@@ -11,6 +11,9 @@ pub use interval::Interval;
 mod aabb;
 pub use aabb::Aabb;
 
+mod camera;
+pub use camera::Camera;
+
 #[cfg(test)]
 mod tests {
     use super::*;
