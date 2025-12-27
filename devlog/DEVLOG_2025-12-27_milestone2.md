@@ -118,10 +118,10 @@ if let Err(e) = renderer.render(clear_color) {
 1. **Surface lifecycle:**
    - Surface → Adapter → Device/Queue → Configure
    - Reconfigure on resize
-   
+
 2. **Render loop:**
    - Get texture → Create view → Encoder → Render pass → Submit → Present
-   
+
 3. **VSync:** `PresentMode::Fifo` ensures frame pacing
 
 4. **Surface errors:**
@@ -152,11 +152,11 @@ if let Err(e) = renderer.render(clear_color) {
 1. **Missing winit in bif_render:**
    - Error: `failed to resolve: use of unresolved module or unlinked crate 'winit'`
    - Fix: Added `winit = { workspace = true }` to `bif_render/Cargo.toml`
-   
+
 2. **Error handling type mismatch:**
    - Error: `expected 'Error', found 'SurfaceError'` in pattern match
    - Fix: Used `downcast_ref()` to check for specific error types
-   
+
 3. **Verbose wgpu logs:**
    - Issue: Many "Device::maintain: waiting for submission" logs
    - Note: Normal for continuous rendering, can filter in production
@@ -182,7 +182,7 @@ if let Err(e) = renderer.render(clear_color) {
    - Bind group setup
    - Estimated: 1 hour
 
-**Total estimated for Milestone 3: 2-2.5 hours**
+## **Total estimated for Milestone 3: 2-2.5 hours**
 
 ## Notes
 
