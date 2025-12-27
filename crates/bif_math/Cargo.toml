@@ -1,0 +1,11 @@
+[package]
+name = "bif_math"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+glam = { workspace = true }
+bytemuck = { workspace = true }
