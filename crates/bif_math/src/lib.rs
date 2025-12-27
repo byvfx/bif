@@ -5,6 +5,9 @@ pub use glam::*;
 mod ray;
 pub use ray::Ray;
 
+mod interval;
+pub use interval::Interval;
+
 #[cfg(test)]
 mod tests {
     use super::*;
