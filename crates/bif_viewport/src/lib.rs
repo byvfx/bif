@@ -260,13 +260,18 @@ impl Renderer {
             // Update camera aspect ratio
             let aspect = new_size.0 as f32 / new_size.1 as f32;
             self.camera.set_aspect(aspect);
-            self.camera_uniform.update_view_proj(&self.camera);
-            self.queue.write_buffer(
-                &self.camera_buffer,
-                0,
-                bytemuck::cast_slice(&[self.camera_uniform]),
-            );
+            self.update_camera();
         }
+    }
+    
+    /// Update camera uniform buffer (call after modifying camera)
+    pub fn update_camera(&mut self) {
+        self.camera_uniform.update_view_proj(&self.camera);
+        self.queue.write_buffer(
+            &self.camera_buffer,
+            0,
+            bytemuck::cast_slice(&[self.camera_uniform]),
+        );
     }
     
     /// Render a frame with the given clear color
