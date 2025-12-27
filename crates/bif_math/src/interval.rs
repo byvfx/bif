@@ -42,6 +42,16 @@ impl Interval {
         Interval::new(self.min + other.min, self.max + other.max)
     }
 
+    /// Adds a scalar displacement to both min and max.
+    pub fn add_scalar(&self, displacement: f32) -> Interval {
+        Interval::new(self.min + displacement, self.max + displacement)
+    }
+
+    /// Creates an interval that surrounds two other intervals.
+    pub fn surrounding(a: &Interval, b: &Interval) -> Interval {
+        Interval::new(a.min.min(b.min), a.max.max(b.max))
+    }
+
     /// An empty interval (min > max, contains nothing).
     pub const EMPTY: Interval = Interval {
         min: f32::INFINITY,

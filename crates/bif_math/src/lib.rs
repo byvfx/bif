@@ -8,6 +8,9 @@ pub use ray::Ray;
 mod interval;
 pub use interval::Interval;
 
+mod aabb;
+pub use aabb::Aabb;
+
 #[cfg(test)]
 mod tests {
     use super::*;
