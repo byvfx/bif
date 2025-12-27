@@ -1,0 +1,13 @@
+[package]
+name = "bif_core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+bif_math = { path = "../bif_math" }
+glam = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }

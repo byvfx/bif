@@ -1,0 +1,16 @@
+[package]
+name = "bif_render"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+bif_math = { path = "../bif_math" }
+bif_core = { path = "../bif_core" }
+wgpu = { workspace = true }
+bytemuck = { workspace = true }
+pollster = { workspace = true }
+log = { workspace = true }
+anyhow = { workspace = true }
