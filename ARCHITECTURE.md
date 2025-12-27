@@ -16,9 +16,7 @@ BIF is a production scene assembler and renderer for VFX, inspired by Isotropix 
 
 **Target Pipeline:**
 
-```
 Houdini/Maya (USD) → BIF (scatter/instance/render) → USD → Nuke/Comp
-```
 
 ## Core Principles
 
