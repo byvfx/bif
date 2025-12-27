@@ -201,13 +201,17 @@ dependencies = [
 ]
 
 [[package]]
-name = "bif_render"
+name = "bif_viewer"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "bif_core",
  "bif_math",
- "bytemuck",
+ "bif_viewport",
+ "egui",
+ "egui-wgpu",
+ "egui-winit",
+ "env_logger",
  "log",
  "pollster",
  "wgpu",
@@ -215,17 +219,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "bif_viewer"
+name = "bif_viewport"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "bif_core",
  "bif_math",
- "bif_render",
- "egui",
- "egui-wgpu",
- "egui-winit",
- "env_logger",
+ "bytemuck",
  "log",
  "pollster",
  "wgpu",
