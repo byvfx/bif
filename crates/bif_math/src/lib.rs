@@ -1,6 +1,10 @@
 // Re-export glam for convenience
 pub use glam::*;
 
+// BIF math types
+mod ray;
+pub use ray::Ray;
+
 #[cfg(test)]
 mod tests {
     use super::*;
