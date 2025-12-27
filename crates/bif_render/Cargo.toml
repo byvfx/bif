@@ -10,6 +10,7 @@ repository.workspace = true
 bif_math = { path = "../bif_math" }
 bif_core = { path = "../bif_core" }
 wgpu = { workspace = true }
+winit = { workspace = true }
 bytemuck = { workspace = true }
 pollster = { workspace = true }
 log = { workspace = true }
