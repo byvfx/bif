@@ -1,6 +1,6 @@
 use glam::{Mat4, Vec3};
 
-/// Camera for 3D rendering
+/// Camera for 3D rendering with orbit controls
 #[derive(Debug, Clone, Copy)]
 pub struct Camera {
     pub position: Vec3,
@@ -10,11 +10,24 @@ pub struct Camera {
     pub aspect: f32,
     pub near: f32,
     pub far: f32,
+    
+    // Orbit controls
+    pub yaw: f32,    // Rotation around Y axis (radians)
+    pub pitch: f32,  // Rotation around X axis (radians)
+    pub distance: f32, // Distance from target
+    pub move_speed: f32, // Movement speed for keyboard
 }
 
 impl Camera {
     /// Create a new camera
     pub fn new(position: Vec3, target: Vec3, aspect: f32) -> Self {
+        let distance = (position - target).length();
+        let direction = (position - target).normalize();
+        
+        // Calculate initial yaw and pitch from position
+        let yaw = direction.z.atan2(direction.x);
+        let pitch = direction.y.asin();
+        
         Self {
             position,
             target,
@@ -23,6 +36,10 @@ impl Camera {
             aspect,
             near: 0.1,
             far: 100.0,
+            yaw,
+            pitch,
+            distance,
+            move_speed: 2.0,
         }
     }
     
@@ -44,6 +61,52 @@ impl Camera {
     /// Update aspect ratio (e.g., on window resize)
     pub fn set_aspect(&mut self, aspect: f32) {
         self.aspect = aspect;
+    }
+    
+    /// Orbit camera by delta angles (in radians)
+    pub fn orbit(&mut self, delta_yaw: f32, delta_pitch: f32) {
+        self.yaw += delta_yaw;
+        self.pitch += delta_pitch;
+        
+        // Clamp pitch to avoid gimbal lock
+        const PITCH_LIMIT: f32 = std::f32::consts::FRAC_PI_2 - 0.01;
+        self.pitch = self.pitch.clamp(-PITCH_LIMIT, PITCH_LIMIT);
+        
+        // Update position from angles
+        self.update_position_from_angles();
+    }
+    
+    /// Move camera and target together (in view space)
+    pub fn pan(&mut self, right: f32, up: f32, forward: f32, delta_time: f32) {
+        let speed = self.move_speed * delta_time;
+        
+        // Get camera axes
+        let view_dir = (self.target - self.position).normalize();
+        let right_dir = view_dir.cross(self.up).normalize();
+        let up_dir = right_dir.cross(view_dir).normalize();
+        
+        // Move camera and target together
+        let movement = right_dir * right * speed
+            + up_dir * up * speed
+            + view_dir * forward * speed;
+        
+        self.position += movement;
+        self.target += movement;
+    }
+    
+    /// Dolly camera (move toward/away from target)
+    pub fn dolly(&mut self, delta: f32) {
+        self.distance = (self.distance + delta).max(0.1);
+        self.update_position_from_angles();
+    }
+    
+    /// Update camera position from spherical coordinates
+    fn update_position_from_angles(&mut self) {
+        let x = self.distance * self.pitch.cos() * self.yaw.cos();
+        let y = self.distance * self.pitch.sin();
+        let z = self.distance * self.pitch.cos() * self.yaw.sin();
+        
+        self.position = self.target + Vec3::new(x, y, z);
     }
 }
 
