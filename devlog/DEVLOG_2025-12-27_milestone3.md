@@ -138,6 +138,25 @@ const VERTICES: &[Vertex] = &[
 **Issue:** Terminal flooded with `Device::maintain` logs  
 **Solution:** Accepted as normal for development (can filter with `RUST_LOG` in production)
 
+## Post-Milestone: Crate Rename
+
+### Renamed bif_render → bif_viewport
+**Motivation:** Clarify distinction between real-time GPU viewport and future CPU path tracer
+
+**Changes Made:**
+- Renamed directory: `crates/bif_render` → `crates/bif_viewport`
+- Updated package name in `Cargo.toml`
+- Updated workspace members in root `Cargo.toml`
+- Updated dependency in `bif_viewer/Cargo.toml`
+- Updated import in `bif_viewer/src/main.rs`
+- Verified build succeeds
+
+**Architecture Clarification:**
+- **`bif_viewport`** = Real-time GPU preview (wgpu, Vulkan/DX12/Metal)
+- **`bif_renderer`** = Future CPU path tracer (production quality)
+
+This matches industry tools like Maya/Houdini where viewport ≠ final render.
+
 ## Statistics
 - **Lines Added:** ~200 LOC
 - **Files Modified:** 5
