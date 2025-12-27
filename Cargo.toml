@@ -1,0 +1,50 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/bif_math",
+    "crates/bif_core",
+    "crates/bif_render",
+    "crates/bif_viewer",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["Brandon Young"]
+license = "MIT"
+repository = "https://github.com/byvfx/bif"
+
+[workspace.dependencies]
+# Math and utilities
+glam = "0.29"
+bytemuck = { version = "1.14", features = ["derive"] }
+
+# Rendering - using older versions compatible with Rust 1.86
+wgpu = "22.1"
+pollster = "0.3"
+
+# UI - using older versions compatible with Rust 1.86
+egui = "0.29"
+egui-wgpu = "0.29"
+egui-winit = "0.29"
+winit = "0.30"
+
+# Scene/serialization (future USD work)
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+# Logging
+env_logger = "0.11"
+log = "0.4"
+
+[profile.dev]
+opt-level = 1  # Basic optimizations for faster iteration
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
