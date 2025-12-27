@@ -1,5 +1,5 @@
 use anyhow::Result;
-use bif_render::Renderer;
+use bif_viewport::Renderer;
 use winit::{
     application::ApplicationHandler,
     event::WindowEvent,

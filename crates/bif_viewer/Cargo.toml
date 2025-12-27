@@ -9,7 +9,7 @@ repository.workspace = true
 [dependencies]
 bif_math = { path = "../bif_math" }
 bif_core = { path = "../bif_core" }
-bif_render = { path = "../bif_render" }
+bif_viewport = { path = "../bif_viewport" }
 
 wgpu = { workspace = true }
 winit = { workspace = true }

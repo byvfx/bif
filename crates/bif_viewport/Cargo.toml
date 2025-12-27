@@ -1,5 +1,5 @@
 [package]
-name = "bif_render"
+name = "bif_viewport"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
