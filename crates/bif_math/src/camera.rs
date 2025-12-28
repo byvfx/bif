@@ -101,7 +101,7 @@ impl Camera {
     }
     
     /// Update camera position from spherical coordinates
-    fn update_position_from_angles(&mut self) {
+    pub fn update_position_from_angles(&mut self) {
         let x = self.distance * self.pitch.cos() * self.yaw.cos();
         let y = self.distance * self.pitch.sin();
         let z = self.distance * self.pitch.cos() * self.yaw.sin();

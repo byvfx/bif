@@ -107,6 +107,14 @@ impl ApplicationHandler for App {
                     match state {
                         ElementState::Pressed => {
                             self.keys_pressed.insert(keycode);
+                            
+                            // Handle single-press keys
+                            if keycode == KeyCode::KeyF {
+                                // Frame mesh
+                                if let Some(renderer) = &mut self.renderer {
+                                    renderer.frame_mesh();
+                                }
+                            }
                         }
                         ElementState::Released => {
                             self.keys_pressed.remove(&keycode);
