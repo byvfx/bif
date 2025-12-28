@@ -1308,65 +1308,196 @@ let hit = scene.intersect(ray);
 
 ---
 
-## Milestone 7: USD Export
+## Milestone 7: egui UI Integration
 
-**Est:** 15-20 hours  
-**Goal:** Export BIF scene to .usda, validate in usdview
+**Est:** 2-3 hours  
+**Goal:** Add immediate-mode UI overlay with scene stats
+
+**Status:** ✅ **COMPLETE** (December 27, 2025)
 
 ### Overview
 
-Prove your scene graph is USD-compatible by exporting it. This doesn't require USD C++ - just write text files.
+Add egui for development UI - side panel with FPS, camera stats, mesh info, and controls. Pure Rust, fast iteration, perfect for prototyping.
 
 ### What You'll Learn
 
-- USD file format (.usda)
-- Text file generation
-- Validation workflows
+- Immediate-mode UI paradigm
+- egui-wgpu integration
+- Two-pass rendering (3D + UI overlay)
+- Event consumption patterns
 
 ### Prerequisites
 
-- Milestone 4 complete (scene graph)
-- usdview installed for validation
+- Milestone 6 complete (depth testing)
+- Understanding of wgpu render passes
 
 ### Tasks
 
-- [ ] Research .usda text format
-- [ ] Write USD header
-- [ ] Export prototypes as UsdGeomMesh
-- [ ] Export instances as PointInstancer
-- [ ] Export materials (basic)
-- [ ] Save to .usda file
-- [ ] Open in usdview
-- [ ] Verify instance count matches
-- [ ] Verify transforms match
+- [x] Add egui dependencies (egui, egui-wgpu, egui-winit)
+- [x] Initialize egui state in Renderer
+- [x] Handle egui events before viewport
+- [x] Create side panel with collapsible sections
+- [x] Add FPS counter (updates every 0.5s)
+- [x] Display camera stats (position, angles, FOV, planes)
+- [x] Display mesh info (vertices, indices, bounds)
+- [x] Two-pass rendering (3D scene, then UI overlay)
 
 ### Validation
 
-- usdview loads file without errors
-- All instances visible
-- Transforms look correct
+- UI panel appears on left side
+- FPS counter updates smoothly
+- Stats reflect actual values
+- UI doesn't block 3D viewport interaction
 
 ---
 
-## Milestone 8: Qt Integration
+## Milestone 8: GPU Instancing
 
-**Est:** 30-50 hours  
-**Goal:** Embed wgpu viewport in Qt window with basic controls
+**Est:** 2-3 hours  
+**Goal:** Replace dual-buffer hack with proper GPU instancing
+
+**Status:** ✅ **COMPLETE** (December 27, 2025)
 
 ### Overview
 
-The big integration. Qt C++ ↔ Rust via cxx-qt. This is complex but worth it.
+Implement proper per-instance transforms using vertex attributes. Render 100 Lucy models with a single draw call. Proves scalability for 10K+ instances.
+
+### What You'll Learn
+
+- GPU instancing with wgpu
+- Mat4 as vertex attributes (4 vec4s)
+- Instance step mode vs vertex step mode
+- Performance optimization
+
+### Prerequisites
+
+- Milestone 7 complete (egui)
+- Understanding of vertex buffers
+
+### Tasks
+
+- [x] Remove temporary secondary buffers
+- [x] Create InstanceData struct with model matrix
+- [x] Update pipeline with instance vertex buffer
+- [x] Generate 100 instances in 10x10 grid
+- [x] Update shader to use per-instance transforms
+- [x] Single draw_indexed call with instance count
+- [x] Extend far clipping plane for distant instances
+
+### Validation
+
+- 100 Lucy models render correctly
+- FPS remains at 60+ (VSync-limited)
+- Single draw call in render pass
+- Memory usage much lower than duplication
+
+---
+
+## Milestone 9: USD Import
+
+**Est:** 4-6 hours  
+**Goal:** Load USD scenes and render in viewport
+
+**Status:** 🎯 **NEXT MILESTONE**
+
+### Overview
+
+Import production USD scenes instead of hardcoded meshes. Start with USDA (text format) parser to avoid C++ dependencies. This validates the architecture's USD compatibility early.
+
+### What You'll Learn
+
+- USD file format (.usda text)
+- Scene graph structures
+- UsdGeomMesh and UsdGeomPointInstancer
+- Transform hierarchies
+
+### Prerequisites
+
+- Milestone 8 complete (instancing ready)
+- Understanding of scene graphs
+
+### Tasks
+
+- [ ] Research USD format (start with USDA text)
+- [ ] Create USD parser in bif_core
+- [ ] Parse UsdGeomMesh primitives
+- [ ] Parse UsdGeomPointInstancer for instances
+- [ ] Extract vertex data and transform matrices
+- [ ] Create test.usda file (1 mesh + 100 instances)
+- [ ] Load USD in viewer instead of hardcoded OBJ
+- [ ] Validate against usdview
+
+### Validation
+
+- BIF viewport matches usdview
+- Instance count correct
+- Transforms match visually
+- Can load different USD files
+
+---
+
+## Milestone 10: CPU Path Tracer
+
+**Est:** 15-20 hours  
+**Goal:** Port Go raytracer for production rendering
+
+### Overview
+
+Create `bif_renderer` crate and port the proven Go implementation. This proves the dual rendering architecture: GPU viewport (fast preview) + CPU path tracer (production quality).
+
+### What You'll Learn
+
+- Path tracing algorithms
+- BVH acceleration structures
+- Material systems (PBR)
+- Multi-threaded rendering
+
+### Prerequisites
+
+- Milestone 9 complete (USD scenes)
+- Go raytracer for reference
+
+### Tasks
+
+- [ ] Create bif_renderer crate
+- [ ] Port Hittable trait (sphere, triangle, mesh)
+- [ ] Port Material trait (Lambert, Metal, Dielectric)
+- [ ] Port BVH acceleration structure
+- [ ] Implement ray casting and shading
+- [ ] Port HDRI environment loading
+- [ ] Multi-threaded bucket renderer
+- [ ] Add "Render" button to egui UI
+- [ ] Display progress bar during render
+- [ ] Show result in viewport
+
+### Validation
+
+- Rendered image matches Go output
+- Can render 1000+ instances
+- Render time competitive with Go
+- IBL looks correct
+
+---
+
+## Milestone 11: Qt Integration (Deferred to Phase 2)
+
+**Est:** 30-50 hours  
+**Goal:** Embed wgpu viewport in Qt window with production UI
+
+### Overview
+
+The big integration. Qt C++ ↔ Rust via cxx-qt. Deferred until after USD import and raytracer port to validate core architecture first. egui is sufficient for prototyping.
 
 ### What You'll Learn
 
 - C++ FFI
-- Qt C++ (you know PyQt, this is similar)
+- Qt C++ (similar to PyQt)
 - cxx-qt bridging
 - Cross-language debugging
 
 ### Prerequisites
 
-- Milestones 1-7 complete
+- Milestones 1-10 complete
 - Qt 6 installed
 - Patience (FFI is hard)
 

@@ -66,6 +66,16 @@ impl ApplicationHandler for App {
         _window_id: WindowId,
         event: WindowEvent,
     ) {
+        // Let egui handle the event first
+        if let Some(renderer) = &mut self.renderer {
+            if let Some(window) = &self.window {
+                if renderer.handle_egui_event(window, &event) {
+                    // Event was consumed by egui, don't process it further
+                    return;
+                }
+            }
+        }
+        
         match event {
             WindowEvent::CloseRequested => {
                 log::info!("Close requested");
@@ -163,6 +173,11 @@ impl ApplicationHandler for App {
                 let delta_time = (now - self.last_frame_time).as_secs_f32();
                 self.last_frame_time = now;
                 
+                // Update FPS counter
+                if let Some(renderer) = &mut self.renderer {
+                    renderer.update_fps(delta_time);
+                }
+                
                 // Handle keyboard movement
                 if let Some(renderer) = &mut self.renderer {
                     let mut right = 0.0;
@@ -194,7 +209,7 @@ impl ApplicationHandler for App {
                     }
                 }
                 
-                if let Some(renderer) = &self.renderer {
+                if let (Some(renderer), Some(window)) = (&mut self.renderer, &self.window) {
                     // Clear to dark blue
                     let clear_color = wgpu::Color {
                         r: 0.1,
@@ -203,7 +218,7 @@ impl ApplicationHandler for App {
                         a: 1.0,
                     };
                     
-                    if let Err(e) = renderer.render(clear_color) {
+                    if let Err(e) = renderer.render(clear_color, window) {
                         // Check if it's a surface error we can handle
                         if let Some(surface_err) = e.downcast_ref::<wgpu::SurfaceError>() {
                             match surface_err {
