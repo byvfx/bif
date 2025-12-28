@@ -1,6 +1,101 @@
 use anyhow::Result;
 use wgpu::{util::DeviceExt, Device, Instance, Queue, Surface, SurfaceConfiguration};
 use bif_math::{Camera, Mat4, Vec3};
+use std::path::Path;
+
+/// Mesh data loaded from file
+pub struct MeshData {
+    pub vertices: Vec<Vertex>,
+    pub indices: Vec<u32>,
+    pub bounds_min: Vec3,
+    pub bounds_max: Vec3,
+}
+
+impl MeshData {
+    /// Get mesh center
+    pub fn center(&self) -> Vec3 {
+        (self.bounds_min + self.bounds_max) * 0.5
+    }
+    
+    /// Get mesh size (diagonal of bounding box)
+    pub fn size(&self) -> f32 {
+        (self.bounds_max - self.bounds_min).length()
+    }
+    
+    /// Load an OBJ file into mesh data
+    pub fn load_obj<P: AsRef<Path>>(path: P) -> Result<Self> {
+        let (models, _materials) = tobj::load_obj(
+            path.as_ref(),
+            &tobj::LoadOptions {
+                single_index: true,
+                triangulate: true,
+                ..Default::default()
+            },
+        )?;
+        
+        if models.is_empty() {
+            anyhow::bail!("No models found in OBJ file");
+        }
+        
+        // Take first model
+        let model = &models[0];
+        let mesh = &model.mesh;
+        
+        // Build vertices with normals
+        let mut vertices = Vec::new();
+        let vertex_count = mesh.positions.len() / 3;
+        
+        for i in 0..vertex_count {
+            let pos_idx = i * 3;
+            let norm_idx = i * 3;
+            
+            // Use normal if available, otherwise default
+            let normal = if mesh.normals.is_empty() {
+                [0.0, 1.0, 0.0]
+            } else {
+                [
+                    mesh.normals[norm_idx],
+                    mesh.normals[norm_idx + 1],
+                    mesh.normals[norm_idx + 2],
+                ]
+            };
+            
+            // Simple color from normal for visualization
+            let color = [
+                (normal[0] * 0.5 + 0.5),
+                (normal[1] * 0.5 + 0.5),
+                (normal[2] * 0.5 + 0.5),
+            ];
+            
+            vertices.push(Vertex {
+                position: [
+                    mesh.positions[pos_idx],
+                    mesh.positions[pos_idx + 1],
+                    mesh.positions[pos_idx + 2],
+                ],
+                normal,
+                color,
+            });
+        }
+        
+        // Calculate bounding box
+        let mut bounds_min = Vec3::splat(f32::INFINITY);
+        let mut bounds_max = Vec3::splat(f32::NEG_INFINITY);
+        
+        for vertex in &vertices {
+            let pos = Vec3::from_array(vertex.position);
+            bounds_min = bounds_min.min(pos);
+            bounds_max = bounds_max.max(pos);
+        }
+        
+        Ok(Self {
+            vertices,
+            indices: mesh.indices.clone(),
+            bounds_min,
+            bounds_max,
+        })
+    }
+}
 
 /// Camera uniform data for GPU
 #[repr(C)]
@@ -26,12 +121,13 @@ impl CameraUniform {
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Vertex {
     pub position: [f32; 3],
+    pub normal: [f32; 3],
     pub color: [f32; 3],
 }
 
 impl Vertex {
-    const ATTRIBS: [wgpu::VertexAttribute; 2] =
-        wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3];
+    const ATTRIBS: [wgpu::VertexAttribute; 3] =
+        wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x3];
 
     pub fn desc<'a>() -> wgpu::VertexBufferLayout<'a> {
         wgpu::VertexBufferLayout {
@@ -51,11 +147,14 @@ pub struct Renderer {
     pub size: (u32, u32),
     pipeline: wgpu::RenderPipeline,
     vertex_buffer: wgpu::Buffer,
-    num_vertices: u32,
+    index_buffer: wgpu::Buffer,
+    num_indices: u32,
     pub camera: Camera,
     camera_uniform: CameraUniform,
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
+    mesh_bounds_min: Vec3,
+    mesh_bounds_max: Vec3,
 }
 
 impl Renderer {
@@ -117,15 +216,39 @@ impl Renderer {
         
         surface.configure(&device, &config);
         
-        // Create camera
+        // Load Lucy model first to get mesh bounds
+        let mesh_path = std::env::current_dir()?
+            .join("legacy/go-raytracing/assets/models/lucy_low.obj");
+        
+        log::info!("Loading mesh from: {:?}", mesh_path);
+        let mesh_data = MeshData::load_obj(&mesh_path)?;
+        log::info!("Loaded {} vertices, {} indices", mesh_data.vertices.len(), mesh_data.indices.len());
+        log::info!("Mesh bounds: min={:?}, max={:?}", mesh_data.bounds_min, mesh_data.bounds_max);
+        log::info!("Mesh center: {:?}, size: {:.2}", mesh_data.center(), mesh_data.size());
+        
+        // Calculate proper camera distance to frame the mesh
+        let mesh_center = mesh_data.center();
+        let mesh_size = mesh_data.size();
+        let camera_distance = mesh_size * 1.5;
+        
+        // Create camera positioned to view the mesh
         let aspect = size.width as f32 / size.height as f32;
         let camera = Camera::new(
-            Vec3::new(0.0, 0.0, 3.0),  // Position camera 3 units back
-            Vec3::ZERO,                 // Look at origin
+            mesh_center + Vec3::new(0.0, 0.0, camera_distance),
+            mesh_center,
             aspect,
         );
         
-        // Create camera uniform buffer
+        // Adjust camera near/far planes for mesh size
+        let mut camera = camera;
+        camera.near = camera_distance * 0.01; // 1% of distance
+        camera.far = camera_distance * 10.0;   // 10x distance for safety
+        
+        log::info!("Camera positioned at {:?}, looking at {:?}, distance {:.2}", 
+                   camera.position, camera.target, camera.distance);
+        log::info!("Camera near={:.2}, far={:.2}", camera.near, camera.far);
+        
+        // Create camera uniform buffer with correct initial values
         let mut camera_uniform = CameraUniform::new();
         camera_uniform.update_view_proj(&camera);
         
@@ -211,26 +334,17 @@ impl Renderer {
             cache: None,
         });
         
-        // Create triangle vertex data
-        let vertices = [
-            Vertex {
-                position: [0.0, 0.5, 0.0],
-                color: [1.0, 0.0, 0.0], // Red
-            },
-            Vertex {
-                position: [-0.5, -0.5, 0.0],
-                color: [0.0, 1.0, 0.0], // Green
-            },
-            Vertex {
-                position: [0.5, -0.5, 0.0],
-                color: [0.0, 0.0, 1.0], // Blue
-            },
-        ];
-        
+        // Create vertex and index buffers from loaded mesh data
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Vertex Buffer"),
-            contents: bytemuck::cast_slice(&vertices),
+            contents: bytemuck::cast_slice(&mesh_data.vertices),
             usage: wgpu::BufferUsages::VERTEX,
+        });
+        
+        let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Index Buffer"),
+            contents: bytemuck::cast_slice(&mesh_data.indices),
+            usage: wgpu::BufferUsages::INDEX,
         });
         
         Ok(Self {
@@ -241,11 +355,14 @@ impl Renderer {
             size: (size.width, size.height),
             pipeline,
             vertex_buffer,
-            num_vertices: vertices.len() as u32,
+            index_buffer,
+            num_indices: mesh_data.indices.len() as u32,
             camera,
             camera_uniform,
             camera_buffer,
             camera_bind_group,
+            mesh_bounds_min: mesh_data.bounds_min,
+            mesh_bounds_max: mesh_data.bounds_max,
         })
     }
     
@@ -272,6 +389,21 @@ impl Renderer {
             0,
             bytemuck::cast_slice(&[self.camera_uniform]),
         );
+    }
+    
+    /// Frame the camera on the loaded mesh
+    pub fn frame_mesh(&mut self) {
+        let mesh_center = (self.mesh_bounds_min + self.mesh_bounds_max) * 0.5;
+        let mesh_size = (self.mesh_bounds_max - self.mesh_bounds_min).length();
+        let camera_distance = mesh_size * 1.5;
+        
+        // Position camera looking at mesh center from current yaw/pitch
+        self.camera.target = mesh_center;
+        self.camera.distance = camera_distance;
+        self.camera.update_position_from_angles();
+        
+        self.update_camera();
+        log::info!("Framed mesh at center {:?}, distance {:.2}", mesh_center, camera_distance);
     }
     
     /// Render a frame with the given clear color
@@ -303,11 +435,12 @@ impl Renderer {
                 occlusion_query_set: None,
             });
             
-            // Draw the triangle
+            // Draw the mesh
             render_pass.set_pipeline(&self.pipeline);
             render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
             render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-            render_pass.draw(0..self.num_vertices, 0..1);
+            render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            render_pass.draw_indexed(0..self.num_indices, 0, 0..1);
         }
         
         self.queue.submit(std::iter::once(encoder.finish()));
