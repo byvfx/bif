@@ -4,6 +4,7 @@ use bif_math::{Camera, Mat4, Vec3};
 use std::path::Path;
 
 /// Mesh data loaded from file
+#[derive(Clone)]
 pub struct MeshData {
     pub vertices: Vec<Vertex>,
     pub indices: Vec<u32>,
@@ -196,6 +197,10 @@ pub struct Renderer {
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
     num_indices: u32,
+    // TODO: Temporary second instance for depth testing - will be replaced with proper instancing later
+    vertex_buffer_2: Option<wgpu::Buffer>,
+    index_buffer_2: Option<wgpu::Buffer>,
+    num_indices_2: u32,
     pub camera: Camera,
     camera_uniform: CameraUniform,
     camera_buffer: wgpu::Buffer,
@@ -427,6 +432,27 @@ impl Renderer {
         // Create depth texture
         let (depth_texture, depth_view) = Self::create_depth_texture(&device, (size.width, size.height));
         
+        // Create second instance offset forward for depth testing
+        let mut mesh_data_2 = mesh_data.clone();
+        let offset = Vec3::new(0.0, 0.0, 500.0); // Offset along Z axis
+        for vertex in &mut mesh_data_2.vertices {
+            vertex.position[2] += offset.z;
+        }
+        mesh_data_2.bounds_min += offset;
+        mesh_data_2.bounds_max += offset;
+        
+        let vertex_buffer_2 = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Vertex Buffer 2"),
+            contents: bytemuck::cast_slice(&mesh_data_2.vertices),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+        
+        let index_buffer_2 = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Index Buffer 2"),
+            contents: bytemuck::cast_slice(&mesh_data_2.indices),
+            usage: wgpu::BufferUsages::INDEX,
+        });
+        
         Ok(Self {
             surface,
             device,
@@ -437,6 +463,9 @@ impl Renderer {
             vertex_buffer,
             index_buffer,
             num_indices: mesh_data.indices.len() as u32,
+            vertex_buffer_2: Some(vertex_buffer_2),
+            index_buffer_2: Some(index_buffer_2),
+            num_indices_2: mesh_data_2.indices.len() as u32,
             camera,
             camera_uniform,
             camera_buffer,
@@ -529,12 +558,19 @@ impl Renderer {
                 occlusion_query_set: None,
             });
             
-            // Draw the mesh
+            // Draw the first mesh
             render_pass.set_pipeline(&self.pipeline);
             render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
             render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
             render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
             render_pass.draw_indexed(0..self.num_indices, 0, 0..1);
+            
+            // Draw the second mesh instance if present
+            if let (Some(vb2), Some(ib2)) = (&self.vertex_buffer_2, &self.index_buffer_2) {
+                render_pass.set_vertex_buffer(0, vb2.slice(..));
+                render_pass.set_index_buffer(ib2.slice(..), wgpu::IndexFormat::Uint32);
+                render_pass.draw_indexed(0..self.num_indices_2, 0, 0..1);
+            }
         }
         
         self.queue.submit(std::iter::once(encoder.finish()));

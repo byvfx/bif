@@ -15,7 +15,8 @@ struct App {
     renderer: Option<Renderer>,
     
     // Input state
-    mouse_pressed: bool,
+    left_mouse_pressed: bool,
+    middle_mouse_pressed: bool,
     last_mouse_pos: Option<(f64, f64)>,
     keys_pressed: std::collections::HashSet<KeyCode>,
     last_frame_time: Instant,
@@ -26,7 +27,8 @@ impl App {
         Self {
             window: None,
             renderer: None,
-            mouse_pressed: false,
+            left_mouse_pressed: false,
+            middle_mouse_pressed: false,
             last_mouse_pos: None,
             keys_pressed: std::collections::HashSet::new(),
             last_frame_time: Instant::now(),
@@ -76,30 +78,63 @@ impl ApplicationHandler for App {
                 }
             }
             WindowEvent::MouseInput { button, state, .. } => {
-                if button == MouseButton::Left {
-                    self.mouse_pressed = state == ElementState::Pressed;
-                    if !self.mouse_pressed {
-                        self.last_mouse_pos = None;
+                match button {
+                    MouseButton::Left => {
+                        self.left_mouse_pressed = state == ElementState::Pressed;
+                        if !self.left_mouse_pressed {
+                            self.last_mouse_pos = None;
+                        }
                     }
+                    MouseButton::Middle => {
+                        self.middle_mouse_pressed = state == ElementState::Pressed;
+                        if !self.middle_mouse_pressed {
+                            self.last_mouse_pos = None;
+                        }
+                    }
+                    _ => {}
                 }
             }
             WindowEvent::CursorMoved { position, .. } => {
-                if self.mouse_pressed {
+                if self.left_mouse_pressed || self.middle_mouse_pressed {
                     if let Some(last_pos) = self.last_mouse_pos {
                         let delta_x = position.x - last_pos.0;
                         let delta_y = position.y - last_pos.1;
                         
-                        // Orbit camera
                         if let Some(renderer) = &mut self.renderer {
-                            let sensitivity = 0.005;
-                            renderer.camera.orbit(
-                                -delta_x as f32 * sensitivity,
-                                -delta_y as f32 * sensitivity,
-                            );
+                            if self.left_mouse_pressed {
+                                // Orbit camera with left mouse
+                                let sensitivity = 0.005;
+                                renderer.camera.orbit(
+                                    -delta_x as f32 * sensitivity,
+                                    -delta_y as f32 * sensitivity,
+                                );
+                            } else if self.middle_mouse_pressed {
+                                // Pan camera with middle mouse (scaled with distance)
+                                let sensitivity = 0.1;
+                                let distance_scale = renderer.camera.distance * 0.0001;
+                                renderer.camera.pan(
+                                    -delta_x as f32 * sensitivity * distance_scale,
+                                    delta_y as f32 * sensitivity * distance_scale,
+                                    0.0,
+                                    1.0,  // delta_time = 1.0 for mouse pan (direct control)
+                                );
+                            }
                             renderer.update_camera();
                         }
                     }
                     self.last_mouse_pos = Some((position.x, position.y));
+                }
+            }
+            WindowEvent::MouseWheel { delta, .. } => {
+                if let Some(renderer) = &mut self.renderer {
+                    // Handle mouse wheel for dolly (zoom in/out)
+                    let scroll_amount = match delta {
+                        winit::event::MouseScrollDelta::LineDelta(_, y) => y * 100.0,
+                        winit::event::MouseScrollDelta::PixelDelta(pos) => pos.y as f32,
+                    };
+                    
+                    renderer.camera.dolly(-scroll_amount);
+                    renderer.update_camera();
                 }
             }
             WindowEvent::KeyboardInput { event: KeyEvent { physical_key, state, .. }, .. } => {
@@ -198,6 +233,15 @@ impl ApplicationHandler for App {
                 }
             }
             _ => {}
+        }
+    }
+    
+    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
+        // Request continuous redraw when keys are pressed for smooth movement
+        if !self.keys_pressed.is_empty() {
+            if let Some(window) = &self.window {
+                window.request_redraw();
+            }
         }
     }
 }

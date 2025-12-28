@@ -1,17 +1,17 @@
 # Session Handoff - December 27, 2025
 
-**Last Updated:** End of Milestone 3  
-**Next Session Starts:** Milestone 4 (Camera Controls)  
+**Last Updated:** End of Milestones 5-6  
+**Next Session Starts:** Milestone 7 (egui UI Integration)  
 **Project:** BIF - VFX Scene Assembler & Renderer
 
 ---
 
 ## Quick Status
 
-✅ **Milestones Complete:** 4/7 (57%)  
-🎯 **Current State:** Interactive viewport with orbit + keyboard controls  
+✅ **Milestones Complete:** 6/7 (86%)  
+🎯 **Current State:** Full Houdini-style viewport with Lucy mesh + depth testing  
 📦 **Tests Passing:** 26/26  
-🚀 **Next Goal:** Depth testing + multiple objects or egui UI
+🚀 **Next Goal:** egui UI integration with scene stats panel
 
 ---
 
@@ -132,6 +132,64 @@ Ported from Go implementation:
 
 ---
 
+### ✅ Milestone 5: OBJ Mesh Loading
+
+**Location:**
+- `crates/bif_viewport/src/lib.rs` - MeshData struct and OBJ loading
+- `crates/bif_viewport/Cargo.toml` - Added tobj dependency
+
+**OBJ Loading System:**
+
+- **MeshData struct:** Vertices, indices, AABB bounds
+- **tobj integration:** Robust OBJ file parsing
+- **Normal computation:** Per-face normals for models lacking them
+  - Cross product of edges for face normal
+  - Accumulate at vertices and normalize for smooth shading
+- **Lucy model:** 140,278 vertices, 840,768 indices loaded successfully
+
+**Auto-Framing:**
+
+- F key to frame mesh in viewport
+- Dynamic near/far planes based on mesh size
+- `camera.near = distance * 0.01`
+- `camera.far = distance * 10.0`
+
+**Stats:** ~120 LOC, 2 hours
+
+---
+
+### ✅ Milestone 6: Depth Testing + Enhanced Controls
+
+**Location:**
+- `crates/bif_viewport/src/lib.rs` - Depth texture creation
+- `crates/bif_viewer/src/main.rs` - Mouse wheel and middle mouse handling
+- `crates/bif_math/src/camera.rs` - Distance-scaled movement
+
+**Depth Testing:**
+
+- **Format:** Depth24Plus with Less comparison
+- **Testing:** Second Lucy instance at +500 Z offset
+- **Result:** Proper occlusion between instances
+- **Note:** Secondary buffers temporary - will use GPU instancing later
+
+**Enhanced Camera Controls:**
+
+- **Mouse Scroll:** Dolly (zoom in/out) with wheel
+- **Middle Mouse:** Pan/track with click-drag
+- **Distance Scaling:** All movement scaled by camera distance
+  - WASD: `move_speed * distance * delta_time`
+  - Middle pan: `sensitivity * distance * 0.0001`
+- **Continuous Redraw:** `about_to_wait` handler for held keys
+
+**Complete Houdini Paradigm:**
+- Tumble (left mouse orbit) ✅
+- Track (middle mouse pan) ✅
+- Dolly (scroll wheel zoom) ✅
+
+**Stats:** ~140 LOC, 2 hours
+
+---
+
 ## Crate Architecture
 
 ```
@@ -196,8 +254,10 @@ This matches Clarisse, Houdini, Maya architecture.
 - **glam** 0.29 - SIMD math library
 - **wgpu** 22.1 - GPU abstraction (Vulkan/DX12/Metal)
 - **winit** 0.30 - Window management
-- **bytemuck** 1.14 - Zero-copy GPU buffer casting
+- **bytemuck** 1.24 - Zero-copy GPU buffer casting
 - **anyhow** 1.0 - Error handling
+- **tobj** 4.0 - OBJ file parser
+- **pollster** 0.3 - Async runtime for wgpu init
 
 ### Build Configuration
 
@@ -212,62 +272,51 @@ opt-level = 1  # Faster dev builds with some optimization
 
 | Metric | Value |
 |--------|-------|
-| **Total LOC** | ~1,350 |
+| **Total LOC** | ~1,750 |
 | **Tests Passing** | 26/26 ✅ |
-| **Commits** | 14 |
-| **Time Invested** | ~9 hours |
-| **Milestones Complete** | 4/7 (57%) |
+| **Commits** | 23+ |
+| **Time Invested** | ~14 hours |
+| **Milestones Complete** | 6/7 (86%) |
 | **Build Time (dev)** | ~4s |
+| **Build Time (release)** | ~3m |
 | **Runtime FPS** | 60 (VSync) |
+| **Lucy Vertices** | 140,278 |
+| **Lucy Indices** | 840,768 |
 
 ---
 
-## Next Session: Milestone 5
+## Next Session: Milestone 7
 
-### 🎯 Recommended: Depth Testing + Multiple Objects
+### 🎯 egui UI Integration
 
-Add depth buffer and render multiple triangles in 3D space.
+Add side panel with scene information and controls.
 
 **Implementation Plan:**
 
-1. **Add Depth Texture**
-   - Create depth texture with `Depth24PlusStencil8` format
-   - Attach to render pass
-   - Configure depth testing (less-than comparison)
+1. **Add egui Dependencies**
+   - `egui` - UI framework
+   - `egui-wgpu` - wgpu rendering backend
+   - `egui-winit` - winit event integration
 
-2. **Multiple Objects**
-   - Create vertex buffer with multiple triangles
-   - Position them at different Z depths
-   - Test that Z-ordering works correctly
+2. **Side Panel UI**
+   - Camera position, target, distance
+   - FPS counter with delta time
+   - Mesh statistics (vertices, triangles)
+   - Control hints (keyboard shortcuts)
 
-3. **Camera Controls Testing**
-   - Orbit around 3D objects
-   - Verify depth writes correctly with movement
+3. **Interactive Controls**
+   - Sliders for camera FOV (30-90°)
+   - Slider for movement speed (0.1-10x)
+   - Button to reset camera
+   - Toggle for wireframe mode (future)
 
 **Files to Modify:**
 
-- `crates/bif_viewport/src/lib.rs` - Add depth texture and pipeline config
+- `crates/bif_viewport/Cargo.toml` - Add egui dependencies
+- `crates/bif_viewport/src/lib.rs` - Integrate egui rendering
+- `crates/bif_viewer/src/main.rs` - Handle egui events
 
-**Estimated Time:** 1 hour
-
----
-
-### Alternative Milestone 5 Options
-
-**Option 2: Mesh Loading (OBJ files)**
-
-- Add `tobj` crate for OBJ parsing
-- Load Lucy statue from `legacy/go-raytracing/models/`
-- Render with flat or smooth shading
-- Time: 2 hours
-
-**Option 4: egui Integration**
-
-- Add `egui-wgpu` and `egui-winit` dependencies
-- Create side panel with camera position display
-- Add FPS counter
-- Add sliders for FOV, camera speed
-- Time: 2 hours
+**Estimated Time:** 2-3 hours
 
 ---
 
@@ -278,13 +327,13 @@ Add depth buffer and render multiple triangles in 3D space.
 1. **This file** (`SESSION_HANDOFF.md`) - Current status
 2. **`CLAUDE.md`** - Your custom AI instructions
 3. **`ARCHITECTURE.md`** - System design and principles
-4. **`devlog/DEVLOG_2025-12-27_milestone3.md`** - Latest session log
+4. **`devlog/DEVLOG_2025-12-27_milestone5_6.md`** - Latest session log
 
 ### Reference (Can Use #codebase)
 
-- `crates/bif_math/src/camera.rs` - Current camera implementation
-- `crates/bif_viewer/src/main.rs` - Event loop structure
-- `crates/bif_viewport/src/lib.rs` - Renderer API
+- `crates/bif_math/src/camera.rs` - Complete camera with all controls
+- `crates/bif_viewer/src/main.rs` - Full input handling (mouse + keyboard)
+- `crates/bif_viewport/src/lib.rs` - Renderer with OBJ loading and depth testing
 
 ### Don't Need to Read
 
