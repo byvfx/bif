@@ -9,11 +9,13 @@
 ## Objectives
 
 ### Milestone 5: OBJ Mesh Loading
+
 - Load and render complex OBJ models (Lucy statue)
 - Compute normals for models without normal data
 - Auto-frame mesh in viewport
 
 ### Milestone 6: Depth Testing & Enhanced Controls
+
 - Implement depth buffer for proper Z-ordering
 - Add mouse scroll wheel for zoom (dolly)
 - Add middle mouse button for panning (track)
@@ -28,6 +30,7 @@
 **File:** `crates/bif_viewport/src/lib.rs`
 
 Added `MeshData` struct with OBJ loading:
+
 ```rust
 #[derive(Clone)]
 pub struct MeshData {
@@ -43,12 +46,14 @@ impl MeshData {
 ```
 
 **Features:**
+
 - Uses `tobj` crate for robust OBJ parsing
 - Computes per-face normals when mesh lacks them
 - Accumulates and normalizes vertex normals for smooth shading
 - Calculates axis-aligned bounding box (AABB)
 
 **Loaded Model:**
+
 - Lucy statue (`lucy_low.obj`): 140,278 vertices, 840,768 indices
 - Bounds: (-464.90, -0.02, -266.78) to (464.99, 1597.11, 266.93)
 - Size: 1923.64 units
@@ -103,6 +108,7 @@ pub fn frame_mesh(&mut self) {
 **File:** `crates/bif_viewport/src/lib.rs`
 
 Added depth texture creation:
+
 ```rust
 fn create_depth_texture(device: &Device, size: (u32, u32)) 
     -> (wgpu::Texture, wgpu::TextureView) 
@@ -117,6 +123,7 @@ fn create_depth_texture(device: &Device, size: (u32, u32))
 ```
 
 **Render Pass Configuration:**
+
 ```rust
 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
     view: &self.depth_view,
@@ -129,6 +136,7 @@ depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
 ```
 
 **Pipeline Configuration:**
+
 ```rust
 depth_stencil: Some(wgpu::DepthStencilState {
     format: wgpu::TextureFormat::Depth24Plus,
@@ -148,6 +156,7 @@ depth_stencil: Some(wgpu::DepthStencilState {
 #### Mouse Controls
 
 **Left Mouse (Orbit/Tumble):**
+
 ```rust
 WindowEvent::MouseInput { button: MouseButton::Left, .. } => {
     self.left_mouse_pressed = state == ElementState::Pressed;
@@ -161,6 +170,7 @@ renderer.camera.orbit(
 ```
 
 **Middle Mouse (Pan/Track):**
+
 ```rust
 WindowEvent::MouseInput { button: MouseButton::Middle, .. } => {
     self.middle_mouse_pressed = state == ElementState::Pressed;
@@ -177,6 +187,7 @@ renderer.camera.pan(
 ```
 
 **Mouse Wheel (Dolly/Zoom):**
+
 ```rust
 WindowEvent::MouseWheel { delta, .. } => {
     let scroll_amount = match delta {
@@ -193,6 +204,7 @@ WindowEvent::MouseWheel { delta, .. } => {
 **File:** `crates/bif_math/src/camera.rs`
 
 Key fix: Scale movement speed with camera distance for consistent feel:
+
 ```rust
 pub fn pan(&mut self, right: f32, up: f32, forward: f32, delta_time: f32) {
     // Scale speed with distance for consistent movement at any zoom level
@@ -212,6 +224,7 @@ pub fn pan(&mut self, right: f32, up: f32, forward: f32, delta_time: f32) {
 ```
 
 **Critical:** Added `about_to_wait` event handler to continuously request redraw when keys are pressed:
+
 ```rust
 fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
     if !self.keys_pressed.is_empty() {
@@ -243,26 +256,32 @@ fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
 ## Technical Challenges & Solutions
 
 ### Challenge 1: Lucy Disappeared After Loading
+
 **Problem:** Camera far plane was 100.0, but Lucy needed 2885+ units.  
 **Solution:** Dynamic near/far calculation based on camera distance:
+
 ```rust
 camera.near = distance * 0.01;  // 28.85
 camera.far = distance * 10.0;   // 28,854.6
 ```
 
 ### Challenge 2: Lucy Rendered as Solid Green
+
 **Problem:** `lucy_low.obj` has no normal data, all vertices defaulted to [0,1,0].  
 **Solution:** Compute per-face normals from geometry using cross products, accumulate and normalize at vertices.
 
 ### Challenge 3: WASD Movement Not Working
+
 **Problem:** Window only requested redraw on events, not continuously.  
 **Solution:** Added `about_to_wait` handler to request continuous redraw when keys are held.
 
 ### Challenge 4: WASD Movement Too Slow
+
 **Problem:** `move_speed = 2.0` but Lucy is at ~2885 unit scale.  
 **Solution:** Scale speed with camera distance: `move_speed * distance * delta_time`.
 
 ### Challenge 5: Middle Mouse Pan Too Sensitive
+
 **Problem:** Initial sensitivity of 1.5 with 0.001 scale caused viewport to "jump".  
 **Solution:** Reduced to 0.1 sensitivity with 0.0001 distance scale for fine control.
 
@@ -271,6 +290,7 @@ camera.far = distance * 10.0;   // 28,854.6
 ## Performance
 
 **Metrics:**
+
 - Lucy low-poly: 140K vertices, 841K indices
 - Rendering: 60 FPS (VSync locked)
 - Depth testing: No performance impact
@@ -283,6 +303,7 @@ camera.far = distance * 10.0;   // 28,854.6
 ## Testing
 
 ### Manual Testing
+
 - ✅ Lucy loads and renders with computed normals
 - ✅ Normal visualization shows colorful surface (RGB from XYZ)
 - ✅ Depth testing: closer Lucy occludes farther Lucy correctly
@@ -293,6 +314,7 @@ camera.far = distance * 10.0;   // 28,854.6
 - ✅ WASD/QE movement works at consistent speed
 
 ### Automated Tests
+
 - All 26 existing tests pass
 - No regressions in core math or rendering
 
@@ -301,16 +323,19 @@ camera.far = distance * 10.0;   // 28,854.6
 ## Results
 
 **Visual:**
+
 - Lucy statue renders with smooth, colorful normal visualization
 - Proper depth occlusion between two instances
 - Interactive navigation feels professional and responsive
 
 **Architecture:**
+
 - Clean separation: math (camera) → viewport (renderer) → viewer (input)
 - Event-driven input with continuous redraw for held keys
 - Distance-scaled controls adapt to any mesh size
 
 **Code Stats:**
+
 - OBJ loading + normals: ~120 LOC
 - Depth testing: ~60 LOC
 - Enhanced controls: ~80 LOC
@@ -321,14 +346,17 @@ camera.far = distance * 10.0;   // 28,854.6
 ## Known Issues & Future Work
 
 ### TODO: Replace Secondary Buffers with Instancing
+
 Current implementation uses duplicate vertex/index buffers for second Lucy instance. This is inefficient.
 
 **Future:** Implement GPU instancing with model matrix per-instance:
+
 - Single vertex/index buffer
 - Instance buffer with transforms
 - Draw call with instance count
 
 ### Future Enhancements
+
 1. **Camera Presets** - Front/Top/Side/Perspective views (Houdini-style)
 2. **Smooth Camera Transitions** - Interpolate to new positions
 3. **Selection/Focus** - Click object to orbit around it
