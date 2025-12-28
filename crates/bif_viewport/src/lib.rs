@@ -45,26 +45,73 @@ impl MeshData {
         let mut vertices = Vec::new();
         let vertex_count = mesh.positions.len() / 3;
         
+        let has_normals = !mesh.normals.is_empty();
+        log::info!("Mesh has normals: {}", has_normals);
+        
+        // If no normals, compute per-face normals
+        let computed_normals = if !has_normals {
+            log::info!("Computing per-face normals...");
+            let mut normals = vec![[0.0f32; 3]; vertex_count];
+            
+            // Compute face normals and accumulate at vertices
+            for face in mesh.indices.chunks(3) {
+                let i0 = face[0] as usize;
+                let i1 = face[1] as usize;
+                let i2 = face[2] as usize;
+                
+                let p0 = Vec3::from_slice(&mesh.positions[i0 * 3..i0 * 3 + 3]);
+                let p1 = Vec3::from_slice(&mesh.positions[i1 * 3..i1 * 3 + 3]);
+                let p2 = Vec3::from_slice(&mesh.positions[i2 * 3..i2 * 3 + 3]);
+                
+                let edge1 = p1 - p0;
+                let edge2 = p2 - p0;
+                let face_normal = edge1.cross(edge2).normalize();
+                
+                // Accumulate at each vertex
+                for &idx in &[i0, i1, i2] {
+                    normals[idx][0] += face_normal.x;
+                    normals[idx][1] += face_normal.y;
+                    normals[idx][2] += face_normal.z;
+                }
+            }
+            
+            // Normalize accumulated normals
+            for normal in &mut normals {
+                let len = (normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2]).sqrt();
+                if len > 0.0 {
+                    normal[0] /= len;
+                    normal[1] /= len;
+                    normal[2] /= len;
+                }
+            }
+            
+            Some(normals)
+        } else {
+            None
+        };
+        
         for i in 0..vertex_count {
             let pos_idx = i * 3;
-            let norm_idx = i * 3;
             
-            // Use normal if available, otherwise default
-            let normal = if mesh.normals.is_empty() {
-                [0.0, 1.0, 0.0]
-            } else {
+            // Use computed normals if available, otherwise from file
+            let normal = if let Some(ref computed) = computed_normals {
+                computed[i]
+            } else if has_normals {
+                let norm_idx = i * 3;
                 [
                     mesh.normals[norm_idx],
                     mesh.normals[norm_idx + 1],
                     mesh.normals[norm_idx + 2],
                 ]
+            } else {
+                [0.0, 1.0, 0.0]
             };
             
-            // Simple color from normal for visualization
+            // Color from normal (not needed anymore, shader uses normal directly)
             let color = [
-                (normal[0] * 0.5 + 0.5),
-                (normal[1] * 0.5 + 0.5),
-                (normal[2] * 0.5 + 0.5),
+                normal[0].abs(),
+                normal[1].abs(),
+                normal[2].abs(),
             ];
             
             vertices.push(Vertex {
@@ -155,9 +202,33 @@ pub struct Renderer {
     camera_bind_group: wgpu::BindGroup,
     mesh_bounds_min: Vec3,
     mesh_bounds_max: Vec3,
+    depth_texture: wgpu::Texture,
+    depth_view: wgpu::TextureView,
 }
 
 impl Renderer {
+    /// Create a depth texture for the given size
+    fn create_depth_texture(device: &Device, size: (u32, u32)) -> (wgpu::Texture, wgpu::TextureView) {
+        let depth_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Depth Texture"),
+            size: wgpu::Extent3d {
+                width: size.0,
+                height: size.1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Depth24Plus,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        
+        let depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        
+        (depth_texture, depth_view)
+    }
+    
     /// Create a new renderer for the given window
     pub async fn new(window: std::sync::Arc<winit::window::Window>) -> Result<Self> {
         let size = window.inner_size();
@@ -324,7 +395,13 @@ impl Renderer {
                 unclipped_depth: false,
                 conservative: false,
             },
-            depth_stencil: None,
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth24Plus,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
             multisample: wgpu::MultisampleState {
                 count: 1,
                 mask: !0,
@@ -347,6 +424,9 @@ impl Renderer {
             usage: wgpu::BufferUsages::INDEX,
         });
         
+        // Create depth texture
+        let (depth_texture, depth_view) = Self::create_depth_texture(&device, (size.width, size.height));
+        
         Ok(Self {
             surface,
             device,
@@ -363,6 +443,8 @@ impl Renderer {
             camera_bind_group,
             mesh_bounds_min: mesh_data.bounds_min,
             mesh_bounds_max: mesh_data.bounds_max,
+            depth_texture,
+            depth_view,
         })
     }
     
@@ -373,6 +455,11 @@ impl Renderer {
             self.config.width = new_size.0;
             self.config.height = new_size.1;
             self.surface.configure(&self.device, &self.config);
+            
+            // Recreate depth texture with new size
+            let (depth_texture, depth_view) = Self::create_depth_texture(&self.device, new_size);
+            self.depth_texture = depth_texture;
+            self.depth_view = depth_view;
             
             // Update camera aspect ratio
             let aspect = new_size.0 as f32 / new_size.1 as f32;
@@ -430,7 +517,14 @@ impl Renderer {
                         store: wgpu::StoreOp::Store,
                     },
                 })],
-                depth_stencil_attachment: None,
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &self.depth_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
