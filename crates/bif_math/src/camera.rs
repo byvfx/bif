@@ -78,7 +78,8 @@ impl Camera {
     
     /// Move camera and target together (in view space)
     pub fn pan(&mut self, right: f32, up: f32, forward: f32, delta_time: f32) {
-        let speed = self.move_speed * delta_time;
+        // Scale speed with distance for consistent movement feel at any zoom level
+        let speed = self.move_speed * self.distance * delta_time;
         
         // Get camera axes
         let view_dir = (self.target - self.position).normalize();
