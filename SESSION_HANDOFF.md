@@ -1,17 +1,17 @@
 # Session Handoff - December 27, 2025
 
-**Last Updated:** End of Milestones 5-6  
-**Next Session Starts:** Milestone 7 (egui UI Integration)  
+**Last Updated:** End of Milestones 7-8  
+**Next Session Starts:** Milestone 9 (USD Import)  
 **Project:** BIF - VFX Scene Assembler & Renderer
 
 ---
 
 ## Quick Status
 
-✅ **Milestones Complete:** 6/7 (86%)  
-🎯 **Current State:** Full Houdini-style viewport with Lucy mesh + depth testing  
+✅ **Milestones Complete:** 8/10 (80%)  
+🎯 **Current State:** egui UI + 100 GPU-instanced Lucy models at 60 FPS  
 📦 **Tests Passing:** 26/26  
-🚀 **Next Goal:** egui UI integration with scene stats panel
+🚀 **Next Goal:** USD import (USDA parser → scene graph)
 
 ---
 
@@ -26,7 +26,12 @@
 
 ### Current Phase
 
-Porting Go raytracer to Rust foundation while building modern viewport.
+**Phase 1 Foundation** - Building core architecture and proving GPU instancing at scale.
+
+**Architecture Decision:** Pivoting milestone order to validate USD compatibility early:
+- ~~Milestone 8: Qt Integration~~ → Deferred to Phase 2
+- **Milestone 9: USD Import** (NEW) - Read USDA files, load meshes & instances
+- **Milestone 10: CPU Path Tracer** - Port Go raytracer for production rendering
 
 ---
 
@@ -49,7 +54,7 @@ Ported from Go implementation:
 - `Aabb` - Axis-aligned bounding box with hit testing (6 tests)
 - `Camera` - 3D camera with view-projection matrices (4 tests)
 
-**Stats:** 22 tests passing, ~400 LOC
+**Stats:** 26 tests passing, ~400 LOC
 
 ### ✅ Milestone 2: wgpu Window
 
@@ -190,6 +195,87 @@ Ported from Go implementation:
 
 ---
 
+### ✅ Milestone 7: egui UI Integration
+
+**Location:**
+- `crates/bif_viewport/src/lib.rs` - egui state and rendering
+- `crates/bif_viewport/Cargo.toml` - egui dependencies
+- `crates/bif_viewer/src/main.rs` - egui event handling
+
+**egui Integration:**
+
+- **Dependencies:** egui 0.29, egui-wgpu 0.29, egui-winit 0.29
+- **UI Architecture:** Immediate-mode side panel (300px)
+- **Two-pass rendering:**
+  1. 3D scene with depth buffer
+  2. egui overlay without depth (uses `.forget_lifetime()` for wgpu compatibility)
+
+**Side Panel Features:**
+
+- **FPS Counter:** Real-time at 60+, updates every 0.5s
+- **Camera Stats:** Position, target, distance, yaw, pitch, FOV, near/far
+- **Mesh Info:** Vertices, indices, instances, bounds, center, size
+- **Viewport Info:** Resolution, aspect ratio
+- **Controls Help:** Mouse/keyboard shortcuts
+
+**Challenges Solved:**
+
+- egui initialization requires specific parameter counts (6 for State, 5 for Renderer)
+- Borrow checker: Extract UI data before `egui_ctx.run()` closure
+- Lifetime issues: Use `.forget_lifetime()` on RenderPass for egui's `'static` requirement
+- Event consumption: UI processes events first to prevent click-through
+
+**Stats:** ~100 LOC, 1.5 hours
+
+---
+
+### ✅ Milestone 8: GPU Instancing
+
+**Location:**
+- `crates/bif_viewport/src/lib.rs` - InstanceData struct, instancing logic
+- `crates/bif_viewport/src/shaders/basic.wgsl` - Per-instance transforms
+
+**Replaced:** Temporary dual-buffer hack with proper GPU instancing
+
+**InstanceData Design:**
+
+```rust
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct InstanceData {
+    pub model_matrix: [[f32; 4]; 4],  // 4 vec4 attributes (locations 3-6)
+}
+```
+
+**Shader Update:**
+
+- Reconstruct model matrix from 4 vec4 inputs
+- Transform vertex position: `model * position`
+- Transform normals: `model * normal` (assumes uniform scale)
+
+**Instance Generation:**
+
+- 100 Lucy models in 10x10 grid
+- Spacing: 1.5x mesh size
+- Single draw call: `draw_indexed(0..indices, 0, 0..100)`
+
+**Performance:**
+
+- **Before:** 2 instances, 2 draw calls, 504MB of duplicate geometry
+- **After:** 100 instances, 1 draw call, 6.4KB instance buffer
+- **FPS:** 60+ (VSync-limited), 28M triangles rendered
+- **Memory Saved:** ~504MB
+
+**Camera Adjustments:**
+
+- Far plane: 10x → 20x distance (better view of distant instances)
+- Near plane: 0.01x distance (unchanged)
+- Spacing: 2x → 1.5x mesh size (tighter grid)
+
+**Stats:** ~150 LOC, 1 hour
+
+---
+
 ## Crate Architecture
 
 ```
@@ -272,51 +358,87 @@ opt-level = 1  # Faster dev builds with some optimization
 
 | Metric | Value |
 |--------|-------|
-| **Total LOC** | ~1,750 |
+| **Total LOC** | ~2,100 |
 | **Tests Passing** | 26/26 ✅ |
-| **Commits** | 23+ |
-| **Time Invested** | ~14 hours |
-| **Milestones Complete** | 6/7 (86%) |
-| **Build Time (dev)** | ~4s |
-| **Build Time (release)** | ~3m |
-| **Runtime FPS** | 60 (VSync) |
+| **Commits** | 25+ |
+| **Time Invested** | ~16.5 hours |
+| **Milestones Complete** | 8/10 (80%) |
+| **Build Time (dev)** | ~5s |
+| **Build Time (release)** | ~2m |
+| **Runtime FPS** | 60+ (VSync) |
 | **Lucy Vertices** | 140,278 |
 | **Lucy Indices** | 840,768 |
+| **Instances Rendered** | 100 |
+| **Total Triangles** | 28,025,600 |
+| **Draw Calls** | 1 (instanced) |
 
 ---
 
-## Next Session: Milestone 7
+## Next Session: Milestone 9
 
-### 🎯 egui UI Integration
+### 🎯 USD Import (Replaces USD Export)
 
-Add side panel with scene information and controls.
+**Rationale:** Validate USD compatibility by *importing* production scene files before building Qt UI. This proves the architecture early.
 
 **Implementation Plan:**
 
-1. **Add egui Dependencies**
-   - `egui` - UI framework
-   - `egui-wgpu` - wgpu rendering backend
-   - `egui-winit` - winit event integration
+1. **Research USD Options**
+   - Option A: `usd-rs` crate (if exists)
+   - Option B: Custom USDA (text) parser (simpler, no C++ deps)
+   - Option C: USD C++ bindings via cxx
 
-2. **Side Panel UI**
-   - Camera position, target, distance
-   - FPS counter with delta time
-   - Mesh statistics (vertices, triangles)
-   - Control hints (keyboard shortcuts)
+2. **Start with USDA Parser**
+   - Parse text USD format (easier than binary .usdc)
+   - Focus on essential prims: UsdGeomMesh, UsdGeomPointInstancer
+   - Load xformOps (translate, rotate, scale)
 
-3. **Interactive Controls**
-   - Sliders for camera FOV (30-90°)
-   - Slider for movement speed (0.1-10x)
-   - Button to reset camera
-   - Toggle for wireframe mode (future)
+3. **Proof of Concept**
+   - Create test.usda with 1 mesh prototype + 100 instances
+   - Parse → BIF MeshData
+   - Parse → instance transforms
+   - Render in viewport
+
+4. **Validation**
+   - Compare scene in BIF vs usdview
+   - Instance count matches
+   - Transforms match visually
+
+**Files to Create:**
+
+- `crates/bif_core/src/usd_parser.rs` - USDA text parser
+- `crates/bif_core/src/scene.rs` - Scene graph structure
+- Test USD files in `assets/test_scenes/`
 
 **Files to Modify:**
 
-- `crates/bif_viewport/Cargo.toml` - Add egui dependencies
-- `crates/bif_viewport/src/lib.rs` - Integrate egui rendering
-- `crates/bif_viewer/src/main.rs` - Handle egui events
+- `crates/bif_viewer/src/main.rs` - Load USD instead of hardcoded OBJ
+- `crates/bif_viewport/src/lib.rs` - Accept scene data from USD
 
-**Estimated Time:** 2-3 hours
+**Estimated Time:** 4-6 hours (depends on parsing complexity)
+
+---
+
+## After USD: Milestone 10
+
+### CPU Path Tracer Port
+
+Port the proven Go raytracer to Rust:
+
+1. **Create `bif_renderer` crate**
+2. **Port Core Types:**
+   - Hittable trait (sphere, triangle, mesh)
+   - Material trait (Lambert, Metal, Dielectric, Emissive)
+   - BVH acceleration structure
+3. **Port Rendering:**
+   - Ray casting and shading
+   - Multi-threaded bucket renderer
+   - HDRI environment loading
+4. **Integration:**
+   - "Render" button in egui UI
+   - Progress bar during render
+   - Display result in viewport
+
+**Goal:** Prove dual rendering architecture (GPU viewport + CPU path tracer).
 
 ---
 
@@ -327,19 +449,19 @@ Add side panel with scene information and controls.
 1. **This file** (`SESSION_HANDOFF.md`) - Current status
 2. **`CLAUDE.md`** - Your custom AI instructions
 3. **`ARCHITECTURE.md`** - System design and principles
-4. **`devlog/DEVLOG_2025-12-27_milestone5_6.md`** - Latest session log
+4. **`devlog/DEVLOG_2025-12-27_milestone7_8.md`** - Latest session log
 
 ### Reference (Can Use #codebase)
 
-- `crates/bif_math/src/camera.rs` - Complete camera with all controls
-- `crates/bif_viewer/src/main.rs` - Full input handling (mouse + keyboard)
-- `crates/bif_viewport/src/lib.rs` - Renderer with OBJ loading and depth testing
+- `crates/bif_math/src/camera.rs` - Complete camera implementation
+- `crates/bif_viewport/src/lib.rs` - Renderer with instancing
+- `legacy/go-raytracing/rt/` - Reference for USD and raytracer port
 
 ### Don't Need to Read
 
 - Cargo.toml files (standard structure)
 - Test files (unless debugging)
-- Legacy Go code (only for algorithm reference)
+- Legacy Go code (only for algorithm reference when porting)
 
 ---
 

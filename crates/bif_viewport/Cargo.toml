@@ -16,3 +16,8 @@ pollster = { workspace = true }
 log = { workspace = true }
 anyhow = { workspace = true }
 tobj = "4.0"
+
+# UI
+egui = { workspace = true }
+egui-wgpu = { workspace = true }
+egui-winit = { workspace = true }

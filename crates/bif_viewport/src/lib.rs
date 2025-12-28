@@ -1,7 +1,10 @@
 use anyhow::Result;
-use wgpu::{util::DeviceExt, Device, Instance, Queue, Surface, SurfaceConfiguration};
-use bif_math::{Camera, Mat4, Vec3};
 use std::path::Path;
+
+use wgpu::{util::DeviceExt, Device, Instance, Queue, Surface, SurfaceConfiguration};
+
+use bif_math::Camera;
+use bif_math::{Mat4, Vec3};
 
 /// Mesh data loaded from file
 #[derive(Clone)]
@@ -186,6 +189,26 @@ impl Vertex {
     }
 }
 
+/// Instance data for GPU instancing
+#[repr(C)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct InstanceData {
+    pub model_matrix: [[f32; 4]; 4],
+}
+
+impl InstanceData {
+    const ATTRIBS: [wgpu::VertexAttribute; 4] =
+        wgpu::vertex_attr_array![3 => Float32x4, 4 => Float32x4, 5 => Float32x4, 6 => Float32x4];
+
+    pub fn desc<'a>() -> wgpu::VertexBufferLayout<'a> {
+        wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<InstanceData>() as wgpu::BufferAddress,
+            step_mode: wgpu::VertexStepMode::Instance,
+            attributes: &Self::ATTRIBS,
+        }
+    }
+}
+
 /// Core renderer managing wgpu state
 pub struct Renderer {
     pub surface: Surface<'static>,
@@ -197,10 +220,8 @@ pub struct Renderer {
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
     num_indices: u32,
-    // TODO: Temporary second instance for depth testing - will be replaced with proper instancing later
-    vertex_buffer_2: Option<wgpu::Buffer>,
-    index_buffer_2: Option<wgpu::Buffer>,
-    num_indices_2: u32,
+    instance_buffer: wgpu::Buffer,
+    num_instances: u32,
     pub camera: Camera,
     camera_uniform: CameraUniform,
     camera_buffer: wgpu::Buffer,
@@ -209,6 +230,17 @@ pub struct Renderer {
     mesh_bounds_max: Vec3,
     depth_texture: wgpu::Texture,
     depth_view: wgpu::TextureView,
+    
+    // egui state
+    egui_ctx: egui::Context,
+    egui_state: egui_winit::State,
+    egui_renderer: egui_wgpu::Renderer,
+    
+    // UI state
+    pub show_ui: bool,
+    pub fps: f32,
+    frame_count: u32,
+    fps_update_timer: f32,
 }
 
 impl Renderer {
@@ -318,7 +350,7 @@ impl Renderer {
         // Adjust camera near/far planes for mesh size
         let mut camera = camera;
         camera.near = camera_distance * 0.01; // 1% of distance
-        camera.far = camera_distance * 10.0;   // 10x distance for safety
+        camera.far = camera_distance * 20.0;   // 20x distance for safety
         
         log::info!("Camera positioned at {:?}, looking at {:?}, distance {:.2}", 
                    camera.position, camera.target, camera.distance);
@@ -378,7 +410,7 @@ impl Renderer {
             vertex: wgpu::VertexState {
                 module: &shader,
                 entry_point: "vs_main",
-                buffers: &[Vertex::desc()],
+                buffers: &[Vertex::desc(), InstanceData::desc()],
                 compilation_options: Default::default(),
             },
             fragment: Some(wgpu::FragmentState {
@@ -432,26 +464,53 @@ impl Renderer {
         // Create depth texture
         let (depth_texture, depth_view) = Self::create_depth_texture(&device, (size.width, size.height));
         
-        // Create second instance offset forward for depth testing
-        let mut mesh_data_2 = mesh_data.clone();
-        let offset = Vec3::new(0.0, 0.0, 500.0); // Offset along Z axis
-        for vertex in &mut mesh_data_2.vertices {
-            vertex.position[2] += offset.z;
-        }
-        mesh_data_2.bounds_min += offset;
-        mesh_data_2.bounds_max += offset;
+        // Generate 100 instances in a 10x10 grid
+        let grid_size = 10;
+        let spacing = mesh_size * 1.5; // 1.5x mesh size spacing
+        let mut instances = Vec::new();
         
-        let vertex_buffer_2 = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Vertex Buffer 2"),
-            contents: bytemuck::cast_slice(&mesh_data_2.vertices),
+        for x in 0..grid_size {
+            for z in 0..grid_size {
+                let offset_x = (x as f32 - grid_size as f32 / 2.0) * spacing;
+                let offset_z = (z as f32 - grid_size as f32 / 2.0) * spacing;
+                
+                // Create translation matrix
+                let model_matrix = Mat4::from_translation(Vec3::new(offset_x, 0.0, offset_z));
+                
+                instances.push(InstanceData {
+                    model_matrix: model_matrix.to_cols_array_2d(),
+                });
+            }
+        }
+        
+        let instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Instance Buffer"),
+            contents: bytemuck::cast_slice(&instances),
             usage: wgpu::BufferUsages::VERTEX,
         });
         
-        let index_buffer_2 = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Index Buffer 2"),
-            contents: bytemuck::cast_slice(&mesh_data_2.indices),
-            usage: wgpu::BufferUsages::INDEX,
-        });
+        log::info!("Created {} instances in {}x{} grid with spacing {:.2}", instances.len(), grid_size, grid_size, spacing);
+        
+        // Initialize egui
+        let egui_ctx = egui::Context::default();
+        let egui_state = egui_winit::State::new(
+            egui_ctx.clone(),
+            egui::ViewportId::ROOT,
+            &window,
+            Some(window.scale_factor() as f32),
+            None,
+            None,  // max_texture_side (use default)
+        );
+        
+        let egui_renderer = egui_wgpu::Renderer::new(
+            &device,
+            config.format,
+            None,  // No depth testing for egui
+            1,
+            false,  // allow_srgb_render_target
+        );
+        
+        log::info!("egui initialized");
         
         Ok(Self {
             surface,
@@ -463,9 +522,8 @@ impl Renderer {
             vertex_buffer,
             index_buffer,
             num_indices: mesh_data.indices.len() as u32,
-            vertex_buffer_2: Some(vertex_buffer_2),
-            index_buffer_2: Some(index_buffer_2),
-            num_indices_2: mesh_data_2.indices.len() as u32,
+            instance_buffer,
+            num_instances: instances.len() as u32,
             camera,
             camera_uniform,
             camera_buffer,
@@ -474,6 +532,13 @@ impl Renderer {
             mesh_bounds_max: mesh_data.bounds_max,
             depth_texture,
             depth_view,
+            egui_ctx,
+            egui_state,
+            egui_renderer,
+            show_ui: true,
+            fps: 0.0,
+            frame_count: 0,
+            fps_update_timer: 0.0,
         })
     }
     
@@ -522,12 +587,140 @@ impl Renderer {
         log::info!("Framed mesh at center {:?}, distance {:.2}", mesh_center, camera_distance);
     }
     
+    /// Handle egui window event - returns true if event was consumed by egui
+    pub fn handle_egui_event(&mut self, window: &winit::window::Window, event: &winit::event::WindowEvent) -> bool {
+        let response = self.egui_state.on_window_event(window, event);
+        response.consumed
+    }
+    
+    /// Update FPS counter (call each frame with delta_time)
+    pub fn update_fps(&mut self, delta_time: f32) {
+        self.frame_count += 1;
+        self.fps_update_timer += delta_time;
+        
+        // Update FPS every 0.5 seconds
+        if self.fps_update_timer >= 0.5 {
+            self.fps = self.frame_count as f32 / self.fps_update_timer;
+            self.frame_count = 0;
+            self.fps_update_timer = 0.0;
+        }
+    }
+    
     /// Render a frame with the given clear color
-    pub fn render(&self, clear_color: wgpu::Color) -> Result<()> {
+    pub fn render(&mut self, clear_color: wgpu::Color, window: &winit::window::Window) -> Result<()> {
         let output = self.surface.get_current_texture()?;
         let view = output
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
+        
+        // Prepare egui UI
+        let raw_input = self.egui_state.take_egui_input(window);
+        
+        // Build UI - need to split borrow to avoid closure borrowing entire self
+        let show_ui = self.show_ui;
+        let fps = self.fps;
+        let camera = &self.camera;
+        let num_indices = self.num_indices;
+        let mesh_bounds_min = self.mesh_bounds_min;
+        let mesh_bounds_max = self.mesh_bounds_max;
+        let size = self.size;
+        
+        let full_output = self.egui_ctx.run(raw_input, |ctx| {
+            if !show_ui {
+                return;
+            }
+            
+            egui::SidePanel::left("stats_panel")
+                .default_width(300.0)
+                .show(ctx, |ui| {
+                    ui.heading("BIF Viewer");
+                    ui.separator();
+                    
+                    // FPS Counter
+                    ui.label(format!("FPS: {:.1}", fps));
+                    ui.separator();
+                    
+                    // Camera Stats
+                    ui.collapsing("Camera", |ui| {
+                        ui.label(format!("Position: ({:.2}, {:.2}, {:.2})", 
+                            camera.position.x, 
+                            camera.position.y, 
+                            camera.position.z));
+                        ui.label(format!("Target: ({:.2}, {:.2}, {:.2})", 
+                            camera.target.x, 
+                            camera.target.y, 
+                            camera.target.z));
+                        ui.label(format!("Distance: {:.2}", camera.distance));
+                        ui.label(format!("Yaw: {:.2}°", camera.yaw.to_degrees()));
+                        ui.label(format!("Pitch: {:.2}°", camera.pitch.to_degrees()));
+                        ui.label(format!("FOV: {:.2}°", camera.fov_y.to_degrees()));
+                        ui.label(format!("Near: {:.2}", camera.near));
+                        ui.label(format!("Far: {:.2}", camera.far));
+                        
+                        ui.label("Press F to frame mesh");
+                    });
+                    
+                    ui.separator();
+                    
+                    // Mesh Info
+                    ui.collapsing("Mesh Info", |ui| {
+                        let mesh_center = (mesh_bounds_min + mesh_bounds_max) * 0.5;
+                        let mesh_size = (mesh_bounds_max - mesh_bounds_min).length();
+                        
+                        ui.label(format!("Vertices: {}", num_indices / 3));
+                        ui.label(format!("Indices: {}", num_indices));
+                        ui.label(format!("Instances: {}", self.num_instances));
+                        ui.label(format!("Bounds Min: ({:.2}, {:.2}, {:.2})", 
+                            mesh_bounds_min.x, 
+                            mesh_bounds_min.y, 
+                            mesh_bounds_min.z));
+                        ui.label(format!("Bounds Max: ({:.2}, {:.2}, {:.2})", 
+                            mesh_bounds_max.x, 
+                            mesh_bounds_max.y, 
+                            mesh_bounds_max.z));
+                        ui.label(format!("Center: ({:.2}, {:.2}, {:.2})", 
+                            mesh_center.x, 
+                            mesh_center.y, 
+                            mesh_center.z));
+                        ui.label(format!("Size: {:.2}", mesh_size));
+                    });
+                    
+                    ui.separator();
+                    
+                    // Viewport Info
+                    ui.collapsing("Viewport", |ui| {
+                        ui.label(format!("Resolution: {}x{}", size.0, size.1));
+                        ui.label(format!("Aspect: {:.3}", size.0 as f32 / size.1 as f32));
+                    });
+                    
+                    ui.separator();
+                    
+                    // Controls Help
+                    ui.collapsing("Controls", |ui| {
+                        ui.label("🖱️ Left Mouse: Tumble (orbit)");
+                        ui.label("🖱️ Middle Mouse: Track (pan)");
+                        ui.label("🖱️ Scroll Wheel: Dolly (zoom)");
+                        ui.label("⌨️ W/A/S/D: Move forward/left/back/right");
+                        ui.label("⌨️ Q/E: Move down/up");
+                        ui.label("⌨️ F: Frame mesh");
+                    });
+                });
+        });
+        
+        self.egui_state.handle_platform_output(
+            window,
+            full_output.platform_output,
+        );
+        
+        let screen_descriptor = egui_wgpu::ScreenDescriptor {
+            size_in_pixels: [self.size.0, self.size.1],
+            pixels_per_point: window.scale_factor() as f32,
+        };
+        
+        let paint_jobs = self.egui_ctx.tessellate(
+            full_output.shapes,
+            full_output.pixels_per_point,
+        );
         
         let mut encoder = self
             .device
@@ -535,6 +728,26 @@ impl Renderer {
                 label: Some("Render Encoder"),
             });
         
+        // Upload egui textures
+        for (id, image_delta) in &full_output.textures_delta.set {
+            self.egui_renderer.update_texture(
+                &self.device,
+                &self.queue,
+                *id,
+                image_delta,
+            );
+        }
+        
+        // Prepare egui render pass
+        self.egui_renderer.update_buffers(
+            &self.device,
+            &self.queue,
+            &mut encoder,
+            &paint_jobs,
+            &screen_descriptor,
+        );
+        
+        // Main render pass
         {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Render Pass"),
@@ -558,19 +771,38 @@ impl Renderer {
                 occlusion_query_set: None,
             });
             
-            // Draw the first mesh
+            // Draw all instances with one draw call
             render_pass.set_pipeline(&self.pipeline);
             render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
             render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+            render_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
             render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-            render_pass.draw_indexed(0..self.num_indices, 0, 0..1);
+            render_pass.draw_indexed(0..self.num_indices, 0, 0..self.num_instances);
+        }
+        
+        // Render egui on top
+        {
+            let mut egui_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("egui Render Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            }).forget_lifetime();  // Need 'static lifetime for egui renderer
             
-            // Draw the second mesh instance if present
-            if let (Some(vb2), Some(ib2)) = (&self.vertex_buffer_2, &self.index_buffer_2) {
-                render_pass.set_vertex_buffer(0, vb2.slice(..));
-                render_pass.set_index_buffer(ib2.slice(..), wgpu::IndexFormat::Uint32);
-                render_pass.draw_indexed(0..self.num_indices_2, 0, 0..1);
-            }
+            self.egui_renderer.render(&mut egui_pass, &paint_jobs, &screen_descriptor);
+        }
+        
+        // Free egui textures
+        for id in &full_output.textures_delta.free {
+            self.egui_renderer.free_texture(id);
         }
         
         self.queue.submit(std::iter::once(encoder.finish()));
