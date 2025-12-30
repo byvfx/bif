@@ -10,6 +10,7 @@ mod sphere;
 mod triangle;
 mod camera;
 mod bvh;
+mod renderer;
 
 pub use ray::Ray;
 pub use hittable::{HitRecord, Hittable, HittableList};
@@ -18,6 +19,7 @@ pub use sphere::Sphere;
 pub use triangle::Triangle;
 pub use camera::Camera;
 pub use bvh::BvhNode;
+pub use renderer::{RenderConfig, ImageBuffer, render, render_pixel, ray_color, color_to_rgba};
 
 /// Re-export Vec3 and common math types from bif_math
 pub use bif_math::{Vec3, Aabb, Interval};
