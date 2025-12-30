@@ -1,17 +1,17 @@
 # Session Handoff - December 30, 2025
 
-**Last Updated:** End of Milestone 9  
-**Next Session Starts:** Milestone 10 (CPU Path Tracer)  
+**Last Updated:** End of Milestone 10  
+**Next Session Starts:** Milestone 11 (Ivar Viewport Integration)  
 **Project:** BIF - VFX Scene Assembler & Renderer
 
 ---
 
 ## Quick Status
 
-✅ **Milestones Complete:** 9/10 (90%)  
-🎯 **Current State:** USDA import working, Lucy model renders with smooth shading  
-📦 **Tests Passing:** 26/26 + USD tests  
-🚀 **Next Goal:** CPU path tracer (port Go raytracer to Rust)
+✅ **Milestones Complete:** 10/11 (91%)  
+🎯 **Current State:** CPU path tracer "Ivar" complete, renders 479 objects  
+📦 **Tests Passing:** 40/40 (26 bif_math + 14 bif_renderer)  
+🚀 **Next Goal:** Integrate Ivar into viewport with render mode toggle
 
 ---
 
@@ -31,7 +31,8 @@
 **Architecture Decision:** Pivoting milestone order to validate USD compatibility early:
 - ~~Milestone 8: Qt Integration~~ → Deferred to Phase 2
 - ~~Milestone 9: USD Import~~ → ✅ Complete (USDA parser, mesh loading, viewport integration)
-- **Milestone 10: CPU Path Tracer** - Port Go raytracer for production rendering
+- ~~Milestone 10: CPU Path Tracer~~ → ✅ Complete ("Ivar" renderer with BVH, materials, PNG output)
+- **Milestone 11: Ivar Viewport Integration** - Render mode toggle, progressive rendering
 
 ---
 
@@ -311,14 +312,46 @@ cargo run -p bif_viewer -- --usda assets/lucy_low.usda
 
 ---
 
+### ✅ Milestone 10: CPU Path Tracer "Ivar"
+
+**Location:**
+- `crates/bif_renderer/src/` - Complete CPU path tracer
+- `crates/bif_renderer/examples/simple_render.rs` - RTIOW scene example
+
+**Renderer Architecture (Named "Ivar"):**
+
+- **Ray/HitRecord:** Lifetime-annotated hit records with material references
+- **Hittable Trait:** Generic object intersection with UV support
+- **Materials:** Lambertian, Metal, Dielectric, DiffuseLight
+- **Primitives:** Sphere (with UV), Triangle (Möller-Trumbore algorithm)
+- **BVH:** Median-split acceleration structure (fixed object loss bug)
+- **Camera:** DOF support, builder pattern
+- **Renderer:** `ray_color()`, `render_pixel()`, `render()`, `ImageBuffer`
+
+**BVH Bug Fix:**
+
+Original implementation tracked primitive indices separately from objects vector.
+During partition, indices got out of sync with actual object positions.
+Solution: Sort objects vector directly by centroid, use `split_off()` for clean partitioning.
+
+**Output:**
+
+- PNG format via `image` crate 0.24 (compatible with Rust 1.86)
+- 479 objects rendered at 800x450 @ 100spp in ~52s
+
+**Stats:** ~1,200 LOC, ~4 hours, 14 tests
+
+---
+
 ## Crate Architecture
 
 ```
 bif/
 ├── crates/
 │   ├── bif_math/       # Math primitives (Vec3, Ray, Interval, Aabb, Camera)
-│   ├── bif_core/       # Scene graph (placeholder for now)
+│   ├── bif_core/       # Scene graph (USD loading, mesh data)
 │   ├── bif_viewport/   # Real-time GPU viewport (wgpu + Vulkan)
+│   ├── bif_renderer/   # CPU path tracer "Ivar" (production rendering)
 │   └── bif_viewer/     # Application entry point (winit event loop)
 ├── legacy/
 │   └── go-raytracing/  # Original Go implementation (reference)
@@ -334,10 +367,11 @@ bif/
   - Speed: 60+ FPS
   - Quality: Good enough for scene composition
   
-- **`bif_renderer`** = CPU path tracer (future)
+- **`bif_renderer`** = CPU path tracer "Ivar"
   - Purpose: Production-quality final renders
   - Speed: Minutes per frame
   - Quality: Physically accurate, all features
+  - Status: ✅ Complete (Milestone 10)
 
 This matches Clarisse, Houdini, Maya architecture.
 
@@ -393,11 +427,11 @@ opt-level = 1  # Faster dev builds with some optimization
 
 | Metric | Value |
 |--------|-------|
-| **Total LOC** | ~3,600 |
+| **Total LOC** | ~4,800 |
 | **Tests Passing** | 40+ ✅ |
-| **Commits** | 30+ |
-| **Time Invested** | ~20.5 hours |
-| **Milestones Complete** | 9/10 (90%) |
+| **Commits** | 35+ |
+| **Time Invested** | ~24 hours |
+| **Milestones Complete** | 10/11 (91%) |
 | **Build Time (dev)** | ~5s |
 | **Build Time (release)** | ~2m |
 | **Runtime FPS** | 60+ (VSync) |
@@ -406,58 +440,57 @@ opt-level = 1  # Faster dev builds with some optimization
 | **Instances Rendered** | 100 |
 | **Total Triangles** | 28,025,600 |
 | **Draw Calls** | 1 (instanced) |
+| **Ivar Render** | 479 objects, 800x450 @ 100spp in ~52s |
 
 ---
 
-## Next Session: Milestone 10
+## Next Session: Milestone 11
 
-### 🎯 CPU Path Tracer Port
+### 🎯 Ivar Viewport Integration
 
-**Rationale:** Port the proven Go raytracer to Rust for production-quality renders. This enables the dual-renderer architecture (GPU viewport for preview + CPU path tracer for final).
+**Rationale:** Connect the Ivar path tracer to the viewport for interactive rendering with progressive display.
 
 **Implementation Plan:**
 
-1. **Create `bif_renderer` Crate**
-   - New crate in workspace for CPU rendering
-   - Separate from viewport (different purpose)
+1. **Render Mode Toggle in egui**
+   - Add "Vulkan" / "Ivar" mode selector in UI
+   - When Ivar selected, disable GPU rendering and show Ivar output
+   - Clear Ivar buffer when switching modes
 
-2. **Port Core Types from Go**
-   - `Hittable` trait (sphere, triangle, mesh)
-   - `Material` trait (Lambert, Metal, Dielectric, Emissive)
-   - `BVH` acceleration structure for ray-mesh intersection
+2. **Progressive Rendering**
+   - Start rendering when camera stops moving
+   - Display samples as they accumulate
+   - Camera movement restarts render from scratch
+   - Show sample count in UI
 
-3. **Port Rendering Pipeline**
-   - Ray casting and path tracing
-   - Multi-threaded bucket renderer (rayon)
-   - Color accumulation and tone mapping
-   - HDRI environment loading (optional)
+3. **Scene Integration**
+   - Render Lucy USD instances with Ivar
+   - Share camera state between viewport and Ivar
+   - Convert GPU instance data to Ivar primitives
 
-4. **Integration**
-   - "Render" button in egui UI
-   - Progress bar during render
-   - Display result in viewport or save to file
+4. **UI Enhancements**
+   - Sample counter (current / target spp)
+   - Estimated time remaining
+   - Cancel render button
+   - Clarisse/Houdini Solaris visual style
 
-**Files to Create:**
+**Files to Modify:**
 
-- `crates/bif_renderer/Cargo.toml`
-- `crates/bif_renderer/src/lib.rs`
-- `crates/bif_renderer/src/ray.rs` - Ray type (or reuse bif_math)
-- `crates/bif_renderer/src/hittable.rs` - Hittable trait and implementations
-- `crates/bif_renderer/src/material.rs` - Material trait and types
-- `crates/bif_renderer/src/bvh.rs` - Bounding volume hierarchy
-- `crates/bif_renderer/src/renderer.rs` - Path tracer core
+- `crates/bif_viewport/src/lib.rs` - Add Ivar integration
+- `crates/bif_viewer/src/main.rs` - Render mode state
+- `crates/bif_renderer/src/renderer.rs` - Progressive API
 
-**Reference:** `legacy/go-raytracing/rt/` - Proven Go implementation
+**Reference:** `crates/bif_renderer/examples/simple_render.rs` - Working Ivar example
 
-**Estimated Time:** 6-8 hours (depends on parsing complexity)
+**Estimated Time:** 4-6 hours
 
 ---
 
-## After Path Tracer: Phase 2
+## After Viewport Integration: Phase 2
 
 ### Qt Integration & Advanced Features
 
-After the CPU path tracer is working:
+After the Ivar viewport integration is working:
 
 1. **Qt 6 UI** - Production-grade interface with docking
 2. **USD References** - `references = @path@</prim>` for asset reuse
@@ -473,7 +506,7 @@ After the CPU path tracer is working:
 1. **This file** (`SESSION_HANDOFF.md`) - Current status
 2. **`CLAUDE.md`** - Your custom AI instructions
 3. **`ARCHITECTURE.md`** - System design and principles
-4. **`devlog/DEVLOG_2025-12-30_milestone9.md`** - Latest session log
+4. **`devlog/DEVLOG_2025-12-30_milestone10.md`** - Latest session log (Ivar renderer)
 5. **`HOUDINI_EXPORT.md`** - USD export best practices
 
 ### Reference (Can Use #codebase)
@@ -481,7 +514,7 @@ After the CPU path tracer is working:
 - `crates/bif_math/src/camera.rs` - Complete camera implementation
 - `crates/bif_viewport/src/lib.rs` - Renderer with instancing
 - `crates/bif_core/src/usd/` - USDA parser implementation
-- `legacy/go-raytracing/rt/` - Reference for path tracer port
+- `crates/bif_renderer/src/` - Ivar path tracer (complete)
 
 ### Don't Need to Read
 
@@ -562,25 +595,31 @@ I'm continuing work on BIF (VFX renderer in Rust).
 
 #file:SESSION_HANDOFF.md
 #file:CLAUDE.md
-#file:devlog/DEVLOG_2025-12-30_milestone9.md
+#file:devlog/DEVLOG_2025-12-30_milestone10.md
 #codebase
 
-Status: Just completed Milestone 9:
+Status: Just completed Milestone 10:
 
-✅ USDA parser (pure Rust, no C++ deps)
-✅ UsdGeomMesh loading with positions, normals, indices
-✅ CLI --usda argument for loading USD files
-✅ Fixed winding order (FrontFace::Cw) for Houdini compatibility
-✅ Gnomon axis indicator in viewport corner
-✅ Lucy model renders correctly with smooth shading
-✅ HOUDINI_EXPORT.md documentation
+✅ bif_renderer crate "Ivar" - complete CPU path tracer
+✅ Ray, HitRecord, Hittable trait with lifetimes
+✅ Materials: Lambertian, Metal, Dielectric, DiffuseLight
+✅ Sphere and Triangle primitives
+✅ BVH acceleration (fixed object loss bug)
+✅ Camera with DOF support
+✅ Core renderer with ray_color(), render()
+✅ simple_render example outputs PNG
+✅ 14 tests passing
 
-Current state: USDA import working, 100 GPU-instanced Lucy models at 60 FPS
+Current state: Ivar renders 479 spheres at 800x450 @ 100spp in ~52s
 
-Ready to start Milestone 10: CPU Path Tracer (6-8 hours estimated)
-Goal: Port Go raytracer to Rust - Hittable trait, Materials, BVH, multi-threaded bucket renderer
+Ready to start Milestone 11: Ivar Viewport Integration
+Goal: Connect Ivar to viewport with progressive rendering
+- Render mode toggle (Vulkan / Ivar) in egui
+- Progressive display as samples accumulate
+- Camera movement restarts render
+- Render Lucy USD instances with Ivar
 
-Let's begin by creating the bif_renderer crate and porting the core ray types.
+Let's begin by adding the render mode toggle to the egui UI.
 ```
 
 ---
@@ -588,7 +627,7 @@ Let's begin by creating the bif_renderer crate and porting the core ray types.
 ## Final Checklist
 
 - ✅ All code committed
-- ✅ All tests passing (26/26)
+- ✅ All tests passing (40/40)
 - ✅ Documentation updated
 - ✅ Devlogs complete
 - ✅ Handoff document created
@@ -598,7 +637,7 @@ Let's begin by creating the bif_renderer crate and porting the core ray types.
 
 ---
 
-**Last Commit:** `Fix winding order for USD/Houdini compatibility`  
+**Last Commit:** `Fix BVH object loss bug, add PNG output, add milestone 10 devlog`  
 **Branch:** `main`  
 **Build Status:** ✅ Successful  
-**Test Status:** ✅ All passing
+**Test Status:** ✅ All passing (26 bif_math + 14 bif_renderer)
