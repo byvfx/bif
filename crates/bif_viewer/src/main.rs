@@ -9,10 +9,61 @@ use winit::{
 };
 use std::time::Instant;
 
+/// CLI options
+#[derive(Default)]
+struct CliOptions {
+    usda_path: Option<String>,
+}
+
+fn parse_args() -> CliOptions {
+    let args: Vec<String> = std::env::args().collect();
+    let mut opts = CliOptions::default();
+    
+    let mut i = 1;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--usda" | "-u" => {
+                if i + 1 < args.len() {
+                    opts.usda_path = Some(args[i + 1].clone());
+                    i += 1;
+                }
+            }
+            arg if !arg.starts_with('-') && opts.usda_path.is_none() => {
+                // Positional argument - treat as usda path if it ends with .usda
+                if arg.ends_with(".usda") || arg.ends_with(".usd") {
+                    opts.usda_path = Some(arg.to_string());
+                }
+            }
+            "--help" | "-h" => {
+                println!("BIF Viewer - VFX Renderer");
+                println!();
+                println!("Usage: bif_viewer [OPTIONS] [FILE]");
+                println!();
+                println!("Options:");
+                println!("  --usda, -u <FILE>  Load a USDA scene file");
+                println!("  --help, -h         Show this help message");
+                println!();
+                println!("Controls:");
+                println!("  Left Mouse Drag    Orbit camera");
+                println!("  Middle Mouse Drag  Pan camera");
+                println!("  Scroll Wheel       Zoom in/out");
+                println!("  WASD               Move camera");
+                println!("  Tab                Toggle UI");
+                std::process::exit(0);
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    
+    opts
+}
+
 /// Application state
 struct App {
     window: Option<std::sync::Arc<Window>>,
     renderer: Option<Renderer>,
+    usda_path: Option<String>,
     
     // Input state
     left_mouse_pressed: bool,
@@ -23,10 +74,11 @@ struct App {
 }
 
 impl App {
-    fn new() -> Self {
+    fn new(usda_path: Option<String>) -> Self {
         Self {
             window: None,
             renderer: None,
+            usda_path,
             left_mouse_pressed: false,
             middle_mouse_pressed: false,
             last_mouse_pos: None,
@@ -49,9 +101,27 @@ impl ApplicationHandler for App {
                     .expect("Failed to create window"),
             );
             
-            // Initialize renderer (async in pollster block)
-            let renderer = pollster::block_on(Renderer::new(window.clone()))
-                .expect("Failed to initialize renderer");
+            // Initialize renderer based on CLI args
+            let renderer = if let Some(ref usda_path) = self.usda_path {
+                log::info!("Loading USDA scene: {}", usda_path);
+                match bif_core::load_usda(usda_path) {
+                    Ok(scene) => {
+                        log::info!("Scene loaded: {} prototypes, {} instances", 
+                                   scene.prototype_count(), scene.instance_count());
+                        pollster::block_on(Renderer::new_with_scene(window.clone(), &scene))
+                            .expect("Failed to initialize renderer with scene")
+                    }
+                    Err(e) => {
+                        log::error!("Failed to load USDA file: {}", e);
+                        log::info!("Falling back to default OBJ loader");
+                        pollster::block_on(Renderer::new(window.clone()))
+                            .expect("Failed to initialize renderer")
+                    }
+                }
+            } else {
+                pollster::block_on(Renderer::new(window.clone()))
+                    .expect("Failed to initialize renderer")
+            };
             
             self.window = Some(window);
             self.renderer = Some(renderer);
@@ -266,12 +336,18 @@ fn main() -> Result<()> {
         .filter_level(log::LevelFilter::Info)
         .init();
     
-    log::info!("Starting BIF Viewer");
+    let opts = parse_args();
+    
+    if let Some(ref path) = opts.usda_path {
+        log::info!("Starting BIF Viewer with USDA: {}", path);
+    } else {
+        log::info!("Starting BIF Viewer (default scene)");
+    }
     
     let event_loop = EventLoop::new()?;
     event_loop.set_control_flow(ControlFlow::Poll);
     
-    let mut app = App::new();
+    let mut app = App::new(opts.usda_path);
     
     log::info!("Running event loop");
     event_loop.run_app(&mut app)?;

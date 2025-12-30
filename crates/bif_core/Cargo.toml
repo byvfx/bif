@@ -9,5 +9,13 @@ repository.workspace = true
 [dependencies]
 bif_math = { path = "../bif_math" }
 glam = { workspace = true }
+log = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }
+
+[dev-dependencies]
+env_logger = { workspace = true }
+
+[[example]]
+name = "load_usda"
+path = "examples/load_usda.rs"

@@ -3,10 +3,8 @@ use std::path::Path;
 
 use wgpu::{util::DeviceExt, Device, Instance, Queue, Surface, SurfaceConfiguration};
 
-use bif_math::Camera;
-use bif_math::{Mat4, Vec3};
+use bif_math::{Camera,Mat4, Vec3};
 
-/// Mesh data loaded from file
 #[derive(Clone)]
 pub struct MeshData {
     pub vertices: Vec<Vertex>,
@@ -146,6 +144,41 @@ impl MeshData {
             bounds_max,
         })
     }
+    
+    /// Convert a bif_core::Mesh to GPU-ready MeshData
+    pub fn from_core_mesh(mesh: &bif_core::Mesh) -> Self {
+        let mut vertices = Vec::with_capacity(mesh.positions.len());
+        
+        // Get normals (should already be computed by loader)
+        let default_normal = Vec3::Y;
+        
+        for (i, pos) in mesh.positions.iter().enumerate() {
+            let normal = mesh.normals
+                .as_ref()
+                .and_then(|n| n.get(i))
+                .unwrap_or(&default_normal);
+            
+            // Color from normal for visualization
+            let color = [normal.x.abs(), normal.y.abs(), normal.z.abs()];
+            
+            vertices.push(Vertex {
+                position: [pos.x, pos.y, pos.z],
+                normal: [normal.x, normal.y, normal.z],
+                color,
+            });
+        }
+        
+        // Get bounds from Aabb
+        let bounds_min = Vec3::new(mesh.bounds.x.min, mesh.bounds.y.min, mesh.bounds.z.min);
+        let bounds_max = Vec3::new(mesh.bounds.x.max, mesh.bounds.y.max, mesh.bounds.z.max);
+        
+        Self {
+            vertices,
+            indices: mesh.indices.clone(),
+            bounds_min,
+            bounds_max,
+        }
+    }
 }
 
 /// Camera uniform data for GPU
@@ -153,17 +186,84 @@ impl MeshData {
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 struct CameraUniform {
     view_proj: [[f32; 4]; 4],
+    view: [[f32; 4]; 4],
 }
 
 impl CameraUniform {
     fn new() -> Self {
         Self {
             view_proj: Mat4::IDENTITY.to_cols_array_2d(),
+            view: Mat4::IDENTITY.to_cols_array_2d(),
         }
     }
     
     fn update_view_proj(&mut self, camera: &Camera) {
         self.view_proj = camera.view_projection_matrix().to_cols_array_2d();
+        self.view = camera.view_matrix().to_cols_array_2d();
+    }
+}
+
+/// Gnomon uniform data for GPU (camera rotation only)
+#[repr(C)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+struct GnomonUniform {
+    view_rotation: [[f32; 4]; 4],
+}
+
+impl GnomonUniform {
+    fn new() -> Self {
+        Self {
+            view_rotation: Mat4::IDENTITY.to_cols_array_2d(),
+        }
+    }
+    
+    fn update_from_camera(&mut self, camera: &Camera) {
+        // Extract rotation from view matrix (zero out translation)
+        let view = camera.view_matrix();
+        // The view matrix is [R | t], we want just R with no translation
+        let rotation = Mat4::from_cols(
+            view.col(0),
+            view.col(1),
+            view.col(2),
+            bif_math::Vec4::new(0.0, 0.0, 0.0, 1.0),
+        );
+        self.view_rotation = rotation.to_cols_array_2d();
+    }
+}
+
+/// Gnomon vertex (position + color)
+#[repr(C)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+struct GnomonVertex {
+    position: [f32; 3],
+    color: [f32; 3],
+}
+
+impl GnomonVertex {
+    const ATTRIBS: [wgpu::VertexAttribute; 2] =
+        wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3];
+
+    fn desc<'a>() -> wgpu::VertexBufferLayout<'a> {
+        wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<GnomonVertex>() as wgpu::BufferAddress,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &Self::ATTRIBS,
+        }
+    }
+    
+    /// Create gnomon axis vertices (origin to X, Y, Z with colors)
+    fn create_axes() -> Vec<Self> {
+        vec![
+            // X axis (red)
+            GnomonVertex { position: [0.0, 0.0, 0.0], color: [1.0, 0.2, 0.2] },
+            GnomonVertex { position: [1.0, 0.0, 0.0], color: [1.0, 0.2, 0.2] },
+            // Y axis (green)
+            GnomonVertex { position: [0.0, 0.0, 0.0], color: [0.2, 1.0, 0.2] },
+            GnomonVertex { position: [0.0, 1.0, 0.0], color: [0.2, 1.0, 0.2] },
+            // Z axis (blue)
+            GnomonVertex { position: [0.0, 0.0, 0.0], color: [0.2, 0.5, 1.0] },
+            GnomonVertex { position: [0.0, 0.0, 1.0], color: [0.2, 0.5, 1.0] },
+        ]
     }
 }
 
@@ -231,6 +331,13 @@ pub struct Renderer {
     depth_texture: wgpu::Texture,
     depth_view: wgpu::TextureView,
     
+    // Gnomon resources
+    gnomon_pipeline: wgpu::RenderPipeline,
+    gnomon_vertex_buffer: wgpu::Buffer,
+    gnomon_uniform: GnomonUniform,
+    gnomon_buffer: wgpu::Buffer,
+    gnomon_bind_group: wgpu::BindGroup,
+    
     // egui state
     egui_ctx: egui::Context,
     egui_state: egui_winit::State,
@@ -241,6 +348,10 @@ pub struct Renderer {
     pub fps: f32,
     frame_count: u32,
     fps_update_timer: f32,
+    
+    // Stats - TODO: Track polygon count from source data for accuracy
+    num_triangles: u32,
+    pub gnomon_size: u32,
 }
 
 impl Renderer {
@@ -426,7 +537,7 @@ impl Renderer {
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,
                 strip_index_format: None,
-                front_face: wgpu::FrontFace::Ccw,
+                front_face: wgpu::FrontFace::Cw,  // USD/Houdini uses clockwise winding
                 cull_mode: Some(wgpu::Face::Back),
                 polygon_mode: wgpu::PolygonMode::Fill,
                 unclipped_depth: false,
@@ -512,6 +623,100 @@ impl Renderer {
         
         log::info!("egui initialized");
         
+        // Create gnomon resources
+        let gnomon_vertices = GnomonVertex::create_axes();
+        let gnomon_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Gnomon Vertex Buffer"),
+            contents: bytemuck::cast_slice(&gnomon_vertices),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+        
+        let mut gnomon_uniform = GnomonUniform::new();
+        gnomon_uniform.update_from_camera(&camera);
+        
+        let gnomon_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Gnomon Buffer"),
+            contents: bytemuck::cast_slice(&[gnomon_uniform]),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+        
+        let gnomon_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Gnomon Bind Group Layout"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+        
+        let gnomon_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Gnomon Bind Group"),
+            layout: &gnomon_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: gnomon_buffer.as_entire_binding(),
+            }],
+        });
+        
+        let gnomon_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Gnomon Shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/gnomon.wgsl").into()),
+        });
+        
+        let gnomon_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Gnomon Pipeline Layout"),
+            bind_group_layouts: &[&gnomon_bind_group_layout],
+            push_constant_ranges: &[],
+        });
+        
+        let gnomon_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Gnomon Pipeline"),
+            layout: Some(&gnomon_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &gnomon_shader,
+                entry_point: "vs_main",
+                buffers: &[GnomonVertex::desc()],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &gnomon_shader,
+                entry_point: "fs_main",
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: config.format,
+                    blend: Some(wgpu::BlendState::REPLACE),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::LineList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: None,  // No culling for lines
+                polygon_mode: wgpu::PolygonMode::Fill,
+                unclipped_depth: false,
+                conservative: false,
+            },
+            depth_stencil: None,  // No depth for gnomon overlay
+            multisample: wgpu::MultisampleState {
+                count: 1,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+            multiview: None,
+            cache: None,
+        });
+        
+        log::info!("Gnomon initialized");
+        
+        // Calculate stats - TODO: Track polygon count from source mesh for accuracy
+        let num_triangles = mesh_data.indices.len() as u32 / 3;
+        
         Ok(Self {
             surface,
             device,
@@ -532,6 +737,11 @@ impl Renderer {
             mesh_bounds_max: mesh_data.bounds_max,
             depth_texture,
             depth_view,
+            gnomon_pipeline,
+            gnomon_vertex_buffer,
+            gnomon_uniform,
+            gnomon_buffer,
+            gnomon_bind_group,
             egui_ctx,
             egui_state,
             egui_renderer,
@@ -539,6 +749,390 @@ impl Renderer {
             fps: 0.0,
             frame_count: 0,
             fps_update_timer: 0.0,
+            num_triangles,
+            gnomon_size: 80,
+        })
+    }
+    
+    /// Create a new renderer for the given window, loading a USD scene
+    pub async fn new_with_scene(
+        window: std::sync::Arc<winit::window::Window>,
+        scene: &bif_core::Scene,
+    ) -> Result<Self> {
+        let size = window.inner_size();
+        
+        // Create wgpu instance
+        let instance = Instance::new(wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::PRIMARY,
+            ..Default::default()
+        });
+        
+        // Create surface
+        let surface = instance.create_surface(window.clone())?;
+        
+        // Request adapter
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::HighPerformance,
+                compatible_surface: Some(&surface),
+                force_fallback_adapter: false,
+            })
+            .await
+            .ok_or_else(|| anyhow::anyhow!("Failed to find suitable GPU adapter"))?;
+        
+        // Request device and queue
+        let (device, queue) = adapter
+            .request_device(
+                &wgpu::DeviceDescriptor {
+                    label: Some("BIF Device"),
+                    required_features: wgpu::Features::empty(),
+                    required_limits: wgpu::Limits::default(),
+                    memory_hints: Default::default(),
+                },
+                None,
+            )
+            .await?;
+        
+        // Configure surface
+        let surface_caps = surface.get_capabilities(&adapter);
+        let surface_format = surface_caps
+            .formats
+            .iter()
+            .copied()
+            .find(|f| f.is_srgb())
+            .unwrap_or(surface_caps.formats[0]);
+        
+        let config = SurfaceConfiguration {
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            format: surface_format,
+            width: size.width,
+            height: size.height,
+            present_mode: wgpu::PresentMode::Mailbox,
+            alpha_mode: surface_caps.alpha_modes[0],
+            view_formats: vec![],
+            desired_maximum_frame_latency: 2,
+        };
+        
+        surface.configure(&device, &config);
+        
+        // Convert first prototype to MeshData (for now, use first prototype)
+        if scene.prototypes.is_empty() {
+            anyhow::bail!("Scene has no prototypes");
+        }
+        
+        let proto = &scene.prototypes[0];
+        let mesh_data = MeshData::from_core_mesh(&proto.mesh);
+        
+        log::info!("Loaded {} vertices, {} indices from USD scene", 
+                   mesh_data.vertices.len(), mesh_data.indices.len());
+        log::info!("Mesh bounds: min={:?}, max={:?}", mesh_data.bounds_min, mesh_data.bounds_max);
+        log::info!("Scene has {} prototypes, {} instances", 
+                   scene.prototype_count(), scene.instance_count());
+        
+        // Calculate proper camera distance to frame the scene
+        // TODO: Add frame_scene() method that can be called to re-frame based on world_bounds
+        let world_bounds = scene.world_bounds();
+        let mesh_center = Vec3::new(
+            (world_bounds.x.min + world_bounds.x.max) * 0.5,
+            (world_bounds.y.min + world_bounds.y.max) * 0.5,
+            (world_bounds.z.min + world_bounds.z.max) * 0.5,
+        );
+        let world_extent = Vec3::new(
+            world_bounds.x.max - world_bounds.x.min,
+            world_bounds.y.max - world_bounds.y.min,
+            world_bounds.z.max - world_bounds.z.min,
+        );
+        let mesh_size = world_extent.length();
+        let camera_distance = mesh_size * 1.5;
+        
+        // Create camera positioned to view the scene
+        let aspect = size.width as f32 / size.height as f32;
+        let camera = Camera::new(
+            mesh_center + Vec3::new(0.0, 0.0, camera_distance),
+            mesh_center,
+            aspect,
+        );
+        
+        let mut camera = camera;
+        camera.near = camera_distance * 0.01;
+        camera.far = camera_distance * 20.0;
+        
+        log::info!("Camera positioned at {:?}, looking at {:?}", camera.position, camera.target);
+        
+        // Create camera uniform buffer
+        let mut camera_uniform = CameraUniform::new();
+        camera_uniform.update_view_proj(&camera);
+        
+        let camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Camera Buffer"),
+            contents: bytemuck::cast_slice(&[camera_uniform]),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+        
+        // Create bind group layout for camera
+        let camera_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Camera Bind Group Layout"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+        
+        let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Camera Bind Group"),
+            layout: &camera_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: camera_buffer.as_entire_binding(),
+            }],
+        });
+        
+        // Create shader module
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Basic Shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/basic.wgsl").into()),
+        });
+        
+        // Create render pipeline
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Render Pipeline Layout"),
+            bind_group_layouts: &[&camera_bind_group_layout],
+            push_constant_ranges: &[],
+        });
+        
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Render Pipeline"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: "vs_main",
+                buffers: &[Vertex::desc(), InstanceData::desc()],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: "fs_main",
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: config.format,
+                    blend: Some(wgpu::BlendState::REPLACE),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Cw,  // USD/Houdini uses clockwise winding
+                cull_mode: Some(wgpu::Face::Back),
+                polygon_mode: wgpu::PolygonMode::Fill,
+                unclipped_depth: false,
+                conservative: false,
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth24Plus,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState {
+                count: 1,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+            multiview: None,
+            cache: None,
+        });
+        
+        // Create vertex and index buffers
+        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Vertex Buffer"),
+            contents: bytemuck::cast_slice(&mesh_data.vertices),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+        
+        let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Index Buffer"),
+            contents: bytemuck::cast_slice(&mesh_data.indices),
+            usage: wgpu::BufferUsages::INDEX,
+        });
+        
+        // Create depth texture
+        let (depth_texture, depth_view) = Self::create_depth_texture(&device, (size.width, size.height));
+        
+        // Generate instances from scene
+        let instances: Vec<InstanceData> = scene.instances.iter()
+            .map(|inst| {
+                let model_matrix = inst.model_matrix();
+                InstanceData {
+                    model_matrix: model_matrix.to_cols_array_2d(),
+                }
+            })
+            .collect();
+        
+        let instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Instance Buffer"),
+            contents: bytemuck::cast_slice(&instances),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+        
+        log::info!("Created {} instances from USD scene", instances.len());
+        
+        // Initialize egui
+        let egui_ctx = egui::Context::default();
+        let egui_state = egui_winit::State::new(
+            egui_ctx.clone(),
+            egui::ViewportId::ROOT,
+            &window,
+            Some(window.scale_factor() as f32),
+            None,
+            None,
+        );
+        
+        let egui_renderer = egui_wgpu::Renderer::new(
+            &device,
+            config.format,
+            None,
+            1,
+            false,
+        );
+        
+        log::info!("Renderer initialized with USD scene");
+        
+        // Create gnomon resources
+        let gnomon_vertices = GnomonVertex::create_axes();
+        let gnomon_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Gnomon Vertex Buffer"),
+            contents: bytemuck::cast_slice(&gnomon_vertices),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+        
+        let mut gnomon_uniform = GnomonUniform::new();
+        gnomon_uniform.update_from_camera(&camera);
+        
+        let gnomon_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Gnomon Buffer"),
+            contents: bytemuck::cast_slice(&[gnomon_uniform]),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+        
+        let gnomon_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Gnomon Bind Group Layout"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+        
+        let gnomon_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Gnomon Bind Group"),
+            layout: &gnomon_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: gnomon_buffer.as_entire_binding(),
+            }],
+        });
+        
+        let gnomon_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Gnomon Shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/gnomon.wgsl").into()),
+        });
+        
+        let gnomon_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Gnomon Pipeline Layout"),
+            bind_group_layouts: &[&gnomon_bind_group_layout],
+            push_constant_ranges: &[],
+        });
+        
+        let gnomon_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Gnomon Pipeline"),
+            layout: Some(&gnomon_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &gnomon_shader,
+                entry_point: "vs_main",
+                buffers: &[GnomonVertex::desc()],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &gnomon_shader,
+                entry_point: "fs_main",
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: config.format,
+                    blend: Some(wgpu::BlendState::REPLACE),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::LineList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: None,
+                polygon_mode: wgpu::PolygonMode::Fill,
+                unclipped_depth: false,
+                conservative: false,
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState {
+                count: 1,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+            multiview: None,
+            cache: None,
+        });
+        
+        log::info!("Gnomon initialized");
+        
+        // Calculate stats - TODO: Track polygon count from source mesh for accuracy
+        let num_triangles = mesh_data.indices.len() as u32 / 3;
+        
+        Ok(Self {
+            surface,
+            device,
+            queue,
+            config,
+            size: (size.width, size.height),
+            pipeline,
+            vertex_buffer,
+            index_buffer,
+            num_indices: mesh_data.indices.len() as u32,
+            instance_buffer,
+            num_instances: instances.len() as u32,
+            camera,
+            camera_uniform,
+            camera_buffer,
+            camera_bind_group,
+            mesh_bounds_min: mesh_data.bounds_min,
+            mesh_bounds_max: mesh_data.bounds_max,
+            depth_texture,
+            depth_view,
+            gnomon_pipeline,
+            gnomon_vertex_buffer,
+            gnomon_uniform,
+            gnomon_buffer,
+            gnomon_bind_group,
+            egui_ctx,
+            egui_state,
+            egui_renderer,
+            show_ui: true,
+            fps: 0.0,
+            frame_count: 0,
+            fps_update_timer: 0.0,
+            num_triangles,
+            gnomon_size: 80,
         })
     }
     
@@ -569,6 +1163,14 @@ impl Renderer {
             &self.camera_buffer,
             0,
             bytemuck::cast_slice(&[self.camera_uniform]),
+        );
+        
+        // Update gnomon uniform with camera rotation
+        self.gnomon_uniform.update_from_camera(&self.camera);
+        self.queue.write_buffer(
+            &self.gnomon_buffer,
+            0,
+            bytemuck::cast_slice(&[self.gnomon_uniform]),
         );
     }
     
@@ -620,10 +1222,12 @@ impl Renderer {
         let show_ui = self.show_ui;
         let fps = self.fps;
         let camera = &self.camera;
-        let num_indices = self.num_indices;
+        let num_instances = self.num_instances;
+        let num_triangles = self.num_triangles;
         let mesh_bounds_min = self.mesh_bounds_min;
         let mesh_bounds_max = self.mesh_bounds_max;
         let size = self.size;
+        let mut gnomon_size = self.gnomon_size;
         
         let full_output = self.egui_ctx.run(raw_input, |ctx| {
             if !show_ui {
@@ -638,6 +1242,19 @@ impl Renderer {
                     
                     // FPS Counter
                     ui.label(format!("FPS: {:.1}", fps));
+                    ui.separator();
+                    
+                    // Scene Stats
+                    ui.collapsing("Scene Stats", |ui| {
+                        ui.label(format!("Instances: {}", num_instances));
+                        ui.label(format!("Triangles: {}", num_triangles * num_instances));
+                        // TODO: Track actual polygon count from source mesh for accuracy
+                        // For now estimate: quads ≈ triangles * 2/3
+                        let estimated_polys = (num_triangles as f32 * 0.67) as u32 * num_instances;
+                        ui.label(format!("Polygons (est): {}", estimated_polys));
+                        ui.label(format!("Triangles/Instance: {}", num_triangles));
+                    });
+                    
                     ui.separator();
                     
                     // Camera Stats
@@ -663,13 +1280,10 @@ impl Renderer {
                     ui.separator();
                     
                     // Mesh Info
-                    ui.collapsing("Mesh Info", |ui| {
+                    ui.collapsing("Mesh Bounds", |ui| {
                         let mesh_center = (mesh_bounds_min + mesh_bounds_max) * 0.5;
                         let mesh_size = (mesh_bounds_max - mesh_bounds_min).length();
                         
-                        ui.label(format!("Vertices: {}", num_indices / 3));
-                        ui.label(format!("Indices: {}", num_indices));
-                        ui.label(format!("Instances: {}", self.num_instances));
                         ui.label(format!("Bounds Min: ({:.2}, {:.2}, {:.2})", 
                             mesh_bounds_min.x, 
                             mesh_bounds_min.y, 
@@ -691,6 +1305,7 @@ impl Renderer {
                     ui.collapsing("Viewport", |ui| {
                         ui.label(format!("Resolution: {}x{}", size.0, size.1));
                         ui.label(format!("Aspect: {:.3}", size.0 as f32 / size.1 as f32));
+                        ui.add(egui::Slider::new(&mut gnomon_size, 40..=120).text("Gnomon Size"));
                     });
                     
                     ui.separator();
@@ -706,6 +1321,9 @@ impl Renderer {
                     });
                 });
         });
+        
+        // Update gnomon size from UI
+        self.gnomon_size = gnomon_size;
         
         self.egui_state.handle_platform_output(
             window,
@@ -778,6 +1396,40 @@ impl Renderer {
             render_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
             render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
             render_pass.draw_indexed(0..self.num_indices, 0, 0..self.num_instances);
+        }
+        
+        // Render gnomon in bottom-right corner
+        {
+            let mut gnomon_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Gnomon Render Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,  // Keep existing content
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,  // No depth testing for gnomon
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            
+            // Set viewport to bottom-right corner
+            let gnomon_size = self.gnomon_size as f32;
+            gnomon_pass.set_viewport(
+                (self.size.0 as f32) - gnomon_size,  // x (right side)
+                (self.size.1 as f32) - gnomon_size,  // y (bottom, wgpu uses top-left origin)
+                gnomon_size,  // width
+                gnomon_size,  // height
+                0.0,  // min_depth
+                1.0,  // max_depth
+            );
+            
+            gnomon_pass.set_pipeline(&self.gnomon_pipeline);
+            gnomon_pass.set_bind_group(0, &self.gnomon_bind_group, &[]);
+            gnomon_pass.set_vertex_buffer(0, self.gnomon_vertex_buffer.slice(..));
+            gnomon_pass.draw(0..6, 0..1);  // 6 vertices (3 lines)
         }
         
         // Render egui on top

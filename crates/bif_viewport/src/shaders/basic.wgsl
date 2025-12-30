@@ -1,7 +1,9 @@
 // Basic shader for rendering solid color geometry with camera
+// Grey placeholder material with headlight diffuse lighting
 
 struct CameraUniform {
     view_proj: mat4x4<f32>,
+    view: mat4x4<f32>,
 }
 
 @group(0) @binding(0)
@@ -19,7 +21,7 @@ struct VertexInput {
 
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
-    @location(0) normal: vec3<f32>,
+    @location(0) normal_vs: vec3<f32>,  // View-space normal for headlight
 }
 
 @vertex
@@ -36,16 +38,26 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     let world_position = model_matrix * vec4<f32>(in.position, 1.0);
     out.clip_position = camera.view_proj * world_position;
     
-    // Transform normal by model matrix (assuming uniform scale)
-    let world_normal = (model_matrix * vec4<f32>(in.normal, 0.0)).xyz;
-    out.normal = normalize(world_normal);
+    // Transform normal to world space, then to view space for headlight
+    let world_normal = normalize((model_matrix * vec4<f32>(in.normal, 0.0)).xyz);
+    out.normal_vs = normalize((camera.view * vec4<f32>(world_normal, 0.0)).xyz);
     
     return out;
 }
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    // Visualize normals as colors (map -1..1 to 0..1)
-    let color = in.normal * 0.5 + 0.5;
-    return vec4<f32>(color, 1.0);
+    // Base grey color
+    let base_color = vec3<f32>(0.5, 0.5, 0.5);
+    
+    // Headlight diffuse: light from camera direction (positive Z in view space)
+    // In view space, the camera looks down -Z, so light comes from +Z
+    let normal = normalize(in.normal_vs);
+    let diffuse = max(normal.z, 0.0);  // Dot with (0, 0, 1)
+    
+    // Ambient + diffuse lighting
+    let ambient = 0.2;
+    let lit_color = base_color * (ambient + diffuse * 0.8);
+    
+    return vec4<f32>(lit_color, 1.0);
 }
