@@ -11,3 +11,4 @@ bif_math = { path = "../bif_math" }
 glam.workspace = true
 rand = "0.8"
 rayon = "1.10"
+image = "0.24"

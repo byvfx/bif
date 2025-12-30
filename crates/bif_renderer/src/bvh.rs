@@ -9,10 +9,6 @@ use crate::{Ray, HitRecord, Hittable};
 /// Maximum primitives per leaf node before splitting.
 const LEAF_MAX_SIZE: usize = 4;
 
-/// Threshold for parallel BVH construction.
-#[allow(dead_code)]
-const PARALLEL_THRESHOLD: usize = 4096;
-
 /// BVH node - either a branch with two children or a leaf with primitives.
 /// 
 /// Using an enum allows for more cache-efficient traversal since
@@ -33,14 +29,6 @@ pub enum BvhNode {
     Empty,
 }
 
-/// Cached primitive data for efficient sorting during BVH construction.
-#[derive(Clone)]
-struct BvhPrimitive {
-    index: usize,
-    bbox: Aabb,
-    centroid: bif_math::Vec3,
-}
-
 /// Convert our Ray to bif_math::Ray for AABB intersection.
 #[inline]
 fn to_math_ray(ray: &Ray) -> bif_math::Ray {
@@ -50,127 +38,67 @@ fn to_math_ray(ray: &Ray) -> bif_math::Ray {
 impl BvhNode {
     /// Create a BVH from a list of hittable objects.
     pub fn new(objects: Vec<Box<dyn Hittable + Send + Sync>>) -> Self {
-        let n = objects.len();
-        if n == 0 {
+        if objects.is_empty() {
             return BvhNode::Empty;
         }
-
-        // Pre-compute bounding boxes and centroids
-        let primitives: Vec<BvhPrimitive> = objects
-            .iter()
-            .enumerate()
-            .map(|(i, obj)| {
-                let bbox = obj.bounding_box();
-                BvhPrimitive {
-                    index: i,
-                    bbox,
-                    centroid: bbox.centroid(),
-                }
-            })
-            .collect();
-
-        Self::build(objects, primitives, true)
+        Self::build(objects)
     }
 
     /// Recursive BVH construction.
-    fn build(
-        objects: Vec<Box<dyn Hittable + Send + Sync>>,
-        mut primitives: Vec<BvhPrimitive>,
-        allow_parallel: bool,
-    ) -> Self {
-        let n = primitives.len();
+    /// 
+    /// Simple median-split approach: sort objects by centroid on longest axis,
+    /// split in half, recurse.
+    fn build(mut objects: Vec<Box<dyn Hittable + Send + Sync>>) -> Self {
+        let n = objects.len();
 
-        // Compute bounds of all primitives
-        let bounds = primitives
+        // Compute bounding box of all objects
+        let bounds = objects
             .iter()
-            .fold(primitives[0].bbox, |acc, p| Aabb::surrounding(&acc, &p.bbox));
-
-        let centroid_bounds = primitives.iter().fold(
-            Aabb::from_points(primitives[0].centroid, primitives[0].centroid),
-            |acc, p| Aabb::surrounding(&acc, &Aabb::from_points(p.centroid, p.centroid)),
-        );
+            .map(|o| o.bounding_box())
+            .fold(objects[0].bounding_box(), |acc, b| Aabb::surrounding(&acc, &b));
 
         // Create leaf for small sets
         if n <= LEAF_MAX_SIZE {
-            // Collect objects for this leaf using primitive indices
-            let needed: std::collections::HashSet<usize> = 
-                primitives.iter().map(|p| p.index).collect();
-            
-            let leaf_objects: Vec<Box<dyn Hittable + Send + Sync>> = objects
-                .into_iter()
-                .enumerate()
-                .filter(|(i, _)| needed.contains(i))
-                .map(|(_, obj)| obj)
-                .collect();
-            
             return BvhNode::Leaf {
-                objects: leaf_objects,
+                objects,
                 bbox: bounds,
             };
         }
 
+        // Compute centroid bounds to choose split axis
+        let centroid_bounds = objects.iter().fold(Aabb::EMPTY, |acc, obj| {
+            let c = obj.bounding_box().centroid();
+            Aabb::surrounding(&acc, &Aabb::from_points(c, c))
+        });
+
         // Choose split axis based on centroid spread
         let axis = centroid_bounds.longest_axis();
 
-        // Sort by centroid on chosen axis
-        primitives.sort_unstable_by(|a, b| {
+        // Sort objects by centroid on chosen axis
+        objects.sort_unstable_by(|a, b| {
+            let a_centroid = a.bounding_box().centroid();
+            let b_centroid = b.bounding_box().centroid();
             let a_val = match axis {
-                0 => a.centroid.x,
-                1 => a.centroid.y,
-                _ => a.centroid.z,
+                0 => a_centroid.x,
+                1 => a_centroid.y,
+                _ => a_centroid.z,
             };
             let b_val = match axis {
-                0 => b.centroid.x,
-                1 => b.centroid.y,
-                _ => b.centroid.z,
+                0 => b_centroid.x,
+                1 => b_centroid.y,
+                _ => b_centroid.z,
             };
             a_val.partial_cmp(&b_val).unwrap_or(std::cmp::Ordering::Equal)
         });
 
+        // Split at midpoint
         let mid = n / 2;
-        let (left_prims, right_prims) = primitives.split_at(mid);
-        let left_prims = left_prims.to_vec();
-        let right_prims = right_prims.to_vec();
+        let right_objects = objects.split_off(mid);
+        let left_objects = objects;
 
-        // Partition objects into left and right
-        let left_indices: std::collections::HashSet<usize> = 
-            left_prims.iter().map(|p| p.index).collect();
-        
-        let (left_objects, right_objects): (Vec<_>, Vec<_>) = objects
-            .into_iter()
-            .enumerate()
-            .partition(|(i, _)| left_indices.contains(i));
-        
-        let left_objects: Vec<_> = left_objects.into_iter().map(|(_, o)| o).collect();
-        let right_objects: Vec<_> = right_objects.into_iter().map(|(_, o)| o).collect();
-
-        // Rebuild primitives with new indices
-        let left_prims: Vec<BvhPrimitive> = left_prims
-            .into_iter()
-            .enumerate()
-            .map(|(new_idx, p)| BvhPrimitive {
-                index: new_idx,
-                bbox: p.bbox,
-                centroid: p.centroid,
-            })
-            .collect();
-        
-        let right_prims: Vec<BvhPrimitive> = right_prims
-            .into_iter()
-            .enumerate()
-            .map(|(new_idx, p)| BvhPrimitive {
-                index: new_idx,
-                bbox: p.bbox,
-                centroid: p.centroid,
-            })
-            .collect();
-
-        // TODO: Add parallel construction with rayon for large trees
-        let _ = allow_parallel; // Suppress unused warning for now
-
-        // Sequential construction
-        let left = Self::build(left_objects, left_prims, false);
-        let right = Self::build(right_objects, right_prims, false);
+        // Recurse
+        let left = Self::build(left_objects);
+        let right = Self::build(right_objects);
 
         BvhNode::Branch {
             left: Box::new(left),
