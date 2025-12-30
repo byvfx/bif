@@ -1,7 +1,20 @@
 //! Hittable trait and HitRecord for ray-object intersection.
 
 use bif_math::{Aabb, Interval, Vec3};
-use crate::{Ray, Material};
+use crate::{Ray, Material, Color};
+
+/// A dummy material used for HitRecord::default().
+/// Always absorbs light (returns None from scatter).
+struct DummyMaterial;
+
+impl Material for DummyMaterial {
+    fn scatter(&self, _ray_in: &Ray, _rec: &HitRecord) -> Option<(Color, Ray)> {
+        None
+    }
+}
+
+/// Static dummy material instance for Default impl.
+static DUMMY_MATERIAL: DummyMaterial = DummyMaterial;
 
 /// Record of a ray-object intersection.
 #[derive(Clone)]
@@ -19,6 +32,20 @@ pub struct HitRecord<'a> {
     pub t: f32,
     /// Whether the ray hit the front face (outside) of the surface
     pub front_face: bool,
+}
+
+impl<'a> Default for HitRecord<'a> {
+    fn default() -> Self {
+        Self {
+            p: Vec3::ZERO,
+            normal: Vec3::ZERO,
+            material: &DUMMY_MATERIAL,
+            u: 0.0,
+            v: 0.0,
+            t: 0.0,
+            front_face: false,
+        }
+    }
 }
 
 impl<'a> HitRecord<'a> {
@@ -44,7 +71,7 @@ pub trait Hittable: Send + Sync {
     /// Test if a ray hits this object within the given interval.
     /// 
     /// Returns true if hit, and fills in the hit record.
-    fn hit(&self, ray: &Ray, ray_t: Interval, rec: &mut HitRecord) -> bool;
+    fn hit<'a>(&'a self, ray: &Ray, ray_t: Interval, rec: &mut HitRecord<'a>) -> bool;
     
     /// Get the axis-aligned bounding box of this object.
     fn bounding_box(&self) -> Aabb;
@@ -95,7 +122,7 @@ impl Default for HittableList {
 }
 
 impl Hittable for HittableList {
-    fn hit(&self, ray: &Ray, ray_t: Interval, rec: &mut HitRecord) -> bool {
+    fn hit<'a>(&'a self, ray: &Ray, ray_t: Interval, rec: &mut HitRecord<'a>) -> bool {
         let mut hit_anything = false;
         let mut closest_so_far = ray_t.max;
 
