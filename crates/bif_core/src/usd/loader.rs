@@ -4,7 +4,7 @@
 //! and converting them to BIF scene graph representation.
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use bif_math::Mat4;
@@ -13,7 +13,7 @@ use thiserror::Error;
 use crate::mesh::Mesh;
 use crate::scene::{Scene, Transform};
 use crate::usd::parser::{parse_usda, ParseError};
-use crate::usd::types::{UsdMesh, UsdPointInstancer, UsdPrim, UsdXform};
+use crate::usd::types::{UsdMesh, UsdPointInstancer, UsdPrim, UsdReference, UsdXform};
 
 /// Errors that can occur during USD loading.
 #[derive(Error, Debug)]
@@ -49,15 +49,17 @@ pub type LoadResult<T> = Result<T, LoadError>;
 /// println!("Loaded {} instances", scene.instance_count());
 /// ```
 pub fn load_usda<P: AsRef<Path>>(path: P) -> LoadResult<Scene> {
-    let content = std::fs::read_to_string(path.as_ref())?;
-    load_usda_from_string(&content, path.as_ref().to_string_lossy().as_ref())
+    let path = path.as_ref();
+    let content = std::fs::read_to_string(path)?;
+    let base_dir = path.parent().map(|p| p.to_path_buf());
+    load_usda_from_string(&content, path.to_string_lossy().as_ref(), base_dir)
 }
 
 /// Load USDA from a string (useful for testing).
-pub fn load_usda_from_string(content: &str, name: &str) -> LoadResult<Scene> {
+pub fn load_usda_from_string(content: &str, name: &str, base_dir: Option<PathBuf>) -> LoadResult<Scene> {
     let prims = parse_usda(content)?;
     
-    let mut builder = SceneBuilder::new(name);
+    let mut builder = SceneBuilder::new(name, base_dir);
     
     for prim in prims {
         builder.process_prim(&prim, Mat4::IDENTITY)?;
@@ -71,13 +73,19 @@ struct SceneBuilder {
     scene: Scene,
     /// Map from USD prim path to prototype ID
     prototype_map: HashMap<String, usize>,
+    /// Base directory for resolving relative references
+    base_dir: Option<PathBuf>,
+    /// Cache of loaded reference files to avoid re-loading
+    reference_cache: HashMap<String, Vec<UsdPrim>>,
 }
 
 impl SceneBuilder {
-    fn new(name: &str) -> Self {
+    fn new(name: &str, base_dir: Option<PathBuf>) -> Self {
         Self {
             scene: Scene::new(name),
             prototype_map: HashMap::new(),
+            base_dir,
+            reference_cache: HashMap::new(),
         }
     }
     
@@ -87,6 +95,7 @@ impl SceneBuilder {
             UsdPrim::Xform(xform) => self.process_xform(xform, parent_transform),
             UsdPrim::Mesh(mesh) => self.process_mesh(mesh, parent_transform),
             UsdPrim::PointInstancer(instancer) => self.process_point_instancer(instancer, parent_transform),
+            UsdPrim::Reference(reference) => self.process_reference(reference, parent_transform),
             UsdPrim::Unknown(_) => Ok(()), // Skip unknown prims
         }
     }
@@ -182,6 +191,72 @@ impl SceneBuilder {
         Ok(())
     }
     
+    /// Process a Reference prim by loading the referenced file.
+    fn process_reference(&mut self, reference: &UsdReference, parent_transform: Mat4) -> LoadResult<()> {
+        let world_transform = parent_transform * reference.transform;
+        
+        // Resolve the asset path relative to the base directory
+        let asset_path = if let Some(base_dir) = &self.base_dir {
+            base_dir.join(&reference.asset_path)
+        } else {
+            PathBuf::from(&reference.asset_path)
+        };
+        
+        // Check cache first
+        let cache_key = asset_path.to_string_lossy().to_string();
+        let prims = if let Some(cached) = self.reference_cache.get(&cache_key) {
+            cached.clone()
+        } else {
+            // Load and parse the referenced file
+            let content = std::fs::read_to_string(&asset_path)
+                .map_err(|e| LoadError::Io(std::io::Error::new(
+                    e.kind(),
+                    format!("Failed to load reference '{}': {}", reference.asset_path, e)
+                )))?;
+            
+            let prims = crate::usd::parser::parse_usda(&content)?;
+            self.reference_cache.insert(cache_key, prims.clone());
+            prims
+        };
+        
+        // Find the target prim (if specified) or process all root prims
+        if let Some(target_path) = &reference.target_prim_path {
+            // Find the specific prim by path
+            for prim in &prims {
+                if self.prim_matches_path(prim, target_path) {
+                    self.process_prim(prim, world_transform)?;
+                    break;
+                }
+            }
+        } else {
+            // Process all root prims from the referenced file
+            for prim in &prims {
+                self.process_prim(prim, world_transform)?;
+            }
+        }
+        
+        // Process any child overrides
+        for child in &reference.children {
+            self.process_prim(child, world_transform)?;
+        }
+        
+        Ok(())
+    }
+    
+    /// Check if a prim matches a target path.
+    fn prim_matches_path(&self, prim: &UsdPrim, target_path: &str) -> bool {
+        let prim_path = match prim {
+            UsdPrim::Xform(x) => &x.path,
+            UsdPrim::Mesh(m) => &m.path,
+            UsdPrim::PointInstancer(p) => &p.path,
+            UsdPrim::Reference(r) => &r.path,
+            UsdPrim::Unknown(_) => return false,
+        };
+        
+        // Match full path or just the name part
+        prim_path == target_path || prim_path.ends_with(target_path)
+    }
+    
     /// Convert a USD mesh to a BIF mesh.
     fn convert_mesh(&self, usd_mesh: &UsdMesh) -> LoadResult<Mesh> {
         // Triangulate the mesh
@@ -217,7 +292,7 @@ def Mesh "Triangle" {
 }
 "#;
         
-        let scene = load_usda_from_string(usda, "test").unwrap();
+        let scene = load_usda_from_string(usda, "test", None).unwrap();
         
         assert_eq!(scene.prototype_count(), 1);
         assert_eq!(scene.instance_count(), 1);
@@ -238,7 +313,7 @@ def Mesh "Triangle" {
 }
 "#;
         
-        let scene = load_usda_from_string(usda, "test").unwrap();
+        let scene = load_usda_from_string(usda, "test", None).unwrap();
         
         // Check that provided normals were used
         let normals = scene.prototypes[0].mesh.normals.as_ref().unwrap();
@@ -261,7 +336,7 @@ def PointInstancer "Grid" {
 }
 "#;
         
-        let scene = load_usda_from_string(usda, "test").unwrap();
+        let scene = load_usda_from_string(usda, "test", None).unwrap();
         
         assert_eq!(scene.prototype_count(), 1);
         assert_eq!(scene.instance_count(), 4);
@@ -282,7 +357,7 @@ def Xform "World" {
 }
 "#;
         
-        let scene = load_usda_from_string(usda, "test").unwrap();
+        let scene = load_usda_from_string(usda, "test", None).unwrap();
         
         assert_eq!(scene.prototype_count(), 1);
         assert_eq!(scene.instance_count(), 1);

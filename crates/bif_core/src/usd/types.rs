@@ -16,8 +16,34 @@ pub enum UsdPrim {
     /// A point instancer
     PointInstancer(UsdPointInstancer),
     
+    /// A reference to an external USD file
+    Reference(UsdReference),
+    
     /// An unknown or unsupported prim type
     Unknown(String),
+}
+
+/// A USD Reference to an external file.
+/// Syntax: `references = @path/to/file.usda@</PrimPath>`
+#[derive(Clone, Debug, Default)]
+pub struct UsdReference {
+    /// Prim path in current file
+    pub path: String,
+    
+    /// Prim name
+    pub name: String,
+    
+    /// Path to the external USD file (relative or absolute)
+    pub asset_path: String,
+    
+    /// Optional prim path within the referenced file (e.g., "/Lucy")
+    pub target_prim_path: Option<String>,
+    
+    /// Local transform applied to the reference
+    pub transform: Mat4,
+    
+    /// Child prims (overrides or additional content)
+    pub children: Vec<UsdPrim>,
 }
 
 /// A USD Xform (transform) prim.

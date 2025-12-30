@@ -75,13 +75,25 @@ impl UsdaParser {
     pub fn parse(&mut self) -> ParseResult<Vec<UsdPrim>> {
         let mut prims = Vec::new();
         
-        // Skip header (lines starting with #)
+        // Skip header (lines starting with # and file-level metadata in parentheses)
+        let mut in_header_metadata = false;
         while let Some((_, line)) = self.lines.front() {
             let trimmed = line.trim();
-            if trimmed.starts_with('#') || trimmed.starts_with('(') || trimmed.is_empty() {
+            if trimmed.starts_with('#') || trimmed.is_empty() {
                 self.lines.pop_front();
-            } else if trimmed == ")" {
-                // End of header metadata
+            } else if trimmed.starts_with('(') && !in_header_metadata {
+                // Start of header metadata block
+                in_header_metadata = true;
+                // Check if it's a single-line metadata block
+                if trimmed.ends_with(')') {
+                    in_header_metadata = false;
+                }
+                self.lines.pop_front();
+            } else if in_header_metadata {
+                // Inside header metadata, consume until we find closing paren
+                if trimmed.ends_with(')') || trimmed == ")" {
+                    in_header_metadata = false;
+                }
                 self.lines.pop_front();
             } else {
                 break;
@@ -159,11 +171,62 @@ impl UsdaParser {
             format!("{}/{}", parent_path, name)
         };
         
-        // Skip any metadata in parentheses
-        self.skip_metadata()?;
+        // Check for metadata on this line or following lines
+        // Metadata can be: inline (refs = @path@), multi-line starting on def line, or on next line
+        let reference_info = if let Some(paren_start) = line.find('(') {
+            if let Some(paren_end) = line.find(')') {
+                // Inline metadata: def Type "Name" (metadata) { ... }
+                let metadata = &line[paren_start..=paren_end];
+                if metadata.contains("references") && metadata.contains('@') {
+                    Some(self.parse_reference_line(metadata)?)
+                } else {
+                    None
+                }
+            } else {
+                // Multi-line metadata started on def line: def Type "Name" (\n  metadata\n)
+                // We need to consume lines until we find the closing paren
+                self.parse_multiline_metadata_from_def()?
+            }
+        } else {
+            // Check for metadata on next line (standalone parentheses)
+            self.parse_metadata()?
+        };
         
-        // Expect opening brace
-        self.expect_opening_brace(start_line)?;
+        // Check if brace and content are inline: def Type "Name" { ... }
+        let has_inline_brace = line.contains('{');
+        let has_inline_close = line.contains('}');
+        
+        // If entire prim is on one line: def Type "Name" (refs) { content }
+        if has_inline_brace && has_inline_close {
+            // Extract content between braces
+            if let Some(brace_start) = line.find('{') {
+                if let Some(brace_end) = line.rfind('}') {
+                    let inline_content = line[brace_start + 1..brace_end].trim();
+                    
+                    // If we have a reference, create a reference prim with inline overrides
+                    if let Some((asset_path, target_prim)) = reference_info {
+                        return self.parse_inline_reference_content(&path, name, asset_path, target_prim, inline_content, start_line)
+                            .map(|r| Some(UsdPrim::Reference(r)));
+                    }
+                    
+                    // For non-reference single-line prims, create an empty transform
+                    // (transform is parsed from inline_content if present)
+                    return self.parse_inline_xform_content(&path, name, inline_content, start_line)
+                        .map(|x| Some(UsdPrim::Xform(x)));
+                }
+            }
+        }
+        
+        // Not inline - expect opening brace
+        if !has_inline_brace {
+            self.expect_opening_brace(start_line)?;
+        }
+        
+        // If we found a reference, parse as a reference prim
+        if let Some((asset_path, target_prim)) = reference_info {
+            return self.parse_reference_content(&path, name, asset_path, target_prim, start_line)
+                .map(|r| Some(UsdPrim::Reference(r)));
+        }
         
         // Parse prim content based on type
         match prim_type {
@@ -182,13 +245,15 @@ impl UsdaParser {
         }
     }
     
-    /// Skip metadata in parentheses.
-    fn skip_metadata(&mut self) -> ParseResult<()> {
+    /// Parse metadata in parentheses and extract reference info if present.
+    /// Returns Some((asset_path, target_prim_path)) if a reference was found.
+    fn parse_metadata(&mut self) -> ParseResult<Option<(String, Option<String>)>> {
         // Look ahead for opening paren
         if let Some((_, line)) = self.lines.front() {
             let trimmed = line.trim();
             if trimmed.starts_with('(') || trimmed.ends_with('(') {
-                // Skip until closing paren
+                // Collect all metadata lines
+                let mut metadata_lines = Vec::new();
                 let mut depth = 1;
                 self.lines.pop_front();
                 
@@ -197,15 +262,214 @@ impl UsdaParser {
                         Some((_, line)) => {
                             depth += line.matches('(').count();
                             depth -= line.matches(')').count();
+                            if depth > 0 || !line.trim().starts_with(')') {
+                                metadata_lines.push(line);
+                            }
                         }
                         None => return Err(ParseError::UnexpectedEof),
                     }
                 }
+                
+                // Look for references = @path@</prim> pattern
+                for line in &metadata_lines {
+                    if line.contains("references") && line.contains('@') {
+                        return Ok(Some(self.parse_reference_line(line)?));
+                    }
+                }
             }
         }
-        Ok(())
+        Ok(None)
     }
     
+    /// Parse multi-line metadata when the opening paren is on the def line.
+    /// e.g., def Xform "Name" (\n    kind = "component"\n)
+    fn parse_multiline_metadata_from_def(&mut self) -> ParseResult<Option<(String, Option<String>)>> {
+        // The opening paren was on the def line, so we start at depth 1
+        let mut metadata_lines = Vec::new();
+        let mut depth = 1;
+        
+        while depth > 0 {
+            match self.lines.pop_front() {
+                Some((_, line)) => {
+                    depth += line.matches('(').count();
+                    depth -= line.matches(')').count();
+                    if depth > 0 || !line.trim().starts_with(')') {
+                        metadata_lines.push(line);
+                    }
+                }
+                None => return Err(ParseError::UnexpectedEof),
+            }
+        }
+        
+        // Look for references = @path@</prim> pattern
+        for line in &metadata_lines {
+            if line.contains("references") && line.contains('@') {
+                return Ok(Some(self.parse_reference_line(line)?));
+            }
+        }
+        
+        Ok(None)
+    }
+    
+    /// Parse a reference line like: references = @./lucy.usda@</Lucy>
+    fn parse_reference_line(&self, line: &str) -> ParseResult<(String, Option<String>)> {
+        // Find the asset path between @ symbols
+        let first_at = line.find('@');
+        let second_at = line.rfind('@');
+        
+        if let (Some(start), Some(end)) = (first_at, second_at) {
+            if start < end {
+                let asset_path = line[start + 1..end].to_string();
+                
+                // Look for target prim path after the closing @
+                let after_ref = &line[end + 1..];
+                let target_prim = if let Some(prim_start) = after_ref.find('<') {
+                    if let Some(prim_end) = after_ref.find('>') {
+                        Some(after_ref[prim_start + 1..prim_end].to_string())
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+                
+                return Ok((asset_path, target_prim));
+            }
+        }
+        
+        Err(ParseError::Parse {
+            line: self.current_line,
+            message: format!("Invalid reference syntax: {}", line),
+        })
+    }
+    
+    /// Parse content of a prim that has a reference (may have overrides).
+    fn parse_reference_content(
+        &mut self,
+        path: &str,
+        name: &str,
+        asset_path: String,
+        target_prim: Option<String>,
+        start_line: usize,
+    ) -> ParseResult<UsdReference> {
+        let mut reference = UsdReference {
+            path: path.to_string(),
+            name: name.to_string(),
+            asset_path,
+            target_prim_path: target_prim,
+            transform: Mat4::IDENTITY,
+            children: Vec::new(),
+        };
+        
+        let mut xform_ops = Vec::new();
+        
+        loop {
+            let (line_num, line) = match self.lines.pop_front() {
+                Some(x) => x,
+                None => return Err(ParseError::UnclosedBlock(start_line)),
+            };
+            
+            let trimmed = line.trim();
+            
+            if trimmed.is_empty() || trimmed.starts_with('#') {
+                continue;
+            }
+            
+            if trimmed == "}" {
+                break;
+            }
+            
+            // Parse xformOps (transform overrides)
+            if let Some(op) = self.parse_xform_op(trimmed)? {
+                xform_ops.push(op);
+                continue;
+            }
+            
+            // Check for child prim (overrides)
+            if trimmed.starts_with("def ") {
+                self.lines.push_front((line_num, line));
+                if let Some(child) = self.parse_prim(path)? {
+                    reference.children.push(child);
+                }
+                continue;
+            }
+        }
+        
+        reference.transform = compose_xform_ops(&xform_ops);
+        
+        Ok(reference)
+    }
+    
+    /// Parse content of a single-line prim that has a reference with inline content.
+    /// e.g., def Xform "Lucy_0_0" (references = @./lucy_low.usda@) { double3 xformOp:translate = (0, 0, 0) }
+    fn parse_inline_reference_content(
+        &self,
+        path: &str,
+        name: &str,
+        asset_path: String,
+        target_prim: Option<String>,
+        inline_content: &str,
+        _start_line: usize,
+    ) -> ParseResult<UsdReference> {
+        let mut reference = UsdReference {
+            path: path.to_string(),
+            name: name.to_string(),
+            asset_path,
+            target_prim_path: target_prim,
+            transform: Mat4::IDENTITY,
+            children: Vec::new(),
+        };
+        
+        let xform_ops = self.parse_inline_xform_ops(inline_content)?;
+        reference.transform = compose_xform_ops(&xform_ops);
+        
+        Ok(reference)
+    }
+    
+    /// Parse content of a single-line Xform with inline content.
+    fn parse_inline_xform_content(
+        &self,
+        path: &str,
+        name: &str,
+        inline_content: &str,
+        _start_line: usize,
+    ) -> ParseResult<UsdXform> {
+        let mut xform = UsdXform {
+            path: path.to_string(),
+            name: name.to_string(),
+            transform: Mat4::IDENTITY,
+            children: Vec::new(),
+        };
+        
+        let xform_ops = self.parse_inline_xform_ops(inline_content)?;
+        xform.transform = compose_xform_ops(&xform_ops);
+        
+        Ok(xform)
+    }
+    
+    /// Parse xformOps from inline content (semicolon or space-separated attributes).
+    fn parse_inline_xform_ops(&self, content: &str) -> ParseResult<Vec<XformOp>> {
+        let mut ops = Vec::new();
+        
+        // Split by common delimiters (could be space or semicolon separated)
+        // For now, just look for xformOp patterns
+        for part in content.split(';') {
+            let part = part.trim();
+            if let Some(op) = self.parse_xform_op(part)? {
+                ops.push(op);
+            }
+        }
+        
+        // Also try parsing the whole thing as a single xformOp
+        if ops.is_empty() {
+            if let Some(op) = self.parse_xform_op(content.trim())? {
+                ops.push(op);
+            }
+        }
+        
+        Ok(ops)
+    }
+
     /// Expect and consume an opening brace.
     fn expect_opening_brace(&mut self, start_line: usize) -> ParseResult<()> {
         // The brace might be on the same line as def, or on the next line
@@ -274,18 +538,18 @@ impl UsdaParser {
                 break;
             }
             
-            // Parse xformOps
-            if let Some(op) = self.parse_xform_op(trimmed)? {
-                xform_ops.push(op);
-                continue;
-            }
-            
-            // Check for child prim
+            // Check for child prim FIRST (before xformOps, since def lines may contain xformOp text)
             if trimmed.starts_with("def ") {
                 self.lines.push_front((line_num, line));
                 if let Some(child) = self.parse_prim(path)? {
                     xform.children.push(child);
                 }
+                continue;
+            }
+            
+            // Parse xformOps
+            if let Some(op) = self.parse_xform_op(trimmed)? {
+                xform_ops.push(op);
                 continue;
             }
         }
@@ -446,7 +710,7 @@ impl UsdaParser {
     }
     
     /// Parse a single xformOp attribute.
-    fn parse_xform_op(&mut self, line: &str) -> ParseResult<Option<XformOp>> {
+    fn parse_xform_op(&self, line: &str) -> ParseResult<Option<XformOp>> {
         // Skip xformOpOrder - it just lists the order of ops, not actual values
         if line.contains("xformOpOrder") {
             return Ok(None);
@@ -492,19 +756,38 @@ impl UsdaParser {
     }
     
     /// Parse an inline Vec3 value like (1, 2, 3).
+    /// For lines with xformOp, finds the value after the xformOp's = sign.
     fn parse_inline_vec3(&self, line: &str) -> ParseResult<Vec3> {
-        // Find parentheses
-        let start = line.find('(').ok_or_else(|| ParseError::Parse {
+        // Find the xformOp pattern and look for = after it
+        // This handles lines like: { double3 xformOp:translate = (0, 0, 0) }
+        // where there might be other ( ) pairs earlier in the line
+        let search_start = if let Some(xform_pos) = line.find("xformOp:") {
+            // Find the = after the xformOp
+            if let Some(eq_offset) = line[xform_pos..].find('=') {
+                xform_pos + eq_offset
+            } else {
+                0
+            }
+        } else if let Some(eq_pos) = line.find('=') {
+            eq_pos
+        } else {
+            0
+        };
+        
+        let search_str = &line[search_start..];
+        
+        // Find parentheses in the portion after the relevant =
+        let start = search_str.find('(').ok_or_else(|| ParseError::Parse {
             line: self.current_line,
             message: format!("Expected '(' in: {}", line),
         })?;
         
-        let end = line.find(')').ok_or_else(|| ParseError::Parse {
+        let end = search_str.find(')').ok_or_else(|| ParseError::Parse {
             line: self.current_line,
             message: format!("Expected ')' in: {}", line),
         })?;
         
-        let inner = &line[start + 1..end];
+        let inner = &search_str[start + 1..end];
         let parts: Vec<&str> = inner.split(',').collect();
         
         if parts.len() != 3 {
