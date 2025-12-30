@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/bif_math",
     "crates/bif_core",
+    "crates/bif_renderer",
     "crates/bif_viewport",
     "crates/bif_viewer",
 ]

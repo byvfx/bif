@@ -1,0 +1,13 @@
+[package]
+name = "bif_renderer"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "CPU path tracing renderer for BIF"
+
+[dependencies]
+bif_math = { path = "../bif_math" }
+glam.workspace = true
+rand = "0.8"
+rayon = "1.10"
