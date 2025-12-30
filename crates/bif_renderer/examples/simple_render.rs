@@ -1,6 +1,6 @@
 //! Simple path tracer example.
 //!
-//! Renders a basic scene with spheres and saves to PPM format.
+//! Renders the classic "Ray Tracing in One Weekend" scene.
 
 use bif_renderer::{
     Camera, BvhNode, Sphere, Hittable,
@@ -8,8 +8,6 @@ use bif_renderer::{
     RenderConfig, render, color_to_rgba,
     Color, Vec3,
 };
-use std::fs::File;
-use std::io::{BufWriter, Write};
 
 fn main() {
     println!("BIF Path Tracer - Simple Example");
@@ -20,23 +18,23 @@ fn main() {
     let world = build_scene();
     println!("Scene built in {:?}", start.elapsed());
     
-    // Set up camera
+    // Set up camera - classic RTIOW view
     let mut camera = Camera::new()
         .with_resolution(800, 450)
-        .with_quality(50, 10)
+        .with_quality(100, 50)
         .with_position(
             Vec3::new(13.0, 2.0, 3.0),  // look_from
             Vec3::new(0.0, 0.0, 0.0),   // look_at
             Vec3::new(0.0, 1.0, 0.0),   // vup
         )
-        .with_lens(20.0, 0.6, 10.0);
+        .with_lens(20.0, 0.0, 10.0);  // No DOF blur
     camera.initialize();
     
     // Render configuration
     let config = RenderConfig {
-        samples_per_pixel: 50,
-        max_depth: 10,
-        background: Color::new(0.5, 0.7, 1.0),
+        samples_per_pixel: 100,
+        max_depth: 50,
+        background: Color::new(0.7, 0.8, 1.0),
         use_sky_gradient: true,
     };
     
@@ -50,9 +48,9 @@ fn main() {
     
     println!("Rendered in {:?}", render_time);
     
-    // Save as PPM
-    let filename = "output.ppm";
-    save_ppm(&image, filename).expect("Failed to save image");
+    // Save as PNG
+    let filename = "output.png";
+    save_png(&image, filename).expect("Failed to save image");
     println!("Saved to {}", filename);
 }
 
@@ -89,15 +87,18 @@ fn build_scene() -> BvhNode {
     use rand::Rng;
     let mut rng = rand::thread_rng();
     
-    for a in -5..5 {
-        for b in -5..5 {
+    for a in -11..11 {
+        for b in -11..11 {
             let center = Vec3::new(
                 a as f32 + 0.9 * rng.gen::<f32>(),
                 0.2,
                 b as f32 + 0.9 * rng.gen::<f32>(),
             );
             
-            if (center - Vec3::new(4.0, 0.2, 0.0)).length() > 0.9 {
+            // Skip if too close to main spheres
+            if (center - Vec3::new(4.0, 0.2, 0.0)).length() > 0.9
+                && (center - Vec3::new(0.0, 0.2, 0.0)).length() > 0.9
+                && (center - Vec3::new(-4.0, 0.2, 0.0)).length() > 0.9 {
                 let choose_mat: f32 = rng.gen();
                 
                 if choose_mat < 0.8 {
@@ -129,21 +130,16 @@ fn build_scene() -> BvhNode {
     BvhNode::new(objects)
 }
 
-fn save_ppm(image: &bif_renderer::ImageBuffer, filename: &str) -> std::io::Result<()> {
-    let file = File::create(filename)?;
-    let mut writer = BufWriter::new(file);
+fn save_png(image_buf: &bif_renderer::ImageBuffer, filename: &str) -> Result<(), image::ImageError> {
+    let mut img = image::RgbImage::new(image_buf.width, image_buf.height);
     
-    writeln!(writer, "P3")?;
-    writeln!(writer, "{} {}", image.width, image.height)?;
-    writeln!(writer, "255")?;
-    
-    for y in 0..image.height {
-        for x in 0..image.width {
-            let color = image.get(x, y);
+    for y in 0..image_buf.height {
+        for x in 0..image_buf.width {
+            let color = image_buf.get(x, y);
             let rgba = color_to_rgba(color);
-            writeln!(writer, "{} {} {}", rgba[0], rgba[1], rgba[2])?;
+            img.put_pixel(x, y, image::Rgb([rgba[0], rgba[1], rgba[2]]));
         }
     }
     
-    Ok(())
+    img.save(filename)
 }
