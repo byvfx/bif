@@ -187,7 +187,9 @@ name = "bif_core"
 version = "0.1.0"
 dependencies = [
  "bif_math",
+ "env_logger",
  "glam",
+ "log",
  "serde",
  "thiserror 1.0.69",
 ]

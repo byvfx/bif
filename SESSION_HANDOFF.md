@@ -1,17 +1,17 @@
-# Session Handoff - December 27, 2025
+# Session Handoff - December 30, 2025
 
-**Last Updated:** End of Milestones 7-8  
-**Next Session Starts:** Milestone 9 (USD Import)  
+**Last Updated:** End of Milestone 9  
+**Next Session Starts:** Milestone 10 (CPU Path Tracer)  
 **Project:** BIF - VFX Scene Assembler & Renderer
 
 ---
 
 ## Quick Status
 
-✅ **Milestones Complete:** 8/10 (80%)  
-🎯 **Current State:** egui UI + 100 GPU-instanced Lucy models at 60 FPS  
-📦 **Tests Passing:** 26/26  
-🚀 **Next Goal:** USD import (USDA parser → scene graph)
+✅ **Milestones Complete:** 9/10 (90%)  
+🎯 **Current State:** USDA import working, Lucy model renders with smooth shading  
+📦 **Tests Passing:** 26/26 + USD tests  
+🚀 **Next Goal:** CPU path tracer (port Go raytracer to Rust)
 
 ---
 
@@ -30,7 +30,7 @@
 
 **Architecture Decision:** Pivoting milestone order to validate USD compatibility early:
 - ~~Milestone 8: Qt Integration~~ → Deferred to Phase 2
-- **Milestone 9: USD Import** (NEW) - Read USDA files, load meshes & instances
+- ~~Milestone 9: USD Import~~ → ✅ Complete (USDA parser, mesh loading, viewport integration)
 - **Milestone 10: CPU Path Tracer** - Port Go raytracer for production rendering
 
 ---
@@ -276,6 +276,41 @@ pub struct InstanceData {
 
 ---
 
+### ✅ Milestone 9: USD Import
+
+**Location:**
+- `crates/bif_core/src/usd/` - USDA parser module
+- `crates/bif_core/src/mesh.rs` - Mesh data with USD loading
+- `crates/bif_core/src/scene.rs` - Scene graph structure
+
+**USDA Parser:**
+
+- **Pure Rust:** No C++ USD dependencies
+- **Supported Types:** UsdGeomMesh, UsdGeomPointInstancer, Xform
+- **Mesh Loading:** positions, normals (optional), faceVertexCounts, faceVertexIndices
+- **Triangulation:** Converts N-gon faces to triangles via fan triangulation
+
+**CLI Integration:**
+
+```bash
+cargo run -p bif_viewer -- --usda assets/lucy_low.usda
+```
+
+**Viewport Changes:**
+
+- `new_with_scene()` - Accept pre-loaded mesh data
+- `FrontFace::Cw` - Fixed winding order for Houdini/USD compatibility
+- Gnomon axis indicator in corner
+
+**Documentation:**
+
+- `HOUDINI_EXPORT.md` - Best practices for Houdini USD export
+- Key insight: Use **point normals**, not vertex normals
+
+**Stats:** ~1,500 LOC, ~4 hours, 15+ tests
+
+---
+
 ## Crate Architecture
 
 ```
@@ -358,11 +393,11 @@ opt-level = 1  # Faster dev builds with some optimization
 
 | Metric | Value |
 |--------|-------|
-| **Total LOC** | ~2,100 |
-| **Tests Passing** | 26/26 ✅ |
-| **Commits** | 25+ |
-| **Time Invested** | ~16.5 hours |
-| **Milestones Complete** | 8/10 (80%) |
+| **Total LOC** | ~3,600 |
+| **Tests Passing** | 40+ ✅ |
+| **Commits** | 30+ |
+| **Time Invested** | ~20.5 hours |
+| **Milestones Complete** | 9/10 (90%) |
 | **Build Time (dev)** | ~5s |
 | **Build Time (release)** | ~2m |
 | **Runtime FPS** | 60+ (VSync) |
@@ -374,71 +409,60 @@ opt-level = 1  # Faster dev builds with some optimization
 
 ---
 
-## Next Session: Milestone 9
+## Next Session: Milestone 10
 
-### 🎯 USD Import (Replaces USD Export)
+### 🎯 CPU Path Tracer Port
 
-**Rationale:** Validate USD compatibility by *importing* production scene files before building Qt UI. This proves the architecture early.
+**Rationale:** Port the proven Go raytracer to Rust for production-quality renders. This enables the dual-renderer architecture (GPU viewport for preview + CPU path tracer for final).
 
 **Implementation Plan:**
 
-1. **Research USD Options**
-   - Option A: `usd-rs` crate (if exists)
-   - Option B: Custom USDA (text) parser (simpler, no C++ deps)
-   - Option C: USD C++ bindings via cxx
+1. **Create `bif_renderer` Crate**
+   - New crate in workspace for CPU rendering
+   - Separate from viewport (different purpose)
 
-2. **Start with USDA Parser**
-   - Parse text USD format (easier than binary .usdc)
-   - Focus on essential prims: UsdGeomMesh, UsdGeomPointInstancer
-   - Load xformOps (translate, rotate, scale)
+2. **Port Core Types from Go**
+   - `Hittable` trait (sphere, triangle, mesh)
+   - `Material` trait (Lambert, Metal, Dielectric, Emissive)
+   - `BVH` acceleration structure for ray-mesh intersection
 
-3. **Proof of Concept**
-   - Create test.usda with 1 mesh prototype + 100 instances
-   - Parse → BIF MeshData
-   - Parse → instance transforms
-   - Render in viewport
+3. **Port Rendering Pipeline**
+   - Ray casting and path tracing
+   - Multi-threaded bucket renderer (rayon)
+   - Color accumulation and tone mapping
+   - HDRI environment loading (optional)
 
-4. **Validation**
-   - Compare scene in BIF vs usdview
-   - Instance count matches
-   - Transforms match visually
+4. **Integration**
+   - "Render" button in egui UI
+   - Progress bar during render
+   - Display result in viewport or save to file
 
 **Files to Create:**
 
-- `crates/bif_core/src/usd_parser.rs` - USDA text parser
-- `crates/bif_core/src/scene.rs` - Scene graph structure
-- Test USD files in `assets/test_scenes/`
+- `crates/bif_renderer/Cargo.toml`
+- `crates/bif_renderer/src/lib.rs`
+- `crates/bif_renderer/src/ray.rs` - Ray type (or reuse bif_math)
+- `crates/bif_renderer/src/hittable.rs` - Hittable trait and implementations
+- `crates/bif_renderer/src/material.rs` - Material trait and types
+- `crates/bif_renderer/src/bvh.rs` - Bounding volume hierarchy
+- `crates/bif_renderer/src/renderer.rs` - Path tracer core
 
-**Files to Modify:**
+**Reference:** `legacy/go-raytracing/rt/` - Proven Go implementation
 
-- `crates/bif_viewer/src/main.rs` - Load USD instead of hardcoded OBJ
-- `crates/bif_viewport/src/lib.rs` - Accept scene data from USD
-
-**Estimated Time:** 4-6 hours (depends on parsing complexity)
+**Estimated Time:** 6-8 hours (depends on parsing complexity)
 
 ---
 
-## After USD: Milestone 10
+## After Path Tracer: Phase 2
 
-### CPU Path Tracer Port
+### Qt Integration & Advanced Features
 
-Port the proven Go raytracer to Rust:
+After the CPU path tracer is working:
 
-1. **Create `bif_renderer` crate**
-2. **Port Core Types:**
-   - Hittable trait (sphere, triangle, mesh)
-   - Material trait (Lambert, Metal, Dielectric, Emissive)
-   - BVH acceleration structure
-3. **Port Rendering:**
-   - Ray casting and shading
-   - Multi-threaded bucket renderer
-   - HDRI environment loading
-4. **Integration:**
-   - "Render" button in egui UI
-   - Progress bar during render
-   - Display result in viewport
-
-**Goal:** Prove dual rendering architecture (GPU viewport + CPU path tracer).
+1. **Qt 6 UI** - Production-grade interface with docking
+2. **USD References** - `references = @path@</prim>` for asset reuse
+3. **Materials** - UsdShade support
+4. **Layers** - Non-destructive scene composition
 
 ---
 
@@ -449,13 +473,15 @@ Port the proven Go raytracer to Rust:
 1. **This file** (`SESSION_HANDOFF.md`) - Current status
 2. **`CLAUDE.md`** - Your custom AI instructions
 3. **`ARCHITECTURE.md`** - System design and principles
-4. **`devlog/DEVLOG_2025-12-27_milestone7_8.md`** - Latest session log
+4. **`devlog/DEVLOG_2025-12-30_milestone9.md`** - Latest session log
+5. **`HOUDINI_EXPORT.md`** - USD export best practices
 
 ### Reference (Can Use #codebase)
 
 - `crates/bif_math/src/camera.rs` - Complete camera implementation
 - `crates/bif_viewport/src/lib.rs` - Renderer with instancing
-- `legacy/go-raytracing/rt/` - Reference for USD and raytracer port
+- `crates/bif_core/src/usd/` - USDA parser implementation
+- `legacy/go-raytracing/rt/` - Reference for path tracer port
 
 ### Don't Need to Read
 
@@ -532,16 +558,29 @@ None currently! Everything working as expected. 🎉
 ## Session Start Prompt Template
 
 ```
-I'm continuing work on BIF (VFX renderer in Rust). 
+I'm continuing work on BIF (VFX renderer in Rust).
 
 #file:SESSION_HANDOFF.md
 #file:CLAUDE.md
+#file:devlog/DEVLOG_2025-12-30_milestone9.md
 #codebase
 
-Status: Just completed Milestone 3 (triangle + camera rendering).
+Status: Just completed Milestone 9:
 
-Ready to start Milestone 4: Camera Controls. 
-Let's add mouse orbit and WASD keyboard movement to make the viewport interactive.
+✅ USDA parser (pure Rust, no C++ deps)
+✅ UsdGeomMesh loading with positions, normals, indices
+✅ CLI --usda argument for loading USD files
+✅ Fixed winding order (FrontFace::Cw) for Houdini compatibility
+✅ Gnomon axis indicator in viewport corner
+✅ Lucy model renders correctly with smooth shading
+✅ HOUDINI_EXPORT.md documentation
+
+Current state: USDA import working, 100 GPU-instanced Lucy models at 60 FPS
+
+Ready to start Milestone 10: CPU Path Tracer (6-8 hours estimated)
+Goal: Port Go raytracer to Rust - Hittable trait, Materials, BVH, multi-threaded bucket renderer
+
+Let's begin by creating the bif_renderer crate and porting the core ray types.
 ```
 
 ---
@@ -559,7 +598,7 @@ Let's add mouse orbit and WASD keyboard movement to make the viewport interactiv
 
 ---
 
-**Last Commit:** `Rename bif_render to bif_viewport for clarity`  
+**Last Commit:** `Fix winding order for USD/Houdini compatibility`  
 **Branch:** `main`  
 **Build Status:** ✅ Successful  
 **Test Status:** ✅ All passing
