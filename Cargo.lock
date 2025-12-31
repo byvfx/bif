@@ -221,6 +221,7 @@ dependencies = [
  "bif_math",
  "glam",
  "image",
+ "log",
  "rand",
  "rayon",
 ]
