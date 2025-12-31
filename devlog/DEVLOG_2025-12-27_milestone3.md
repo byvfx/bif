@@ -8,6 +8,7 @@
 Implemented basic 3D rendering with a triangle, WGSL shaders, and a camera system with view-projection matrices. The triangle now renders through a proper perspective camera pipeline.
 
 ## Objectives
+
 - [x] Create WGSL shader module with vertex and fragment stages
 - [x] Implement Camera struct with view and projection matrices
 - [x] Set up uniform buffer for camera data
@@ -21,6 +22,7 @@ Implemented basic 3D rendering with a triangle, WGSL shaders, and a camera syste
 **File:** `crates/bif_render/src/shaders/basic.wgsl`
 
 Created a complete shader with:
+
 - **Camera Uniform Binding:**
   ```wgsl
   struct CameraUniform {
@@ -55,12 +57,14 @@ pub struct Camera {
 ```
 
 **Methods:**
+
 - `view_matrix()` - Right-handed look-at matrix using `Mat4::look_at_rh()`
 - `projection_matrix()` - Right-handed perspective using `Mat4::perspective_rh()`
 - `view_projection_matrix()` - Combined matrix (projection × view)
 - `set_aspect()` - Updates aspect ratio on window resize
 
 **Defaults:**
+
 - Position: (0, 0, 3)
 - Target: (0, 0, 0)
 - Up: (0, 1, 0)
@@ -82,6 +86,7 @@ struct CameraUniform {
 ```
 
 **Key Implementation Details:**
+
 - Used `bytemuck` traits for zero-copy GPU upload
 - Created bind group layout matching shader `@group(0) @binding(0)`
 - Uniform buffer has `UNIFORM | COPY_DST` usage flags
@@ -90,6 +95,7 @@ struct CameraUniform {
 
 ### 4. Render Pipeline Updates
 Modified pipeline to include:
+
 - Bind group layout for camera uniform at group 0
 - Automatic aspect ratio update on window resize
 - Proper matrix upload to GPU before rendering
@@ -106,23 +112,27 @@ const VERTICES: &[Vertex] = &[
 ## Learnings
 
 ### 1. Uniform Buffer Workflow
+
 - **COPY_DST flag is mandatory** for `write_buffer()` operations
 - Bind group layouts must **exactly match** shader declarations
 - Use `Mat4::to_cols_array_2d()` for WGSL-compatible matrix format
 - `bytemuck::Pod` trait enables safe zero-copy casting
 
 ### 2. Camera Mathematics
+
 - Right-handed coordinate system (RH) is standard for wgpu
 - Projection matrix encodes perspective distortion
 - View matrix transforms world to camera space
 - **Order matters:** `projection × view × position`, not `view × projection`
 
 ### 3. Window Resize Handling
+
 - Must update surface configuration **AND** camera aspect ratio
 - Uniform buffer needs re-upload after aspect change
 - Surface can be lost during resize (handle `SurfaceError::Lost`)
 
 ### 4. Shader Integration
+
 - `@group(0) @binding(0)` maps to bind group index 0
 - Vertex attributes use `@location(N)` for indexing
 - `@builtin(position)` is clip-space position, not world position
@@ -144,6 +154,7 @@ const VERTICES: &[Vertex] = &[
 **Motivation:** Clarify distinction between real-time GPU viewport and future CPU path tracer
 
 **Changes Made:**
+
 - Renamed directory: `crates/bif_render` → `crates/bif_viewport`
 - Updated package name in `Cargo.toml`
 - Updated workspace members in root `Cargo.toml`
@@ -152,12 +163,14 @@ const VERTICES: &[Vertex] = &[
 - Verified build succeeds
 
 **Architecture Clarification:**
+
 - **`bif_viewport`** = Real-time GPU preview (wgpu, Vulkan/DX12/Metal)
 - **`bif_renderer`** = Future CPU path tracer (production quality)
 
 This matches industry tools like Maya/Houdini where viewport ≠ final render.
 
 ## Statistics
+
 - **Lines Added:** ~200 LOC
 - **Files Modified:** 5
 - **Tests Added:** 4 (Camera tests)
@@ -167,12 +180,14 @@ This matches industry tools like Maya/Houdini where viewport ≠ final render.
 
 ## Visual Result
 ✅ **Triangle renders successfully** with:
+
 - Dark blue background (0.1, 0.2, 0.3)
 - RGB color gradient (red → green → blue)
 - Perspective projection from camera at (0, 0, 3)
 - Proper aspect ratio handling on resize
 
 ## Next Steps (Milestone 4 Ideas)
+
 1. **Camera Controls:**
    - Mouse orbit (drag to rotate around target)
    - WASD keyboard movement
