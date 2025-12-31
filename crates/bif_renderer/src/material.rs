@@ -35,6 +35,7 @@ pub struct MaterialProperties {
 }
 
 /// Lambertian (diffuse) material.
+#[derive(Clone)]
 pub struct Lambertian {
     albedo: Color,
 }

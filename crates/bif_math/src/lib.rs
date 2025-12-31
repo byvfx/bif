@@ -14,6 +14,9 @@ pub use aabb::Aabb;
 mod camera;
 pub use camera::Camera;
 
+mod transform;
+pub use transform::Mat4Ext;
+
 #[cfg(test)]
 mod tests {
     use super::*;

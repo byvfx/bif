@@ -14,6 +14,7 @@ mod camera;
 mod bvh;
 mod renderer;
 mod bucket;
+mod instanced_geometry;
 
 pub use ray::Ray;
 pub use hittable::{HitRecord, Hittable, HittableList};
@@ -24,6 +25,7 @@ pub use camera::Camera;
 pub use bvh::BvhNode;
 pub use renderer::{RenderConfig, ImageBuffer, render, render_pixel, ray_color, color_to_rgba};
 pub use bucket::{Bucket, BucketResult, generate_buckets, render_bucket, DEFAULT_BUCKET_SIZE};
+pub use instanced_geometry::InstancedGeometry;
 
 /// Re-export Vec3 and common math types from bif_math
 pub use bif_math::{Vec3, Aabb, Interval};
