@@ -9,12 +9,14 @@ repository.workspace = true
 [dependencies]
 bif_math = { path = "../bif_math" }
 bif_core = { path = "../bif_core" }
+bif_renderer = { path = "../bif_renderer" }
 wgpu = { workspace = true }
 winit = { workspace = true }
 bytemuck = { workspace = true }
 pollster = { workspace = true }
 log = { workspace = true }
 anyhow = { workspace = true }
+rayon = { workspace = true }
 tobj = "4.0"
 
 # UI

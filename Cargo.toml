@@ -20,6 +20,9 @@ repository = "https://github.com/byvfx/bif"
 glam = "0.29"
 bytemuck = { version = "1.14", features = ["derive"] }
 
+# Parallel processing
+rayon = "1.10"
+
 # Rendering - using older versions compatible with Rust 1.86
 wgpu = "22.1"
 pollster = "0.3"
