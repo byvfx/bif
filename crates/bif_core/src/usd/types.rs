@@ -85,6 +85,9 @@ pub struct UsdMesh {
     
     /// Local transform
     pub transform: Mat4,
+    
+    /// Whether the mesh uses left-handed winding (CW instead of CCW)
+    pub left_handed: bool,
 }
 
 impl UsdMesh {
@@ -92,6 +95,7 @@ impl UsdMesh {
     ///
     /// USD meshes can have n-gons (faces with more than 3 vertices).
     /// This method converts them to triangles using fan triangulation.
+    /// If the mesh is left-handed, indices are reversed to produce CCW winding.
     pub fn triangulate(&self) -> Vec<u32> {
         let mut indices = Vec::new();
         let mut vertex_offset = 0usize;
@@ -109,9 +113,17 @@ impl UsdMesh {
                 let i0 = self.face_vertex_indices[vertex_offset] as u32;
                 let i1 = self.face_vertex_indices[vertex_offset + i] as u32;
                 let i2 = self.face_vertex_indices[vertex_offset + i + 1] as u32;
-                indices.push(i0);
-                indices.push(i1);
-                indices.push(i2);
+                
+                if self.left_handed {
+                    // Reverse winding order: swap i1 and i2
+                    indices.push(i0);
+                    indices.push(i2);
+                    indices.push(i1);
+                } else {
+                    indices.push(i0);
+                    indices.push(i1);
+                    indices.push(i2);
+                }
             }
             
             vertex_offset += count;

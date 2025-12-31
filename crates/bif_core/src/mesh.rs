@@ -122,8 +122,9 @@ impl Mesh {
         
         if should_compute {
             if self.normals.is_some() {
-                log::warn!(
-                    "Normals array length ({}) doesn't match vertex count ({}), recomputing",
+                // Only log at debug level - this is expected for face-varying normals from USD
+                log::debug!(
+                    "Normals array length ({}) doesn't match vertex count ({}), computing smooth normals",
                     self.normals.as_ref().unwrap().len(),
                     self.positions.len()
                 );

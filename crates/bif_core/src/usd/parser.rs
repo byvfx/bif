@@ -625,6 +625,15 @@ impl UsdaParser {
                 mesh.normals = Some(self.parse_vec3_array(trimmed)?);
                 continue;
             }
+            
+            // Parse orientation (winding order)
+            if trimmed.contains("orientation") {
+                if trimmed.contains("\"leftHanded\"") {
+                    mesh.left_handed = true;
+                    log::debug!("Mesh {} uses left-handed winding", mesh.name);
+                }
+                continue;
+            }
         }
         
         mesh.transform = compose_xform_ops(&xform_ops);

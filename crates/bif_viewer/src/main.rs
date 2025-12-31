@@ -101,26 +101,26 @@ impl ApplicationHandler for App {
                     .expect("Failed to create window"),
             );
             
-            // Initialize renderer based on CLI args
-            let renderer = if let Some(ref usda_path) = self.usda_path {
-                log::info!("Loading USDA scene: {}", usda_path);
-                match bif_core::load_usda(usda_path) {
-                    Ok(scene) => {
-                        log::info!("Scene loaded: {} prototypes, {} instances", 
-                                   scene.prototype_count(), scene.instance_count());
-                        pollster::block_on(Renderer::new_with_scene(window.clone(), &scene))
-                            .expect("Failed to initialize renderer with scene")
-                    }
-                    Err(e) => {
-                        log::error!("Failed to load USDA file: {}", e);
-                        log::info!("Falling back to default OBJ loader");
-                        pollster::block_on(Renderer::new(window.clone()))
-                            .expect("Failed to initialize renderer")
-                    }
+            // Initialize renderer - default to USDA scene if no path specified
+            let usda_path = self.usda_path.clone().unwrap_or_else(|| {
+                // Default to lucy_100.usda for instanced rendering demo
+                "assets/lucy_100.usda".to_string()
+            });
+            
+            log::info!("Loading USDA scene: {}", usda_path);
+            let renderer = match bif_core::load_usda(&usda_path) {
+                Ok(scene) => {
+                    log::info!("Scene loaded: {} prototypes, {} instances", 
+                               scene.prototype_count(), scene.instance_count());
+                    pollster::block_on(Renderer::new_with_scene(window.clone(), &scene))
+                        .expect("Failed to initialize renderer with scene")
                 }
-            } else {
-                pollster::block_on(Renderer::new(window.clone()))
-                    .expect("Failed to initialize renderer")
+                Err(e) => {
+                    log::error!("Failed to load USDA file '{}': {}", usda_path, e);
+                    log::info!("Falling back to default OBJ loader");
+                    pollster::block_on(Renderer::new(window.clone()))
+                        .expect("Failed to initialize renderer")
+                }
             };
             
             self.window = Some(window);
@@ -334,6 +334,10 @@ impl ApplicationHandler for App {
 fn main() -> Result<()> {
     env_logger::Builder::from_default_env()
         .filter_level(log::LevelFilter::Info)
+        // Suppress noisy wgpu logs
+        .filter_module("wgpu_core", log::LevelFilter::Warn)
+        .filter_module("wgpu_hal", log::LevelFilter::Warn)
+        .filter_module("naga", log::LevelFilter::Warn)
         .init();
     
     let opts = parse_args();

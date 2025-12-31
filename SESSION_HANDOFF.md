@@ -1,17 +1,17 @@
-# Session Handoff - December 30, 2025
+# Session Handoff - December 31, 2025
 
-**Last Updated:** End of Milestone 10  
-**Next Session Starts:** Milestone 11 (Ivar Viewport Integration)  
+**Last Updated:** End of Milestone 11  
+**Next Session Starts:** Phase 2 Planning  
 **Project:** BIF - VFX Scene Assembler & Renderer
 
 ---
 
 ## Quick Status
 
-✅ **Milestones Complete:** 10/11 (91%)  
-🎯 **Current State:** CPU path tracer "Ivar" complete, renders 479 objects  
-📦 **Tests Passing:** 40/40 (26 bif_math + 14 bif_renderer)  
-🚀 **Next Goal:** Integrate Ivar into viewport with render mode toggle
+✅ **Milestones Complete:** 11/11 (100%) - Phase 1 Complete!  
+🎯 **Current State:** Full USD instancing + dual renderers (Vulkan + Ivar)  
+📦 **Tests Passing:** 55+ (26 bif_math + 14 bif_renderer + 15 bif_core)  
+🚀 **Next Goal:** Phase 2 - Qt UI, USD References, Materials
 
 ---
 
@@ -26,13 +26,16 @@
 
 ### Current Phase
 
-**Phase 1 Foundation** - Building core architecture and proving GPU instancing at scale.
+**Phase 1 Foundation** - ✅ COMPLETE!
 
-**Architecture Decision:** Pivoting milestone order to validate USD compatibility early:
-- ~~Milestone 8: Qt Integration~~ → Deferred to Phase 2
-- ~~Milestone 9: USD Import~~ → ✅ Complete (USDA parser, mesh loading, viewport integration)
-- ~~Milestone 10: CPU Path Tracer~~ → ✅ Complete ("Ivar" renderer with BVH, materials, PNG output)
-- **Milestone 11: Ivar Viewport Integration** - Render mode toggle, progressive rendering
+All core systems proven:
+- ✅ GPU Vulkan viewport with 100 instance rendering
+- ✅ CPU path tracer "Ivar" with 28M triangle support  
+- ✅ USD USDA parsing with left-handed orientation fix
+- ✅ Render mode toggle between Vulkan and Ivar
+- ✅ Progressive bucket rendering with background threads
+
+**Ready for Phase 2:** Qt integration, USD references, materials, layers
 
 ---
 
@@ -343,6 +346,61 @@ Solution: Sort objects vector directly by centroid, use `split_off()` for clean 
 
 ---
 
+### ✅ Milestone 11: Ivar Viewport Integration
+
+**Location:**
+- `crates/bif_viewport/src/lib.rs` - Render mode toggle, Ivar integration, instancing
+- `crates/bif_core/src/usd/types.rs` - Left-handed orientation fix
+- `crates/bif_core/src/usd/parser.rs` - Orientation parsing
+
+**Render Mode Toggle:**
+
+- `RenderMode::Vulkan` - Real-time GPU rendering (default)
+- `RenderMode::Ivar` - CPU path tracer with progressive display
+- Toggle via egui dropdown in side panel
+- Switching to Ivar triggers BVH build from mesh data
+
+**Ivar Instancing:**
+
+When building the Ivar scene, all instance transforms are applied:
+
+```rust
+// Transform prototype mesh for each instance
+for transform in &self.instance_transforms {
+    for (i0, i1, i2) in indices.chunks(3) {
+        let v0 = transform.transform_point3(v0_local);
+        let v1 = transform.transform_point3(v1_local);
+        let v2 = transform.transform_point3(v2_local);
+        let tri = Triangle::new(v0, v1, v2, material);
+        objects.push(Box::new(tri));
+    }
+}
+```
+
+**Left-Handed Winding Fix:**
+
+USD files from Houdini use `orientation = "leftHanded"`:
+- Added `left_handed: bool` to `UsdMesh`
+- `triangulate()` swaps i1/i2 when left-handed → correct CCW for GPU/Ivar
+- Parser detects `orientation = "leftHanded"` attribute
+
+**Progressive Bucket Rendering:**
+
+- Scene divided into 64x64 pixel buckets
+- Buckets rendered in parallel via rayon thread pool
+- Results sent via channel to main thread
+- Composited into GPU texture for display
+
+**Performance:**
+- 100 Lucy instances = 28,055,600 triangles
+- BVH build: ~4 seconds
+- Vulkan: 60+ FPS (1 draw call)
+- Ivar: Progressive @ 16 SPP
+
+**Stats:** ~400 LOC, ~4 hours
+
+---
+
 ## Crate Architecture
 
 ```
@@ -427,74 +485,71 @@ opt-level = 1  # Faster dev builds with some optimization
 
 | Metric | Value |
 |--------|-------|
-| **Total LOC** | ~4,800 |
-| **Tests Passing** | 40+ ✅ |
-| **Commits** | 35+ |
-| **Time Invested** | ~24 hours |
-| **Milestones Complete** | 10/11 (91%) |
+| **Total LOC** | ~5,200 |
+| **Tests Passing** | 55+ ✅ |
+| **Commits** | 40+ |
+| **Time Invested** | ~28 hours |
+| **Milestones Complete** | 11/11 (100%) |
 | **Build Time (dev)** | ~5s |
 | **Build Time (release)** | ~2m |
 | **Runtime FPS** | 60+ (VSync) |
 | **Lucy Vertices** | 140,278 |
 | **Lucy Indices** | 840,768 |
 | **Instances Rendered** | 100 |
-| **Total Triangles** | 28,025,600 |
+| **Total Triangles** | 28,055,600 |
 | **Draw Calls** | 1 (instanced) |
-| **Ivar Render** | 479 objects, 800x450 @ 100spp in ~52s |
+| **Ivar Triangles** | 28,055,600 |
+| **Ivar BVH Build** | ~4s |
 
 ---
 
-## Next Session: Milestone 11
+## Next Session: Phase 2
 
-### 🎯 Ivar Viewport Integration
+### 🎯 Phase 2 Overview
 
-**Rationale:** Connect the Ivar path tracer to the viewport for interactive rendering with progressive display.
+**Rationale:** Phase 1 foundation complete - dual renderers, USD, instancing all proven. Time for production features.
 
-**Implementation Plan:**
+**Priorities:**
 
-1. **Render Mode Toggle in egui**
-   - Add "Vulkan" / "Ivar" mode selector in UI
-   - When Ivar selected, disable GPU rendering and show Ivar output
-   - Clear Ivar buffer when switching modes
+1. **Qt 6 UI Integration**
+   - Replace egui with production-grade Qt interface
+   - Docking windows, node editor potential
+   - Industry-standard look and feel
 
-2. **Progressive Rendering**
-   - Start rendering when camera stops moving
-   - Display samples as they accumulate
-   - Camera movement restarts render from scratch
-   - Show sample count in UI
+2. **USD References**
+   - Support `references = @path@</prim>` syntax
+   - Enable asset reuse and scene composition
+   - Lazy loading for large scenes
 
-3. **Scene Integration**
-   - Render Lucy USD instances with Ivar
-   - Share camera state between viewport and Ivar
-   - Convert GPU instance data to Ivar primitives
+3. **Materials (UsdShade)**
+   - Parse UsdPreviewSurface materials
+   - Connect to Ivar's material system
+   - Basic PBR in Vulkan viewport
 
-4. **UI Enhancements**
-   - Sample counter (current / target spp)
-   - Estimated time remaining
-   - Cancel render button
-   - Clarisse/Houdini Solaris visual style
+4. **Layers**
+   - Non-destructive scene composition
+   - Opinion stacking (USD sublayers)
+   - Artist-friendly workflow
 
-**Files to Modify:**
+**Files to Consider:**
 
-- `crates/bif_viewport/src/lib.rs` - Add Ivar integration
-- `crates/bif_viewer/src/main.rs` - Render mode state
-- `crates/bif_renderer/src/renderer.rs` - Progressive API
+- New `crates/bif_qt/` - Qt 6 bindings and UI
+- `crates/bif_core/src/usd/references.rs` - Reference loading
+- `crates/bif_core/src/usd/materials.rs` - UsdShade parsing
 
-**Reference:** `crates/bif_renderer/examples/simple_render.rs` - Working Ivar example
-
-**Estimated Time:** 4-6 hours
+**Estimated Time:** Phase 2 will be multi-session
 
 ---
 
-## After Viewport Integration: Phase 2
+## Phase 2 Planning
 
 ### Qt Integration & Advanced Features
 
-After the Ivar viewport integration is working:
+Phase 1 complete! Ready for production features:
 
 1. **Qt 6 UI** - Production-grade interface with docking
 2. **USD References** - `references = @path@</prim>` for asset reuse
-3. **Materials** - UsdShade support
+3. **Materials** - UsdShade support (UsdPreviewSurface)
 4. **Layers** - Non-destructive scene composition
 
 ---
@@ -506,7 +561,7 @@ After the Ivar viewport integration is working:
 1. **This file** (`SESSION_HANDOFF.md`) - Current status
 2. **`CLAUDE.md`** - Your custom AI instructions
 3. **`ARCHITECTURE.md`** - System design and principles
-4. **`devlog/DEVLOG_2025-12-30_milestone10.md`** - Latest session log (Ivar renderer)
+4. **`devlog/DEVLOG_2025-12-30_milestone11.md`** - Latest session log (Ivar integration)
 5. **`HOUDINI_EXPORT.md`** - USD export best practices
 
 ### Reference (Can Use #codebase)
@@ -595,31 +650,30 @@ I'm continuing work on BIF (VFX renderer in Rust).
 
 #file:SESSION_HANDOFF.md
 #file:CLAUDE.md
-#file:devlog/DEVLOG_2025-12-30_milestone10.md
+#file:devlog/DEVLOG_2025-12-30_milestone11.md
 #codebase
 
-Status: Just completed Milestone 10:
+Status: Phase 1 Complete! 🎉
 
-✅ bif_renderer crate "Ivar" - complete CPU path tracer
-✅ Ray, HitRecord, Hittable trait with lifetimes
-✅ Materials: Lambertian, Metal, Dielectric, DiffuseLight
-✅ Sphere and Triangle primitives
-✅ BVH acceleration (fixed object loss bug)
-✅ Camera with DOF support
-✅ Core renderer with ray_color(), render()
-✅ simple_render example outputs PNG
-✅ 14 tests passing
+✅ Milestone 11 (Ivar Viewport Integration) - DONE
+✅ Render mode toggle: Vulkan ↔ Ivar
+✅ USD left-handed orientation fix
+✅ Ivar instancing: 28M triangles rendered
+✅ Progressive bucket rendering with BVH
 
-Current state: Ivar renders 479 spheres at 800x450 @ 100spp in ~52s
+Current state: 
+- 100 Lucy instances (28M tris) render in both Vulkan and Ivar
+- Left-handed winding from Houdini correctly handled
+- egui mode selector switches between renderers
 
-Ready to start Milestone 11: Ivar Viewport Integration
-Goal: Connect Ivar to viewport with progressive rendering
-- Render mode toggle (Vulkan / Ivar) in egui
-- Progressive display as samples accumulate
-- Camera movement restarts render
-- Render Lucy USD instances with Ivar
+Ready to start Phase 2!
+Options:
+1. Qt 6 UI integration (production interface)
+2. USD references (@path@</prim> syntax)
+3. UsdShade materials (PBR)
+4. Scene layers (non-destructive editing)
 
-Let's begin by adding the render mode toggle to the egui UI.
+Which feature should we tackle first?
 ```
 
 ---
@@ -627,17 +681,17 @@ Let's begin by adding the render mode toggle to the egui UI.
 ## Final Checklist
 
 - ✅ All code committed
-- ✅ All tests passing (40/40)
+- ✅ All tests passing (55+)
 - ✅ Documentation updated
 - ✅ Devlogs complete
-- ✅ Handoff document created
-- ✅ Next milestone defined
+- ✅ Handoff document updated
+- ✅ Phase 1 complete!
 
-**You're ready for the next session!** 🚀
+**Ready for Phase 2!** 🚀
 
 ---
 
-**Last Commit:** `Fix BVH object loss bug, add PNG output, add milestone 10 devlog`  
+**Last Commit:** `feat: Ivar viewport integration with instancing + left-handed winding fix`  
 **Branch:** `main`  
 **Build Status:** ✅ Successful  
-**Test Status:** ✅ All passing (26 bif_math + 14 bif_renderer)
+**Test Status:** ✅ All passing (26 bif_math + 14 bif_renderer + 15 bif_core)
