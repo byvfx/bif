@@ -1,7 +1,7 @@
 # BIF Architecture
 
-**Version:** 0.1.0  
-**Last Updated:** 2024-12-26
+**Version:** 0.1.0
+**Last Updated:** December 31, 2025 (Milestones 0-11 Complete)
 
 ## Vision
 
@@ -57,11 +57,11 @@ BIF's scene graph maps cleanly to USD but doesn't use USD C++ internally initial
 | `Instance` | `UsdGeomPointInstancer` | Instance transforms |
 | `Layer` | `SubLayer` | Non-destructive overrides |
 
-**Phased Implementation:**
+**Implementation Status:**
 
-1. Phase 1: Pure Rust scene graph (USD-compatible design)
-2. Phase 2: USD export (write .usda text files)
-3. Phase 3: USD C++ import (load .usda files)
+1. ✅ **Milestones 0-11:** Pure Rust USDA parser (import text files)
+2. 🎯 **Milestone 13:** USD C++ integration (USDC binary + references)
+3. 🔮 **Future:** Full bidirectional USD workflow with export
 
 ### 3. Dual Rendering Architecture
 
@@ -72,12 +72,12 @@ BIF's scene graph maps cleanly to USD but doesn't use USD C++ internally initial
 - Basic PBR shading
 - Interactive scene assembly
 
-**CPU Path Tracer:**
+**CPU Path Tracer ("Ivar"):**
 
 - Production quality renders
 - Physically-based lighting
-- Embree BVH acceleration
-- IBL, materials, Next Event Estimation
+- BVH acceleration (instance-aware in Milestones 0-11, Embree in Milestone 12)
+- Materials, progressive rendering
 
 ```
          Scene Graph (Rust)
@@ -91,19 +91,30 @@ GPU Viewport      CPU Path Tracer
   60 FPS            .exr/.png
 ```
 
-### 4. Embree for BVH Acceleration
+### 4. BVH Acceleration Strategy
 
-**Decision:** Use Intel Embree instead of custom BVH.
+**Milestones 0-11 (Current):** Instance-aware BVH in pure Rust
 
-**Rationale:**
+- ONE prototype BVH (280K triangles)
+- 100 transforms stored separately
+- Per-instance ray transformation: world→local→test→world
+- Build time: ~40ms (was 4000ms for naive approach)
+- Memory: ~50MB (was 5GB for duplicated geometry)
+- Trade-off: ~3x slower rendering due to linear instance search O(100)
 
-- Production-proven (Arnold, Blender Cycles, etc.)
+**Implementation:** See [instanced_geometry.rs](crates/bif_renderer/src/instanced_geometry.rs)
+
+**Milestone 12 (Next):** Intel Embree integration
+
+- Two-level BVH: O(log instances + log primitives)
 - SIMD optimized (4-8x faster than scalar)
-- Built-in motion blur support
-- Instance-aware traversal
+- Production-proven (Arnold, Cycles, etc.)
+- Motion blur support
+
+**Rationale:** Milestones 0-11 proved the architecture with pure Rust. Embree adds performance for 10K+ instances.
 
 ```rust
-// Embree handles BVH construction
+// Milestone 12: Embree handles BVH construction
 let scene = embree::Scene::new(device);
 
 // Add prototype once
@@ -114,7 +125,7 @@ for instance in instances {
     scene.add_instance(geom_id, &instance.transform);
 }
 
-scene.commit();  // Embree builds optimized BVH
+scene.commit();  // Embree builds optimized two-level BVH
 ```
 
 ### 5. egui for PoC, Qt 6 for Production
@@ -399,54 +410,69 @@ fn trace_ray(ray: Ray, scene: &Scene, depth: u32) -> Color {
 
 ## Development Roadmap
 
-### Phase 1: Core Foundation (Months 1-6)
+### Milestones 0-11: Core Foundation ✅ COMPLETE (December 2025)
 
-- Math library and scene graph
-- wgpu viewport with instanced rendering
-- CPU path tracer with Embree
-- egui UI for workflow validation
+**Completed:**
+- ✅ Math library (Vec3, Ray, AABB, Camera, Transform)
+- ✅ wgpu viewport with GPU instancing (100+ instances @ 60 FPS)
+- ✅ CPU path tracer "Ivar" with progressive rendering
+- ✅ egui UI for development workflow
+- ✅ USD USDA import (Houdini-compatible)
+- ✅ Instance-aware BVH (no UI freeze, sub-millisecond builds)
+- ✅ Background threading for scene builds
+- ✅ 60+ tests across 4 crates
 
-### Phase 2: Production Ready (Months 7-8)
+**Actual Timeline:** ~34 hours over 2 weeks (December 2025)
 
-- USD export (geometry + materials)
-- Scene assembly workflow complete
-- Decide: egui sufficient or migrate to Qt?
+**Key Learnings:** Rust ownership, wgpu pipeline, USD parsing, BVH optimization
 
-### Phase 3: Optional Qt Migration (Months 9-12)
+**See:** [MILESTONES.md](MILESTONES.md) for complete milestone details
 
-- Qt 6 integration (if egui insufficient)
-- Professional UI polish
-- Industry-standard features
+### Milestone 12: Embree Integration 🎯 NEXT
 
-### Phase 4: Advanced Features (Future)
+- Replace instance-aware BVH with Embree
+- Target: 10K+ instances @ 60 FPS
+- Estimated: 8-12 hours
 
-- GPU path tracing (wgpu compute)
-- Denoising (OIDN)
-- USD C++ import (full bidirectional)
-- MaterialX integration
-- Python scripting API
+**See:** [MILESTONES.md#milestone-12](MILESTONES.md#milestone-12-embree-integration-🎯-next)
+
+### Milestone 13: USD C++ Integration
+
+- USDC binary format support
+- USD references (@path@</prim>)
+- Full bidirectional USD workflow
+- Estimated: 15-20 hours
+
+**See:** [MILESTONES.md#milestone-13](MILESTONES.md#milestone-13-usd-c-integration-usdc-binary--references)
+
+### Future Milestones
+
+- Milestone 14: Materials (UsdPreviewSurface)
+- Milestone 15: Qt 6 UI Integration (optional)
+- Milestone 16+: Layers, Python scripting, GPU path tracing
 
 ## File Structure
 
 ```
 bif/
 ├── Cargo.toml              # Rust workspace
-├── docs/
-│   ├── ARCHITECTURE.md     # This file
-│   ├── GETTING_STARTED.md  # Implementation guide
-│   └── claude.md           # AI assistant instructions
 ├── crates/
-│   ├── bif_math/           # Vec3, Ray, AABB, transforms
-│   ├── bif_scene/          # Scene graph, instances, layers
-│   ├── bif_renderer/       # CPU path tracer
-│   ├── bif_viewport/       # GPU viewport (wgpu)
-│   ├── bif_materials/      # Material system
-│   ├── bif_io/             # glTF, image loading
-│   └── bif_app/            # Main application
-├── cpp/
-│   └── usd_bridge/         # USD C++ FFI (later)
-└── assets/                 # Test scenes, HDRIs
+│   ├── bif_math/           # Math primitives (Vec3, Ray, Aabb, Camera, Transform)
+│   ├── bif_core/           # Scene graph, USD parser, mesh data
+│   ├── bif_viewport/       # GPU viewport (wgpu + Vulkan + egui)
+│   ├── bif_renderer/       # CPU path tracer "Ivar" (progressive rendering)
+│   └── bif_viewer/         # Application entry point (winit event loop)
+├── legacy/
+│   └── go-raytracing/      # Original Go raytracer (reference)
+├── devlog/                 # Development session logs
+├── docs/archive/           # Archived documentation
+├── renders/                # Render output files
+└── assets/                 # Test scenes, meshes, HDRIs
 ```
+
+**Note:** Milestones 0-11 established the actual crate structure shown above. Future milestones may add:
+- `cpp/usd_bridge/` - USD C++ FFI (Milestone 13)
+- `cpp/embree_bridge/` - Embree FFI if needed (Milestone 12)
 
 ## Design Decisions
 
@@ -456,29 +482,50 @@ bif/
 - Better C++ FFI for USD/Embree
 - Zero-cost abstractions, no GC pauses
 
-### 2. Embree Over Custom BVH
+### 2. Instance-Aware BVH (Milestones 0-11), Then Embree (Milestone 12)
 
-- Production-proven, SIMD optimized
-- Instance-aware traversal
-- Less code to maintain
+**Decision:** Start with instance-aware BVH in pure Rust, migrate to Embree for 10K+ scalability
 
-### 3. USD-Compatible Over USD-Native
+**Rationale:**
+- Milestones 0-11: Prove architecture with pure Rust (100 instances)
+- Milestone 12: Add Embree for production scale (10K+ instances)
+- Optional feature flag: Fallback to instance-aware BVH if Embree unavailable
 
-- Start simple, validate with USD export
-- Defer USD C++ until proven necessary
-- Can always add later
+### 3. Instance-Aware BVH (Milestones 0-11 Implementation)
 
-### 4. Dual Rendering (GPU + CPU)
+**Decision:** Build ONE BVH for prototype geometry, transform rays per-instance
+
+**Rationale:**
+- 100x memory reduction vs duplicating geometry
+- 100x faster build time (40ms vs 4000ms)
+- Eliminates UI freeze on render mode switch
+- Rendering ~3x slower than two-level BVH, but acceptable for 100 instances
+- Proves architecture before committing to Embree complexity
+
+**Trade-off:** Linear instance search O(100). For 10K+ instances, Milestone 12 (Embree) needed.
+
+**Implementation:** See [instanced_geometry.rs](crates/bif_renderer/src/instanced_geometry.rs)
+
+### 4. USD-Compatible Over USD-Native
+
+- Start simple with pure Rust USDA parser (Milestones 0-11)
+- Add USD C++ for USDC + references when proven necessary (Milestone 13)
+- Can always extend later
+
+### 5. Dual Rendering (GPU + CPU)
 
 - GPU: Interactive assembly (60 FPS)
 - CPU: Production quality
 - Best of both worlds
 
-### 5. Qt 6 Over egui
+### 6. egui for Development, Qt 6 Optional
 
-- Industry standard UI framework
-- Professional docking/MDI
-- Worth complexity for long-term
+**Decision:** Start with egui (pure Rust), migrate to Qt only if needed
+
+**Rationale:**
+- egui sufficient for Milestones 0-11 workflow validation
+- Qt 6 adds complexity (C++ FFI, build system)
+- Defer Qt decision until core functionality proven
 
 ## Non-Goals
 
@@ -491,4 +538,9 @@ bif/
 
 ---
 
-**Document Status:** Living document - update as design evolves
+**Document Status:** Living document - updated for Milestones 0-11 completion
+
+**See Also:**
+- [MILESTONES.md](MILESTONES.md) - Complete milestone history and roadmap
+- [SESSION_HANDOFF.md](SESSION_HANDOFF.md) - Current status and next steps
+- [REFERENCE.md](REFERENCE.md) - Code patterns and best practices
