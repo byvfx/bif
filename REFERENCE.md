@@ -1,492 +1,600 @@
-# BIF Reference & Task Checklist
+# BIF Code Reference - Milestones 0-11 Patterns
 
-Quick reference for implementation tasks, code patterns, and performance notes.
+> Best practices and patterns learned from implementing Milestones 0-11
 
-See [GETTING_STARTED.md](GETTING_STARTED.md) for milestone-based progression.
+**Last Updated:** December 31, 2025
 
-## Crate Dependencies
+This document captures actual code patterns, solutions, and lessons from completing Milestones 0-11. For milestone history, see [MILESTONES.md](MILESTONES.md).
+
+---
+
+## Code Patterns
+
+### 1. Instance-Aware Rendering
+
+**Problem:** Rendering 100+ instances without duplicating geometry
+
+**Solution:** Per-instance transform buffer + instanced draw call
+
+**Example:**
+
+```rust
+// See: crates/bif_viewport/src/lib.rs:1200-1250
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct InstanceData {
+    pub model_matrix: [[f32; 4]; 4],
+}
+
+// Generate instances
+let instance_data: Vec<InstanceData> = self.instance_transforms
+    .iter()
+    .map(|transform| InstanceData {
+        model_matrix: transform.to_cols_array_2d(),
+    })
+    .collect();
+
+// Single draw call for all 100 instances
+render_pass.draw_indexed(0..self.index_count, 0, 0..instance_count);
+```
+
+**Key Files:**
+
+- [bif_viewport/src/lib.rs:1200-1250](crates/bif_viewport/src/lib.rs#L1200-L1250) - GPU instancing
+- [bif_viewport/src/shaders/basic.wgsl](crates/bif_viewport/src/shaders/basic.wgsl) - Shader instance handling
+
+**Performance:** 100 instances @ 60+ FPS, single draw call, 28M triangles
+
+---
+
+### 2. Background Scene Building
+
+**Problem:** 4-second UI freeze when building BVH for 28M triangles
+
+**Solution:** Background thread + non-blocking status polling
+
+**Example:**
+
+```rust
+// See: crates/bif_viewport/src/lib.rs:1651-1736
+enum BuildStatus {
+    NotStarted,
+    Building,
+    Complete { scene: IvarScene },
+    Failed(String),
+}
+
+// Spawn background thread
+let (tx, rx) = mpsc::channel();
+std::thread::spawn(move || {
+    let scene = build_ivar_scene(...);
+    tx.send(scene).unwrap();
+});
+
+// Poll without blocking
+if let Ok(scene) = self.scene_rx.try_recv() {
+    self.ivar_scene = Some(scene);
+    self.build_status = BuildStatus::Complete { scene };
+}
+```
+
+**Key Files:**
+
+- [bif_viewport/src/lib.rs:1651-1736](crates/bif_viewport/src/lib.rs#L1651-L1736) - Background threading
+- [bif_renderer/src/instanced_geometry.rs](crates/bif_renderer/src/instanced_geometry.rs) - Instance-aware BVH
+
+**Performance:** 0ms UI freeze (was 4s), ~40ms BVH build time
+
+---
+
+### 3. USD Left-Handed Orientation Fix
+
+**Problem:** Meshes from Houdini render inside-out due to winding order
+
+**Solution:** Detect `orientation = "leftHanded"` and swap triangle indices
+
+**Example:**
+
+```rust
+// See: crates/bif_core/src/usd/parser.rs:150-180
+if mesh.left_handed {
+    // Swap i1 and i2 to convert left-handed → CCW for GPU/Ivar
+    triangles.push([i0, i2, i1]);
+} else {
+    triangles.push([i0, i1, i2]);
+}
+```
+
+**Key Files:**
+
+- [bif_core/src/usd/parser.rs:150-180](crates/bif_core/src/usd/parser.rs#L150-L180) - Orientation detection
+- [bif_core/src/usd/types.rs](crates/bif_core/src/usd/types.rs) - `left_handed` field
+- [HOUDINI_EXPORT.md](HOUDINI_EXPORT.md) - Best practices guide
+
+**Rationale:** Houdini USD exports use left-handed coordinates, but both Vulkan and Ivar expect CCW winding.
+
+---
+
+### 4. egui Integration with wgpu
+
+**Problem:** egui requires specific initialization and lifetime management with wgpu
+
+**Solution:** Two-pass rendering (3D scene, then egui overlay) with `.forget_lifetime()`
+
+**Example:**
+
+```rust
+// See: crates/bif_viewport/src/lib.rs:1800-1900
+// Pass 1: 3D scene
+{
+    let mut render_pass = encoder.begin_render_pass(&RenderPassDescriptor {
+        depth_stencil_attachment: Some(...),
+        ...
+    });
+    render_pass.draw_indexed(0..index_count, 0, 0..instance_count);
+}
+
+// Pass 2: egui overlay
+{
+    let mut render_pass = encoder.begin_render_pass(&RenderPassDescriptor {
+        depth_stencil_attachment: None,  // No depth for UI
+        ...
+    }).forget_lifetime();  // Required for egui's 'static requirement
+
+    self.egui_renderer.render(&mut render_pass, &paint_jobs, &screen_descriptor);
+}
+```
+
+**Key Files:**
+
+- [bif_viewport/src/lib.rs:1800-1900](crates/bif_viewport/src/lib.rs#L1800-L1900) - egui rendering
+
+**Challenges Solved:**
+
+- egui `State::new()` requires 6 parameters, `Renderer::new()` requires 5
+- Borrow checker: Extract UI data BEFORE `egui_ctx.run()` closure
+- Lifetime issues: Use `.forget_lifetime()` on RenderPass for egui's `'static` requirement
+
+---
+
+### 5. Progressive Bucket Rendering
+
+**Problem:** Long-running Ivar renders need to show progress
+
+**Solution:** Divide image into buckets, render in parallel, composite incrementally
+
+**Example:**
+
+```rust
+// See: crates/bif_renderer/src/lib.rs:200-300
+const BUCKET_SIZE: u32 = 64;
+
+// Generate buckets
+let buckets: Vec<(u32, u32, u32, u32)> = (0..height)
+    .step_by(BUCKET_SIZE)
+    .flat_map(|y| {
+        (0..width).step_by(BUCKET_SIZE).map(move |x| {
+            (x, y,
+             (x + BUCKET_SIZE).min(width),
+             (y + BUCKET_SIZE).min(height))
+        })
+    })
+    .collect();
+
+// Render buckets in parallel
+buckets.par_iter().for_each(|(x0, y0, x1, y1)| {
+    for y in *y0..*y1 {
+        for x in *x0..*x1 {
+            let color = render_pixel(x, y, scene, camera);
+            tx.send((x, y, color)).unwrap();
+        }
+    }
+});
+```
+
+**Key Files:**
+
+- [bif_renderer/src/lib.rs:200-300](crates/bif_renderer/src/lib.rs#L200-L300) - Bucket system
+
+**Performance:** Progressive display allows UI interaction during render
+
+---
+
+### 6. Mat4 Transform Operations
+
+**Problem:** Need to transform rays and AABBs for instance-aware BVH
+
+**Solution:** Extension trait on `Mat4` with `glam` integration
+
+**Example:**
+
+```rust
+// See: crates/bif_math/src/transform.rs
+pub trait Mat4Ext {
+    fn transform_vector3(&self, v: Vec3) -> Vec3;
+    fn transform_aabb(&self, aabb: &Aabb) -> Aabb;
+}
+
+impl Mat4Ext for Mat4 {
+    fn transform_vector3(&self, v: Vec3) -> Vec3 {
+        let v4 = self.mul_vec4(v.extend(0.0));
+        Vec3::new(v4.x, v4.y, v4.z)
+    }
+
+    fn transform_aabb(&self, aabb: &Aabb) -> Aabb {
+        // Transform all 8 corners and recompute bounds
+        ...
+    }
+}
+```
+
+**Key Files:**
+
+- [bif_math/src/transform.rs](crates/bif_math/src/transform.rs) - Mat4 extensions
+
+**Tests:** 8 unit tests covering identity, translation, rotation, AABB transforms
+
+---
+
+### 7. Instance-Aware BVH Architecture
+
+**Problem:** Building 28M triangles (100 instances × 280K triangles) caused 4s freeze
+
+**Solution:** ONE BVH for prototype, transform rays per-instance
+
+**Example:**
+
+```rust
+// See: crates/bif_renderer/src/instanced_geometry.rs
+pub struct InstancedGeometry {
+    prototype_bvh: BvhNode,           // ONE BVH (280K triangles)
+    instance_transforms: Vec<Mat4>,   // 100 transforms
+}
+
+impl Hittable for InstancedGeometry {
+    fn hit(&self, ray: &Ray, ray_t: Interval) -> bool {
+        for transform in &self.instance_transforms {
+            // Transform ray: world → local
+            let inverse = transform.inverse();
+            let local_ray = Ray {
+                origin: inverse.transform_point3(ray.origin),
+                direction: inverse.transform_vector3(ray.direction),
+                ...
+            };
+
+            // Test against prototype BVH
+            if self.prototype_bvh.hit(&local_ray, ray_t) {
+                // Transform hit back: local → world
+                ...
+                return true;
+            }
+        }
+        false
+    }
+}
+```
+
+**Key Files:**
+
+- [bif_renderer/src/instanced_geometry.rs](crates/bif_renderer/src/instanced_geometry.rs) - Full implementation
+
+**Performance:**
+
+- BVH build: 4000ms → 40ms (100x faster)
+- Memory: 5GB → 50MB (100x reduction)
+- Trade-off: ~3x slower rendering due to linear instance search O(100)
+
+**Tests:** 5 unit tests (identity transform, multiple instances, correctness, rotation)
+
+---
+
+### 8. USD USDA Parser (Pure Rust)
+
+**Problem:** Need to load USD files without C++ dependencies
+
+**Solution:** Hand-written parser for USDA text format
+
+**Example:**
+
+```rust
+// See: crates/bif_core/src/usd/parser.rs
+pub fn parse_usda(path: &Path) -> Result<UsdScene> {
+    let content = fs::read_to_string(path)?;
+    let mut scene = UsdScene::default();
+
+    // Parse primitives
+    for line in content.lines() {
+        if line.contains("def Mesh") {
+            let mesh = parse_mesh(&mut lines)?;
+            scene.meshes.push(mesh);
+        }
+        if line.contains("def PointInstancer") {
+            let instancer = parse_point_instancer(&mut lines)?;
+            scene.instancers.push(instancer);
+        }
+    }
+
+    Ok(scene)
+}
+```
+
+**Supported:**
+
+- `UsdGeomMesh` - positions, normals, faceVertexCounts, faceVertexIndices
+- `UsdGeomPointInstancer` - protoIndices, positions, orientations, scales
+- `orientation = "leftHanded"` detection
+- N-gon triangulation via fan triangulation
+
+**Key Files:**
+
+- [bif_core/src/usd/parser.rs](crates/bif_core/src/usd/parser.rs) - Parser
+- [bif_core/src/usd/types.rs](crates/bif_core/src/usd/types.rs) - USD types
+
+**Tests:** 15 tests in `bif_core` covering mesh loading, instancing, orientation
+
+**Limitations:** Text format only (no USDC binary), no references yet
+
+---
+
+## Performance Targets vs Actuals
+
+| Target | Actual (Milestones 0-11) | Notes |
+|--------|--------------------------|-------|
+| 10K instances @ 60 FPS | 100 instances @ 60+ FPS | VSync-limited, Milestone 12 (Embree) needed for 10K+ |
+| BVH build < 100ms | ~40ms | Instance-aware approach |
+| Memory for 100 instances | ~50MB | 100x reduction vs duplicating geometry |
+| Ivar render time | ~52s (479 objects, 800x450, 100spp) | Acceptable baseline, ~3x slower than Embree would be |
+| UI freeze on mode switch | **0ms** | Was 4s before background threading |
+
+---
+
+## Testing Strategy
+
+### Unit Tests (60+ passing)
+
+**bif_math (26 tests):**
+
+- `Vec3` operations (dot, cross, length)
+- `Ray::at()` position calculation
+- `Interval` contains/clamp/expand
+- `Aabb` hit testing, combining, longest axis
+- `Camera` view/projection matrices
+- `Transform` Mat4 extensions
+
+**bif_renderer (19 tests):**
+
+- Material scattering (Lambertian, Metal, Dielectric)
+- BVH construction and hit testing
+- Sphere/Triangle hit testing
+- InstancedGeometry correctness
+
+**bif_core (15 tests):**
+
+- USD mesh parsing
+- Point instancer parsing
+- Triangulation (quads, N-gons)
+
+**Pattern:**
+
+```rust
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_transform_point() {
+        let transform = Mat4::from_translation(Vec3::new(1.0, 2.0, 3.0));
+        let point = Vec3::ZERO;
+        let result = transform.transform_point3(point);
+        assert_eq!(result, Vec3::new(1.0, 2.0, 3.0));
+    }
+}
+```
+
+### Integration Tests
+
+- Load [assets/lucy_low.usda](assets/lucy_low.usda) and verify vertex count (140,278)
+- Render 100 instances and measure FPS (60+)
+- Switch Vulkan ↔ Ivar and verify no freeze (0ms)
+- Compare output with reference renders
+
+---
+
+## Code Organization Principles
+
+1. **Crate Separation:** Math → Core → Viewport/Renderer → Viewer
+   - `bif_math`: No dependencies, pure math
+   - `bif_core`: Depends on `bif_math`, scene graph + USD
+   - `bif_viewport`, `bif_renderer`: Depend on `bif_core`, `bif_math`
+   - `bif_viewer`: Application entry, depends on all
+
+2. **Shared Ownership:** Use `Arc<T>` for geometry, materials
+   - Cheap clones across thread boundaries
+   - Example: `Arc<Mesh>` shared by 100 instances
+
+3. **Background Work:** Move expensive operations off main thread
+   - BVH builds in `std::thread::spawn`
+   - Ivar rendering in rayon thread pool
+   - Use `mpsc::channel()` for completion notification
+
+4. **Progressive Display:** Update UI during long operations
+   - Bucket rendering with incremental compositing
+   - Status enums (NotStarted → Building → Complete)
+
+5. **Instance-Aware:** Build BVH once, transform rays per-instance
+   - 100x memory savings for 100 instances
+   - Trade-off: ~3x slower rendering (acceptable for 100, not 10K+)
+
+---
+
+## Common Pitfalls
+
+### 1. Forgetting to Mark Instances as Modified
+
+**Problem:** Adding transforms but GPU buffer not updated
+
+**Solution:**
+
+```rust
+self.instance_transforms.push(transform);
+self.needs_instance_buffer_update = true;  // DON'T FORGET!
+```
+
+### 2. egui Borrow Checker Issues
+
+**Problem:** Cannot borrow `self` mutably inside `egui_ctx.run()` closure
+
+**Solution:** Extract data BEFORE closure
+
+```rust
+// BAD
+egui_ctx.run(input, |ctx| {
+    ui.label(format!("FPS: {}", self.fps));  // Borrow error!
+});
+
+// GOOD
+let fps = self.fps;
+egui_ctx.run(input, |ctx| {
+    ui.label(format!("FPS: {fps}"));
+});
+```
+
+### 3. Mat4 Column-Major vs Row-Major
+
+**Problem:** glam uses column-major, but GPU expects specific format
+
+**Solution:** Always use `.to_cols_array_2d()` for GPU upload
+
+```rust
+// Correct
+let matrix_data = transform.to_cols_array_2d();  // [[f32; 4]; 4]
+```
+
+### 4. USD USDA Parsing Edge Cases
+
+**Challenges:**
+
+- Missing normals → compute from face geometry
+- N-gon faces (5+ vertices) → fan triangulation
+- Left-handed orientation → swap triangle indices i1/i2
+
+**Solution:** See [bif_core/src/usd/parser.rs](crates/bif_core/src/usd/parser.rs)
+
+### 5. wgpu Surface Loss on Resize
+
+**Problem:** Window resize invalidates surface
+
+**Solution:** Recreate surface configuration
+
+```rust
+if self.config.width != new_width || self.config.height != new_height {
+    self.config.width = new_width;
+    self.config.height = new_height;
+    self.surface.configure(&self.device, &self.config);
+}
+```
+
+---
+
+## Dependencies (Actual)
 
 ```toml
 [workspace.dependencies]
 # Math
 glam = "0.29"              # SIMD-optimized vector math
 
+# GPU
+wgpu = "22.1"              # Vulkan/DX12/Metal abstraction
+winit = "0.30"             # Window management
+bytemuck = "1.24"          # Zero-copy GPU buffer casting
+pollster = "0.3"           # Async executor for wgpu init
+
+# UI
+egui = "0.29"              # Immediate-mode UI
+egui-wgpu = "0.29"         # egui + wgpu integration
+egui-winit = "0.29"        # egui + winit integration
+
+# I/O
+tobj = "4.0"               # OBJ file parser (legacy)
+image = "0.24"             # PNG/JPG loading (Rust 1.86 compatible)
+
 # Parallelism
 rayon = "1.10"             # Data parallelism
 
-# Image I/O
-image = "0.25"             # PNG/JPG/EXR
-
-# 3D Loading
-gltf = "1.4"               # glTF 2.0 loader
-
-# Random
-rand = "0.8"
-
-# UI (egui PoC)
-egui = "0.29"
-eframe = "0.29"            # egui + wgpu integration
-egui_wgpu = "0.29"
-
-# GPU
-wgpu = "23.0"
-winit = "0.30"
-pollster = "0.3"           # Async executor
-
 # Utilities
-anyhow = "1.0"
-thiserror = "2.0"
-```
-
-## Task Checklist by Subsystem
-
-### Core Math (bif_math crate)
-
-- [ ] `Vec3` using `glam::Vec3A` (SIMD-aligned)
-- [ ] Type aliases: `Point3 = Vec3`, `Color = Vec3`
-- [ ] Helpers: `dot()`, `cross()`, `reflect()`, `refract()`
-- [ ] `Ray` struct (origin, direction, time)
-- [ ] `Ray::at(t)` method
-- [ ] `Interval` struct (min, max)
-- [ ] `Interval` methods: `contains()`, `clamp()`, `expand()`
-- [ ] `AABB` struct (x, y, z intervals)
-- [ ] `AABB::hit()` ray-box intersection
-- [ ] `AABB::longest_axis()`
-- [ ] AABB combining
-
-### Traits (bif_renderer crate)
-
-```rust
-// Hittable trait
-pub trait Hittable: Send + Sync {
-    fn hit(&self, r: &Ray, ray_t: Interval, rec: &mut HitRecord) -> bool;
-    fn bounding_box(&self) -> AABB;
-}
-
-// Material trait
-pub trait Material: Send + Sync {
-    fn scatter(&self, r_in: &Ray, rec: &HitRecord) 
-        -> Option<(Color, Ray)>;
-    fn emitted(&self, u: f32, v: f32, p: Vec3) -> Color {
-        Color::ZERO
-    }
-}
-
-// Texture trait
-pub trait Texture: Send + Sync {
-    fn value(&self, u: f32, v: f32, p: Vec3) -> Color;
-}
-```
-
-- [ ] Define `Hittable` trait with `Send + Sync`
-- [ ] Define `Material` trait with optional `emitted()`
-- [ ] Define `Texture` trait
-- [ ] `HitRecord` struct (point, normal, t, u, v, material)
-
-### Primitives (bif_renderer crate)
-
-- [ ] `Sphere` with UV mapping
-- [ ] Moving `Sphere` (motion blur)
-- [ ] `Plane` (infinite)
-- [ ] `Quad` with point sampling for area lights
-- [ ] `Triangle` with Möller-Trumbore intersection
-- [ ] `Box` compound (6 quads)
-- [ ] `Pyramid` compound (base + 4 triangles)
-- [ ] `Disk` / `Circle`
-
-**Transform wrappers:**
-
-- [ ] `Translate` with AABB update
-- [ ] `RotateX`, `RotateY`, `RotateZ`
-- [ ] `Scale` (non-uniform, cached inverse)
-- [ ] `Transform` builder (SRT: Scale → Rotate → Translate)
-
-### BVH Acceleration (bif_renderer crate)
-
-```rust
-pub enum BVHNode {
-    Leaf {
-        objects: Vec<Box<dyn Hittable>>,
-        bbox: AABB,
-    },
-    Branch {
-        left: Box<BVHNode>,
-        right: Box<BVHNode>,
-        bbox: AABB,
-    },
-}
-```
-
-- [ ] Recursive construction with longest axis split
-- [ ] SAH (Surface Area Heuristic) for production
-- [ ] Implement `Hittable` for `BVHNode`
-- [ ] Parallel construction with `rayon`
-- [ ] Pre-compute centroids for faster sorting
-- [ ] Configurable leaf size (4-8 objects)
-- [ ] Parallel threshold (8192+ primitives)
-
-**Profiling note:** BVH traversal dominates CPU time (~82% in Go). Optimize AABB slab test.
-
-### Materials (bif_materials crate)
-
-- [ ] `Lambertian` with cosine-weighted hemisphere sampling
-- [ ] `Lambertian` texture support
-- [ ] `Metal` with perfect reflection
-- [ ] `Metal` fuzz/roughness parameter
-- [ ] `Dielectric` with Fresnel/Snell's law
-- [ ] `Dielectric` total internal reflection
-- [ ] `Emissive` emission-only material
-
-**MIS support (Next Event Estimation):**
-
-- [ ] PDF evaluation for each material
-- [ ] `MaterialInfo` trait (is_specular, is_emissive, can_use_nee)
-- [ ] Light sampling infrastructure
-- [ ] Balance heuristic: `w = pdf_light / (pdf_light + pdf_brdf)`
-- [ ] Firefly clamping (max component = 20.0)
-
-### Textures (bif_materials crate)
-
-- [ ] `SolidColor`
-- [ ] `CheckerTexture` (3D procedural)
-- [ ] `ImageTexture` (PNG/JPG loading)
-- [ ] `NoiseTexture` (Perlin noise with turbulence)
-
-### Camera (bif_renderer crate)
-
-```rust
-pub struct Camera {
-    // Position
-    position: Vec3,
-    target: Vec3,
-    up: Vec3,
-    
-    // Lens
-    fov: f32,
-    aspect: f32,
-    aperture: f32,
-    focus_dist: f32,
-    
-    // Render settings
-    samples_per_pixel: u32,
-    max_depth: u32,
-    
-    // Lights (for NEE)
-    lights: Vec<Arc<dyn Hittable>>,
-}
-```
-
-- [ ] Builder pattern for configuration
-- [ ] Ray generation with DOF (defocus disk)
-- [ ] Motion blur support (camera interpolation)
-- [ ] Free camera mode (forward vector)
-- [ ] Presets: `QuickPreview`, `StandardQuality`, `HighQuality`
-- [ ] Background options (solid, sky gradient)
-- [ ] `AddLight()` for NEE light collection
-
-### CPU Renderer (bif_renderer crate)
-
-- [ ] Progressive rendering with sample accumulation
-- [ ] `trace_ray()` with recursive depth
-- [ ] Next Event Estimation (direct lighting)
-- [ ] IBL environment map sampling
-- [ ] Parallel rendering with `rayon`
-- [ ] Gamma correction (gamma 2.0)
-- [ ] Tone mapping
-
-**Profiling note:** `trace_ray()` allocation hotspot in Go. Reuse scratch buffers per thread.
-
-### Scene Graph (bif_scene crate)
-
-```rust
-pub struct Scene {
-    prototypes: Vec<Arc<Prototype>>,
-    instances: Vec<Instance>,
-    layers: Vec<Layer>,
-}
-
-pub struct Prototype {
-    id: usize,
-    mesh: Arc<Mesh>,
-    material: Arc<Material>,
-    bounds: AABB,
-}
-
-pub struct Instance {
-    id: u32,
-    prototype_id: usize,
-    transform: Mat4,
-    visible: bool,
-}
-
-pub struct Layer {
-    name: String,
-    enabled: bool,
-    overrides: HashMap<u32, Override>,
-}
-```
-
-- [ ] `Scene::add_prototype(mesh) -> usize`
-- [ ] `Scene::add_instance(prototype_id, transform)`
-- [ ] `Scene::create_layer(name)`
-- [ ] Layer override system
-- [ ] Instance culling by visibility
-
-### File I/O (bif_io crate)
-
-- [ ] glTF loader with `gltf` crate
-- [ ] Extract vertices, normals, UVs, indices
-- [ ] Calculate mesh bounds
-- [ ] Image loading (PNG/JPG) with `image` crate
-- [ ] Image export with gamma correction
-- [ ] EXR support for HDR output
-
-### GPU Viewport (bif_viewport crate)
-
-**wgpu setup:**
-
-- [ ] Window creation with `winit`
-- [ ] wgpu instance/adapter/device/queue
-- [ ] Surface configuration
-- [ ] Event loop with resize handling
-
-**Rendering:**
-
-- [ ] Vertex buffer (mesh data)
-- [ ] Instance buffer (transforms)
-- [ ] Vertex shader (transform vertices)
-- [ ] Fragment shader (basic PBR)
-- [ ] Instanced draw calls
-- [ ] Camera uniform buffer
-- [ ] Bind groups
-
-**Performance target:** 10K instances @ 60 FPS
-
-### egui UI (bif_app crate)
-
-- [ ] egui + wgpu integration via `eframe`
-- [ ] Main window with central viewport
-- [ ] Scene hierarchy panel (tree view)
-- [ ] Properties panel (transform, material)
-- [ ] Render settings panel
-- [ ] Camera controls (orbit, pan, zoom)
-- [ ] Progress overlay (samples, time)
-
-### USD Bridge (bif_usd crate, optional)
-
-**Phase 1: Export only**
-
-- [ ] Write .usda text files
-- [ ] Export geometry (UsdGeomMesh)
-- [ ] Export instances (UsdGeomPointInstancer)
-- [ ] Validate in usdview
-
-**Phase 2: Import via C++ FFI**
-
-- [ ] C++ shim (`usd_bridge.cpp`)
-- [ ] Rust FFI wrapper
-- [ ] Load USD stage
-- [ ] Extract meshes
-- [ ] Extract materials (UsdPreviewSurface)
-
-## Code Patterns
-
-### SIMD Vector Math
-
-```rust
-use glam::Vec3A;
-
-// Always use Vec3A for SIMD
-pub type Vec3 = Vec3A;
-pub type Point3 = Vec3A;
-pub type Color = Vec3A;
-
-// Inline hot paths
-#[inline]
-pub fn dot(a: Vec3, b: Vec3) -> f32 {
-    a.dot(b)
-}
-
-#[inline]
-pub fn reflect(v: Vec3, n: Vec3) -> Vec3 {
-    v - 2.0 * dot(v, n) * n
-}
-```
-
-### Parallel Iteration with Rayon
-
-```rust
-use rayon::prelude::*;
-
-// Parallel pixel rendering
-pixels.par_iter_mut().for_each(|(x, y, pixel)| {
-    let ray = camera.get_ray(*x, *y);
-    *pixel = trace_ray(ray, scene, max_depth);
-});
-
-// Parallel BVH construction
-if primitives.len() > PARALLEL_THRESHOLD {
-    let (left, right) = rayon::join(
-        || build_bvh(&left_prims),
-        || build_bvh(&right_prims),
-    );
-}
-```
-
-### Material Trait Object
-
-```rust
-// Store materials as Arc<dyn Material>
-pub struct Prototype {
-    material: Arc<dyn Material>,
-}
-
-// Scatter ray
-if let Some((attenuation, scattered)) = 
-    prototype.material.scatter(&ray, &hit) {
-    // Continue tracing
-}
-```
-
-### Instance Rendering (wgpu)
-
-```rust
-// Per-instance data
-#[repr(C)]
-#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-struct InstanceData {
-    transform: [[f32; 4]; 4],  // Mat4
-}
-
-// Upload instances
-let instance_data: Vec<InstanceData> = scene.instances
-    .iter()
-    .map(|inst| InstanceData {
-        transform: inst.transform.to_cols_array_2d(),
-    })
-    .collect();
-
-let instance_buffer = device.create_buffer_init(&BufferInitDescriptor {
-    contents: bytemuck::cast_slice(&instance_data),
-    usage: BufferUsages::VERTEX,
-});
-
-// Draw all instances in one call
-render_pass.set_vertex_buffer(0, vertex_buffer.slice(..));
-render_pass.set_vertex_buffer(1, instance_buffer.slice(..));
-render_pass.draw_indexed(0..index_count, 0, 0..instance_count);
-```
-
-## Performance Targets
-
-**Scene Creation:**
-
-- 10K instances: < 500ms
-- 100K instances: < 5s
-
-**Rendering:**
-
-- Preview (10 SPP): < 1s first pixels
-- Standard (100 SPP): target parity with Go
-- High quality (500 SPP): 4-8x speedup with parallelism
-
-**Viewport:**
-
-- 10K instances @ 60 FPS
-- 100K instances @ 30 FPS
-
-**Memory:**
-
-- 1M instances: < 60MB overhead (prototype sharing)
-
-## Profiling Notes from Go
-
-**CPU hotspots:**
-
-- BVH traversal: ~82% (AABB slab test dominates)
-- Triangle intersection: ~5-10%
-- Material evaluation: secondary
-
-**Allocation hotspots:**
-
-- `trace_ray()` recursion allocates per call
-- `sample_lights()` per-sample allocations
-- Fix: Reuse per-thread scratch buffers
-
-**Parallel efficiency:**
-
-- Go channels add overhead (recv/send/select)
-- Rust: Use `rayon` work-stealing for better load balance
-
-**Optimization priorities:**
-
-1. BVH traversal (SIMD AABB test)
-2. Reduce allocations (scratch buffers)
-3. Better memory layout (SoA for triangles)
-
-## Testing Strategy
-
-**Unit tests:**
-
-- Vector math operations
-- Ray-primitive intersection
-- Material scattering
-- BVH construction
-
-**Integration tests:**
-
-- Render test scenes
-- Compare output with Go version
-- Validate MIS (check for fireflies)
-- Performance benchmarks
-
-**Visual validation:**
-
-- Cornell box
-- Glass/metal spheres
-- Textured objects
-- Area lights with NEE
-
-## Code Organization
-
-```
-crates/
-├── bif_math/
-│   ├── vec3.rs
-│   ├── ray.rs
-│   ├── interval.rs
-│   └── aabb.rs
-├── bif_scene/
-│   ├── scene.rs
-│   ├── prototype.rs
-│   ├── instance.rs
-│   └── layer.rs
-├── bif_renderer/
-│   ├── hittable.rs
-│   ├── primitives/
-│   │   ├── sphere.rs
-│   │   ├── triangle.rs
-│   │   └── quad.rs
-│   ├── bvh.rs
-│   ├── camera.rs
-│   └── renderer.rs
-├── bif_materials/
-│   ├── material.rs
-│   ├── lambertian.rs
-│   ├── metal.rs
-│   ├── dielectric.rs
-│   └── textures/
-├── bif_viewport/
-│   ├── renderer.rs
-│   └── shaders.wgsl
-├── bif_io/
-│   ├── gltf.rs
-│   └── image.rs
-└── bif_app/
-    ├── main.rs
-    └── ui/
+anyhow = "1.0"             # Error handling
 ```
 
 ---
 
-**Note:** This is a reference checklist. See [GETTING_STARTED.md](GETTING_STARTED.md) for milestone-based implementation order.
+## File Structure (Actual)
+
+```
+bif/
+├── Cargo.toml              # Rust workspace
+├── crates/
+│   ├── bif_math/           # Vec3, Ray, Interval, Aabb, Camera, Transform
+│   │   ├── src/
+│   │   │   ├── lib.rs      # Re-exports
+│   │   │   ├── vec3.rs     # (empty, uses glam directly)
+│   │   │   ├── ray.rs      # Ray struct
+│   │   │   ├── interval.rs # Interval struct
+│   │   │   ├── aabb.rs     # AABB struct
+│   │   │   ├── camera.rs   # Camera with view/proj matrices
+│   │   │   └── transform.rs # Mat4Ext trait (NEW in Freeze Fix)
+│   ├── bif_core/           # Scene graph, USD parser, mesh data
+│   │   ├── src/
+│   │   │   ├── mesh.rs     # Mesh struct
+│   │   │   ├── scene.rs    # Scene struct (minimal)
+│   │   │   └── usd/        # USD parser
+│   │   │       ├── mod.rs
+│   │   │       ├── parser.rs  # USDA text parser
+│   │   │       └── types.rs   # UsdMesh, UsdPointInstancer
+│   ├── bif_viewport/       # GPU viewport (wgpu + Vulkan + egui)
+│   │   ├── src/
+│   │   │   ├── lib.rs      # Renderer struct (~2000 LOC)
+│   │   │   └── shaders/
+│   │   │       └── basic.wgsl  # Vertex + fragment shaders
+│   ├── bif_renderer/       # CPU path tracer "Ivar"
+│   │   ├── src/
+│   │   │   ├── lib.rs
+│   │   │   ├── hittable.rs    # Hittable trait
+│   │   │   ├── material.rs    # Material trait
+│   │   │   ├── materials/     # Lambertian, Metal, Dielectric, DiffuseLight
+│   │   │   ├── sphere.rs      # Sphere primitive
+│   │   │   ├── triangle.rs    # Triangle primitive (Möller-Trumbore)
+│   │   │   ├── bvh.rs         # BVH acceleration
+│   │   │   ├── instanced_geometry.rs  # Instance-aware BVH (NEW in Freeze Fix)
+│   │   │   ├── camera.rs      # Ivar camera (separate from viewport camera)
+│   │   │   └── renderer.rs    # Progressive rendering
+│   └── bif_viewer/         # Application entry point
+│       └── src/
+│           └── main.rs     # winit event loop
+├── legacy/
+│   └── go-raytracing/      # Original Go raytracer (reference)
+├── devlog/                 # Development session logs
+│   ├── DEVLOG_2025-12-27_milestone1.md
+│   ├── ...
+│   └── DEVLOG_2025-12-31_freeze-fix.md
+├── docs/archive/           # Archived documentation
+│   └── GO_API_REFERENCE.md
+├── renders/                # Render output files
+│   ├── output.png
+│   └── output.ppm
+└── assets/                 # Test scenes, meshes
+    └── lucy_low.usda
+```
+
+---
+
+## Next Steps
+
+For Milestone 12 (Embree Integration) and beyond, see:
+
+- [MILESTONES.md](MILESTONES.md) - Complete roadmap
+- [SESSION_HANDOFF.md](SESSION_HANDOFF.md) - Current status
+- [ARCHITECTURE.md](ARCHITECTURE.md) - System design
+
+---
+
+**Last Updated:** December 31, 2025 (Milestones 0-11 Complete)
