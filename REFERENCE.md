@@ -95,6 +95,7 @@ pub trait Texture: Send + Sync {
 - [ ] `Disk` / `Circle`
 
 **Transform wrappers:**
+
 - [ ] `Translate` with AABB update
 - [ ] `RotateX`, `RotateY`, `RotateZ`
 - [ ] `Scale` (non-uniform, cached inverse)
@@ -137,6 +138,7 @@ pub enum BVHNode {
 - [ ] `Emissive` emission-only material
 
 **MIS support (Next Event Estimation):**
+
 - [ ] PDF evaluation for each material
 - [ ] `MaterialInfo` trait (is_specular, is_emissive, can_use_nee)
 - [ ] Light sampling infrastructure
@@ -242,12 +244,14 @@ pub struct Layer {
 ### GPU Viewport (bif_viewport crate)
 
 **wgpu setup:**
+
 - [ ] Window creation with `winit`
 - [ ] wgpu instance/adapter/device/queue
 - [ ] Surface configuration
 - [ ] Event loop with resize handling
 
 **Rendering:**
+
 - [ ] Vertex buffer (mesh data)
 - [ ] Instance buffer (transforms)
 - [ ] Vertex shader (transform vertices)
@@ -271,12 +275,14 @@ pub struct Layer {
 ### USD Bridge (bif_usd crate, optional)
 
 **Phase 1: Export only**
+
 - [ ] Write .usda text files
 - [ ] Export geometry (UsdGeomMesh)
 - [ ] Export instances (UsdGeomPointInstancer)
 - [ ] Validate in usdview
 
 **Phase 2: Import via C++ FFI**
+
 - [ ] C++ shim (`usd_bridge.cpp`)
 - [ ] Rust FFI wrapper
 - [ ] Load USD stage
@@ -374,38 +380,46 @@ render_pass.draw_indexed(0..index_count, 0, 0..instance_count);
 ## Performance Targets
 
 **Scene Creation:**
+
 - 10K instances: < 500ms
 - 100K instances: < 5s
 
 **Rendering:**
+
 - Preview (10 SPP): < 1s first pixels
 - Standard (100 SPP): target parity with Go
 - High quality (500 SPP): 4-8x speedup with parallelism
 
 **Viewport:**
+
 - 10K instances @ 60 FPS
 - 100K instances @ 30 FPS
 
 **Memory:**
+
 - 1M instances: < 60MB overhead (prototype sharing)
 
 ## Profiling Notes from Go
 
 **CPU hotspots:**
+
 - BVH traversal: ~82% (AABB slab test dominates)
 - Triangle intersection: ~5-10%
 - Material evaluation: secondary
 
 **Allocation hotspots:**
+
 - `trace_ray()` recursion allocates per call
 - `sample_lights()` per-sample allocations
 - Fix: Reuse per-thread scratch buffers
 
 **Parallel efficiency:**
+
 - Go channels add overhead (recv/send/select)
 - Rust: Use `rayon` work-stealing for better load balance
 
 **Optimization priorities:**
+
 1. BVH traversal (SIMD AABB test)
 2. Reduce allocations (scratch buffers)
 3. Better memory layout (SoA for triangles)
@@ -413,18 +427,21 @@ render_pass.draw_indexed(0..index_count, 0, 0..instance_count);
 ## Testing Strategy
 
 **Unit tests:**
+
 - Vector math operations
 - Ray-primitive intersection
 - Material scattering
 - BVH construction
 
 **Integration tests:**
+
 - Render test scenes
 - Compare output with Go version
 - Validate MIS (check for fireflies)
 - Performance benchmarks
 
 **Visual validation:**
+
 - Cornell box
 - Glass/metal spheres
 - Textured objects

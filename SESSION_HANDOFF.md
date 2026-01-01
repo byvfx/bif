@@ -739,7 +739,7 @@ Current state:
 - Instance-aware BVH: ONE prototype, 100 transforms
 
 Next steps:
-1. Test Ivar rendering with teapot.usda to verify fix
+1. Test Ivar rendering with lucy_low.usda to verify fix - done, slight freeze when opening Bif but this seems acceptable
 2. OR start Phase 2 features (Qt, USD refs, materials, layers)
 
 Which should we do first?
