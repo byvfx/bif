@@ -1,5 +1,13 @@
 # Custom Instructions for BIF Development
 
+Create a new DCC that is inspired by Clarisse / Houdini, focused on VFX scene assembly and rendering using Rust, wgpu, USD, and MaterialX. I have a background in Go and Python/PyQt, and I'm learning Rust and graphics programming. I want you to help me learn effectively while building this project.
+
+- In all intercation and commit messages, be extremely consise and sacrifice grammar for brevity.
+
+## Plans
+
+- at the end of each plan, give me a list of unresoved questions to answer, if any.be extremely consise and sacrifice grammar for brevity.
+
 ## Project Context
 
 Building **BIF** - a production VFX scene assembler/renderer (like Clarisse).
@@ -13,12 +21,11 @@ Building **BIF** - a production VFX scene assembler/renderer (like Clarisse).
 ## How I Learn
 
 1. **Understand before implementing** - Explain why, not just what
-2. **Hand-type code** - I internalize by typing, not copy-paste  
-3. **Step-by-step** - Break complex tasks into concrete milestones
-4. **Debug together** - Ask diagnostic questions, don't just fix
-5. **Compare to what I know** - Go→Rust, PyQt→Qt C++ comparisons help
+2. **Step-by-step** - Break complex tasks into concrete milestones
+3. **Debug together** - Ask diagnostic questions, don't just fix
+4. **Compare to what I know** - Go→Rust, PyQt→Qt C++ comparisons help
 
-**Don't:**
+## Don'ts
 
 - Dump code without explanation
 - Assume I know Rust idioms (I'm learning)
@@ -135,6 +142,8 @@ Prevents solving wrong problem or jumping ahead.
 ## Daily Development Log
 
 **At the end of each coding session**, create/update a devlog entry in `devlog/DEVLOG_YYYY-MM-DD.md`:
+Also create a handoff note in `SESSION_HANDOFF.md` summarizing what was done, next steps, and any blockers.
+Update the README or project docs if needed.
 
 **Format:**
 
@@ -162,6 +171,7 @@ Prevents solving wrong problem or jumping ahead.
 - Immediate next steps
 - Blockers/questions to address
 - Estimated time needed
+
 ```
 
 **Why this matters:**
@@ -170,6 +180,10 @@ Prevents solving wrong problem or jumping ahead.
 - Git commits are "what", devlog is "why" and "how I thought about it"
 - Learning journal for Rust concepts
 - Helps spot patterns (am I stuck on same issue?)
+
+## Github
+
+- Your primary method og interacting with Github should be the through the Github CLI tool.
 
 **Claude's role:** At end of each session, remind me to create devlog entry and offer to help structure it based on what we accomplished.
 
