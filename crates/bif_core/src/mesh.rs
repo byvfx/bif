@@ -157,6 +157,48 @@ impl Mesh {
     pub fn vertex_count(&self) -> usize {
         self.positions.len()
     }
+
+    /// Extract triangle vertices as flat array of [Vec3; 3] triplets.
+    ///
+    /// This is useful for Embree integration, which expects triangles
+    /// as flat vertex arrays (v0, v1, v2, v0, v1, v2, ...).
+    ///
+    /// # Returns
+    /// Vector of triangle vertices, where each element is [v0, v1, v2].
+    ///
+    /// # Example
+    /// ```ignore
+    /// let triangles = mesh.extract_triangle_vertices();
+    /// // triangles[0] = [v0, v1, v2] for first triangle
+    /// // triangles[1] = [v0, v1, v2] for second triangle
+    /// ```
+    pub fn extract_triangle_vertices(&self) -> Vec<[Vec3; 3]> {
+        let mut triangles = Vec::with_capacity(self.triangle_count());
+
+        for chunk in self.indices.chunks(3) {
+            if chunk.len() < 3 {
+                continue;
+            }
+
+            let i0 = chunk[0] as usize;
+            let i1 = chunk[1] as usize;
+            let i2 = chunk[2] as usize;
+
+            // Bounds check
+            if i0 >= self.positions.len() || i1 >= self.positions.len() || i2 >= self.positions.len() {
+                log::warn!("Invalid triangle indices: [{}, {}, {}], vertex count: {}", i0, i1, i2, self.positions.len());
+                continue;
+            }
+
+            triangles.push([
+                self.positions[i0],
+                self.positions[i1],
+                self.positions[i2],
+            ]);
+        }
+
+        triangles
+    }
 }
 
 #[cfg(test)]
@@ -217,5 +259,32 @@ mod tests {
         assert!((mesh.bounds.y.max - 5.0).abs() < 0.001);
         assert!((mesh.bounds.z.min - (-3.0)).abs() < 0.001);
         assert!((mesh.bounds.z.max - 6.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_extract_triangle_vertices() {
+        let positions = vec![
+            Vec3::new(0.0, 0.0, 0.0),  // v0
+            Vec3::new(1.0, 0.0, 0.0),  // v1
+            Vec3::new(0.0, 1.0, 0.0),  // v2
+            Vec3::new(1.0, 1.0, 0.0),  // v3
+        ];
+        // Two triangles: [0,1,2] and [1,3,2]
+        let indices = vec![0, 1, 2, 1, 3, 2];
+
+        let mesh = Mesh::new(positions.clone(), indices, None);
+        let triangles = mesh.extract_triangle_vertices();
+
+        assert_eq!(triangles.len(), 2, "Should extract 2 triangles");
+
+        // First triangle: [v0, v1, v2]
+        assert_eq!(triangles[0][0], positions[0]);
+        assert_eq!(triangles[0][1], positions[1]);
+        assert_eq!(triangles[0][2], positions[2]);
+
+        // Second triangle: [v1, v3, v2]
+        assert_eq!(triangles[1][0], positions[1]);
+        assert_eq!(triangles[1][1], positions[3]);
+        assert_eq!(triangles[1][2], positions[2]);
     }
 }

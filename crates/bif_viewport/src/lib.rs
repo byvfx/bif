@@ -11,8 +11,8 @@ use bif_math::{Camera, Mat4, Vec3};
 // Re-export bif_renderer types for Ivar integration
 use bif_renderer::{
     Bucket, BucketResult, generate_buckets, render_bucket, DEFAULT_BUCKET_SIZE,
-    Triangle, BvhNode, Hittable, Lambertian, Color, RenderConfig, ImageBuffer,
-    InstancedGeometry,
+    BvhNode, Hittable, Lambertian, Color, RenderConfig, ImageBuffer,
+    EmbreeScene,
 };
 
 /// Render mode selection: GPU viewport or Ivar CPU path tracer
@@ -1690,11 +1690,11 @@ impl Renderer {
         std::thread::spawn(move || {
             let start_time = Instant::now();
 
-            log::info!("Background thread: Building prototype BVH ({} triangles)...", mesh_data.indices.len() / 3);
+            log::info!("Background thread: Building Embree scene ({} triangles, {} instances)...",
+                mesh_data.indices.len() / 3, transforms.len());
 
-            // Build local-space triangles ONCE (not per instance!)
-            let mut local_triangles: Vec<Box<dyn Hittable + Send + Sync>> = Vec::new();
-
+            // Extract triangle vertices for Embree
+            let mut triangle_vertices = Vec::with_capacity(mesh_data.indices.len() / 3);
             for i in (0..mesh_data.indices.len()).step_by(3) {
                 let i0 = mesh_data.indices[i] as usize;
                 let i1 = mesh_data.indices[i + 1] as usize;
@@ -1705,22 +1705,22 @@ impl Renderer {
                 let v1 = Vec3::from_array(mesh_data.vertices[i1].position);
                 let v2 = Vec3::from_array(mesh_data.vertices[i2].position);
 
-                let tri = Triangle::new(v0, v1, v2, Lambertian::new(Color::new(0.7, 0.7, 0.7)));
-                local_triangles.push(Box::new(tri));
+                triangle_vertices.push([v0, v1, v2]);
             }
 
-            log::info!("Background thread: Created {} prototype triangles, creating InstancedGeometry...", local_triangles.len());
+            log::info!("Background thread: Extracted {} triangles, creating EmbreeScene with {} instances...",
+                triangle_vertices.len(), transforms.len());
 
-            // Create instanced geometry with transforms
-            let instanced_geo = InstancedGeometry::new(
-                local_triangles,
+            // Create Embree scene with two-level BVH
+            let embree_scene = EmbreeScene::new(
+                &triangle_vertices,
                 transforms,
                 Lambertian::new(Color::new(0.7, 0.7, 0.7)),
             );
 
-            // Wrap instanced geometry in a BVH node (BVH contains just 1 object)
+            // Wrap Embree scene in a BVH node (BVH contains just 1 object)
             let mut objects: Vec<Box<dyn Hittable + Send + Sync>> = Vec::new();
-            objects.push(Box::new(instanced_geo));
+            objects.push(Box::new(embree_scene));
 
             let world = Arc::new(BvhNode::new(objects));
 
