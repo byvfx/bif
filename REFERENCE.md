@@ -327,7 +327,7 @@ pub fn parse_usda(path: &Path) -> Result<UsdScene> {
 
 **Key Files:**
 
-- [bif_core/src/usd/parser.rs](crates/bif_core/src/usd/parser.rs) - Parser
+- [bif_core/src/usd/parser.rs](crates/bif_core/src/usd/parser.rs) - USDA Parser
 - [bif_core/src/usd/types.rs](crates/bif_core/src/usd/types.rs) - USD types
 
 **Tests:** 15 tests in `bif_core` covering mesh loading, instancing, orientation
