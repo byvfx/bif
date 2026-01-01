@@ -257,9 +257,8 @@ Current state:
 - BVH build time: 4000ms → 40ms
 
 Next: [Choose one]
-1. Finish documentation cleanup (ARCHITECTURE.md, REFERENCE.md, GETTING_STARTED.md)
+1. Finish documentation cleanup (ARCHITECTURE.md, REFERENCE.md, GETTING_STARTED.md) - this is done
 2. Start Milestone 12 (Embree Integration)
-3. Other [specify]
 
 Which should we tackle?
 ```
