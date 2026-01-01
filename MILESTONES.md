@@ -242,65 +242,52 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 
 ---
 
-## Summary Statistics (Milestones 0-11)
+### Milestone 12: Embree 4 Integration ✅
+
+- **Completed:** 2026-01-01
+- **Time Invested:** ~8 hours
+- **Location:**
+  - `crates/bif_renderer/src/embree.rs` (NEW) - Manual FFI bindings
+  - `crates/bif_renderer/build.rs` (NEW) - Link embree4.lib
+  - `crates/bif_viewport/src/lib.rs` - EmbreeScene integration
+- **Key Achievements:**
+  - Embree 4.4.0 via vcpkg (no embree-sys crate exists)
+  - Manual FFI bindings (~600 LOC) - educational approach
+  - Two-level BVH: prototype mesh (280K tris) + instance transforms
+  - Implements `Hittable` trait for seamless Ivar integration
+  - **Performance:** 28ms BVH build for 100 instances
+  - **Debugging:** Fixed 6 issues (enum values, API changes, memory lifetime)
+- **Stats:** ~600 LOC, error checking after all FFI calls
+- **Devlog:** [devlog/DEVLOG_2026-01-01_milestone12.md](devlog/DEVLOG_2026-01-01_milestone12.md)
+
+---
+
+## Summary Statistics (Milestones 0-12)
 
 | Metric | Value |
 |--------|-------|
-| **Total LOC** | ~5,900 |
+| **Total LOC** | ~6,500 |
 | **Tests Passing** | 60+ ✅ (26 bif_math + 19 bif_renderer + 15 bif_core) |
-| **Milestones Complete** | 11/11 + Freeze Fix |
-| **Time Invested** | ~34 hours over 2 weeks (December 2024-2025) |
-| **Commits** | 45+ |
+| **Milestones Complete** | 12/12 + Freeze Fix |
+| **Time Invested** | ~42 hours (December 2024 - January 2026) |
+| **Commits** | 50+ |
 | **Build Time (dev)** | ~5s |
 | **Build Time (release)** | ~2m |
 | **Runtime FPS** | 60+ (VSync-limited) |
 | **Lucy Vertices** | 140,278 |
 | **Lucy Indices** | 840,768 |
-| **Instances Rendered** | 100 (GPU), 100 (Ivar) |
+| **Instances Rendered** | 100 (GPU), 100 (Ivar/Embree) |
 | **Total Triangles** | 28,055,600 |
 | **Draw Calls** | 1 (instanced) |
-| **Ivar BVH Triangles** | 280,556 (was 28M before freeze fix) |
-| **Ivar BVH Build** | ~40ms (was 4000ms) |
-| **Ivar UI Freeze** | **0ms** (was 4000ms) ✅ |
+| **Embree BVH Build** | 28ms (100 instances, 280K triangles) |
+| **Embree Two-Level** | Prototype BLAS + Instance TLAS |
+| **Ivar UI Freeze** | **0ms** ✅ |
 
 ---
 
 ## Upcoming Milestones 🎯
 
-### Milestone 12: Embree Integration 🎯 NEXT
-
-- **Goal:** Replace instance-aware BVH with Intel Embree for 10K+ instance scalability
-- **Why:**
-  - **Current:** O(100) linear instance search, ~3x slower rendering
-  - **Embree:** O(log instances + log primitives) two-level BVH
-  - Production-proven (Arnold, Cycles, etc.)
-  - SIMD optimized (4-8x faster than scalar)
-  - Native motion blur support
-- **Prerequisites:** Milestones 0-11 complete ✅
-- **Estimated Time:** 8-12 hours
-- **Key Tasks:**
-  - Research: `embree-sys` vs `embree-rs` crates
-  - Add dependency and build C++ shim if needed
-  - Create Embree device and scene
-  - Build prototype BVH in Embree (280K triangles)
-  - Add instance transforms (100 instances)
-  - Integrate with Ivar renderer (`trace_ray` loop)
-  - Benchmark vs current instance-aware BVH
-  - Measure: 10K instances performance, memory usage
-  - Optional: Make Embree a feature flag (fallback to instance-aware BVH)
-- **Success Criteria:**
-  - 10K instances render without lag
-  - BVH build time < 100ms
-  - Render time 3x faster than current approach
-  - Tests passing for Embree integration
-- **Critical Files:**
-  - `crates/bif_renderer/Cargo.toml` - Add embree dependency
-  - `crates/bif_renderer/src/embree.rs` (NEW) - Embree wrapper
-  - `crates/bif_renderer/src/lib.rs` - Integrate Embree BVH
-
----
-
-### Milestone 13: USD C++ Integration (USDC Binary + References)
+### Milestone 13: USD C++ Integration (USDC Binary + References) 🎯 NEXT
 
 - **Goal:** Full USD library access via C++ shim (import/export USDC, references)
 - **Why:**
@@ -400,6 +387,6 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 
 ---
 
-**Last Updated:** December 31, 2025
-**Status:** Milestones 0-11 + Freeze Fix Complete ✅
-**Next:** Milestone 12 (Embree Integration)
+**Last Updated:** January 1, 2026
+**Status:** Milestones 0-12 + Freeze Fix Complete ✅
+**Next:** Milestone 13 (USD C++ Integration)
