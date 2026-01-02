@@ -421,7 +421,7 @@ impl<M: Material + Clone + 'static> EmbreeScene<M> {
             }
 
             // 8. Store transforms (Embree holds pointers, must keep alive)
-            let mut transform_data: Vec<[f32; 16]> = transforms.iter()
+            let transform_data: Vec<[f32; 16]> = transforms.iter()
                 .map(|t| t.to_cols_array())
                 .collect();
 
