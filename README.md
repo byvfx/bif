@@ -5,6 +5,7 @@
 ## 🎯 Current Status: Milestones 0-11 Complete! ✅
 
 **Foundation Complete (Milestones 0-11)** - DONE
+
 - ✅ Dual rendering: Vulkan viewport (60 FPS) + Ivar CPU path tracer
 - ✅ GPU instancing: 100+ instances, single draw call
 - ✅ USD USDA import: Houdini-compatible workflow
@@ -62,15 +63,18 @@ bif/
 ## Documentation
 
 ### Getting Started
+
 - **[Milestones](MILESTONES.md)** - Complete milestone history with actual results + future roadmap
 - **[Getting Started Guide](GETTING_STARTED.md)** - Milestone-by-milestone implementation guide
 - **[Session Handoff](SESSION_HANDOFF.md)** - Current status and next steps
 
 ### Architecture & Design
+
 - **[Architecture](ARCHITECTURE.md)** - Core principles, design decisions, rendering pipeline
 - **[Houdini Export](HOUDINI_EXPORT.md)** - Best practices for USD export
 
 ### Development
+
 - **[Reference](REFERENCE.md)** - Code patterns and best practices
 - **[Dev Logs](devlog/)** - Session-by-session development history
 - **[Claude Instructions](CLAUDE.md)** - AI assistant custom instructions
@@ -122,7 +126,7 @@ sudo apt-get install cmake pkg-config libssl-dev
 
 ```bash
 # Clone repository
-git clone https://github.com/yourusername/bif.git
+git clone https://github.com/byvfx/bif.git
 cd bif
 
 # Build workspace
@@ -147,6 +151,7 @@ cargo run -p bif_viewer -- --usda assets/lucy_low.usda
 ```
 
 **Viewport Controls:**
+
 - **Left Mouse:** Orbit camera around target
 - **Middle Mouse:** Pan camera and target
 - **Scroll Wheel:** Dolly (zoom in/out)
@@ -156,6 +161,7 @@ cargo run -p bif_viewer -- --usda assets/lucy_low.usda
 ### Toggle Renderers
 
 Use the egui side panel to switch between:
+
 - **Vulkan:** Real-time GPU rendering (60 FPS)
 - **Ivar:** CPU path tracer (progressive)
 
@@ -166,16 +172,19 @@ Use the egui side panel to switch between:
 See [MILESTONES.md](MILESTONES.md) for complete milestone history and future plans.
 
 ### ✅ Completed (Milestones 0-11)
+
 - Math library, wgpu viewport, camera controls
 - OBJ/USD loading, GPU instancing
 - egui UI, CPU path tracer "Ivar"
 - Instance-aware BVH, background threading
 
 ### 🎯 Next Up
+
 - **Milestone 12:** Embree Integration (8-12 hours)
 - **Milestone 13:** USD C++ Integration with references (15-20 hours)
 
 ### 🔮 Future
+
 - Materials (UsdPreviewSurface)
 - Qt 6 UI (optional)
 - Layers, Python scripting, GPU path tracing
@@ -185,6 +194,7 @@ See [MILESTONES.md](MILESTONES.md) for complete milestone history and future pla
 ## Contributing
 
 BIF is in active development. Contributions welcome in:
+
 - Rust performance optimization
 - Embree integration
 - USD/MaterialX workflows
