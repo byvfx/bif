@@ -22,12 +22,14 @@
 **Goal:** Replace instance-aware BVH with Intel Embree for production-quality ray tracing
 
 **Implementation:**
+
 - Embree 4.4.0 installed via vcpkg (24-minute build including TBB)
 - Manual FFI bindings (~600 LOC) - educational approach, avoids libclang dependency
 - Two-level BVH architecture: Prototype BLAS + Instance TLAS
 - Implements `Hittable` trait for seamless Ivar integration
 
 **Debugging Journey (6 issues fixed):**
+
 1. Wrong enum values (RTCFormat, RTCGeometryType) - read actual headers
 2. Missing index buffer - Embree requires both vertex AND index
 3. Wrong buffer type constant (0 vs 1)
@@ -44,6 +46,7 @@
 | Architecture | Custom Rust BVH | Production Embree |
 
 **Files:**
+
 - [bif_renderer/src/embree.rs](crates/bif_renderer/src/embree.rs) (NEW) - ~600 LOC FFI bindings
 - [bif_renderer/build.rs](crates/bif_renderer/build.rs) (NEW) - Links embree4.lib
 - [bif_viewport/src/lib.rs](crates/bif_viewport/src/lib.rs) - Uses EmbreeScene
@@ -59,17 +62,20 @@
 
 ### Test Status
 ✅ 60+ tests passing:
+
 - bif_math: 26 tests (Vec3, Ray, Interval, Aabb, Camera, Transform)
 - bif_renderer: 19 tests (Materials, BVH, Hittables, InstancedGeometry)
 - bif_core: 15 tests (USD parsing, mesh loading)
 
 ### Performance
+
 - **Vulkan viewport:** 60+ FPS (VSync-limited), 1 draw call, 100 instances, 28M triangles
 - **Ivar renderer:** Progressive rendering @ 16 SPP, 28ms Embree BVH build
 - **Memory:** ~60MB for 100 instances
 
 ### Known Issues/Quirks
 **Non-Issues (Ignore These):**
+
 - Rockstar Vulkan layer warning - Harmless, from old game install
 - Verbose wgpu logs - Normal for development
 - CRLF warnings - Windows line endings, git handles automatically
@@ -99,6 +105,7 @@ bif/
 ```
 
 **Key Design:**
+
 - **bif_viewport** = Real-time GPU (60+ FPS) for interactive preview
 - **bif_renderer** = CPU path tracer "Ivar" with Embree two-level BVH
 - **Dual rendering** matches Clarisse, Houdini, Maya architecture
@@ -112,6 +119,7 @@ bif/
 **Goal:** Full USD library access via C++ shim (import/export USDC, references)
 
 **Why:**
+
 - Current: Pure Rust USDA parser (text only, no references)
 - USD C++: Binary USDC format, references (`@path@</prim>`), full feature set
 - Production workflows require references for asset reuse
@@ -119,6 +127,7 @@ bif/
 **Estimated Time:** 15-20 hours
 
 **Key Tasks:**
+
 1. Create `cpp/usd_bridge/` directory for C++ FFI layer
 2. Implement C shim functions (open_stage, get_mesh_*, get_instances, resolve_reference)
 3. Create Rust wrapper in `bif_core/src/usd/cpp_bridge.rs`
@@ -133,12 +142,14 @@ bif/
 ## Important Files for Next Session
 
 ### Must Read
+
 1. [SESSION_HANDOFF.md](SESSION_HANDOFF.md) - This file (current status)
 2. [MILESTONES.md](MILESTONES.md) - Complete milestone history + roadmap
 3. [CLAUDE.md](CLAUDE.md) - Your custom AI instructions
 4. [devlog/DEVLOG_2026-01-01_milestone12.md](devlog/DEVLOG_2026-01-01_milestone12.md) - Latest work
 
 ### Reference (Use #codebase as needed)
+
 - [bif_renderer/src/embree.rs](crates/bif_renderer/src/embree.rs) - Embree FFI bindings
 - [bif_viewport/src/lib.rs](crates/bif_viewport/src/lib.rs) - Renderer with Embree integration
 - [bif_core/src/usd/](crates/bif_core/src/usd/) - USDA parser
