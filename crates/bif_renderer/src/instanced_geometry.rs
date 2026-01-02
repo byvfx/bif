@@ -7,7 +7,7 @@
 //! Trade-off: Linear instance search (O(N) instances), but acceptable for ~100 instances.
 //! For 10K+ instances, use Embree with two-level BVH (Phase 2).
 
-use bif_math::{Aabb, Interval, Mat4};
+use bif_math::{Aabb, Interval, Mat4, Mat4Ext};
 use crate::{Ray, Material, hittable::{HitRecord, Hittable}, BvhNode};
 use std::sync::Arc;
 
@@ -80,7 +80,7 @@ impl<M: Material + Clone + 'static> InstancedGeometry<M> {
         let mut world_bbox = Aabb::EMPTY;
 
         // Need to import Mat4Ext trait to use transform_aabb
-        use bif_math::Mat4Ext;
+        //use bif_math::Mat4Ext;
 
         for transform in &transforms {
             let transformed_bbox = transform.transform_aabb(&local_bbox);
@@ -177,6 +177,7 @@ impl<M: Material + Clone + 'static> Hittable for InstancedGeometry<M> {
 mod tests {
     use super::*;
     use crate::{Triangle, Lambertian, Color};
+    use bif_math::Vec3;
 
     /// Helper: Create a simple triangle at origin
     fn create_unit_triangle() -> Triangle<Lambertian> {
