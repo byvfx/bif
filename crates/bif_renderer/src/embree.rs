@@ -6,6 +6,7 @@
 use bif_math::{Aabb, Interval, Mat4, Vec3};
 use crate::{Ray, Material, hittable::{HitRecord, Hittable}};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 // ============================================================================
 // Embree FFI Bindings
@@ -20,7 +21,7 @@ type RTCScene = *mut std::ffi::c_void;
 #[allow(non_camel_case_types)]
 type RTCGeometry = *mut std::ffi::c_void;
 
-#[allow(non_camel_case_types)]
+#[allow(non_camel_case_types, dead_code)]
 type RTCBuffer = *mut std::ffi::c_void;
 
 // Embree geometry types (from rtcore_geometry.h)
@@ -170,6 +171,7 @@ extern "C" {
         xfm: *const f32,
     );
 
+    #[allow(dead_code)]
     fn rtcSetGeometryVertexAttributeCount(geom: RTCGeometry, vertex_attribute_count: u32);
 
     fn rtcIntersect1(
@@ -519,12 +521,12 @@ impl<M: Material + Clone + 'static> Hittable for EmbreeScene<M> {
             // 3. Check if hit
             if rayhit.hit.geom_id == RTC_INVALID_GEOMETRY_ID {
                 // Debug first few misses
-                static mut MISS_COUNT: u32 = 0;
-                MISS_COUNT += 1;
-                if MISS_COUNT <= 5 {
+                static MISS_COUNT: AtomicU32 = AtomicU32::new(0);
+                let count = MISS_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
+                if count <= 5 {
                     log::debug!(
                         "Ray miss #{}: origin=({}, {}, {}), dir=({}, {}, {}), tfar={}",
-                        MISS_COUNT,
+                        count,
                         rayhit.ray.org_x, rayhit.ray.org_y, rayhit.ray.org_z,
                         rayhit.ray.dir_x, rayhit.ray.dir_y, rayhit.ray.dir_z,
                         rayhit.ray.tfar
@@ -534,12 +536,12 @@ impl<M: Material + Clone + 'static> Hittable for EmbreeScene<M> {
             }
 
             // Debug first few hits
-            static mut HIT_COUNT: u32 = 0;
-            HIT_COUNT += 1;
-            if HIT_COUNT <= 5 {
+            static HIT_COUNT: AtomicU32 = AtomicU32::new(0);
+            let count = HIT_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
+            if count <= 5 {
                 log::info!(
                     "Ray hit #{}: t={}, geom_id={}, prim_id={}, normal=({}, {}, {})",
-                    HIT_COUNT,
+                    count,
                     rayhit.ray.tfar,
                     rayhit.hit.geom_id,
                     rayhit.hit.prim_id,
