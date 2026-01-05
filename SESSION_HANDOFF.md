@@ -1,23 +1,71 @@
-# Session Handoff - January 1, 2026
+# Session Handoff - January 4, 2026
 
-**Last Updated:** Milestone 12 Complete (Embree Integration)
-**Current Milestone:** Planning Milestone 13 (USD C++ Integration)
+**Last Updated:** Milestone 13 Complete (USD C++ Integration)
+**Current Milestone:** Planning Milestone 14 (TBD)
 **Project:** BIF - VFX Scene Assembler & Renderer
 
 ---
 
 ## Quick Status
 
-✅ **Milestones Complete:** 12/12 + Freeze Fix (100%)
-🎯 **Current State:** Embree 4 two-level BVH + dual renderers (Vulkan + Ivar)
-📦 **Tests Passing:** 60+ (26 bif_math + 19 bif_renderer + 15 bif_core)
-🚀 **Next Goal:** Milestone 13 (USD C++ Integration)
+✅ **Milestones Complete:** 13/13 + Freeze Fix (100%)
+🎯 **Current State:** USD C++ integration for USDC and file references
+📦 **Tests Passing:** 63+ (26 bif_math + 19 bif_renderer + 18 bif_core)
+🚀 **Next Goal:** TBD (see Milestone 14 planning below)
 
 ---
 
 ## Recent Work (Last Session)
 
-### Milestone 12: Embree 4 Integration ✅ (January 1, 2026)
+### Milestone 13: USD C++ Integration ✅ (January 4, 2026)
+
+**Goal:** Add support for USDC binary files and USD file references
+
+**Implementation:**
+
+- Pixar USD 25.11 installed via vcpkg (12-minute build)
+- C++ FFI bridge with extern "C" functions for Rust interop
+- CMake build automated via build.rs with caching
+- ~500 LOC Rust FFI wrapper in cpp_bridge.rs
+
+**Key Discoveries:**
+
+1. **Plugin path required:** USD crashes without `PXR_PLUGINPATH_NAME` set
+2. **API changes in USD 25.11:** `GetForwardedTargets()` now takes output parameter
+3. **vcpkg USD uses shared libs:** Import libs are in bin/ not lib/
+
+**Results:**
+
+| Feature | Before | After |
+|---------|--------|-------|
+| USDA (text) | ✅ Pure Rust parser | ✅ Pure Rust parser |
+| USDC (binary) | ❌ Not supported | ✅ C++ bridge |
+| File references | ❌ Not supported | ✅ Automatic resolution |
+
+**Files:**
+
+- [cpp/usd_bridge/usd_bridge.h](cpp/usd_bridge/usd_bridge.h) (NEW) - C API declarations
+- [cpp/usd_bridge/usd_bridge.cpp](cpp/usd_bridge/usd_bridge.cpp) (NEW) - C++ implementation
+- [cpp/usd_bridge/CMakeLists.txt](cpp/usd_bridge/CMakeLists.txt) (NEW) - Build config
+- [crates/bif_core/build.rs](crates/bif_core/build.rs) (NEW) - CMake automation
+- [crates/bif_core/src/usd/cpp_bridge.rs](crates/bif_core/src/usd/cpp_bridge.rs) (NEW) - FFI wrapper
+- [USD_SETUP.md](USD_SETUP.md) (NEW) - Setup documentation
+- [setup_usd_env.ps1](setup_usd_env.ps1) (NEW) - Environment setup script
+
+**Usage:**
+
+```powershell
+# Setup environment (required once per session)
+. .\setup_usd_env.ps1
+
+# Build and test
+cargo build --package bif_core
+cargo test --package bif_core test_load_usd -- --ignored
+```
+
+---
+
+## Milestone 12 (Previous): Embree 4 Integration ✅
 
 **Goal:** Replace instance-aware BVH with Intel Embree for production-quality ray tracing
 
@@ -58,9 +106,11 @@
 ## Current State
 
 ### Build Status
+
 ✅ All builds passing (dev: ~5s, release: ~2m)
 
 ### Test Status
+
 ✅ 60+ tests passing:
 
 - bif_math: 26 tests (Vec3, Ray, Interval, Aabb, Camera, Transform)
@@ -74,6 +124,7 @@
 - **Memory:** ~60MB for 100 instances
 
 ### Known Issues/Quirks
+
 **Non-Issues (Ignore These):**
 
 - Rockstar Vulkan layer warning - Harmless, from old game install
@@ -83,6 +134,7 @@
 **Actual Issues:** None! 🎉
 
 ### Current Branch
+
 `main`
 
 ---
@@ -160,6 +212,7 @@ bif/
 ## Quick Commands
 
 ### Build & Run
+
 ```bash
 cargo build                    # Dev build (opt-level=1)
 cargo build --release          # Release build
@@ -169,6 +222,7 @@ cargo run -p bif_viewer -- --usda assets/lucy_100.usda  # Load USD scene
 ```
 
 ### Git Workflow
+
 ```bash
 git status
 git add .
