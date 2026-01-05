@@ -12,7 +12,7 @@
 - ✅ Intel Embree 4: Production-quality ray tracing
 - ✅ 73+ tests passing across 4 crates
 
-**Next:** [Milestone 14](MILESTONES.md#milestone-14-materials-usdpreviewsurface-🎯-next) (Materials/UsdPreviewSurface)
+**Next:** [Milestone 13a](MILESTONES.md#milestone-13a-usd-scene-browser--node-graph-🎯-next) (USD Scene Browser + Node Graph)
 
 ---
 
@@ -186,12 +186,11 @@ See [MILESTONES.md](MILESTONES.md) for complete milestone history and future pla
 
 ### 🎯 Next Up
 
-- **Milestone 12:** Embree Integration (8-12 hours)
-- **Milestone 13:** USD C++ Integration with references (15-20 hours)
+- **Milestone 13a:** USD Scene Browser + Node Graph (8-12 hours)
+- **Milestone 14:** Materials (UsdPreviewSurface) (10-15 hours)
 
 ### 🔮 Future
 
-- Materials (UsdPreviewSurface)
 - Qt 6 UI (optional)
 - Layers, Python scripting, GPU path tracing
 
@@ -224,5 +223,5 @@ MIT License - See [LICENSE](LICENSE) for details
 
 ---
 
-**Last Updated:** December 31, 2025
-**Status:** Milestones 0-11 Complete ✅ | Next: Milestone 12 (Embree Integration)
+**Last Updated:** January 5, 2026
+**Status:** Milestones 0-13 Complete ✅ | Next: Milestone 13a (USD Scene Browser + Node Graph)
