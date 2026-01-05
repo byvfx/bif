@@ -15,6 +15,13 @@ use bif_renderer::{
     EmbreeScene,
 };
 
+// Scene browser and property inspector modules
+pub mod scene_browser;
+pub mod property_inspector;
+
+pub use scene_browser::{SceneBrowserState, PrimDisplayInfo, PrimDataProvider, EmptyPrimProvider};
+pub use property_inspector::{PrimProperties, render_property_inspector};
+
 /// Render mode selection: GPU viewport or Ivar CPU path tracer
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RenderMode {
@@ -553,6 +560,15 @@ pub struct Renderer {
     
     // Instance transforms for Ivar (stored as Mat4 arrays)
     instance_transforms: Vec<Mat4>,
+
+    // Scene browser state
+    pub scene_browser_state: SceneBrowserState,
+    
+    // Currently selected prim path (synced with scene browser)
+    pub selected_prim_path: Option<String>,
+    
+    // Properties for the selected prim (computed when selection changes)
+    pub selected_prim_properties: Option<PrimProperties>,
 }
 
 impl Renderer {
@@ -1130,6 +1146,9 @@ impl Renderer {
             ivar_pipeline,
             mesh_data,
             instance_transforms: vec![Mat4::IDENTITY],  // Default single instance at origin
+            scene_browser_state: SceneBrowserState::new(),
+            selected_prim_path: None,
+            selected_prim_properties: None,
         })
     }
     
@@ -1554,6 +1573,9 @@ impl Renderer {
             ivar_pipeline,
             mesh_data,
             instance_transforms,
+            scene_browser_state: SceneBrowserState::new(),
+            selected_prim_path: None,
+            selected_prim_properties: None,
         })
     }
     
@@ -2107,6 +2129,33 @@ impl Renderer {
                         ui.label("⌨️ Q/E: Move down/up");
                         ui.label("⌨️ F: Frame mesh");
                     });
+
+                    ui.separator();
+
+                    // Scene Browser (collapsible)
+                    ui.collapsing("Scene Browser", |ui| {
+                        // Use empty provider for now (actual USD stage provider will be added later)
+                        // TODO: Pass actual USD stage as PrimDataProvider
+                        let provider = EmptyPrimProvider;
+                        
+                        // Store selection change request in temp data for processing after egui run
+                        if let Some(new_selection) = scene_browser::render_scene_browser(
+                            ui,
+                            &mut self.scene_browser_state,
+                            &provider,
+                        ) {
+                            ctx.data_mut(|d| {
+                                d.insert_temp(egui::Id::new("prim_selection_changed"), new_selection);
+                            });
+                        }
+                    });
+                });
+
+            // Property Inspector (right panel)
+            egui::SidePanel::right("property_panel")
+                .default_width(280.0)
+                .show(ctx, |ui| {
+                    render_property_inspector(ui, self.selected_prim_properties.as_ref());
                 });
         });
 

@@ -168,6 +168,111 @@ UsdBridgeError usd_bridge_export_stage(
     const char* path
 );
 
+// ============================================================================
+// Prim Traversal (Scene Browser Support)
+// ============================================================================
+
+/// Prim info structure for scene hierarchy browsing
+typedef struct UsdBridgePrimInfo {
+    /// Prim path (e.g., "/World/Mesh")
+    const char* path;
+
+    /// Type name (e.g., "Mesh", "Xform", "PointInstancer", "Scope")
+    const char* type_name;
+
+    /// Whether prim is active (visible in composed scene)
+    int is_active;
+
+    /// Whether prim has children
+    int has_children;
+
+    /// Number of direct children
+    size_t child_count;
+} UsdBridgePrimInfo;
+
+/// Get the total number of prims in the stage (including all types).
+///
+/// @param stage Stage handle
+/// @param out_count Pointer to receive prim count
+/// @return USD_BRIDGE_SUCCESS on success
+UsdBridgeError usd_bridge_get_prim_count(
+    const UsdBridgeStage* stage,
+    size_t* out_count
+);
+
+/// Get prim info by index.
+/// Index order is depth-first traversal order.
+///
+/// @param stage Stage handle
+/// @param index Prim index (0 to prim_count-1)
+/// @param out_info Pointer to receive prim info
+/// @return USD_BRIDGE_SUCCESS on success
+UsdBridgeError usd_bridge_get_prim_info(
+    const UsdBridgeStage* stage,
+    size_t index,
+    UsdBridgePrimInfo* out_info
+);
+
+/// Get the root prim paths (direct children of the pseudo-root).
+///
+/// @param stage Stage handle
+/// @param out_count Pointer to receive root count
+/// @return USD_BRIDGE_SUCCESS on success
+UsdBridgeError usd_bridge_get_root_prim_count(
+    const UsdBridgeStage* stage,
+    size_t* out_count
+);
+
+/// Get a root prim path by index.
+///
+/// @param stage Stage handle
+/// @param index Root prim index
+/// @param out_path Pointer to receive path string (owned by stage)
+/// @return USD_BRIDGE_SUCCESS on success
+UsdBridgeError usd_bridge_get_root_prim_path(
+    const UsdBridgeStage* stage,
+    size_t index,
+    const char** out_path
+);
+
+/// Get child prim paths for a given parent path.
+///
+/// @param stage Stage handle
+/// @param parent_path Path to parent prim (or "/" for root)
+/// @param out_count Pointer to receive child count
+/// @return USD_BRIDGE_SUCCESS on success
+UsdBridgeError usd_bridge_get_children_count(
+    const UsdBridgeStage* stage,
+    const char* parent_path,
+    size_t* out_count
+);
+
+/// Get a child prim path by index.
+///
+/// @param stage Stage handle
+/// @param parent_path Path to parent prim
+/// @param index Child index
+/// @param out_path Pointer to receive path string (owned by stage)
+/// @return USD_BRIDGE_SUCCESS on success
+UsdBridgeError usd_bridge_get_child_path(
+    const UsdBridgeStage* stage,
+    const char* parent_path,
+    size_t index,
+    const char** out_path
+);
+
+/// Get prim info by path.
+///
+/// @param stage Stage handle
+/// @param path Prim path (e.g., "/World/Mesh")
+/// @param out_info Pointer to receive prim info
+/// @return USD_BRIDGE_SUCCESS on success
+UsdBridgeError usd_bridge_get_prim_info_by_path(
+    const UsdBridgeStage* stage,
+    const char* path,
+    UsdBridgePrimInfo* out_info
+);
+
 #ifdef __cplusplus
 }
 #endif
