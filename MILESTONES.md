@@ -311,7 +311,43 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 
 ## Upcoming Milestones 🎯
 
-### Milestone 14: Materials (UsdPreviewSurface) 🎯 NEXT
+### Milestone 13a: USD Scene Browser + Node Graph 🎯 NEXT
+
+- **Goal:** Interactive USD scene hierarchy viewer with node graph for testing/loading
+- **Prerequisites:** Milestone 13 complete ✅
+- **Estimated Time:** 8-12 hours
+- **Location:**
+  - `crates/bif_viewport/src/scene_browser.rs` - USD hierarchy tree view
+  - `crates/bif_viewport/src/node_graph.rs` - Node-based USD composition
+  - `crates/bif_core/src/usd/inspector.rs` - USD introspection utilities
+- **Key Tasks:**
+  - **Hierarchy View:** Tree widget showing USD scene graph (similar to Gaffer's HierarchyView)
+    - Expandable prims with type icons (Mesh, Xform, Material, etc.)
+    - Multi-selection with ctrl/shift
+    - Context menu for isolate/hide/show
+    - Search and filter by prim type
+  - **Node Graph View:** Visual USD composition (similar to Gaffer's node editor)
+    - References as nodes with file path labels
+    - Variant sets as dropdown nodes
+    - Layer composition showing sublayer stack
+    - Visual connections between referenced prims
+  - **Property Inspector:** USD metadata and attributes panel
+    - Show USD prim properties (type, metadata, attributes)
+    - Edit basic string/numeric attributes
+    - Time-sampled attribute visualization
+  - **Integration:**
+    - Load USD files via drag-and-drop
+    - Real-time sync with viewport (selection highlights)
+    - Export composed scene back to USD
+- **Reference Implementation:** Study Gaffer's approach:
+  - `GafferSceneUI::HierarchyView` for tree structure
+  - `GafferUI::GraphGadget` for node graph layout
+  - USD introspection via Pixar USD C++ API
+- **Why This Milestone:** Essential tooling for USD workflow debugging and scene composition understanding
+
+---
+
+### Milestone 14: Materials (UsdPreviewSurface) 🎯
 
 - **Goal:** Import/export basic USD materials (UsdShade + UsdPreviewSurface)
 - **Prerequisites:** Milestone 13 complete ✅

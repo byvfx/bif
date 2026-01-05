@@ -11,7 +11,7 @@
 ✅ **Milestones Complete:** 13/13 + Freeze Fix (100%)
 🎯 **Current State:** USD C++ integration for USDC and file references
 📦 **Tests Passing:** 63+ (26 bif_math + 19 bif_renderer + 18 bif_core)
-🚀 **Next Goal:** TBD (see Milestone 14 planning below)
+🚀 **Next Goal:** Milestone 13a (USD Scene Browser + Node Graph)
 
 ---
 
@@ -166,28 +166,27 @@ bif/
 
 ## Next Session Priorities
 
-### 1. Milestone 13: USD C++ Integration (🎯 NEXT)
+### 1. Milestone 13a: USD Scene Browser + Node Graph (🎯 NEXT)
 
-**Goal:** Full USD library access via C++ shim (import/export USDC, references)
+**Goal:** Interactive USD scene hierarchy viewer with node graph for testing/loading
 
 **Why:**
 
-- Current: Pure Rust USDA parser (text only, no references)
-- USD C++: Binary USDC format, references (`@path@</prim>`), full feature set
-- Production workflows require references for asset reuse
+- Essential tooling for USD workflow debugging and scene composition understanding
+- Current USD loading is black box - need visibility into scene structure
+- Node graph visualization helps understand USD references and composition
+- Similar to Gaffer's HierarchyView and node editor approach
 
-**Estimated Time:** 15-20 hours
+**Estimated Time:** 8-12 hours
 
 **Key Tasks:**
 
-1. Create `cpp/usd_bridge/` directory for C++ FFI layer
-2. Implement C shim functions (open_stage, get_mesh_*, get_instances, resolve_reference)
-3. Create Rust wrapper in `bif_core/src/usd/cpp_bridge.rs`
-4. Support USD references
-5. Handle UsdGeomPointInstancer with prototype references
-6. Export BIF scenes to USDC format
+1. **Hierarchy View:** Tree widget showing USD scene graph structure
+2. **Node Graph View:** Visual USD composition (references, variants, layers)
+3. **Property Inspector:** USD metadata and attributes panel
+4. **Integration:** Real-time sync with viewport, drag-and-drop loading
 
-**See:** [MILESTONES.md#milestone-13](MILESTONES.md#milestone-13-usd-c-integration-usdc-binary--references-🎯-next) for full details
+**See:** [MILESTONES.md#milestone-13a](MILESTONES.md#milestone-13a-usd-scene-browser--node-graph-🎯-next) for full details
 
 ---
 
@@ -258,27 +257,27 @@ I'm continuing work on BIF (VFX renderer in Rust).
 #file:CLAUDE.md
 #codebase
 
-Status: Milestone 12 Complete! 🎉
+Status: Milestone 13 Complete! 🎉
 
-✅ All 12 milestones done + Freeze Fix
-✅ 60+ tests passing
+✅ All 13 milestones done + Freeze Fix
+✅ 63+ tests passing
 ✅ Dual renderers: Vulkan (60 FPS) + Ivar (Embree two-level BVH)
-✅ Embree 4 integrated: 28ms BVH build, production ray tracing
+✅ USD C++ integration: USDC support, file references, Pixar USD 25.11
 
 Current state:
-- 100 instances rendering with Embree two-level BVH
-- Manual FFI bindings (~600 LOC)
-- All enum values verified against actual headers
+- USD C++ bridge with ~500 LOC FFI wrapper
+- Full USDC and reference support via Pixar USD
+- Environment setup automated with PowerShell script
 
-Next: Milestone 13 (USD C++ Integration)
+Next: Milestone 13a (USD Scene Browser + Node Graph)
 
-Let's plan the approach for USD C++ FFI.
+Let's plan the USD scene browser with hierarchy view and node graph.
 ```
 
 ---
 
-**Last Commit:** (pending)
+**Last Commit:** 4d7877c (Milestone 13 USD C++ Integration)
 **Branch:** `main`
 **Build Status:** ✅ Successful
 **Test Status:** ✅ All passing
-**Ready for:** Milestone 13 (USD C++ Integration)! 🚀
+**Ready for:** Milestone 13a (USD Scene Browser + Node Graph)! 🚀
