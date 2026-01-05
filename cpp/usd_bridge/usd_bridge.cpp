@@ -42,14 +42,29 @@ struct CachedInstancer {
     std::vector<int32_t> proto_indices;
 };
 
+/// Cached prim info for scene browser
+struct CachedPrimInfo {
+    std::string path;
+    std::string type_name;
+    bool is_active;
+    bool has_children;
+    size_t child_count;
+    std::vector<std::string> child_paths;
+    std::vector<const char*> child_path_ptrs;  // For C API
+};
+
 /// Internal stage representation
 struct UsdBridgeStage {
     UsdStageRefPtr stage;
     std::vector<CachedMesh> meshes;
     std::vector<CachedInstancer> instancers;
+    std::vector<CachedPrimInfo> all_prims;  // All prims in traversal order
+    std::vector<std::string> root_paths;    // Direct children of pseudo-root
+    std::vector<const char*> root_path_ptrs;
     bool cached;
+    bool prims_cached;
 
-    UsdBridgeStage() : cached(false) {}
+    UsdBridgeStage() : cached(false), prims_cached(false) {}
 };
 
 // ============================================================================
@@ -88,6 +103,46 @@ static void matrix_to_float16(const GfMatrix4d& mat, float* out) {
     for (int i = 0; i < 16; ++i) {
         out[i] = static_cast<float>(data[i]);
     }
+}
+
+/// Cache all prim info for scene browser
+static void cache_prim_data(UsdBridgeStage* bridge) {
+    if (bridge->prims_cached) return;
+
+    bridge->all_prims.clear();
+    bridge->root_paths.clear();
+    bridge->root_path_ptrs.clear();
+
+    // Get root prims (direct children of pseudo-root)
+    UsdPrim pseudo_root = bridge->stage->GetPseudoRoot();
+    for (const UsdPrim& child : pseudo_root.GetChildren()) {
+        bridge->root_paths.push_back(child.GetPath().GetString());
+    }
+    for (const auto& path : bridge->root_paths) {
+        bridge->root_path_ptrs.push_back(path.c_str());
+    }
+
+    // Traverse all prims in depth-first order
+    for (const UsdPrim& prim : bridge->stage->Traverse()) {
+        CachedPrimInfo info;
+        info.path = prim.GetPath().GetString();
+        info.type_name = prim.GetTypeName().GetString();
+        info.is_active = prim.IsActive();
+        
+        // Get children
+        for (const UsdPrim& child : prim.GetChildren()) {
+            info.child_paths.push_back(child.GetPath().GetString());
+        }
+        for (const auto& child_path : info.child_paths) {
+            info.child_path_ptrs.push_back(child_path.c_str());
+        }
+        info.has_children = !info.child_paths.empty();
+        info.child_count = info.child_paths.size();
+
+        bridge->all_prims.push_back(std::move(info));
+    }
+
+    bridge->prims_cached = true;
 }
 
 /// Cache all mesh and instancer data from the stage
@@ -328,4 +383,170 @@ UsdBridgeError usd_bridge_export_stage(
     } catch (...) {
         return USD_BRIDGE_ERROR_UNKNOWN;
     }
+}
+
+// ============================================================================
+// Prim Traversal API Implementation
+// ============================================================================
+
+UsdBridgeError usd_bridge_get_prim_count(
+    const UsdBridgeStage* stage,
+    size_t* out_count
+) {
+    if (!stage || !out_count) {
+        return USD_BRIDGE_ERROR_NULL_POINTER;
+    }
+
+    cache_prim_data(const_cast<UsdBridgeStage*>(stage));
+    *out_count = stage->all_prims.size();
+    return USD_BRIDGE_SUCCESS;
+}
+
+UsdBridgeError usd_bridge_get_prim_info(
+    const UsdBridgeStage* stage,
+    size_t index,
+    UsdBridgePrimInfo* out_info
+) {
+    if (!stage || !out_info) {
+        return USD_BRIDGE_ERROR_NULL_POINTER;
+    }
+
+    cache_prim_data(const_cast<UsdBridgeStage*>(stage));
+
+    if (index >= stage->all_prims.size()) {
+        return USD_BRIDGE_ERROR_INVALID_PRIM;
+    }
+
+    const CachedPrimInfo& info = stage->all_prims[index];
+    out_info->path = info.path.c_str();
+    out_info->type_name = info.type_name.c_str();
+    out_info->is_active = info.is_active ? 1 : 0;
+    out_info->has_children = info.has_children ? 1 : 0;
+    out_info->child_count = info.child_count;
+
+    return USD_BRIDGE_SUCCESS;
+}
+
+UsdBridgeError usd_bridge_get_root_prim_count(
+    const UsdBridgeStage* stage,
+    size_t* out_count
+) {
+    if (!stage || !out_count) {
+        return USD_BRIDGE_ERROR_NULL_POINTER;
+    }
+
+    cache_prim_data(const_cast<UsdBridgeStage*>(stage));
+    *out_count = stage->root_paths.size();
+    return USD_BRIDGE_SUCCESS;
+}
+
+UsdBridgeError usd_bridge_get_root_prim_path(
+    const UsdBridgeStage* stage,
+    size_t index,
+    const char** out_path
+) {
+    if (!stage || !out_path) {
+        return USD_BRIDGE_ERROR_NULL_POINTER;
+    }
+
+    cache_prim_data(const_cast<UsdBridgeStage*>(stage));
+
+    if (index >= stage->root_paths.size()) {
+        return USD_BRIDGE_ERROR_INVALID_PRIM;
+    }
+
+    *out_path = stage->root_path_ptrs[index];
+    return USD_BRIDGE_SUCCESS;
+}
+
+UsdBridgeError usd_bridge_get_children_count(
+    const UsdBridgeStage* stage,
+    const char* parent_path,
+    size_t* out_count
+) {
+    if (!stage || !parent_path || !out_count) {
+        return USD_BRIDGE_ERROR_NULL_POINTER;
+    }
+
+    cache_prim_data(const_cast<UsdBridgeStage*>(stage));
+
+    // Handle pseudo-root case
+    std::string path_str(parent_path);
+    if (path_str == "/" || path_str.empty()) {
+        *out_count = stage->root_paths.size();
+        return USD_BRIDGE_SUCCESS;
+    }
+
+    // Find the prim in our cache
+    for (const auto& info : stage->all_prims) {
+        if (info.path == path_str) {
+            *out_count = info.child_count;
+            return USD_BRIDGE_SUCCESS;
+        }
+    }
+
+    return USD_BRIDGE_ERROR_INVALID_PRIM;
+}
+
+UsdBridgeError usd_bridge_get_child_path(
+    const UsdBridgeStage* stage,
+    const char* parent_path,
+    size_t index,
+    const char** out_path
+) {
+    if (!stage || !parent_path || !out_path) {
+        return USD_BRIDGE_ERROR_NULL_POINTER;
+    }
+
+    cache_prim_data(const_cast<UsdBridgeStage*>(stage));
+
+    std::string path_str(parent_path);
+    
+    // Handle pseudo-root case
+    if (path_str == "/" || path_str.empty()) {
+        if (index >= stage->root_paths.size()) {
+            return USD_BRIDGE_ERROR_INVALID_PRIM;
+        }
+        *out_path = stage->root_path_ptrs[index];
+        return USD_BRIDGE_SUCCESS;
+    }
+
+    // Find the prim in our cache
+    for (const auto& info : stage->all_prims) {
+        if (info.path == path_str) {
+            if (index >= info.child_paths.size()) {
+                return USD_BRIDGE_ERROR_INVALID_PRIM;
+            }
+            *out_path = info.child_path_ptrs[index];
+            return USD_BRIDGE_SUCCESS;
+        }
+    }
+
+    return USD_BRIDGE_ERROR_INVALID_PRIM;
+}
+
+UsdBridgeError usd_bridge_get_prim_info_by_path(
+    const UsdBridgeStage* stage,
+    const char* path,
+    UsdBridgePrimInfo* out_info
+) {
+    if (!stage || !path || !out_info) {
+        return USD_BRIDGE_ERROR_NULL_POINTER;
+    }
+
+    cache_prim_data(const_cast<UsdBridgeStage*>(stage));
+
+    std::string path_str(path);
+    for (const auto& info : stage->all_prims) {
+        if (info.path == path_str) {
+            out_info->path = info.path.c_str();
+            out_info->type_name = info.type_name.c_str();
+            out_info->is_active = info.is_active ? 1 : 0;
+            out_info->has_children = info.has_children ? 1 : 0;
+            out_info->child_count = info.child_count;
+            return USD_BRIDGE_SUCCESS;
+        }
+    }
+
+    return USD_BRIDGE_ERROR_INVALID_PRIM;
 }

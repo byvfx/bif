@@ -23,3 +23,6 @@ tobj = "4.0"
 egui = { workspace = true }
 egui-wgpu = { workspace = true }
 egui-winit = { workspace = true }
+
+# TODO: Uncomment for Milestone 13b (Node Graph)
+# egui-snarl = "0.9"

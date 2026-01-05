@@ -69,6 +69,16 @@ struct UsdBridgeInstancerDataRaw {
     proto_indices: *const i32,
 }
 
+/// Prim info from C API (for scene browser)
+#[repr(C)]
+struct UsdBridgePrimInfoRaw {
+    path: *const std::ffi::c_char,
+    type_name: *const std::ffi::c_char,
+    is_active: i32,
+    has_children: i32,
+    child_count: usize,
+}
+
 #[link(name = "usd_bridge")]
 extern "C" {
     fn usd_bridge_error_message(error: UsdBridgeErrorCode) -> *const std::ffi::c_char;
@@ -105,6 +115,48 @@ extern "C" {
     fn usd_bridge_export_stage(
         stage: *const UsdBridgeStageRaw,
         path: *const std::ffi::c_char,
+    ) -> UsdBridgeErrorCode;
+
+    // Prim traversal APIs (for scene browser)
+    fn usd_bridge_get_prim_count(
+        stage: *const UsdBridgeStageRaw,
+        out_count: *mut usize,
+    ) -> UsdBridgeErrorCode;
+
+    fn usd_bridge_get_prim_info(
+        stage: *const UsdBridgeStageRaw,
+        index: usize,
+        out_info: *mut UsdBridgePrimInfoRaw,
+    ) -> UsdBridgeErrorCode;
+
+    fn usd_bridge_get_root_prim_count(
+        stage: *const UsdBridgeStageRaw,
+        out_count: *mut usize,
+    ) -> UsdBridgeErrorCode;
+
+    fn usd_bridge_get_root_prim_path(
+        stage: *const UsdBridgeStageRaw,
+        index: usize,
+        out_path: *mut *const std::ffi::c_char,
+    ) -> UsdBridgeErrorCode;
+
+    fn usd_bridge_get_children_count(
+        stage: *const UsdBridgeStageRaw,
+        parent_path: *const std::ffi::c_char,
+        out_count: *mut usize,
+    ) -> UsdBridgeErrorCode;
+
+    fn usd_bridge_get_child_path(
+        stage: *const UsdBridgeStageRaw,
+        parent_path: *const std::ffi::c_char,
+        index: usize,
+        out_path: *mut *const std::ffi::c_char,
+    ) -> UsdBridgeErrorCode;
+
+    fn usd_bridge_get_prim_info_by_path(
+        stage: *const UsdBridgeStageRaw,
+        path: *const std::ffi::c_char,
+        out_info: *mut UsdBridgePrimInfoRaw,
     ) -> UsdBridgeErrorCode;
 }
 
@@ -200,6 +252,25 @@ pub struct UsdInstancerData {
 
     /// Prototype index for each instance
     pub proto_indices: Vec<i32>,
+}
+
+/// Prim info for scene hierarchy browsing.
+#[derive(Clone, Debug)]
+pub struct UsdPrimInfo {
+    /// Prim path (e.g., "/World/Mesh")
+    pub path: String,
+
+    /// Type name (e.g., "Mesh", "Xform", "PointInstancer")
+    pub type_name: String,
+
+    /// Whether prim is active in composed scene
+    pub is_active: bool,
+
+    /// Whether prim has children
+    pub has_children: bool,
+
+    /// Number of direct children
+    pub child_count: usize,
 }
 
 // ============================================================================
@@ -474,6 +545,182 @@ impl UsdStage {
         }
 
         Ok(())
+    }
+
+    // ========================================================================
+    // Prim Traversal (Scene Browser Support)
+    // ========================================================================
+
+    /// Get the total number of prims in the stage.
+    pub fn prim_count(&self) -> UsdBridgeResult<usize> {
+        let mut count: usize = 0;
+        let result = unsafe { usd_bridge_get_prim_count(self.raw, &mut count) };
+
+        if result != UsdBridgeErrorCode::Success {
+            return Err(result.into());
+        }
+
+        Ok(count)
+    }
+
+    /// Get prim info by index (depth-first traversal order).
+    pub fn get_prim_info(&self, index: usize) -> UsdBridgeResult<UsdPrimInfo> {
+        let mut raw_info = UsdBridgePrimInfoRaw {
+            path: ptr::null(),
+            type_name: ptr::null(),
+            is_active: 0,
+            has_children: 0,
+            child_count: 0,
+        };
+
+        let result = unsafe { usd_bridge_get_prim_info(self.raw, index, &mut raw_info) };
+
+        if result != UsdBridgeErrorCode::Success {
+            return Err(match result {
+                UsdBridgeErrorCode::InvalidPrim => {
+                    UsdBridgeError::InvalidPrim(format!("prim index {}", index))
+                }
+                other => other.into(),
+            });
+        }
+
+        Self::convert_prim_info(&raw_info)
+    }
+
+    /// Get prim info by path.
+    pub fn get_prim_info_by_path(&self, path: &str) -> UsdBridgeResult<UsdPrimInfo> {
+        let c_path = CString::new(path).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let mut raw_info = UsdBridgePrimInfoRaw {
+            path: ptr::null(),
+            type_name: ptr::null(),
+            is_active: 0,
+            has_children: 0,
+            child_count: 0,
+        };
+
+        let result =
+            unsafe { usd_bridge_get_prim_info_by_path(self.raw, c_path.as_ptr(), &mut raw_info) };
+
+        if result != UsdBridgeErrorCode::Success {
+            return Err(match result {
+                UsdBridgeErrorCode::InvalidPrim => {
+                    UsdBridgeError::InvalidPrim(format!("prim path {}", path))
+                }
+                other => other.into(),
+            });
+        }
+
+        Self::convert_prim_info(&raw_info)
+    }
+
+    /// Get root prim paths (direct children of pseudo-root).
+    pub fn root_prim_paths(&self) -> UsdBridgeResult<Vec<String>> {
+        let mut count: usize = 0;
+        let result = unsafe { usd_bridge_get_root_prim_count(self.raw, &mut count) };
+
+        if result != UsdBridgeErrorCode::Success {
+            return Err(result.into());
+        }
+
+        let mut paths = Vec::with_capacity(count);
+        for i in 0..count {
+            let mut path_ptr: *const std::ffi::c_char = ptr::null();
+            let result = unsafe { usd_bridge_get_root_prim_path(self.raw, i, &mut path_ptr) };
+
+            if result != UsdBridgeErrorCode::Success {
+                return Err(result.into());
+            }
+
+            let path = unsafe {
+                if path_ptr.is_null() {
+                    String::new()
+                } else {
+                    CStr::from_ptr(path_ptr).to_string_lossy().into_owned()
+                }
+            };
+            paths.push(path);
+        }
+
+        Ok(paths)
+    }
+
+    /// Get child prim paths for a given parent path.
+    ///
+    /// Pass "/" or empty string for root prims.
+    pub fn child_prim_paths(&self, parent_path: &str) -> UsdBridgeResult<Vec<String>> {
+        let c_path = CString::new(parent_path).map_err(|_| UsdBridgeError::InvalidPath)?;
+
+        let mut count: usize = 0;
+        let result =
+            unsafe { usd_bridge_get_children_count(self.raw, c_path.as_ptr(), &mut count) };
+
+        if result != UsdBridgeErrorCode::Success {
+            return Err(match result {
+                UsdBridgeErrorCode::InvalidPrim => {
+                    UsdBridgeError::InvalidPrim(format!("parent path {}", parent_path))
+                }
+                other => other.into(),
+            });
+        }
+
+        let mut paths = Vec::with_capacity(count);
+        for i in 0..count {
+            let mut path_ptr: *const std::ffi::c_char = ptr::null();
+            let result =
+                unsafe { usd_bridge_get_child_path(self.raw, c_path.as_ptr(), i, &mut path_ptr) };
+
+            if result != UsdBridgeErrorCode::Success {
+                return Err(result.into());
+            }
+
+            let path = unsafe {
+                if path_ptr.is_null() {
+                    String::new()
+                } else {
+                    CStr::from_ptr(path_ptr).to_string_lossy().into_owned()
+                }
+            };
+            paths.push(path);
+        }
+
+        Ok(paths)
+    }
+
+    /// Get all prims in the stage (depth-first order).
+    pub fn all_prims(&self) -> UsdBridgeResult<Vec<UsdPrimInfo>> {
+        let count = self.prim_count()?;
+        let mut prims = Vec::with_capacity(count);
+        for i in 0..count {
+            prims.push(self.get_prim_info(i)?);
+        }
+        Ok(prims)
+    }
+
+    /// Helper to convert raw prim info to Rust type.
+    fn convert_prim_info(raw: &UsdBridgePrimInfoRaw) -> UsdBridgeResult<UsdPrimInfo> {
+        let path = unsafe {
+            if raw.path.is_null() {
+                String::new()
+            } else {
+                CStr::from_ptr(raw.path).to_string_lossy().into_owned()
+            }
+        };
+
+        let type_name = unsafe {
+            if raw.type_name.is_null() {
+                String::new()
+            } else {
+                CStr::from_ptr(raw.type_name).to_string_lossy().into_owned()
+            }
+        };
+
+        Ok(UsdPrimInfo {
+            path,
+            type_name,
+            is_active: raw.is_active != 0,
+            has_children: raw.has_children != 0,
+            child_count: raw.child_count,
+        })
     }
 }
 
