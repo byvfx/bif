@@ -2,17 +2,17 @@
 
 > Production-grade renderer inspired by Isotropix Clarisse, built in Rust
 
-## 🎯 Current Status: Milestones 0-11 Complete! ✅
+## 🎯 Current Status: Milestones 0-13 Complete! ✅
 
-**Foundation Complete (Milestones 0-11)** - DONE
+**Foundation Complete (Milestones 0-13)** - DONE
 
 - ✅ Dual rendering: Vulkan viewport (60 FPS) + Ivar CPU path tracer
 - ✅ GPU instancing: 100+ instances, single draw call
-- ✅ USD USDA import: Houdini-compatible workflow
-- ✅ Instance-aware BVH: No UI freeze, 100x memory reduction
-- ✅ 60+ tests passing across 4 crates
+- ✅ USD support: USDA (pure Rust) + USDC/references (C++ bridge)
+- ✅ Intel Embree 4: Production-quality ray tracing
+- ✅ 73+ tests passing across 4 crates
 
-**Next:** [Milestone 12](MILESTONES.md#milestone-12-embree-integration-🎯-next) (Embree Integration), then [Milestone 13](MILESTONES.md#milestone-13-usd-c-integration-usdc-binary--references) (USD C++ with references)
+**Next:** [Milestone 14](MILESTONES.md#milestone-14-materials-usdpreviewsurface-🎯-next) (Materials/UsdPreviewSurface)
 
 ---
 
@@ -27,6 +27,9 @@ cargo test
 
 # Load USD scene
 cargo run -p bif_viewer -- --usda assets/lucy_low.usda
+
+# For USD C++ features (USDC, references), set up environment:
+# See USD_SETUP.md for details
 ```
 
 ---
@@ -37,8 +40,9 @@ cargo run -p bif_viewer -- --usda assets/lucy_low.usda
 - **Dual Renderers:**
   - **GPU (Vulkan):** Real-time preview at 60+ FPS
   - **CPU (Ivar):** Production path tracing with progressive refinement
-- **USD Workflow:** Import USDA scenes from Houdini/Maya
-- **Instance-Aware BVH:** Sub-millisecond scene builds, no UI freeze
+- **USD Workflow:** Import USDA/USDC scenes from Houdini/Maya
+- **Intel Embree 4:** Production two-level BVH ray tracing
+- **File References:** `@path.usda@</Prim>` resolved automatically
 
 ---
 
@@ -50,13 +54,15 @@ bif/
 │   ├── bif_math/       # Math primitives (Vec3, Ray, AABB, Camera, Transform)
 │   ├── bif_core/       # Scene graph, USD parser, mesh data
 │   ├── bif_viewport/   # GPU viewport (wgpu + Vulkan + egui)
-│   ├── bif_renderer/   # CPU path tracer "Ivar" (progressive rendering)
+│   ├── bif_renderer/   # CPU path tracer "Ivar" (Embree + progressive rendering)
 │   └── bif_viewer/     # Application entry point
+├── cpp/usd_bridge/     # C++ FFI bridge to Pixar USD
 ├── devlog/             # Development session logs
 ├── legacy/             # Original Go raytracer (reference)
 ├── docs/archive/       # Archived documentation
 └── renders/            # Render output files
 ```
+
 
 ---
 

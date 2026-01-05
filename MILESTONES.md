@@ -285,56 +285,36 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 
 ---
 
-## Upcoming Milestones 🎯
+### Milestone 13: USD C++ Integration ✅
 
-### Milestone 13: USD C++ Integration (USDC Binary + References) 🎯 NEXT
-
-- **Goal:** Full USD library access via C++ shim (import/export USDC, references)
-- **Why:**
-  - **Current:** Pure Rust USDA parser (text only, no references)
-  - **USD C++:** Binary USDC format, references (`@path@</prim>`), full feature set
-  - Production workflows require references for asset reuse
-  - USDC is faster to load than USDA text files
-- **Prerequisites:** Milestone 12 complete (Embree proven and stable)
-- **Estimated Time:** 15-20 hours
-- **Key Tasks:**
-  - Create `cpp/usd_bridge/` directory for C++ FFI layer
-  - Implement C shim functions:
-    - `usd_open_stage(path) -> void*`
-    - `usd_get_mesh_vertices(stage, prim_path, out_vertices)`
-    - `usd_get_mesh_indices(stage, prim_path, out_indices)`
-    - `usd_get_instances(stage, instancer_path, out_transforms)`
-    - `usd_resolve_reference(stage, prim_path)` - **Key feature**
-    - `usd_close_stage(stage)`
-  - Create Rust wrapper in `bif_core/src/usd/cpp_bridge.rs`
-  - Support USD references: `references = @assets/tree.usda@</Tree>`
-  - Handle UsdGeomPointInstancer with prototype references
-  - Export BIF scenes to USDC format
-  - Test with Houdini-exported USDC files
-- **Success Criteria:**
-  - Load USDC (binary) files
-  - Resolve references correctly (nested assets)
-  - Export BIF scenes to USD (round-trip test)
-  - Output matches usdview
-- **Challenges:**
-  - USD C++ library build complexity (monorepo, TBB, Boost dependencies)
-  - FFI lifetime management (stage pointers must outlive mesh data)
-  - Error handling across FFI boundary (C++ exceptions → Rust Results)
-  - Cross-platform compatibility (Windows MSVC vs Linux GCC)
-- **Critical Files:**
-  - `cpp/usd_bridge/CMakeLists.txt` (NEW) - Build system
-  - `cpp/usd_bridge/usd_bridge.cpp` (NEW) - C++ implementation
-  - `cpp/usd_bridge/usd_bridge.h` (NEW) - C API header
-  - `crates/bif_core/src/usd/cpp_bridge.rs` (NEW) - Rust FFI wrapper
-  - `crates/bif_core/build.rs` (NEW) - Compile C++ bridge
+- **Completed:** 2026-01-04
+- **Time Invested:** ~4 hours
+- **Location:**
+  - `cpp/usd_bridge/` - C++ FFI bridge
+  - `crates/bif_core/src/usd/cpp_bridge.rs` - Rust wrapper
+  - `crates/bif_core/build.rs` - CMake automation
+- **Key Achievements:**
+  - Pixar USD 25.11 via vcpkg
+  - C++ FFI bridge with extern "C" functions
+  - CMake build integrated into cargo via build.rs
+  - ~500 LOC Rust FFI wrapper
+  - Full support for USDC binary and file references
+  - Environment setup script and documentation
+- **Key Discoveries:**
+  - USD requires `PXR_PLUGINPATH_NAME` environment variable
+  - USD 25.11 changed `GetForwardedTargets()` API
+  - vcpkg USD puts import libs in bin/ not lib/
+- **Stats:** 3 new integration tests, 18 tests total in bif_core
+- **Devlog:** (Embedded in SESSION_HANDOFF.md)
 
 ---
 
-### Milestone 14: Materials (UsdPreviewSurface)
+## Upcoming Milestones 🎯
+
+### Milestone 14: Materials (UsdPreviewSurface) 🎯 NEXT
 
 - **Goal:** Import/export basic USD materials (UsdShade + UsdPreviewSurface)
-- **Status:** Deferred until Embree + USD C++ proven
-- **Prerequisites:** Milestone 13 complete
+- **Prerequisites:** Milestone 13 complete ✅
 - **Estimated Time:** 10-15 hours
 - **Key Tasks:**
   - Parse UsdPreviewSurface shader nodes

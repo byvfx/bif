@@ -1,0 +1,508 @@
+//! USD C++ Bridge - Rust FFI wrapper.
+//!
+//! Provides safe Rust bindings to the USD C++ library via the usd_bridge C shim.
+//! Supports loading USDA, USD, and USDC files with automatic reference resolution.
+//!
+//! # Example
+//!
+//! ```ignore
+//! use bif_core::usd::cpp_bridge::UsdStage;
+//!
+//! let stage = UsdStage::open("scene.usdc")?;
+//! for mesh in stage.meshes() {
+//!     println!("Mesh: {} with {} vertices", mesh.path, mesh.vertices.len());
+//! }
+//! ```
+
+use std::ffi::{CStr, CString};
+use std::path::Path;
+use std::ptr;
+
+use bif_math::{Mat4, Vec3};
+use thiserror::Error;
+
+// ============================================================================
+// FFI Declarations
+// ============================================================================
+
+/// Opaque stage handle (matches C struct)
+#[repr(C)]
+struct UsdBridgeStageRaw {
+    _private: [u8; 0],
+}
+
+/// Error codes from C API
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
+enum UsdBridgeErrorCode {
+    Success = 0,
+    NullPointer = 1,
+    FileNotFound = 2,
+    InvalidStage = 3,
+    InvalidPrim = 4,
+    OutOfMemory = 5,
+    Unknown = 99,
+}
+
+/// Mesh data from C API
+#[repr(C)]
+struct UsdBridgeMeshDataRaw {
+    path: *const std::ffi::c_char,
+    vertices: *const f32,
+    vertex_count: usize,
+    indices: *const u32,
+    index_count: usize,
+    normals: *const f32,
+    normal_count: usize,
+    transform: [f32; 16],
+}
+
+/// Instancer data from C API
+#[repr(C)]
+struct UsdBridgeInstancerDataRaw {
+    path: *const std::ffi::c_char,
+    prototype_paths: *const *const std::ffi::c_char,
+    prototype_count: usize,
+    transforms: *const f32,
+    instance_count: usize,
+    proto_indices: *const i32,
+}
+
+#[link(name = "usd_bridge")]
+extern "C" {
+    fn usd_bridge_error_message(error: UsdBridgeErrorCode) -> *const std::ffi::c_char;
+
+    fn usd_bridge_open_stage(
+        path: *const std::ffi::c_char,
+        out_stage: *mut *mut UsdBridgeStageRaw,
+    ) -> UsdBridgeErrorCode;
+
+    fn usd_bridge_close_stage(stage: *mut UsdBridgeStageRaw);
+
+    fn usd_bridge_get_mesh_count(
+        stage: *const UsdBridgeStageRaw,
+        out_count: *mut usize,
+    ) -> UsdBridgeErrorCode;
+
+    fn usd_bridge_get_instancer_count(
+        stage: *const UsdBridgeStageRaw,
+        out_count: *mut usize,
+    ) -> UsdBridgeErrorCode;
+
+    fn usd_bridge_get_mesh(
+        stage: *const UsdBridgeStageRaw,
+        index: usize,
+        out_data: *mut UsdBridgeMeshDataRaw,
+    ) -> UsdBridgeErrorCode;
+
+    fn usd_bridge_get_instancer(
+        stage: *const UsdBridgeStageRaw,
+        index: usize,
+        out_data: *mut UsdBridgeInstancerDataRaw,
+    ) -> UsdBridgeErrorCode;
+
+    fn usd_bridge_export_stage(
+        stage: *const UsdBridgeStageRaw,
+        path: *const std::ffi::c_char,
+    ) -> UsdBridgeErrorCode;
+}
+
+// ============================================================================
+// Error Types
+// ============================================================================
+
+/// Errors from USD bridge operations.
+#[derive(Error, Debug)]
+pub enum UsdBridgeError {
+    #[error("Null pointer passed to USD bridge")]
+    NullPointer,
+
+    #[error("USD file not found: {0}")]
+    FileNotFound(String),
+
+    #[error("Invalid USD stage handle")]
+    InvalidStage,
+
+    #[error("Invalid prim or index: {0}")]
+    InvalidPrim(String),
+
+    #[error("Out of memory")]
+    OutOfMemory,
+
+    #[error("USD bridge error: {0}")]
+    Unknown(String),
+
+    #[error("Path contains invalid UTF-8")]
+    InvalidPath,
+}
+
+impl From<UsdBridgeErrorCode> for UsdBridgeError {
+    fn from(code: UsdBridgeErrorCode) -> Self {
+        match code {
+            UsdBridgeErrorCode::Success => unreachable!("Success is not an error"),
+            UsdBridgeErrorCode::NullPointer => UsdBridgeError::NullPointer,
+            UsdBridgeErrorCode::FileNotFound => UsdBridgeError::FileNotFound(String::new()),
+            UsdBridgeErrorCode::InvalidStage => UsdBridgeError::InvalidStage,
+            UsdBridgeErrorCode::InvalidPrim => UsdBridgeError::InvalidPrim(String::new()),
+            UsdBridgeErrorCode::OutOfMemory => UsdBridgeError::OutOfMemory,
+            UsdBridgeErrorCode::Unknown => {
+                let msg = unsafe {
+                    let ptr = usd_bridge_error_message(code);
+                    if ptr.is_null() {
+                        "Unknown error".to_string()
+                    } else {
+                        CStr::from_ptr(ptr).to_string_lossy().into_owned()
+                    }
+                };
+                UsdBridgeError::Unknown(msg)
+            }
+        }
+    }
+}
+
+pub type UsdBridgeResult<T> = Result<T, UsdBridgeError>;
+
+// ============================================================================
+// Safe Rust Types
+// ============================================================================
+
+/// Mesh data extracted from USD.
+#[derive(Clone, Debug)]
+pub struct UsdMeshData {
+    /// Prim path in the USD hierarchy
+    pub path: String,
+
+    /// Vertex positions
+    pub vertices: Vec<Vec3>,
+
+    /// Triangle indices
+    pub indices: Vec<u32>,
+
+    /// Vertex normals (optional)
+    pub normals: Option<Vec<Vec3>>,
+
+    /// World transform matrix
+    pub transform: Mat4,
+}
+
+/// Point instancer data extracted from USD.
+#[derive(Clone, Debug)]
+pub struct UsdInstancerData {
+    /// Prim path in the USD hierarchy
+    pub path: String,
+
+    /// Paths to prototype prims
+    pub prototype_paths: Vec<String>,
+
+    /// Instance transforms (world space)
+    pub transforms: Vec<Mat4>,
+
+    /// Prototype index for each instance
+    pub proto_indices: Vec<i32>,
+}
+
+// ============================================================================
+// UsdStage - Safe Wrapper
+// ============================================================================
+
+/// A USD stage opened via the C++ bridge.
+///
+/// Automatically closes the stage when dropped.
+pub struct UsdStage {
+    raw: *mut UsdBridgeStageRaw,
+}
+
+// UsdStage is Send because the underlying C++ code is thread-safe for reading
+unsafe impl Send for UsdStage {}
+
+impl UsdStage {
+    /// Open a USD stage from a file path.
+    ///
+    /// Supports `.usda` (text), `.usdc` (binary), and `.usd` (auto-detect) formats.
+    /// References are automatically resolved.
+    pub fn open<P: AsRef<Path>>(path: P) -> UsdBridgeResult<Self> {
+        // Convert to absolute path - USD C++ library may not handle relative paths well
+        let abs_path = std::fs::canonicalize(path.as_ref())
+            .map_err(|_| UsdBridgeError::FileNotFound(path.as_ref().display().to_string()))?;
+        
+        // Convert to forward slashes for USD compatibility
+        let path_str = abs_path.to_str().ok_or(UsdBridgeError::InvalidPath)?;
+        // Remove Windows extended path prefix if present (\\?\)
+        let path_str = path_str.strip_prefix(r"\\?\").unwrap_or(path_str);
+        
+        let c_path = CString::new(path_str).map_err(|_| UsdBridgeError::InvalidPath)?;
+
+        let mut raw: *mut UsdBridgeStageRaw = ptr::null_mut();
+
+        let result = unsafe { usd_bridge_open_stage(c_path.as_ptr(), &mut raw) };
+
+        if result != UsdBridgeErrorCode::Success {
+            return Err(match result {
+                UsdBridgeErrorCode::FileNotFound => {
+                    UsdBridgeError::FileNotFound(path_str.to_string())
+                }
+                other => other.into(),
+            });
+        }
+
+        Ok(Self { raw })
+    }
+
+    /// Get the number of mesh prims in the stage.
+    pub fn mesh_count(&self) -> UsdBridgeResult<usize> {
+        let mut count: usize = 0;
+        let result = unsafe { usd_bridge_get_mesh_count(self.raw, &mut count) };
+
+        if result != UsdBridgeErrorCode::Success {
+            return Err(result.into());
+        }
+
+        Ok(count)
+    }
+
+    /// Get the number of point instancer prims in the stage.
+    pub fn instancer_count(&self) -> UsdBridgeResult<usize> {
+        let mut count: usize = 0;
+        let result = unsafe { usd_bridge_get_instancer_count(self.raw, &mut count) };
+
+        if result != UsdBridgeErrorCode::Success {
+            return Err(result.into());
+        }
+
+        Ok(count)
+    }
+
+    /// Get mesh data by index.
+    pub fn get_mesh(&self, index: usize) -> UsdBridgeResult<UsdMeshData> {
+        let mut raw_data = UsdBridgeMeshDataRaw {
+            path: ptr::null(),
+            vertices: ptr::null(),
+            vertex_count: 0,
+            indices: ptr::null(),
+            index_count: 0,
+            normals: ptr::null(),
+            normal_count: 0,
+            transform: [0.0; 16],
+        };
+
+        let result = unsafe { usd_bridge_get_mesh(self.raw, index, &mut raw_data) };
+
+        if result != UsdBridgeErrorCode::Success {
+            return Err(match result {
+                UsdBridgeErrorCode::InvalidPrim => {
+                    UsdBridgeError::InvalidPrim(format!("mesh index {}", index))
+                }
+                other => other.into(),
+            });
+        }
+
+        // Convert to Rust types
+        let path = unsafe {
+            if raw_data.path.is_null() {
+                String::new()
+            } else {
+                CStr::from_ptr(raw_data.path).to_string_lossy().into_owned()
+            }
+        };
+
+        // Convert vertices (flat f32 array to Vec<Vec3>)
+        let vertices = unsafe {
+            if raw_data.vertices.is_null() || raw_data.vertex_count == 0 {
+                Vec::new()
+            } else {
+                let slice = std::slice::from_raw_parts(raw_data.vertices, raw_data.vertex_count * 3);
+                slice
+                    .chunks_exact(3)
+                    .map(|chunk| Vec3::new(chunk[0], chunk[1], chunk[2]))
+                    .collect()
+            }
+        };
+
+        // Convert indices
+        let indices = unsafe {
+            if raw_data.indices.is_null() || raw_data.index_count == 0 {
+                Vec::new()
+            } else {
+                std::slice::from_raw_parts(raw_data.indices, raw_data.index_count).to_vec()
+            }
+        };
+
+        // Convert normals (optional)
+        let normals = unsafe {
+            if raw_data.normals.is_null() || raw_data.normal_count == 0 {
+                None
+            } else {
+                let slice = std::slice::from_raw_parts(raw_data.normals, raw_data.normal_count * 3);
+                Some(
+                    slice
+                        .chunks_exact(3)
+                        .map(|chunk| Vec3::new(chunk[0], chunk[1], chunk[2]))
+                        .collect(),
+                )
+            }
+        };
+
+        // Convert transform (column-major f32[16] to Mat4)
+        let transform = Mat4::from_cols_array(&raw_data.transform);
+
+        Ok(UsdMeshData {
+            path,
+            vertices,
+            indices,
+            normals,
+            transform,
+        })
+    }
+
+    /// Get instancer data by index.
+    pub fn get_instancer(&self, index: usize) -> UsdBridgeResult<UsdInstancerData> {
+        let mut raw_data = UsdBridgeInstancerDataRaw {
+            path: ptr::null(),
+            prototype_paths: ptr::null(),
+            prototype_count: 0,
+            transforms: ptr::null(),
+            instance_count: 0,
+            proto_indices: ptr::null(),
+        };
+
+        let result = unsafe { usd_bridge_get_instancer(self.raw, index, &mut raw_data) };
+
+        if result != UsdBridgeErrorCode::Success {
+            return Err(match result {
+                UsdBridgeErrorCode::InvalidPrim => {
+                    UsdBridgeError::InvalidPrim(format!("instancer index {}", index))
+                }
+                other => other.into(),
+            });
+        }
+
+        // Convert path
+        let path = unsafe {
+            if raw_data.path.is_null() {
+                String::new()
+            } else {
+                CStr::from_ptr(raw_data.path).to_string_lossy().into_owned()
+            }
+        };
+
+        // Convert prototype paths
+        let prototype_paths = unsafe {
+            if raw_data.prototype_paths.is_null() || raw_data.prototype_count == 0 {
+                Vec::new()
+            } else {
+                let ptrs =
+                    std::slice::from_raw_parts(raw_data.prototype_paths, raw_data.prototype_count);
+                ptrs.iter()
+                    .map(|&ptr| {
+                        if ptr.is_null() {
+                            String::new()
+                        } else {
+                            CStr::from_ptr(ptr).to_string_lossy().into_owned()
+                        }
+                    })
+                    .collect()
+            }
+        };
+
+        // Convert transforms (flat f32 array to Vec<Mat4>)
+        let transforms = unsafe {
+            if raw_data.transforms.is_null() || raw_data.instance_count == 0 {
+                Vec::new()
+            } else {
+                let slice =
+                    std::slice::from_raw_parts(raw_data.transforms, raw_data.instance_count * 16);
+                slice
+                    .chunks_exact(16)
+                    .map(|chunk| {
+                        let mut arr = [0.0f32; 16];
+                        arr.copy_from_slice(chunk);
+                        Mat4::from_cols_array(&arr)
+                    })
+                    .collect()
+            }
+        };
+
+        // Convert proto indices
+        let proto_indices = unsafe {
+            if raw_data.proto_indices.is_null() || raw_data.instance_count == 0 {
+                Vec::new()
+            } else {
+                std::slice::from_raw_parts(raw_data.proto_indices, raw_data.instance_count).to_vec()
+            }
+        };
+
+        Ok(UsdInstancerData {
+            path,
+            prototype_paths,
+            transforms,
+            proto_indices,
+        })
+    }
+
+    /// Get all meshes in the stage.
+    pub fn meshes(&self) -> UsdBridgeResult<Vec<UsdMeshData>> {
+        let count = self.mesh_count()?;
+        let mut meshes = Vec::with_capacity(count);
+        for i in 0..count {
+            meshes.push(self.get_mesh(i)?);
+        }
+        Ok(meshes)
+    }
+
+    /// Get all instancers in the stage.
+    pub fn instancers(&self) -> UsdBridgeResult<Vec<UsdInstancerData>> {
+        let count = self.instancer_count()?;
+        let mut instancers = Vec::with_capacity(count);
+        for i in 0..count {
+            instancers.push(self.get_instancer(i)?);
+        }
+        Ok(instancers)
+    }
+
+    /// Export the stage to a file.
+    ///
+    /// Format is determined by file extension: `.usda`, `.usdc`, or `.usd`.
+    pub fn export<P: AsRef<Path>>(&self, path: P) -> UsdBridgeResult<()> {
+        let path_str = path.as_ref().to_str().ok_or(UsdBridgeError::InvalidPath)?;
+        let c_path = CString::new(path_str).map_err(|_| UsdBridgeError::InvalidPath)?;
+
+        let result = unsafe { usd_bridge_export_stage(self.raw, c_path.as_ptr()) };
+
+        if result != UsdBridgeErrorCode::Success {
+            return Err(result.into());
+        }
+
+        Ok(())
+    }
+}
+
+impl Drop for UsdStage {
+    fn drop(&mut self) {
+        if !self.raw.is_null() {
+            unsafe {
+                usd_bridge_close_stage(self.raw);
+            }
+        }
+    }
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_error_codes() {
+        // Verify error conversion doesn't panic
+        let _ = UsdBridgeError::from(UsdBridgeErrorCode::NullPointer);
+        let _ = UsdBridgeError::from(UsdBridgeErrorCode::FileNotFound);
+        let _ = UsdBridgeError::from(UsdBridgeErrorCode::InvalidStage);
+    }
+
+    // Integration tests require USD to be installed
+    // Run with: cargo test --features usd-integration-tests
+}
