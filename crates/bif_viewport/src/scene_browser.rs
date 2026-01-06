@@ -349,6 +349,31 @@ impl PrimDataProvider for EmptyPrimProvider {
     }
 }
 
+/// Provider that wraps a UsdStage from the C++ bridge.
+use bif_core::usd::UsdStage;
+
+impl PrimDataProvider for UsdStage {
+    fn root_paths(&self) -> Vec<String> {
+        self.root_prim_paths().unwrap_or_default()
+    }
+
+    fn get_prim_info(&self, path: &str) -> Option<PrimDisplayInfo> {
+        self.get_prim_info_by_path(path).ok().map(|info| {
+            PrimDisplayInfo::new(
+                info.path,
+                info.type_name,
+                info.is_active,
+                info.has_children,
+                info.child_count,
+            )
+        })
+    }
+
+    fn get_children(&self, parent_path: &str) -> Vec<String> {
+        self.child_prim_paths(parent_path).unwrap_or_default()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

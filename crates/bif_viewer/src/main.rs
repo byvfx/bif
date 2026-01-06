@@ -120,11 +120,11 @@ impl ApplicationHandler for App {
             let renderer = if let Some(usd_path) = &self.usd_path {
                 // Use C++ bridge for --usd flag (supports USDC and references)
                 log::info!("Loading USD scene via C++ bridge: {}", usd_path);
-                match bif_core::usd::load_usd(usd_path) {
-                    Ok(scene) => {
-                        log::info!("Scene loaded: {} prototypes, {} instances", 
-                                   scene.prototype_count(), scene.instance_count());
-                        pollster::block_on(Renderer::new_with_scene(window.clone(), &scene))
+                match bif_core::usd::load_usd_with_stage(usd_path) {
+                    Ok((scene, stage)) => {
+                        log::info!("Scene loaded: {} prototypes, {} instances, {} prims", 
+                                   scene.prototype_count(), scene.instance_count(), stage.prim_count().unwrap_or(0));
+                        pollster::block_on(Renderer::new_with_scene_and_stage(window.clone(), &scene, stage))
                             .expect("Failed to initialize renderer with scene")
                     }
                     Err(e) => {
@@ -137,23 +137,37 @@ impl ApplicationHandler for App {
                 }
             } else {
                 // Use pure Rust parser for --usda flag or default
+                // Note: Pure Rust parser doesn't have stage hierarchy, so scene browser won't work
                 let usda_path = self.usda_path.clone().unwrap_or_else(|| {
                     "assets/lucy_100.usda".to_string()
                 });
                 
                 log::info!("Loading USDA scene: {}", usda_path);
-                match bif_core::load_usda(&usda_path) {
-                    Ok(scene) => {
-                        log::info!("Scene loaded: {} prototypes, {} instances", 
-                                   scene.prototype_count(), scene.instance_count());
-                        pollster::block_on(Renderer::new_with_scene(window.clone(), &scene))
+                // Try C++ bridge first to get scene browser support
+                match bif_core::usd::load_usd_with_stage(&usda_path) {
+                    Ok((scene, stage)) => {
+                        log::info!("Scene loaded via C++ bridge: {} prototypes, {} instances, {} prims", 
+                                   scene.prototype_count(), scene.instance_count(), stage.prim_count().unwrap_or(0));
+                        pollster::block_on(Renderer::new_with_scene_and_stage(window.clone(), &scene, stage))
                             .expect("Failed to initialize renderer with scene")
                     }
                     Err(e) => {
-                        log::error!("Failed to load USDA file '{}': {}", usda_path, e);
-                        log::info!("Falling back to default OBJ loader");
-                        pollster::block_on(Renderer::new(window.clone()))
-                            .expect("Failed to initialize renderer")
+                        // Fall back to pure Rust parser (no scene browser)
+                        log::warn!("C++ bridge failed ({}), using pure Rust parser (no scene browser)", e);
+                        match bif_core::load_usda(&usda_path) {
+                            Ok(scene) => {
+                                log::info!("Scene loaded: {} prototypes, {} instances", 
+                                           scene.prototype_count(), scene.instance_count());
+                                pollster::block_on(Renderer::new_with_scene(window.clone(), &scene))
+                                    .expect("Failed to initialize renderer with scene")
+                            }
+                            Err(e) => {
+                                log::error!("Failed to load USDA file '{}': {}", usda_path, e);
+                                log::info!("Falling back to default OBJ loader");
+                                pollster::block_on(Renderer::new(window.clone()))
+                                    .expect("Failed to initialize renderer")
+                            }
+                        }
                     }
                 }
             };

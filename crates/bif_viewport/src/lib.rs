@@ -8,6 +8,9 @@ use wgpu::{util::DeviceExt, Device, Instance, Queue, Surface, SurfaceConfigurati
 
 use bif_math::{Camera, Mat4, Vec3};
 
+// USD stage for scene browser
+use bif_core::usd::UsdStage;
+
 // Re-export bif_renderer types for Ivar integration
 use bif_renderer::{
     Bucket, BucketResult, generate_buckets, render_bucket, DEFAULT_BUCKET_SIZE,
@@ -569,6 +572,9 @@ pub struct Renderer {
     
     // Properties for the selected prim (computed when selection changes)
     pub selected_prim_properties: Option<PrimProperties>,
+    
+    // USD stage for scene browser hierarchy (None if loaded via pure Rust parser)
+    usd_stage: Option<UsdStage>,
 }
 
 impl Renderer {
@@ -1149,6 +1155,7 @@ impl Renderer {
             scene_browser_state: SceneBrowserState::new(),
             selected_prim_path: None,
             selected_prim_properties: None,
+            usd_stage: None,
         })
     }
     
@@ -1576,7 +1583,19 @@ impl Renderer {
             scene_browser_state: SceneBrowserState::new(),
             selected_prim_path: None,
             selected_prim_properties: None,
+            usd_stage: None,
         })
+    }
+    
+    /// Create a new renderer with scene AND USD stage for scene browser
+    pub async fn new_with_scene_and_stage(
+        window: std::sync::Arc<winit::window::Window>,
+        scene: &bif_core::Scene,
+        stage: UsdStage,
+    ) -> Result<Self> {
+        let mut renderer = Self::new_with_scene(window, scene).await?;
+        renderer.usd_stage = Some(stage);
+        Ok(renderer)
     }
     
     /// Handle window resize
@@ -2134,15 +2153,18 @@ impl Renderer {
 
                     // Scene Browser (collapsible)
                     ui.collapsing("Scene Browser", |ui| {
-                        // Use empty provider for now (actual USD stage provider will be added later)
-                        // TODO: Pass actual USD stage as PrimDataProvider
-                        let provider = EmptyPrimProvider;
+                        // Use USD stage if available, otherwise empty provider
+                        let empty_provider = EmptyPrimProvider;
+                        let provider: &dyn PrimDataProvider = match &self.usd_stage {
+                            Some(stage) => stage,
+                            None => &empty_provider,
+                        };
                         
                         // Store selection change request in temp data for processing after egui run
                         if let Some(new_selection) = scene_browser::render_scene_browser(
                             ui,
                             &mut self.scene_browser_state,
-                            &provider,
+                            provider,
                         ) {
                             ctx.data_mut(|d| {
                                 d.insert_temp(egui::Id::new("prim_selection_changed"), new_selection);
