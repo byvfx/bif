@@ -61,6 +61,24 @@ pub type LoadResult<T> = Result<T, LoadError>;
 /// println!("Loaded {} instances", scene.instance_count());
 /// ```
 pub fn load_usd<P: AsRef<Path>>(path: P) -> LoadResult<Scene> {
+    let (scene, _stage) = load_usd_with_stage(path)?;
+    Ok(scene)
+}
+
+/// Load a USD file and return both the BIF Scene and the UsdStage.
+///
+/// Use this when you need access to the USD stage hierarchy for
+/// scene browsing or inspection.
+///
+/// # Example
+///
+/// ```ignore
+/// use bif_core::usd::load_usd_with_stage;
+///
+/// let (scene, stage) = load_usd_with_stage("scene.usdc")?;
+/// println!("Loaded {} prims", stage.prim_count());
+/// ```
+pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdStage)> {
     let path = path.as_ref();
     let name = path.file_stem()
         .and_then(|s| s.to_str())
@@ -157,7 +175,7 @@ pub fn load_usd<P: AsRef<Path>>(path: P) -> LoadResult<Scene> {
         return Err(LoadError::NoGeometry);
     }
     
-    Ok(scene)
+    Ok((scene, stage))
 }
 
 /// Load a USDA file using the pure Rust parser (legacy).
