@@ -296,12 +296,12 @@ impl UsdStage {
         // Convert to absolute path - USD C++ library may not handle relative paths well
         let abs_path = std::fs::canonicalize(path.as_ref())
             .map_err(|_| UsdBridgeError::FileNotFound(path.as_ref().display().to_string()))?;
-        
+
         // Convert to forward slashes for USD compatibility
         let path_str = abs_path.to_str().ok_or(UsdBridgeError::InvalidPath)?;
         // Remove Windows extended path prefix if present (\\?\)
         let path_str = path_str.strip_prefix(r"\\?\").unwrap_or(path_str);
-        
+
         let c_path = CString::new(path_str).map_err(|_| UsdBridgeError::InvalidPath)?;
 
         let mut raw: *mut UsdBridgeStageRaw = ptr::null_mut();
@@ -382,7 +382,8 @@ impl UsdStage {
             if raw_data.vertices.is_null() || raw_data.vertex_count == 0 {
                 Vec::new()
             } else {
-                let slice = std::slice::from_raw_parts(raw_data.vertices, raw_data.vertex_count * 3);
+                let slice =
+                    std::slice::from_raw_parts(raw_data.vertices, raw_data.vertex_count * 3);
                 slice
                     .chunks_exact(3)
                     .map(|chunk| Vec3::new(chunk[0], chunk[1], chunk[2]))

@@ -14,7 +14,7 @@ use crate::mesh::Mesh;
 pub struct Material {
     /// Material name
     pub name: String,
-    
+
     /// Base color (RGB, 0-1)
     pub base_color: Vec3,
 }
@@ -26,16 +26,16 @@ pub struct Material {
 pub struct Prototype {
     /// Unique identifier within the scene
     pub id: usize,
-    
+
     /// Prototype name (from USD prim path)
     pub name: String,
-    
+
     /// Shared mesh geometry
     pub mesh: Arc<Mesh>,
-    
+
     /// Material (optional, defaults to grey)
     pub material: Option<Arc<Material>>,
-    
+
     /// Local bounding box (from mesh)
     pub bounds: Aabb,
 }
@@ -52,7 +52,7 @@ impl Prototype {
             bounds,
         }
     }
-    
+
     /// Set the material for this prototype.
     pub fn with_material(mut self, material: Arc<Material>) -> Self {
         self.material = Some(material);
@@ -65,10 +65,10 @@ impl Prototype {
 pub struct Transform {
     /// Translation
     pub translation: Vec3,
-    
+
     /// Rotation (as quaternion)
     pub rotation: Quat,
-    
+
     /// Scale
     pub scale: Vec3,
 }
@@ -91,7 +91,7 @@ impl Transform {
             ..Default::default()
         }
     }
-    
+
     /// Create a new transform from a 4x4 matrix.
     ///
     /// Decomposes the matrix into translation, rotation, and scale.
@@ -103,7 +103,7 @@ impl Transform {
             scale,
         }
     }
-    
+
     /// Convert to a 4x4 transformation matrix.
     ///
     /// Order: Scale -> Rotate -> Translate (SRT)
@@ -120,7 +120,7 @@ impl Transform {
 pub struct Instance {
     /// Index of the prototype this instance references
     pub prototype_id: usize,
-    
+
     /// Instance transform
     pub transform: Transform,
 }
@@ -133,12 +133,12 @@ impl Instance {
             transform,
         }
     }
-    
+
     /// Create an instance with just a translation.
     pub fn with_translation(prototype_id: usize, translation: Vec3) -> Self {
         Self::new(prototype_id, Transform::from_translation(translation))
     }
-    
+
     /// Get the 4x4 model matrix for this instance.
     pub fn model_matrix(&self) -> Mat4 {
         self.transform.to_matrix()
@@ -152,10 +152,10 @@ impl Instance {
 pub struct Scene {
     /// Shared prototype definitions (meshes)
     pub prototypes: Vec<Arc<Prototype>>,
-    
+
     /// Instances referencing prototypes
     pub instances: Vec<Instance>,
-    
+
     /// Scene name (usually from filename)
     pub name: String,
 }
@@ -168,7 +168,7 @@ impl Scene {
             ..Default::default()
         }
     }
-    
+
     /// Add a prototype to the scene and return its ID.
     pub fn add_prototype(&mut self, mesh: Arc<Mesh>, name: String) -> usize {
         let id = self.prototypes.len();
@@ -176,12 +176,12 @@ impl Scene {
         self.prototypes.push(prototype);
         id
     }
-    
+
     /// Add an instance of a prototype.
     pub fn add_instance(&mut self, prototype_id: usize, transform: Transform) {
         self.instances.push(Instance::new(prototype_id, transform));
     }
-    
+
     /// Get total triangle count across all instances.
     pub fn total_triangle_count(&self) -> usize {
         let mut count = 0;
@@ -192,26 +192,26 @@ impl Scene {
         }
         count
     }
-    
+
     /// Get total instance count.
     pub fn instance_count(&self) -> usize {
         self.instances.len()
     }
-    
+
     /// Get prototype count.
     pub fn prototype_count(&self) -> usize {
         self.prototypes.len()
     }
-    
+
     /// Compute the world-space bounding box of all instances.
     pub fn world_bounds(&self) -> Aabb {
         let mut min = Vec3::splat(f32::INFINITY);
         let mut max = Vec3::splat(f32::NEG_INFINITY);
-        
+
         for instance in &self.instances {
             if let Some(proto) = self.prototypes.get(instance.prototype_id) {
                 let matrix = instance.model_matrix();
-                
+
                 // Transform all 8 corners of the prototype bounds
                 let b = &proto.bounds;
                 let corners = [
@@ -224,7 +224,7 @@ impl Scene {
                     Vec3::new(b.x.min, b.y.max, b.z.max),
                     Vec3::new(b.x.max, b.y.max, b.z.max),
                 ];
-                
+
                 for corner in corners {
                     let world_pos = matrix.transform_point3(corner);
                     min = min.min(world_pos);
@@ -232,7 +232,7 @@ impl Scene {
                 }
             }
         }
-        
+
         if min.x.is_infinite() {
             Aabb::empty()
         } else {
@@ -244,28 +244,31 @@ impl Scene {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_scene_creation() {
         let mut scene = Scene::new("test");
-        
+
         let mesh = Arc::new(Mesh::new(
             vec![Vec3::ZERO, Vec3::X, Vec3::Y],
             vec![0, 1, 2],
             None,
         ));
-        
+
         let proto_id = scene.add_prototype(mesh, "triangle".to_string());
         assert_eq!(proto_id, 0);
-        
+
         scene.add_instance(proto_id, Transform::default());
-        scene.add_instance(proto_id, Transform::from_translation(Vec3::new(1.0, 0.0, 0.0)));
-        
+        scene.add_instance(
+            proto_id,
+            Transform::from_translation(Vec3::new(1.0, 0.0, 0.0)),
+        );
+
         assert_eq!(scene.prototype_count(), 1);
         assert_eq!(scene.instance_count(), 2);
         assert_eq!(scene.total_triangle_count(), 2);
     }
-    
+
     #[test]
     fn test_transform_matrix_roundtrip() {
         let transform = Transform {
@@ -273,10 +276,10 @@ mod tests {
             rotation: Quat::from_rotation_y(std::f32::consts::FRAC_PI_4),
             scale: Vec3::new(2.0, 2.0, 2.0),
         };
-        
+
         let matrix = transform.to_matrix();
         let recovered = Transform::from_matrix(matrix);
-        
+
         assert!((recovered.translation - transform.translation).length() < 0.001);
         assert!((recovered.scale - transform.scale).length() < 0.001);
     }

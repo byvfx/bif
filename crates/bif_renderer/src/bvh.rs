@@ -3,14 +3,14 @@
 //! Uses a binary tree structure for efficient ray-scene intersection testing.
 //! Ported from legacy Go raytracer with Rust-idiomatic enhancements.
 
+use crate::{HitRecord, Hittable, Ray};
 use bif_math::{Aabb, Interval};
-use crate::{Ray, HitRecord, Hittable};
 
 /// Maximum primitives per leaf node before splitting.
 const LEAF_MAX_SIZE: usize = 4;
 
 /// BVH node - either a branch with two children or a leaf with primitives.
-/// 
+///
 /// Using an enum allows for more cache-efficient traversal since
 /// we avoid dynamic dispatch overhead.
 pub enum BvhNode {
@@ -45,7 +45,7 @@ impl BvhNode {
     }
 
     /// Recursive BVH construction.
-    /// 
+    ///
     /// Simple median-split approach: sort objects by centroid on longest axis,
     /// split in half, recurse.
     fn build(mut objects: Vec<Box<dyn Hittable + Send + Sync>>) -> Self {
@@ -55,7 +55,9 @@ impl BvhNode {
         let bounds = objects
             .iter()
             .map(|o| o.bounding_box())
-            .fold(objects[0].bounding_box(), |acc, b| Aabb::surrounding(&acc, &b));
+            .fold(objects[0].bounding_box(), |acc, b| {
+                Aabb::surrounding(&acc, &b)
+            });
 
         // Create leaf for small sets
         if n <= LEAF_MAX_SIZE {
@@ -88,7 +90,9 @@ impl BvhNode {
                 1 => b_centroid.y,
                 _ => b_centroid.z,
             };
-            a_val.partial_cmp(&b_val).unwrap_or(std::cmp::Ordering::Equal)
+            a_val
+                .partial_cmp(&b_val)
+                .unwrap_or(std::cmp::Ordering::Equal)
         });
 
         // Split at midpoint
@@ -111,10 +115,10 @@ impl BvhNode {
 impl Hittable for BvhNode {
     fn hit<'a>(&'a self, ray: &Ray, ray_t: Interval, rec: &mut HitRecord<'a>) -> bool {
         let math_ray = to_math_ray(ray);
-        
+
         match self {
             BvhNode::Empty => false,
-            
+
             BvhNode::Leaf { objects, bbox } => {
                 if !bbox.hit(&math_ray, ray_t) {
                     return false;
@@ -132,14 +136,14 @@ impl Hittable for BvhNode {
                 }
                 hit_anything
             }
-            
+
             BvhNode::Branch { left, right, bbox } => {
                 if !bbox.hit(&math_ray, ray_t) {
                     return false;
                 }
 
                 let hit_left = left.hit(ray, ray_t, rec);
-                
+
                 // Only check right up to closest hit
                 let right_max = if hit_left { rec.t } else { ray_t.max };
                 let hit_right = right.hit(ray, Interval::new(ray_t.min, right_max), rec);
@@ -161,7 +165,7 @@ impl Hittable for BvhNode {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Sphere, Lambertian};
+    use crate::{Lambertian, Sphere};
     use bif_math::Vec3;
 
     type Color = Vec3;
@@ -179,13 +183,13 @@ mod tests {
             0.5,
             Lambertian::new(Color::new(0.5, 0.5, 0.5)),
         );
-        
+
         let objects: Vec<Box<dyn Hittable + Send + Sync>> = vec![Box::new(sphere)];
         let bvh = BvhNode::new(objects);
-        
+
         // Should create a leaf
         assert!(matches!(bvh, BvhNode::Leaf { .. }));
-        
+
         // Test ray hit
         let ray = Ray::new(Vec3::ZERO, Vec3::new(0.0, 0.0, -1.0), 0.0);
         let mut rec = HitRecord::default();
@@ -207,17 +211,13 @@ mod tests {
             .collect();
 
         let bvh = BvhNode::new(spheres);
-        
+
         // Test ray that hits sphere at x=5
-        let ray = Ray::new(
-            Vec3::new(5.0, 0.0, 0.0),
-            Vec3::new(0.0, 0.0, -1.0),
-            0.0,
-        );
+        let ray = Ray::new(Vec3::new(5.0, 0.0, 0.0), Vec3::new(0.0, 0.0, -1.0), 0.0);
         let mut rec = HitRecord::default();
         let hit = bvh.hit(&ray, Interval::new(0.001, f32::INFINITY), &mut rec);
         assert!(hit);
-        
+
         // Hit point should be near z = -4.5 (sphere at z=-5, radius 0.5)
         assert!((rec.p.z - (-4.5)).abs() < 0.01);
     }

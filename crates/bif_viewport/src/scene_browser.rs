@@ -1,18 +1,19 @@
-//! USD Scene Browser - Hierarchy view for USD scene graph.
+//! USD Scene Browser - Houdini-style table view for USD scene graph.
 //!
-//! Provides an interactive tree widget for browsing USD prim hierarchy,
-//! inspired by Gaffer's HierarchyView.
+//! Provides an interactive table widget for browsing USD prim hierarchy,
+//! inspired by Houdini's Scene Graph Tree.
 //!
 //! # Features
+//! - Table layout with columns: Path, Type, Children, Kind
 //! - Expandable tree with lazy child loading
 //! - Type icons for prim types (Mesh, Xform, Instancer, Scope, etc.)
 //! - Search/filter functionality
-//! - Keyboard navigation (arrow keys for expand/collapse)
 //! - Selection synced with viewport
 //!
 //! # TODOs
-//! - [ ] Focus vs Selection model (Gaffer-style: focus for viewer, selection for inspector)
-//! - [ ] Keyboard navigation with arrow keys (↑↓ to expand/collapse, Shift+↓ expand all)
+//! - [ ] Visibility toggle columns (P, L, etc.)
+//! - [ ] Kind column from USD metadata
+//! - [ ] Keyboard navigation with arrow keys
 
 use std::collections::HashSet;
 
@@ -112,12 +113,12 @@ pub fn prim_type_icon(type_name: &str) -> &'static str {
         "Scope" => "📁",          // Folder/scope
         "Camera" => "📷",         // Camera
         "Light" | "DistantLight" | "DomeLight" | "SphereLight" | "RectLight" => "💡",
-        "Material" => "🎨",       // Material
-        "Shader" => "🔲",         // Shader
-        "Skeleton" => "🦴",       // Skeleton
-        "SkelRoot" => "🦴",       // Skeleton root
-        "" => "◇",                // Empty/unknown type
-        _ => "○",                 // Default circle for other types
+        "Material" => "🎨", // Material
+        "Shader" => "🔲",   // Shader
+        "Skeleton" => "🦴", // Skeleton
+        "SkelRoot" => "🦴", // Skeleton root
+        "" => "◇",          // Empty/unknown type
+        _ => "○",           // Default circle for other types
     }
 }
 
@@ -143,6 +144,12 @@ pub struct PrimDisplayInfo {
 
     /// Child count
     pub child_count: usize,
+
+    /// Kind (from USD metadata: component, assembly, group, etc.)
+    pub kind: String,
+
+    /// Visibility state (computed from inherited visibility)
+    pub is_visible: bool,
 }
 
 impl PrimDisplayInfo {
@@ -154,11 +161,7 @@ impl PrimDisplayInfo {
         has_children: bool,
         child_count: usize,
     ) -> Self {
-        let name = path
-            .rsplit('/')
-            .next()
-            .unwrap_or(&path)
-            .to_string();
+        let name = path.rsplit('/').next().unwrap_or(&path).to_string();
 
         Self {
             path,
@@ -167,6 +170,32 @@ impl PrimDisplayInfo {
             is_active,
             has_children,
             child_count,
+            kind: String::new(), // Default to empty
+            is_visible: true,    // Default to visible
+        }
+    }
+
+    /// Create with all fields including kind and visibility.
+    pub fn with_kind(
+        path: String,
+        type_name: String,
+        is_active: bool,
+        has_children: bool,
+        child_count: usize,
+        kind: String,
+        is_visible: bool,
+    ) -> Self {
+        let name = path.rsplit('/').next().unwrap_or(&path).to_string();
+
+        Self {
+            path,
+            name,
+            type_name,
+            is_active,
+            has_children,
+            child_count,
+            kind,
+            is_visible,
         }
     }
 
@@ -192,7 +221,7 @@ pub trait PrimDataProvider {
     fn get_children(&self, parent_path: &str) -> Vec<String>;
 }
 
-/// Render the scene browser UI.
+/// Render the scene browser UI in Houdini-style table layout.
 ///
 /// Returns `Some(path)` if selection changed, `None` otherwise.
 pub fn render_scene_browser(
@@ -202,38 +231,121 @@ pub fn render_scene_browser(
 ) -> Option<String> {
     let mut selection_changed: Option<String> = None;
 
-    // Search/filter box
+    // Filter row at top (like Houdini)
     ui.horizontal(|ui| {
-        ui.label("🔍");
-        ui.text_edit_singleline(&mut state.search_filter);
+        ui.label("Filter:");
+        let response = ui.text_edit_singleline(&mut state.search_filter);
+        if response.changed() {
+            // Could auto-expand matching paths here
+        }
         if ui.button("✕").clicked() {
             state.search_filter.clear();
         }
+        ui.separator();
+        ui.checkbox(&mut state.show_inactive, "Inactive");
     });
 
     ui.separator();
 
-    // Show checkbox for inactive prims
-    ui.checkbox(&mut state.show_inactive, "Show inactive prims");
+    // Get root paths
+    let root_paths = provider.root_paths();
+
+    if root_paths.is_empty() {
+        ui.vertical_centered(|ui| {
+            ui.add_space(20.0);
+            ui.label("No USD scene loaded");
+            ui.label("Use the node graph to load a .usda or .usdc file");
+        });
+        return None;
+    }
+
+    // Table header
+    let available_width = ui.available_width();
+    let path_width = (available_width * 0.5).max(150.0);
+    let type_width = 80.0;
+    let children_width = 60.0;
+    let kind_width = 80.0;
+    let viz_width = 30.0;
+
+    // Header row with column labels (Houdini style)
+    ui.horizontal(|ui| {
+        ui.set_min_height(20.0);
+        ui.style_mut().visuals.widgets.inactive.bg_fill = egui::Color32::from_gray(50);
+
+        // Scene Graph Path column header
+        ui.allocate_ui_with_layout(
+            egui::vec2(path_width, 20.0),
+            egui::Layout::left_to_right(egui::Align::Center),
+            |ui| {
+                ui.label(egui::RichText::new("Scene Graph Path").strong().small());
+            },
+        );
+
+        ui.separator();
+
+        // Primitive Type column header
+        ui.allocate_ui_with_layout(
+            egui::vec2(type_width, 20.0),
+            egui::Layout::left_to_right(egui::Align::Center),
+            |ui| {
+                ui.label(egui::RichText::new("Prim Type").strong().small());
+            },
+        );
+
+        ui.separator();
+
+        // Children column header
+        ui.allocate_ui_with_layout(
+            egui::vec2(children_width, 20.0),
+            egui::Layout::left_to_right(egui::Align::Center),
+            |ui| {
+                ui.label(egui::RichText::new("Children").strong().small());
+            },
+        );
+
+        ui.separator();
+
+        // Kind column header
+        ui.allocate_ui_with_layout(
+            egui::vec2(kind_width, 20.0),
+            egui::Layout::left_to_right(egui::Align::Center),
+            |ui| {
+                ui.label(egui::RichText::new("Kind").strong().small());
+            },
+        );
+
+        ui.separator();
+
+        // Visibility column header (like Houdini's eye icon)
+        ui.allocate_ui_with_layout(
+            egui::vec2(viz_width, 20.0),
+            egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
+            |ui| {
+                ui.label(egui::RichText::new("👁").small());
+            },
+        );
+    });
 
     ui.separator();
 
-    // Prim hierarchy tree
+    // Scrollable table body
     egui::ScrollArea::vertical()
         .auto_shrink([false; 2])
         .show(ui, |ui| {
-            let root_paths = provider.root_paths();
+            // Collect column widths for consistent rendering
+            let col_widths = ColumnWidths {
+                path: path_width,
+                prim_type: type_width,
+                children: children_width,
+                kind: kind_width,
+                visibility: viz_width,
+            };
 
-            if root_paths.is_empty() {
-                ui.label("No USD scene loaded");
-                ui.label("Load a .usda or .usdc file to browse");
-            } else {
-                for root_path in root_paths {
-                    if let Some(new_selection) =
-                        render_prim_tree(ui, state, provider, &root_path, 0)
-                    {
-                        selection_changed = Some(new_selection);
-                    }
+            for root_path in root_paths {
+                if let Some(new_selection) =
+                    render_prim_row(ui, state, provider, &root_path, 0, &col_widths)
+                {
+                    selection_changed = Some(new_selection);
                 }
             }
         });
@@ -241,7 +353,186 @@ pub fn render_scene_browser(
     selection_changed
 }
 
-/// Recursively render a prim and its children.
+/// Column widths for the table layout
+struct ColumnWidths {
+    path: f32,
+    prim_type: f32,
+    children: f32,
+    kind: f32,
+    visibility: f32,
+}
+
+/// Recursively render a prim row and its children in table format.
+fn render_prim_row(
+    ui: &mut egui::Ui,
+    state: &mut SceneBrowserState,
+    provider: &dyn PrimDataProvider,
+    path: &str,
+    depth: usize,
+    col_widths: &ColumnWidths,
+) -> Option<String> {
+    let info = provider.get_prim_info(path)?;
+
+    // Filter check
+    if !state.show_inactive && !info.is_active {
+        return None;
+    }
+
+    // For filtering, we need to check if this prim or any descendant matches
+    let matches = state.matches_filter(&info.path, &info.type_name);
+
+    // If using filter and this doesn't match, still render if has children that might match
+    if !matches && !state.search_filter.is_empty() && !info.has_children {
+        return None;
+    }
+
+    let mut selection_changed: Option<String> = None;
+    let is_selected = state.selected_path.as_ref() == Some(&info.path);
+    let is_expanded = state.is_expanded(&info.path);
+
+    // Row background color (alternating or selection highlight)
+    let row_bg = if is_selected {
+        egui::Color32::from_rgb(50, 80, 120)
+    } else {
+        egui::Color32::TRANSPARENT
+    };
+
+    // Calculate indent for tree hierarchy
+    let indent = depth as f32 * 16.0;
+
+    // Render the row
+    let row_response = ui.horizontal(|ui| {
+        // Apply row background
+        let row_rect = ui.available_rect_before_wrap();
+        ui.painter().rect_filled(
+            egui::Rect::from_min_size(row_rect.min, egui::vec2(ui.available_width(), 20.0)),
+            0.0,
+            row_bg,
+        );
+
+        // Path column with tree controls
+        ui.allocate_ui_with_layout(
+            egui::vec2(col_widths.path, 20.0),
+            egui::Layout::left_to_right(egui::Align::Center),
+            |ui| {
+                ui.add_space(indent);
+
+                // Expand/collapse button
+                if info.has_children {
+                    let expand_text = if is_expanded { "▼" } else { "▶" };
+                    if ui.small_button(expand_text).clicked() {
+                        state.toggle_expanded(&info.path);
+                    }
+                } else {
+                    ui.add_space(18.0);
+                }
+
+                // Type icon
+                ui.label(info.icon());
+
+                // Prim name
+                let name_text = if info.is_active {
+                    egui::RichText::new(&info.name)
+                } else {
+                    egui::RichText::new(&info.name).color(egui::Color32::GRAY)
+                };
+
+                let name_response = ui.selectable_label(is_selected, name_text);
+                if name_response.clicked() {
+                    state.select(&info.path);
+                    selection_changed = Some(info.path.clone());
+                }
+                name_response.on_hover_text(&info.path);
+            },
+        );
+
+        ui.separator();
+
+        // Primitive Type column
+        ui.allocate_ui_with_layout(
+            egui::vec2(col_widths.prim_type, 20.0),
+            egui::Layout::left_to_right(egui::Align::Center),
+            |ui| {
+                let type_text = if info.type_name.is_empty() {
+                    egui::RichText::new("-").color(egui::Color32::GRAY)
+                } else {
+                    egui::RichText::new(&info.type_name).small()
+                };
+                ui.label(type_text);
+            },
+        );
+
+        ui.separator();
+
+        // Children column
+        ui.allocate_ui_with_layout(
+            egui::vec2(col_widths.children, 20.0),
+            egui::Layout::left_to_right(egui::Align::Center),
+            |ui| {
+                if info.child_count > 0 {
+                    ui.label(egui::RichText::new(format!("{}", info.child_count)).small());
+                } else {
+                    ui.label(egui::RichText::new("-").color(egui::Color32::GRAY).small());
+                }
+            },
+        );
+
+        ui.separator();
+
+        // Kind column
+        ui.allocate_ui_with_layout(
+            egui::vec2(col_widths.kind, 20.0),
+            egui::Layout::left_to_right(egui::Align::Center),
+            |ui| {
+                if info.kind.is_empty() {
+                    ui.label(egui::RichText::new("-").color(egui::Color32::GRAY).small());
+                } else {
+                    ui.label(egui::RichText::new(&info.kind).small());
+                }
+            },
+        );
+
+        ui.separator();
+
+        // Visibility column (read-only for now)
+        ui.allocate_ui_with_layout(
+            egui::vec2(col_widths.visibility, 20.0),
+            egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
+            |ui| {
+                let viz_icon = if info.is_visible { "👁" } else { "🚫" };
+                let viz_text = egui::RichText::new(viz_icon).small();
+                ui.label(viz_text).on_hover_text(if info.is_visible {
+                    "Visible"
+                } else {
+                    "Hidden"
+                });
+            },
+        );
+    });
+
+    // Handle row click for selection
+    if row_response.response.clicked() && selection_changed.is_none() {
+        state.select(&info.path);
+        selection_changed = Some(info.path.clone());
+    }
+
+    // Render children if expanded
+    if is_expanded && info.has_children {
+        let children = provider.get_children(&info.path);
+        for child_path in children {
+            if let Some(new_selection) =
+                render_prim_row(ui, state, provider, &child_path, depth + 1, col_widths)
+            {
+                selection_changed = Some(new_selection);
+            }
+        }
+    }
+
+    selection_changed
+}
+
+/// Old tree-style render function (kept for reference, unused)
+#[allow(dead_code)]
 fn render_prim_tree(
     ui: &mut egui::Ui,
     state: &mut SceneBrowserState,
@@ -249,9 +540,7 @@ fn render_prim_tree(
     path: &str,
     depth: usize,
 ) -> Option<String> {
-    let Some(info) = provider.get_prim_info(path) else {
-        return None;
-    };
+    let info = provider.get_prim_info(path)?;
 
     // Filter check
     if !state.show_inactive && !info.is_active {
@@ -322,7 +611,8 @@ fn render_prim_tree(
     if is_expanded && info.has_children {
         let children = provider.get_children(&info.path);
         for child_path in children {
-            if let Some(new_selection) = render_prim_tree(ui, state, provider, &child_path, depth + 1)
+            if let Some(new_selection) =
+                render_prim_tree(ui, state, provider, &child_path, depth + 1)
             {
                 selection_changed = Some(new_selection);
             }

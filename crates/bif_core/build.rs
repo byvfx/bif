@@ -47,7 +47,10 @@ fn main() {
     }
 
     // Link the USD bridge library
-    println!("cargo:rustc-link-search=native={}", build_dir.join("Release").display());
+    println!(
+        "cargo:rustc-link-search=native={}",
+        build_dir.join("Release").display()
+    );
     println!("cargo:rustc-link-lib=static=usd_bridge");
 
     // Link USD libraries from vcpkg
@@ -60,10 +63,14 @@ fn main() {
     } else {
         // Try to find vcpkg in common locations
         let possible_vcpkg_paths = vec![
-            ("D:\\__projects\\_programming\\vcpkg\\installed\\x64-windows\\lib",
-             "D:\\__projects\\_programming\\vcpkg\\installed\\x64-windows\\bin"),
-            ("C:\\vcpkg\\installed\\x64-windows\\lib",
-             "C:\\vcpkg\\installed\\x64-windows\\bin"),
+            (
+                "D:\\__projects\\_programming\\vcpkg\\installed\\x64-windows\\lib",
+                "D:\\__projects\\_programming\\vcpkg\\installed\\x64-windows\\bin",
+            ),
+            (
+                "C:\\vcpkg\\installed\\x64-windows\\lib",
+                "C:\\vcpkg\\installed\\x64-windows\\bin",
+            ),
         ];
         for (lib_path, bin_path) in possible_vcpkg_paths {
             if Path::new(lib_path).exists() {
@@ -177,10 +184,14 @@ fn build_usd_bridge(cpp_dir: &Path, build_dir: &Path) {
     let configure_status = Command::new(&cmake)
         .current_dir(build_dir)
         .args([
-            "-S", cpp_dir.to_str().unwrap(),
-            "-B", ".",
-            "-G", "Visual Studio 17 2022",
-            "-A", "x64",
+            "-S",
+            cpp_dir.to_str().unwrap(),
+            "-B",
+            ".",
+            "-G",
+            "Visual Studio 17 2022",
+            "-A",
+            "x64",
             &format!("-DCMAKE_TOOLCHAIN_FILE={}", toolchain),
             "-DCMAKE_BUILD_TYPE=Release",
         ])
@@ -194,11 +205,7 @@ fn build_usd_bridge(cpp_dir: &Path, build_dir: &Path) {
     // CMake build
     let build_status = Command::new(&cmake)
         .current_dir(build_dir)
-        .args([
-            "--build", ".",
-            "--config", "Release",
-            "--parallel",
-        ])
+        .args(["--build", ".", "--config", "Release", "--parallel"])
         .status()
         .expect("Failed to run cmake build");
 

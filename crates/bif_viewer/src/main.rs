@@ -1,25 +1,25 @@
 use anyhow::Result;
 use bif_viewport::Renderer;
+use std::time::Instant;
 use winit::{
     application::ApplicationHandler,
-    event::{WindowEvent, MouseButton, ElementState, KeyEvent},
+    event::{ElementState, KeyEvent, MouseButton, WindowEvent},
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
+    keyboard::{KeyCode, PhysicalKey},
     window::{Window, WindowId},
-    keyboard::{PhysicalKey, KeyCode},
 };
-use std::time::Instant;
 
 /// CLI options
 #[derive(Default)]
 struct CliOptions {
     usda_path: Option<String>,
-    usd_path: Option<String>,  // Uses C++ bridge (USDC, references)
+    usd_path: Option<String>, // Uses C++ bridge (USDC, references)
 }
 
 fn parse_args() -> CliOptions {
     let args: Vec<String> = std::env::args().collect();
     let mut opts = CliOptions::default();
-    
+
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
@@ -68,7 +68,7 @@ fn parse_args() -> CliOptions {
         }
         i += 1;
     }
-    
+
     opts
 }
 
@@ -77,8 +77,8 @@ struct App {
     window: Option<std::sync::Arc<Window>>,
     renderer: Option<Renderer>,
     usda_path: Option<String>,
-    usd_path: Option<String>,  // C++ bridge path
-    
+    usd_path: Option<String>, // C++ bridge path
+
     // Input state
     left_mouse_pressed: bool,
     middle_mouse_pressed: bool,
@@ -109,23 +109,31 @@ impl ApplicationHandler for App {
             let window_attrs = Window::default_attributes()
                 .with_title("BIF Viewer")
                 .with_inner_size(winit::dpi::PhysicalSize::new(1280, 720));
-            
+
             let window = std::sync::Arc::new(
                 event_loop
                     .create_window(window_attrs)
                     .expect("Failed to create window"),
             );
-            
+
             // Load scene based on CLI options
             let renderer = if let Some(usd_path) = &self.usd_path {
                 // Use C++ bridge for --usd flag (supports USDC and references)
                 log::info!("Loading USD scene via C++ bridge: {}", usd_path);
                 match bif_core::usd::load_usd_with_stage(usd_path) {
                     Ok((scene, stage)) => {
-                        log::info!("Scene loaded: {} prototypes, {} instances, {} prims", 
-                                   scene.prototype_count(), scene.instance_count(), stage.prim_count().unwrap_or(0));
-                        pollster::block_on(Renderer::new_with_scene_and_stage(window.clone(), &scene, stage))
-                            .expect("Failed to initialize renderer with scene")
+                        log::info!(
+                            "Scene loaded: {} prototypes, {} instances, {} prims",
+                            scene.prototype_count(),
+                            scene.instance_count(),
+                            stage.prim_count().unwrap_or(0)
+                        );
+                        pollster::block_on(Renderer::new_with_scene_and_stage(
+                            window.clone(),
+                            &scene,
+                            stage,
+                        ))
+                        .expect("Failed to initialize renderer with scene")
                     }
                     Err(e) => {
                         log::error!("Failed to load USD file '{}': {:?}", usd_path, e);
@@ -138,47 +146,63 @@ impl ApplicationHandler for App {
             } else {
                 // Use pure Rust parser for --usda flag or default
                 // Note: Pure Rust parser doesn't have stage hierarchy, so scene browser won't work
-                let usda_path = self.usda_path.clone().unwrap_or_else(|| {
-                    "assets/lucy_100.usda".to_string()
-                });
-                
-                log::info!("Loading USDA scene: {}", usda_path);
-                // Try C++ bridge first to get scene browser support
-                match bif_core::usd::load_usd_with_stage(&usda_path) {
-                    Ok((scene, stage)) => {
-                        log::info!("Scene loaded via C++ bridge: {} prototypes, {} instances, {} prims", 
-                                   scene.prototype_count(), scene.instance_count(), stage.prim_count().unwrap_or(0));
-                        pollster::block_on(Renderer::new_with_scene_and_stage(window.clone(), &scene, stage))
+                if let Some(usda_path) = self.usda_path.clone() {
+                    log::info!("Loading USDA scene: {}", usda_path);
+                    // Try C++ bridge first to get scene browser support
+                    match bif_core::usd::load_usd_with_stage(&usda_path) {
+                        Ok((scene, stage)) => {
+                            log::info!("Scene loaded via C++ bridge: {} prototypes, {} instances, {} prims", 
+                                       scene.prototype_count(), scene.instance_count(), stage.prim_count().unwrap_or(0));
+                            pollster::block_on(Renderer::new_with_scene_and_stage(
+                                window.clone(),
+                                &scene,
+                                stage,
+                            ))
                             .expect("Failed to initialize renderer with scene")
-                    }
-                    Err(e) => {
-                        // Fall back to pure Rust parser (no scene browser)
-                        log::warn!("C++ bridge failed ({}), using pure Rust parser (no scene browser)", e);
-                        match bif_core::load_usda(&usda_path) {
-                            Ok(scene) => {
-                                log::info!("Scene loaded: {} prototypes, {} instances", 
-                                           scene.prototype_count(), scene.instance_count());
-                                pollster::block_on(Renderer::new_with_scene(window.clone(), &scene))
+                        }
+                        Err(e) => {
+                            // Fall back to pure Rust parser (no scene browser)
+                            log::warn!(
+                                "C++ bridge failed ({}), using pure Rust parser (no scene browser)",
+                                e
+                            );
+                            match bif_core::load_usda(&usda_path) {
+                                Ok(scene) => {
+                                    log::info!(
+                                        "Scene loaded: {} prototypes, {} instances",
+                                        scene.prototype_count(),
+                                        scene.instance_count()
+                                    );
+                                    pollster::block_on(Renderer::new_with_scene(
+                                        window.clone(),
+                                        &scene,
+                                    ))
                                     .expect("Failed to initialize renderer with scene")
-                            }
-                            Err(e) => {
-                                log::error!("Failed to load USDA file '{}': {}", usda_path, e);
-                                log::info!("Falling back to default OBJ loader");
-                                pollster::block_on(Renderer::new(window.clone()))
-                                    .expect("Failed to initialize renderer")
+                                }
+                                Err(e) => {
+                                    log::error!("Failed to load USDA file '{}': {}", usda_path, e);
+                                    log::info!("Falling back to empty viewport");
+                                    pollster::block_on(Renderer::new(window.clone()))
+                                        .expect("Failed to initialize renderer")
+                                }
                             }
                         }
                     }
+                } else {
+                    // No file specified - start with empty viewport
+                    log::info!("Starting with empty viewport (use node graph to load USD files)");
+                    pollster::block_on(Renderer::new(window.clone()))
+                        .expect("Failed to initialize renderer")
                 }
             };
-            
+
             self.window = Some(window);
             self.renderer = Some(renderer);
-            
+
             log::info!("Window and renderer initialized");
         }
     }
-    
+
     fn window_event(
         &mut self,
         event_loop: &ActiveEventLoop,
@@ -194,7 +218,7 @@ impl ApplicationHandler for App {
                 }
             }
         }
-        
+
         match event {
             WindowEvent::CloseRequested => {
                 log::info!("Close requested");
@@ -203,32 +227,34 @@ impl ApplicationHandler for App {
             WindowEvent::Resized(physical_size) => {
                 if let Some(renderer) = &mut self.renderer {
                     renderer.resize((physical_size.width, physical_size.height));
-                    log::info!("Resized to {}x{}", physical_size.width, physical_size.height);
+                    log::info!(
+                        "Resized to {}x{}",
+                        physical_size.width,
+                        physical_size.height
+                    );
                 }
             }
-            WindowEvent::MouseInput { button, state, .. } => {
-                match button {
-                    MouseButton::Left => {
-                        self.left_mouse_pressed = state == ElementState::Pressed;
-                        if !self.left_mouse_pressed {
-                            self.last_mouse_pos = None;
-                        }
+            WindowEvent::MouseInput { button, state, .. } => match button {
+                MouseButton::Left => {
+                    self.left_mouse_pressed = state == ElementState::Pressed;
+                    if !self.left_mouse_pressed {
+                        self.last_mouse_pos = None;
                     }
-                    MouseButton::Middle => {
-                        self.middle_mouse_pressed = state == ElementState::Pressed;
-                        if !self.middle_mouse_pressed {
-                            self.last_mouse_pos = None;
-                        }
-                    }
-                    _ => {}
                 }
-            }
+                MouseButton::Middle => {
+                    self.middle_mouse_pressed = state == ElementState::Pressed;
+                    if !self.middle_mouse_pressed {
+                        self.last_mouse_pos = None;
+                    }
+                }
+                _ => {}
+            },
             WindowEvent::CursorMoved { position, .. } => {
                 if self.left_mouse_pressed || self.middle_mouse_pressed {
                     if let Some(last_pos) = self.last_mouse_pos {
                         let delta_x = position.x - last_pos.0;
                         let delta_y = position.y - last_pos.1;
-                        
+
                         if let Some(renderer) = &mut self.renderer {
                             if self.left_mouse_pressed {
                                 // Orbit camera with left mouse
@@ -245,7 +271,7 @@ impl ApplicationHandler for App {
                                     -delta_x as f32 * sensitivity * distance_scale,
                                     delta_y as f32 * sensitivity * distance_scale,
                                     0.0,
-                                    1.0,  // delta_time = 1.0 for mouse pan (direct control)
+                                    1.0, // delta_time = 1.0 for mouse pan (direct control)
                                 );
                             }
                             renderer.update_camera();
@@ -261,28 +287,34 @@ impl ApplicationHandler for App {
                         winit::event::MouseScrollDelta::LineDelta(_, y) => y * 100.0,
                         winit::event::MouseScrollDelta::PixelDelta(pos) => pos.y as f32,
                     };
-                    
+
                     renderer.camera.dolly(-scroll_amount);
                     renderer.update_camera();
                 }
             }
-            WindowEvent::KeyboardInput { event: KeyEvent { physical_key, state, .. }, .. } => {
-                if let PhysicalKey::Code(keycode) = physical_key {
-                    match state {
-                        ElementState::Pressed => {
-                            self.keys_pressed.insert(keycode);
-                            
-                            // Handle single-press keys
-                            if keycode == KeyCode::KeyF {
-                                // Frame mesh
-                                if let Some(renderer) = &mut self.renderer {
-                                    renderer.frame_mesh();
-                                }
+            WindowEvent::KeyboardInput {
+                event:
+                    KeyEvent {
+                        physical_key: PhysicalKey::Code(keycode),
+                        state,
+                        ..
+                    },
+                ..
+            } => {
+                match state {
+                    ElementState::Pressed => {
+                        self.keys_pressed.insert(keycode);
+
+                        // Handle single-press keys
+                        if keycode == KeyCode::KeyF {
+                            // Frame mesh
+                            if let Some(renderer) = &mut self.renderer {
+                                renderer.frame_mesh();
                             }
                         }
-                        ElementState::Released => {
-                            self.keys_pressed.remove(&keycode);
-                        }
+                    }
+                    ElementState::Released => {
+                        self.keys_pressed.remove(&keycode);
                     }
                 }
             }
@@ -291,18 +323,18 @@ impl ApplicationHandler for App {
                 let now = Instant::now();
                 let delta_time = (now - self.last_frame_time).as_secs_f32();
                 self.last_frame_time = now;
-                
+
                 // Update FPS counter
                 if let Some(renderer) = &mut self.renderer {
                     renderer.update_fps(delta_time);
                 }
-                
+
                 // Handle keyboard movement
                 if let Some(renderer) = &mut self.renderer {
                     let mut right = 0.0;
                     let mut up = 0.0;
                     let mut forward = 0.0;
-                    
+
                     if self.keys_pressed.contains(&KeyCode::KeyW) {
                         forward += 1.0;
                     }
@@ -321,13 +353,13 @@ impl ApplicationHandler for App {
                     if self.keys_pressed.contains(&KeyCode::KeyQ) {
                         up -= 1.0;
                     }
-                    
+
                     if right != 0.0 || up != 0.0 || forward != 0.0 {
                         renderer.camera.pan(right, up, forward, delta_time);
                         renderer.update_camera();
                     }
                 }
-                
+
                 if let (Some(renderer), Some(window)) = (&mut self.renderer, &self.window) {
                     // Clear to dark blue
                     let clear_color = wgpu::Color {
@@ -336,7 +368,7 @@ impl ApplicationHandler for App {
                         b: 0.3,
                         a: 1.0,
                     };
-                    
+
                     if let Err(e) = renderer.render(clear_color, window) {
                         // Check if it's a surface error we can handle
                         if let Some(surface_err) = e.downcast_ref::<wgpu::SurfaceError>() {
@@ -360,7 +392,7 @@ impl ApplicationHandler for App {
                         }
                     }
                 }
-                
+
                 // Request next frame
                 if let Some(window) = &self.window {
                     window.request_redraw();
@@ -369,7 +401,7 @@ impl ApplicationHandler for App {
             _ => {}
         }
     }
-    
+
     fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
         // Request continuous redraw when keys are pressed for smooth movement
         if !self.keys_pressed.is_empty() {
@@ -388,9 +420,9 @@ fn main() -> Result<()> {
         .filter_module("wgpu_hal", log::LevelFilter::Warn)
         .filter_module("naga", log::LevelFilter::Warn)
         .init();
-    
+
     let opts = parse_args();
-    
+
     if let Some(ref path) = opts.usd_path {
         log::info!("Starting BIF Viewer with USD (C++ bridge): {}", path);
     } else if let Some(ref path) = opts.usda_path {
@@ -398,14 +430,14 @@ fn main() -> Result<()> {
     } else {
         log::info!("Starting BIF Viewer (default scene)");
     }
-    
+
     let event_loop = EventLoop::new()?;
     event_loop.set_control_flow(ControlFlow::Poll);
-    
+
     let mut app = App::new(opts.usda_path, opts.usd_path);
-    
+
     log::info!("Running event loop");
     event_loop.run_app(&mut app)?;
-    
+
     Ok(())
 }

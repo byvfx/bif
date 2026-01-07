@@ -7,8 +7,11 @@
 //! Trade-off: Linear instance search (O(N) instances), but acceptable for ~100 instances.
 //! For 10K+ instances, use Embree with two-level BVH (Phase 2).
 
+use crate::{
+    hittable::{HitRecord, Hittable},
+    BvhNode, Material, Ray,
+};
 use bif_math::{Aabb, Interval, Mat4, Mat4Ext};
-use crate::{Ray, Material, hittable::{HitRecord, Hittable}, BvhNode};
 use std::sync::Arc;
 
 /// Geometry with multiple instances via transforms.
@@ -70,10 +73,7 @@ impl<M: Material + Clone + 'static> InstancedGeometry<M> {
         let prototype_bvh = Arc::new(BvhNode::new(local_primitives));
 
         // Precompute inverse transforms for ray transformation
-        let inv_transforms: Vec<Mat4> = transforms
-            .iter()
-            .map(|t| t.inverse())
-            .collect();
+        let inv_transforms: Vec<Mat4> = transforms.iter().map(|t| t.inverse()).collect();
 
         // Compute world-space bounding box by transforming prototype bbox
         let local_bbox = prototype_bvh.bounding_box();
@@ -128,9 +128,7 @@ impl<M: Material + Clone + 'static> Hittable for InstancedGeometry<M> {
         let mut closest = ray_t.max;
 
         // Test each instance (linear search - acceptable for ~100 instances)
-        for (inv_transform, transform) in
-            self.inv_transforms.iter().zip(&self.transforms)
-        {
+        for (inv_transform, transform) in self.inv_transforms.iter().zip(&self.transforms) {
             // Transform ray to local space
             let local_origin = inv_transform.transform_point3(ray.origin());
             let local_direction = inv_transform.transform_vector3(ray.direction()).normalize();
@@ -176,7 +174,7 @@ impl<M: Material + Clone + 'static> Hittable for InstancedGeometry<M> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Triangle, Lambertian, Color};
+    use crate::{Color, Lambertian, Triangle};
     use bif_math::Vec3;
 
     /// Helper: Create a simple triangle at origin
@@ -194,9 +192,7 @@ mod tests {
         // Single instance with identity transform should behave like non-instanced
         let tri = create_unit_triangle();
 
-        let local_primitives: Vec<Box<dyn Hittable + Send + Sync>> = vec![
-            Box::new(tri),
-        ];
+        let local_primitives: Vec<Box<dyn Hittable + Send + Sync>> = vec![Box::new(tri)];
 
         let instanced = InstancedGeometry::new(
             local_primitives,
@@ -205,17 +201,17 @@ mod tests {
         );
 
         // Ray pointing at triangle from above
-        let ray = Ray::new(
-            Vec3::new(0.5, 0.5, 1.0),
-            Vec3::new(0.0, 0.0, -1.0),
-            0.0,
-        );
+        let ray = Ray::new(Vec3::new(0.5, 0.5, 1.0), Vec3::new(0.0, 0.0, -1.0), 0.0);
 
         let mut rec = HitRecord::default();
         let hit = instanced.hit(&ray, Interval::new(0.001, f32::INFINITY), &mut rec);
 
         assert!(hit, "Ray should hit triangle");
-        assert!((rec.t - 1.0).abs() < 0.01, "Hit distance should be ~1.0, got {}", rec.t);
+        assert!(
+            (rec.t - 1.0).abs() < 0.01,
+            "Hit distance should be ~1.0, got {}",
+            rec.t
+        );
     }
 
     #[test]
@@ -223,9 +219,7 @@ mod tests {
         // Two instances at different Z positions - closer one should win
         let tri = create_unit_triangle();
 
-        let local_primitives: Vec<Box<dyn Hittable + Send + Sync>> = vec![
-            Box::new(tri),
-        ];
+        let local_primitives: Vec<Box<dyn Hittable + Send + Sync>> = vec![Box::new(tri)];
 
         // Instance 1: far away (z = -10)
         // Instance 2: closer (z = -5)
@@ -241,11 +235,7 @@ mod tests {
         );
 
         // Ray from origin pointing down -Z
-        let ray = Ray::new(
-            Vec3::new(0.5, 0.5, 0.0),
-            Vec3::new(0.0, 0.0, -1.0),
-            0.0,
-        );
+        let ray = Ray::new(Vec3::new(0.5, 0.5, 0.0), Vec3::new(0.0, 0.0, -1.0), 0.0);
 
         let mut rec = HitRecord::default();
         let hit = instanced.hit(&ray, Interval::new(0.001, f32::INFINITY), &mut rec);
@@ -265,14 +255,10 @@ mod tests {
         // Test that ray transformation works correctly
         let tri = create_unit_triangle();
 
-        let local_primitives: Vec<Box<dyn Hittable + Send + Sync>> = vec![
-            Box::new(tri),
-        ];
+        let local_primitives: Vec<Box<dyn Hittable + Send + Sync>> = vec![Box::new(tri)];
 
         // Translate triangle to (5, 0, 0)
-        let transforms = vec![
-            Mat4::from_translation(Vec3::new(5.0, 0.0, 0.0)),
-        ];
+        let transforms = vec![Mat4::from_translation(Vec3::new(5.0, 0.0, 0.0))];
 
         let instanced = InstancedGeometry::new(
             local_primitives,
@@ -293,8 +279,16 @@ mod tests {
         assert!(hit, "Ray should hit translated triangle");
 
         // Hit point should be around (5.5, 0.5, 0)
-        assert!((rec.p.x - 5.5).abs() < 0.1, "Hit X should be ~5.5, got {}", rec.p.x);
-        assert!((rec.p.y - 0.5).abs() < 0.1, "Hit Y should be ~0.5, got {}", rec.p.y);
+        assert!(
+            (rec.p.x - 5.5).abs() < 0.1,
+            "Hit X should be ~5.5, got {}",
+            rec.p.x
+        );
+        assert!(
+            (rec.p.y - 0.5).abs() < 0.1,
+            "Hit Y should be ~0.5, got {}",
+            rec.p.y
+        );
         assert!(rec.p.z.abs() < 0.1, "Hit Z should be ~0, got {}", rec.p.z);
     }
 
@@ -305,16 +299,12 @@ mod tests {
         // Triangle in XY plane: v0=(0,0,0), v1=(1,0,0), v2=(0,1,0)
         let tri = create_unit_triangle();
 
-        let local_primitives: Vec<Box<dyn Hittable + Send + Sync>> = vec![
-            Box::new(tri),
-        ];
+        let local_primitives: Vec<Box<dyn Hittable + Send + Sync>> = vec![Box::new(tri)];
 
         // Rotate 90 degrees around Y axis
         // After rotation: v0=(0,0,0), v1=(0,0,-1), v2=(0,1,0)
         // Triangle is now in ZY plane at X=0
-        let transforms = vec![
-            Mat4::from_rotation_y(PI / 2.0),
-        ];
+        let transforms = vec![Mat4::from_rotation_y(PI / 2.0)];
 
         let instanced = InstancedGeometry::new(
             local_primitives,
@@ -325,8 +315,8 @@ mod tests {
         // Ray pointing at rotated triangle
         // Target: center of triangle after rotation is around (0, 0.33, -0.33)
         let ray = Ray::new(
-            Vec3::new(-1.0, 0.3, -0.3),  // From -X, slightly offset
-            Vec3::new(1.0, 0.0, 0.0),    // Pointing +X
+            Vec3::new(-1.0, 0.3, -0.3), // From -X, slightly offset
+            Vec3::new(1.0, 0.0, 0.0),   // Pointing +X
             0.0,
         );
 

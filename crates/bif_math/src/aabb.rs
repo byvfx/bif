@@ -1,7 +1,7 @@
 use crate::{Interval, Ray, Vec3};
 
 /// Axis-Aligned Bounding Box for spatial acceleration structures (BVH).
-/// 
+///
 /// An AABB is defined by three intervals (one per axis) that bound a 3D volume.
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub struct Aabb {
@@ -41,7 +41,7 @@ impl Aabb {
         let x = Interval::new(a.x.min(b.x), a.x.max(b.x));
         let y = Interval::new(a.y.min(b.y), a.y.max(b.y));
         let z = Interval::new(a.z.min(b.z), a.z.max(b.z));
-        
+
         let mut aabb = Self { x, y, z };
         aabb.pad_to_minimums();
         aabb
@@ -66,7 +66,7 @@ impl Aabb {
     }
 
     /// Test if a ray intersects this AABB within the given interval.
-    /// 
+    ///
     /// Uses the slab method - efficient ray-box intersection test.
     pub fn hit(&self, r: &Ray, mut ray_t: Interval) -> bool {
         let ray_orig = r.origin;
@@ -206,7 +206,7 @@ mod tests {
     #[test]
     fn test_aabb_hit() {
         let aabb = Aabb::from_points(Vec3::new(-1.0, -1.0, -1.0), Vec3::new(1.0, 1.0, 1.0));
-        
+
         // Ray pointing at center
         let ray = Ray::new(Vec3::new(0.0, 0.0, -5.0), Vec3::new(0.0, 0.0, 1.0), 0.0);
         assert!(aabb.hit(&ray, Interval::new(0.0, 100.0)));
@@ -224,7 +224,7 @@ mod tests {
     fn test_aabb_centroid() {
         let aabb = Aabb::from_points(Vec3::new(0.0, 0.0, 0.0), Vec3::new(10.0, 10.0, 10.0));
         let centroid = aabb.centroid();
-        
+
         assert_eq!(centroid, Vec3::new(5.0, 5.0, 5.0));
     }
 

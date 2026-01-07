@@ -8,9 +8,9 @@ use bif_core::usd::load_usda;
 
 fn main() {
     env_logger::init();
-    
+
     let args: Vec<String> = env::args().collect();
-    
+
     if args.len() < 2 {
         println!("Usage: load_usda <path-to-usda-file>");
         println!("\nExamples:");
@@ -19,17 +19,17 @@ fn main() {
         println!("  cargo run --example load_usda -- assets/test_transform.usda");
         return;
     }
-    
+
     let path = &args[1];
     println!("Loading USDA file: {}", path);
-    
+
     match load_usda(path) {
         Ok(scene) => {
             println!("\n=== Scene: {} ===", scene.name);
             println!("Prototypes: {}", scene.prototype_count());
             println!("Instances: {}", scene.instance_count());
             println!("Total triangles: {}", scene.total_triangle_count());
-            
+
             println!("\n--- Prototypes ---");
             for proto in &scene.prototypes {
                 println!(
@@ -41,12 +41,16 @@ fn main() {
                 );
                 println!(
                     "       Bounds: ({:.2}, {:.2}, {:.2}) to ({:.2}, {:.2}, {:.2})",
-                    proto.bounds.x.min, proto.bounds.y.min, proto.bounds.z.min,
-                    proto.bounds.x.max, proto.bounds.y.max, proto.bounds.z.max
+                    proto.bounds.x.min,
+                    proto.bounds.y.min,
+                    proto.bounds.z.min,
+                    proto.bounds.x.max,
+                    proto.bounds.y.max,
+                    proto.bounds.z.max
                 );
                 println!("       Has normals: {}", proto.mesh.has_normals());
             }
-            
+
             println!("\n--- Instances ---");
             for (i, instance) in scene.instances.iter().enumerate() {
                 let matrix = instance.model_matrix();
@@ -56,7 +60,7 @@ fn main() {
                     i, instance.prototype_id, pos.x, pos.y, pos.z
                 );
             }
-            
+
             let world_bounds = scene.world_bounds();
             println!("\n--- World Bounds ---");
             println!(

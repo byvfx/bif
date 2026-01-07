@@ -75,11 +75,7 @@ mod tests {
 
     #[test]
     fn test_ray_at() {
-        let ray = Ray::new(
-            Vec3::new(0.0, 0.0, 0.0),
-            Vec3::new(1.0, 0.0, 0.0),
-            0.0,
-        );
+        let ray = Ray::new(Vec3::new(0.0, 0.0, 0.0), Vec3::new(1.0, 0.0, 0.0), 0.0);
 
         assert_eq!(ray.at(0.0), Vec3::new(0.0, 0.0, 0.0));
         assert_eq!(ray.at(1.0), Vec3::new(1.0, 0.0, 0.0));

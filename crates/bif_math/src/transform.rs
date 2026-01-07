@@ -3,8 +3,8 @@
 // Extends glam::Mat4 with convenience methods for ray tracing transformations.
 // Note: glam::Mat4 already provides transform_point3() and inverse()
 
-use glam::{Mat4, Vec3, Vec4};
 use crate::Aabb;
+use glam::{Mat4, Vec3, Vec4};
 
 /// Extension trait for Mat4 to provide additional transform utilities
 pub trait Mat4Ext {

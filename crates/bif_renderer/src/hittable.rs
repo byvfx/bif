@@ -1,7 +1,7 @@
 //! Hittable trait and HitRecord for ray-object intersection.
 
+use crate::{Color, Material, Ray};
 use bif_math::{Aabb, Interval, Vec3};
-use crate::{Ray, Material, Color};
 
 /// A dummy material used for HitRecord::default().
 /// Always absorbs light (returns None from scatter).
@@ -50,13 +50,13 @@ impl<'a> Default for HitRecord<'a> {
 
 impl<'a> HitRecord<'a> {
     /// Set the face normal based on ray direction and outward normal.
-    /// 
+    ///
     /// The normal is always stored pointing against the ray direction,
     /// so we need to track whether we hit the front or back face.
     pub fn set_face_normal(&mut self, ray: &Ray, outward_normal: Vec3) {
         // If the ray and normal point in the same direction, we're inside
         self.front_face = ray.direction().dot(outward_normal) < 0.0;
-        
+
         // Normal always points against the ray
         self.normal = if self.front_face {
             outward_normal
@@ -69,10 +69,10 @@ impl<'a> HitRecord<'a> {
 /// Trait for objects that can be hit by rays.
 pub trait Hittable: Send + Sync {
     /// Test if a ray hits this object within the given interval.
-    /// 
+    ///
     /// Returns true if hit, and fills in the hit record.
     fn hit<'a>(&'a self, ray: &Ray, ray_t: Interval, rec: &mut HitRecord<'a>) -> bool;
-    
+
     /// Get the axis-aligned bounding box of this object.
     fn bounding_box(&self) -> Aabb;
 }

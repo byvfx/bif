@@ -51,9 +51,7 @@ impl PrimProperties {
             transform: None,
             bounds_min: None,
             bounds_max: None,
-            attributes: vec![
-                ("Children".to_string(), info.child_count.to_string()),
-            ],
+            attributes: vec![("Children".to_string(), info.child_count.to_string())],
         }
     }
 
@@ -123,14 +121,8 @@ pub fn render_property_inspector(ui: &mut egui::Ui, properties: Option<&PrimProp
             // Bounding box (if available)
             if let (Some(min), Some(max)) = (&props.bounds_min, &props.bounds_max) {
                 ui.collapsing("Bounding Box", |ui| {
-                    ui.label(format!(
-                        "Min: ({:.3}, {:.3}, {:.3})",
-                        min.x, min.y, min.z
-                    ));
-                    ui.label(format!(
-                        "Max: ({:.3}, {:.3}, {:.3})",
-                        max.x, max.y, max.z
-                    ));
+                    ui.label(format!("Min: ({:.3}, {:.3}, {:.3})", min.x, min.y, min.z));
+                    ui.label(format!("Max: ({:.3}, {:.3}, {:.3})", max.x, max.y, max.z));
 
                     let size = *max - *min;
                     ui.label(format!(
@@ -176,10 +168,10 @@ fn render_matrix(ui: &mut egui::Ui, matrix: &Mat4) {
         .spacing([8.0, 4.0])
         .show(ui, |ui| {
             for row in 0..4 {
-                for col in 0..4 {
+                for col_data in cols.iter().take(4) {
                     // cols[col][row] because column-major
                     ui.label(
-                        egui::RichText::new(format!("{:.3}", cols[col][row]))
+                        egui::RichText::new(format!("{:.3}", col_data[row]))
                             .monospace()
                             .small(),
                     );
@@ -210,13 +202,8 @@ mod tests {
 
     #[test]
     fn test_prim_properties_from_display_info() {
-        let info = PrimDisplayInfo::new(
-            "/World/Mesh".to_string(),
-            "Mesh".to_string(),
-            true,
-            true,
-            3,
-        );
+        let info =
+            PrimDisplayInfo::new("/World/Mesh".to_string(), "Mesh".to_string(), true, true, 3);
 
         let props = PrimProperties::from_display_info(&info);
 

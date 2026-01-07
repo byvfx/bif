@@ -15,13 +15,13 @@ use bif_math::{Aabb, Vec3};
 pub struct Mesh {
     /// Vertex positions (one Vec3 per vertex)
     pub positions: Vec<Vec3>,
-    
+
     /// Vertex normals (optional - will be computed if not provided)
     pub normals: Option<Vec<Vec3>>,
-    
+
     /// Triangle indices (every 3 indices form a triangle)
     pub indices: Vec<u32>,
-    
+
     /// Axis-aligned bounding box
     pub bounds: Aabb,
 }
@@ -40,24 +40,24 @@ impl Mesh {
             bounds,
         }
     }
-    
+
     /// Compute axis-aligned bounding box from positions.
     fn compute_bounds(positions: &[Vec3]) -> Aabb {
         if positions.is_empty() {
             return Aabb::empty();
         }
-        
+
         let mut min = Vec3::splat(f32::INFINITY);
         let mut max = Vec3::splat(f32::NEG_INFINITY);
-        
+
         for pos in positions {
             min = min.min(*pos);
             max = max.max(*pos);
         }
-        
+
         Aabb::from_points(min, max)
     }
-    
+
     /// Compute smooth vertex normals by averaging face normals.
     ///
     /// This generates normals if the mesh doesn't have them, or replaces
@@ -66,34 +66,34 @@ impl Mesh {
     pub fn compute_normals(&mut self) {
         let vertex_count = self.positions.len();
         let mut normals = vec![Vec3::ZERO; vertex_count];
-        
+
         // Accumulate face normals at each vertex
         for face in self.indices.chunks(3) {
             if face.len() < 3 {
                 continue;
             }
-            
+
             let i0 = face[0] as usize;
             let i1 = face[1] as usize;
             let i2 = face[2] as usize;
-            
+
             if i0 >= vertex_count || i1 >= vertex_count || i2 >= vertex_count {
                 continue;
             }
-            
+
             let p0 = self.positions[i0];
             let p1 = self.positions[i1];
             let p2 = self.positions[i2];
-            
+
             let edge1 = p1 - p0;
             let edge2 = p2 - p0;
             let face_normal = edge1.cross(edge2); // Not normalized - area-weighted
-            
+
             normals[i0] += face_normal;
             normals[i1] += face_normal;
             normals[i2] += face_normal;
         }
-        
+
         // Normalize accumulated normals
         for normal in &mut normals {
             let len = normal.length();
@@ -103,15 +103,15 @@ impl Mesh {
                 *normal = Vec3::Y; // Default up normal for degenerate cases
             }
         }
-        
+
         self.normals = Some(normals);
     }
-    
+
     /// Check if the mesh has normals.
     pub fn has_normals(&self) -> bool {
         self.normals.is_some()
     }
-    
+
     /// Ensure the mesh has normals, computing them if necessary.
     /// Also recomputes if existing normals don't match vertex count (e.g., face-varying normals).
     pub fn ensure_normals(&mut self) {
@@ -119,7 +119,7 @@ impl Mesh {
             None => true,
             Some(normals) => normals.len() != self.positions.len(),
         };
-        
+
         if should_compute {
             if self.normals.is_some() {
                 // Only log at debug level - this is expected for face-varying normals from USD
@@ -132,12 +132,12 @@ impl Mesh {
             self.compute_normals();
         }
     }
-    
+
     /// Get the mesh center (center of bounding box).
     pub fn center(&self) -> Vec3 {
         self.bounds.centroid()
     }
-    
+
     /// Get the mesh size (diagonal length of bounding box).
     pub fn size(&self) -> f32 {
         let extent = Vec3::new(
@@ -147,12 +147,12 @@ impl Mesh {
         );
         extent.length()
     }
-    
+
     /// Get the number of triangles in the mesh.
     pub fn triangle_count(&self) -> usize {
         self.indices.len() / 3
     }
-    
+
     /// Get the number of vertices in the mesh.
     pub fn vertex_count(&self) -> usize {
         self.positions.len()
@@ -185,16 +185,21 @@ impl Mesh {
             let i2 = chunk[2] as usize;
 
             // Bounds check
-            if i0 >= self.positions.len() || i1 >= self.positions.len() || i2 >= self.positions.len() {
-                log::warn!("Invalid triangle indices: [{}, {}, {}], vertex count: {}", i0, i1, i2, self.positions.len());
+            if i0 >= self.positions.len()
+                || i1 >= self.positions.len()
+                || i2 >= self.positions.len()
+            {
+                log::warn!(
+                    "Invalid triangle indices: [{}, {}, {}], vertex count: {}",
+                    i0,
+                    i1,
+                    i2,
+                    self.positions.len()
+                );
                 continue;
             }
 
-            triangles.push([
-                self.positions[i0],
-                self.positions[i1],
-                self.positions[i2],
-            ]);
+            triangles.push([self.positions[i0], self.positions[i1], self.positions[i2]]);
         }
 
         triangles
@@ -204,7 +209,7 @@ impl Mesh {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_mesh_creation() {
         let positions = vec![
@@ -213,14 +218,14 @@ mod tests {
             Vec3::new(0.0, 1.0, 0.0),
         ];
         let indices = vec![0, 1, 2];
-        
+
         let mesh = Mesh::new(positions.clone(), indices.clone(), None);
-        
+
         assert_eq!(mesh.vertex_count(), 3);
         assert_eq!(mesh.triangle_count(), 1);
         assert!(!mesh.has_normals());
     }
-    
+
     #[test]
     fn test_compute_normals() {
         let positions = vec![
@@ -229,19 +234,19 @@ mod tests {
             Vec3::new(0.0, 1.0, 0.0),
         ];
         let indices = vec![0, 1, 2];
-        
+
         let mut mesh = Mesh::new(positions, indices, None);
         mesh.compute_normals();
-        
+
         assert!(mesh.has_normals());
         let normals = mesh.normals.as_ref().unwrap();
-        
+
         // For a CCW triangle in XY plane, normal should point in +Z
         for normal in normals {
             assert!((normal.z - 1.0).abs() < 0.001);
         }
     }
-    
+
     #[test]
     fn test_bounds_computation() {
         let positions = vec![
@@ -250,9 +255,9 @@ mod tests {
             Vec3::new(0.0, 0.0, 0.0),
         ];
         let indices = vec![0, 1, 2];
-        
+
         let mesh = Mesh::new(positions, indices, None);
-        
+
         assert!((mesh.bounds.x.min - (-1.0)).abs() < 0.001);
         assert!((mesh.bounds.x.max - 4.0).abs() < 0.001);
         assert!((mesh.bounds.y.min - (-2.0)).abs() < 0.001);
@@ -264,10 +269,10 @@ mod tests {
     #[test]
     fn test_extract_triangle_vertices() {
         let positions = vec![
-            Vec3::new(0.0, 0.0, 0.0),  // v0
-            Vec3::new(1.0, 0.0, 0.0),  // v1
-            Vec3::new(0.0, 1.0, 0.0),  // v2
-            Vec3::new(1.0, 1.0, 0.0),  // v3
+            Vec3::new(0.0, 0.0, 0.0), // v0
+            Vec3::new(1.0, 0.0, 0.0), // v1
+            Vec3::new(0.0, 1.0, 0.0), // v2
+            Vec3::new(1.0, 1.0, 0.0), // v3
         ];
         // Two triangles: [0,1,2] and [1,3,2]
         let indices = vec![0, 1, 2, 1, 3, 2];
