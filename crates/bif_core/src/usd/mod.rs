@@ -32,12 +32,12 @@
 //!     scene.instance_count());
 //! ```
 
-mod types;
-mod parser;
-mod loader;
 pub mod cpp_bridge;
+mod loader;
+mod parser;
+mod types;
 
-pub use types::*;
-pub use parser::*;
+pub use cpp_bridge::{UsdBridgeError, UsdInstancerData, UsdMeshData, UsdStage};
 pub use loader::*;
-pub use cpp_bridge::{UsdStage, UsdMeshData, UsdInstancerData, UsdBridgeError};
+pub use parser::*;
+pub use types::*;

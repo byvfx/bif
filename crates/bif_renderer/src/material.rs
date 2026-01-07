@@ -1,7 +1,7 @@
 //! Material trait for surface scattering.
 
+use crate::{hittable::HitRecord, Ray};
 use bif_math::Vec3;
-use crate::{Ray, hittable::HitRecord};
 
 /// Color type alias (RGB values typically 0-1)
 pub type Color = Vec3;
@@ -9,13 +9,13 @@ pub type Color = Vec3;
 /// Trait for materials that describe how light interacts with surfaces.
 pub trait Material: Send + Sync {
     /// Scatter an incoming ray.
-    /// 
+    ///
     /// Returns Some((attenuation, scattered_ray)) if the ray scatters,
     /// or None if the ray is absorbed.
     fn scatter(&self, ray_in: &Ray, rec: &HitRecord) -> Option<(Color, Ray)>;
-    
+
     /// Get emitted light from this material.
-    /// 
+    ///
     /// Returns the color of light emitted at the given UV coordinates and point.
     /// Most materials return black (no emission).
     fn emitted(&self, _u: f32, _v: f32, _p: Vec3) -> Color {
@@ -60,12 +60,12 @@ impl Material for Lambertian {
     fn scatter(&self, ray_in: &Ray, rec: &HitRecord) -> Option<(Color, Ray)> {
         // Scatter in a random direction on the hemisphere around the normal
         let mut scatter_direction = rec.normal + random_unit_vector();
-        
+
         // Catch degenerate scatter direction
         if scatter_direction.length_squared() < 1e-8 {
             scatter_direction = rec.normal;
         }
-        
+
         let scattered = Ray::new(rec.p, scatter_direction, ray_in.time());
         Some((self.albedo, scattered))
     }
@@ -79,7 +79,7 @@ pub struct Metal {
 
 impl Metal {
     /// Create a new Metal material.
-    /// 
+    ///
     /// - `albedo`: The color of the metal
     /// - `fuzz`: Roughness, 0.0 = perfect mirror, 1.0 = very rough
     pub fn new(albedo: Color, fuzz: f32) -> Self {
@@ -94,7 +94,7 @@ impl Material for Metal {
     fn scatter(&self, ray_in: &Ray, rec: &HitRecord) -> Option<(Color, Ray)> {
         let reflected = reflect(ray_in.direction().normalize(), rec.normal);
         let scattered_dir = reflected + self.fuzz * random_unit_vector();
-        
+
         // Only scatter if the reflected ray is in the same hemisphere as the normal
         if scattered_dir.dot(rec.normal) > 0.0 {
             let scattered = Ray::new(rec.p, scattered_dir, ray_in.time());
@@ -113,7 +113,7 @@ pub struct Dielectric {
 
 impl Dielectric {
     /// Create a new Dielectric material.
-    /// 
+    ///
     /// - `ior`: Index of refraction (1.0 = air, 1.5 = glass, 2.4 = diamond)
     pub fn new(ior: f32) -> Self {
         Self { ior }
@@ -129,7 +129,11 @@ impl Dielectric {
 impl Material for Dielectric {
     fn scatter(&self, ray_in: &Ray, rec: &HitRecord) -> Option<(Color, Ray)> {
         let attenuation = Color::ONE;
-        let refraction_ratio = if rec.front_face { 1.0 / self.ior } else { self.ior };
+        let refraction_ratio = if rec.front_face {
+            1.0 / self.ior
+        } else {
+            self.ior
+        };
 
         let unit_direction = ray_in.direction().normalize();
         let cos_theta = (-unit_direction).dot(rec.normal).min(1.0);
@@ -137,12 +141,13 @@ impl Material for Dielectric {
 
         // Check for total internal reflection
         let cannot_refract = refraction_ratio * sin_theta > 1.0;
-        
-        let direction = if cannot_refract || Self::reflectance(cos_theta, refraction_ratio) > rand::random() {
-            reflect(unit_direction, rec.normal)
-        } else {
-            refract(unit_direction, rec.normal, refraction_ratio)
-        };
+
+        let direction =
+            if cannot_refract || Self::reflectance(cos_theta, refraction_ratio) > rand::random() {
+                reflect(unit_direction, rec.normal)
+            } else {
+                refract(unit_direction, rec.normal, refraction_ratio)
+            };
 
         let scattered = Ray::new(rec.p, direction, ray_in.time());
         Some((attenuation, scattered))

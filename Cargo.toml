@@ -23,11 +23,11 @@ bytemuck = { version = "1.14", features = ["derive"] }
 # Parallel processing
 rayon = "1.10"
 
-# Rendering - using older versions compatible with Rust 1.86
+# Rendering
 wgpu = "22.1"
 pollster = "0.3"
 
-# UI - using older versions compatible with Rust 1.86
+# UI - egui 0.29 (stable, works with wgpu 22)
 egui = "0.29"
 egui-wgpu = "0.29"
 egui-winit = "0.29"

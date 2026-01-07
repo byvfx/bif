@@ -5,29 +5,29 @@
 //!
 //! Named "Ivar" to distinguish from the GPU viewport renderer.
 
-mod ray;
+mod bucket;
+mod bvh;
+mod camera;
+mod embree;
 mod hittable;
+mod instanced_geometry;
 mod material;
+mod ray;
+mod renderer;
 mod sphere;
 mod triangle;
-mod camera;
-mod bvh;
-mod renderer;
-mod bucket;
-mod instanced_geometry;
-mod embree;
 
-pub use ray::Ray;
+pub use bucket::{generate_buckets, render_bucket, Bucket, BucketResult, DEFAULT_BUCKET_SIZE};
+pub use bvh::BvhNode;
+pub use camera::Camera;
+pub use embree::EmbreeScene;
 pub use hittable::{HitRecord, Hittable, HittableList};
-pub use material::{Material, Color, Lambertian, Metal, Dielectric, DiffuseLight};
+pub use instanced_geometry::InstancedGeometry;
+pub use material::{Color, Dielectric, DiffuseLight, Lambertian, Material, Metal};
+pub use ray::Ray;
+pub use renderer::{color_to_rgba, ray_color, render, render_pixel, ImageBuffer, RenderConfig};
 pub use sphere::Sphere;
 pub use triangle::Triangle;
-pub use camera::Camera;
-pub use bvh::BvhNode;
-pub use renderer::{RenderConfig, ImageBuffer, render, render_pixel, ray_color, color_to_rgba};
-pub use bucket::{Bucket, BucketResult, generate_buckets, render_bucket, DEFAULT_BUCKET_SIZE};
-pub use instanced_geometry::InstancedGeometry;
-pub use embree::EmbreeScene;
 
 /// Re-export Vec3 and common math types from bif_math
-pub use bif_math::{Vec3, Aabb, Interval};
+pub use bif_math::{Aabb, Interval, Vec3};

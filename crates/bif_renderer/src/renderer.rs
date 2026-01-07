@@ -5,8 +5,8 @@
 //! - Gamma correction
 //! - Anti-aliasing via multi-sampling
 
+use crate::{Camera, Color, HitRecord, Hittable, Ray};
 use bif_math::Interval;
-use crate::{Camera, Ray, HitRecord, Hittable, Color};
 
 /// Render configuration.
 #[derive(Debug, Clone)]
@@ -33,7 +33,7 @@ impl Default for RenderConfig {
 }
 
 /// Compute the color seen by a ray.
-/// 
+///
 /// This is the core path tracing function. It traces the ray through
 /// the scene, bouncing off surfaces and accumulating color.
 pub fn ray_color(ray: &Ray, world: &dyn Hittable, depth: u32, config: &RenderConfig) -> Color {
@@ -43,7 +43,7 @@ pub fn ray_color(ray: &Ray, world: &dyn Hittable, depth: u32, config: &RenderCon
     }
 
     let mut rec = HitRecord::default();
-    
+
     // Check if ray hits anything
     if !world.hit(ray, Interval::new(0.001, f32::INFINITY), &mut rec) {
         // Ray didn't hit anything - return background
@@ -113,13 +113,13 @@ pub fn render_pixel(
     config: &RenderConfig,
 ) -> Color {
     let mut pixel_color = Color::ZERO;
-    
+
     for _ in 0..config.samples_per_pixel {
         // Camera.get_ray already adds random offset for anti-aliasing
         let ray = camera.get_ray(x, y);
         pixel_color += ray_color(&ray, world, config.max_depth, config);
     }
-    
+
     // Average the samples
     pixel_color / config.samples_per_pixel as f32
 }
@@ -163,43 +163,44 @@ impl ImageBuffer {
 }
 
 /// Render the entire scene to an image buffer.
-/// 
+///
 /// This is a simple single-threaded renderer for testing.
-pub fn render(
-    camera: &Camera,
-    world: &dyn Hittable,
-    config: &RenderConfig,
-) -> ImageBuffer {
+pub fn render(camera: &Camera, world: &dyn Hittable, config: &RenderConfig) -> ImageBuffer {
     let mut image = ImageBuffer::new(camera.image_width, camera.image_height);
-    
+
     for y in 0..camera.image_height {
         for x in 0..camera.image_width {
             let color = render_pixel(camera, world, x, y, config);
             image.set(x, y, color);
         }
     }
-    
+
     image
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Sphere, Lambertian, BvhNode, Vec3};
+    use crate::{BvhNode, Lambertian, Sphere, Vec3};
 
     #[test]
     fn test_sky_gradient() {
         // Ray pointing up should be more blue (less red than white)
         let up_ray = Ray::new(Vec3::ZERO, Vec3::new(0.0, 1.0, 0.0), 0.0);
         let up_color = sky_gradient(&up_ray);
-        
+
         // Ray pointing down should be more white (more red)
         let down_ray = Ray::new(Vec3::ZERO, Vec3::new(0.0, -1.0, 0.0), 0.0);
         let down_color = sky_gradient(&down_ray);
-        
+
         // Up color should have less red (more blue-ish) than down color (white)
         // blue = (0.5, 0.7, 1.0), white = (1.0, 1.0, 1.0)
-        assert!(up_color.x < down_color.x, "up_color.x={} should be < down_color.x={}", up_color.x, down_color.x);
+        assert!(
+            up_color.x < down_color.x,
+            "up_color.x={} should be < down_color.x={}",
+            up_color.x,
+            down_color.x
+        );
     }
 
     #[test]
@@ -217,25 +218,24 @@ mod tests {
             0.5,
             Lambertian::new(Color::new(0.5, 0.5, 0.5)),
         );
-        
+
         let objects: Vec<Box<dyn Hittable + Send + Sync>> = vec![Box::new(sphere)];
         let world = BvhNode::new(objects);
-        
+
         // Create a camera
-        let mut camera = Camera::new()
-            .with_resolution(10, 10);
+        let mut camera = Camera::new().with_resolution(10, 10);
         camera.initialize();
-        
+
         let config = RenderConfig {
             samples_per_pixel: 4,
             max_depth: 5,
             background: Color::new(0.5, 0.7, 1.0),
             use_sky_gradient: false,
         };
-        
+
         // Render center pixel (should hit the sphere)
         let color = render_pixel(&camera, &world, 5, 5, &config);
-        
+
         // Color should not be the background (we hit the sphere)
         // Can't test exact color due to random sampling
         assert!(color.length() > 0.0);

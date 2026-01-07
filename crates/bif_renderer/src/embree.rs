@@ -3,10 +3,13 @@
 //! Manual FFI bindings to Intel Embree 4 library, avoiding bindgen dependency.
 //! Only includes the minimal API needed for instanced geometry rendering.
 
+use crate::{
+    hittable::{HitRecord, Hittable},
+    Material, Ray,
+};
 use bif_math::{Aabb, Interval, Mat4, Vec3};
-use crate::{Ray, Material, hittable::{HitRecord, Hittable}};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::Arc;
 
 // ============================================================================
 // Embree FFI Bindings
@@ -29,8 +32,8 @@ type RTCBuffer = *mut std::ffi::c_void;
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 #[allow(dead_code)]
 enum RTCGeometryType {
-    Triangle = 0,    // RTC_GEOMETRY_TYPE_TRIANGLE
-    Instance = 121,  // RTC_GEOMETRY_TYPE_INSTANCE
+    Triangle = 0,   // RTC_GEOMETRY_TYPE_TRIANGLE
+    Instance = 121, // RTC_GEOMETRY_TYPE_INSTANCE
 }
 
 // Embree buffer type
@@ -49,9 +52,9 @@ enum RTCBufferType {
 #[allow(dead_code)]
 enum RTCFormat {
     Undefined = 0,
-    UInt3 = 0x5003,    // RTC_FORMAT_UINT = 0x5001, +2 for UINT3
-    Float3 = 0x9003,   // RTC_FORMAT_FLOAT = 0x9001, +2 for FLOAT3
-    Float4x4ColumnMajor = 0x9244,  // For transforms
+    UInt3 = 0x5003,               // RTC_FORMAT_UINT = 0x5001, +2 for UINT3
+    Float3 = 0x9003,              // RTC_FORMAT_FLOAT = 0x9001, +2 for FLOAT3
+    Float4x4ColumnMajor = 0x9244, // For transforms
 }
 
 // Embree scene flags
@@ -167,7 +170,7 @@ extern "C" {
     fn rtcSetGeometryTransform(
         geom: RTCGeometry,
         time_step: u32,
-        format: u32,  // RTC_FORMAT_FLOAT4X4_COLUMN_MAJOR = 34
+        format: u32, // RTC_FORMAT_FLOAT4X4_COLUMN_MAJOR = 34
         xfm: *const f32,
     );
 
@@ -177,7 +180,7 @@ extern "C" {
     fn rtcIntersect1(
         scene: RTCScene,
         rayhit: *mut RTCRayHit,
-        args: *const std::ffi::c_void,  // RTCIntersectArguments*, can be NULL
+        args: *const std::ffi::c_void, // RTCIntersectArguments*, can be NULL
     );
 }
 
@@ -257,7 +260,7 @@ impl RTCRayHit {
 pub struct EmbreeScene<M: Material + Clone + 'static> {
     device: RTCDevice,
     scene: RTCScene,
-    prototype_scene: RTCScene,  // Must stay alive while instances reference it!
+    prototype_scene: RTCScene, // Must stay alive while instances reference it!
     material: Arc<M>,
 
     // Keep vertex, index, and transform data alive (Embree holds pointers to this)
@@ -280,11 +283,7 @@ impl<M: Material + Clone + 'static> EmbreeScene<M> {
     ///
     /// # Safety
     /// Requires Embree 3 library to be installed and linkable.
-    pub fn new(
-        vertices: &[[Vec3; 3]],
-        transforms: Vec<Mat4>,
-        material: M,
-    ) -> Self {
+    pub fn new(vertices: &[[Vec3; 3]], transforms: Vec<Mat4>, material: M) -> Self {
         unsafe {
             // 1. Create Embree device
             let device = rtcNewDevice(std::ptr::null());
@@ -327,9 +326,15 @@ impl<M: Material + Clone + 'static> EmbreeScene<M> {
             if !vertices.is_empty() {
                 log::debug!(
                     "First triangle: v0=({}, {}, {}), v1=({}, {}, {}), v2=({}, {}, {})",
-                    vertices[0][0].x, vertices[0][0].y, vertices[0][0].z,
-                    vertices[0][1].x, vertices[0][1].y, vertices[0][1].z,
-                    vertices[0][2].x, vertices[0][2].y, vertices[0][2].z
+                    vertices[0][0].x,
+                    vertices[0][0].y,
+                    vertices[0][0].z,
+                    vertices[0][1].x,
+                    vertices[0][1].y,
+                    vertices[0][1].z,
+                    vertices[0][2].x,
+                    vertices[0][2].y,
+                    vertices[0][2].z
                 );
             }
 
@@ -341,19 +346,23 @@ impl<M: Material + Clone + 'static> EmbreeScene<M> {
                 panic!("Failed to create Embree geometry");
             }
 
-            log::info!("Setting up triangle geometry: {} triangles, {} vertices, {} indices",
-                vertices.len(), vertex_data.len() / 3, index_data.len());
+            log::info!(
+                "Setting up triangle geometry: {} triangles, {} vertices, {} indices",
+                vertices.len(),
+                vertex_data.len() / 3,
+                index_data.len()
+            );
 
             // 5. Set vertex buffer
             rtcSetSharedGeometryBuffer(
                 geom,
                 RTCBufferType::Vertex as u32,
-                0,  // slot
+                0, // slot
                 RTCFormat::Float3 as u32,
                 vertex_data.as_ptr() as *const std::ffi::c_void,
-                0,  // byte offset
-                12,  // stride: 3 * f32 = 12 bytes per vertex
-                vertex_data.len() / 3,  // vertex count
+                0,                     // byte offset
+                12,                    // stride: 3 * f32 = 12 bytes per vertex
+                vertex_data.len() / 3, // vertex count
             );
 
             let err = rtcGetDeviceError(device);
@@ -365,12 +374,12 @@ impl<M: Material + Clone + 'static> EmbreeScene<M> {
             rtcSetSharedGeometryBuffer(
                 geom,
                 RTCBufferType::Index as u32,
-                0,  // slot
+                0, // slot
                 RTCFormat::UInt3 as u32,
                 index_data.as_ptr() as *const std::ffi::c_void,
-                0,  // byte offset
-                12,  // stride: 3 * u32 = 12 bytes per triangle
-                vertices.len(),  // triangle count
+                0,              // byte offset
+                12,             // stride: 3 * u32 = 12 bytes per triangle
+                vertices.len(), // triangle count
             );
 
             let err = rtcGetDeviceError(device);
@@ -410,8 +419,12 @@ impl<M: Material + Clone + 'static> EmbreeScene<M> {
             rtcGetSceneBounds(prototype_scene, &mut proto_bounds);
             log::debug!(
                 "Prototype scene bounds: ({}, {}, {}) to ({}, {}, {})",
-                proto_bounds.lower_x, proto_bounds.lower_y, proto_bounds.lower_z,
-                proto_bounds.upper_x, proto_bounds.upper_y, proto_bounds.upper_z
+                proto_bounds.lower_x,
+                proto_bounds.lower_y,
+                proto_bounds.lower_z,
+                proto_bounds.upper_x,
+                proto_bounds.upper_y,
+                proto_bounds.upper_z
             );
 
             // 7. Create top-level scene with instances
@@ -423,9 +436,8 @@ impl<M: Material + Clone + 'static> EmbreeScene<M> {
             }
 
             // 8. Store transforms (Embree holds pointers, must keep alive)
-            let transform_data: Vec<[f32; 16]> = transforms.iter()
-                .map(|t| t.to_cols_array())
-                .collect();
+            let transform_data: Vec<[f32; 16]> =
+                transforms.iter().map(|t| t.to_cols_array()).collect();
 
             // 9. Add instances
             for (idx, transform_array) in transform_data.iter().enumerate() {
@@ -442,7 +454,7 @@ impl<M: Material + Clone + 'static> EmbreeScene<M> {
                 // From rtcore_common.h: RTC_FORMAT_FLOAT4X4_COLUMN_MAJOR = 0x9244
                 rtcSetGeometryTransform(
                     inst_geom,
-                    0,  // time step
+                    0, // time step
                     RTCFormat::Float4x4ColumnMajor as u32,
                     transform_array.as_ptr(),
                 );
@@ -480,14 +492,18 @@ impl<M: Material + Clone + 'static> EmbreeScene<M> {
             );
             log::info!(
                 "Scene bounds: ({}, {}, {}) to ({}, {}, {})",
-                bounds.lower_x, bounds.lower_y, bounds.lower_z,
-                bounds.upper_x, bounds.upper_y, bounds.upper_z
+                bounds.lower_x,
+                bounds.lower_y,
+                bounds.lower_z,
+                bounds.upper_x,
+                bounds.upper_y,
+                bounds.upper_z
             );
 
             Self {
                 device,
                 scene,
-                prototype_scene,  // Keep alive for instances
+                prototype_scene, // Keep alive for instances
                 material: Arc::new(material),
                 _vertex_data: vertex_data,
                 _index_data: index_data,
@@ -527,8 +543,12 @@ impl<M: Material + Clone + 'static> Hittable for EmbreeScene<M> {
                     log::debug!(
                         "Ray miss #{}: origin=({}, {}, {}), dir=({}, {}, {}), tfar={}",
                         count,
-                        rayhit.ray.org_x, rayhit.ray.org_y, rayhit.ray.org_z,
-                        rayhit.ray.dir_x, rayhit.ray.dir_y, rayhit.ray.dir_z,
+                        rayhit.ray.org_x,
+                        rayhit.ray.org_y,
+                        rayhit.ray.org_z,
+                        rayhit.ray.dir_x,
+                        rayhit.ray.dir_y,
+                        rayhit.ray.dir_z,
                         rayhit.ray.tfar
                     );
                 }
@@ -545,7 +565,9 @@ impl<M: Material + Clone + 'static> Hittable for EmbreeScene<M> {
                     rayhit.ray.tfar,
                     rayhit.hit.geom_id,
                     rayhit.hit.prim_id,
-                    rayhit.hit.ng_x, rayhit.hit.ng_y, rayhit.hit.ng_z
+                    rayhit.hit.ng_x,
+                    rayhit.hit.ng_y,
+                    rayhit.hit.ng_z
                 );
             }
 
@@ -588,7 +610,7 @@ impl<M: Material + Clone + 'static> Drop for EmbreeScene<M> {
     fn drop(&mut self) {
         unsafe {
             rtcReleaseScene(self.scene);
-            rtcReleaseScene(self.prototype_scene);  // Release prototype after top-level scene
+            rtcReleaseScene(self.prototype_scene); // Release prototype after top-level scene
             rtcReleaseDevice(self.device);
         }
     }
