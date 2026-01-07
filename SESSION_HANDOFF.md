@@ -1,23 +1,64 @@
-# Session Handoff - January 4, 2026
+# Session Handoff - January 6, 2026
 
-**Last Updated:** Milestone 13 Complete (USD C++ Integration)
-**Current Milestone:** Planning Milestone 14 (TBD)
+**Last Updated:** Milestone 13b Complete (Node Graph + Dynamic USD Loading)
+**Current Milestone:** Planning Milestone 14 (Materials/MaterialX)
 **Project:** BIF - VFX Scene Assembler & Renderer
 
 ---
 
 ## Quick Status
 
-✅ **Milestones Complete:** 13/13 + Freeze Fix (100%)
-🎯 **Current State:** USD C++ integration for USDC and file references
-📦 **Tests Passing:** 63+ (26 bif_math + 19 bif_renderer + 18 bif_core)
-🚀 **Next Goal:** Milestone 13a (USD Scene Browser + Node Graph)
+✅ **Milestones Complete:** 13a + 13b (Scene Browser + Node Graph)
+🎯 **Current State:** Dynamic USD loading via node graph, Houdini-style scene browser
+📦 **Tests Passing:** 45+ (34 bif_math/bif_core + 11 bif_viewport)
+🚀 **Next Goal:** Milestone 14 (MaterialX integration)
 
 ---
 
 ## Recent Work (Last Session)
 
-### Milestone 13: USD C++ Integration ✅ (January 4, 2026)
+### Milestone 13b: Node Graph + Dynamic USD Loading ✅ (January 6, 2026)
+
+**Goal:** Nuke-style node graph for scene assembly + Houdini-style scene browser
+
+**Implementation:**
+
+- egui-snarl 0.5 node graph with USD Read + Ivar Render nodes
+- rfd 0.14 for native file dialogs (Browse button)
+- `load_usd_scene()` method for dynamic USD loading from node graph
+- Houdini-style table layout for scene browser (Path, Type, Children, Kind, Visibility)
+- Empty viewport startup when no CLI args
+
+**Key Features:**
+
+| Feature | Description |
+|---------|-------------|
+| USD Read node | File path + Browse + Load button |
+| Ivar Render node | SPP slider + Render button |
+| NodeGraphEvent | Communication between graph and viewport |
+| Table layout | 5 columns like Houdini Scene Graph Tree |
+
+**Files:**
+
+- [crates/bif_viewport/src/node_graph.rs](crates/bif_viewport/src/node_graph.rs) (NEW) - ~350 LOC
+- [crates/bif_viewport/src/scene_browser.rs](crates/bif_viewport/src/scene_browser.rs) - Table redesign
+- [crates/bif_viewport/src/lib.rs](crates/bif_viewport/src/lib.rs) - +load_usd_scene, +events
+- [crates/bif_viewer/src/main.rs](crates/bif_viewer/src/main.rs) - Empty startup
+
+### Milestone 13a: USD Scene Browser + Property Inspector ✅ (January 5, 2026)
+
+**Goal:** Gaffer-style hierarchy browser + property inspector panels
+
+**Implementation:**
+
+- 7 new prim traversal APIs in C++ bridge
+- `PrimDataProvider` trait abstraction for USD data
+- Scene browser with expandable tree and type icons
+- Property inspector with transforms and bounding boxes
+
+---
+
+## Milestone 13 (Previous): USD C++ Integration ✅
 
 **Goal:** Add support for USDC binary files and USD file references
 
