@@ -1,7 +1,7 @@
 # BIF Architecture
 
-**Version:** 0.1.0
-**Last Updated:** December 31, 2025 (Milestones 0-11 Complete)
+**Version:** 0.2.0
+**Last Updated:** January 8, 2026 (Milestones 0-13b Complete)
 
 ## Vision
 
@@ -93,25 +93,21 @@ GPU Viewport      CPU Path Tracer
 
 ### 4. BVH Acceleration Strategy
 
-**Milestones 0-11 (Current):** Instance-aware BVH in pure Rust
+**Milestones 0-11:** Instance-aware BVH in pure Rust (deprecated)
 
 - ONE prototype BVH (280K triangles)
 - 100 transforms stored separately
 - Per-instance ray transformation: world→local→test→world
-- Build time: ~40ms (was 4000ms for naive approach)
-- Memory: ~50MB (was 5GB for duplicated geometry)
-- Trade-off: ~3x slower rendering due to linear instance search O(100)
 
-**Implementation:** See [instanced_geometry.rs](crates/bif_renderer/src/instanced_geometry.rs)
-
-**Milestone 12 (Next):** Intel Embree integration
+**Milestone 12+ (Current):** Intel Embree 4 integration ✅
 
 - Two-level BVH: O(log instances + log primitives)
 - SIMD optimized (4-8x faster than scalar)
 - Production-proven (Arnold, Cycles, etc.)
-- Motion blur support
+- Build time: 28ms for 100 instances
+- Motion blur ready
 
-**Rationale:** Milestones 0-11 proved the architecture with pure Rust. Embree adds performance for 10K+ instances.
+**Implementation:** See [embree.rs](crates/bif_renderer/src/embree.rs)
 
 ```rust
 // Milestone 12: Embree handles BVH construction
@@ -130,8 +126,8 @@ scene.commit();  // Embree builds optimized two-level BVH
 
 ### 5. egui for PoC, Qt 6 for Production
 
-**PoC:** egui + wgpu (pure Rust)  
-**Production:** Qt 6 via cxx-qt (optional)
+**PoC:** egui + wgpu (pure Rust) ✅ Current
+**Production:** Qt 6 via cxx-qt (Milestone 25+)
 
 **Rationale:**
 

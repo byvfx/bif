@@ -262,15 +262,15 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 
 ---
 
-## Summary Statistics (Milestones 0-12)
+## Summary Statistics (Milestones 0-13b)
 
 | Metric | Value |
 |--------|-------|
-| **Total LOC** | ~6,500 |
-| **Tests Passing** | 60+ ✅ (26 bif_math + 19 bif_renderer + 15 bif_core) |
-| **Milestones Complete** | 12/12 + Freeze Fix |
-| **Time Invested** | ~42 hours (December 2024 - January 2026) |
-| **Commits** | 50+ |
+| **Total LOC** | ~7,500 |
+| **Tests Passing** | 60+ ✅ |
+| **Milestones Complete** | 13b + Freeze Fix |
+| **Time Invested** | ~55 hours |
+| **Commits** | 60+ |
 | **Build Time (dev)** | ~5s |
 | **Build Time (release)** | ~2m |
 | **Runtime FPS** | 60+ (VSync-limited) |
@@ -279,9 +279,8 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 | **Instances Rendered** | 100 (GPU), 100 (Ivar/Embree) |
 | **Total Triangles** | 28,055,600 |
 | **Draw Calls** | 1 (instanced) |
-| **Embree BVH Build** | 28ms (100 instances, 280K triangles) |
-| **Embree Two-Level** | Prototype BLAS + Instance TLAS |
-| **Ivar UI Freeze** | **0ms** ✅ |
+| **Embree BVH Build** | 28ms |
+| **UI Freeze** | **0ms** ✅ |
 
 ---
 
@@ -309,86 +308,285 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 
 ---
 
-## Upcoming Milestones 🎯
+### Milestone 13a: USD Scene Browser + Property Inspector ✅
 
-### Milestone 13a: USD Scene Browser + Node Graph 🎯 NEXT
-
-- **Goal:** Interactive USD scene hierarchy viewer with node graph for testing/loading
-- **Prerequisites:** Milestone 13 complete ✅
-- **Estimated Time:** 8-12 hours
+- **Completed:** 2026-01-05
+- **Time Invested:** ~6 hours
 - **Location:**
   - `crates/bif_viewport/src/scene_browser.rs` - USD hierarchy tree view
-  - `crates/bif_viewport/src/node_graph.rs` - Node-based USD composition
-  - `crates/bif_core/src/usd/inspector.rs` - USD introspection utilities
-- **Key Tasks:**
-  - **Hierarchy View:** Tree widget showing USD scene graph (similar to Gaffer's HierarchyView)
-    - Expandable prims with type icons (Mesh, Xform, Material, etc.)
-    - Multi-selection with ctrl/shift
-    - Context menu for isolate/hide/show
-    - Search and filter by prim type
-  - **Node Graph View:** Visual USD composition (similar to Gaffer's node editor)
-    - References as nodes with file path labels
-    - Variant sets as dropdown nodes
-    - Layer composition showing sublayer stack
-    - Visual connections between referenced prims
-  - **Property Inspector:** USD metadata and attributes panel
-    - Show USD prim properties (type, metadata, attributes)
-    - Edit basic string/numeric attributes
-    - Time-sampled attribute visualization
-  - **Integration:**
-    - Load USD files via drag-and-drop
-    - Real-time sync with viewport (selection highlights)
-    - Export composed scene back to USD
-- **Reference Implementation:** Study Gaffer's approach:
-  - `GafferSceneUI::HierarchyView` for tree structure
-  - `GafferUI::GraphGadget` for node graph layout
-  - USD introspection via Pixar USD C++ API
-- **Why This Milestone:** Essential tooling for USD workflow debugging and scene composition understanding
+  - `crates/bif_viewport/src/property_inspector.rs` - Property panel
+  - `cpp/usd_bridge/usd_bridge.cpp` - Prim traversal APIs
+- **Key Achievements:**
+  - 7 new prim traversal APIs in C++ bridge
+  - `PrimDataProvider` trait abstraction for USD data
+  - Scene browser with expandable tree and type icons
+  - Property inspector with transforms and bounding boxes
+- **Devlog:** [devlog/DEVLOG_2026-01-05_milestone13a.md](devlog/DEVLOG_2026-01-05_milestone13a.md)
 
 ---
 
-### Milestone 14: Materials (UsdPreviewSurface) 🎯
+### Milestone 13b: Node Graph + Dynamic USD Loading ✅
 
-- **Goal:** Import/export basic USD materials (UsdShade + UsdPreviewSurface)
-- **Prerequisites:** Milestone 13 complete ✅
+- **Completed:** 2026-01-06
+- **Time Invested:** ~4 hours
+- **Location:**
+  - `crates/bif_viewport/src/node_graph.rs` (NEW) - Node graph system
+  - `crates/bif_viewport/src/scene_browser.rs` - Houdini-style table
+  - `crates/bif_viewport/src/lib.rs` - Dynamic loading
+- **Key Achievements:**
+  - egui-snarl 0.5 node graph with USD Read + Ivar Render nodes
+  - rfd 0.14 native file dialogs (Browse button)
+  - `load_usd_scene()` for dynamic USD loading from node graph
+  - Houdini-style table layout (Path, Type, Children, Kind, Visibility)
+  - Delete key to remove selected nodes
+- **Stats:** ~350 LOC, 11 tests
+- **Devlog:** [devlog/DEVLOG_2026-01-06_milestone13b.md](devlog/DEVLOG_2026-01-06_milestone13b.md)
+
+---
+
+## Upcoming Milestones 🎯
+
+### Milestone 14: Materials (UsdPreviewSurface + MaterialX) 🎯
+
+- **Goal:** Import USD materials and render with proper shading
+- **Prerequisites:** Milestone 13b complete ✅
+- **Estimated Time:** 15-20 hours
+- **Key Tasks:**
+  - Parse UsdPreviewSurface shader nodes from USD
+  - Parse MaterialX documents (.mtlx)
+  - Map to Ivar materials (Lambertian, Metal, Dielectric)
+  - Add Disney Principled BSDF for production materials
+  - Assign materials to meshes during USD loading
+  - Basic PBR shading in Vulkan viewport
+- **Reference:** Disney Principled BSDF paper, MaterialX specification
+
+---
+
+### Milestone 15: Animation + Motion Blur 🎬
+
+- **Goal:** Load and render time-sampled USD data with motion blur
+- **Estimated Time:** 15-20 hours
+- **Key Tasks:**
+  - Parse time-sampled attributes (`xformOp:translate.timeSamples`)
+  - Timeline UI widget (frame slider, play/pause, frame range)
+  - Animate transforms in Vulkan viewport
+  - Motion blur in Ivar renderer (transformation + deformation)
+  - Support `UsdSkelAnimation` basics (stretch goal)
+- **Reference:** Arnold paper "Motion Blur Corner Cases"
+
+---
+
+### Milestone 16: Frame Rendering 🎞️
+
+- **Goal:** Render animated sequences to disk
+- **Estimated Time:** 8-12 hours
+- **Key Tasks:**
+  - Frame range UI (start/end/step)
+  - Batch render loop with frame substitution
+  - Progress tracking with cancellation
+  - Output naming patterns (`render.####.exr`)
+  - EXR output with AOVs (beauty, depth, normals)
+
+---
+
+### Milestone 17: Scene Interactivity + Keyframing 🎮
+
+- **Goal:** Clarisse-style object manipulation and animation authoring
+- **Estimated Time:** 15-20 hours
+- **Key Tasks:**
+  - Selection system (click raycast through Embree)
+  - Transform gizmos (translate/rotate/scale)
+  - Undo/redo stack for transforms
+  - Keyframe transforms at current frame
+  - Animate TRS (translation, rotation, scale) over time
+  - Timeline integration (scrub to see animated transforms)
+  - Export modified transforms back to USD layer
+
+---
+
+### Milestone 18: Point Instancing + Scattering 🌲
+
+- **Goal:** Massive instancing via point clouds and scattering tools
+- **Estimated Time:** 15-20 hours
+- **Key Tasks:**
+  - UsdGeomPointInstancer support (load from USD)
+  - Point Instancer node in node graph
+  - Scatter points on surface (random/Poisson disk)
+  - Paint points tool (brush-based placement)
+  - Per-point attributes (scale, rotation, ID)
+  - Viewport preview of point clouds
+  - Instance geometry onto points
+- **Why Important:** Core BIF use case - scatter millions of instances
+
+---
+
+### Milestone 19: Viewport Performance ⚡
+
+- **Goal:** Clarisse-like lazy loading and GPU optimization
+- **Estimated Time:** 20-30 hours
+- **Key Tasks:**
+  - Upgrade to Vulkan 1.3 features:
+    - Dynamic rendering (simplify render passes)
+    - Buffer device address (bindless buffers)
+    - Descriptor indexing (bindless textures)
+    - Synchronization2 (cleaner barriers)
+  - LOD/proxy system for distant objects
+  - Lazy geometry loading (load on demand)
+  - Frustum culling on CPU before GPU submit
+  - Async texture streaming
+  - GPU-driven rendering (indirect draws)
+- **Reference:** [howtovulkan.com](https://howtovulkan.com) - Modern Vulkan patterns
+
+---
+
+### Milestone 20: Renderer Polish (Arnold-Inspired) 🔬
+
+- **Goal:** Production-quality rendering techniques from research
+- **Estimated Time:** 20-30 hours
+- **Key Tasks (from Arnold research papers):**
+  - Blue-noise dithered sampling (perceptually cleaner noise)
+  - Variance-aware MIS (smarter sampler combining)
+  - Robust BVH ray traversal (numerical stability)
+  - BSSRDF importance sampling (subsurface scattering)
+  - Specular manifold sampling (caustics, glints)
+  - Area light importance sampling (soft shadows)
+- **Reference:** [Arnold Research Papers](https://blogs.autodesk.com/media-and-entertainment/2024/01/04/autodesk-arnold-research-papers/)
+
+---
+
+### Milestone 21: Spectral Rendering 🌈
+
+- **Goal:** Full wavelength simulation for accurate light behavior
+- **Estimated Time:** 15-20 hours
+- **Key Tasks:**
+  - Spectral path tracing (wavelength arrays vs RGB)
+  - Hero wavelength sampling for efficiency
+  - Accurate dispersion (prisms, diamonds)
+  - Fluorescence support (optional)
+  - `--spectral` flag for reference renders
+- **Why:** Ground truth for USD/MaterialX validation, scientific accuracy
+
+---
+
+### Milestone 22: Volumes + OpenVDB 🌫️
+
+- **Goal:** Render fog, smoke, clouds, and VDB volumes
+- **Estimated Time:** 20-30 hours
+- **Key Tasks:**
+  - OpenVDB integration via C++ bridge
+  - UsdVolume support (load from USD)
+  - Null-scattering path integral formulation
+  - Equi-angular sampling for point lights in media
+  - Delta tracking for heterogeneous volumes
+  - Viewport volume preview (ray marching)
+- **Reference:** Arnold papers on participating media
+
+---
+
+### Milestone 23: Denoising (Intel OIDN) 🧹
+
+- **Goal:** Production-quality denoising for faster convergence
 - **Estimated Time:** 10-15 hours
 - **Key Tasks:**
-  - Parse UsdPreviewSurface shader nodes
-  - Map to Ivar materials (Lambertian, Metal, Dielectric)
-  - Support basic PBR in Vulkan viewport
-  - Export BIF materials to USD
-- **Why Deferred:** Core performance (Embree) and asset workflows (USD references) are higher priority
+  - Intel Open Image Denoise integration
+  - AOV outputs (albedo, normal) for denoiser input
+  - Interactive denoising during progressive render
+  - Final frame denoising
+  - Preserve detail in denoised output
 
 ---
 
-### Milestone 15: Qt 6 UI Integration
+### Milestone 24: GPU Path Tracing (wgpu Compute) ⚡
+
+- **Goal:** Massively parallel path tracing on GPU
+- **Estimated Time:** 30-40 hours
+- **Key Tasks:**
+  - wgpu compute shader path tracer
+  - GPU BVH construction and traversal
+  - ReSTIR (basic reservoir sampling first)
+  - Spatiotemporal resampling (full ReSTIR)
+  - Shared memory optimizations
+  - Wavefront path tracing architecture
+- **Why:** 10-100x speedup over CPU, near-real-time quality
+
+---
+
+### Milestone 25+: Qt 6 UI Integration (Deferred)
 
 - **Goal:** Replace egui with Qt 6 for production-grade UI
-- **Status:** Deferred - egui sufficient for current workflow
-- **Prerequisites:** Milestones 12-14 complete (core features proven)
-- **Estimated Time:** 30-50 hours
+- **Status:** Deferred until core features complete
+- **Estimated Time:** 50+ hours
 - **Key Tasks:**
-  - Integrate Qt 6 via cxx-qt (C++ ↔ Rust bridge)
+  - Qt 6 via cxx-qt (C++ ↔ Rust bridge)
   - Embed wgpu viewport in Qt widget
-  - Implement docking windows
-  - Node editor for scene composition
-  - Industry-standard menus and shortcuts
-- **Why Deferred:**
-  - egui meets current needs for development
-  - Qt adds significant complexity (FFI, build system)
-  - Better to prove core rendering features first
+  - Docking windows, menus, shortcuts
+  - Professional node editor
+  - Outliner, property editor, timeline
 
 ---
 
-### Future Milestones (16+)
+### Milestone 26+: USD Export (Deferred)
 
-**Post-Qt Integration:**
+- **Goal:** Write scene changes back to USD
+- **Estimated Time:** 15-20 hours
+- **Key Tasks:**
+  - USD stage authoring via C++ bridge
+  - Export modified transforms as USD layer
+  - Export scattered points as PointInstancer
+  - Non-destructive layer workflow
 
-- **Milestone 16:** Layers (non-destructive editing, USD sublayers)
-- **Milestone 17:** Python Scripting API (scene automation)
-- **Milestone 18:** GPU Path Tracing (wgpu compute shaders, optional)
-- **Milestone 19:** Denoising (Intel OIDN integration)
-- **Milestone 20:** Production Renders (HDRI environments, complex materials)
+---
+
+## Milestone Roadmap Summary
+
+| # | Milestone | Focus | Status |
+|---|-----------|-------|--------|
+| 0-13b | Foundation | Math, viewport, USD, Embree, UI | ✅ Complete |
+| 14 | Materials | UsdPreviewSurface + MaterialX | 🎯 Next |
+| 15 | Animation | Time-sampled USD + motion blur | Planned |
+| 16 | Frame Rendering | Batch render to disk | Planned |
+| 17 | Interactivity | Move objects + keyframing | Planned |
+| 18 | Point Instancing | Scatter + paint tools | Planned |
+| 19 | Viewport Perf | Vulkan 1.3, lazy loading | Planned |
+| 20 | Renderer Polish | Arnold-inspired techniques | Planned |
+| 21 | Spectral | Wavelength simulation | Planned |
+| 22 | Volumes | OpenVDB + fog/smoke | Planned |
+| 23 | Denoising | Intel OIDN | Planned |
+| 24 | GPU Path Tracing | wgpu compute + ReSTIR | Planned |
+| 25+ | Qt 6 UI | Production interface | Deferred |
+| 26+ | USD Export | Write back to USD | Deferred |
+
+---
+
+## Research References
+
+### Arnold Research Papers
+
+Key papers for Milestone 20 (Renderer Polish):
+
+| Paper | Year | Application |
+|-------|------|-------------|
+| Blue-Noise Dithered Sampling | 2016 | Perceptually better noise |
+| BSSRDF Importance Sampling | 2013 | Subsurface scattering |
+| Robust BVH Ray Traversal | 2013 | Numerical stability |
+| Area-Preserving Spherical Rectangles | 2013 | Soft shadows |
+| Importance Sampling in Participating Media | 2012 | Volume rendering |
+| Variance-Aware MIS | 2019 | Reduce fireflies |
+| Null-Scattering Path Integral | 2019 | Heterogeneous volumes |
+| Specular Manifold Sampling | 2020 | Caustics and glints |
+
+**Source:** [Arnold Research Papers](https://blogs.autodesk.com/media-and-entertainment/2024/01/04/autodesk-arnold-research-papers/)
+
+### Other Key References
+
+| Resource | Topics |
+|----------|--------|
+| [PBR Book](https://pbr-book.org/) | Comprehensive rendering theory |
+| [Ray Tracing Gems 1 & 2](https://www.realtimerendering.com/raytracinggems/) | Practical GPU techniques |
+| Disney Principled BSDF | Industry-standard material model |
+| [howtovulkan.com](https://howtovulkan.com) | Modern Vulkan 1.3 patterns |
+| Intel OIDN | Production denoising |
+| NVIDIA ReSTIR | Real-time path tracing |
 
 ---
 
@@ -403,6 +601,6 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 
 ---
 
-**Last Updated:** January 1, 2026
-**Status:** Milestones 0-12 + Freeze Fix Complete ✅
-**Next:** Milestone 13 (USD C++ Integration)
+**Last Updated:** January 8, 2026
+**Status:** Milestones 0-13b Complete ✅
+**Next:** Milestone 14 (Materials/MaterialX)
