@@ -2,17 +2,18 @@
 
 > Production-grade renderer inspired by Isotropix Clarisse, built in Rust
 
-## 🎯 Current Status: Milestones 0-13 Complete! ✅
+## 🎯 Current Status: Milestones 0-13b Complete! ✅
 
-**Foundation Complete (Milestones 0-13)** - DONE
+**Foundation Complete** - Scene Browser + Node Graph DONE
 
 - ✅ Dual rendering: Vulkan viewport (60 FPS) + Ivar CPU path tracer
 - ✅ GPU instancing: 100+ instances, single draw call
 - ✅ USD support: USDA (pure Rust) + USDC/references (C++ bridge)
 - ✅ Intel Embree 4: Production-quality ray tracing
-- ✅ 73+ tests passing across 4 crates
+- ✅ Node graph + scene browser + property inspector
+- ✅ 60+ tests passing across 4 crates
 
-**Next:** [Milestone 13a](MILESTONES.md#milestone-13a-usd-scene-browser--node-graph-🎯-next) (USD Scene Browser + Node Graph)
+**Next:** [Milestone 14](MILESTONES.md#milestone-14-materials-usdpreviewsurface--materialx-) (Materials/MaterialX)
 
 ---
 
@@ -48,7 +49,7 @@ cargo run -p bif_viewer -- --usda assets/lucy_low.usda
 
 ## Architecture
 
-```
+```text
 bif/
 ├── crates/
 │   ├── bif_math/       # Math primitives (Vec3, Ray, AABB, Camera, Transform)
@@ -62,7 +63,6 @@ bif/
 ├── docs/archive/       # Archived documentation
 └── renders/            # Render output files
 ```
-
 
 ---
 
@@ -87,29 +87,32 @@ bif/
 
 ---
 
-## Statistics (Milestones 0-11)
+## Statistics (Milestones 0-13b)
 
 | Metric | Value |
 |--------|-------|
-| Total LOC | ~5,900 |
+| Total LOC | ~7,500 |
 | Tests Passing | 60+ ✅ |
-| Milestones Complete | 11/11 + Freeze Fix |
+| Milestones Complete | 13b + Freeze Fix |
 | Build Time (dev) | ~5s |
 | Runtime FPS | 60+ (VSync) |
 | Instances Rendered | 100 (scalable to 10K+) |
 | Total Triangles | 28M+ |
+| Embree BVH Build | 28ms |
 
 ---
 
 ## Technology Stack
 
-- **Language:** Rust 1.86+
+- **Language:** Rust 1.92+
 - **GPU:** wgpu 22.1 (Vulkan/DX12/Metal)
+- **Ray Tracing:** Intel Embree 4.4.0
 - **Math:** glam 0.29 (SIMD)
-- **UI:** egui 0.29 (immediate-mode)
-- **Format:** USD USDA (text), OBJ (legacy)
+- **UI:** egui 0.29 + egui-snarl 0.5 (node graph)
+- **USD:** Pixar USD 25.11 (C++ bridge) + pure Rust parser
+- **Format:** USD (USDA/USDC), OBJ (legacy)
 
-**Future:** Intel Embree (Milestone 12), USD C++ (Milestone 13), Qt 6 (optional)
+**Upcoming:** Materials (M14), Animation (M15), Qt 6 (M25+)
 
 ---
 
@@ -177,22 +180,26 @@ Use the egui side panel to switch between:
 
 See [MILESTONES.md](MILESTONES.md) for complete milestone history and future plans.
 
-### ✅ Completed (Milestones 0-11)
+### ✅ Completed (Milestones 0-13b)
 
 - Math library, wgpu viewport, camera controls
-- OBJ/USD loading, GPU instancing
+- OBJ/USD loading, GPU instancing, Embree 4
 - egui UI, CPU path tracer "Ivar"
-- Instance-aware BVH, background threading
+- USD C++ bridge (USDC, references)
+- Scene browser, property inspector, node graph
 
 ### 🎯 Next Up
 
-- **Milestone 13a:** USD Scene Browser + Node Graph (8-12 hours)
-- **Milestone 14:** Materials (UsdPreviewSurface) (10-15 hours)
+- **Milestone 14:** Materials (UsdPreviewSurface + MaterialX)
+- **Milestone 15:** Animation + Motion Blur
+- **Milestone 16:** Frame Rendering
 
 ### 🔮 Future
 
-- Qt 6 UI (optional)
-- Layers, Python scripting, GPU path tracing
+- Point instancing + scattering (M18)
+- Viewport performance (M19)
+- GPU path tracing + ReSTIR (M24)
+- Qt 6 UI (M25+)
 
 ---
 
@@ -223,5 +230,5 @@ MIT License - See [LICENSE](LICENSE) for details
 
 ---
 
-**Last Updated:** January 5, 2026
-**Status:** Milestones 0-13 Complete ✅ | Next: Milestone 13a (USD Scene Browser + Node Graph)
+**Last Updated:** January 8, 2026
+**Status:** Milestones 0-13b Complete ✅ | Next: Milestone 14 (Materials/MaterialX)
