@@ -106,5 +106,9 @@ All 11 tests passing:
 ## Next Steps
 
 - Milestone 14: MaterialX integration
-- Add more node types (Merge, Transform, Sublayer)
+- Add more node types (Merge, Transform, Sublayer, PointInstancer)
 - Multi-select in scene browser
+- *Fix bug following bugs:*
+- After pressing render the Ivar Render node still says rendering even after render is complete
+- The lucy instance scene does not load on startup when no CLI args are provided
+- Improve error handling for USD loading
