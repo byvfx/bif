@@ -348,7 +348,9 @@ impl UsdaParser {
                 // Look for target prim path after the closing @
                 let after_ref = &line[end + 1..];
                 let target_prim = if let Some(prim_start) = after_ref.find('<') {
-                    after_ref.find('>').map(|prim_end| after_ref[prim_start + 1..prim_end].to_string())
+                    after_ref
+                        .find('>')
+                        .map(|prim_end| after_ref[prim_start + 1..prim_end].to_string())
                 } else {
                     None
                 };
