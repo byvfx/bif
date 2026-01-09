@@ -159,9 +159,10 @@ static void cache_stage_data(UsdBridgeStage* bridge) {
             CachedMesh cached;
             cached.path = prim.GetPath().GetString();
 
-            // Get points
+            // Get points at earliest authored time for animated geometry
             VtArray<GfVec3f> points;
-            mesh.GetPointsAttr().Get(&points);
+            UsdTimeCode timeCode = UsdTimeCode::EarliestTime();
+            mesh.GetPointsAttr().Get(&points, timeCode);
             cached.vertices.reserve(points.size() * 3);
             for (const auto& p : points) {
                 cached.vertices.push_back(p[0]);
@@ -172,13 +173,13 @@ static void cache_stage_data(UsdBridgeStage* bridge) {
             // Get face topology and triangulate
             VtArray<int> face_vertex_counts;
             VtArray<int> face_vertex_indices;
-            mesh.GetFaceVertexCountsAttr().Get(&face_vertex_counts);
-            mesh.GetFaceVertexIndicesAttr().Get(&face_vertex_indices);
+            mesh.GetFaceVertexCountsAttr().Get(&face_vertex_counts, timeCode);
+            mesh.GetFaceVertexIndicesAttr().Get(&face_vertex_indices, timeCode);
             triangulate_mesh(face_vertex_counts, face_vertex_indices, cached.indices);
 
             // Get normals (optional)
             VtArray<GfVec3f> normals;
-            if (mesh.GetNormalsAttr().Get(&normals)) {
+            if (mesh.GetNormalsAttr().Get(&normals, timeCode)) {
                 cached.normals.reserve(normals.size() * 3);
                 for (const auto& n : normals) {
                     cached.normals.push_back(n[0]);
