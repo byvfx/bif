@@ -29,8 +29,8 @@ impl<M: Material> Triangle<M> {
         let edge1 = v1 - v0;
         let edge2 = v2 - v0;
 
-        // Calculate normal using cross product
-        let normal = edge1.cross(edge2).normalize();
+        // Calculate normal using cross product (USD uses CW winding)
+        let normal = edge2.cross(edge1).normalize();
 
         // Create bounding box
         let min = Vec3::new(

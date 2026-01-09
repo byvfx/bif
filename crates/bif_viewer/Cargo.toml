@@ -5,6 +5,7 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
+default-run = "bif_viewer"
 
 [dependencies]
 bif_math = { path = "../bif_math" }

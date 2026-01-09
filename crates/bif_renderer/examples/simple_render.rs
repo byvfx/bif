@@ -54,6 +54,7 @@ fn main() {
     println!("Saved to {}", filename);
 }
 
+#[allow(clippy::vec_init_then_push)]
 fn build_scene() -> BvhNode {
     let mut objects: Vec<Box<dyn Hittable + Send + Sync>> = Vec::new();
 

@@ -87,7 +87,7 @@ impl Mesh {
 
             let edge1 = p1 - p0;
             let edge2 = p2 - p0;
-            let face_normal = edge1.cross(edge2); // Not normalized - area-weighted
+            let face_normal = edge2.cross(edge1); // USD uses CW winding
 
             normals[i0] += face_normal;
             normals[i1] += face_normal;
@@ -233,6 +233,7 @@ mod tests {
             Vec3::new(1.0, 0.0, 0.0),
             Vec3::new(0.0, 1.0, 0.0),
         ];
+        // CW winding (USD convention): 0,1,2 viewed from +Z produces normal pointing -Z
         let indices = vec![0, 1, 2];
 
         let mut mesh = Mesh::new(positions, indices, None);
@@ -241,9 +242,9 @@ mod tests {
         assert!(mesh.has_normals());
         let normals = mesh.normals.as_ref().unwrap();
 
-        // For a CCW triangle in XY plane, normal should point in +Z
+        // For a CW triangle in XY plane (viewed from +Z), normal points in -Z
         for normal in normals {
-            assert!((normal.z - 1.0).abs() < 0.001);
+            assert!((normal.z + 1.0).abs() < 0.001);
         }
     }
 
