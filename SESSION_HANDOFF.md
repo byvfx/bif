@@ -1,6 +1,6 @@
-# Session Handoff - January 8, 2026
+# Session Handoff - January 9, 2026
 
-**Last Updated:** Milestone 13b Complete
+**Last Updated:** USD Winding Order Fix
 **Next Milestone:** 14 (Materials/MaterialX)
 **Project:** BIF - VFX Scene Assembler & Renderer
 
@@ -12,12 +12,49 @@
 |--------|---------|
 | ✅ Complete | Milestones 0-13b (Scene Browser + Node Graph) |
 | 🎯 Next | Milestone 14 (Materials/MaterialX) |
-| 📦 Tests | 60+ passing |
+| 📦 Tests | 60+ passing (51 total: 17 core, 34 math) |
 | 🚀 Performance | 60 FPS viewport, 28ms Embree BVH |
 
 ---
 
 ## Recent Work
+
+### Bug Fix: USD Winding Order ✅ (Jan 9, 2026)
+
+**Issue:** USD meshes rendering inside-out/incorrectly in viewport
+
+**Root Cause:**
+
+- USD uses **clockwise (CW)** vertex winding
+- BIF configured for counter-clockwise (CCW)
+- Caused backface culling to cull wrong faces + inverted normals
+
+**Fix:**
+
+- Changed wgpu `front_face: FrontFace::Cw`
+- Updated normal computation: `edge2 × edge1` (CW) instead of `edge1 × edge2`
+- Fixed in mesh.rs, triangle.rs, lib.rs
+- Updated tests for CW convention
+
+**Tools Added:**
+
+- `debug_usd_mesh` binary - inspects USD geometry for debugging
+- `test.ps1` - runs tests with USD DLLs loaded
+
+**Validation:**
+
+- Both water surface (no normals) + walker scan (has normals) render correctly
+- All tests pass (17 core + 34 math)
+
+**Files:**
+
+- [mesh.rs](crates/bif_core/src/mesh.rs) - Normal computation
+- [triangle.rs](crates/bif_renderer/src/triangle.rs) - Raytracer normals
+- [lib.rs](crates/bif_viewport/src/lib.rs) - wgpu winding order
+- [debug_usd_mesh.rs](crates/bif_viewer/src/bin/debug_usd_mesh.rs) - NEW
+- [test.ps1](test.ps1) - NEW
+
+**Commit:** e9abf84
 
 ### Milestone 13b: Node Graph + Dynamic USD Loading ✅ (Jan 6, 2026)
 
