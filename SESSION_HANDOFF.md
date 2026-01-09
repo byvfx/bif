@@ -38,6 +38,22 @@
 
 ---
 
+### Bug Fix: Blank Scene Startup ✅ (Jan 8, 2026)
+
+**Issue:** lucy_low.obj auto-loaded when starting without CLI args
+
+**Fix:**
+- Removed legacy mesh loading from `Renderer::new()`
+- Empty vertex/index/instance buffers (dummy data for wgpu)
+- Camera defaults to `(0, 10, 50)` looking at origin
+- USD now loads exclusively via node graph or CLI
+
+**Files:**
+- [lib.rs](crates/bif_viewport/src/lib.rs) - ~40 lines removed/refactored
+- [main.rs](crates/bif_viewer/src/main.rs) - Log message update
+
+---
+
 ### Milestone 13a: USD Scene Browser + Property Inspector ✅ (Jan 5, 2026)
 
 **Goal:** Gaffer-style hierarchy browser + property inspector
@@ -64,7 +80,7 @@
 
 ### Known Issues
 
-- Lucy still loads when no CLI args (should start empty)
+None currently.
 
 ---
 
@@ -111,9 +127,10 @@ I'm continuing work on BIF (VFX renderer in Rust).
 #file:CLAUDE.md
 #codebase
 
-Status: Milestone 13b Complete! 🎉
+Status: Blank Scene Fix Complete! ✅
 
 ✅ Milestones 0-13b done (Scene Browser + Node Graph)
+✅ Bug fix: Blank scene startup (no auto-load)
 ✅ 60+ tests passing
 ✅ Dual renderers: Vulkan (60 FPS) + Ivar (Embree two-level BVH)
 ✅ USD C++ integration: USDC, references, scene browser, node graph
@@ -122,6 +139,7 @@ Current state:
 - Node graph with USD Read + Ivar Render nodes
 - Houdini-style scene browser (table layout)
 - Dynamic USD loading via node graph
+- Blank scene startup (no legacy OBJ auto-load)
 - Property inspector panel
 
 Next: Milestone 14 (Materials/MaterialX)
@@ -131,6 +149,6 @@ Let's implement UsdPreviewSurface material parsing.
 
 ---
 
-**Last Commit:** c7c83d4 (docs: Update SESSION_HANDOFF.md for 13a/13b completion)
+**Last Commit:** 8ce4cef (fix: Remove lucy_low.obj auto-load, start blank scene)
 **Branch:** main
 **Ready for:** Milestone 14 (Materials)! 🚀
