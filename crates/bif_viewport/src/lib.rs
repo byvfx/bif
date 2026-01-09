@@ -832,51 +832,33 @@ impl Renderer {
 
         surface.configure(&device, &config);
 
-        // Load Lucy model first to get mesh bounds
-        let mesh_path =
-            std::env::current_dir()?.join("legacy/go-raytracing/assets/models/lucy_low.obj");
+        // Start with blank scene - no default mesh
+        log::info!("Initializing blank scene (no default geometry)");
 
-        log::info!("Loading mesh from: {:?}", mesh_path);
-        let mesh_data = MeshData::load_obj(&mesh_path)?;
-        log::info!(
-            "Loaded {} vertices, {} indices",
-            mesh_data.vertices.len(),
-            mesh_data.indices.len()
-        );
-        log::info!(
-            "Mesh bounds: min={:?}, max={:?}",
-            mesh_data.bounds_min,
-            mesh_data.bounds_max
-        );
-        log::info!(
-            "Mesh center: {:?}, size: {:.2}",
-            mesh_data.center(),
-            mesh_data.size()
-        );
+        // Create empty mesh data
+        let mesh_data = MeshData {
+            vertices: vec![],
+            indices: vec![],
+            bounds_min: Vec3::new(0.0, 0.0, 0.0),
+            bounds_max: Vec3::new(0.0, 0.0, 0.0),
+        };
 
-        // Calculate proper camera distance to frame the mesh
-        let mesh_center = mesh_data.center();
-        let mesh_size = mesh_data.size();
-        let camera_distance = mesh_size * 1.5;
-
-        // Create camera positioned to view the mesh
+        // Create camera at default position looking at origin
         let aspect = size.width as f32 / size.height as f32;
-        let camera = Camera::new(
-            mesh_center + Vec3::new(0.0, 0.0, camera_distance),
-            mesh_center,
+        let mut camera = Camera::new(
+            Vec3::new(0.0, 10.0, 50.0),  // Default position
+            Vec3::new(0.0, 0.0, 0.0),    // Look at origin
             aspect,
         );
 
-        // Adjust camera near/far planes for mesh size
-        let mut camera = camera;
-        camera.near = camera_distance * 0.01; // 1% of distance
-        camera.far = camera_distance * 20.0; // 20x distance for safety
+        // Set reasonable default near/far planes
+        camera.near = 0.1;
+        camera.far = 1000.0;
 
         log::info!(
-            "Camera positioned at {:?}, looking at {:?}, distance {:.2}",
+            "Camera positioned at {:?}, looking at {:?}",
             camera.position,
-            camera.target,
-            camera.distance
+            camera.target
         );
         log::info!("Camera near={:.2}, far={:.2}", camera.near, camera.far);
 
@@ -973,16 +955,22 @@ impl Renderer {
             cache: None,
         });
 
-        // Create vertex and index buffers from loaded mesh data
+        // Create empty vertex and index buffers (will be populated when USD loads)
+        // Note: wgpu requires non-zero buffer sizes, so we use a dummy vertex/index
+        let dummy_vertex = Vertex {
+            position: [0.0, 0.0, 0.0],
+            normal: [0.0, 1.0, 0.0],
+            color: [1.0, 1.0, 1.0],
+        };
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Vertex Buffer"),
-            contents: bytemuck::cast_slice(&mesh_data.vertices),
+            label: Some("Vertex Buffer (Empty)"),
+            contents: bytemuck::cast_slice(&[dummy_vertex]),
             usage: wgpu::BufferUsages::VERTEX,
         });
 
         let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Index Buffer"),
-            contents: bytemuck::cast_slice(&mesh_data.indices),
+            label: Some("Index Buffer (Empty)"),
+            contents: bytemuck::cast_slice(&[0u32]),
             usage: wgpu::BufferUsages::INDEX,
         });
 
@@ -990,38 +978,17 @@ impl Renderer {
         let (depth_texture, depth_view) =
             Self::create_depth_texture(&device, (size.width, size.height));
 
-        // Generate 100 instances in a 10x10 grid
-        let grid_size = 10;
-        let spacing = mesh_size * 1.5; // 1.5x mesh size spacing
-        let mut instances = Vec::new();
-
-        for x in 0..grid_size {
-            for z in 0..grid_size {
-                let offset_x = (x as f32 - grid_size as f32 / 2.0) * spacing;
-                let offset_z = (z as f32 - grid_size as f32 / 2.0) * spacing;
-
-                // Create translation matrix
-                let model_matrix = Mat4::from_translation(Vec3::new(offset_x, 0.0, offset_z));
-
-                instances.push(InstanceData {
-                    model_matrix: model_matrix.to_cols_array_2d(),
-                });
-            }
-        }
-
+        // No instances by default - empty scene
+        let dummy_instance = InstanceData {
+            model_matrix: Mat4::IDENTITY.to_cols_array_2d(),
+        };
         let instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Instance Buffer"),
-            contents: bytemuck::cast_slice(&instances),
+            label: Some("Instance Buffer (Empty)"),
+            contents: bytemuck::cast_slice(&[dummy_instance]),
             usage: wgpu::BufferUsages::VERTEX,
         });
 
-        log::info!(
-            "Created {} instances in {}x{} grid with spacing {:.2}",
-            instances.len(),
-            grid_size,
-            grid_size,
-            spacing
-        );
+        log::info!("Created empty vertex/index/instance buffers");
 
         // Initialize egui
         let egui_ctx = egui::Context::default();
@@ -1137,8 +1104,8 @@ impl Renderer {
 
         log::info!("Gnomon initialized");
 
-        // Calculate stats - TODO: Track polygon count from source mesh for accuracy
-        let num_triangles = mesh_data.indices.len() as u32 / 3;
+        // Calculate stats - empty scene has 0 triangles
+        let num_triangles = 0;
 
         // Create Ivar resources for CPU path tracer display
         let (ivar_texture, ivar_texture_view) =
@@ -1169,9 +1136,9 @@ impl Renderer {
             pipeline,
             vertex_buffer,
             index_buffer,
-            num_indices: mesh_data.indices.len() as u32,
+            num_indices: 0, // Empty scene - no indices
             instance_buffer,
-            num_instances: instances.len() as u32,
+            num_instances: 0, // Empty scene - no instances
             camera,
             camera_uniform,
             camera_buffer,
@@ -1201,7 +1168,7 @@ impl Renderer {
             ivar_bind_group,
             ivar_pipeline,
             mesh_data,
-            instance_transforms: vec![Mat4::IDENTITY], // Default single instance at origin
+            instance_transforms: vec![], // Empty scene - no instances
             scene_browser_state: SceneBrowserState::new(),
             selected_prim_path: None,
             selected_prim_properties: None,

@@ -189,8 +189,8 @@ impl ApplicationHandler for App {
                         }
                     }
                 } else {
-                    // No file specified - start with empty viewport
-                    log::info!("Starting with empty viewport (use node graph to load USD files)");
+                    // No file specified - start with blank scene
+                    log::info!("Starting with blank scene (load USD via node graph)");
                     pollster::block_on(Renderer::new(window.clone()))
                         .expect("Failed to initialize renderer")
                 }
