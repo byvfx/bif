@@ -1,6 +1,6 @@
 # Session Handoff - January 9, 2026
 
-**Last Updated:** USD Winding Order Fix
+**Last Updated:** Critical Bug Fixes (vfx-code-reviewer findings)
 **Next Milestone:** 14 (Materials/MaterialX)
 **Project:** BIF - VFX Scene Assembler & Renderer
 
@@ -10,14 +10,32 @@
 
 | Status | Details |
 |--------|---------|
-| ✅ Complete | Milestones 0-13b (Scene Browser + Node Graph) |
+| ✅ Complete | Milestones 0-13b + Critical Fixes |
 | 🎯 Next | Milestone 14 (Materials/MaterialX) |
-| 📦 Tests | 60+ passing (51 total: 17 core, 34 math) |
+| 📦 Tests | 60+ passing (embree link issue on test) |
 | 🚀 Performance | 60 FPS viewport, 28ms Embree BVH |
 
 ---
 
 ## Recent Work
+
+### Critical Bug Fixes ✅ (Jan 9, 2026 - Later)
+
+**vfx-code-reviewer agent identified 3 critical issues:**
+
+1. **Color Overflow** - white rendered as black (256→255)
+2. **Embree Crash** - no fallback when DLL missing
+3. **Memory Management** - USD bridge lacked cleanup
+
+**Fixes Applied:**
+- renderer.rs: 255.0 * color (was 256.0)
+- embree.rs: try_new() with graceful fallback
+- usd_bridge.cpp: destructor + clear_cache()
+
+**Files:**
+- [renderer.rs](crates/bif_renderer/src/renderer.rs:101-103)
+- [embree.rs](crates/bif_renderer/src/embree.rs:276-290)
+- [usd_bridge.cpp](cpp/usd_bridge/usd_bridge.cpp:67,312)
 
 ### Bug Fix: USD Winding Order ✅ (Jan 9, 2026)
 

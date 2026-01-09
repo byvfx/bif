@@ -57,6 +57,12 @@ UsdBridgeError usd_bridge_open_stage(const char* path, UsdBridgeStage** out_stag
 /// @param stage Stage handle to close (safe to pass NULL)
 void usd_bridge_close_stage(UsdBridgeStage* stage);
 
+/// Clear cached mesh/instancer data to free memory while keeping stage open.
+/// Useful for memory management in long-running sessions.
+///
+/// @param stage Stage handle (safe to pass NULL)
+void usd_bridge_clear_cache(UsdBridgeStage* stage);
+
 // ============================================================================
 // Scene Traversal
 // ============================================================================

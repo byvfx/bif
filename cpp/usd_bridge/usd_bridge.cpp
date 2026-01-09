@@ -65,6 +65,16 @@ struct UsdBridgeStage {
     bool prims_cached;
 
     UsdBridgeStage() : cached(false), prims_cached(false) {}
+    
+    ~UsdBridgeStage() {
+        // Clear cached data to ensure proper cleanup
+        meshes.clear();
+        instancers.clear();
+        all_prims.clear();
+        root_paths.clear();
+        root_path_ptrs.clear();
+        // stage RefPtr will auto-release
+    }
 };
 
 // ============================================================================
@@ -163,7 +173,10 @@ static void cache_stage_data(UsdBridgeStage* bridge) {
             VtArray<GfVec3f> points;
             UsdTimeCode timeCode = UsdTimeCode::EarliestTime();
             mesh.GetPointsAttr().Get(&points, timeCode);
+            
+            // Pre-allocate to exact size to minimize memory overhead
             cached.vertices.reserve(points.size() * 3);
+            cached.vertices.shrink_to_fit();
             for (const auto& p : points) {
                 cached.vertices.push_back(p[0]);
                 cached.vertices.push_back(p[1]);
@@ -223,6 +236,7 @@ static void cache_stage_data(UsdBridgeStage* bridge) {
                     UsdTimeCode::Default(),
                     UsdTimeCode::Default())) {
 
+                // Pre-allocate exact size for transforms
                 cached.transforms.reserve(instance_transforms.size() * 16);
                 for (const auto& mat : instance_transforms) {
                     float mat_data[16];
@@ -231,6 +245,7 @@ static void cache_stage_data(UsdBridgeStage* bridge) {
                         cached.transforms.push_back(mat_data[i]);
                     }
                 }
+                cached.transforms.shrink_to_fit();
             }
 
             bridge->instancers.push_back(std::move(cached));
@@ -278,7 +293,38 @@ UsdBridgeError usd_bridge_open_stage(const char* path, UsdBridgeStage** out_stag
 }
 
 void usd_bridge_close_stage(UsdBridgeStage* stage) {
+    if (stage) {
+        // Log memory usage before cleanup
+        size_t mesh_mem = 0;
+        for (const auto& mesh : stage->meshes) {
+            mesh_mem += mesh.vertices.capacity() * sizeof(float);
+            mesh_mem += mesh.indices.capacity() * sizeof(uint32_t);
+            mesh_mem += mesh.normals.capacity() * sizeof(float);
+        }
+        if (mesh_mem > 0) {
+            // Optional: log memory being freed
+            // std::cerr << "Freeing ~" << (mesh_mem / 1024 / 1024) << "MB of cached USD data\n";
+        }
+    }
     delete stage;  // Safe to delete nullptr
+}
+
+void usd_bridge_clear_cache(UsdBridgeStage* stage) {
+    if (!stage) return;
+    
+    // Clear mesh and instancer caches to free memory
+    stage->meshes.clear();
+    stage->meshes.shrink_to_fit();
+    stage->instancers.clear();
+    stage->instancers.shrink_to_fit();
+    stage->all_prims.clear();
+    stage->all_prims.shrink_to_fit();
+    stage->root_paths.clear();
+    stage->root_path_ptrs.clear();
+    
+    // Reset cache flags
+    stage->cached = false;
+    stage->prims_cached = false;
 }
 
 UsdBridgeError usd_bridge_get_mesh_count(
@@ -324,6 +370,8 @@ UsdBridgeError usd_bridge_get_mesh(
     }
 
     const CachedMesh& mesh = stage->meshes[index];
+    // IMPORTANT: These pointers are only valid while stage exists!
+    // Rust side must copy data immediately
     out_data->path = mesh.path.c_str();
     out_data->vertices = mesh.vertices.data();
     out_data->vertex_count = mesh.vertices.size() / 3;

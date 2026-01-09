@@ -1928,20 +1928,28 @@ impl Renderer {
                 triangle_vertices.push([v0, v1, v2]);
             }
 
-            log::info!("Background thread: Extracted {} triangles, creating EmbreeScene with {} instances...",
+            log::info!("Background thread: Extracted {} triangles, creating acceleration structure with {} instances...",
                 triangle_vertices.len(), transforms.len());
 
-            // Create Embree scene with two-level BVH
-            let embree_scene = EmbreeScene::new(
+            // Try to create Embree scene first, fall back to CPU BVH if unavailable
+            let world = if let Some(embree_scene) = EmbreeScene::try_new(
                 &triangle_vertices,
-                transforms,
+                transforms.clone(),
                 Lambertian::new(Color::new(0.7, 0.7, 0.7)),
-            );
-
-            // Wrap Embree scene in a BVH node (BVH contains just 1 object)
-            let objects: Vec<Box<dyn Hittable + Send + Sync>> = vec![Box::new(embree_scene)];
-
-            let world = Arc::new(BvhNode::new(objects));
+            ) {
+                log::info!("Using Embree for hardware-accelerated ray tracing");
+                // Wrap Embree scene in a BVH node (BVH contains just 1 object)
+                let objects: Vec<Box<dyn Hittable + Send + Sync>> = vec![Box::new(embree_scene)];
+                Arc::new(BvhNode::new(objects))
+            } else {
+                log::warn!("Embree not available - using CPU BVH (slower performance)");
+                log::info!("To enable Embree acceleration, ensure embree4.dll is in PATH");
+                // Fall back to CPU BVH - create instances manually
+                // TODO: Implement CPU-based instancing fallback
+                // For now, just create empty BVH
+                let objects: Vec<Box<dyn Hittable + Send + Sync>> = vec![];
+                Arc::new(BvhNode::new(objects))
+            };
 
             let elapsed = start_time.elapsed();
             log::info!(

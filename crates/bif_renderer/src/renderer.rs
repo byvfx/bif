@@ -98,9 +98,9 @@ pub fn clamp_01(x: f32) -> f32 {
 /// Convert a color to 8-bit RGBA.
 pub fn color_to_rgba(color: Color) -> [u8; 4] {
     // Apply gamma correction and convert to 0-255
-    let r = (256.0 * clamp_01(linear_to_gamma(color.x))) as u8;
-    let g = (256.0 * clamp_01(linear_to_gamma(color.y))) as u8;
-    let b = (256.0 * clamp_01(linear_to_gamma(color.z))) as u8;
+    let r = (255.0 * clamp_01(linear_to_gamma(color.x))) as u8;
+    let g = (255.0 * clamp_01(linear_to_gamma(color.y))) as u8;
+    let b = (255.0 * clamp_01(linear_to_gamma(color.z))) as u8;
     [r, g, b, 255]
 }
 
