@@ -274,6 +274,20 @@ pub struct EmbreeScene<M: Material + Clone + 'static> {
 }
 
 impl<M: Material + Clone + 'static> EmbreeScene<M> {
+    /// Try to create Embree scene, returns None if Embree unavailable.
+    pub fn try_new(vertices: &[[Vec3; 3]], transforms: Vec<Mat4>, material: M) -> Option<Self> {
+        // Check if Embree is available
+        unsafe {
+            let test_device = rtcNewDevice(std::ptr::null());
+            if test_device.is_null() {
+                log::warn!("Embree not available - DLL not found or failed to load");
+                return None;
+            }
+            rtcReleaseDevice(test_device);
+        }
+        Some(Self::new(vertices, transforms, material))
+    }
+
     /// Create Embree scene with instanced geometry.
     ///
     /// # Arguments
@@ -288,13 +302,13 @@ impl<M: Material + Clone + 'static> EmbreeScene<M> {
             // 1. Create Embree device
             let device = rtcNewDevice(std::ptr::null());
             if device.is_null() {
-                panic!("Failed to create Embree device");
+                panic!("Failed to create Embree device - ensure embree4.dll is in PATH or run with appropriate environment");
             }
 
             // Check for errors
             let err = rtcGetDeviceError(device);
             if err != 0 {
-                panic!("Embree device error: {}", err);
+                panic!("Embree device error: {} - check Embree installation", err);
             }
 
             // 2. Create scene for prototype mesh
