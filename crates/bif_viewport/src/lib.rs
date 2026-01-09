@@ -846,8 +846,8 @@ impl Renderer {
         // Create camera at default position looking at origin
         let aspect = size.width as f32 / size.height as f32;
         let mut camera = Camera::new(
-            Vec3::new(0.0, 10.0, 50.0),  // Default position
-            Vec3::new(0.0, 0.0, 0.0),    // Look at origin
+            Vec3::new(0.0, 10.0, 50.0), // Default position
+            Vec3::new(0.0, 0.0, 0.0),   // Look at origin
             aspect,
         );
 

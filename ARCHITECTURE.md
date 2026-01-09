@@ -79,7 +79,7 @@ BIF's scene graph maps cleanly to USD but doesn't use USD C++ internally initial
 - BVH acceleration (instance-aware in Milestones 0-11, Embree in Milestone 12)
 - Materials, progressive rendering
 
-```
+```text
          Scene Graph (Rust)
               │
     ┌─────────┴──────────┐
@@ -213,7 +213,7 @@ scene.set_layer_enabled("hide_near_camera", false);
 
 ### Three-Layer Material Architecture
 
-```
+```text
 Layer 1: BIF Internal Materials (Rust Traits)
          CPU path tracer production rendering
          
