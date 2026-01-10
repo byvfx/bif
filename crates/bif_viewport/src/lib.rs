@@ -821,6 +821,10 @@ pub struct Renderer {
     lod_box_instance_count: u32,
     /// Pre-allocated scratch buffers for frustum culling (avoids per-frame allocations)
     culling_scratch: CullingScratch,
+    /// Cached frustum (recomputed only when camera changes)
+    cached_frustum: Frustum,
+    /// Camera snapshot for frustum cache invalidation
+    frustum_camera_snapshot: CameraSnapshot,
 
     // Scene browser state
     pub scene_browser_state: SceneBrowserState,
@@ -1465,6 +1469,10 @@ impl Renderer {
             lod_box_instance_buffer,
             lod_box_instance_count: 0,
             culling_scratch: CullingScratch::new(MAX_INSTANCES as usize),
+            cached_frustum: Frustum::from_view_projection(
+                camera.projection_matrix() * camera.view_matrix(),
+            ),
+            frustum_camera_snapshot: CameraSnapshot::from_camera(&camera),
             scene_browser_state: SceneBrowserState::new(),
             selected_prim_path: None,
             selected_prim_properties: None,
@@ -1970,6 +1978,10 @@ impl Renderer {
             lod_box_instance_buffer,
             lod_box_instance_count: 0,
             culling_scratch: CullingScratch::new(MAX_INSTANCES as usize),
+            cached_frustum: Frustum::from_view_projection(
+                camera.projection_matrix() * camera.view_matrix(),
+            ),
+            frustum_camera_snapshot: CameraSnapshot::from_camera(&camera),
             scene_browser_state: SceneBrowserState::new(),
             selected_prim_path: None,
             selected_prim_properties: None,
@@ -2067,18 +2079,20 @@ impl Renderer {
         // Clear scratch buffers (reuse pre-allocated capacity)
         self.culling_scratch.clear();
 
-        // Extract frustum from current camera view-projection matrix
-        let view = self.camera.view_matrix();
-        let proj = self.camera.projection_matrix();
-        let vp = proj * view;
-        let frustum = Frustum::from_view_projection(vp);
+        // Update cached frustum only when camera changes
+        let current_snapshot = CameraSnapshot::from_camera(&self.camera);
+        if current_snapshot.has_changed(&self.frustum_camera_snapshot) {
+            let vp = self.camera.projection_matrix() * self.camera.view_matrix();
+            self.cached_frustum = Frustum::from_view_projection(vp);
+            self.frustum_camera_snapshot = current_snapshot;
+        }
 
         let camera_pos = self.camera.position;
 
         // Collect visible instances with their distances
         for (idx, aabb) in self.instance_aabbs.iter().enumerate() {
             // Frustum culling first
-            if !frustum.intersects_aabb(aabb) {
+            if !self.cached_frustum.intersects_aabb(aabb) {
                 continue;
             }
 
