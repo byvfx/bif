@@ -112,8 +112,6 @@ bif/
 - **USD:** Pixar USD 25.11 (C++ bridge) + pure Rust parser
 - **Format:** USD (USDA/USDC), OBJ (legacy)
 
-**Upcoming:** Materials (M14), Animation (M15), Qt 6 (M25+)
-
 ---
 
 ## Building from Source
@@ -224,11 +222,10 @@ MIT License - See [LICENSE](LICENSE) for details
 
 ## Acknowledgments
 
-- Inspired by **Isotropix Clarisse** (VFX scene assembly workflow)
-- Based on **"Ray Tracing in One Weekend"** series by Peter Shirley
+- Inspired by **Isotropix Clarisse**, **Houdini**, and **Gaffer** (VFX scene assembly workflow)
 - Built with **Rust**, **wgpu**, **egui**, **glam**, and **USD**
 
 ---
 
-**Last Updated:** January 8, 2026
-**Status:** Milestones 0-13b Complete ✅ | Next: Milestone 14 (Materials/MaterialX)
+**Last Updated:** January 9, 2026
+**Status:** Milestones 0-13b Complete ✅ | Next: Milestone 14 (GPU Instancing Optimization)
