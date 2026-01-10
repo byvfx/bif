@@ -161,6 +161,22 @@ impl Aabb {
         )
     }
 
+    /// Returns the center point of the bounding box (alias for centroid).
+    #[inline]
+    pub fn center(&self) -> Vec3 {
+        self.centroid()
+    }
+
+    /// Returns the minimum corner point of the bounding box.
+    pub fn min_point(&self) -> Vec3 {
+        Vec3::new(self.x.min, self.y.min, self.z.min)
+    }
+
+    /// Returns the maximum corner point of the bounding box.
+    pub fn max_point(&self) -> Vec3 {
+        Vec3::new(self.x.max, self.y.max, self.z.max)
+    }
+
     /// Static constants
     pub const EMPTY: Aabb = Aabb {
         x: Interval::EMPTY,

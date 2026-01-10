@@ -17,6 +17,9 @@ pub use camera::Camera;
 mod transform;
 pub use transform::Mat4Ext;
 
+mod frustum;
+pub use frustum::Frustum;
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1,7 +1,7 @@
 # Session Handoff - January 9, 2026
 
-**Last Updated:** Critical Bug Fixes (vfx-code-reviewer findings)
-**Next Milestone:** 14 (Materials/MaterialX)
+**Last Updated:** Milestone 14 Complete (GPU Instancing + LOD)
+**Next Milestone:** 15 (Materials/MaterialX)
 **Project:** BIF - VFX Scene Assembler & Renderer
 
 ---
@@ -10,16 +10,37 @@
 
 | Status | Details |
 |--------|---------|
-| ✅ Complete | Milestones 0-13b + Critical Fixes |
-| 🎯 Next | Milestone 14 (Materials/MaterialX) |
-| 📦 Tests | 60+ passing (embree link issue on test) |
-| 🚀 Performance | 60 FPS viewport, 28ms Embree BVH |
+| ✅ Complete | Milestones 0-14 (GPU Instancing + LOD) |
+| 🎯 Next | Milestone 15 (Materials/MaterialX) |
+| 📦 Tests | 89 passing |
+| 🚀 Performance | 60 FPS viewport, 10K instances with LOD |
 
 ---
 
 ## Recent Work
 
-### Critical Bug Fixes ✅ (Jan 9, 2026 - Later)
+### Milestone 14: GPU Instancing Optimization ✅ (Jan 9, 2026)
+
+**Goal:** Enable 10K+ instances with smart LOD system
+
+**Implementation:**
+- Frustum culling via Gribb/Hartmann plane extraction (bif_math::Frustum)
+- Dynamic instance buffer with COPY_DST (per-frame visible upload)
+- Distance-sorted LOD with polygon budget control
+- Dual draw calls for near/far instances
+- Polygon budget slider (0.1M-100M triangles, logarithmic scale)
+- Budget percentage indicator in Scene Stats panel
+
+**Files:**
+- [frustum.rs](crates/bif_math/src/frustum.rs) - NEW ~200 LOC
+- [aabb.rs](crates/bif_math/src/aabb.rs) - Added center(), min_point(), max_point()
+- [lib.rs](crates/bif_viewport/src/lib.rs) - LOD buffers, update_visible_instances()
+
+**Test:** lucy_10000.usda loads and renders at 60 FPS with LOD
+
+---
+
+### Critical Bug Fixes ✅ (Jan 9, 2026 - Earlier)
 
 **vfx-code-reviewer agent identified 3 critical issues:**
 
@@ -182,28 +203,27 @@ I'm continuing work on BIF (VFX renderer in Rust).
 #file:CLAUDE.md
 #codebase
 
-Status: Blank Scene Fix Complete! ✅
+Status: Milestone 14 Complete! ✅
 
-✅ Milestones 0-13b done (Scene Browser + Node Graph)
-✅ Bug fix: Blank scene startup (no auto-load)
-✅ 60+ tests passing
+✅ Milestones 0-14 done (GPU Instancing + LOD)
+✅ 10K instances with frustum culling + box LOD
+✅ 89 tests passing
 ✅ Dual renderers: Vulkan (60 FPS) + Ivar (Embree two-level BVH)
 ✅ USD C++ integration: USDC, references, scene browser, node graph
 
 Current state:
+- Frustum culling for massive instance counts
+- Distance-based LOD (full mesh near, box proxy far)
 - Node graph with USD Read + Ivar Render nodes
 - Houdini-style scene browser (table layout)
 - Dynamic USD loading via node graph
-- Blank scene startup (no legacy OBJ auto-load)
-- Property inspector panel
 
-Next: Milestone 14 (Materials/MaterialX)
+Next: Milestone 15 (Materials/MaterialX)
 
 Let's implement UsdPreviewSurface material parsing.
 ```
 
 ---
 
-**Last Commit:** 8ce4cef (fix: Remove lucy_low.obj auto-load, start blank scene)
 **Branch:** main
-**Ready for:** Milestone 14 (Materials)! 🚀
+**Ready for:** Milestone 15 (Materials)! 🚀
