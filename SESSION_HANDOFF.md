@@ -1,6 +1,6 @@
-# Session Handoff - January 9, 2026
+# Session Handoff - January 10, 2026
 
-**Last Updated:** Milestone 14 Complete (GPU Instancing + LOD)
+**Last Updated:** Performance optimizations from code review
 **Next Milestone:** 15 (Materials/MaterialX)
 **Project:** BIF - VFX Scene Assembler & Renderer
 
@@ -10,7 +10,7 @@
 
 | Status | Details |
 |--------|---------|
-| ✅ Complete | Milestones 0-14 (GPU Instancing + LOD) |
+| ✅ Complete | Milestones 0-14 + perf optimizations |
 | 🎯 Next | Milestone 15 (Materials/MaterialX) |
 | 📦 Tests | 89 passing |
 | 🚀 Performance | 60 FPS viewport, 10K instances with LOD |
@@ -18,6 +18,20 @@
 ---
 
 ## Recent Work
+
+### Performance Optimizations (Jan 10, 2026)
+
+**Source:** vfx-code-reviewer agent analysis of Milestone 14
+
+**Completed:**
+- ✅ Pre-allocate culling scratch buffers (~80MB/sec allocation savings)
+- ✅ Partial sort → O(n) partitioning via `select_nth_unstable`
+- ✅ AABB transform: zero heap allocation
+- ✅ Frustum caching when camera static
+- ✅ Instance count warning when exceeding buffer capacity
+
+**Deferred:**
+- [ ] Merge instance buffers (modest benefit at current scale)
 
 ### Milestone 14: GPU Instancing Optimization ✅ (Jan 9, 2026)
 
