@@ -44,7 +44,7 @@ pub struct InstancedGeometry<M: Material + Clone> {
 
     /// World-to-local transform for each instance (for ray transformation)
     inv_transforms: Vec<Mat4>,
-    
+
     /// World-space bounding box for each instance (for culling)
     instance_bboxes: Vec<Aabb>,
 
@@ -78,7 +78,7 @@ impl<M: Material + Clone + 'static> InstancedGeometry<M> {
         // Precompute transforms and bounding boxes
         let inv_transforms: Vec<Mat4> = transforms.iter().map(|t| t.inverse()).collect();
         let local_bbox = prototype_bvh.bounding_box();
-        
+
         let mut instance_bboxes = Vec::with_capacity(transforms.len());
         let mut world_bbox = Aabb::EMPTY;
 
@@ -129,9 +129,9 @@ impl<M: Material + Clone + 'static> Hittable for InstancedGeometry<M> {
         let mut closest = ray_t.max;
 
         // Test each instance with precomputed bbox culling
-        for (i, (inv_transform, transform)) in 
-            self.inv_transforms.iter().zip(&self.transforms).enumerate() {
-            
+        for (i, (inv_transform, transform)) in
+            self.inv_transforms.iter().zip(&self.transforms).enumerate()
+        {
             // Early bbox rejection using precomputed world-space bbox
             // Convert bif_renderer::Ray to bif_math::Ray for Aabb::hit
             let math_ray = bif_math::Ray::new(ray.origin(), ray.direction(), ray.time());

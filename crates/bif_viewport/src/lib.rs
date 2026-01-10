@@ -9,7 +9,7 @@ use std::time::Instant;
 
 use wgpu::{util::DeviceExt, Device, Instance, Queue, Surface, SurfaceConfiguration};
 
-use bif_math::{Camera, Mat4, Vec3};
+use bif_math::{Aabb, Camera, Frustum, Mat4, Mat4Ext, Vec3};
 
 // USD stage for scene browser
 use bif_core::usd::UsdStage;
@@ -221,6 +221,191 @@ impl MeshData {
     /// Get mesh size (diagonal of bounding box)
     pub fn size(&self) -> f32 {
         (self.bounds_max - self.bounds_min).length()
+    }
+
+    /// Create a box mesh from AABB (for LOD proxy rendering)
+    ///
+    /// Generates a simple box with 8 vertices, 36 indices (12 triangles).
+    /// Uses clockwise winding to match USD mesh convention.
+    #[allow(clippy::vec_init_then_push)]
+    pub fn from_aabb(aabb: &Aabb) -> Self {
+        let min = aabb.min_point();
+        let max = aabb.max_point();
+
+        // 8 corner vertices of the box
+        let corners = [
+            Vec3::new(min.x, min.y, min.z), // 0: front-bottom-left
+            Vec3::new(max.x, min.y, min.z), // 1: front-bottom-right
+            Vec3::new(max.x, max.y, min.z), // 2: front-top-right
+            Vec3::new(min.x, max.y, min.z), // 3: front-top-left
+            Vec3::new(min.x, min.y, max.z), // 4: back-bottom-left
+            Vec3::new(max.x, min.y, max.z), // 5: back-bottom-right
+            Vec3::new(max.x, max.y, max.z), // 6: back-top-right
+            Vec3::new(min.x, max.y, max.z), // 7: back-top-left
+        ];
+
+        // Face normals
+        let normals = [
+            Vec3::new(0.0, 0.0, -1.0), // front (negative Z)
+            Vec3::new(0.0, 0.0, 1.0),  // back (positive Z)
+            Vec3::new(-1.0, 0.0, 0.0), // left (negative X)
+            Vec3::new(1.0, 0.0, 0.0),  // right (positive X)
+            Vec3::new(0.0, -1.0, 0.0), // bottom (negative Y)
+            Vec3::new(0.0, 1.0, 0.0),  // top (positive Y)
+        ];
+
+        let grey = [0.4, 0.4, 0.4]; // Slightly darker grey for LOD boxes
+
+        // Build vertices with per-face normals (24 vertices = 6 faces x 4 corners)
+        let mut vertices = Vec::with_capacity(24);
+
+        // Front face (z = min) - vertices 0,1,2,3, normal -Z
+        vertices.push(Vertex {
+            position: corners[0].into(),
+            normal: normals[0].into(),
+            color: grey,
+        });
+        vertices.push(Vertex {
+            position: corners[1].into(),
+            normal: normals[0].into(),
+            color: grey,
+        });
+        vertices.push(Vertex {
+            position: corners[2].into(),
+            normal: normals[0].into(),
+            color: grey,
+        });
+        vertices.push(Vertex {
+            position: corners[3].into(),
+            normal: normals[0].into(),
+            color: grey,
+        });
+
+        // Back face (z = max) - vertices 5,4,7,6, normal +Z
+        vertices.push(Vertex {
+            position: corners[5].into(),
+            normal: normals[1].into(),
+            color: grey,
+        });
+        vertices.push(Vertex {
+            position: corners[4].into(),
+            normal: normals[1].into(),
+            color: grey,
+        });
+        vertices.push(Vertex {
+            position: corners[7].into(),
+            normal: normals[1].into(),
+            color: grey,
+        });
+        vertices.push(Vertex {
+            position: corners[6].into(),
+            normal: normals[1].into(),
+            color: grey,
+        });
+
+        // Left face (x = min) - vertices 4,0,3,7, normal -X
+        vertices.push(Vertex {
+            position: corners[4].into(),
+            normal: normals[2].into(),
+            color: grey,
+        });
+        vertices.push(Vertex {
+            position: corners[0].into(),
+            normal: normals[2].into(),
+            color: grey,
+        });
+        vertices.push(Vertex {
+            position: corners[3].into(),
+            normal: normals[2].into(),
+            color: grey,
+        });
+        vertices.push(Vertex {
+            position: corners[7].into(),
+            normal: normals[2].into(),
+            color: grey,
+        });
+
+        // Right face (x = max) - vertices 1,5,6,2, normal +X
+        vertices.push(Vertex {
+            position: corners[1].into(),
+            normal: normals[3].into(),
+            color: grey,
+        });
+        vertices.push(Vertex {
+            position: corners[5].into(),
+            normal: normals[3].into(),
+            color: grey,
+        });
+        vertices.push(Vertex {
+            position: corners[6].into(),
+            normal: normals[3].into(),
+            color: grey,
+        });
+        vertices.push(Vertex {
+            position: corners[2].into(),
+            normal: normals[3].into(),
+            color: grey,
+        });
+
+        // Bottom face (y = min) - vertices 4,5,1,0, normal -Y
+        vertices.push(Vertex {
+            position: corners[4].into(),
+            normal: normals[4].into(),
+            color: grey,
+        });
+        vertices.push(Vertex {
+            position: corners[5].into(),
+            normal: normals[4].into(),
+            color: grey,
+        });
+        vertices.push(Vertex {
+            position: corners[1].into(),
+            normal: normals[4].into(),
+            color: grey,
+        });
+        vertices.push(Vertex {
+            position: corners[0].into(),
+            normal: normals[4].into(),
+            color: grey,
+        });
+
+        // Top face (y = max) - vertices 3,2,6,7, normal +Y
+        vertices.push(Vertex {
+            position: corners[3].into(),
+            normal: normals[5].into(),
+            color: grey,
+        });
+        vertices.push(Vertex {
+            position: corners[2].into(),
+            normal: normals[5].into(),
+            color: grey,
+        });
+        vertices.push(Vertex {
+            position: corners[6].into(),
+            normal: normals[5].into(),
+            color: grey,
+        });
+        vertices.push(Vertex {
+            position: corners[7].into(),
+            normal: normals[5].into(),
+            color: grey,
+        });
+
+        // Indices for 6 faces (clockwise winding for USD convention)
+        // Each face has 4 vertices and 2 triangles (6 indices)
+        let mut indices = Vec::with_capacity(36);
+        for face in 0..6 {
+            let base = face * 4;
+            // CW winding: 0,2,1 and 0,3,2
+            indices.extend_from_slice(&[base, base + 2, base + 1, base, base + 3, base + 2]);
+        }
+
+        Self {
+            vertices,
+            indices,
+            bounds_min: min,
+            bounds_max: max,
+        }
     }
 
     /// Load an OBJ file into mesh data
@@ -581,6 +766,36 @@ pub struct Renderer {
 
     // Instance transforms for Ivar (stored as Mat4 arrays)
     instance_transforms: Vec<Mat4>,
+
+    // Frustum culling for GPU instancing optimization
+    /// Maximum instances the buffer can hold (preallocated)
+    #[allow(dead_code)]
+    max_instances: u32,
+    /// Precomputed world-space AABBs for each instance (for frustum culling)
+    instance_aabbs: Vec<Aabb>,
+    /// Local-space AABB of the prototype mesh
+    prototype_aabb: Aabb,
+    /// Number of visible instances after frustum culling (updated per frame)
+    visible_instance_count: u32,
+    /// LOD distance threshold - instances beyond this use box proxy (legacy, kept for fallback)
+    #[allow(dead_code)]
+    lod_distance_threshold: f32,
+    /// Maximum polygon budget before LOD kicks in (user-adjustable)
+    pub lod_max_polys: u32,
+    /// Triangles per instance (for polygon budget calculation)
+    triangles_per_instance: u32,
+
+    // Box LOD proxy for distant instances
+    /// Box proxy vertex buffer (generated from prototype AABB)
+    lod_box_vertex_buffer: wgpu::Buffer,
+    /// Box proxy index buffer
+    lod_box_index_buffer: wgpu::Buffer,
+    /// Number of indices in box proxy mesh (36 = 12 triangles)
+    lod_box_num_indices: u32,
+    /// Instance buffer for LOD box proxies (far instances)
+    lod_box_instance_buffer: wgpu::Buffer,
+    /// Number of instances rendered as box proxies
+    lod_box_instance_count: u32,
 
     // Scene browser state
     pub scene_browser_state: SceneBrowserState,
@@ -982,13 +1197,56 @@ impl Renderer {
         let dummy_instance = InstanceData {
             model_matrix: Mat4::IDENTITY.to_cols_array_2d(),
         };
-        let instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Instance Buffer (Empty)"),
-            contents: bytemuck::cast_slice(&[dummy_instance]),
+
+        // Preallocate instance buffer for up to MAX_INSTANCES (10K)
+        // Uses COPY_DST for dynamic per-frame updates during frustum culling
+        const MAX_INSTANCES: u32 = 10_000;
+        let instance_buffer_size = (MAX_INSTANCES as usize) * std::mem::size_of::<InstanceData>();
+        let instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Instance Buffer (Dynamic)"),
+            size: instance_buffer_size as u64,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        // Write a single dummy instance so the buffer isn't empty
+        queue.write_buffer(&instance_buffer, 0, bytemuck::cast_slice(&[dummy_instance]));
+
+        log::info!(
+            "Created dynamic instance buffer (capacity: {} instances)",
+            MAX_INSTANCES
+        );
+
+        // Create LOD box proxy buffers (for distant instances)
+        // Start with a unit cube, will be regenerated when mesh loads
+        let unit_aabb = Aabb::from_points(Vec3::ZERO, Vec3::ONE);
+        let lod_box_mesh = MeshData::from_aabb(&unit_aabb);
+
+        let lod_box_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("LOD Box Vertex Buffer"),
+            contents: bytemuck::cast_slice(&lod_box_mesh.vertices),
             usage: wgpu::BufferUsages::VERTEX,
         });
 
-        log::info!("Created empty vertex/index/instance buffers");
+        let lod_box_index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("LOD Box Index Buffer"),
+            contents: bytemuck::cast_slice(&lod_box_mesh.indices),
+            usage: wgpu::BufferUsages::INDEX,
+        });
+
+        // LOD box instance buffer (shares capacity with main instance buffer)
+        let lod_box_instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("LOD Box Instance Buffer (Dynamic)"),
+            size: instance_buffer_size as u64,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(
+            &lod_box_instance_buffer,
+            0,
+            bytemuck::cast_slice(&[dummy_instance]),
+        );
+
+        log::info!("Created LOD box proxy buffers");
 
         // Initialize egui
         let egui_ctx = egui::Context::default();
@@ -1169,6 +1427,18 @@ impl Renderer {
             ivar_pipeline,
             mesh_data,
             instance_transforms: vec![], // Empty scene - no instances
+            max_instances: MAX_INSTANCES,
+            instance_aabbs: vec![],
+            prototype_aabb: Aabb::empty(),
+            visible_instance_count: 0,
+            lod_distance_threshold: 100.0, // Default LOD threshold
+            lod_max_polys: 5_000_000,      // 5M poly budget default
+            triangles_per_instance: 0,     // Empty scene
+            lod_box_vertex_buffer,
+            lod_box_index_buffer,
+            lod_box_num_indices: lod_box_mesh.indices.len() as u32,
+            lod_box_instance_buffer,
+            lod_box_instance_count: 0,
             scene_browser_state: SceneBrowserState::new(),
             selected_prim_path: None,
             selected_prim_properties: None,
@@ -1434,13 +1704,59 @@ impl Renderer {
             })
             .collect();
 
-        let instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Instance Buffer"),
-            contents: bytemuck::cast_slice(&instances),
+        // Compute prototype AABB and per-instance world-space AABBs for frustum culling
+        let prototype_aabb = Aabb::from_points(mesh_data.bounds_min, mesh_data.bounds_max);
+        let instance_aabbs: Vec<Aabb> = instance_transforms
+            .iter()
+            .map(|transform| transform.transform_aabb(&prototype_aabb))
+            .collect();
+
+        // Preallocate dynamic instance buffer for frustum culling
+        const MAX_INSTANCES: u32 = 10_000;
+        let instance_buffer_size = (MAX_INSTANCES as usize) * std::mem::size_of::<InstanceData>();
+        let instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Instance Buffer (Dynamic)"),
+            size: instance_buffer_size as u64,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        // Write initial instances
+        queue.write_buffer(&instance_buffer, 0, bytemuck::cast_slice(&instances));
+
+        log::info!(
+            "Created {} instances from USD scene (buffer capacity: {})",
+            instances.len(),
+            MAX_INSTANCES
+        );
+
+        // Create LOD box proxy buffers (for distant instances)
+        let lod_box_mesh = MeshData::from_aabb(&prototype_aabb);
+
+        let lod_box_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("LOD Box Vertex Buffer"),
+            contents: bytemuck::cast_slice(&lod_box_mesh.vertices),
             usage: wgpu::BufferUsages::VERTEX,
         });
 
-        log::info!("Created {} instances from USD scene", instances.len());
+        let lod_box_index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("LOD Box Index Buffer"),
+            contents: bytemuck::cast_slice(&lod_box_mesh.indices),
+            usage: wgpu::BufferUsages::INDEX,
+        });
+
+        // LOD box instance buffer (shares capacity with main instance buffer)
+        let lod_box_instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("LOD Box Instance Buffer (Dynamic)"),
+            size: instance_buffer_size as u64,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        log::info!(
+            "Created LOD box proxy buffers (prototype AABB: {:?} to {:?})",
+            prototype_aabb.min_point(),
+            prototype_aabb.max_point()
+        );
 
         // Initialize egui
         let egui_ctx = egui::Context::default();
@@ -1615,6 +1931,18 @@ impl Renderer {
             ivar_pipeline,
             mesh_data,
             instance_transforms,
+            max_instances: MAX_INSTANCES,
+            instance_aabbs,
+            prototype_aabb,
+            visible_instance_count: instances.len() as u32,
+            lod_distance_threshold: 100.0,
+            lod_max_polys: 5_000_000, // 5M poly budget default
+            triangles_per_instance: num_triangles,
+            lod_box_vertex_buffer,
+            lod_box_index_buffer,
+            lod_box_num_indices: lod_box_mesh.indices.len() as u32,
+            lod_box_instance_buffer,
+            lod_box_instance_count: 0,
             scene_browser_state: SceneBrowserState::new(),
             selected_prim_path: None,
             selected_prim_properties: None,
@@ -1689,6 +2017,102 @@ impl Renderer {
             &self.gnomon_buffer,
             0,
             bytemuck::cast_slice(&[self.gnomon_uniform]),
+        );
+    }
+
+    /// Perform frustum culling and LOD selection, updating visible instance buffers.
+    ///
+    /// This method:
+    /// 1. Filters instances by camera frustum visibility
+    /// 2. Sorts visible instances by distance (near to far)
+    /// 3. Fills polygon budget with full mesh, rest become box LOD
+    /// 4. Uploads only visible instances to GPU each frame
+    ///
+    /// Uses `lod_max_polys` as the polygon budget - nearest instances get full
+    /// mesh until budget is exhausted, then remaining use box proxy.
+    pub fn update_visible_instances(&mut self) {
+        if self.instance_aabbs.is_empty() {
+            self.visible_instance_count = self.num_instances;
+            self.lod_box_instance_count = 0;
+            return;
+        }
+
+        // Extract frustum from current camera view-projection matrix
+        let view = self.camera.view_matrix();
+        let proj = self.camera.projection_matrix();
+        let vp = proj * view;
+        let frustum = Frustum::from_view_projection(vp);
+
+        let camera_pos = self.camera.position;
+
+        // Collect visible instances with their distances
+        let mut visible_with_distance: Vec<(f32, usize)> = Vec::new();
+
+        for (idx, aabb) in self.instance_aabbs.iter().enumerate() {
+            // Frustum culling first
+            if !frustum.intersects_aabb(aabb) {
+                continue;
+            }
+
+            // Calculate distance for sorting
+            let instance_center = aabb.center();
+            let distance_sq = (instance_center - camera_pos).length_squared();
+            visible_with_distance.push((distance_sq, idx));
+        }
+
+        // Sort by distance (nearest first)
+        visible_with_distance
+            .sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+
+        // Split based on polygon budget
+        let tris_per_instance = self.triangles_per_instance as u64;
+        let max_polys = self.lod_max_polys as u64;
+        let mut current_polys: u64 = 0;
+
+        let mut near_instances: Vec<InstanceData> = Vec::new();
+        let mut far_instances: Vec<InstanceData> = Vec::new();
+
+        for (_distance_sq, idx) in visible_with_distance {
+            let transform = &self.instance_transforms[idx];
+            let instance_data = InstanceData {
+                model_matrix: transform.to_cols_array_2d(),
+            };
+
+            // Check if adding this instance would exceed budget
+            if current_polys + tris_per_instance <= max_polys {
+                near_instances.push(instance_data);
+                current_polys += tris_per_instance;
+            } else {
+                far_instances.push(instance_data);
+            }
+        }
+
+        // Update GPU buffers with visible instances
+        if !near_instances.is_empty() {
+            self.queue.write_buffer(
+                &self.instance_buffer,
+                0,
+                bytemuck::cast_slice(&near_instances),
+            );
+        }
+
+        if !far_instances.is_empty() {
+            self.queue.write_buffer(
+                &self.lod_box_instance_buffer,
+                0,
+                bytemuck::cast_slice(&far_instances),
+            );
+        }
+
+        self.visible_instance_count = near_instances.len() as u32;
+        self.lod_box_instance_count = far_instances.len() as u32;
+
+        log::trace!(
+            "LOD split: {} near (full mesh), {} far (box LOD), {}/{} total visible",
+            self.visible_instance_count,
+            self.lod_box_instance_count,
+            self.visible_instance_count + self.lod_box_instance_count,
+            self.num_instances
         );
     }
 
@@ -1775,13 +2199,16 @@ impl Renderer {
             })
             .collect();
 
-        let instance_buffer = self
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Instance Buffer"),
-                contents: bytemuck::cast_slice(&instances),
-                usage: wgpu::BufferUsages::VERTEX,
-            });
+        // Compute prototype AABB and per-instance world-space AABBs for frustum culling
+        let prototype_aabb = Aabb::from_points(mesh_data.bounds_min, mesh_data.bounds_max);
+        let instance_aabbs: Vec<Aabb> = instance_transforms
+            .iter()
+            .map(|transform| transform.transform_aabb(&prototype_aabb))
+            .collect();
+
+        // Write instances to dynamic buffer (reuse existing preallocated buffer)
+        self.queue
+            .write_buffer(&self.instance_buffer, 0, bytemuck::cast_slice(&instances));
 
         log::info!("Created {} instances from USD scene", instances.len());
 
@@ -1804,13 +2231,41 @@ impl Renderer {
         self.vertex_buffer = vertex_buffer;
         self.index_buffer = index_buffer;
         self.num_indices = mesh_data.indices.len() as u32;
-        self.instance_buffer = instance_buffer;
+        // Note: instance_buffer is reused (dynamic), don't reassign
         self.num_instances = instances.len() as u32;
+        self.visible_instance_count = instances.len() as u32;
         self.mesh_bounds_min = mesh_data.bounds_min;
         self.mesh_bounds_max = mesh_data.bounds_max;
         self.mesh_data = mesh_data;
         self.instance_transforms = instance_transforms;
-        self.num_triangles = (self.num_indices / 3) * self.num_instances;
+        self.instance_aabbs = instance_aabbs;
+        self.prototype_aabb = prototype_aabb;
+        self.triangles_per_instance = self.num_indices / 3;
+        self.num_triangles = self.triangles_per_instance * self.num_instances;
+        self.lod_box_instance_count = 0;
+
+        // Regenerate LOD box mesh for new prototype AABB
+        let lod_box_mesh = MeshData::from_aabb(&prototype_aabb);
+        self.lod_box_vertex_buffer =
+            self.device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("LOD Box Vertex Buffer"),
+                    contents: bytemuck::cast_slice(&lod_box_mesh.vertices),
+                    usage: wgpu::BufferUsages::VERTEX,
+                });
+        self.lod_box_index_buffer =
+            self.device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("LOD Box Index Buffer"),
+                    contents: bytemuck::cast_slice(&lod_box_mesh.indices),
+                    usage: wgpu::BufferUsages::INDEX,
+                });
+        self.lod_box_num_indices = lod_box_mesh.indices.len() as u32;
+        log::info!(
+            "Regenerated LOD box mesh for prototype AABB: {:?} to {:?}",
+            prototype_aabb.min_point(),
+            prototype_aabb.max_point()
+        );
 
         // Update USD stage for scene browser
         self.usd_stage = Some(stage);
@@ -2152,6 +2607,11 @@ impl Renderer {
         clear_color: wgpu::Color,
         window: &winit::window::Window,
     ) -> Result<()> {
+        // Update frustum culling before rendering (in Vulkan mode)
+        if self.ivar_state.mode == RenderMode::Vulkan {
+            self.update_visible_instances();
+        }
+
         let output = self.surface.get_current_texture()?;
         let view = output
             .texture
@@ -2165,11 +2625,14 @@ impl Renderer {
         let fps = self.fps;
         let camera = &self.camera;
         let num_instances = self.num_instances;
-        let num_triangles = self.num_triangles;
+        let visible_instances = self.visible_instance_count;
+        let lod_box_instances = self.lod_box_instance_count;
+        let triangles_per_instance = self.triangles_per_instance;
         let mesh_bounds_min = self.mesh_bounds_min;
         let mesh_bounds_max = self.mesh_bounds_max;
         let size = self.size;
         let mut gnomon_size = self.gnomon_size;
+        let mut lod_max_polys = self.lod_max_polys;
 
         // Ivar state for UI
         let mut render_mode = self.ivar_state.mode;
@@ -2273,13 +2736,47 @@ impl Renderer {
 
                     // Scene Stats
                     ui.collapsing("Scene Stats", |ui| {
-                        ui.label(format!("Instances: {}", num_instances));
-                        ui.label(format!("Triangles: {}", num_triangles * num_instances));
-                        // TODO: Track actual polygon count from source mesh for accuracy
-                        // For now estimate: quads ≈ triangles * 2/3
-                        let estimated_polys = (num_triangles as f32 * 0.67) as u32 * num_instances;
-                        ui.label(format!("Polygons (est): {}", estimated_polys));
-                        ui.label(format!("Triangles/Instance: {}", num_triangles));
+                        ui.label(format!("Instances: {} total", num_instances));
+                        let total_visible = visible_instances + lod_box_instances;
+                        ui.label(format!(
+                            "Visible: {} ({:.0}%)",
+                            total_visible,
+                            if num_instances > 0 {
+                                (total_visible as f32 / num_instances as f32) * 100.0
+                            } else {
+                                0.0
+                            }
+                        ));
+                        ui.label(format!("  Full mesh: {}", visible_instances));
+                        ui.label(format!("  Box LOD: {}", lod_box_instances));
+                        // Triangle count: full mesh triangles + 12 triangles per LOD box
+                        let full_mesh_tris = triangles_per_instance * visible_instances;
+                        let box_tris = 12 * lod_box_instances;
+                        ui.label(format!(
+                            "Triangles: {} ({}+{})",
+                            full_mesh_tris + box_tris,
+                            full_mesh_tris,
+                            box_tris
+                        ));
+                        ui.label(format!("Tris/Instance: {}", triangles_per_instance));
+
+                        ui.separator();
+                        ui.label("LOD Budget Control:");
+                        // Slider for max polys (in millions for readability)
+                        let max_millions = (lod_max_polys as f32 / 1_000_000.0).max(0.1);
+                        let mut millions = max_millions;
+                        ui.add(
+                            egui::Slider::new(&mut millions, 0.1..=100.0)
+                                .logarithmic(true)
+                                .text("Max M tris")
+                                .suffix("M"),
+                        );
+                        if (millions - max_millions).abs() > 0.001 {
+                            lod_max_polys = (millions * 1_000_000.0) as u32;
+                        }
+                        let budget_used =
+                            (full_mesh_tris as f32 / lod_max_polys as f32 * 100.0).min(100.0);
+                        ui.label(format!("Budget: {:.0}% used", budget_used));
                     });
 
                     ui.separator();
@@ -2403,6 +2900,9 @@ impl Renderer {
         // Update gnomon size from UI
         self.gnomon_size = gnomon_size;
 
+        // Update LOD max polys from UI
+        self.lod_max_polys = lod_max_polys;
+
         // Update render mode from UI - detect mode change
         let mode_changed = self.ivar_state.mode != render_mode;
         self.ivar_state.mode = render_mode;
@@ -2522,10 +3022,12 @@ impl Renderer {
                         occlusion_query_set: None,
                     });
 
-                    // Draw all instances with one draw call
+                    // Draw near instances (full mesh, after frustum culling + LOD split)
                     log::trace!(
-                        "Drawing {} indices x {} instances",
+                        "Drawing {} indices x {} near instances + {} LOD box instances (of {} total)",
                         self.num_indices,
+                        self.visible_instance_count,
+                        self.lod_box_instance_count,
                         self.num_instances
                     );
                     render_pass.set_pipeline(&self.pipeline);
@@ -2534,7 +3036,26 @@ impl Renderer {
                     render_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
                     render_pass
                         .set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-                    render_pass.draw_indexed(0..self.num_indices, 0, 0..self.num_instances);
+                    render_pass.draw_indexed(
+                        0..self.num_indices,
+                        0,
+                        0..self.visible_instance_count,
+                    );
+
+                    // Draw far instances as LOD box proxies
+                    if self.lod_box_instance_count > 0 {
+                        render_pass.set_vertex_buffer(0, self.lod_box_vertex_buffer.slice(..));
+                        render_pass.set_vertex_buffer(1, self.lod_box_instance_buffer.slice(..));
+                        render_pass.set_index_buffer(
+                            self.lod_box_index_buffer.slice(..),
+                            wgpu::IndexFormat::Uint32,
+                        );
+                        render_pass.draw_indexed(
+                            0..self.lod_box_num_indices,
+                            0,
+                            0..self.lod_box_instance_count,
+                        );
+                    }
                 }
 
                 // Render gnomon in bottom-right corner
