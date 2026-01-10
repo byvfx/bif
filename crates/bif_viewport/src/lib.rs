@@ -815,9 +815,7 @@ pub struct Renderer {
     lod_box_index_buffer: wgpu::Buffer,
     /// Number of indices in box proxy mesh (36 = 12 triangles)
     lod_box_num_indices: u32,
-    /// Instance buffer for LOD box proxies (far instances)
-    lod_box_instance_buffer: wgpu::Buffer,
-    /// Number of instances rendered as box proxies
+    /// Number of instances rendered as box proxies (stored after near instances in instance_buffer)
     lod_box_instance_count: u32,
     /// Pre-allocated scratch buffers for frustum culling (avoids per-frame allocations)
     culling_scratch: CullingScratch,
@@ -1262,19 +1260,6 @@ impl Renderer {
             usage: wgpu::BufferUsages::INDEX,
         });
 
-        // LOD box instance buffer (shares capacity with main instance buffer)
-        let lod_box_instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("LOD Box Instance Buffer (Dynamic)"),
-            size: instance_buffer_size as u64,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        queue.write_buffer(
-            &lod_box_instance_buffer,
-            0,
-            bytemuck::cast_slice(&[dummy_instance]),
-        );
-
         log::info!("Created LOD box proxy buffers");
 
         // Initialize egui
@@ -1466,7 +1451,6 @@ impl Renderer {
             lod_box_vertex_buffer,
             lod_box_index_buffer,
             lod_box_num_indices: lod_box_mesh.indices.len() as u32,
-            lod_box_instance_buffer,
             lod_box_instance_count: 0,
             culling_scratch: CullingScratch::new(MAX_INSTANCES as usize),
             cached_frustum: Frustum::from_view_projection(
@@ -1787,14 +1771,6 @@ impl Renderer {
             usage: wgpu::BufferUsages::INDEX,
         });
 
-        // LOD box instance buffer (shares capacity with main instance buffer)
-        let lod_box_instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("LOD Box Instance Buffer (Dynamic)"),
-            size: instance_buffer_size as u64,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
         log::info!(
             "Created LOD box proxy buffers (prototype AABB: {:?} to {:?})",
             prototype_aabb.min_point(),
@@ -1984,7 +1960,6 @@ impl Renderer {
             lod_box_vertex_buffer,
             lod_box_index_buffer,
             lod_box_num_indices: lod_box_mesh.indices.len() as u32,
-            lod_box_instance_buffer,
             lod_box_instance_count: 0,
             culling_scratch: CullingScratch::new(MAX_INSTANCES as usize),
             cached_frustum: Frustum::from_view_projection(
@@ -2149,21 +2124,28 @@ impl Renderer {
             });
         }
 
-        // Update GPU buffers with visible instances
-        if !self.culling_scratch.near_instances.is_empty() {
-            self.queue.write_buffer(
-                &self.instance_buffer,
-                0,
-                bytemuck::cast_slice(&self.culling_scratch.near_instances),
-            );
-        }
+        // Update GPU buffer: [near_instances... | far_instances...] in single contiguous write
+        let near_count = self.culling_scratch.near_instances.len();
+        let far_count = self.culling_scratch.far_instances.len();
 
-        if !self.culling_scratch.far_instances.is_empty() {
-            self.queue.write_buffer(
-                &self.lod_box_instance_buffer,
-                0,
-                bytemuck::cast_slice(&self.culling_scratch.far_instances),
-            );
+        if near_count > 0 || far_count > 0 {
+            // Write near instances at offset 0
+            if near_count > 0 {
+                self.queue.write_buffer(
+                    &self.instance_buffer,
+                    0,
+                    bytemuck::cast_slice(&self.culling_scratch.near_instances),
+                );
+            }
+            // Write far instances immediately after near instances
+            if far_count > 0 {
+                let far_offset = (near_count * std::mem::size_of::<InstanceData>()) as u64;
+                self.queue.write_buffer(
+                    &self.instance_buffer,
+                    far_offset,
+                    bytemuck::cast_slice(&self.culling_scratch.far_instances),
+                );
+            }
         }
 
         self.visible_instance_count = self.culling_scratch.near_instances.len() as u32;
@@ -3113,10 +3095,12 @@ impl Renderer {
                         0..self.visible_instance_count,
                     );
 
-                    // Draw far instances as LOD box proxies
+                    // Draw far instances as LOD box proxies (from same buffer, offset by near count)
                     if self.lod_box_instance_count > 0 {
+                        let far_byte_offset =
+                            (self.visible_instance_count as usize * std::mem::size_of::<InstanceData>()) as u64;
                         render_pass.set_vertex_buffer(0, self.lod_box_vertex_buffer.slice(..));
-                        render_pass.set_vertex_buffer(1, self.lod_box_instance_buffer.slice(..));
+                        render_pass.set_vertex_buffer(1, self.instance_buffer.slice(far_byte_offset..));
                         render_pass.set_index_buffer(
                             self.lod_box_index_buffer.slice(..),
                             wgpu::IndexFormat::Uint32,
