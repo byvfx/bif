@@ -346,10 +346,42 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 
 ## Upcoming Milestones 🎯
 
-### Milestone 14: Materials (UsdPreviewSurface + MaterialX) 🎯
+### Milestone 14: GPU Instancing Optimization (10K+ Instances) 🎯
+
+- **Goal:** Enable massive instancing (10K+ instances) with smart LOD system
+- **Prerequisites:** Milestone 13b complete ✅, bbox culling added ✅
+- **Estimated Time:** 12-15 hours
+- **Target:** 10K Lucy instances (~700M triangles) @ 60 FPS
+- **Key Tasks:**
+  
+  **Phase 1: Enhanced GPU Instancing (4-6 hours)**
+  - Upgrade existing GPU instancing to handle 10K+ instances
+  - CPU frustum culling before GPU submission
+  - Dynamic instance buffer (only visible instances)
+  - Per-instance material IDs (shared material for now)
+  
+  **Phase 2: LOD System (6-8 hours)**
+  - Distance-based triangle reduction:
+    - 0-50m: Full Lucy (280K tris) = 100 instances max
+    - 50-200m: Half detail (140K tris) = 1K instances  
+    - 200m+: Quarter detail (70K tris) = 9K instances
+  - Pre-computed LOD meshes or runtime simplification
+  - LOD transition smoothing (optional)
+  
+  **Phase 3: Performance Validation (2 hours)**
+  - Test 10K Lucy scene @ 60 FPS target
+  - Memory usage profiling
+  - Frame time analysis (GPU/CPU bottlenecks)
+
+- **Performance Target:** 10K instances = ~700M triangles (realistic for modern GPU)
+- **Reference:** UE5 Nanite, Unity DOTS instancing
+
+---
+
+### Milestone 15: Materials (UsdPreviewSurface + MaterialX) 
 
 - **Goal:** Import USD materials and render with proper shading
-- **Prerequisites:** Milestone 13b complete ✅
+- **Prerequisites:** Milestone 14 complete ✅
 - **Estimated Time:** 15-20 hours
 - **Key Tasks:**
   - Parse UsdPreviewSurface shader nodes from USD
@@ -362,7 +394,7 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 
 ---
 
-### Milestone 15: Animation + Motion Blur 🎬
+### Milestone 16: Animation + Motion Blur 🎬
 
 - **Goal:** Load and render time-sampled USD data with motion blur
 - **Estimated Time:** 15-20 hours
@@ -376,7 +408,7 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 
 ---
 
-### Milestone 16: Frame Rendering 🎞️
+### Milestone 17: Frame Rendering 🎞️
 
 - **Goal:** Render animated sequences to disk
 - **Estimated Time:** 8-12 hours
@@ -389,7 +421,7 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 
 ---
 
-### Milestone 17: Scene Interactivity + Keyframing 🎮
+### Milestone 18: Scene Interactivity + Keyframing 🎮
 
 - **Goal:** Clarisse-style object manipulation and animation authoring
 - **Estimated Time:** 15-20 hours
@@ -404,7 +436,7 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 
 ---
 
-### Milestone 18: Point Instancing + Scattering 🌲
+### Milestone 19: Point Instancing + Scattering 🌲
 
 - **Goal:** Massive instancing via point clouds and scattering tools
 - **Estimated Time:** 15-20 hours
@@ -420,7 +452,7 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 
 ---
 
-### Milestone 19: Viewport Performance ⚡
+### Milestone 20: Viewport Performance ⚡
 
 - **Goal:** Clarisse-like lazy loading and GPU optimization
 - **Estimated Time:** 20-30 hours
@@ -439,7 +471,7 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 
 ---
 
-### Milestone 20: Renderer Polish (Arnold-Inspired) 🔬
+### Milestone 21: Renderer Polish (Arnold-Inspired) 🔬
 
 - **Goal:** Production-quality rendering techniques from research
 - **Estimated Time:** 20-30 hours
@@ -454,7 +486,7 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 
 ---
 
-### Milestone 21: Spectral Rendering 🌈
+### Milestone 22: Spectral Rendering 🌈
 
 - **Goal:** Full wavelength simulation for accurate light behavior
 - **Estimated Time:** 15-20 hours
@@ -468,7 +500,7 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 
 ---
 
-### Milestone 22: Volumes + OpenVDB 🌫️
+### Milestone 23: Volumes + OpenVDB 🌫️
 
 - **Goal:** Render fog, smoke, clouds, and VDB volumes
 - **Estimated Time:** 20-30 hours
@@ -483,7 +515,7 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 
 ---
 
-### Milestone 23: Denoising (Intel OIDN) 🧹
+### Milestone 24: Denoising (Intel OIDN) 🧹
 
 - **Goal:** Production-quality denoising for faster convergence
 - **Estimated Time:** 10-15 hours
@@ -496,7 +528,7 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 
 ---
 
-### Milestone 24: GPU Path Tracing (wgpu Compute) ⚡
+### Milestone 25: GPU Path Tracing (wgpu Compute) ⚡
 
 - **Goal:** Massively parallel path tracing on GPU
 - **Estimated Time:** 30-40 hours
@@ -511,7 +543,7 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 
 ---
 
-### Milestone 25+: Qt 6 UI Integration (Deferred)
+### Milestone 26+: Qt 6 UI Integration (Deferred)
 
 - **Goal:** Replace egui with Qt 6 for production-grade UI
 - **Status:** Deferred until core features complete
@@ -525,7 +557,7 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 
 ---
 
-### Milestone 26+: USD Export (Deferred)
+### Milestone 27+: USD Export (Deferred)
 
 - **Goal:** Write scene changes back to USD
 - **Estimated Time:** 15-20 hours
@@ -542,19 +574,20 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 | # | Milestone | Focus | Status |
 |---|-----------|-------|--------|
 | 0-13b | Foundation | Math, viewport, USD, Embree, UI | ✅ Complete |
-| 14 | Materials | UsdPreviewSurface + MaterialX | 🎯 Next |
-| 15 | Animation | Time-sampled USD + motion blur | Planned |
-| 16 | Frame Rendering | Batch render to disk | Planned |
-| 17 | Interactivity | Move objects + keyframing | Planned |
-| 18 | Point Instancing | Scatter + paint tools | Planned |
-| 19 | Viewport Perf | Vulkan 1.3, lazy loading | Planned |
-| 20 | Renderer Polish | Arnold-inspired techniques | Planned |
-| 21 | Spectral | Wavelength simulation | Planned |
-| 22 | Volumes | OpenVDB + fog/smoke | Planned |
-| 23 | Denoising | Intel OIDN | Planned |
-| 24 | GPU Path Tracing | wgpu compute + ReSTIR | Planned |
-| 25+ | Qt 6 UI | Production interface | Deferred |
-| 26+ | USD Export | Write back to USD | Deferred |
+| 14 | GPU Instancing | 10K+ instances + LOD system | 🎯 Next |
+| 15 | Materials | UsdPreviewSurface + MaterialX | Planned |
+| 16 | Animation | Time-sampled USD + motion blur | Planned |
+| 17 | Frame Rendering | Batch render to disk | Planned |
+| 18 | Interactivity | Move objects + keyframing | Planned |
+| 19 | Point Instancing | Scatter + paint tools | Planned |
+| 20 | Viewport Perf | Vulkan 1.3, lazy loading | Planned |
+| 21 | Renderer Polish | Arnold-inspired techniques | Planned |
+| 22 | Spectral | Wavelength simulation | Planned |
+| 23 | Volumes | OpenVDB + fog/smoke | Planned |
+| 24 | Denoising | Intel OIDN | Planned |
+| 25 | GPU Path Tracing | wgpu compute + ReSTIR | Planned |
+| 26+ | Qt 6 UI | Production interface | Deferred |
+| 27+ | USD Export | Write back to USD | Deferred |
 
 ---
 
@@ -601,6 +634,6 @@ Key papers for Milestone 20 (Renderer Polish):
 
 ---
 
-**Last Updated:** January 8, 2026
-**Status:** Milestones 0-13b Complete ✅
-**Next:** Milestone 14 (Materials/MaterialX)
+**Last Updated:** January 9, 2026
+**Status:** Milestones 0-13b Complete ✅ 
+**Next:** Milestone 14 (GPU Instancing Optimization)
