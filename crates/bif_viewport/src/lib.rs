@@ -1738,15 +1738,24 @@ impl Renderer {
             })
             .collect();
 
+        // Preallocate dynamic instance buffer for frustum culling
+        const MAX_INSTANCES: u32 = 10_000;
+
+        // Warn if instance count exceeds buffer capacity
+        if instances.len() > MAX_INSTANCES as usize {
+            log::warn!(
+                "Instance count {} exceeds buffer capacity {}. Some instances will be truncated.",
+                instances.len(),
+                MAX_INSTANCES
+            );
+        }
+
         // Compute prototype AABB and per-instance world-space AABBs for frustum culling
         let prototype_aabb = Aabb::from_points(mesh_data.bounds_min, mesh_data.bounds_max);
         let instance_aabbs: Vec<Aabb> = instance_transforms
             .iter()
             .map(|transform| transform.transform_aabb(&prototype_aabb))
             .collect();
-
-        // Preallocate dynamic instance buffer for frustum culling
-        const MAX_INSTANCES: u32 = 10_000;
         let instance_buffer_size = (MAX_INSTANCES as usize) * std::mem::size_of::<InstanceData>();
         let instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Instance Buffer (Dynamic)"),
@@ -2251,6 +2260,15 @@ impl Renderer {
                 }
             })
             .collect();
+
+        // Warn if instance count exceeds buffer capacity
+        if instances.len() > self.max_instances as usize {
+            log::warn!(
+                "Instance count {} exceeds buffer capacity {}. Some instances will be truncated.",
+                instances.len(),
+                self.max_instances
+            );
+        }
 
         // Compute prototype AABB and per-instance world-space AABBs for frustum culling
         let prototype_aabb = Aabb::from_points(mesh_data.bounds_min, mesh_data.bounds_max);
