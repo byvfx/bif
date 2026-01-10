@@ -29,9 +29,7 @@
 - ✅ AABB transform: zero heap allocation
 - ✅ Frustum caching when camera static
 - ✅ Instance count warning when exceeding buffer capacity
-
-**Deferred:**
-- [ ] Merge instance buffers (modest benefit at current scale)
+- ✅ Merge near/far instance buffers into single buffer
 
 ### Milestone 14: GPU Instancing Optimization ✅ (Jan 9, 2026)
 
