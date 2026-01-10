@@ -26,34 +26,28 @@ impl Mat4Ext for Mat4 {
     }
 
     fn transform_aabb(&self, aabb: &Aabb) -> Aabb {
-        // Transform all 8 corners and compute new AABB
-        let min_point = Vec3::new(aabb.x.min, aabb.y.min, aabb.z.min);
-        let max_point = Vec3::new(aabb.x.max, aabb.y.max, aabb.z.max);
+        // Transform all 8 corners and compute new AABB (no heap allocation)
+        let min_p = Vec3::new(aabb.x.min, aabb.y.min, aabb.z.min);
+        let max_p = Vec3::new(aabb.x.max, aabb.y.max, aabb.z.max);
 
-        let corners = [
-            Vec3::new(min_point.x, min_point.y, min_point.z),
-            Vec3::new(max_point.x, min_point.y, min_point.z),
-            Vec3::new(min_point.x, max_point.y, min_point.z),
-            Vec3::new(max_point.x, max_point.y, min_point.z),
-            Vec3::new(min_point.x, min_point.y, max_point.z),
-            Vec3::new(max_point.x, min_point.y, max_point.z),
-            Vec3::new(min_point.x, max_point.y, max_point.z),
-            Vec3::new(max_point.x, max_point.y, max_point.z),
-        ];
+        // Transform first corner to initialize min/max
+        let first = self.transform_point3(min_p);
+        let mut result_min = first;
+        let mut result_max = first;
 
-        // Transform all corners using glam's transform_point3
-        let transformed_corners: Vec<Vec3> = corners
-            .iter()
-            .map(|&corner| self.transform_point3(corner))
-            .collect();
-
-        // Find min/max of transformed corners
-        let mut result_min = transformed_corners[0];
-        let mut result_max = transformed_corners[0];
-
-        for &corner in &transformed_corners[1..] {
-            result_min = result_min.min(corner);
-            result_max = result_max.max(corner);
+        // Transform remaining 7 corners, updating min/max inline
+        for corner in [
+            Vec3::new(max_p.x, min_p.y, min_p.z),
+            Vec3::new(min_p.x, max_p.y, min_p.z),
+            Vec3::new(max_p.x, max_p.y, min_p.z),
+            Vec3::new(min_p.x, min_p.y, max_p.z),
+            Vec3::new(max_p.x, min_p.y, max_p.z),
+            Vec3::new(min_p.x, max_p.y, max_p.z),
+            Vec3::new(max_p.x, max_p.y, max_p.z),
+        ] {
+            let t = self.transform_point3(corner);
+            result_min = result_min.min(t);
+            result_max = result_max.max(t);
         }
 
         Aabb::from_points(result_min, result_max)
