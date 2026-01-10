@@ -2088,29 +2088,42 @@ impl Renderer {
             self.culling_scratch.visible_with_distance.push((distance_sq, idx));
         }
 
-        // Sort by distance (nearest first)
-        self.culling_scratch
-            .visible_with_distance
-            .sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
-
-        // Split based on polygon budget
+        // Calculate how many instances fit in polygon budget
         let tris_per_instance = self.triangles_per_instance as u64;
         let max_polys = self.lod_max_polys as u64;
-        let mut current_polys: u64 = 0;
+        let budget_count = if tris_per_instance > 0 {
+            (max_polys / tris_per_instance) as usize
+        } else {
+            self.culling_scratch.visible_with_distance.len()
+        };
 
-        for &(_distance_sq, idx) in &self.culling_scratch.visible_with_distance {
+        let visible_count = self.culling_scratch.visible_with_distance.len();
+
+        // Partition: O(n) instead of O(n log n) full sort
+        // After this, indices 0..budget_count are the nearest (unordered among themselves)
+        if budget_count > 0 && budget_count < visible_count {
+            self.culling_scratch
+                .visible_with_distance
+                .select_nth_unstable_by(budget_count, |a, b| {
+                    a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal)
+                });
+        }
+
+        // Split into near (full mesh) and far (box proxy)
+        let split_point = budget_count.min(visible_count);
+
+        for &(_distance_sq, idx) in &self.culling_scratch.visible_with_distance[..split_point] {
             let transform = &self.instance_transforms[idx];
-            let instance_data = InstanceData {
+            self.culling_scratch.near_instances.push(InstanceData {
                 model_matrix: transform.to_cols_array_2d(),
-            };
+            });
+        }
 
-            // Check if adding this instance would exceed budget
-            if current_polys + tris_per_instance <= max_polys {
-                self.culling_scratch.near_instances.push(instance_data);
-                current_polys += tris_per_instance;
-            } else {
-                self.culling_scratch.far_instances.push(instance_data);
-            }
+        for &(_distance_sq, idx) in &self.culling_scratch.visible_with_distance[split_point..] {
+            let transform = &self.instance_transforms[idx];
+            self.culling_scratch.far_instances.push(InstanceData {
+                model_matrix: transform.to_cols_array_2d(),
+            });
         }
 
         // Update GPU buffers with visible instances
