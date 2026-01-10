@@ -709,6 +709,29 @@ impl InstanceData {
     }
 }
 
+/// Scratch buffers for frustum culling to avoid per-frame allocations
+struct CullingScratch {
+    visible_with_distance: Vec<(f32, usize)>,
+    near_instances: Vec<InstanceData>,
+    far_instances: Vec<InstanceData>,
+}
+
+impl CullingScratch {
+    fn new(max_instances: usize) -> Self {
+        Self {
+            visible_with_distance: Vec::with_capacity(max_instances),
+            near_instances: Vec::with_capacity(max_instances),
+            far_instances: Vec::with_capacity(max_instances),
+        }
+    }
+
+    fn clear(&mut self) {
+        self.visible_with_distance.clear();
+        self.near_instances.clear();
+        self.far_instances.clear();
+    }
+}
+
 /// Core renderer managing wgpu state
 pub struct Renderer {
     pub surface: Surface<'static>,
@@ -796,6 +819,8 @@ pub struct Renderer {
     lod_box_instance_buffer: wgpu::Buffer,
     /// Number of instances rendered as box proxies
     lod_box_instance_count: u32,
+    /// Pre-allocated scratch buffers for frustum culling (avoids per-frame allocations)
+    culling_scratch: CullingScratch,
 
     // Scene browser state
     pub scene_browser_state: SceneBrowserState,
@@ -1439,6 +1464,7 @@ impl Renderer {
             lod_box_num_indices: lod_box_mesh.indices.len() as u32,
             lod_box_instance_buffer,
             lod_box_instance_count: 0,
+            culling_scratch: CullingScratch::new(MAX_INSTANCES as usize),
             scene_browser_state: SceneBrowserState::new(),
             selected_prim_path: None,
             selected_prim_properties: None,
@@ -1943,6 +1969,7 @@ impl Renderer {
             lod_box_num_indices: lod_box_mesh.indices.len() as u32,
             lod_box_instance_buffer,
             lod_box_instance_count: 0,
+            culling_scratch: CullingScratch::new(MAX_INSTANCES as usize),
             scene_browser_state: SceneBrowserState::new(),
             selected_prim_path: None,
             selected_prim_properties: None,
@@ -2037,6 +2064,9 @@ impl Renderer {
             return;
         }
 
+        // Clear scratch buffers (reuse pre-allocated capacity)
+        self.culling_scratch.clear();
+
         // Extract frustum from current camera view-projection matrix
         let view = self.camera.view_matrix();
         let proj = self.camera.projection_matrix();
@@ -2046,8 +2076,6 @@ impl Renderer {
         let camera_pos = self.camera.position;
 
         // Collect visible instances with their distances
-        let mut visible_with_distance: Vec<(f32, usize)> = Vec::new();
-
         for (idx, aabb) in self.instance_aabbs.iter().enumerate() {
             // Frustum culling first
             if !frustum.intersects_aabb(aabb) {
@@ -2057,11 +2085,12 @@ impl Renderer {
             // Calculate distance for sorting
             let instance_center = aabb.center();
             let distance_sq = (instance_center - camera_pos).length_squared();
-            visible_with_distance.push((distance_sq, idx));
+            self.culling_scratch.visible_with_distance.push((distance_sq, idx));
         }
 
         // Sort by distance (nearest first)
-        visible_with_distance
+        self.culling_scratch
+            .visible_with_distance
             .sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
 
         // Split based on polygon budget
@@ -2069,10 +2098,7 @@ impl Renderer {
         let max_polys = self.lod_max_polys as u64;
         let mut current_polys: u64 = 0;
 
-        let mut near_instances: Vec<InstanceData> = Vec::new();
-        let mut far_instances: Vec<InstanceData> = Vec::new();
-
-        for (_distance_sq, idx) in visible_with_distance {
+        for &(_distance_sq, idx) in &self.culling_scratch.visible_with_distance {
             let transform = &self.instance_transforms[idx];
             let instance_data = InstanceData {
                 model_matrix: transform.to_cols_array_2d(),
@@ -2080,32 +2106,32 @@ impl Renderer {
 
             // Check if adding this instance would exceed budget
             if current_polys + tris_per_instance <= max_polys {
-                near_instances.push(instance_data);
+                self.culling_scratch.near_instances.push(instance_data);
                 current_polys += tris_per_instance;
             } else {
-                far_instances.push(instance_data);
+                self.culling_scratch.far_instances.push(instance_data);
             }
         }
 
         // Update GPU buffers with visible instances
-        if !near_instances.is_empty() {
+        if !self.culling_scratch.near_instances.is_empty() {
             self.queue.write_buffer(
                 &self.instance_buffer,
                 0,
-                bytemuck::cast_slice(&near_instances),
+                bytemuck::cast_slice(&self.culling_scratch.near_instances),
             );
         }
 
-        if !far_instances.is_empty() {
+        if !self.culling_scratch.far_instances.is_empty() {
             self.queue.write_buffer(
                 &self.lod_box_instance_buffer,
                 0,
-                bytemuck::cast_slice(&far_instances),
+                bytemuck::cast_slice(&self.culling_scratch.far_instances),
             );
         }
 
-        self.visible_instance_count = near_instances.len() as u32;
-        self.lod_box_instance_count = far_instances.len() as u32;
+        self.visible_instance_count = self.culling_scratch.near_instances.len() as u32;
+        self.lod_box_instance_count = self.culling_scratch.far_instances.len() as u32;
 
         log::trace!(
             "LOD split: {} near (full mesh), {} far (box LOD), {}/{} total visible",
