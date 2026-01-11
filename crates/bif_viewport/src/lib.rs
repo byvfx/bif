@@ -16,8 +16,8 @@ use bif_core::usd::UsdStage;
 
 // Re-export bif_renderer types for Ivar integration
 use bif_renderer::{
-    generate_buckets, render_bucket, Bucket, BucketResult, BvhNode, Color, EmbreeScene, Hittable,
-    ImageBuffer, Lambertian, RenderConfig, DEFAULT_BUCKET_SIZE,
+    generate_buckets, render_bucket, Bucket, BucketResult, BvhNode, Color, DisneyBSDF,
+    EmbreeScene, Hittable, ImageBuffer, RenderConfig, DEFAULT_BUCKET_SIZE,
 };
 
 // Scene browser and property inspector modules
@@ -826,6 +826,9 @@ pub struct Renderer {
     // Instance transforms for Ivar (stored as Mat4 arrays)
     instance_transforms: Vec<Mat4>,
 
+    // Material for Ivar rendering (from loaded USD scene)
+    scene_material: bif_core::Material,
+
     // Frustum culling for GPU instancing optimization
     /// Maximum instances the buffer can hold (preallocated)
     #[allow(dead_code)]
@@ -1478,6 +1481,7 @@ impl Renderer {
             ivar_pipeline,
             mesh_data,
             instance_transforms: vec![], // Empty scene - no instances
+            scene_material: bif_core::Material::default(),
             max_instances: MAX_INSTANCES,
             instance_aabbs: vec![],
             prototype_aabb: Aabb::empty(),
@@ -1570,6 +1574,19 @@ impl Renderer {
 
         let proto = &scene.prototypes[0];
         let mesh_data = MeshData::from_core_mesh(&proto.mesh);
+
+        // Get material from prototype (or use default)
+        let scene_material = proto
+            .material
+            .as_ref()
+            .map(|m| (**m).clone())
+            .unwrap_or_default();
+        log::info!(
+            "Material: {} (metallic={:.2}, roughness={:.2})",
+            scene_material.name,
+            scene_material.metallic,
+            scene_material.roughness
+        );
 
         log::info!(
             "Loaded {} vertices, {} indices from USD scene",
@@ -1987,6 +2004,7 @@ impl Renderer {
             ivar_pipeline,
             mesh_data,
             instance_transforms,
+            scene_material,
             max_instances: MAX_INSTANCES,
             instance_aabbs,
             prototype_aabb,
@@ -2242,6 +2260,19 @@ impl Renderer {
         let proto = &scene.prototypes[0];
         let mesh_data = MeshData::from_core_mesh(&proto.mesh);
 
+        // Get material from prototype (or use default)
+        let scene_material = proto
+            .material
+            .as_ref()
+            .map(|m| (**m).clone())
+            .unwrap_or_default();
+        log::info!(
+            "Material: {} (metallic={:.2}, roughness={:.2})",
+            scene_material.name,
+            scene_material.metallic,
+            scene_material.roughness
+        );
+
         log::info!(
             "Loaded {} vertices, {} indices from USD scene",
             mesh_data.vertices.len(),
@@ -2328,6 +2359,7 @@ impl Renderer {
         self.mesh_bounds_max = mesh_data.bounds_max;
         self.mesh_data = mesh_data;
         self.instance_transforms = instance_transforms;
+        self.scene_material = scene_material;
         self.instance_aabbs = instance_aabbs;
         self.prototype_aabb = prototype_aabb;
         self.triangles_per_instance = self.num_indices / 3;
@@ -2443,6 +2475,7 @@ impl Renderer {
         // Clone data needed for background thread
         let mesh_data = self.mesh_data.clone();
         let transforms = self.instance_transforms.clone();
+        let material = self.scene_material.clone();
 
         // Create channel for build completion
         let (tx, rx) = mpsc::channel();
@@ -2476,11 +2509,19 @@ impl Renderer {
             log::info!("Background thread: Extracted {} triangles, creating acceleration structure with {} instances...",
                 triangle_vertices.len(), transforms.len());
 
+            // Convert material to Disney BSDF
+            let disney_mat = DisneyBSDF::from(&material);
+            log::info!(
+                "Using Disney BSDF: base_color=({:.2}, {:.2}, {:.2}), metallic={:.2}, roughness={:.2}",
+                disney_mat.base_color.x, disney_mat.base_color.y, disney_mat.base_color.z,
+                disney_mat.metallic, disney_mat.roughness
+            );
+
             // Try to create Embree scene first, fall back to CPU BVH if unavailable
             let world = if let Some(embree_scene) = EmbreeScene::try_new(
                 &triangle_vertices,
                 transforms.clone(),
-                Lambertian::new(Color::new(0.7, 0.7, 0.7)),
+                disney_mat,
             ) {
                 log::info!("Using Embree for hardware-accelerated ray tracing");
                 // Wrap Embree scene in a BVH node (BVH contains just 1 object)

@@ -390,6 +390,7 @@ dependencies = [
 name = "bif_renderer"
 version = "0.1.0"
 dependencies = [
+ "bif_core",
  "bif_math",
  "glam",
  "image",

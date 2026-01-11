@@ -129,6 +129,33 @@ impl DisneyBSDF {
     }
 }
 
+/// Convert from bif_core::Material (UsdPreviewSurface-based) to DisneyBSDF.
+///
+/// This maps the USD material properties to Disney BSDF parameters:
+/// - diffuse_color → base_color
+/// - metallic → metallic
+/// - roughness → roughness
+/// - specular → specular
+///
+/// Note: Texture support requires additional integration (Phase 8).
+impl From<&bif_core::Material> for DisneyBSDF {
+    fn from(mat: &bif_core::Material) -> Self {
+        Self {
+            base_color: mat.diffuse_color,
+            metallic: mat.metallic,
+            roughness: mat.roughness,
+            specular: mat.specular,
+            specular_tint: 0.0,
+            sheen: 0.0,
+            sheen_tint: 0.5,
+            clearcoat: 0.0,
+            clearcoat_gloss: 1.0,
+            subsurface: 0.0,
+            anisotropic: 0.0,
+        }
+    }
+}
+
 impl Material for DisneyBSDF {
     fn scatter(&self, ray_in: &Ray, rec: &HitRecord) -> Option<(Color, Ray)> {
         let wo = -ray_in.direction().normalize();
