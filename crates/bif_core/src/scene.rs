@@ -9,14 +9,91 @@ use bif_math::{Aabb, Mat4, Quat, Vec3};
 
 use crate::mesh::Mesh;
 
-/// A material definition (placeholder for Milestone 10+).
-#[derive(Clone, Debug, Default)]
+/// A PBR material definition based on UsdPreviewSurface.
+///
+/// Maps to the UsdPreviewSurface shader specification with support
+/// for both constant values and texture paths.
+#[derive(Clone, Debug)]
 pub struct Material {
-    /// Material name
+    /// Material name (from USD prim path)
     pub name: String,
 
-    /// Base color (RGB, 0-1)
-    pub base_color: Vec3,
+    /// Diffuse/albedo color (RGB, 0-1)
+    pub diffuse_color: Vec3,
+
+    /// Metallic factor (0=dielectric, 1=metal)
+    pub metallic: f32,
+
+    /// Roughness factor (0=smooth, 1=rough)
+    pub roughness: f32,
+
+    /// Emissive color (RGB, for light-emitting surfaces)
+    pub emissive_color: Vec3,
+
+    /// Opacity (0=transparent, 1=opaque)
+    pub opacity: f32,
+
+    /// Specular factor (for non-metallic surfaces)
+    pub specular: f32,
+
+    /// Path to diffuse/albedo texture
+    pub diffuse_texture: Option<String>,
+
+    /// Path to roughness texture
+    pub roughness_texture: Option<String>,
+
+    /// Path to metallic texture
+    pub metallic_texture: Option<String>,
+
+    /// Path to normal map texture
+    pub normal_texture: Option<String>,
+
+    /// Path to emissive texture
+    pub emissive_texture: Option<String>,
+}
+
+impl Default for Material {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            diffuse_color: Vec3::new(0.5, 0.5, 0.5), // Grey default
+            metallic: 0.0,
+            roughness: 0.5,
+            emissive_color: Vec3::ZERO,
+            opacity: 1.0,
+            specular: 0.5,
+            diffuse_texture: None,
+            roughness_texture: None,
+            metallic_texture: None,
+            normal_texture: None,
+            emissive_texture: None,
+        }
+    }
+}
+
+impl Material {
+    /// Create a new material with just a name and diffuse color.
+    pub fn new(name: impl Into<String>, diffuse_color: Vec3) -> Self {
+        Self {
+            name: name.into(),
+            diffuse_color,
+            ..Default::default()
+        }
+    }
+
+    /// Check if this material uses any textures.
+    pub fn has_textures(&self) -> bool {
+        self.diffuse_texture.is_some()
+            || self.roughness_texture.is_some()
+            || self.metallic_texture.is_some()
+            || self.normal_texture.is_some()
+            || self.emissive_texture.is_some()
+    }
+
+    /// Check if this material is emissive.
+    pub fn is_emissive(&self) -> bool {
+        self.emissive_color.length_squared() > 0.0 || self.emissive_texture.is_some()
+    }
 }
 
 /// A prototype is a shared mesh + material that can be instanced.
@@ -145,7 +222,7 @@ impl Instance {
     }
 }
 
-/// A complete scene containing prototypes and instances.
+/// A complete scene containing prototypes, instances, and materials.
 ///
 /// This corresponds to a `UsdStage` in USD terminology.
 #[derive(Clone, Debug, Default)]
@@ -155,6 +232,9 @@ pub struct Scene {
 
     /// Instances referencing prototypes
     pub instances: Vec<Instance>,
+
+    /// Materials used in the scene
+    pub materials: Vec<Arc<Material>>,
 
     /// Scene name (usually from filename)
     pub name: String,
@@ -180,6 +260,23 @@ impl Scene {
     /// Add an instance of a prototype.
     pub fn add_instance(&mut self, prototype_id: usize, transform: Transform) {
         self.instances.push(Instance::new(prototype_id, transform));
+    }
+
+    /// Add a material to the scene and return its ID.
+    pub fn add_material(&mut self, material: Material) -> usize {
+        let id = self.materials.len();
+        self.materials.push(Arc::new(material));
+        id
+    }
+
+    /// Get a material by ID.
+    pub fn get_material(&self, id: usize) -> Option<&Arc<Material>> {
+        self.materials.get(id)
+    }
+
+    /// Get material count.
+    pub fn material_count(&self) -> usize {
+        self.materials.len()
     }
 
     /// Get total triangle count across all instances.
