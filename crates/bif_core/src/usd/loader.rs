@@ -144,10 +144,51 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
         scene.add_instance(proto_id, transform);
     }
 
+    // Load materials
+    let usd_materials = stage.materials().unwrap_or_default();
+    let mut material_map: HashMap<String, usize> = HashMap::new();
+
+    for mat_data in &usd_materials {
+        let material = crate::scene::Material {
+            name: mat_data.path.clone(),
+            diffuse_color: mat_data.diffuse_color,
+            metallic: mat_data.metallic,
+            roughness: mat_data.roughness,
+            emissive_color: mat_data.emissive_color,
+            opacity: mat_data.opacity,
+            specular: mat_data.specular,
+            diffuse_texture: mat_data.diffuse_texture.clone(),
+            roughness_texture: mat_data.roughness_texture.clone(),
+            metallic_texture: mat_data.metallic_texture.clone(),
+            normal_texture: mat_data.normal_texture.clone(),
+            emissive_texture: mat_data.emissive_texture.clone(),
+        };
+        let mat_id = scene.add_material(material);
+        material_map.insert(mat_data.path.clone(), mat_id);
+    }
+
+    // Bind materials to prototypes via mesh material paths
+    for (mesh_idx, mesh_data) in meshes.iter().enumerate() {
+        if let Ok(Some(mat_path)) = stage.get_mesh_material_path(mesh_idx) {
+            if let Some(&mat_id) = material_map.get(&mat_path) {
+                // Find the prototype for this mesh and bind the material
+                if let Some(&proto_id) = prototype_map.get(&mesh_data.path) {
+                    if let Some(proto) = scene.prototypes.get(proto_id) {
+                        // Clone the inner Prototype and update with material
+                        let mut updated_proto: crate::scene::Prototype = (**proto).clone();
+                        updated_proto.material = Some(scene.materials[mat_id].clone());
+                        scene.prototypes[proto_id] = Arc::new(updated_proto);
+                    }
+                }
+            }
+        }
+    }
+
     log::info!(
-        "Loaded {} unique prototypes from {} meshes",
+        "Loaded {} unique prototypes from {} meshes, {} materials",
         scene.prototype_count(),
-        meshes.len()
+        meshes.len(),
+        scene.material_count()
     );
 
     // Load point instancers
