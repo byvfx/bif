@@ -81,6 +81,23 @@ struct UsdBridgePrimInfoRaw {
     child_count: usize,
 }
 
+/// Material data from C API (UsdPreviewSurface)
+#[repr(C)]
+struct UsdBridgeMaterialDataRaw {
+    path: *const std::ffi::c_char,
+    diffuse_color: [f32; 3],
+    metallic: f32,
+    roughness: f32,
+    specular: f32,
+    opacity: f32,
+    emissive_color: [f32; 3],
+    diffuse_texture: *const std::ffi::c_char,
+    roughness_texture: *const std::ffi::c_char,
+    metallic_texture: *const std::ffi::c_char,
+    normal_texture: *const std::ffi::c_char,
+    emissive_texture: *const std::ffi::c_char,
+}
+
 #[link(name = "usd_bridge")]
 extern "C" {
     fn usd_bridge_error_message(error: UsdBridgeErrorCode) -> *const std::ffi::c_char;
@@ -159,6 +176,24 @@ extern "C" {
         stage: *const UsdBridgeStageRaw,
         path: *const std::ffi::c_char,
         out_info: *mut UsdBridgePrimInfoRaw,
+    ) -> UsdBridgeErrorCode;
+
+    // Material APIs
+    fn usd_bridge_get_material_count(
+        stage: *const UsdBridgeStageRaw,
+        out_count: *mut usize,
+    ) -> UsdBridgeErrorCode;
+
+    fn usd_bridge_get_material(
+        stage: *const UsdBridgeStageRaw,
+        index: usize,
+        out_data: *mut UsdBridgeMaterialDataRaw,
+    ) -> UsdBridgeErrorCode;
+
+    fn usd_bridge_get_mesh_material_path(
+        stage: *const UsdBridgeStageRaw,
+        mesh_index: usize,
+        out_path: *mut *const std::ffi::c_char,
     ) -> UsdBridgeErrorCode;
 }
 
@@ -276,6 +311,46 @@ pub struct UsdPrimInfo {
 
     /// Number of direct children
     pub child_count: usize,
+}
+
+/// Material data extracted from USD (UsdPreviewSurface).
+#[derive(Clone, Debug)]
+pub struct UsdMaterialData {
+    /// Material prim path (e.g., "/World/Looks/Material_0")
+    pub path: String,
+
+    /// Diffuse/albedo color (RGB, 0-1)
+    pub diffuse_color: Vec3,
+
+    /// Metallic factor (0=dielectric, 1=metal)
+    pub metallic: f32,
+
+    /// Roughness factor (0=smooth, 1=rough)
+    pub roughness: f32,
+
+    /// Specular factor
+    pub specular: f32,
+
+    /// Opacity (0=transparent, 1=opaque)
+    pub opacity: f32,
+
+    /// Emissive color (RGB)
+    pub emissive_color: Vec3,
+
+    /// Path to diffuse texture (if any)
+    pub diffuse_texture: Option<String>,
+
+    /// Path to roughness texture (if any)
+    pub roughness_texture: Option<String>,
+
+    /// Path to metallic texture (if any)
+    pub metallic_texture: Option<String>,
+
+    /// Path to normal map texture (if any)
+    pub normal_texture: Option<String>,
+
+    /// Path to emissive texture (if any)
+    pub emissive_texture: Option<String>,
 }
 
 // ============================================================================
@@ -553,6 +628,126 @@ impl UsdStage {
             instancers.push(self.get_instancer(i)?);
         }
         Ok(instancers)
+    }
+
+    /// Get the number of materials in the stage.
+    pub fn material_count(&self) -> UsdBridgeResult<usize> {
+        let mut count: usize = 0;
+        let result = unsafe { usd_bridge_get_material_count(self.raw, &mut count) };
+
+        if result != UsdBridgeErrorCode::Success {
+            return Err(result.into());
+        }
+
+        Ok(count)
+    }
+
+    /// Get material data by index.
+    pub fn get_material(&self, index: usize) -> UsdBridgeResult<UsdMaterialData> {
+        let mut raw_data = UsdBridgeMaterialDataRaw {
+            path: ptr::null(),
+            diffuse_color: [0.5, 0.5, 0.5],
+            metallic: 0.0,
+            roughness: 0.5,
+            specular: 0.5,
+            opacity: 1.0,
+            emissive_color: [0.0, 0.0, 0.0],
+            diffuse_texture: ptr::null(),
+            roughness_texture: ptr::null(),
+            metallic_texture: ptr::null(),
+            normal_texture: ptr::null(),
+            emissive_texture: ptr::null(),
+        };
+
+        let result = unsafe { usd_bridge_get_material(self.raw, index, &mut raw_data) };
+
+        if result != UsdBridgeErrorCode::Success {
+            return Err(match result {
+                UsdBridgeErrorCode::InvalidPrim => {
+                    UsdBridgeError::InvalidPrim(format!("material index {}", index))
+                }
+                other => other.into(),
+            });
+        }
+
+        // Convert path
+        let path = unsafe {
+            if raw_data.path.is_null() {
+                String::new()
+            } else {
+                CStr::from_ptr(raw_data.path).to_string_lossy().into_owned()
+            }
+        };
+
+        // Helper to convert optional texture path
+        let texture_path = |ptr: *const std::ffi::c_char| -> Option<String> {
+            if ptr.is_null() {
+                None
+            } else {
+                let s = unsafe { CStr::from_ptr(ptr).to_string_lossy().into_owned() };
+                if s.is_empty() { None } else { Some(s) }
+            }
+        };
+
+        Ok(UsdMaterialData {
+            path,
+            diffuse_color: Vec3::new(
+                raw_data.diffuse_color[0],
+                raw_data.diffuse_color[1],
+                raw_data.diffuse_color[2],
+            ),
+            metallic: raw_data.metallic,
+            roughness: raw_data.roughness,
+            specular: raw_data.specular,
+            opacity: raw_data.opacity,
+            emissive_color: Vec3::new(
+                raw_data.emissive_color[0],
+                raw_data.emissive_color[1],
+                raw_data.emissive_color[2],
+            ),
+            diffuse_texture: texture_path(raw_data.diffuse_texture),
+            roughness_texture: texture_path(raw_data.roughness_texture),
+            metallic_texture: texture_path(raw_data.metallic_texture),
+            normal_texture: texture_path(raw_data.normal_texture),
+            emissive_texture: texture_path(raw_data.emissive_texture),
+        })
+    }
+
+    /// Get the material path bound to a mesh.
+    pub fn get_mesh_material_path(&self, mesh_index: usize) -> UsdBridgeResult<Option<String>> {
+        let mut path_ptr: *const std::ffi::c_char = ptr::null();
+        let result =
+            unsafe { usd_bridge_get_mesh_material_path(self.raw, mesh_index, &mut path_ptr) };
+
+        if result != UsdBridgeErrorCode::Success {
+            return Err(match result {
+                UsdBridgeErrorCode::InvalidPrim => {
+                    UsdBridgeError::InvalidPrim(format!("mesh index {}", mesh_index))
+                }
+                other => other.into(),
+            });
+        }
+
+        if path_ptr.is_null() {
+            return Ok(None);
+        }
+
+        let path = unsafe { CStr::from_ptr(path_ptr).to_string_lossy().into_owned() };
+        if path.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(path))
+        }
+    }
+
+    /// Get all materials in the stage.
+    pub fn materials(&self) -> UsdBridgeResult<Vec<UsdMaterialData>> {
+        let count = self.material_count()?;
+        let mut materials = Vec::with_capacity(count);
+        for i in 0..count {
+            materials.push(self.get_material(i)?);
+        }
+        Ok(materials)
     }
 
     /// Export the stage to a file.
