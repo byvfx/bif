@@ -9,7 +9,9 @@
 #include <pxr/usd/usdGeom/mesh.h>
 #include <pxr/usd/usdGeom/pointInstancer.h>
 #include <pxr/usd/usdGeom/xformCache.h>
+#include <pxr/usd/usdGeom/primvarsAPI.h>
 #include <pxr/base/gf/matrix4f.h>
+#include <pxr/base/gf/vec2f.h>
 #include <pxr/base/gf/vec3f.h>
 #include <pxr/base/gf/quath.h>
 #include <pxr/base/vt/array.h>
@@ -30,6 +32,7 @@ struct CachedMesh {
     std::vector<float> vertices;
     std::vector<uint32_t> indices;
     std::vector<float> normals;
+    std::vector<float> uvs;  // u,v pairs from primvars:st
     GfMatrix4d transform;
 };
 
@@ -198,6 +201,20 @@ static void cache_stage_data(UsdBridgeStage* bridge) {
                     cached.normals.push_back(n[0]);
                     cached.normals.push_back(n[1]);
                     cached.normals.push_back(n[2]);
+                }
+            }
+
+            // Get UV coordinates from primvars:st (optional)
+            UsdGeomPrimvarsAPI primvarsAPI(mesh);
+            UsdGeomPrimvar stPrimvar = primvarsAPI.GetPrimvar(TfToken("st"));
+            if (stPrimvar) {
+                VtArray<GfVec2f> uvs;
+                if (stPrimvar.Get(&uvs, timeCode)) {
+                    cached.uvs.reserve(uvs.size() * 2);
+                    for (const auto& uv : uvs) {
+                        cached.uvs.push_back(uv[0]);
+                        cached.uvs.push_back(uv[1]);
+                    }
                 }
             }
 
@@ -379,6 +396,8 @@ UsdBridgeError usd_bridge_get_mesh(
     out_data->index_count = mesh.indices.size();
     out_data->normals = mesh.normals.empty() ? nullptr : mesh.normals.data();
     out_data->normal_count = mesh.normals.size() / 3;
+    out_data->uvs = mesh.uvs.empty() ? nullptr : mesh.uvs.data();
+    out_data->uv_count = mesh.uvs.size() / 2;
 
     // Copy transform
     float mat_data[16];

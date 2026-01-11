@@ -108,6 +108,10 @@ typedef struct UsdBridgeMeshData {
     const float* normals;
     size_t normal_count;
 
+    /// UV coordinates (optional, may be NULL - u, v pairs from primvars:st)
+    const float* uvs;
+    size_t uv_count;
+
     /// World transform (4x4 column-major matrix)
     float transform[16];
 } UsdBridgeMeshData;

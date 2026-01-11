@@ -19,6 +19,9 @@ pub struct Mesh {
     /// Vertex normals (optional - will be computed if not provided)
     pub normals: Option<Vec<Vec3>>,
 
+    /// UV coordinates (optional - one [u, v] per vertex)
+    pub uvs: Option<Vec<[f32; 2]>>,
+
     /// Triangle indices (every 3 indices form a triangle)
     pub indices: Vec<u32>,
 
@@ -36,6 +39,24 @@ impl Mesh {
         Self {
             positions,
             normals,
+            uvs: None,
+            indices,
+            bounds,
+        }
+    }
+
+    /// Create a new mesh with UV coordinates.
+    pub fn new_with_uvs(
+        positions: Vec<Vec3>,
+        indices: Vec<u32>,
+        normals: Option<Vec<Vec3>>,
+        uvs: Option<Vec<[f32; 2]>>,
+    ) -> Self {
+        let bounds = Self::compute_bounds(&positions);
+        Self {
+            positions,
+            normals,
+            uvs,
             indices,
             bounds,
         }
@@ -110,6 +131,11 @@ impl Mesh {
     /// Check if the mesh has normals.
     pub fn has_normals(&self) -> bool {
         self.normals.is_some()
+    }
+
+    /// Check if the mesh has UV coordinates.
+    pub fn has_uvs(&self) -> bool {
+        self.uvs.is_some()
     }
 
     /// Ensure the mesh has normals, computing them if necessary.

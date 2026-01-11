@@ -13,15 +13,17 @@ struct VertexInput {
     @location(0) position: vec3<f32>,
     @location(1) normal: vec3<f32>,
     @location(2) color: vec3<f32>,
-    @location(3) model_matrix_0: vec4<f32>,
-    @location(4) model_matrix_1: vec4<f32>,
-    @location(5) model_matrix_2: vec4<f32>,
-    @location(6) model_matrix_3: vec4<f32>,
+    @location(3) uv: vec2<f32>,
+    @location(4) model_matrix_0: vec4<f32>,
+    @location(5) model_matrix_1: vec4<f32>,
+    @location(6) model_matrix_2: vec4<f32>,
+    @location(7) model_matrix_3: vec4<f32>,
 }
 
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
     @location(0) normal_vs: vec3<f32>,  // View-space normal for headlight
+    @location(1) uv: vec2<f32>,         // UV coordinates for texturing
 }
 
 @vertex
@@ -33,15 +35,18 @@ fn vs_main(in: VertexInput) -> VertexOutput {
         in.model_matrix_2,
         in.model_matrix_3,
     );
-    
+
     var out: VertexOutput;
     let world_position = model_matrix * vec4<f32>(in.position, 1.0);
     out.clip_position = camera.view_proj * world_position;
-    
+
     // Transform normal to world space, then to view space for headlight
     let world_normal = normalize((model_matrix * vec4<f32>(in.normal, 0.0)).xyz);
     out.normal_vs = normalize((camera.view * vec4<f32>(world_normal, 0.0)).xyz);
-    
+
+    // Pass through UV coordinates
+    out.uv = in.uv;
+
     return out;
 }
 
