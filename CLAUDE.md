@@ -16,7 +16,7 @@ You Create a new DCC that is inspired by Clarisse / Houdini, focused on VFX scen
 
 - **Status:** Milestones 0-12 complete (math, viewport, instancing, USD text parser, Embree)
 - **Current:** Milestone 13 - USD C++ Integration (USDC binary, references)
-- **Next:** Materials (M14) → Qt UI (M15)
+- **Next:** Materials (M15)
 - **Goal:** Load Houdini USD → instance massively → render → export USD
 - **Timeline:** Side project, 10-20 hrs/week
 
