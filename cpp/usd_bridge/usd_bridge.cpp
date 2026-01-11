@@ -10,6 +10,9 @@
 #include <pxr/usd/usdGeom/pointInstancer.h>
 #include <pxr/usd/usdGeom/xformCache.h>
 #include <pxr/usd/usdGeom/primvarsAPI.h>
+#include <pxr/usd/usdShade/material.h>
+#include <pxr/usd/usdShade/materialBindingAPI.h>
+#include <pxr/usd/usdShade/shader.h>
 #include <pxr/base/gf/matrix4f.h>
 #include <pxr/base/gf/vec2f.h>
 #include <pxr/base/gf/vec3f.h>
@@ -56,23 +59,45 @@ struct CachedPrimInfo {
     std::vector<const char*> child_path_ptrs;  // For C API
 };
 
+/// Cached material data for FFI transfer (UsdPreviewSurface)
+struct CachedMaterial {
+    std::string path;
+    float diffuse_color[3];
+    float metallic;
+    float roughness;
+    float specular;
+    float opacity;
+    float emissive_color[3];
+    std::string diffuse_texture;
+    std::string roughness_texture;
+    std::string metallic_texture;
+    std::string normal_texture;
+    std::string emissive_texture;
+    std::string material_path_for_mesh;  // Per-mesh material binding
+};
+
 /// Internal stage representation
 struct UsdBridgeStage {
     UsdStageRefPtr stage;
     std::vector<CachedMesh> meshes;
     std::vector<CachedInstancer> instancers;
+    std::vector<CachedMaterial> materials;
+    std::vector<std::string> mesh_material_paths;  // Material path per mesh
     std::vector<CachedPrimInfo> all_prims;  // All prims in traversal order
     std::vector<std::string> root_paths;    // Direct children of pseudo-root
     std::vector<const char*> root_path_ptrs;
     bool cached;
     bool prims_cached;
+    bool materials_cached;
 
-    UsdBridgeStage() : cached(false), prims_cached(false) {}
-    
+    UsdBridgeStage() : cached(false), prims_cached(false), materials_cached(false) {}
+
     ~UsdBridgeStage() {
         // Clear cached data to ensure proper cleanup
         meshes.clear();
         instancers.clear();
+        materials.clear();
+        mesh_material_paths.clear();
         all_prims.clear();
         root_paths.clear();
         root_path_ptrs.clear();
@@ -272,6 +297,192 @@ static void cache_stage_data(UsdBridgeStage* bridge) {
     bridge->cached = true;
 }
 
+/// Helper to extract a texture path from a shader input connection
+static std::string get_texture_path(const UsdShadeInput& input) {
+    if (!input) return "";
+
+    // Check for a connection to a texture reader
+    SdfPathVector connections;
+    input.GetRawConnectedSourcePaths(&connections);
+
+    for (const auto& conn_path : connections) {
+        // The connection target is usually something like /Material/Shader.outputs:rgb
+        // We need to find the shader prim and get its file attribute
+        SdfPath prim_path = conn_path.GetPrimPath();
+        UsdPrim shader_prim = input.GetPrim().GetStage()->GetPrimAtPath(prim_path);
+        if (!shader_prim) continue;
+
+        UsdShadeShader shader(shader_prim);
+        if (!shader) continue;
+
+        // Check if this is a UsdUVTexture
+        TfToken shader_id;
+        shader.GetIdAttr().Get(&shader_id);
+        if (shader_id == TfToken("UsdUVTexture")) {
+            // Get the file input
+            UsdShadeInput file_input = shader.GetInput(TfToken("file"));
+            if (file_input) {
+                SdfAssetPath asset_path;
+                if (file_input.Get(&asset_path)) {
+                    return asset_path.GetResolvedPath().empty()
+                        ? asset_path.GetAssetPath()
+                        : asset_path.GetResolvedPath();
+                }
+            }
+        }
+    }
+    return "";
+}
+
+/// Cache all material data from the stage
+static void cache_material_data(UsdBridgeStage* bridge) {
+    if (bridge->materials_cached) return;
+
+    bridge->materials.clear();
+
+    // Find all UsdShadeMaterial prims
+    for (const UsdPrim& prim : bridge->stage->Traverse()) {
+        if (!prim.IsA<UsdShadeMaterial>()) continue;
+
+        UsdShadeMaterial material(prim);
+        CachedMaterial cached;
+        cached.path = prim.GetPath().GetString();
+
+        // Initialize defaults
+        cached.diffuse_color[0] = 0.5f;
+        cached.diffuse_color[1] = 0.5f;
+        cached.diffuse_color[2] = 0.5f;
+        cached.metallic = 0.0f;
+        cached.roughness = 0.5f;
+        cached.specular = 0.5f;
+        cached.opacity = 1.0f;
+        cached.emissive_color[0] = 0.0f;
+        cached.emissive_color[1] = 0.0f;
+        cached.emissive_color[2] = 0.0f;
+
+        // Get the surface shader output
+        UsdShadeOutput surface_output = material.GetSurfaceOutput();
+        if (!surface_output) {
+            bridge->materials.push_back(std::move(cached));
+            continue;
+        }
+
+        // Find connected shader
+        SdfPathVector connections;
+        surface_output.GetRawConnectedSourcePaths(&connections);
+        if (connections.empty()) {
+            bridge->materials.push_back(std::move(cached));
+            continue;
+        }
+
+        SdfPath shader_path = connections[0].GetPrimPath();
+        UsdPrim shader_prim = bridge->stage->GetPrimAtPath(shader_path);
+        if (!shader_prim) {
+            bridge->materials.push_back(std::move(cached));
+            continue;
+        }
+
+        UsdShadeShader shader(shader_prim);
+        if (!shader) {
+            bridge->materials.push_back(std::move(cached));
+            continue;
+        }
+
+        // Check if it's UsdPreviewSurface
+        TfToken shader_id;
+        shader.GetIdAttr().Get(&shader_id);
+        if (shader_id != TfToken("UsdPreviewSurface")) {
+            bridge->materials.push_back(std::move(cached));
+            continue;
+        }
+
+        // Extract UsdPreviewSurface parameters
+        UsdShadeInput input;
+
+        // Diffuse color
+        input = shader.GetInput(TfToken("diffuseColor"));
+        if (input) {
+            GfVec3f color;
+            if (input.Get(&color)) {
+                cached.diffuse_color[0] = color[0];
+                cached.diffuse_color[1] = color[1];
+                cached.diffuse_color[2] = color[2];
+            }
+            cached.diffuse_texture = get_texture_path(input);
+        }
+
+        // Metallic
+        input = shader.GetInput(TfToken("metallic"));
+        if (input) {
+            input.Get(&cached.metallic);
+            cached.metallic_texture = get_texture_path(input);
+        }
+
+        // Roughness
+        input = shader.GetInput(TfToken("roughness"));
+        if (input) {
+            input.Get(&cached.roughness);
+            cached.roughness_texture = get_texture_path(input);
+        }
+
+        // Specular (ior in UsdPreviewSurface, but we use specular for simplicity)
+        input = shader.GetInput(TfToken("specularColor"));
+        if (input) {
+            GfVec3f spec;
+            if (input.Get(&spec)) {
+                cached.specular = (spec[0] + spec[1] + spec[2]) / 3.0f;
+            }
+        }
+
+        // Opacity
+        input = shader.GetInput(TfToken("opacity"));
+        if (input) {
+            input.Get(&cached.opacity);
+        }
+
+        // Emissive color
+        input = shader.GetInput(TfToken("emissiveColor"));
+        if (input) {
+            GfVec3f emissive;
+            if (input.Get(&emissive)) {
+                cached.emissive_color[0] = emissive[0];
+                cached.emissive_color[1] = emissive[1];
+                cached.emissive_color[2] = emissive[2];
+            }
+            cached.emissive_texture = get_texture_path(input);
+        }
+
+        // Normal map
+        input = shader.GetInput(TfToken("normal"));
+        if (input) {
+            cached.normal_texture = get_texture_path(input);
+        }
+
+        bridge->materials.push_back(std::move(cached));
+    }
+
+    // Also collect mesh-to-material bindings
+    bridge->mesh_material_paths.clear();
+    for (const auto& mesh : bridge->meshes) {
+        UsdPrim mesh_prim = bridge->stage->GetPrimAtPath(SdfPath(mesh.path));
+        std::string mat_path;
+
+        if (mesh_prim) {
+            UsdShadeMaterialBindingAPI binding_api(mesh_prim);
+            if (binding_api) {
+                UsdShadeMaterial bound_material = binding_api.ComputeBoundMaterial();
+                if (bound_material) {
+                    mat_path = bound_material.GetPath().GetString();
+                }
+            }
+        }
+
+        bridge->mesh_material_paths.push_back(mat_path);
+    }
+
+    bridge->materials_cached = true;
+}
+
 // ============================================================================
 // C API Implementation
 // ============================================================================
@@ -432,6 +643,79 @@ UsdBridgeError usd_bridge_get_instancer(
     out_data->instance_count = instancer.transforms.size() / 16;
     out_data->proto_indices = instancer.proto_indices.data();
 
+    return USD_BRIDGE_SUCCESS;
+}
+
+UsdBridgeError usd_bridge_get_material_count(
+    const UsdBridgeStage* stage,
+    size_t* out_count
+) {
+    if (!stage || !out_count) {
+        return USD_BRIDGE_ERROR_NULL_POINTER;
+    }
+
+    // Ensure mesh data is cached first (needed for material bindings)
+    cache_stage_data(const_cast<UsdBridgeStage*>(stage));
+    cache_material_data(const_cast<UsdBridgeStage*>(stage));
+
+    *out_count = stage->materials.size();
+    return USD_BRIDGE_SUCCESS;
+}
+
+UsdBridgeError usd_bridge_get_material(
+    const UsdBridgeStage* stage,
+    size_t index,
+    UsdBridgeMaterialData* out_data
+) {
+    if (!stage || !out_data) {
+        return USD_BRIDGE_ERROR_NULL_POINTER;
+    }
+
+    cache_stage_data(const_cast<UsdBridgeStage*>(stage));
+    cache_material_data(const_cast<UsdBridgeStage*>(stage));
+
+    if (index >= stage->materials.size()) {
+        return USD_BRIDGE_ERROR_INVALID_PRIM;
+    }
+
+    const CachedMaterial& mat = stage->materials[index];
+    out_data->path = mat.path.c_str();
+    out_data->diffuse_color[0] = mat.diffuse_color[0];
+    out_data->diffuse_color[1] = mat.diffuse_color[1];
+    out_data->diffuse_color[2] = mat.diffuse_color[2];
+    out_data->metallic = mat.metallic;
+    out_data->roughness = mat.roughness;
+    out_data->specular = mat.specular;
+    out_data->opacity = mat.opacity;
+    out_data->emissive_color[0] = mat.emissive_color[0];
+    out_data->emissive_color[1] = mat.emissive_color[1];
+    out_data->emissive_color[2] = mat.emissive_color[2];
+    out_data->diffuse_texture = mat.diffuse_texture.empty() ? nullptr : mat.diffuse_texture.c_str();
+    out_data->roughness_texture = mat.roughness_texture.empty() ? nullptr : mat.roughness_texture.c_str();
+    out_data->metallic_texture = mat.metallic_texture.empty() ? nullptr : mat.metallic_texture.c_str();
+    out_data->normal_texture = mat.normal_texture.empty() ? nullptr : mat.normal_texture.c_str();
+    out_data->emissive_texture = mat.emissive_texture.empty() ? nullptr : mat.emissive_texture.c_str();
+
+    return USD_BRIDGE_SUCCESS;
+}
+
+UsdBridgeError usd_bridge_get_mesh_material_path(
+    const UsdBridgeStage* stage,
+    size_t mesh_index,
+    const char** out_path
+) {
+    if (!stage || !out_path) {
+        return USD_BRIDGE_ERROR_NULL_POINTER;
+    }
+
+    cache_stage_data(const_cast<UsdBridgeStage*>(stage));
+    cache_material_data(const_cast<UsdBridgeStage*>(stage));
+
+    if (mesh_index >= stage->mesh_material_paths.size()) {
+        return USD_BRIDGE_ERROR_INVALID_PRIM;
+    }
+
+    *out_path = stage->mesh_material_paths[mesh_index].c_str();
     return USD_BRIDGE_SUCCESS;
 }
 

@@ -164,6 +164,77 @@ UsdBridgeError usd_bridge_get_instancer(
 );
 
 // ============================================================================
+// Material Data Extraction (UsdPreviewSurface)
+// ============================================================================
+
+/// Material data structure for FFI transfer (UsdPreviewSurface)
+typedef struct UsdBridgeMaterialData {
+    /// Material prim path (e.g., "/World/Looks/Material_0")
+    const char* path;
+
+    /// Diffuse/albedo color (RGB, 0-1)
+    float diffuse_color[3];
+
+    /// Metallic factor (0=dielectric, 1=metal)
+    float metallic;
+
+    /// Roughness factor (0=smooth, 1=rough)
+    float roughness;
+
+    /// Specular factor (for non-metallic surfaces)
+    float specular;
+
+    /// Opacity (0=transparent, 1=opaque)
+    float opacity;
+
+    /// Emissive color (RGB)
+    float emissive_color[3];
+
+    /// Texture paths (NULL if not used)
+    const char* diffuse_texture;
+    const char* roughness_texture;
+    const char* metallic_texture;
+    const char* normal_texture;
+    const char* emissive_texture;
+} UsdBridgeMaterialData;
+
+/// Get the number of materials in the stage.
+///
+/// @param stage Stage handle
+/// @param out_count Pointer to receive material count
+/// @return USD_BRIDGE_SUCCESS on success
+UsdBridgeError usd_bridge_get_material_count(
+    const UsdBridgeStage* stage,
+    size_t* out_count
+);
+
+/// Get material data by index.
+/// The returned data is owned by the stage and valid until stage is closed.
+///
+/// @param stage Stage handle
+/// @param index Material index (0 to material_count-1)
+/// @param out_data Pointer to receive material data
+/// @return USD_BRIDGE_SUCCESS on success
+UsdBridgeError usd_bridge_get_material(
+    const UsdBridgeStage* stage,
+    size_t index,
+    UsdBridgeMaterialData* out_data
+);
+
+/// Get the material path bound to a mesh.
+/// Returns empty string if no material is bound.
+///
+/// @param stage Stage handle
+/// @param mesh_index Mesh index
+/// @param out_path Pointer to receive material path (owned by stage)
+/// @return USD_BRIDGE_SUCCESS on success
+UsdBridgeError usd_bridge_get_mesh_material_path(
+    const UsdBridgeStage* stage,
+    size_t mesh_index,
+    const char** out_path
+);
+
+// ============================================================================
 // Export Functions
 // ============================================================================
 
