@@ -16,8 +16,8 @@ use bif_core::usd::UsdStage;
 
 // Re-export bif_renderer types for Ivar integration
 use bif_renderer::{
-    generate_buckets, render_bucket, Bucket, BucketResult, BvhNode, Color, DisneyBSDF,
-    EmbreeScene, Hittable, ImageBuffer, RenderConfig, DEFAULT_BUCKET_SIZE,
+    generate_buckets, render_bucket, Bucket, BucketResult, BvhNode, Color, DisneyBSDF, EmbreeScene,
+    Hittable, ImageBuffer, RenderConfig, DEFAULT_BUCKET_SIZE,
 };
 
 // Scene browser and property inspector modules
@@ -620,6 +620,35 @@ impl CameraUniform {
     }
 }
 
+/// Material uniform data for GPU (PBR properties)
+#[repr(C)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+struct MaterialUniform {
+    diffuse_color: [f32; 4],      // RGB + padding
+    metallic_roughness: [f32; 4], // metallic, roughness, specular, padding
+}
+
+impl MaterialUniform {
+    fn new() -> Self {
+        Self {
+            diffuse_color: [0.5, 0.5, 0.5, 1.0],      // Grey default
+            metallic_roughness: [0.0, 0.5, 0.5, 0.0], // dielectric, medium rough
+        }
+    }
+
+    fn from_material(mat: &bif_core::Material) -> Self {
+        Self {
+            diffuse_color: [
+                mat.diffuse_color.x,
+                mat.diffuse_color.y,
+                mat.diffuse_color.z,
+                1.0,
+            ],
+            metallic_roughness: [mat.metallic, mat.roughness, mat.specular, 0.0],
+        }
+    }
+}
+
 /// Gnomon uniform data for GPU (camera rotation only)
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
@@ -785,6 +814,9 @@ pub struct Renderer {
     camera_uniform: CameraUniform,
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
+    material_uniform: MaterialUniform,
+    material_buffer: wgpu::Buffer,
+    material_bind_group: wgpu::BindGroup,
     mesh_bounds_min: Vec3,
     mesh_bounds_max: Vec3,
     depth_texture: wgpu::Texture,
@@ -1179,6 +1211,40 @@ impl Renderer {
             }],
         });
 
+        // Create material uniform buffer
+        let material_uniform = MaterialUniform::new();
+        let material_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Material Buffer"),
+            contents: bytemuck::cast_slice(&[material_uniform]),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+
+        // Create bind group layout for material
+        let material_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Material Bind Group Layout"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+            });
+
+        // Create bind group for material
+        let material_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Material Bind Group"),
+            layout: &material_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: material_buffer.as_entire_binding(),
+            }],
+        });
+
         // Create shader module
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Basic Shader"),
@@ -1188,7 +1254,7 @@ impl Renderer {
         // Create render pipeline
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Render Pipeline Layout"),
-            bind_group_layouts: &[&camera_bind_group_layout],
+            bind_group_layouts: &[&camera_bind_group_layout, &material_bind_group_layout],
             push_constant_ranges: &[],
         });
 
@@ -1455,6 +1521,9 @@ impl Renderer {
             camera_uniform,
             camera_buffer,
             camera_bind_group,
+            material_uniform,
+            material_buffer,
+            material_bind_group,
             mesh_bounds_min: mesh_data.bounds_min,
             mesh_bounds_max: mesh_data.bounds_max,
             depth_texture,
@@ -1682,6 +1751,40 @@ impl Renderer {
             }],
         });
 
+        // Create material uniform buffer (use scene material)
+        let material_uniform = MaterialUniform::from_material(&scene_material);
+        let material_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Material Buffer"),
+            contents: bytemuck::cast_slice(&[material_uniform]),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+
+        // Create bind group layout for material
+        let material_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Material Bind Group Layout"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+            });
+
+        // Create bind group for material
+        let material_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Material Bind Group"),
+            layout: &material_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: material_buffer.as_entire_binding(),
+            }],
+        });
+
         // Create shader module
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Basic Shader"),
@@ -1691,7 +1794,7 @@ impl Renderer {
         // Create render pipeline
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Render Pipeline Layout"),
-            bind_group_layouts: &[&camera_bind_group_layout],
+            bind_group_layouts: &[&camera_bind_group_layout, &material_bind_group_layout],
             push_constant_ranges: &[],
         });
 
@@ -1978,6 +2081,9 @@ impl Renderer {
             camera_uniform,
             camera_buffer,
             camera_bind_group,
+            material_uniform,
+            material_buffer,
+            material_bind_group,
             mesh_bounds_min: mesh_data.bounds_min,
             mesh_bounds_max: mesh_data.bounds_max,
             depth_texture,
@@ -2138,7 +2244,9 @@ impl Renderer {
             // Calculate distance for sorting
             let instance_center = aabb.center();
             let distance_sq = (instance_center - camera_pos).length_squared();
-            self.culling_scratch.visible_with_distance.push((distance_sq, idx));
+            self.culling_scratch
+                .visible_with_distance
+                .push((distance_sq, idx));
         }
 
         // Calculate how many instances fit in polygon budget
@@ -2359,7 +2467,16 @@ impl Renderer {
         self.mesh_bounds_max = mesh_data.bounds_max;
         self.mesh_data = mesh_data;
         self.instance_transforms = instance_transforms;
-        self.scene_material = scene_material;
+        self.scene_material = scene_material.clone();
+
+        // Update material uniform buffer for viewport PBR
+        self.material_uniform = MaterialUniform::from_material(&scene_material);
+        self.queue.write_buffer(
+            &self.material_buffer,
+            0,
+            bytemuck::cast_slice(&[self.material_uniform]),
+        );
+
         self.instance_aabbs = instance_aabbs;
         self.prototype_aabb = prototype_aabb;
         self.triangles_per_instance = self.num_indices / 3;
@@ -2518,11 +2635,9 @@ impl Renderer {
             );
 
             // Try to create Embree scene first, fall back to CPU BVH if unavailable
-            let world = if let Some(embree_scene) = EmbreeScene::try_new(
-                &triangle_vertices,
-                transforms.clone(),
-                disney_mat,
-            ) {
+            let world = if let Some(embree_scene) =
+                EmbreeScene::try_new(&triangle_vertices, transforms.clone(), disney_mat)
+            {
                 log::info!("Using Embree for hardware-accelerated ray tracing");
                 // Wrap Embree scene in a BVH node (BVH contains just 1 object)
                 let objects: Vec<Box<dyn Hittable + Send + Sync>> = vec![Box::new(embree_scene)];
@@ -3163,6 +3278,7 @@ impl Renderer {
                     );
                     render_pass.set_pipeline(&self.pipeline);
                     render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
+                    render_pass.set_bind_group(1, &self.material_bind_group, &[]);
                     render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
                     render_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
                     render_pass
@@ -3175,10 +3291,12 @@ impl Renderer {
 
                     // Draw far instances as LOD box proxies (from same buffer, offset by near count)
                     if self.lod_box_instance_count > 0 {
-                        let far_byte_offset =
-                            (self.visible_instance_count as usize * std::mem::size_of::<InstanceData>()) as u64;
+                        let far_byte_offset = (self.visible_instance_count as usize
+                            * std::mem::size_of::<InstanceData>())
+                            as u64;
                         render_pass.set_vertex_buffer(0, self.lod_box_vertex_buffer.slice(..));
-                        render_pass.set_vertex_buffer(1, self.instance_buffer.slice(far_byte_offset..));
+                        render_pass
+                            .set_vertex_buffer(1, self.instance_buffer.slice(far_byte_offset..));
                         render_pass.set_index_buffer(
                             self.lod_box_index_buffer.slice(..),
                             wgpu::IndexFormat::Uint32,
