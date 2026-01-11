@@ -183,13 +183,13 @@ impl Material for DiffuseLight {
 
 /// Reflect a vector about a normal.
 #[inline]
-fn reflect(v: Vec3, n: Vec3) -> Vec3 {
+pub fn reflect(v: Vec3, n: Vec3) -> Vec3 {
     v - 2.0 * v.dot(n) * n
 }
 
 /// Refract a vector through a surface.
 #[inline]
-fn refract(uv: Vec3, n: Vec3, etai_over_etat: f32) -> Vec3 {
+pub fn refract(uv: Vec3, n: Vec3, etai_over_etat: f32) -> Vec3 {
     let cos_theta = (-uv).dot(n).min(1.0);
     let r_out_perp = etai_over_etat * (uv + cos_theta * n);
     let r_out_parallel = -(1.0 - r_out_perp.length_squared()).abs().sqrt() * n;
@@ -197,7 +197,7 @@ fn refract(uv: Vec3, n: Vec3, etai_over_etat: f32) -> Vec3 {
 }
 
 /// Generate a random unit vector on the unit sphere.
-fn random_unit_vector() -> Vec3 {
+pub fn random_unit_vector() -> Vec3 {
     // Use rejection sampling for uniform distribution on sphere
     loop {
         let v = Vec3::new(
@@ -209,5 +209,15 @@ fn random_unit_vector() -> Vec3 {
         if len_sq > 1e-6 && len_sq <= 1.0 {
             return v / len_sq.sqrt();
         }
+    }
+}
+
+/// Generate a random vector in the hemisphere around a normal.
+pub fn random_in_hemisphere(normal: Vec3) -> Vec3 {
+    let unit = random_unit_vector();
+    if unit.dot(normal) > 0.0 {
+        unit
+    } else {
+        -unit
     }
 }
