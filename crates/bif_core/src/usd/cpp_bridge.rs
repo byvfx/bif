@@ -685,7 +685,11 @@ impl UsdStage {
                 None
             } else {
                 let s = unsafe { CStr::from_ptr(ptr).to_string_lossy().into_owned() };
-                if s.is_empty() { None } else { Some(s) }
+                if s.is_empty() {
+                    None
+                } else {
+                    Some(s)
+                }
             }
         };
 

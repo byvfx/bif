@@ -9,6 +9,7 @@ repository.workspace = true
 [dependencies]
 bif_math = { path = "../bif_math" }
 glam = { workspace = true }
+image = "0.24"
 log = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }
