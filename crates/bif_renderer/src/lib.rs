@@ -8,6 +8,7 @@
 mod bucket;
 mod bvh;
 mod camera;
+pub mod disney;
 mod embree;
 mod hittable;
 mod instanced_geometry;
@@ -20,6 +21,7 @@ mod triangle;
 pub use bucket::{generate_buckets, render_bucket, Bucket, BucketResult, DEFAULT_BUCKET_SIZE};
 pub use bvh::BvhNode;
 pub use camera::Camera;
+pub use disney::DisneyBSDF;
 pub use embree::EmbreeScene;
 pub use hittable::{HitRecord, Hittable, HittableList};
 pub use instanced_geometry::InstancedGeometry;
