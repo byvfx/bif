@@ -1,7 +1,7 @@
 # Session Handoff - January 11, 2026
 
-**Last Updated:** Milestone 15 Phases 1-4 Complete
-**Next Milestone:** 15 (Materials/MaterialX) - Phases 5-9
+**Last Updated:** Milestone 15 Complete
+**Next Milestone:** 16 (Viewport PBR + Textures)
 **Project:** BIF - VFX Scene Assembler & Renderer
 
 ---
@@ -10,16 +10,16 @@
 
 | Status | Details |
 |--------|---------|
-| ✅ Complete | Milestones 0-14 + M15 Phases 1-4 |
-| 🎯 Next | M15 Phases 5-9 (Textures, Disney BSDF) |
-| 📦 Tests | 89 passing |
+| ✅ Complete | Milestones 0-15 |
+| 🎯 Next | M16 (Viewport PBR + Textures) |
+| 📦 Tests | 93+ passing |
 | 🚀 Performance | 60 FPS viewport, 10K instances with LOD |
 
 ---
 
 ## Recent Work
 
-### Milestone 15: Materials - Phases 1-4 (Jan 11, 2026)
+### Milestone 15: Materials - Complete (Jan 11, 2026)
 
 **Goal:** Full material pipeline from USD to render
 
@@ -28,31 +28,26 @@
 - ✅ Phase 2: PBR Material struct with texture paths
 - ✅ Phase 3: C++ bridge UsdPreviewSurface extraction
 - ✅ Phase 4: Rust material loading + prototype binding
+- ✅ Phase 5: Texture loading system (image crate)
+- ✅ Phase 6: Disney Principled BSDF implementation
+- ✅ Phase 7: Ivar material integration
 
-**Remaining:**
-- Phase 5: Texture loading system
-- Phase 6: Disney Principled BSDF
-- Phase 7: Ivar material integration
-- Phase 8: Viewport texture support
-- Phase 9: Testing and documentation
+**Deferred to M16:**
+- Phase 8: Viewport texture support (GPU upload + sampling)
 
 **Key Files:**
-- [mesh.rs](crates/bif_core/src/mesh.rs) - UV coordinates
+- [texture.rs](crates/bif_core/src/texture.rs) - Texture loading/caching
+- [disney.rs](crates/bif_renderer/src/disney.rs) - Disney BSDF
 - [scene.rs](crates/bif_core/src/scene.rs) - PBR Material struct
 - [usd_bridge.cpp](cpp/usd_bridge/usd_bridge.cpp) - UsdShade extraction
 - [cpp_bridge.rs](crates/bif_core/src/usd/cpp_bridge.rs) - Material FFI
-- [loader.rs](crates/bif_core/src/usd/loader.rs) - Material loading
-- [lib.rs](crates/bif_viewport/src/lib.rs) - UV in Vertex
 
 ### Milestone 14: GPU Instancing Optimization ✅ (Jan 9-10, 2026)
 
-**Goal:** Enable 10K+ instances with smart LOD system
-
-**Implementation:**
 - Frustum culling via Gribb/Hartmann plane extraction
 - Dynamic instance buffer with COPY_DST
 - Distance-sorted LOD with polygon budget control
-- Performance: pre-allocated buffers, O(n) partitioning, frustum caching
+- 10K+ instances @ 60 FPS
 
 ---
 
@@ -62,7 +57,7 @@
 |--------|-------|
 | Build (dev) | ~5s ✅ |
 | Build (release) | ~2m ✅ |
-| Tests | 89+ passing |
+| Tests | 93+ passing |
 | Vulkan FPS | 60+ (VSync) |
 | Embree BVH | 28ms |
 | Instances | 10K+ with LOD |
@@ -73,15 +68,15 @@ None currently.
 
 ---
 
-## Next Session: Continue M15
+## Next Session: M16 Viewport PBR + Textures
 
-**Materials Pipeline (Phases 5-9)**
+**Goal:** Textured PBR materials in Vulkan viewport
 
-1. Phase 5: Texture loading via `image` crate
-2. Phase 6: Disney Principled BSDF implementation
-3. Phase 7: Ivar material integration
-4. Phase 8: Viewport textured PBR
-5. Phase 9: Testing + update MILESTONES.md/README.md
+1. GPU texture upload (texture array or bindless)
+2. Texture bind group in render pipeline
+3. Update basic.wgsl for texture sampling
+4. Material ID per instance
+5. Basic PBR lighting (metallic/roughness)
 
 ---
 
@@ -93,7 +88,7 @@ cargo build                    # Dev (~5s)
 cargo build --release          # Release (~2m)
 
 # Test
-cargo test                     # All tests
+cargo test                     # All tests (needs USD env)
 
 # Run
 cargo run -p bif_viewer                                 # Empty viewport
@@ -115,26 +110,25 @@ I'm continuing work on BIF (VFX renderer in Rust).
 #file:CLAUDE.md
 #codebase
 
-Status: Milestone 15 Phases 1-4 Complete!
+Status: Milestone 15 Complete!
 
-✅ Milestones 0-14 done
-✅ UV coordinates in mesh pipeline
-✅ PBR Material struct with texture paths
-✅ C++ UsdPreviewSurface material extraction
-✅ Rust material loading + binding
+✅ Milestones 0-15 done
+✅ Disney BSDF in Ivar renderer
+✅ UV coordinates + materials from USD
+✅ 93+ tests passing
 
 Current state:
-- Materials load from USD via C++ bridge
-- Material struct has full PBR properties
-- Materials bound to prototypes
-- UV coordinates flow through pipeline
+- Materials load from USD with PBR properties
+- Disney BSDF renders in Ivar
+- Texture loading system ready (CPU)
+- Viewport textures not yet implemented
 
-Next: M15 Phases 5-9 (Textures, Disney BSDF, Integration)
+Next: M16 (Viewport PBR + Textures)
 
-Let's implement texture loading next.
+Let's implement viewport texture support next.
 ```
 
 ---
 
 **Branch:** main
-**Ready for:** M15 Phase 5 (Texture Loading)
+**Ready for:** M16 (Viewport PBR + Textures)
