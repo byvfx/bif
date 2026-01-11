@@ -381,23 +381,78 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 
 ---
 
-### Milestone 15: Materials (UsdPreviewSurface + MaterialX) 🎯 
+### Milestone 15: Materials (UsdPreviewSurface + Disney BSDF) ✅
 
 - **Goal:** Import USD materials and render with proper shading
 - **Prerequisites:** Milestone 14 complete ✅
-- **Estimated Time:** 15-20 hours
-- **Key Tasks:**
-  - Parse UsdPreviewSurface shader nodes from USD
-  - Parse MaterialX documents (.mtlx)
-  - Map to Ivar materials (Lambertian, Metal, Dielectric)
-  - Add Disney Principled BSDF for production materials
-  - Assign materials to meshes during USD loading
-  - Basic PBR shading in Vulkan viewport
-- **Reference:** Disney Principled BSDF paper, MaterialX specification
+- **Status:** Complete ✅ (Phase 8 - viewport textures deferred to M16)
+- **Completed:** January 11, 2026
+- **Key Achievements:**
+
+  **Phase 1: UV Coordinate Support ✅**
+  - Added `uvs: Option<Vec<[f32; 2]>>` to Mesh struct
+  - Extract primvars:st from USD via C++ bridge
+  - UV attribute in viewport vertex shader (location 3)
+
+  **Phase 2: Material Data Structures ✅**
+  - PBR Material struct: diffuse, metallic, roughness, specular, emissive
+  - Texture paths for all material channels
+  - Material binding to prototypes
+
+  **Phase 3: C++ Bridge Material Extraction ✅**
+  - UsdBridgeMaterialData struct in C++ bridge
+  - Parse UsdPreviewSurface shader network
+  - Extract texture connections from UsdUVTexture nodes
+  - Link usd_usdShade library
+
+  **Phase 4: Rust Material Loading ✅**
+  - UsdMaterialData struct and FFI bindings
+  - Load materials from USD stage
+  - Bind materials to prototypes in Scene
+
+  **Phase 5: Texture Loading System ✅**
+  - TextureCache with image crate
+  - sRGB to linear conversion
+  - Bilinear texture sampling
+  - Base directory path resolution
+
+  **Phase 6: Disney Principled BSDF ✅**
+  - Full Disney BSDF implementation in Ivar
+  - Burley diffuse lobe with subsurface
+  - GGX specular with importance sampling
+  - Metallic/dielectric Fresnel blending
+  - Sheen for cloth-like materials
+
+  **Phase 7: Ivar Material Integration ✅**
+  - From<&bif_core::Material> impl for DisneyBSDF
+  - Scene materials flow to Ivar renderer
+  - EmbreeScene uses loaded materials
+
+  **Phase 8: Viewport Texture Support (Deferred)**
+  - GPU texture upload and sampling (M16)
+  - Basic PBR in Vulkan viewport (M16)
+
+- **Tests:** 93+ passing
+- **Reference:** Disney Principled BSDF paper (2012, 2015)
 
 ---
 
-### Milestone 16: Animation + Motion Blur 🎬
+### Milestone 16: Viewport PBR + Textures 🖼️
+
+- **Goal:** Textured PBR materials in Vulkan viewport
+- **Prerequisites:** Milestone 15 complete ✅
+- **Key Tasks:**
+  - GPU texture upload (texture array or bindless)
+  - Texture bind group in render pipeline
+  - Update basic.wgsl for texture sampling
+  - Material ID per instance
+  - Basic PBR lighting (metallic/roughness)
+  - Normal mapping (stretch goal)
+- **Reference:** wgpu texture examples, LearnOpenGL PBR
+
+---
+
+### Milestone 17: Animation + Motion Blur 🎬
 
 - **Goal:** Load and render time-sampled USD data with motion blur
 - **Estimated Time:** 15-20 hours
@@ -411,7 +466,7 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 
 ---
 
-### Milestone 17: Frame Rendering 🎞️
+### Milestone 18: Frame Rendering 🎞️
 
 - **Goal:** Render animated sequences to disk
 - **Estimated Time:** 8-12 hours
@@ -424,7 +479,7 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 
 ---
 
-### Milestone 18: Scene Interactivity + Keyframing 🎮
+### Milestone 19: Scene Interactivity + Keyframing 🎮
 
 - **Goal:** Clarisse-style object manipulation and animation authoring
 - **Estimated Time:** 15-20 hours
@@ -439,7 +494,7 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 
 ---
 
-### Milestone 19: Point Instancing + Scattering 🌲
+### Milestone 20: Point Instancing + Scattering 🌲
 
 - **Goal:** Massive instancing via point clouds and scattering tools
 - **Estimated Time:** 15-20 hours
@@ -455,7 +510,7 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 
 ---
 
-### Milestone 20: Viewport Performance ⚡
+### Milestone 21: Viewport Performance ⚡
 
 - **Goal:** Clarisse-like lazy loading and GPU optimization
 - **Estimated Time:** 20-30 hours
@@ -578,19 +633,20 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 |---|-----------|-------|--------|
 | 0-13b | Foundation | Math, viewport, USD, Embree, UI | ✅ Complete |
 | 14 | GPU Instancing | 10K+ instances + frustum culling + LOD | ✅ Complete |
-| 15 | Materials | UsdPreviewSurface + MaterialX | 🎯 Next |
-| 16 | Animation | Time-sampled USD + motion blur | Planned |
-| 17 | Frame Rendering | Batch render to disk | Planned |
-| 18 | Interactivity | Move objects + keyframing | Planned |
-| 19 | Point Instancing | Scatter + paint tools | Planned |
-| 20 | Viewport Perf | Vulkan 1.3, lazy loading | Planned |
-| 21 | Renderer Polish | Arnold-inspired techniques | Planned |
-| 22 | Spectral | Wavelength simulation | Planned |
-| 23 | Volumes | OpenVDB + fog/smoke | Planned |
-| 24 | Denoising | Intel OIDN | Planned |
-| 25 | GPU Path Tracing | wgpu compute + ReSTIR | Planned |
-| 26+ | Qt 6 UI | Production interface | Deferred |
-| 27+ | USD Export | Write back to USD | Deferred |
+| 15 | Materials | UsdPreviewSurface + Disney BSDF | ✅ Complete |
+| 16 | Viewport PBR | Textured PBR in Vulkan viewport | 🎯 Next |
+| 17 | Animation | Time-sampled USD + motion blur | Planned |
+| 18 | Frame Rendering | Batch render to disk | Planned |
+| 19 | Interactivity | Move objects + keyframing | Planned |
+| 20 | Point Instancing | Scatter + paint tools | Planned |
+| 21 | Viewport Perf | Vulkan 1.3, lazy loading | Planned |
+| 22 | Renderer Polish | Arnold-inspired techniques | Planned |
+| 23 | Spectral | Wavelength simulation | Planned |
+| 24 | Volumes | OpenVDB + fog/smoke | Planned |
+| 25 | Denoising | Intel OIDN | Planned |
+| 26 | GPU Path Tracing | wgpu compute + ReSTIR | Planned |
+| 27+ | Qt 6 UI | Production interface | Deferred |
+| 28+ | USD Export | Write back to USD | Deferred |
 
 ---
 
@@ -637,7 +693,7 @@ Key papers for Milestone 20 (Renderer Polish):
 
 ---
 
-**Last Updated:** January 9, 2026
-**Status:** Milestone 14 In Progress (Phase 1 Complete ✅)
-**Current:** Frustum culling implemented, testing 10K instances
-**Next:** Phase 2 (Box LOD) or Milestone 15 (Materials)
+**Last Updated:** January 11, 2026
+**Status:** Milestones 0-15 Complete ✅
+**Current:** Disney BSDF materials in Ivar, 93+ tests passing
+**Next:** Milestone 16 (Viewport PBR + Textures)
