@@ -20,9 +20,11 @@
 
 pub mod mesh;
 pub mod scene;
+pub mod texture;
 pub mod usd;
 
 // Re-export commonly used types
 pub use mesh::Mesh;
 pub use scene::{Instance, Material, Prototype, Scene, Transform};
+pub use texture::{Texture, TextureCache, TextureError, TextureResult};
 pub use usd::{load_usd, load_usda, load_usda_from_string};
