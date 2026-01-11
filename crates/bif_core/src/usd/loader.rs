@@ -101,6 +101,7 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
         let vertices = mesh_data.vertices.clone();
         let indices = mesh_data.indices.clone();
         let normals = mesh_data.normals.clone();
+        let uvs = mesh_data.uvs.clone();
 
         // Create a hash key based on mesh geometry
         // Use vertex count, index count, and hash of first few vertices
@@ -128,7 +129,7 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
             existing_id
         } else {
             // New unique mesh, create prototype
-            let mut mesh = Mesh::new(vertices, indices, normals);
+            let mut mesh = Mesh::new_with_uvs(vertices, indices, normals, uvs);
             mesh.ensure_normals();
 
             let mesh_arc = Arc::new(mesh);

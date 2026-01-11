@@ -55,6 +55,8 @@ struct UsdBridgeMeshDataRaw {
     index_count: usize,
     normals: *const f32,
     normal_count: usize,
+    uvs: *const f32,
+    uv_count: usize,
     transform: [f32; 16],
 }
 
@@ -234,6 +236,9 @@ pub struct UsdMeshData {
     /// Vertex normals (optional)
     pub normals: Option<Vec<Vec3>>,
 
+    /// UV coordinates (optional, from primvars:st)
+    pub uvs: Option<Vec<[f32; 2]>>,
+
     /// World transform matrix
     pub transform: Mat4,
 }
@@ -354,6 +359,8 @@ impl UsdStage {
             index_count: 0,
             normals: ptr::null(),
             normal_count: 0,
+            uvs: ptr::null(),
+            uv_count: 0,
             transform: [0.0; 16],
         };
 
@@ -415,6 +422,21 @@ impl UsdStage {
             }
         };
 
+        // Convert UVs (optional)
+        let uvs = unsafe {
+            if raw_data.uvs.is_null() || raw_data.uv_count == 0 {
+                None
+            } else {
+                let slice = std::slice::from_raw_parts(raw_data.uvs, raw_data.uv_count * 2);
+                Some(
+                    slice
+                        .chunks_exact(2)
+                        .map(|chunk| [chunk[0], chunk[1]])
+                        .collect(),
+                )
+            }
+        };
+
         // Convert transform (column-major f32[16] to Mat4)
         let transform = Mat4::from_cols_array(&raw_data.transform);
 
@@ -423,6 +445,7 @@ impl UsdStage {
             vertices,
             indices,
             normals,
+            uvs,
             transform,
         })
     }

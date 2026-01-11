@@ -264,21 +264,25 @@ impl MeshData {
             position: corners[0].into(),
             normal: normals[0].into(),
             color: grey,
+            uv: [0.0, 0.0],
         });
         vertices.push(Vertex {
             position: corners[1].into(),
             normal: normals[0].into(),
             color: grey,
+            uv: [0.0, 0.0],
         });
         vertices.push(Vertex {
             position: corners[2].into(),
             normal: normals[0].into(),
             color: grey,
+            uv: [0.0, 0.0],
         });
         vertices.push(Vertex {
             position: corners[3].into(),
             normal: normals[0].into(),
             color: grey,
+            uv: [0.0, 0.0],
         });
 
         // Back face (z = max) - vertices 5,4,7,6, normal +Z
@@ -286,21 +290,25 @@ impl MeshData {
             position: corners[5].into(),
             normal: normals[1].into(),
             color: grey,
+            uv: [0.0, 0.0],
         });
         vertices.push(Vertex {
             position: corners[4].into(),
             normal: normals[1].into(),
             color: grey,
+            uv: [0.0, 0.0],
         });
         vertices.push(Vertex {
             position: corners[7].into(),
             normal: normals[1].into(),
             color: grey,
+            uv: [0.0, 0.0],
         });
         vertices.push(Vertex {
             position: corners[6].into(),
             normal: normals[1].into(),
             color: grey,
+            uv: [0.0, 0.0],
         });
 
         // Left face (x = min) - vertices 4,0,3,7, normal -X
@@ -308,21 +316,25 @@ impl MeshData {
             position: corners[4].into(),
             normal: normals[2].into(),
             color: grey,
+            uv: [0.0, 0.0],
         });
         vertices.push(Vertex {
             position: corners[0].into(),
             normal: normals[2].into(),
             color: grey,
+            uv: [0.0, 0.0],
         });
         vertices.push(Vertex {
             position: corners[3].into(),
             normal: normals[2].into(),
             color: grey,
+            uv: [0.0, 0.0],
         });
         vertices.push(Vertex {
             position: corners[7].into(),
             normal: normals[2].into(),
             color: grey,
+            uv: [0.0, 0.0],
         });
 
         // Right face (x = max) - vertices 1,5,6,2, normal +X
@@ -330,21 +342,25 @@ impl MeshData {
             position: corners[1].into(),
             normal: normals[3].into(),
             color: grey,
+            uv: [0.0, 0.0],
         });
         vertices.push(Vertex {
             position: corners[5].into(),
             normal: normals[3].into(),
             color: grey,
+            uv: [0.0, 0.0],
         });
         vertices.push(Vertex {
             position: corners[6].into(),
             normal: normals[3].into(),
             color: grey,
+            uv: [0.0, 0.0],
         });
         vertices.push(Vertex {
             position: corners[2].into(),
             normal: normals[3].into(),
             color: grey,
+            uv: [0.0, 0.0],
         });
 
         // Bottom face (y = min) - vertices 4,5,1,0, normal -Y
@@ -352,21 +368,25 @@ impl MeshData {
             position: corners[4].into(),
             normal: normals[4].into(),
             color: grey,
+            uv: [0.0, 0.0],
         });
         vertices.push(Vertex {
             position: corners[5].into(),
             normal: normals[4].into(),
             color: grey,
+            uv: [0.0, 0.0],
         });
         vertices.push(Vertex {
             position: corners[1].into(),
             normal: normals[4].into(),
             color: grey,
+            uv: [0.0, 0.0],
         });
         vertices.push(Vertex {
             position: corners[0].into(),
             normal: normals[4].into(),
             color: grey,
+            uv: [0.0, 0.0],
         });
 
         // Top face (y = max) - vertices 3,2,6,7, normal +Y
@@ -374,21 +394,25 @@ impl MeshData {
             position: corners[3].into(),
             normal: normals[5].into(),
             color: grey,
+            uv: [0.0, 0.0],
         });
         vertices.push(Vertex {
             position: corners[2].into(),
             normal: normals[5].into(),
             color: grey,
+            uv: [0.0, 0.0],
         });
         vertices.push(Vertex {
             position: corners[6].into(),
             normal: normals[5].into(),
             color: grey,
+            uv: [0.0, 0.0],
         });
         vertices.push(Vertex {
             position: corners[7].into(),
             normal: normals[5].into(),
             color: grey,
+            uv: [0.0, 0.0],
         });
 
         // Indices for 6 faces (clockwise winding for USD convention)
@@ -505,6 +529,7 @@ impl MeshData {
                 ],
                 normal,
                 color,
+                uv: [0.0, 0.0], // OBJ loading doesn't have UVs yet
             });
         }
 
@@ -532,6 +557,7 @@ impl MeshData {
 
         // Get normals (should already be computed by loader)
         let default_normal = Vec3::Y;
+        let default_uv = [0.0f32, 0.0f32];
 
         for (i, pos) in mesh.positions.iter().enumerate() {
             let normal = mesh
@@ -540,6 +566,14 @@ impl MeshData {
                 .and_then(|n| n.get(i))
                 .unwrap_or(&default_normal);
 
+            // Get UV coordinates if available
+            let uv = mesh
+                .uvs
+                .as_ref()
+                .and_then(|uvs| uvs.get(i))
+                .copied()
+                .unwrap_or(default_uv);
+
             // Color from normal for visualization
             let color = [normal.x.abs(), normal.y.abs(), normal.z.abs()];
 
@@ -547,6 +581,7 @@ impl MeshData {
                 position: [pos.x, pos.y, pos.z],
                 normal: [normal.x, normal.y, normal.z],
                 color,
+                uv,
             });
         }
 
@@ -674,11 +709,12 @@ pub struct Vertex {
     pub position: [f32; 3],
     pub normal: [f32; 3],
     pub color: [f32; 3],
+    pub uv: [f32; 2],
 }
 
 impl Vertex {
-    const ATTRIBS: [wgpu::VertexAttribute; 3] =
-        wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x3];
+    const ATTRIBS: [wgpu::VertexAttribute; 4] =
+        wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x3, 3 => Float32x2];
 
     pub fn desc<'a>() -> wgpu::VertexBufferLayout<'a> {
         wgpu::VertexBufferLayout {
@@ -698,7 +734,7 @@ pub struct InstanceData {
 
 impl InstanceData {
     const ATTRIBS: [wgpu::VertexAttribute; 4] =
-        wgpu::vertex_attr_array![3 => Float32x4, 4 => Float32x4, 5 => Float32x4, 6 => Float32x4];
+        wgpu::vertex_attr_array![4 => Float32x4, 5 => Float32x4, 6 => Float32x4, 7 => Float32x4];
 
     pub fn desc<'a>() -> wgpu::VertexBufferLayout<'a> {
         wgpu::VertexBufferLayout {
@@ -1203,6 +1239,7 @@ impl Renderer {
             position: [0.0, 0.0, 0.0],
             normal: [0.0, 1.0, 0.0],
             color: [1.0, 1.0, 1.0],
+            uv: [0.0, 0.0],
         };
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Vertex Buffer (Empty)"),
