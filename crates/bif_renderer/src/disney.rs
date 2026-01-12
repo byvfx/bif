@@ -210,7 +210,7 @@ impl DisneyBSDF {
         // Subsurface approximation blend
         let fss90 = l_dot_h * l_dot_h * self.roughness;
         let fss = lerp(1.0, fss90, fl) * lerp(1.0, fss90, fv);
-        let ss = 1.25 * (fss * (1.0 / (n_dot_l + n_dot_v) - 0.5) + 0.5);
+        let ss = 1.25 * (fss * (1.0 / (n_dot_l + n_dot_v).max(0.001) - 0.5) + 0.5);
 
         let diffuse = lerp(fd, ss, self.subsurface);
 
@@ -271,7 +271,7 @@ impl DisneyBSDF {
 
         // Specular BRDF: D * G * F / (4 * NdotL * NdotV)
         // But since we're importance sampling D, we need to adjust the weight
-        let weight = g * l_dot_h / (n_dot_h * n_dot_v);
+        let weight = (g * l_dot_h) / (n_dot_h * n_dot_v * n_dot_l.max(0.001));
 
         let attenuation = f * weight.max(0.0);
         let scattered = Ray::new(hit_point, wi, time);
