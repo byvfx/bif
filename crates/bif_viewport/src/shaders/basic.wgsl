@@ -101,7 +101,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let ambient = base_color * 0.15;
 
     // Final color
-    let lit_color = ambient + dielectric_contrib * 0.7 + specular_color * 0.5;
+    let lit_color = ambient + dielectric_contrib * 0.7 + metal_contrib * 0.5;
 
     return vec4<f32>(lit_color, 1.0);
 }
