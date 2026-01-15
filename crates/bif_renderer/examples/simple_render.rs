@@ -6,6 +6,7 @@ use bif_renderer::{
     color_to_rgba, render, BvhNode, Camera, Color, Dielectric, Hittable, Lambertian, Metal,
     RenderConfig, Sphere, Vec3,
 };
+use rand::SeedableRng;
 
 fn main() {
     println!("BIF Path Tracer - Simple Example");
@@ -43,7 +44,8 @@ fn main() {
 
     // Render
     let start = std::time::Instant::now();
-    let image = render(&camera, &world, &config);
+    let mut rng = rand::rngs::StdRng::seed_from_u64(42);
+    let image = render(&camera, &world, &config, &mut rng);
     let render_time = start.elapsed();
 
     println!("Rendered in {:?}", render_time);

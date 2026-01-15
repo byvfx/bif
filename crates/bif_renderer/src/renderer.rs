@@ -7,6 +7,7 @@
 
 use crate::{Camera, Color, HitRecord, Hittable, Ray};
 use bif_math::Interval;
+use rand::RngCore;
 
 /// Render configuration.
 #[derive(Debug, Clone)]
@@ -36,7 +37,13 @@ impl Default for RenderConfig {
 ///
 /// This is the core path tracing function. It traces the ray through
 /// the scene, bouncing off surfaces and accumulating color.
-pub fn ray_color(ray: &Ray, world: &dyn Hittable, depth: u32, config: &RenderConfig) -> Color {
+pub fn ray_color(
+    ray: &Ray,
+    world: &dyn Hittable,
+    depth: u32,
+    config: &RenderConfig,
+    rng: &mut dyn RngCore,
+) -> Color {
     // If we've exceeded max depth, return black (no light)
     if depth == 0 {
         return Color::ZERO;
@@ -57,11 +64,11 @@ pub fn ray_color(ray: &Ray, world: &dyn Hittable, depth: u32, config: &RenderCon
     let emission = rec.material.emitted(rec.u, rec.v, rec.p);
 
     // Try to scatter the ray
-    match rec.material.scatter(ray, &rec) {
-        Some((attenuation, scattered)) => {
+    match rec.material.scatter(ray, &rec, rng) {
+        Some(result) => {
             // Ray scattered - continue tracing
-            let scattered_color = ray_color(&scattered, world, depth - 1, config);
-            emission + attenuation * scattered_color
+            let scattered_color = ray_color(&result.scattered, world, depth - 1, config, rng);
+            emission + result.attenuation * scattered_color
         }
         None => {
             // Ray was absorbed - just return emission
@@ -111,13 +118,14 @@ pub fn render_pixel(
     x: u32,
     y: u32,
     config: &RenderConfig,
+    rng: &mut dyn RngCore,
 ) -> Color {
     let mut pixel_color = Color::ZERO;
 
     for _ in 0..config.samples_per_pixel {
         // Camera.get_ray already adds random offset for anti-aliasing
-        let ray = camera.get_ray(x, y);
-        pixel_color += ray_color(&ray, world, config.max_depth, config);
+        let ray = camera.get_ray(x, y, rng);
+        pixel_color += ray_color(&ray, world, config.max_depth, config, rng);
     }
 
     // Average the samples
@@ -165,12 +173,17 @@ impl ImageBuffer {
 /// Render the entire scene to an image buffer.
 ///
 /// This is a simple single-threaded renderer for testing.
-pub fn render(camera: &Camera, world: &dyn Hittable, config: &RenderConfig) -> ImageBuffer {
+pub fn render(
+    camera: &Camera,
+    world: &dyn Hittable,
+    config: &RenderConfig,
+    rng: &mut dyn RngCore,
+) -> ImageBuffer {
     let mut image = ImageBuffer::new(camera.image_width, camera.image_height);
 
     for y in 0..camera.image_height {
         for x in 0..camera.image_width {
-            let color = render_pixel(camera, world, x, y, config);
+            let color = render_pixel(camera, world, x, y, config, rng);
             image.set(x, y, color);
         }
     }
@@ -182,6 +195,8 @@ pub fn render(camera: &Camera, world: &dyn Hittable, config: &RenderConfig) -> I
 mod tests {
     use super::*;
     use crate::{BvhNode, Lambertian, Sphere, Vec3};
+    use rand::rngs::StdRng;
+    use rand::SeedableRng;
 
     #[test]
     fn test_sky_gradient() {
@@ -233,8 +248,10 @@ mod tests {
             use_sky_gradient: false,
         };
 
+        let mut rng = StdRng::seed_from_u64(42);
+
         // Render center pixel (should hit the sphere)
-        let color = render_pixel(&camera, &world, 5, 5, &config);
+        let color = render_pixel(&camera, &world, 5, 5, &config, &mut rng);
 
         // Color should not be the background (we hit the sphere)
         // Can't test exact color due to random sampling

@@ -3,9 +3,10 @@
 //! Based on the 2012 Disney paper "Physically Based Shading at Disney"
 //! and the 2015 extension for clearcoat and sheen.
 
-use crate::material::{random_in_hemisphere, reflect, Color};
+use crate::material::{cosine_weighted_hemisphere, gen_f32, reflect, Color, ScatterResult};
 use crate::{hittable::HitRecord, Material, Ray};
 use bif_math::Vec3;
+use rand::RngCore;
 use std::f32::consts::PI;
 
 /// Disney Principled BSDF material.
@@ -35,15 +36,21 @@ pub struct DisneyBSDF {
     pub sheen_tint: f32,
 
     /// Clearcoat: second specular lobe for car paint, lacquered wood
+    /// TODO: Implement clearcoat lobe sampling
+    #[allow(dead_code)]
     pub clearcoat: f32,
 
     /// Clearcoat gloss: 0 = satin, 1 = gloss
+    /// TODO: Implement clearcoat lobe sampling
+    #[allow(dead_code)]
     pub clearcoat_gloss: f32,
 
     /// Subsurface: blend to subsurface approximation
     pub subsurface: f32,
 
     /// Anisotropic: aspect ratio for anisotropic reflection
+    /// TODO: Implement anisotropic GGX sampling
+    #[allow(dead_code)]
     pub anisotropic: f32,
 }
 
@@ -157,7 +164,12 @@ impl From<&bif_core::Material> for DisneyBSDF {
 }
 
 impl Material for DisneyBSDF {
-    fn scatter(&self, ray_in: &Ray, rec: &HitRecord) -> Option<(Color, Ray)> {
+    fn scatter(
+        &self,
+        ray_in: &Ray,
+        rec: &HitRecord,
+        rng: &mut dyn RngCore,
+    ) -> Option<ScatterResult> {
         let wo = -ray_in.direction().normalize();
         let n = rec.normal;
 
@@ -166,14 +178,14 @@ impl Material for DisneyBSDF {
         let specular_weight = 1.0 - diffuse_weight;
 
         let do_diffuse =
-            rand::random::<f32>() < diffuse_weight / (diffuse_weight + specular_weight);
+            gen_f32(rng) < diffuse_weight / (diffuse_weight + specular_weight);
 
         if do_diffuse {
             // Diffuse scattering (Burley diffuse approximation)
-            self.scatter_diffuse(wo, n, rec.p, ray_in.time())
+            self.scatter_diffuse(wo, n, rec.p, ray_in.time(), rng)
         } else {
             // Specular scattering (GGX microfacet)
-            self.scatter_specular(wo, n, rec.p, ray_in.time())
+            self.scatter_specular(wo, n, rec.p, ray_in.time(), rng)
         }
     }
 }
@@ -186,9 +198,10 @@ impl DisneyBSDF {
         n: Vec3,
         hit_point: Vec3,
         time: f32,
-    ) -> Option<(Color, Ray)> {
-        // Sample cosine-weighted hemisphere
-        let wi = random_in_hemisphere(n);
+        rng: &mut dyn RngCore,
+    ) -> Option<ScatterResult> {
+        // Sample cosine-weighted hemisphere (PDF = cos(theta) / PI)
+        let wi = cosine_weighted_hemisphere(n, rng);
 
         // Burley diffuse
         let n_dot_l = n.dot(wi).max(0.0);
@@ -230,7 +243,14 @@ impl DisneyBSDF {
         let attenuation = self.base_color * diffuse / PI + sheen;
         let scattered = Ray::new(hit_point, wi, time);
 
-        Some((attenuation, scattered))
+        // Cosine-weighted hemisphere PDF
+        let pdf = (n_dot_l / PI).max(0.0001);
+
+        Some(ScatterResult {
+            attenuation,
+            scattered,
+            pdf,
+        })
     }
 
     /// Scatter with specular (GGX) lobe.
@@ -240,13 +260,14 @@ impl DisneyBSDF {
         n: Vec3,
         hit_point: Vec3,
         time: f32,
-    ) -> Option<(Color, Ray)> {
+        rng: &mut dyn RngCore,
+    ) -> Option<ScatterResult> {
         // Use GGX importance sampling
         let alpha = self.roughness * self.roughness;
         let alpha = alpha.max(0.001); // Prevent division by zero
 
         // Sample GGX microfacet normal
-        let h = sample_ggx(n, alpha);
+        let h = sample_ggx(n, alpha, rng);
         let wi = reflect(-wo, h);
 
         // Check if scattering direction is valid
@@ -259,8 +280,8 @@ impl DisneyBSDF {
         let n_dot_h = n.dot(h).max(0.0);
         let l_dot_h = wi.dot(h).max(0.0);
 
-        // GGX distribution (computed for reference, cancels in importance sampling)
-        let _d = ggx_d(n_dot_h, alpha);
+        // GGX distribution
+        let d = ggx_d(n_dot_h, alpha);
 
         // Schlick-GGX geometry (Smith)
         let g = smith_g_ggx(n_dot_l, n_dot_v, alpha);
@@ -270,13 +291,21 @@ impl DisneyBSDF {
         let f = schlick_fresnel3(f0, l_dot_h);
 
         // Specular BRDF: D * G * F / (4 * NdotL * NdotV)
-        // But since we're importance sampling D, we need to adjust the weight
-        let weight = (g * l_dot_h) / (n_dot_h * n_dot_v * n_dot_l.max(0.001));
+        // With GGX importance sampling (PDF = D * NdotH / (4 * LdotH)):
+        // weight = BRDF / PDF = G * F * LdotH / (NdotH * NdotV)
+        let weight = (g * l_dot_h) / (n_dot_h * n_dot_v.max(0.001));
 
         let attenuation = f * weight.max(0.0);
         let scattered = Ray::new(hit_point, wi, time);
 
-        Some((attenuation, scattered))
+        // GGX importance sampling PDF: D * n_dot_h / (4 * l_dot_h)
+        let pdf = (d * n_dot_h / (4.0 * l_dot_h)).max(0.0001);
+
+        Some(ScatterResult {
+            attenuation,
+            scattered,
+            pdf,
+        })
     }
 
     /// Compute F0 (Fresnel at normal incidence) based on material parameters.
@@ -356,9 +385,10 @@ fn smith_g_ggx(n_dot_l: f32, n_dot_v: f32, alpha: f32) -> f32 {
 }
 
 /// Sample GGX microfacet normal in world space.
-fn sample_ggx(n: Vec3, alpha: f32) -> Vec3 {
-    let u1: f32 = rand::random();
-    let u2: f32 = rand::random();
+fn sample_ggx(n: Vec3, alpha: f32, rng: &mut dyn RngCore) -> Vec3 {
+    // Clamp to avoid degenerate half vectors at extremes
+    let u1 = gen_f32(rng).clamp(0.0001, 0.9999);
+    let u2 = gen_f32(rng);
 
     // Sample half vector in tangent space
     let theta = (alpha * u1.sqrt() / (1.0 - u1).sqrt()).atan();
