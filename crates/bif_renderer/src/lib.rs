@@ -25,7 +25,10 @@ pub use disney::DisneyBSDF;
 pub use embree::EmbreeScene;
 pub use hittable::{HitRecord, Hittable, HittableList};
 pub use instanced_geometry::InstancedGeometry;
-pub use material::{Color, Dielectric, DiffuseLight, Lambertian, Material, Metal};
+pub use material::{
+    cosine_weighted_hemisphere, gen_f32, random_in_hemisphere, random_unit_vector, Color,
+    Dielectric, DiffuseLight, Lambertian, Material, Metal, ScatterResult,
+};
 pub use ray::Ray;
 pub use renderer::{color_to_rgba, ray_color, render, render_pixel, ImageBuffer, RenderConfig};
 pub use sphere::Sphere;

@@ -1,14 +1,15 @@
 //! Hittable trait and HitRecord for ray-object intersection.
 
-use crate::{Color, Material, Ray};
+use crate::{Material, Ray, ScatterResult};
 use bif_math::{Aabb, Interval, Vec3};
+use rand::RngCore;
 
 /// A dummy material used for HitRecord::default().
 /// Always absorbs light (returns None from scatter).
 struct DummyMaterial;
 
 impl Material for DummyMaterial {
-    fn scatter(&self, _ray_in: &Ray, _rec: &HitRecord) -> Option<(Color, Ray)> {
+    fn scatter(&self, _ray_in: &Ray, _rec: &HitRecord, _rng: &mut dyn RngCore) -> Option<ScatterResult> {
         None
     }
 }

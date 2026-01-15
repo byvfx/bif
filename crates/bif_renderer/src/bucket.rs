@@ -5,6 +5,8 @@
 
 use crate::renderer::render_pixel;
 use crate::{Camera, Color, Hittable, RenderConfig};
+use rand::rngs::StdRng;
+use rand::SeedableRng;
 
 /// A rectangular region of the image to render.
 #[derive(Debug, Clone, Copy)]
@@ -103,19 +105,24 @@ fn sort_spiral(buckets: &mut [Bucket], width: u32, height: u32) {
 /// Render a single bucket to a vector of colors.
 ///
 /// Returns pixels in row-major order within the bucket.
+/// Each bucket has a seeded RNG for deterministic results.
 pub fn render_bucket(
     bucket: &Bucket,
     camera: &Camera,
     world: &dyn Hittable,
     config: &RenderConfig,
 ) -> Vec<Color> {
+    // Create seeded RNG based on bucket position to avoid correlation between adjacent buckets
+    let seed = ((bucket.x as u64) << 32) | (bucket.y as u64) ^ 0xDEAD_BEEF;
+    let mut rng = StdRng::seed_from_u64(seed);
+
     let mut pixels = Vec::with_capacity((bucket.width * bucket.height) as usize);
 
     for local_y in 0..bucket.height {
         for local_x in 0..bucket.width {
             let global_x = bucket.x + local_x;
             let global_y = bucket.y + local_y;
-            let color = render_pixel(camera, world, global_x, global_y, config);
+            let color = render_pixel(camera, world, global_x, global_y, config, &mut rng);
             pixels.push(color);
         }
     }

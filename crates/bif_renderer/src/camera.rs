@@ -1,7 +1,8 @@
 //! Camera for ray generation.
 
-use crate::Ray;
+use crate::{gen_f32, Ray};
 use bif_math::Vec3;
+use rand::RngCore;
 
 /// Camera for generating rays into the scene.
 #[derive(Clone)]
@@ -140,8 +141,8 @@ impl Camera {
     }
 
     /// Generate a ray for pixel (i, j) with random sampling.
-    pub fn get_ray(&self, i: u32, j: u32) -> Ray {
-        let offset = sample_square();
+    pub fn get_ray(&self, i: u32, j: u32, rng: &mut dyn RngCore) -> Ray {
+        let offset = sample_square(rng);
 
         let pixel_sample = self.pixel00_loc
             + ((i as f32) + offset.x) * self.pixel_delta_u
@@ -150,18 +151,18 @@ impl Camera {
         let ray_origin = if self.defocus_angle <= 0.0 {
             self.center
         } else {
-            self.defocus_disk_sample()
+            self.defocus_disk_sample(rng)
         };
 
         let ray_direction = pixel_sample - ray_origin;
-        let ray_time = rand::random::<f32>();
+        let ray_time = gen_f32(rng);
 
         Ray::new(ray_origin, ray_direction, ray_time)
     }
 
     /// Sample a point on the defocus disk.
-    fn defocus_disk_sample(&self) -> Vec3 {
-        let p = random_in_unit_disk();
+    fn defocus_disk_sample(&self, rng: &mut dyn RngCore) -> Vec3 {
+        let p = random_in_unit_disk(rng);
         self.center + p.x * self.defocus_disk_u + p.y * self.defocus_disk_v
     }
 
@@ -178,20 +179,16 @@ impl Default for Camera {
 }
 
 /// Sample a random point in the unit square [-0.5, 0.5] x [-0.5, 0.5].
-fn sample_square() -> Vec3 {
-    Vec3::new(
-        rand::random::<f32>() - 0.5,
-        rand::random::<f32>() - 0.5,
-        0.0,
-    )
+fn sample_square(rng: &mut dyn RngCore) -> Vec3 {
+    Vec3::new(gen_f32(rng) - 0.5, gen_f32(rng) - 0.5, 0.0)
 }
 
 /// Sample a random point in the unit disk.
-fn random_in_unit_disk() -> Vec3 {
+fn random_in_unit_disk(rng: &mut dyn RngCore) -> Vec3 {
     loop {
         let p = Vec3::new(
-            rand::random::<f32>() * 2.0 - 1.0,
-            rand::random::<f32>() * 2.0 - 1.0,
+            gen_f32(rng) * 2.0 - 1.0,
+            gen_f32(rng) * 2.0 - 1.0,
             0.0,
         );
         if p.length_squared() < 1.0 {
@@ -203,6 +200,8 @@ fn random_in_unit_disk() -> Vec3 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rand::rngs::StdRng;
+    use rand::SeedableRng;
 
     #[test]
     fn test_camera_initialize() {
@@ -230,8 +229,10 @@ mod tests {
 
         camera.initialize();
 
+        let mut rng = StdRng::seed_from_u64(42);
+
         // Center ray should point roughly towards -Z
-        let ray = camera.get_ray(50, 50);
+        let ray = camera.get_ray(50, 50, &mut rng);
         assert!(ray.direction().z < 0.0);
     }
 }
