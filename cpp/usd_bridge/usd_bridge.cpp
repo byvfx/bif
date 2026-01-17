@@ -59,7 +59,7 @@ struct CachedPrimInfo {
     std::vector<const char*> child_path_ptrs;  // For C API
 };
 
-/// Cached material data for FFI transfer (UsdPreviewSurface)
+/// Cached material data for FFI transfer (UsdPreviewSurface or MaterialX)
 struct CachedMaterial {
     std::string path;
     float diffuse_color[3];
@@ -74,6 +74,7 @@ struct CachedMaterial {
     std::string normal_texture;
     std::string emissive_texture;
     std::string material_path_for_mesh;  // Per-mesh material binding
+    bool is_materialx;  // True if material is from MaterialX, false for UsdPreviewSurface
 };
 
 /// Internal stage representation
@@ -334,6 +335,53 @@ static std::string get_texture_path(const UsdShadeInput& input) {
     return "";
 }
 
+/// Helper to check if a shader ID is a MaterialX standard_surface
+static bool is_materialx_standard_surface(const TfToken& shader_id) {
+    std::string id_str = shader_id.GetString();
+    // MaterialX standard_surface shaders typically have IDs like:
+    // ND_standard_surface_surfaceshader
+    // ND_standard_surface_to_UsdPreviewSurface (converted)
+    return id_str.find("ND_standard_surface") != std::string::npos ||
+           id_str.find("standard_surface") != std::string::npos;
+}
+
+/// Helper to extract texture path from MaterialX ND_image_* nodes
+static std::string get_materialx_texture_path(const UsdShadeInput& input) {
+    if (!input) return "";
+
+    SdfPathVector connections;
+    input.GetRawConnectedSourcePaths(&connections);
+
+    for (const auto& conn_path : connections) {
+        SdfPath prim_path = conn_path.GetPrimPath();
+        UsdPrim shader_prim = input.GetPrim().GetStage()->GetPrimAtPath(prim_path);
+        if (!shader_prim) continue;
+
+        UsdShadeShader shader(shader_prim);
+        if (!shader) continue;
+
+        TfToken shader_id;
+        shader.GetIdAttr().Get(&shader_id);
+        std::string id_str = shader_id.GetString();
+
+        // Check for MaterialX image nodes: ND_image_color3, ND_image_float, etc.
+        if (id_str.find("ND_image") != std::string::npos ||
+            id_str.find("image") != std::string::npos) {
+            // MaterialX uses "file" attribute for texture path
+            UsdShadeInput file_input = shader.GetInput(TfToken("file"));
+            if (file_input) {
+                SdfAssetPath asset_path;
+                if (file_input.Get(&asset_path)) {
+                    return asset_path.GetResolvedPath().empty()
+                        ? asset_path.GetAssetPath()
+                        : asset_path.GetResolvedPath();
+                }
+            }
+        }
+    }
+    return "";
+}
+
 /// Cache all material data from the stage
 static void cache_material_data(UsdBridgeStage* bridge) {
     if (bridge->materials_cached) return;
@@ -359,6 +407,7 @@ static void cache_material_data(UsdBridgeStage* bridge) {
         cached.emissive_color[0] = 0.0f;
         cached.emissive_color[1] = 0.0f;
         cached.emissive_color[2] = 0.0f;
+        cached.is_materialx = false;
 
         // Get the surface shader output
         UsdShadeOutput surface_output = material.GetSurfaceOutput();
@@ -388,9 +437,92 @@ static void cache_material_data(UsdBridgeStage* bridge) {
             continue;
         }
 
-        // Check if it's UsdPreviewSurface
+        // Get shader ID
         TfToken shader_id;
         shader.GetIdAttr().Get(&shader_id);
+
+        // Check for MaterialX standard_surface first
+        if (is_materialx_standard_surface(shader_id)) {
+            cached.is_materialx = true;
+            UsdShadeInput input;
+
+            // MaterialX standard_surface uses different parameter names:
+            // base_color (not diffuseColor)
+            input = shader.GetInput(TfToken("base_color"));
+            if (input) {
+                GfVec3f color;
+                if (input.Get(&color)) {
+                    cached.diffuse_color[0] = color[0];
+                    cached.diffuse_color[1] = color[1];
+                    cached.diffuse_color[2] = color[2];
+                }
+                cached.diffuse_texture = get_materialx_texture_path(input);
+            }
+
+            // metalness (not metallic)
+            input = shader.GetInput(TfToken("metalness"));
+            if (input) {
+                input.Get(&cached.metallic);
+                cached.metallic_texture = get_materialx_texture_path(input);
+            }
+
+            // specular_roughness (not roughness)
+            input = shader.GetInput(TfToken("specular_roughness"));
+            if (input) {
+                input.Get(&cached.roughness);
+                cached.roughness_texture = get_materialx_texture_path(input);
+            }
+
+            // specular
+            input = shader.GetInput(TfToken("specular"));
+            if (input) {
+                input.Get(&cached.specular);
+            }
+
+            // opacity
+            input = shader.GetInput(TfToken("opacity"));
+            if (input) {
+                GfVec3f opacity_vec;
+                if (input.Get(&opacity_vec)) {
+                    // MaterialX uses vec3 for opacity, take average
+                    cached.opacity = (opacity_vec[0] + opacity_vec[1] + opacity_vec[2]) / 3.0f;
+                } else {
+                    float opacity_scalar;
+                    if (input.Get(&opacity_scalar)) {
+                        cached.opacity = opacity_scalar;
+                    }
+                }
+            }
+
+            // emission_color + emission (multiply for intensity)
+            input = shader.GetInput(TfToken("emission_color"));
+            if (input) {
+                GfVec3f emissive;
+                if (input.Get(&emissive)) {
+                    // Check emission intensity
+                    float emission = 0.0f;
+                    UsdShadeInput emission_input = shader.GetInput(TfToken("emission"));
+                    if (emission_input) {
+                        emission_input.Get(&emission);
+                    }
+                    cached.emissive_color[0] = emissive[0] * emission;
+                    cached.emissive_color[1] = emissive[1] * emission;
+                    cached.emissive_color[2] = emissive[2] * emission;
+                }
+                cached.emissive_texture = get_materialx_texture_path(input);
+            }
+
+            // normal (for normal mapping)
+            input = shader.GetInput(TfToken("normal"));
+            if (input) {
+                cached.normal_texture = get_materialx_texture_path(input);
+            }
+
+            bridge->materials.push_back(std::move(cached));
+            continue;
+        }
+
+        // Fall back to UsdPreviewSurface
         if (shader_id != TfToken("UsdPreviewSurface")) {
             bridge->materials.push_back(std::move(cached));
             continue;
@@ -695,6 +827,7 @@ UsdBridgeError usd_bridge_get_material(
     out_data->metallic_texture = mat.metallic_texture.empty() ? nullptr : mat.metallic_texture.c_str();
     out_data->normal_texture = mat.normal_texture.empty() ? nullptr : mat.normal_texture.c_str();
     out_data->emissive_texture = mat.emissive_texture.empty() ? nullptr : mat.emissive_texture.c_str();
+    out_data->is_materialx = mat.is_materialx ? 1 : 0;
 
     return USD_BRIDGE_SUCCESS;
 }

@@ -147,8 +147,19 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
     // Load materials
     let usd_materials = stage.materials().unwrap_or_default();
     let mut material_map: HashMap<String, usize> = HashMap::new();
+    let mut materialx_count = 0;
 
     for mat_data in &usd_materials {
+        if mat_data.is_materialx {
+            materialx_count += 1;
+            log::debug!(
+                "MaterialX material: {} (diffuse={:?}, metallic={:.2}, roughness={:.2})",
+                mat_data.path,
+                mat_data.diffuse_color,
+                mat_data.metallic,
+                mat_data.roughness
+            );
+        }
         let material = crate::scene::Material {
             name: mat_data.path.clone(),
             diffuse_color: mat_data.diffuse_color,
@@ -165,6 +176,10 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
         };
         let mat_id = scene.add_material(material);
         material_map.insert(mat_data.path.clone(), mat_id);
+    }
+
+    if materialx_count > 0 {
+        log::info!("Loaded {} MaterialX materials", materialx_count);
     }
 
     // Bind materials to prototypes via mesh material paths

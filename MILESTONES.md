@@ -441,44 +441,30 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 
 - **Goal:** Import MaterialX materials from USD and render with proper shading
 - **Prerequisites:** Milestone 15 complete ✅
-- **Status:** Planned
-- **Key Tasks:**
+- **Status:** In Progress (awaiting test asset)
+- **Key Achievements:**
 
-  **Phase 1: MaterialX Detection & Discovery**
-  - Detect MaterialX materials in USD stage (look for `ND_standard_surface_*` shaders)
-  - Log MaterialX shader network structure for debugging
-  - Handle both inline MaterialX and `.mtlx` file references
-  - Commit: "M16-P1: MaterialX material detection"
+  **Phase 1-4: C++ Bridge MaterialX Support ✅**
+  - `is_materialx_standard_surface()` detection for `ND_standard_surface_*` shaders
+  - `get_materialx_texture_path()` for `ND_image_*` texture nodes
+  - Full standard_surface property extraction:
+    - `base_color` → diffuse_color ✅
+    - `metalness` → metallic ✅
+    - `specular_roughness` → roughness ✅
+    - `emission_color` × `emission` → emissive_color ✅
+    - `opacity` (vec3 or scalar) → opacity ✅
+    - `specular` → specular ✅
+  - Automatic fallback: MaterialX → UsdPreviewSurface → default gray
+  - `is_materialx` flag exposed via FFI
 
-  **Phase 2: Standard Surface Parsing**
-  - Parse `ND_standard_surface_surfaceshader` node
-  - Extract core PBR properties:
-    - `base_color` → diffuse_color
-    - `metalness` → metallic
-    - `specular_roughness` → roughness
-    - `emission_color` + `emission` → emissive_color
-    - `opacity` → opacity
-    - `specular` → specular
-  - Map to existing `Material` struct
-  - Commit: "M16-P2: Standard surface property extraction"
+  **Phase 5: Rust FFI Integration ✅**
+  - `UsdMaterialData.is_materialx: bool` field added
+  - Logging when MaterialX materials detected
+  - Materials flow to existing Disney BSDF unchanged
 
-  **Phase 3: Texture Connections**
-  - Parse `ND_image_*` nodes connected to material inputs
-  - Extract texture file paths from `file` attribute
-  - Resolve relative paths using USD resolver
-  - Commit: "M16-P3: MaterialX texture path extraction"
-
-  **Phase 4: C++ Bridge Integration**
-  - Add `usd_bridge_get_materialx_material()` to C++ bridge
-  - Use `UsdMtlx` utilities if available, or parse raw shader network
-  - Handle fallback: MaterialX → UsdPreviewSurface → default
-  - Commit: "M16-P4: C++ bridge MaterialX support"
-
-  **Phase 5: Ivar Integration**
-  - MaterialX materials flow to Disney BSDF
-  - Test with Houdini-exported MaterialX assets
-  - Validate green metallic Lucy renders correctly
-  - Commit: "M16-P5: MaterialX to Ivar Disney BSDF"
+  **Phase 6: Validation (Pending)**
+  - Awaiting Houdini-exported MaterialX test asset
+  - Validate rendering in Ivar
 
 - **Reference:** MaterialX Specification, USD MaterialX Schema
 
@@ -681,7 +667,7 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 | 0-13b | Foundation | Math, viewport, USD, Embree, UI | ✅ Complete |
 | 14 | GPU Instancing | 10K+ instances + frustum culling + LOD | ✅ Complete |
 | 15 | Materials | UsdPreviewSurface + Disney BSDF | ✅ Complete |
-| 16 | MaterialX | MaterialX standard_surface support | 🎯 Next |
+| 16 | MaterialX | MaterialX standard_surface support | 🔄 In Progress |
 | 17 | Viewport PBR | Textured PBR in Vulkan viewport | Planned |
 | 18 | Animation | Time-sampled USD + motion blur | Planned |
 | 19 | Frame Rendering | Batch render to disk | Planned |
@@ -741,7 +727,7 @@ Key papers for Milestone 20 (Renderer Polish):
 
 ---
 
-**Last Updated:** January 11, 2026
-**Status:** Milestones 0-15 Complete ✅
-**Current:** Disney BSDF materials in Ivar, 93+ tests passing
-**Next:** Milestone 16 (MaterialX Support)
+**Last Updated:** January 16, 2026
+**Status:** Milestones 0-15 Complete ✅, M16 In Progress
+**Current:** MaterialX standard_surface parsing implemented, awaiting test asset
+**Next:** Validate M16 with Houdini-exported MaterialX USD
