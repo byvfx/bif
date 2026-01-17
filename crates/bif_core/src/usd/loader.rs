@@ -189,9 +189,13 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
                 // Find the prototype for this mesh and bind the material
                 if let Some(&proto_id) = prototype_map.get(&mesh_data.path) {
                     if let Some(proto) = scene.prototypes.get(proto_id) {
-                        // Clone the inner Prototype and update with material
                         let mut updated_proto: crate::scene::Prototype = (**proto).clone();
-                        updated_proto.material = Some(scene.materials[mat_id].clone());
+                        let mat = &scene.materials[mat_id];
+                        log::debug!(
+                            "Binding {} to prototype {} (diffuse={:?})",
+                            mat.name, proto_id, mat.diffuse_color
+                        );
+                        updated_proto.material = Some(mat.clone());
                         scene.prototypes[proto_id] = Arc::new(updated_proto);
                     }
                 }
