@@ -22,6 +22,7 @@
 #include <vector>
 #include <string>
 #include <memory>
+#include <iostream>
 
 PXR_NAMESPACE_USING_DIRECTIVE
 
@@ -409,7 +410,114 @@ static void cache_material_data(UsdBridgeStage* bridge) {
         cached.emissive_color[2] = 0.0f;
         cached.is_materialx = false;
 
-        // Get the surface shader output
+        // First, try to find MaterialX shader by looking for mtlx:surface output
+        // or by searching material children for mtlxstandard_surface
+        UsdShadeShader mtlx_shader;
+
+        // Check for mtlx:surface output (MaterialX-specific)
+        UsdShadeOutput mtlx_surface = material.GetOutput(TfToken("mtlx:surface"));
+        if (mtlx_surface) {
+            SdfPathVector mtlx_connections;
+            mtlx_surface.GetRawConnectedSourcePaths(&mtlx_connections);
+            if (!mtlx_connections.empty()) {
+                UsdPrim mtlx_prim = bridge->stage->GetPrimAtPath(mtlx_connections[0].GetPrimPath());
+                if (mtlx_prim) {
+                    mtlx_shader = UsdShadeShader(mtlx_prim);
+                }
+            }
+        }
+
+        // If no mtlx:surface, search children for mtlxstandard_surface
+        if (!mtlx_shader) {
+            for (const UsdPrim& child : prim.GetChildren()) {
+                std::string child_name = child.GetName().GetString();
+                if (child_name.find("mtlxstandard_surface") != std::string::npos ||
+                    child_name.find("standard_surface") != std::string::npos) {
+                    UsdShadeShader potential_shader(child);
+                    if (potential_shader) {
+                        mtlx_shader = potential_shader;
+                        break;
+                    }
+                }
+            }
+        }
+
+        // If we found a MaterialX shader, use it
+        if (mtlx_shader) {
+            TfToken mtlx_id;
+            mtlx_shader.GetIdAttr().Get(&mtlx_id);
+
+            cached.is_materialx = true;
+            UsdShadeInput input;
+
+            // MaterialX standard_surface parameter names
+            input = mtlx_shader.GetInput(TfToken("base_color"));
+            if (input) {
+                GfVec3f color;
+                if (input.Get(&color)) {
+                    cached.diffuse_color[0] = color[0];
+                    cached.diffuse_color[1] = color[1];
+                    cached.diffuse_color[2] = color[2];
+                }
+                cached.diffuse_texture = get_materialx_texture_path(input);
+            }
+
+            input = mtlx_shader.GetInput(TfToken("metalness"));
+            if (input) {
+                input.Get(&cached.metallic);
+                cached.metallic_texture = get_materialx_texture_path(input);
+            }
+
+            input = mtlx_shader.GetInput(TfToken("specular_roughness"));
+            if (input) {
+                input.Get(&cached.roughness);
+                cached.roughness_texture = get_materialx_texture_path(input);
+            }
+
+            input = mtlx_shader.GetInput(TfToken("specular"));
+            if (input) {
+                input.Get(&cached.specular);
+            }
+
+            input = mtlx_shader.GetInput(TfToken("opacity"));
+            if (input) {
+                GfVec3f opacity_vec;
+                if (input.Get(&opacity_vec)) {
+                    cached.opacity = (opacity_vec[0] + opacity_vec[1] + opacity_vec[2]) / 3.0f;
+                } else {
+                    float opacity_scalar;
+                    if (input.Get(&opacity_scalar)) {
+                        cached.opacity = opacity_scalar;
+                    }
+                }
+            }
+
+            input = mtlx_shader.GetInput(TfToken("emission_color"));
+            if (input) {
+                GfVec3f emissive;
+                if (input.Get(&emissive)) {
+                    float emission = 0.0f;
+                    UsdShadeInput emission_input = mtlx_shader.GetInput(TfToken("emission"));
+                    if (emission_input) {
+                        emission_input.Get(&emission);
+                    }
+                    cached.emissive_color[0] = emissive[0] * emission;
+                    cached.emissive_color[1] = emissive[1] * emission;
+                    cached.emissive_color[2] = emissive[2] * emission;
+                }
+                cached.emissive_texture = get_materialx_texture_path(input);
+            }
+
+            input = mtlx_shader.GetInput(TfToken("normal"));
+            if (input) {
+                cached.normal_texture = get_materialx_texture_path(input);
+            }
+
+            bridge->materials.push_back(std::move(cached));
+            continue;
+        }
+
+        // Fall back to standard surface output for UsdPreviewSurface
         UsdShadeOutput surface_output = material.GetSurfaceOutput();
         if (!surface_output) {
             bridge->materials.push_back(std::move(cached));
@@ -594,18 +702,23 @@ static void cache_material_data(UsdBridgeStage* bridge) {
     }
 
     // Also collect mesh-to-material bindings
+    // Note: Material bindings can be inherited from parent prims
     bridge->mesh_material_paths.clear();
     for (const auto& mesh : bridge->meshes) {
         UsdPrim mesh_prim = bridge->stage->GetPrimAtPath(SdfPath(mesh.path));
         std::string mat_path;
 
         if (mesh_prim) {
-            UsdShadeMaterialBindingAPI binding_api(mesh_prim);
-            if (binding_api) {
+            // Walk up the hierarchy to find material binding
+            UsdPrim current = mesh_prim;
+            while (current) {
+                UsdShadeMaterialBindingAPI binding_api(current);
                 UsdShadeMaterial bound_material = binding_api.ComputeBoundMaterial();
                 if (bound_material) {
                     mat_path = bound_material.GetPath().GetString();
+                    break;
                 }
+                current = current.GetParent();
             }
         }
 
