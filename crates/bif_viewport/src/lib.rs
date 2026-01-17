@@ -844,6 +844,11 @@ pub struct Renderer {
     num_triangles: u32,
     pub gnomon_size: u32,
 
+    // UI layout metrics (for viewport-safe overlays)
+    ui_left_panel_width: f32,
+    ui_right_panel_width: f32,
+    ui_bottom_panel_height: f32,
+
     // Ivar CPU path tracer state
     pub ivar_state: IvarState,
     ivar_texture: wgpu::Texture,
@@ -1542,6 +1547,9 @@ impl Renderer {
             fps_update_timer: 0.0,
             num_triangles,
             gnomon_size: 80,
+            ui_left_panel_width: 0.0,
+            ui_right_panel_width: 0.0,
+            ui_bottom_panel_height: 0.0,
             ivar_state: IvarState::default(),
             ivar_texture,
             ivar_texture_view,
@@ -2102,6 +2110,9 @@ impl Renderer {
             fps_update_timer: 0.0,
             num_triangles,
             gnomon_size: 80,
+            ui_left_panel_width: 0.0,
+            ui_right_panel_width: 0.0,
+            ui_bottom_panel_height: 0.0,
             ivar_state: IvarState::default(),
             ivar_texture,
             ivar_texture_view,
@@ -2879,6 +2890,9 @@ impl Renderer {
         let size = self.size;
         let mut gnomon_size = self.gnomon_size;
         let mut lod_max_polys = self.lod_max_polys;
+        let mut left_panel_width = self.ui_left_panel_width;
+        let mut right_panel_width = self.ui_right_panel_width;
+        let mut bottom_panel_height = self.ui_bottom_panel_height;
 
         // Ivar state for UI
         let mut render_mode = self.ivar_state.mode;
@@ -2891,10 +2905,13 @@ impl Renderer {
 
         let full_output = self.egui_ctx.run(raw_input, |ctx| {
             if !show_ui {
+                left_panel_width = 0.0;
+                right_panel_width = 0.0;
+                bottom_panel_height = 0.0;
                 return;
             }
 
-            egui::SidePanel::left("stats_panel")
+            let stats_panel = egui::SidePanel::left("stats_panel")
                 .default_width(300.0)
                 .show(ctx, |ui| {
                     ui.heading("BIF Viewer");
@@ -3116,16 +3133,18 @@ impl Renderer {
                         }
                     });
                 });
+            left_panel_width = stats_panel.response.rect.width();
 
             // Property Inspector (right panel)
-            egui::SidePanel::right("property_panel")
+            let property_panel = egui::SidePanel::right("property_panel")
                 .default_width(280.0)
                 .show(ctx, |ui| {
                     render_property_inspector(ui, self.selected_prim_properties.as_ref());
                 });
+            right_panel_width = property_panel.response.rect.width();
 
             // Node Graph (bottom panel)
-            egui::TopBottomPanel::bottom("node_graph_panel")
+            let node_graph_panel = egui::TopBottomPanel::bottom("node_graph_panel")
                 .default_height(200.0)
                 .resizable(true)
                 .show(ctx, |ui| {
@@ -3141,10 +3160,14 @@ impl Renderer {
                         });
                     }
                 });
+            bottom_panel_height = node_graph_panel.response.rect.height();
         });
 
         // Update gnomon size from UI
         self.gnomon_size = gnomon_size;
+        self.ui_left_panel_width = left_panel_width;
+        self.ui_right_panel_width = right_panel_width;
+        self.ui_bottom_panel_height = bottom_panel_height;
 
         // Update LOD max polys from UI
         self.lod_max_polys = lod_max_polys;
@@ -3326,21 +3349,36 @@ impl Renderer {
                         occlusion_query_set: None,
                     });
 
-                    // Set viewport to bottom-right corner
+                    // Set viewport to bottom-right corner of the active viewport
                     let gnomon_size = self.gnomon_size as f32;
-                    gnomon_pass.set_viewport(
-                        (self.size.0 as f32) - gnomon_size, // x (right side)
-                        (self.size.1 as f32) - gnomon_size, // y (bottom, wgpu uses top-left origin)
-                        gnomon_size,                        // width
-                        gnomon_size,                        // height
-                        0.0,                                // min_depth
-                        1.0,                                // max_depth
-                    );
+                    let padding = 16.0;
+                    let viewport_left = self.ui_left_panel_width;
+                    let viewport_right = (self.size.0 as f32) - self.ui_right_panel_width;
+                    let viewport_bottom = (self.size.1 as f32) - self.ui_bottom_panel_height;
+                    let viewport_width = (viewport_right - viewport_left).max(0.0);
+                    let viewport_height = viewport_bottom.max(0.0);
 
-                    gnomon_pass.set_pipeline(&self.gnomon_pipeline);
-                    gnomon_pass.set_bind_group(0, &self.gnomon_bind_group, &[]);
-                    gnomon_pass.set_vertex_buffer(0, self.gnomon_vertex_buffer.slice(..));
-                    gnomon_pass.draw(0..6, 0..1); // 6 vertices (3 lines)
+                    if viewport_width >= gnomon_size + padding
+                        && viewport_height >= gnomon_size + padding
+                    {
+                        let x = (viewport_right - gnomon_size - padding)
+                            .max(viewport_left + padding);
+                        let y = (viewport_bottom - gnomon_size - padding).max(padding);
+
+                        gnomon_pass.set_viewport(
+                            x,           // x (right side)
+                            y,           // y (bottom, wgpu uses top-left origin)
+                            gnomon_size, // width
+                            gnomon_size, // height
+                            0.0,         // min_depth
+                            1.0,         // max_depth
+                        );
+
+                        gnomon_pass.set_pipeline(&self.gnomon_pipeline);
+                        gnomon_pass.set_bind_group(0, &self.gnomon_bind_group, &[]);
+                        gnomon_pass.set_vertex_buffer(0, self.gnomon_vertex_buffer.slice(..));
+                        gnomon_pass.draw(0..6, 0..1); // 6 vertices (3 lines)
+                    }
                 }
             }
             RenderMode::Ivar => {
