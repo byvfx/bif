@@ -1,7 +1,7 @@
-# Session Handoff - January 11, 2026
+# Session Handoff - January 17, 2026
 
-**Last Updated:** Milestone 15 Complete (All Phases)
-**Next Milestone:** 16 (Viewport Textures + Per-Instance Materials)
+**Last Updated:** Milestone 16 Complete (MaterialX Support)
+**Next Milestone:** 17 (Viewport PBR + Textures)
 **Project:** BIF - VFX Scene Assembler & Renderer
 
 ---
@@ -10,42 +10,40 @@
 
 | Status | Details |
 |--------|---------|
-| ✅ Complete | Milestones 0-15 |
-| 🎯 Next | M16 (GPU Textures, Per-Instance Materials) |
-| 📦 Tests | 93+ passing |
-| 🚀 Performance | 60 FPS viewport, 10K instances with LOD |
+| Complete | Milestones 0-16 |
+| Next | M17 (GPU Textures, Per-Instance Materials) |
+| Tests | 93+ passing |
+| Performance | 60 FPS viewport, 10K instances with LOD |
 
 ---
 
 ## Recent Work
 
+### Milestone 16: MaterialX Support - Complete (Jan 17, 2026)
+
+**Goal:** Import MaterialX materials from USD
+
+**Key Achievements:**
+- MaterialX standard_surface shader detection (Houdini exports)
+- Property extraction: base_color, metalness, specular_roughness, opacity, emission
+- Parent hierarchy traversal for inherited material bindings
+- Automatic fallback: MaterialX → UsdPreviewSurface → default gray
+- Tested with Houdini-exported Lucy model (orange material)
+
+**Key Files:**
+- [usd_bridge.cpp](cpp/usd_bridge/usd_bridge.cpp) - MaterialX shader parsing
+- [cpp_bridge.rs](crates/bif_core/src/usd/cpp_bridge.rs) - FFI bindings
+
 ### Milestone 15: Materials - Complete (Jan 11, 2026)
 
 **Goal:** Full material pipeline from USD to render
 
-**All Phases Complete:**
-- ✅ Phase 1: UV coordinates throughout pipeline
-- ✅ Phase 2: PBR Material struct with texture paths
-- ✅ Phase 3: C++ bridge UsdPreviewSurface extraction
-- ✅ Phase 4: Rust material loading + prototype binding
-- ✅ Phase 5: Texture loading system (image crate)
-- ✅ Phase 6: Disney Principled BSDF implementation
-- ✅ Phase 7: Ivar material integration
-- ✅ Phase 8: Viewport PBR material support
-
-**Key Files:**
-- [texture.rs](crates/bif_core/src/texture.rs) - Texture loading/caching
-- [disney.rs](crates/bif_renderer/src/disney.rs) - Disney BSDF
-- [scene.rs](crates/bif_core/src/scene.rs) - PBR Material struct
-- [basic.wgsl](crates/bif_viewport/src/shaders/basic.wgsl) - PBR viewport shader
-- [usd_bridge.cpp](cpp/usd_bridge/usd_bridge.cpp) - UsdShade extraction
-
-### Milestone 14: GPU Instancing Optimization ✅ (Jan 9-10, 2026)
-
-- Frustum culling via Gribb/Hartmann plane extraction
-- Dynamic instance buffer with COPY_DST
-- Distance-sorted LOD with polygon budget control
-- 10K+ instances @ 60 FPS
+- UV coordinates throughout pipeline
+- PBR Material struct with texture paths
+- C++ bridge UsdPreviewSurface extraction
+- Texture loading system (CPU)
+- Disney Principled BSDF in Ivar
+- Viewport PBR material support
 
 ---
 
@@ -53,8 +51,8 @@
 
 | Metric | Value |
 |--------|-------|
-| Build (dev) | ~5s ✅ |
-| Build (release) | ~2m ✅ |
+| Build (dev) | ~5s |
+| Build (release) | ~2m |
 | Tests | 93+ passing |
 | Vulkan FPS | 60+ (VSync) |
 | Embree BVH | 28ms |
@@ -64,23 +62,29 @@
 
 **Ivar (CPU Path Tracer):**
 - Disney Principled BSDF with Burley diffuse + GGX specular
-- Materials loaded from USD flow to renderer
+- Materials from USD (UsdPreviewSurface + MaterialX)
 - Metallic/roughness/specular properties
 
 **Viewport (GPU):**
 - PBR-inspired shading (Fresnel, metallic blend)
-- Material properties from USD (diffuse, metallic, roughness)
+- Material properties from USD
 - UVs pass through to fragment shader
+
+**USD Import:**
+- USDA (pure Rust) + USDC (C++ bridge)
+- UsdPreviewSurface materials
+- MaterialX standard_surface materials
+- File references resolved
 
 ### Known Limitations
 
-- Textures load to CPU but aren't sampled yet (M16)
-- Single material per scene (per-instance materials in M16)
+- Textures load to CPU but aren't sampled yet (M17)
+- Single material per scene (per-instance materials in M17)
 - No normal mapping yet
 
 ---
 
-## Next Session: M16 Viewport Textures
+## Next Session: M17 Viewport Textures
 
 **Goal:** Full textured PBR in Vulkan viewport
 
@@ -103,7 +107,7 @@ cargo test                     # All tests (needs USD env)
 
 # Run
 cargo run -p bif_viewer                                 # Empty viewport
-cargo run -p bif_viewer -- --usda assets/lucy_100.usda  # Load USD
+cargo run -p bif_viewer -- --usd assets/lucy/usd/assets/lucy/lucy.usd  # Load USD
 
 # USD environment (required for USDC/references)
 . .\setup_usd_env.ps1
@@ -121,21 +125,21 @@ I'm continuing work on BIF (VFX renderer in Rust).
 #file:CLAUDE.md
 #codebase
 
-Status: Milestone 15 Complete!
+Status: Milestone 16 Complete!
 
-✅ Milestones 0-15 done
-✅ Disney BSDF in Ivar renderer
-✅ Viewport PBR shading (metallic/roughness)
-✅ UV coordinates + materials from USD
-✅ 93+ tests passing
+Milestones 0-16 done
+Disney BSDF in Ivar renderer
+MaterialX + UsdPreviewSurface support
+Viewport PBR shading
+93+ tests passing
 
 Current state:
-- Materials load from USD with PBR properties
+- Materials from USD (MaterialX + UsdPreviewSurface)
 - Disney BSDF renders in Ivar
-- Viewport shows PBR shading from material properties
+- Viewport shows PBR shading
 - Texture loading ready (CPU), not yet on GPU
 
-Next: M16 (GPU Textures, Per-Instance Materials)
+Next: M17 (GPU Textures, Per-Instance Materials)
 
 Let's implement GPU texture sampling next.
 ```
@@ -143,4 +147,4 @@ Let's implement GPU texture sampling next.
 ---
 
 **Branch:** main
-**Ready for:** M16 (Viewport Textures)
+**Ready for:** M17 (Viewport Textures)

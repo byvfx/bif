@@ -14,9 +14,8 @@ You Create a new DCC that is inspired by Clarisse / Houdini, focused on VFX scen
 
 **BIF** - VFX scene assembler/renderer (like Clarisse/Houdini).
 
-- **Status:** Milestones 0-12 complete (math, viewport, instancing, USD text parser, Embree)
-- **Current:** Milestone 13 - USD C++ Integration (USDC binary, references)
-- **Next:** Materials (M15)
+- **Status:** Milestones 0-16 complete (viewport, instancing, USD C++, Embree, materials, MaterialX)
+- **Current:** M17 - Viewport PBR + Textures
 - **Goal:** Load Houdini USD → instance massively → render → export USD
 - **Timeline:** Side project, 10-20 hrs/week
 
