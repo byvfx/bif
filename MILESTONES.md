@@ -437,34 +437,35 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 
 ---
 
-### Milestone 16: MaterialX Support 🎨
+### Milestone 16: MaterialX Support ✅
 
 - **Goal:** Import MaterialX materials from USD and render with proper shading
+- **Completed:** 2025-01-17
 - **Prerequisites:** Milestone 15 complete ✅
-- **Status:** In Progress (awaiting test asset)
 - **Key Achievements:**
 
-  **Phase 1-4: C++ Bridge MaterialX Support ✅**
+  **C++ Bridge MaterialX Support**
   - `is_materialx_standard_surface()` detection for `ND_standard_surface_*` shaders
   - `get_materialx_texture_path()` for `ND_image_*` texture nodes
   - Full standard_surface property extraction:
-    - `base_color` → diffuse_color ✅
-    - `metalness` → metallic ✅
-    - `specular_roughness` → roughness ✅
-    - `emission_color` × `emission` → emissive_color ✅
-    - `opacity` (vec3 or scalar) → opacity ✅
-    - `specular` → specular ✅
+    - `base_color` → diffuse_color
+    - `metalness` → metallic
+    - `specular_roughness` → roughness
+    - `emission_color` × `emission` → emissive_color
+    - `opacity` (vec3 or scalar) → opacity
+    - `specular` → specular
   - Automatic fallback: MaterialX → UsdPreviewSurface → default gray
   - `is_materialx` flag exposed via FFI
+  - Houdini USD support: search child prims for `mtlxstandard_surface`
+  - Parent hierarchy traversal for inherited material bindings
 
-  **Phase 5: Rust FFI Integration ✅**
+  **Rust FFI Integration**
   - `UsdMaterialData.is_materialx: bool` field added
-  - Logging when MaterialX materials detected
   - Materials flow to existing Disney BSDF unchanged
 
-  **Phase 6: Validation (Pending)**
-  - Awaiting Houdini-exported MaterialX test asset
-  - Validate rendering in Ivar
+  **Validation**
+  - Tested with Houdini-exported MaterialX USD (Lucy model)
+  - Orange material (base_color=1,0.5,0) renders correctly in Ivar
 
 - **Reference:** MaterialX Specification, USD MaterialX Schema
 
