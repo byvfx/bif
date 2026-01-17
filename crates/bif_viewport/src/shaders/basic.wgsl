@@ -30,7 +30,7 @@ struct VertexInput {
 
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
-    @location(0) normal_ws: vec3<f32>,   // World-space normal
+    @location(0) normal_vs: vec3<f32>,   // View-space normal
     @location(1) uv: vec2<f32>,          // UV coordinates for texturing
     @location(2) view_dir: vec3<f32>,    // View direction for specular
 }
@@ -49,8 +49,9 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     let world_position = model_matrix * vec4<f32>(in.position, 1.0);
     out.clip_position = camera.view_proj * world_position;
 
-    // Transform normal to world space
-    out.normal_ws = normalize((model_matrix * vec4<f32>(in.normal, 0.0)).xyz);
+    // Transform normal to view space for camera-locked headlight
+    let normal_ws = (model_matrix * vec4<f32>(in.normal, 0.0)).xyz;
+    out.normal_vs = normalize((camera.view * vec4<f32>(normal_ws, 0.0)).xyz);
 
     // Pass through UV coordinates
     out.uv = in.uv;
@@ -72,7 +73,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let specular = material.metallic_roughness.z;
 
     // Simple PBR-inspired shading
-    let normal = normalize(in.normal_ws);
+    let normal = normalize(in.normal_vs);
     let view_dir = normalize(in.view_dir);
 
     // Headlight: light from camera direction
