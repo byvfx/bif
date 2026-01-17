@@ -167,7 +167,7 @@ UsdBridgeError usd_bridge_get_instancer(
 // Material Data Extraction (UsdPreviewSurface)
 // ============================================================================
 
-/// Material data structure for FFI transfer (UsdPreviewSurface)
+/// Material data structure for FFI transfer (UsdPreviewSurface or MaterialX)
 typedef struct UsdBridgeMaterialData {
     /// Material prim path (e.g., "/World/Looks/Material_0")
     const char* path;
@@ -196,6 +196,9 @@ typedef struct UsdBridgeMaterialData {
     const char* metallic_texture;
     const char* normal_texture;
     const char* emissive_texture;
+
+    /// Material source type (1=MaterialX, 0=UsdPreviewSurface or default)
+    int is_materialx;
 } UsdBridgeMaterialData;
 
 /// Get the number of materials in the stage.

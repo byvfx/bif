@@ -81,7 +81,7 @@ struct UsdBridgePrimInfoRaw {
     child_count: usize,
 }
 
-/// Material data from C API (UsdPreviewSurface)
+/// Material data from C API (UsdPreviewSurface or MaterialX)
 #[repr(C)]
 struct UsdBridgeMaterialDataRaw {
     path: *const std::ffi::c_char,
@@ -96,6 +96,7 @@ struct UsdBridgeMaterialDataRaw {
     metallic_texture: *const std::ffi::c_char,
     normal_texture: *const std::ffi::c_char,
     emissive_texture: *const std::ffi::c_char,
+    is_materialx: i32,
 }
 
 #[link(name = "usd_bridge")]
@@ -313,7 +314,7 @@ pub struct UsdPrimInfo {
     pub child_count: usize,
 }
 
-/// Material data extracted from USD (UsdPreviewSurface).
+/// Material data extracted from USD (UsdPreviewSurface or MaterialX).
 #[derive(Clone, Debug)]
 pub struct UsdMaterialData {
     /// Material prim path (e.g., "/World/Looks/Material_0")
@@ -351,6 +352,9 @@ pub struct UsdMaterialData {
 
     /// Path to emissive texture (if any)
     pub emissive_texture: Option<String>,
+
+    /// True if material is from MaterialX, false for UsdPreviewSurface
+    pub is_materialx: bool,
 }
 
 // ============================================================================
@@ -657,6 +661,7 @@ impl UsdStage {
             metallic_texture: ptr::null(),
             normal_texture: ptr::null(),
             emissive_texture: ptr::null(),
+            is_materialx: 0,
         };
 
         let result = unsafe { usd_bridge_get_material(self.raw, index, &mut raw_data) };
@@ -714,6 +719,7 @@ impl UsdStage {
             metallic_texture: texture_path(raw_data.metallic_texture),
             normal_texture: texture_path(raw_data.normal_texture),
             emissive_texture: texture_path(raw_data.emissive_texture),
+            is_materialx: raw_data.is_materialx != 0,
         })
     }
 
