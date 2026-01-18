@@ -1402,8 +1402,12 @@ impl Renderer {
             .request_device(
                 &wgpu::DeviceDescriptor {
                     label: Some("BIF Device"),
-                    required_features: wgpu::Features::empty(),
-                    required_limits: wgpu::Limits::default(),
+                    required_features: wgpu::Features::TEXTURE_BINDING_ARRAY
+                        | wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING,
+                    required_limits: wgpu::Limits {
+                        max_sampled_textures_per_shader_stage: MAX_VIEWPORT_TEXTURES as u32,
+                        ..Default::default()
+                    },
                     memory_hints: Default::default(),
                 },
                 None,
@@ -1987,8 +1991,12 @@ impl Renderer {
             .request_device(
                 &wgpu::DeviceDescriptor {
                     label: Some("BIF Device"),
-                    required_features: wgpu::Features::empty(),
-                    required_limits: wgpu::Limits::default(),
+                    required_features: wgpu::Features::TEXTURE_BINDING_ARRAY
+                        | wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING,
+                    required_limits: wgpu::Limits {
+                        max_sampled_textures_per_shader_stage: MAX_VIEWPORT_TEXTURES as u32,
+                        ..Default::default()
+                    },
                     memory_hints: Default::default(),
                 },
                 None,
