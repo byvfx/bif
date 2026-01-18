@@ -26,6 +26,7 @@ struct VertexInput {
     @location(5) model_matrix_1: vec4<f32>,
     @location(6) model_matrix_2: vec4<f32>,
     @location(7) model_matrix_3: vec4<f32>,
+    @location(8) material_id: u32,
 }
 
 struct VertexOutput {
@@ -33,6 +34,7 @@ struct VertexOutput {
     @location(0) normal_vs: vec3<f32>,   // View-space normal
     @location(1) uv: vec2<f32>,          // UV coordinates for texturing
     @location(2) view_dir: vec3<f32>,    // View direction for specular
+    @location(3) material_id: u32,
 }
 
 @vertex
@@ -60,6 +62,8 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     // For headlight, we use the view-space Z direction
     let view_pos = camera.view * world_position;
     out.view_dir = normalize(-view_pos.xyz);
+
+    out.material_id = in.material_id;
 
     return out;
 }
