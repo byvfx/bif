@@ -57,6 +57,8 @@ struct UsdBridgeMeshDataRaw {
     normal_count: usize,
     uvs: *const f32,
     uv_count: usize,
+    face_material_ids: *const u32,
+    triangle_count: usize,
     transform: [f32; 16],
 }
 
@@ -275,6 +277,9 @@ pub struct UsdMeshData {
     /// UV coordinates (optional, from primvars:st)
     pub uvs: Option<Vec<[f32; 2]>>,
 
+    /// Per-triangle material IDs (from GeomSubsets, optional)
+    pub face_material_ids: Option<Vec<u32>>,
+
     /// World transform matrix
     pub transform: Mat4,
 }
@@ -440,6 +445,8 @@ impl UsdStage {
             normal_count: 0,
             uvs: ptr::null(),
             uv_count: 0,
+            face_material_ids: ptr::null(),
+            triangle_count: 0,
             transform: [0.0; 16],
         };
 
@@ -516,6 +523,21 @@ impl UsdStage {
             }
         };
 
+        // Convert per-triangle material IDs (optional, from GeomSubsets)
+        let face_material_ids = unsafe {
+            if raw_data.face_material_ids.is_null() || raw_data.triangle_count == 0 {
+                None
+            } else {
+                Some(
+                    std::slice::from_raw_parts(
+                        raw_data.face_material_ids,
+                        raw_data.triangle_count,
+                    )
+                    .to_vec(),
+                )
+            }
+        };
+
         // Convert transform (column-major f32[16] to Mat4)
         let transform = Mat4::from_cols_array(&raw_data.transform);
 
@@ -525,6 +547,7 @@ impl UsdStage {
             indices,
             normals,
             uvs,
+            face_material_ids,
             transform,
         })
     }

@@ -37,6 +37,7 @@ struct CachedMesh {
     std::vector<uint32_t> indices;
     std::vector<float> normals;
     std::vector<float> uvs;  // u,v pairs from primvars:st
+    std::vector<uint32_t> face_material_ids;  // Material index per triangle (for GeomSubsets)
     GfMatrix4d transform;
 };
 
@@ -112,15 +113,19 @@ struct UsdBridgeStage {
 // ============================================================================
 
 /// Triangulate a polygon mesh (fan triangulation for n-gons)
+/// Also outputs original face index for each triangle (for material mapping)
 static void triangulate_mesh(
     const VtArray<int>& face_vertex_counts,
     const VtArray<int>& face_vertex_indices,
-    std::vector<uint32_t>& out_indices
+    std::vector<uint32_t>& out_indices,
+    std::vector<uint32_t>& out_triangle_face_indices
 ) {
     out_indices.clear();
+    out_triangle_face_indices.clear();
     size_t idx_offset = 0;
 
-    for (int face_size : face_vertex_counts) {
+    for (size_t face_idx = 0; face_idx < face_vertex_counts.size(); ++face_idx) {
+        int face_size = face_vertex_counts[face_idx];
         if (face_size < 3) {
             idx_offset += face_size;
             continue;
@@ -131,6 +136,7 @@ static void triangulate_mesh(
             out_indices.push_back(static_cast<uint32_t>(face_vertex_indices[idx_offset]));
             out_indices.push_back(static_cast<uint32_t>(face_vertex_indices[idx_offset + i]));
             out_indices.push_back(static_cast<uint32_t>(face_vertex_indices[idx_offset + i + 1]));
+            out_triangle_face_indices.push_back(static_cast<uint32_t>(face_idx));
         }
         idx_offset += face_size;
     }
@@ -144,6 +150,9 @@ static void matrix_to_float16(const GfMatrix4d& mat, float* out) {
         out[i] = static_cast<float>(data[i]);
     }
 }
+
+// Forward declaration - materials must be cached before meshes for GeomSubset support
+static void cache_material_data(UsdBridgeStage* bridge);
 
 /// Cache all prim info for scene browser
 static void cache_prim_data(UsdBridgeStage* bridge) {
@@ -189,6 +198,9 @@ static void cache_prim_data(UsdBridgeStage* bridge) {
 static void cache_stage_data(UsdBridgeStage* bridge) {
     if (bridge->cached) return;
 
+    // Cache materials first - needed for GeomSubset material assignment
+    cache_material_data(bridge);
+
     UsdGeomXformCache xform_cache;
 
     // Traverse all prims
@@ -218,7 +230,67 @@ static void cache_stage_data(UsdBridgeStage* bridge) {
             VtArray<int> face_vertex_indices;
             mesh.GetFaceVertexCountsAttr().Get(&face_vertex_counts, timeCode);
             mesh.GetFaceVertexIndicesAttr().Get(&face_vertex_indices, timeCode);
-            triangulate_mesh(face_vertex_counts, face_vertex_indices, cached.indices);
+
+            std::vector<uint32_t> triangle_face_indices;
+            triangulate_mesh(face_vertex_counts, face_vertex_indices, cached.indices, triangle_face_indices);
+
+            // Extract GeomSubsets for per-face material assignment
+            size_t num_faces = face_vertex_counts.size();
+            std::vector<uint32_t> face_material_map(num_faces, 0);  // Default material 0
+
+            std::vector<UsdGeomSubset> subsets = UsdGeomSubset::GetAllGeomSubsets(mesh);
+            fprintf(stderr, "[USD_BRIDGE] Mesh %s: found %zu GeomSubsets, %zu faces\n",
+                cached.path.c_str(), subsets.size(), num_faces);
+
+            if (!subsets.empty()) {
+                // Build material path -> index map
+                std::map<std::string, uint32_t> material_path_to_index;
+                for (size_t i = 0; i < bridge->materials.size(); ++i) {
+                    material_path_to_index[bridge->materials[i].path] = static_cast<uint32_t>(i);
+                    fprintf(stderr, "[USD_BRIDGE]   Material[%zu]: %s\n", i, bridge->materials[i].path.c_str());
+                }
+
+                for (const auto& subset : subsets) {
+                    // Get material binding for this subset
+                    UsdShadeMaterialBindingAPI binding_api(subset.GetPrim());
+                    UsdShadeMaterial bound_material = binding_api.ComputeBoundMaterial();
+
+                    // Skip subsets without valid material bindings (e.g., __subdivs__ from Houdini)
+                    if (!bound_material) {
+                        fprintf(stderr, "[USD_BRIDGE]   Skipping subset %s (no material binding)\n",
+                            subset.GetPath().GetName().c_str());
+                        continue;
+                    }
+
+                    std::string mat_path = bound_material.GetPath().GetString();
+                    auto it = material_path_to_index.find(mat_path);
+                    if (it == material_path_to_index.end()) {
+                        fprintf(stderr, "[USD_BRIDGE]   WARNING: subset material '%s' not found in map!\n", mat_path.c_str());
+                        continue;
+                    }
+                    uint32_t material_idx = it->second;
+
+                    // Get face indices for this subset
+                    VtArray<int> subset_indices;
+                    subset.GetIndicesAttr().Get(&subset_indices);
+
+                    fprintf(stderr, "[USD_BRIDGE]   Subset %s: %zu faces, material='%s' (idx=%u)\n",
+                        subset.GetPath().GetName().c_str(), subset_indices.size(), mat_path.c_str(), material_idx);
+
+                    // Assign material to these faces
+                    for (int face_idx : subset_indices) {
+                        if (face_idx >= 0 && static_cast<size_t>(face_idx) < num_faces) {
+                            face_material_map[face_idx] = material_idx;
+                        }
+                    }
+                }
+            }
+
+            // Map per-original-face materials to per-triangle
+            cached.face_material_ids.reserve(triangle_face_indices.size());
+            for (uint32_t orig_face : triangle_face_indices) {
+                cached.face_material_ids.push_back(face_material_map[orig_face]);
+            }
 
             // Get normals (optional)
             VtArray<GfVec3f> normals;
@@ -422,7 +494,23 @@ static void cache_material_data(UsdBridgeStage* bridge) {
             if (!mtlx_connections.empty()) {
                 UsdPrim mtlx_prim = bridge->stage->GetPrimAtPath(mtlx_connections[0].GetPrimPath());
                 if (mtlx_prim) {
-                    mtlx_shader = UsdShadeShader(mtlx_prim);
+                    // Check if this is a NodeGraph (Karma materials) or a Shader
+                    if (mtlx_prim.IsA<UsdShadeNodeGraph>()) {
+                        // Search inside NodeGraph for standard_surface shader
+                        for (const UsdPrim& ng_child : mtlx_prim.GetDescendants()) {
+                            std::string child_name = ng_child.GetName().GetString();
+                            if (child_name.find("mtlxstandard_surface") != std::string::npos ||
+                                child_name.find("standard_surface") != std::string::npos) {
+                                UsdShadeShader potential_shader(ng_child);
+                                if (potential_shader) {
+                                    mtlx_shader = potential_shader;
+                                    break;
+                                }
+                            }
+                        }
+                    } else {
+                        mtlx_shader = UsdShadeShader(mtlx_prim);
+                    }
                 }
             }
         }
@@ -433,6 +521,7 @@ static void cache_material_data(UsdBridgeStage* bridge) {
                 std::string child_name = child.GetName().GetString();
                 if (child_name.find("mtlxstandard_surface") != std::string::npos ||
                     child_name.find("standard_surface") != std::string::npos) {
+                    fprintf(stderr, "[USD_BRIDGE] Found standard_surface child: %s\n", child_name.c_str());
                     UsdShadeShader potential_shader(child);
                     if (potential_shader) {
                         mtlx_shader = potential_shader;
@@ -444,9 +533,6 @@ static void cache_material_data(UsdBridgeStage* bridge) {
 
         // If we found a MaterialX shader, use it
         if (mtlx_shader) {
-            TfToken mtlx_id;
-            mtlx_shader.GetIdAttr().Get(&mtlx_id);
-
             cached.is_materialx = true;
             UsdShadeInput input;
 
@@ -854,6 +940,8 @@ UsdBridgeError usd_bridge_get_mesh(
     out_data->normal_count = mesh.normals.size() / 3;
     out_data->uvs = mesh.uvs.empty() ? nullptr : mesh.uvs.data();
     out_data->uv_count = mesh.uvs.size() / 2;
+    out_data->face_material_ids = mesh.face_material_ids.empty() ? nullptr : mesh.face_material_ids.data();
+    out_data->triangle_count = mesh.face_material_ids.size();
 
     // Copy transform
     float mat_data[16];

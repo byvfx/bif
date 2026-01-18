@@ -82,6 +82,7 @@ struct App {
     // Input state
     left_mouse_pressed: bool,
     middle_mouse_pressed: bool,
+    right_mouse_pressed: bool,
     last_mouse_pos: Option<(f64, f64)>,
     keys_pressed: std::collections::HashSet<KeyCode>,
     last_frame_time: Instant,
@@ -96,6 +97,7 @@ impl App {
             usd_path,
             left_mouse_pressed: false,
             middle_mouse_pressed: false,
+            right_mouse_pressed: false,
             last_mouse_pos: None,
             keys_pressed: std::collections::HashSet::new(),
             last_frame_time: Instant::now(),
@@ -247,10 +249,16 @@ impl ApplicationHandler for App {
                         self.last_mouse_pos = None;
                     }
                 }
+                MouseButton::Right => {
+                    self.right_mouse_pressed = state == ElementState::Pressed;
+                    if !self.right_mouse_pressed {
+                        self.last_mouse_pos = None;
+                    }
+                }
                 _ => {}
             },
             WindowEvent::CursorMoved { position, .. } => {
-                if self.left_mouse_pressed || self.middle_mouse_pressed {
+                if self.left_mouse_pressed || self.middle_mouse_pressed || self.right_mouse_pressed {
                     if let Some(last_pos) = self.last_mouse_pos {
                         let delta_x = position.x - last_pos.0;
                         let delta_y = position.y - last_pos.1;
@@ -273,6 +281,11 @@ impl ApplicationHandler for App {
                                     0.0,
                                     1.0, // delta_time = 1.0 for mouse pan (direct control)
                                 );
+                            } else if self.right_mouse_pressed {
+                                // Dolly (zoom) with right mouse drag - scale with distance
+                                let sensitivity = 0.005;
+                                let dolly_amount = delta_y as f32 * sensitivity * renderer.camera.distance;
+                                renderer.camera.dolly(dolly_amount);
                             }
                             renderer.update_camera();
                         }
@@ -282,13 +295,14 @@ impl ApplicationHandler for App {
             }
             WindowEvent::MouseWheel { delta, .. } => {
                 if let Some(renderer) = &mut self.renderer {
-                    // Handle mouse wheel for dolly (zoom in/out)
-                    let scroll_amount = match delta {
-                        winit::event::MouseScrollDelta::LineDelta(_, y) => y * 100.0,
-                        winit::event::MouseScrollDelta::PixelDelta(pos) => pos.y as f32,
+                    // Handle mouse wheel for dolly (zoom in/out) - scaled with distance
+                    let scroll_lines = match delta {
+                        winit::event::MouseScrollDelta::LineDelta(_, y) => y,
+                        winit::event::MouseScrollDelta::PixelDelta(pos) => pos.y as f32 / 50.0,
                     };
-
-                    renderer.camera.dolly(-scroll_amount);
+                    // Scale dolly with distance for consistent feel
+                    let dolly_amount = -scroll_lines * renderer.camera.distance * 0.1;
+                    renderer.camera.dolly(dolly_amount);
                     renderer.update_camera();
                 }
             }

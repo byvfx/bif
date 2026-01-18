@@ -25,6 +25,10 @@ pub struct Mesh {
     /// Triangle indices (every 3 indices form a triangle)
     pub indices: Vec<u32>,
 
+    /// Per-triangle material IDs (from GeomSubsets, optional)
+    /// Length should be indices.len() / 3 when present
+    pub face_material_ids: Option<Vec<u32>>,
+
     /// Axis-aligned bounding box
     pub bounds: Aabb,
 }
@@ -41,6 +45,7 @@ impl Mesh {
             normals,
             uvs: None,
             indices,
+            face_material_ids: None,
             bounds,
         }
     }
@@ -58,6 +63,26 @@ impl Mesh {
             normals,
             uvs,
             indices,
+            face_material_ids: None,
+            bounds,
+        }
+    }
+
+    /// Create a new mesh with UV coordinates and per-face material IDs (from GeomSubsets).
+    pub fn new_with_materials(
+        positions: Vec<Vec3>,
+        indices: Vec<u32>,
+        normals: Option<Vec<Vec3>>,
+        uvs: Option<Vec<[f32; 2]>>,
+        face_material_ids: Option<Vec<u32>>,
+    ) -> Self {
+        let bounds = Self::compute_bounds(&positions);
+        Self {
+            positions,
+            normals,
+            uvs,
+            indices,
+            face_material_ids,
             bounds,
         }
     }

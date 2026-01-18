@@ -38,11 +38,12 @@ struct VertexInput {
     @location(1) normal: vec3<f32>,
     @location(2) color: vec3<f32>,
     @location(3) uv: vec2<f32>,
-    @location(4) model_matrix_0: vec4<f32>,
-    @location(5) model_matrix_1: vec4<f32>,
-    @location(6) model_matrix_2: vec4<f32>,
-    @location(7) model_matrix_3: vec4<f32>,
-    @location(8) material_id: u32,
+    @location(4) vertex_material_id: u32,  // Per-vertex material (from GeomSubsets)
+    @location(5) model_matrix_0: vec4<f32>,
+    @location(6) model_matrix_1: vec4<f32>,
+    @location(7) model_matrix_2: vec4<f32>,
+    @location(8) model_matrix_3: vec4<f32>,
+    @location(9) instance_material_id: u32,  // Per-instance fallback
 }
 
 struct VertexOutput {
@@ -79,7 +80,13 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     let view_pos = camera.view * world_position;
     out.view_dir = normalize(-view_pos.xyz);
 
-    out.material_id = in.material_id;
+    // Use vertex material_id if valid (from GeomSubsets), otherwise use instance material_id
+    // 0xFFFFFFFF is the sentinel value for "use instance material"
+    if (in.vertex_material_id != 0xFFFFFFFFu) {
+        out.material_id = in.vertex_material_id;
+    } else {
+        out.material_id = in.instance_material_id;
+    }
 
     return out;
 }
@@ -94,7 +101,18 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     var base_color = mat.diffuse_color.rgb;
     let diffuse_tex_index = mat.texture_indices.x;
     if (diffuse_tex_index != 0u) {
-        base_color *= textureSample(textures[diffuse_tex_index], texture_sampler, in.uv).rgb;
+        // Use texture color directly (not multiplied by diffuse_color which may be grey default)
+        let tex_sample = textureSample(textures[diffuse_tex_index], texture_sampler, in.uv);
+        base_color = tex_sample.rgb;
+
+        // DEBUG: Uncomment to see raw texture without lighting
+        // return vec4<f32>(base_color, 1.0);
+
+        // DEBUG: Uncomment to see UV coordinates
+        // return vec4<f32>(in.uv.x, in.uv.y, 0.0, 1.0);
+
+        // DEBUG: Uncomment to see material_id as color
+        // return vec4<f32>(f32(in.material_id) / 14.0, 0.0, 0.0, 1.0);
     }
 
     // Simple PBR-inspired shading

@@ -129,7 +129,8 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
             existing_id
         } else {
             // New unique mesh, create prototype
-            let mut mesh = Mesh::new_with_uvs(vertices, indices, normals, uvs);
+            let face_material_ids = mesh_data.face_material_ids.clone();
+            let mut mesh = Mesh::new_with_materials(vertices, indices, normals, uvs, face_material_ids);
             mesh.ensure_normals();
 
             let mesh_arc = Arc::new(mesh);
