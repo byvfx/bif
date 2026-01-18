@@ -1,5 +1,6 @@
 use anyhow::Result;
 use std::collections::{HashMap, HashSet};
+use std::num::NonZeroU32;
 use std::path::Path;
 use std::sync::mpsc;
 use std::sync::{
@@ -651,6 +652,43 @@ impl MaterialUniform {
     }
 }
 
+/// Material table entry for GPU sampling (per-material data).
+#[repr(C)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+struct MaterialGpu {
+    diffuse_color: [f32; 4],      // RGB + padding
+    metallic_roughness: [f32; 4], // metallic, roughness, specular, padding
+    texture_indices: [u32; 4],    // diffuse, roughness, metallic, emissive
+    extra_indices: [u32; 4],      // normal, reserved, reserved, reserved
+}
+
+impl MaterialGpu {
+    fn from_material(material: &bif_core::Material, textures: &GpuTextureSet) -> Self {
+        let resolve_index = |path: &Option<String>| -> u32 {
+            path.as_ref()
+                .and_then(|p| textures.index_map.get(p).copied())
+                .unwrap_or(0)
+        };
+
+        Self {
+            diffuse_color: [
+                material.diffuse_color.x,
+                material.diffuse_color.y,
+                material.diffuse_color.z,
+                1.0,
+            ],
+            metallic_roughness: [material.metallic, material.roughness, material.specular, 0.0],
+            texture_indices: [
+                resolve_index(&material.diffuse_texture),
+                resolve_index(&material.roughness_texture),
+                resolve_index(&material.metallic_texture),
+                resolve_index(&material.emissive_texture),
+            ],
+            extra_indices: [resolve_index(&material.normal_texture), 0, 0, 0],
+        }
+    }
+}
+
 /// Gnomon uniform data for GPU (camera rotation only)
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
@@ -827,7 +865,11 @@ pub struct Renderer {
     material_uniform: MaterialUniform,
     material_buffer: wgpu::Buffer,
     material_bind_group: wgpu::BindGroup,
+    material_table_buffer: wgpu::Buffer,
+    material_table_len: u32,
     gpu_textures: GpuTextureSet,
+    texture_sampler: wgpu::Sampler,
+    texture_bind_group: wgpu::BindGroup,
     mesh_bounds_min: Vec3,
     mesh_bounds_max: Vec3,
     depth_texture: wgpu::Texture,
@@ -1455,6 +1497,19 @@ impl Renderer {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
+        let gpu_textures = Self::create_default_gpu_textures(&device, &queue);
+
+        let material_table = vec![MaterialGpu::from_material(
+            &bif_core::Material::default(),
+            &gpu_textures,
+        )];
+        let material_table_len = material_table.len() as u32;
+        let material_table_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Material Table Buffer"),
+            contents: bytemuck::cast_slice(&material_table),
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        });
+
         // Create bind group layout for material
         let material_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -1464,6 +1519,16 @@ impl Renderer {
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
@@ -1478,10 +1543,63 @@ impl Renderer {
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: material_buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: material_table_buffer.as_entire_binding(),
             }],
         });
 
-        let gpu_textures = Self::create_default_gpu_textures(&device, &queue);
+        let texture_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("Viewport Texture Sampler"),
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Nearest,
+            ..Default::default()
+        });
+
+        let texture_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Texture Bind Group Layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            multisampled: false,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        },
+                        count: NonZeroU32::new(MAX_VIEWPORT_TEXTURES as u32),
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                ],
+            });
+
+        let texture_view_refs: Vec<&wgpu::TextureView> =
+            gpu_textures.views.iter().collect();
+        let texture_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Texture Bind Group"),
+            layout: &texture_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureViewArray(&texture_view_refs),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&texture_sampler),
+                },
+            ],
+        });
 
         // Create shader module
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -1492,7 +1610,11 @@ impl Renderer {
         // Create render pipeline
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Render Pipeline Layout"),
-            bind_group_layouts: &[&camera_bind_group_layout, &material_bind_group_layout],
+            bind_group_layouts: &[
+                &camera_bind_group_layout,
+                &material_bind_group_layout,
+                &texture_bind_group_layout,
+            ],
             push_constant_ranges: &[],
         });
 
@@ -1762,7 +1884,11 @@ impl Renderer {
             material_uniform,
             material_buffer,
             material_bind_group,
+            material_table_buffer,
+            material_table_len,
             gpu_textures,
+            texture_sampler,
+            texture_bind_group,
             mesh_bounds_min: mesh_data.bounds_min,
             mesh_bounds_max: mesh_data.bounds_max,
             depth_texture,
@@ -2001,6 +2127,27 @@ impl Renderer {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
+        let gpu_textures = Self::create_gpu_textures_for_scene(&device, &queue, scene);
+
+        let material_table = if scene.materials.is_empty() {
+            vec![MaterialGpu::from_material(
+                &bif_core::Material::default(),
+                &gpu_textures,
+            )]
+        } else {
+            scene
+                .materials
+                .iter()
+                .map(|mat| MaterialGpu::from_material(mat.as_ref(), &gpu_textures))
+                .collect()
+        };
+        let material_table_len = material_table.len() as u32;
+        let material_table_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Material Table Buffer"),
+            contents: bytemuck::cast_slice(&material_table),
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        });
+
         // Create bind group layout for material
         let material_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -2010,6 +2157,16 @@ impl Renderer {
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
@@ -2024,10 +2181,63 @@ impl Renderer {
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: material_buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: material_table_buffer.as_entire_binding(),
             }],
         });
 
-        let gpu_textures = Self::create_gpu_textures_for_scene(&device, &queue, scene);
+        let texture_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("Viewport Texture Sampler"),
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Nearest,
+            ..Default::default()
+        });
+
+        let texture_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Texture Bind Group Layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            multisampled: false,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        },
+                        count: NonZeroU32::new(MAX_VIEWPORT_TEXTURES as u32),
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                ],
+            });
+
+        let texture_view_refs: Vec<&wgpu::TextureView> =
+            gpu_textures.views.iter().collect();
+        let texture_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Texture Bind Group"),
+            layout: &texture_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureViewArray(&texture_view_refs),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&texture_sampler),
+                },
+            ],
+        });
 
         // Create shader module
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -2038,7 +2248,11 @@ impl Renderer {
         // Create render pipeline
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Render Pipeline Layout"),
-            bind_group_layouts: &[&camera_bind_group_layout, &material_bind_group_layout],
+            bind_group_layouts: &[
+                &camera_bind_group_layout,
+                &material_bind_group_layout,
+                &texture_bind_group_layout,
+            ],
             push_constant_ranges: &[],
         });
 
@@ -2328,7 +2542,11 @@ impl Renderer {
             material_uniform,
             material_buffer,
             material_bind_group,
+            material_table_buffer,
+            material_table_len,
             gpu_textures,
+            texture_sampler,
+            texture_bind_group,
             mesh_bounds_min: mesh_data.bounds_min,
             mesh_bounds_max: mesh_data.bounds_max,
             depth_texture,
@@ -3539,6 +3757,7 @@ impl Renderer {
                     render_pass.set_pipeline(&self.pipeline);
                     render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
                     render_pass.set_bind_group(1, &self.material_bind_group, &[]);
+                    render_pass.set_bind_group(2, &self.texture_bind_group, &[]);
                     render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
                     render_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
                     render_pass
