@@ -1,4 +1,5 @@
 use anyhow::Result;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::mpsc;
 use std::sync::{
@@ -12,6 +13,7 @@ use wgpu::{util::DeviceExt, Device, Instance, Queue, Surface, SurfaceConfigurati
 use bif_math::{Aabb, Camera, Frustum, Mat4, Mat4Ext, Vec3};
 
 // USD stage for scene browser
+use bif_core::texture::TextureCache;
 use bif_core::usd::UsdStage;
 
 // Re-export bif_renderer types for Ivar integration
@@ -774,6 +776,14 @@ impl InstanceData {
     }
 }
 
+const MAX_VIEWPORT_TEXTURES: usize = 128;
+
+struct GpuTextureSet {
+    textures: Vec<wgpu::Texture>,
+    views: Vec<wgpu::TextureView>,
+    index_map: HashMap<String, u32>,
+}
+
 /// Scratch buffers for frustum culling to avoid per-frame allocations
 struct CullingScratch {
     visible_with_distance: Vec<(f32, usize)>,
@@ -817,6 +827,7 @@ pub struct Renderer {
     material_uniform: MaterialUniform,
     material_buffer: wgpu::Buffer,
     material_bind_group: wgpu::BindGroup,
+    gpu_textures: GpuTextureSet,
     mesh_bounds_min: Vec3,
     mesh_bounds_max: Vec3,
     depth_texture: wgpu::Texture,
@@ -917,6 +928,226 @@ pub struct Renderer {
 }
 
 impl Renderer {
+    fn is_linear_texture_path(path: &str) -> bool {
+        match Path::new(path).extension().and_then(|ext| ext.to_str()) {
+            Some(ext) => matches!(ext.to_ascii_lowercase().as_str(), "exr" | "hdr"),
+            None => false,
+        }
+    }
+
+    fn linear_to_srgb_byte(value: f32) -> u8 {
+        if !value.is_finite() {
+            return 0;
+        }
+        let v = value.clamp(0.0, 1.0);
+        let srgb = if v <= 0.0031308 {
+            v * 12.92
+        } else {
+            1.055 * v.powf(1.0 / 2.4) - 0.055
+        };
+        (srgb * 255.0 + 0.5) as u8
+    }
+
+    fn linear_to_byte(value: f32) -> u8 {
+        if !value.is_finite() {
+            return 0;
+        }
+        let v = value.clamp(0.0, 1.0);
+        (v * 255.0 + 0.5) as u8
+    }
+
+    fn texture_to_rgba8(texture: &bif_core::texture::Texture, is_linear: bool) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity((texture.width * texture.height * 4) as usize);
+        for pixel in &texture.pixels {
+            if is_linear {
+                bytes.push(Self::linear_to_byte(pixel[0]));
+                bytes.push(Self::linear_to_byte(pixel[1]));
+                bytes.push(Self::linear_to_byte(pixel[2]));
+                bytes.push(Self::linear_to_byte(pixel[3]));
+            } else {
+                bytes.push(Self::linear_to_srgb_byte(pixel[0]));
+                bytes.push(Self::linear_to_srgb_byte(pixel[1]));
+                bytes.push(Self::linear_to_srgb_byte(pixel[2]));
+                bytes.push(Self::linear_to_byte(pixel[3]));
+            }
+        }
+        bytes
+    }
+
+    fn create_gpu_texture(
+        device: &Device,
+        queue: &Queue,
+        texture: &bif_core::texture::Texture,
+        is_linear: bool,
+        label: &str,
+    ) -> wgpu::Texture {
+        let format = if is_linear {
+            wgpu::TextureFormat::Rgba8Unorm
+        } else {
+            wgpu::TextureFormat::Rgba8UnormSrgb
+        };
+
+        let gpu_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some(label),
+            size: wgpu::Extent3d {
+                width: texture.width,
+                height: texture.height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+
+        let rgba = Self::texture_to_rgba8(texture, is_linear);
+        queue.write_texture(
+            wgpu::ImageCopyTexture {
+                texture: &gpu_texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &rgba,
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(4 * texture.width),
+                rows_per_image: Some(texture.height),
+            },
+            wgpu::Extent3d {
+                width: texture.width,
+                height: texture.height,
+                depth_or_array_layers: 1,
+            },
+        );
+
+        gpu_texture
+    }
+
+    fn create_default_gpu_textures(device: &Device, queue: &Queue) -> GpuTextureSet {
+        let default_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Default White Texture"),
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+
+        queue.write_texture(
+            wgpu::ImageCopyTexture {
+                texture: &default_texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &[255u8, 255u8, 255u8, 255u8],
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(4),
+                rows_per_image: Some(1),
+            },
+            wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+        );
+
+        let mut textures = vec![default_texture];
+        let mut views = Vec::with_capacity(MAX_VIEWPORT_TEXTURES);
+        for _ in 0..MAX_VIEWPORT_TEXTURES {
+            views.push(textures[0].create_view(&wgpu::TextureViewDescriptor::default()));
+        }
+
+        GpuTextureSet {
+            textures,
+            views,
+            index_map: HashMap::new(),
+        }
+    }
+
+    fn collect_scene_texture_paths(scene: &bif_core::Scene) -> Vec<String> {
+        let mut unique_paths = HashSet::new();
+        let mut paths = Vec::new();
+
+        for material in &scene.materials {
+            let material = material.as_ref();
+            let candidate_paths = [
+                material.diffuse_texture.as_deref(),
+                material.roughness_texture.as_deref(),
+                material.metallic_texture.as_deref(),
+                material.normal_texture.as_deref(),
+                material.emissive_texture.as_deref(),
+            ];
+
+            for path in candidate_paths.into_iter().flatten() {
+                if unique_paths.insert(path.to_string()) {
+                    paths.push(path.to_string());
+                }
+            }
+        }
+
+        paths
+    }
+
+    fn create_gpu_textures_for_scene(
+        device: &Device,
+        queue: &Queue,
+        scene: &bif_core::Scene,
+    ) -> GpuTextureSet {
+        let mut texture_set = Self::create_default_gpu_textures(device, queue);
+        let mut texture_cache = TextureCache::new();
+
+        let texture_paths = Self::collect_scene_texture_paths(scene);
+        if texture_paths.len() >= MAX_VIEWPORT_TEXTURES {
+            log::warn!(
+                "Texture count {} exceeds GPU limit {}. Extra textures will be skipped.",
+                texture_paths.len(),
+                MAX_VIEWPORT_TEXTURES - 1
+            );
+        }
+
+        for path in texture_paths {
+            if texture_set.textures.len() >= MAX_VIEWPORT_TEXTURES {
+                log::warn!(
+                    "Skipping texture {} (limit {} reached).",
+                    path,
+                    MAX_VIEWPORT_TEXTURES - 1
+                );
+                break;
+            }
+
+            match texture_cache.load(&path) {
+                Ok(texture) => {
+                    let is_linear = Self::is_linear_texture_path(&path);
+                    let label = format!("Viewport Texture: {}", path);
+                    let gpu_texture =
+                        Self::create_gpu_texture(device, queue, &texture, is_linear, &label);
+                    let view = gpu_texture.create_view(&wgpu::TextureViewDescriptor::default());
+                    let index = texture_set.textures.len() as u32;
+
+                    texture_set.textures.push(gpu_texture);
+                    texture_set.views[index as usize] = view;
+                    texture_set.index_map.insert(path, index);
+                }
+                Err(err) => {
+                    log::warn!("Failed to load texture {}: {}", path, err);
+                }
+            }
+        }
+
+        texture_set
+    }
+
     /// Create a depth texture for the given size
     fn create_depth_texture(
         device: &Device,
@@ -1250,6 +1481,8 @@ impl Renderer {
             }],
         });
 
+        let gpu_textures = Self::create_default_gpu_textures(&device, &queue);
+
         // Create shader module
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Basic Shader"),
@@ -1529,6 +1762,7 @@ impl Renderer {
             material_uniform,
             material_buffer,
             material_bind_group,
+            gpu_textures,
             mesh_bounds_min: mesh_data.bounds_min,
             mesh_bounds_max: mesh_data.bounds_max,
             depth_texture,
@@ -1792,6 +2026,8 @@ impl Renderer {
                 resource: material_buffer.as_entire_binding(),
             }],
         });
+
+        let gpu_textures = Self::create_gpu_textures_for_scene(&device, &queue, scene);
 
         // Create shader module
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -2092,6 +2328,7 @@ impl Renderer {
             material_uniform,
             material_buffer,
             material_bind_group,
+            gpu_textures,
             mesh_bounds_min: mesh_data.bounds_min,
             mesh_bounds_max: mesh_data.bounds_max,
             depth_texture,
