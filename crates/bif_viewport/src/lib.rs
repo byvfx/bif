@@ -799,11 +799,17 @@ impl Vertex {
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct InstanceData {
     pub model_matrix: [[f32; 4]; 4],
+    pub material_id: u32,
 }
 
 impl InstanceData {
-    const ATTRIBS: [wgpu::VertexAttribute; 4] =
-        wgpu::vertex_attr_array![4 => Float32x4, 5 => Float32x4, 6 => Float32x4, 7 => Float32x4];
+    const ATTRIBS: [wgpu::VertexAttribute; 5] = wgpu::vertex_attr_array![
+        4 => Float32x4,
+        5 => Float32x4,
+        6 => Float32x4,
+        7 => Float32x4,
+        8 => Uint32
+    ];
 
     pub fn desc<'a>() -> wgpu::VertexBufferLayout<'a> {
         wgpu::VertexBufferLayout {
@@ -915,6 +921,7 @@ pub struct Renderer {
 
     // Instance transforms for Ivar (stored as Mat4 arrays)
     instance_transforms: Vec<Mat4>,
+    instance_material_ids: Vec<u32>,
 
     // Material for Ivar rendering (from loaded USD scene)
     scene_material: bif_core::Material,
@@ -1689,6 +1696,7 @@ impl Renderer {
         // No instances by default - empty scene
         let dummy_instance = InstanceData {
             model_matrix: Mat4::IDENTITY.to_cols_array_2d(),
+            material_id: 0,
         };
 
         // Preallocate instance buffer for up to MAX_INSTANCES (10K)
@@ -1918,6 +1926,7 @@ impl Renderer {
             ivar_pipeline,
             mesh_data,
             instance_transforms: vec![], // Empty scene - no instances
+            instance_material_ids: vec![],
             scene_material: bif_core::Material::default(),
             max_instances: MAX_INSTANCES,
             instance_aabbs: vec![],
@@ -2317,8 +2326,16 @@ impl Renderer {
         let (depth_texture, depth_view) =
             Self::create_depth_texture(&device, (size.width, size.height));
 
+        let material_index_by_name: HashMap<String, u32> = scene
+            .materials
+            .iter()
+            .enumerate()
+            .map(|(idx, mat)| (mat.name.clone(), idx as u32))
+            .collect();
+
         // Generate instances from scene - collect both GPU data and transforms for Ivar
         let mut instance_transforms: Vec<Mat4> = Vec::with_capacity(scene.instances.len());
+        let mut instance_material_ids: Vec<u32> = Vec::with_capacity(scene.instances.len());
         let instances: Vec<InstanceData> = scene
             .instances
             .iter()
@@ -2326,6 +2343,13 @@ impl Renderer {
             .map(|(i, inst)| {
                 let model_matrix = inst.model_matrix();
                 instance_transforms.push(model_matrix);
+                let material_id = scene
+                    .prototypes
+                    .get(inst.prototype_id)
+                    .and_then(|proto| proto.material.as_ref())
+                    .and_then(|mat| material_index_by_name.get(&mat.name).copied())
+                    .unwrap_or(0);
+                instance_material_ids.push(material_id);
                 // Debug: log first few instance transforms
                 if i < 5 || i == scene.instances.len() - 1 {
                     let translation = model_matrix.w_axis.truncate();
@@ -2333,6 +2357,7 @@ impl Renderer {
                 }
                 InstanceData {
                     model_matrix: model_matrix.to_cols_array_2d(),
+                    material_id,
                 }
             })
             .collect();
@@ -2576,6 +2601,7 @@ impl Renderer {
             ivar_pipeline,
             mesh_data,
             instance_transforms,
+            instance_material_ids,
             scene_material,
             max_instances: MAX_INSTANCES,
             instance_aabbs,
@@ -2741,15 +2767,27 @@ impl Renderer {
 
         for &(_distance_sq, idx) in &self.culling_scratch.visible_with_distance[..split_point] {
             let transform = &self.instance_transforms[idx];
+            let material_id = self
+                .instance_material_ids
+                .get(idx)
+                .copied()
+                .unwrap_or(0);
             self.culling_scratch.near_instances.push(InstanceData {
                 model_matrix: transform.to_cols_array_2d(),
+                material_id,
             });
         }
 
         for &(_distance_sq, idx) in &self.culling_scratch.visible_with_distance[split_point..] {
             let transform = &self.instance_transforms[idx];
+            let material_id = self
+                .instance_material_ids
+                .get(idx)
+                .copied()
+                .unwrap_or(0);
             self.culling_scratch.far_instances.push(InstanceData {
                 model_matrix: transform.to_cols_array_2d(),
+                material_id,
             });
         }
 
@@ -2871,16 +2909,32 @@ impl Renderer {
                 usage: wgpu::BufferUsages::INDEX,
             });
 
+        let material_index_by_name: HashMap<String, u32> = scene
+            .materials
+            .iter()
+            .enumerate()
+            .map(|(idx, mat)| (mat.name.clone(), idx as u32))
+            .collect();
+
         // Generate instances from scene
         let mut instance_transforms: Vec<Mat4> = Vec::with_capacity(scene.instances.len());
+        let mut instance_material_ids: Vec<u32> = Vec::with_capacity(scene.instances.len());
         let instances: Vec<InstanceData> = scene
             .instances
             .iter()
             .map(|inst| {
                 let model_matrix = inst.model_matrix();
                 instance_transforms.push(model_matrix);
+                let material_id = scene
+                    .prototypes
+                    .get(inst.prototype_id)
+                    .and_then(|proto| proto.material.as_ref())
+                    .and_then(|mat| material_index_by_name.get(&mat.name).copied())
+                    .unwrap_or(0);
+                instance_material_ids.push(material_id);
                 InstanceData {
                     model_matrix: model_matrix.to_cols_array_2d(),
+                    material_id,
                 }
             })
             .collect();
@@ -2906,6 +2960,8 @@ impl Renderer {
             .write_buffer(&self.instance_buffer, 0, bytemuck::cast_slice(&instances));
 
         log::info!("Created {} instances from USD scene", instances.len());
+
+        self.instance_material_ids = instance_material_ids;
 
         // Calculate world bounds for camera framing
         let world_bounds = scene.world_bounds();
