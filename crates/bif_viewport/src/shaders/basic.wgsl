@@ -28,7 +28,7 @@ var<uniform> material: MaterialUniform;
 var<storage, read> material_table: array<MaterialGpu>;
 
 @group(2) @binding(0)
-var textures: array<texture_2d<f32>, 128>;
+var textures: binding_array<texture_2d<f32>>;
 
 @group(2) @binding(1)
 var texture_sampler: sampler;
@@ -50,7 +50,7 @@ struct VertexOutput {
     @location(0) normal_vs: vec3<f32>,   // View-space normal
     @location(1) uv: vec2<f32>,          // UV coordinates for texturing
     @location(2) view_dir: vec3<f32>,    // View direction for specular
-    @location(3) material_id: u32,
+    @location(3) @interpolate(flat) material_id: u32,
 }
 
 @vertex
