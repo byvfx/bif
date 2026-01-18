@@ -297,12 +297,6 @@ fn load_texture_file(path: &Path) -> TextureResult<Texture> {
         ))
     }
 
-    Ok(Texture::new(
-        width,
-        height,
-        pixels,
-        path.to_string_lossy().to_string(),
-    ))
 }
 
 /// Convert sRGB byte value to linear float.
