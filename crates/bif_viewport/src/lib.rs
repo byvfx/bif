@@ -268,24 +268,28 @@ impl MeshData {
             normal: normals[0].into(),
             color: grey,
             uv: [0.0, 0.0],
+            material_id: 0xFFFFFFFF,
         });
         vertices.push(Vertex {
             position: corners[1].into(),
             normal: normals[0].into(),
             color: grey,
             uv: [0.0, 0.0],
+            material_id: 0xFFFFFFFF,
         });
         vertices.push(Vertex {
             position: corners[2].into(),
             normal: normals[0].into(),
             color: grey,
             uv: [0.0, 0.0],
+            material_id: 0xFFFFFFFF,
         });
         vertices.push(Vertex {
             position: corners[3].into(),
             normal: normals[0].into(),
             color: grey,
             uv: [0.0, 0.0],
+            material_id: 0xFFFFFFFF,
         });
 
         // Back face (z = max) - vertices 5,4,7,6, normal +Z
@@ -294,24 +298,28 @@ impl MeshData {
             normal: normals[1].into(),
             color: grey,
             uv: [0.0, 0.0],
+            material_id: 0xFFFFFFFF,
         });
         vertices.push(Vertex {
             position: corners[4].into(),
             normal: normals[1].into(),
             color: grey,
             uv: [0.0, 0.0],
+            material_id: 0xFFFFFFFF,
         });
         vertices.push(Vertex {
             position: corners[7].into(),
             normal: normals[1].into(),
             color: grey,
             uv: [0.0, 0.0],
+            material_id: 0xFFFFFFFF,
         });
         vertices.push(Vertex {
             position: corners[6].into(),
             normal: normals[1].into(),
             color: grey,
             uv: [0.0, 0.0],
+            material_id: 0xFFFFFFFF,
         });
 
         // Left face (x = min) - vertices 4,0,3,7, normal -X
@@ -320,24 +328,28 @@ impl MeshData {
             normal: normals[2].into(),
             color: grey,
             uv: [0.0, 0.0],
+            material_id: 0xFFFFFFFF,
         });
         vertices.push(Vertex {
             position: corners[0].into(),
             normal: normals[2].into(),
             color: grey,
             uv: [0.0, 0.0],
+            material_id: 0xFFFFFFFF,
         });
         vertices.push(Vertex {
             position: corners[3].into(),
             normal: normals[2].into(),
             color: grey,
             uv: [0.0, 0.0],
+            material_id: 0xFFFFFFFF,
         });
         vertices.push(Vertex {
             position: corners[7].into(),
             normal: normals[2].into(),
             color: grey,
             uv: [0.0, 0.0],
+            material_id: 0xFFFFFFFF,
         });
 
         // Right face (x = max) - vertices 1,5,6,2, normal +X
@@ -346,24 +358,28 @@ impl MeshData {
             normal: normals[3].into(),
             color: grey,
             uv: [0.0, 0.0],
+            material_id: 0xFFFFFFFF,
         });
         vertices.push(Vertex {
             position: corners[5].into(),
             normal: normals[3].into(),
             color: grey,
             uv: [0.0, 0.0],
+            material_id: 0xFFFFFFFF,
         });
         vertices.push(Vertex {
             position: corners[6].into(),
             normal: normals[3].into(),
             color: grey,
             uv: [0.0, 0.0],
+            material_id: 0xFFFFFFFF,
         });
         vertices.push(Vertex {
             position: corners[2].into(),
             normal: normals[3].into(),
             color: grey,
             uv: [0.0, 0.0],
+            material_id: 0xFFFFFFFF,
         });
 
         // Bottom face (y = min) - vertices 4,5,1,0, normal -Y
@@ -372,24 +388,28 @@ impl MeshData {
             normal: normals[4].into(),
             color: grey,
             uv: [0.0, 0.0],
+            material_id: 0xFFFFFFFF,
         });
         vertices.push(Vertex {
             position: corners[5].into(),
             normal: normals[4].into(),
             color: grey,
             uv: [0.0, 0.0],
+            material_id: 0xFFFFFFFF,
         });
         vertices.push(Vertex {
             position: corners[1].into(),
             normal: normals[4].into(),
             color: grey,
             uv: [0.0, 0.0],
+            material_id: 0xFFFFFFFF,
         });
         vertices.push(Vertex {
             position: corners[0].into(),
             normal: normals[4].into(),
             color: grey,
             uv: [0.0, 0.0],
+            material_id: 0xFFFFFFFF,
         });
 
         // Top face (y = max) - vertices 3,2,6,7, normal +Y
@@ -398,24 +418,28 @@ impl MeshData {
             normal: normals[5].into(),
             color: grey,
             uv: [0.0, 0.0],
+            material_id: 0xFFFFFFFF,
         });
         vertices.push(Vertex {
             position: corners[2].into(),
             normal: normals[5].into(),
             color: grey,
             uv: [0.0, 0.0],
+            material_id: 0xFFFFFFFF,
         });
         vertices.push(Vertex {
             position: corners[6].into(),
             normal: normals[5].into(),
             color: grey,
             uv: [0.0, 0.0],
+            material_id: 0xFFFFFFFF,
         });
         vertices.push(Vertex {
             position: corners[7].into(),
             normal: normals[5].into(),
             color: grey,
             uv: [0.0, 0.0],
+            material_id: 0xFFFFFFFF,
         });
 
         // Indices for 6 faces (clockwise winding for USD convention)
@@ -533,6 +557,7 @@ impl MeshData {
                 normal,
                 color,
                 uv: [0.0, 0.0], // OBJ loading doesn't have UVs yet
+                material_id: 0xFFFFFFFF,
             });
         }
 
@@ -556,11 +581,72 @@ impl MeshData {
 
     /// Convert a bif_core::Mesh to GPU-ready MeshData
     pub fn from_core_mesh(mesh: &bif_core::Mesh) -> Self {
-        let mut vertices = Vec::with_capacity(mesh.positions.len());
-
-        // Get normals (should already be computed by loader)
         let default_normal = Vec3::Y;
         let default_uv = [0.0f32, 0.0f32];
+
+        // Check if we have per-face materials (GeomSubsets)
+        if let Some(ref face_mat_ids) = mesh.face_material_ids {
+            // Count unique material IDs for debug
+            let unique: std::collections::HashSet<_> = face_mat_ids.iter().collect();
+            log::info!(
+                "Mesh with per-face materials: {} triangles, {} unique materials (IDs: {:?})",
+                face_mat_ids.len(),
+                unique.len(),
+                unique.iter().take(10).collect::<Vec<_>>()
+            );
+            // Unindex the mesh: create 3 vertices per triangle with face's material_id
+            let triangle_count = mesh.indices.len() / 3;
+            let mut vertices = Vec::with_capacity(triangle_count * 3);
+            let mut indices = Vec::with_capacity(triangle_count * 3);
+
+            for (tri_idx, chunk) in mesh.indices.chunks(3).enumerate() {
+                if chunk.len() < 3 {
+                    continue;
+                }
+
+                let mat_id = face_mat_ids.get(tri_idx).copied().unwrap_or(0xFFFFFFFF);
+
+                for &vertex_idx in chunk {
+                    let vi = vertex_idx as usize;
+                    let pos = mesh.positions.get(vi).copied().unwrap_or(Vec3::ZERO);
+                    let normal = mesh
+                        .normals
+                        .as_ref()
+                        .and_then(|n| n.get(vi))
+                        .unwrap_or(&default_normal);
+                    let uv = mesh
+                        .uvs
+                        .as_ref()
+                        .and_then(|uvs| uvs.get(vi))
+                        .copied()
+                        .unwrap_or(default_uv);
+
+                    let color = [normal.x.abs(), normal.y.abs(), normal.z.abs()];
+
+                    indices.push(vertices.len() as u32);
+                    vertices.push(Vertex {
+                        position: [pos.x, pos.y, pos.z],
+                        normal: [normal.x, normal.y, normal.z],
+                        color,
+                        uv,
+                        material_id: mat_id,
+                    });
+                }
+            }
+
+            let bounds_min = Vec3::new(mesh.bounds.x.min, mesh.bounds.y.min, mesh.bounds.z.min);
+            let bounds_max = Vec3::new(mesh.bounds.x.max, mesh.bounds.y.max, mesh.bounds.z.max);
+
+            return Self {
+                vertices,
+                indices,
+                bounds_min,
+                bounds_max,
+            };
+        }
+
+        // No per-face materials - use indexed mesh with shared vertices
+        let mut vertices = Vec::with_capacity(mesh.positions.len());
 
         for (i, pos) in mesh.positions.iter().enumerate() {
             let normal = mesh
@@ -569,7 +655,6 @@ impl MeshData {
                 .and_then(|n| n.get(i))
                 .unwrap_or(&default_normal);
 
-            // Get UV coordinates if available
             let uv = mesh
                 .uvs
                 .as_ref()
@@ -577,7 +662,6 @@ impl MeshData {
                 .copied()
                 .unwrap_or(default_uv);
 
-            // Color from normal for visualization
             let color = [normal.x.abs(), normal.y.abs(), normal.z.abs()];
 
             vertices.push(Vertex {
@@ -585,10 +669,10 @@ impl MeshData {
                 normal: [normal.x, normal.y, normal.z],
                 color,
                 uv,
+                material_id: 0xFFFFFFFF, // Fallback to instance material
             });
         }
 
-        // Get bounds from Aabb
         let bounds_min = Vec3::new(mesh.bounds.x.min, mesh.bounds.y.min, mesh.bounds.z.min);
         let bounds_max = Vec3::new(mesh.bounds.x.max, mesh.bounds.y.max, mesh.bounds.z.max);
 
@@ -779,11 +863,12 @@ pub struct Vertex {
     pub normal: [f32; 3],
     pub color: [f32; 3],
     pub uv: [f32; 2],
+    pub material_id: u32,
 }
 
 impl Vertex {
-    const ATTRIBS: [wgpu::VertexAttribute; 4] =
-        wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x3, 3 => Float32x2];
+    const ATTRIBS: [wgpu::VertexAttribute; 5] =
+        wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x3, 3 => Float32x2, 4 => Uint32];
 
     pub fn desc<'a>() -> wgpu::VertexBufferLayout<'a> {
         wgpu::VertexBufferLayout {
@@ -803,12 +888,13 @@ pub struct InstanceData {
 }
 
 impl InstanceData {
+    // Shifted to slots 5-9 to make room for vertex material_id at slot 4
     const ATTRIBS: [wgpu::VertexAttribute; 5] = wgpu::vertex_attr_array![
-        4 => Float32x4,
         5 => Float32x4,
         6 => Float32x4,
         7 => Float32x4,
-        8 => Uint32
+        8 => Float32x4,
+        9 => Uint32
     ];
 
     pub fn desc<'a>() -> wgpu::VertexBufferLayout<'a> {
@@ -1196,6 +1282,9 @@ impl Renderer {
             }
         }
 
+        if !paths.is_empty() {
+            log::info!("Collected {} texture paths from materials", paths.len());
+        }
         paths
     }
 
@@ -1743,6 +1832,7 @@ impl Renderer {
             normal: [0.0, 1.0, 0.0],
             color: [1.0, 1.0, 1.0],
             uv: [0.0, 0.0],
+            material_id: 0xFFFFFFFF,
         };
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Vertex Buffer (Empty)"),
@@ -2975,28 +3065,6 @@ impl Renderer {
             &scene,
             base_dir,
         );
-
-        for material in &scene.materials {
-            let material = material.as_ref();
-            if let Some(path) = &material.diffuse_texture {
-                if let Some(index) = self.gpu_textures.index_map.get(path) {
-                    log::info!(
-                        "Viewport texture: {} -> slot {} (material {})",
-                        path,
-                        index,
-                        material.name
-                    );
-                } else {
-                    log::warn!(
-                        "Viewport texture missing: {} (material {})",
-                        path,
-                        material.name
-                    );
-                }
-            } else {
-                log::info!("Material has no diffuse texture: {}", material.name);
-            }
-        }
 
         let material_table = if scene.materials.is_empty() {
             vec![MaterialGpu::from_material(

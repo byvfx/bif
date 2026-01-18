@@ -112,6 +112,11 @@ typedef struct UsdBridgeMeshData {
     const float* uvs;
     size_t uv_count;
 
+    /// Per-triangle material IDs (from GeomSubsets, one per triangle)
+    /// May be NULL if no GeomSubsets, triangle_count = index_count / 3
+    const uint32_t* face_material_ids;
+    size_t triangle_count;
+
     /// World transform (4x4 column-major matrix)
     float transform[16];
 } UsdBridgeMeshData;
