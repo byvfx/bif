@@ -1007,9 +1007,14 @@ impl Renderer {
         (v * 255.0 + 0.5) as u8
     }
 
-    fn texture_to_rgba8(texture: &bif_core::texture::Texture, is_linear: bool) -> Vec<u8> {
-        let mut bytes = Vec::with_capacity((texture.width * texture.height * 4) as usize);
-        for pixel in &texture.pixels {
+    fn texture_to_rgba8(
+        width: u32,
+        height: u32,
+        pixels: &[[f32; 4]],
+        is_linear: bool,
+    ) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity((width * height * 4) as usize);
+        for pixel in pixels {
             if is_linear {
                 bytes.push(Self::linear_to_byte(pixel[0]));
                 bytes.push(Self::linear_to_byte(pixel[1]));
@@ -1025,12 +1030,42 @@ impl Renderer {
         bytes
     }
 
+    fn downscale_texture_nearest(
+        texture: &bif_core::texture::Texture,
+        max_dimension: u32,
+    ) -> (u32, u32, Vec<[f32; 4]>) {
+        if texture.width <= max_dimension && texture.height <= max_dimension {
+            return (texture.width, texture.height, texture.pixels.clone());
+        }
+
+        let scale = (texture.width as f32 / max_dimension as f32)
+            .max(texture.height as f32 / max_dimension as f32);
+        let new_width = ((texture.width as f32 / scale).floor() as u32).max(1);
+        let new_height = ((texture.height as f32 / scale).floor() as u32).max(1);
+        let mut pixels = vec![[0.0; 4]; (new_width * new_height) as usize];
+
+        for y in 0..new_height {
+            let src_y = ((y as f32) * scale).floor() as u32;
+            let src_y = src_y.min(texture.height - 1);
+            for x in 0..new_width {
+                let src_x = ((x as f32) * scale).floor() as u32;
+                let src_x = src_x.min(texture.width - 1);
+                let src_index = (src_y * texture.width + src_x) as usize;
+                let dst_index = (y * new_width + x) as usize;
+                pixels[dst_index] = texture.pixels[src_index];
+            }
+        }
+
+        (new_width, new_height, pixels)
+    }
+
     fn create_gpu_texture(
         device: &Device,
         queue: &Queue,
         texture: &bif_core::texture::Texture,
         is_linear: bool,
         label: &str,
+        max_dimension: u32,
     ) -> wgpu::Texture {
         let format = if is_linear {
             wgpu::TextureFormat::Rgba8Unorm
@@ -1038,11 +1073,25 @@ impl Renderer {
             wgpu::TextureFormat::Rgba8UnormSrgb
         };
 
+        let (width, height, pixels) =
+            Self::downscale_texture_nearest(texture, max_dimension);
+        if width != texture.width || height != texture.height {
+            log::warn!(
+                "Downscaled texture {} from {}x{} to {}x{} (limit {}).",
+                texture.path,
+                texture.width,
+                texture.height,
+                width,
+                height,
+                max_dimension
+            );
+        }
+
         let gpu_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some(label),
             size: wgpu::Extent3d {
-                width: texture.width,
-                height: texture.height,
+                width,
+                height,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
@@ -1053,7 +1102,7 @@ impl Renderer {
             view_formats: &[],
         });
 
-        let rgba = Self::texture_to_rgba8(texture, is_linear);
+        let rgba = Self::texture_to_rgba8(width, height, &pixels, is_linear);
         queue.write_texture(
             wgpu::ImageCopyTexture {
                 texture: &gpu_texture,
@@ -1064,12 +1113,12 @@ impl Renderer {
             &rgba,
             wgpu::ImageDataLayout {
                 offset: 0,
-                bytes_per_row: Some(4 * texture.width),
-                rows_per_image: Some(texture.height),
+                bytes_per_row: Some(4 * width),
+                rows_per_image: Some(height),
             },
             wgpu::Extent3d {
-                width: texture.width,
-                height: texture.height,
+                width,
+                height,
                 depth_or_array_layers: 1,
             },
         );
@@ -1154,9 +1203,15 @@ impl Renderer {
         device: &Device,
         queue: &Queue,
         scene: &bif_core::Scene,
+        base_dir: Option<&Path>,
     ) -> GpuTextureSet {
         let mut texture_set = Self::create_default_gpu_textures(device, queue);
-        let mut texture_cache = TextureCache::new();
+        let mut texture_cache = if let Some(base_dir) = base_dir {
+            TextureCache::with_base_dir(base_dir)
+        } else {
+            TextureCache::new()
+        };
+        let max_dimension = device.limits().max_texture_dimension_2d;
 
         let texture_paths = Self::collect_scene_texture_paths(scene);
         if texture_paths.len() >= MAX_VIEWPORT_TEXTURES {
@@ -1181,8 +1236,14 @@ impl Renderer {
                 Ok(texture) => {
                     let is_linear = Self::is_linear_texture_path(&path);
                     let label = format!("Viewport Texture: {}", path);
-                    let gpu_texture =
-                        Self::create_gpu_texture(device, queue, &texture, is_linear, &label);
+                    let gpu_texture = Self::create_gpu_texture(
+                        device,
+                        queue,
+                        &texture,
+                        is_linear,
+                        &label,
+                        max_dimension,
+                    );
                     let view = gpu_texture.create_view(&wgpu::TextureViewDescriptor::default());
                     let index = texture_set.textures.len() as u32;
 
@@ -2149,7 +2210,7 @@ impl Renderer {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
-        let gpu_textures = Self::create_gpu_textures_for_scene(&device, &queue, scene);
+        let gpu_textures = Self::create_gpu_textures_for_scene(&device, &queue, scene, None);
 
         let material_table = if scene.materials.is_empty() {
             vec![MaterialGpu::from_material(
@@ -2907,8 +2968,35 @@ impl Renderer {
         );
 
         // Refresh texture resources and material table for the new scene
-        self.gpu_textures =
-            Self::create_gpu_textures_for_scene(&self.device, &self.queue, &scene);
+        let base_dir = path.parent();
+        self.gpu_textures = Self::create_gpu_textures_for_scene(
+            &self.device,
+            &self.queue,
+            &scene,
+            base_dir,
+        );
+
+        for material in &scene.materials {
+            let material = material.as_ref();
+            if let Some(path) = &material.diffuse_texture {
+                if let Some(index) = self.gpu_textures.index_map.get(path) {
+                    log::info!(
+                        "Viewport texture: {} -> slot {} (material {})",
+                        path,
+                        index,
+                        material.name
+                    );
+                } else {
+                    log::warn!(
+                        "Viewport texture missing: {} (material {})",
+                        path,
+                        material.name
+                    );
+                }
+            } else {
+                log::info!("Material has no diffuse texture: {}", material.name);
+            }
+        }
 
         let material_table = if scene.materials.is_empty() {
             vec![MaterialGpu::from_material(
