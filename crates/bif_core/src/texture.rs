@@ -253,22 +253,49 @@ fn load_texture_file(path: &Path) -> TextureResult<Texture> {
         TextureError::LoadError(format!("Failed to open {}: {}", path.display(), e))
     })?;
 
-    // Convert to RGBA8
-    let rgba = img.to_rgba8();
-    let (width, height) = rgba.dimensions();
+    let is_linear = is_linear_texture_path(path);
 
-    // Convert to linear float RGBA
-    let pixels: Vec<[f32; 4]> = rgba
-        .pixels()
-        .map(|p| {
-            [
-                srgb_to_linear(p[0]),
-                srgb_to_linear(p[1]),
-                srgb_to_linear(p[2]),
-                p[3] as f32 / 255.0, // Alpha is linear
-            ]
-        })
-        .collect();
+    if is_linear {
+        // Load as linear float RGBA (EXR/HDR)
+        let rgba = img.to_rgba32f();
+        let (width, height) = rgba.dimensions();
+
+        let pixels: Vec<[f32; 4]> = rgba
+            .pixels()
+            .map(|p| [p[0], p[1], p[2], p[3]])
+            .collect();
+
+        Ok(Texture::new(
+            width,
+            height,
+            pixels,
+            path.to_string_lossy().to_string(),
+        ))
+    } else {
+        // Convert to RGBA8
+        let rgba = img.to_rgba8();
+        let (width, height) = rgba.dimensions();
+
+        // Convert to linear float RGBA
+        let pixels: Vec<[f32; 4]> = rgba
+            .pixels()
+            .map(|p| {
+                [
+                    srgb_to_linear(p[0]),
+                    srgb_to_linear(p[1]),
+                    srgb_to_linear(p[2]),
+                    p[3] as f32 / 255.0, // Alpha is linear
+                ]
+            })
+            .collect();
+
+        Ok(Texture::new(
+            width,
+            height,
+            pixels,
+            path.to_string_lossy().to_string(),
+        ))
+    }
 
     Ok(Texture::new(
         width,
@@ -285,6 +312,14 @@ fn srgb_to_linear(value: u8) -> f32 {
         v / 12.92
     } else {
         ((v + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+/// Detect if a texture path should be treated as linear (HDR/EXR).
+fn is_linear_texture_path(path: &Path) -> bool {
+    match path.extension().and_then(|ext| ext.to_str()) {
+        Some(ext) => matches!(ext.to_ascii_lowercase().as_str(), "exr" | "hdr"),
+        None => false,
     }
 }
 
