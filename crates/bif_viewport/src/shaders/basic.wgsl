@@ -11,11 +11,27 @@ struct MaterialUniform {
     metallic_roughness: vec4<f32>,  // metallic, roughness, specular, padding
 }
 
+struct MaterialGpu {
+    diffuse_color: vec4<f32>,
+    metallic_roughness: vec4<f32>,
+    texture_indices: vec4<u32>,
+    extra_indices: vec4<u32>,
+}
+
 @group(0) @binding(0)
 var<uniform> camera: CameraUniform;
 
 @group(1) @binding(0)
 var<uniform> material: MaterialUniform;
+
+@group(1) @binding(1)
+var<storage, read> material_table: array<MaterialGpu>;
+
+@group(2) @binding(0)
+var textures: array<texture_2d<f32>, 128>;
+
+@group(2) @binding(1)
+var texture_sampler: sampler;
 
 struct VertexInput {
     @location(0) position: vec3<f32>,
@@ -70,11 +86,16 @@ fn vs_main(in: VertexInput) -> VertexOutput {
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    // Material properties from uniform
-    let base_color = material.diffuse_color.rgb;
-    let metallic = material.metallic_roughness.x;
-    let roughness = material.metallic_roughness.y;
-    let specular = material.metallic_roughness.z;
+    let mat = material_table[in.material_id];
+    let metallic = mat.metallic_roughness.x;
+    let roughness = mat.metallic_roughness.y;
+    let specular = mat.metallic_roughness.z;
+
+    var base_color = mat.diffuse_color.rgb;
+    let diffuse_tex_index = mat.texture_indices.x;
+    if (diffuse_tex_index != 0u) {
+        base_color *= textureSample(textures[diffuse_tex_index], texture_sampler, in.uv).rgb;
+    }
 
     // Simple PBR-inspired shading
     let normal = normalize(in.normal_vs);

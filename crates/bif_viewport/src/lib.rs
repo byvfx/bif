@@ -870,11 +870,13 @@ pub struct Renderer {
     camera_bind_group: wgpu::BindGroup,
     material_uniform: MaterialUniform,
     material_buffer: wgpu::Buffer,
+    material_bind_group_layout: wgpu::BindGroupLayout,
     material_bind_group: wgpu::BindGroup,
     material_table_buffer: wgpu::Buffer,
     material_table_len: u32,
     gpu_textures: GpuTextureSet,
     texture_sampler: wgpu::Sampler,
+    texture_bind_group_layout: wgpu::BindGroupLayout,
     texture_bind_group: wgpu::BindGroup,
     mesh_bounds_min: Vec3,
     mesh_bounds_max: Vec3,
@@ -1891,11 +1893,13 @@ impl Renderer {
             camera_bind_group,
             material_uniform,
             material_buffer,
+            material_bind_group_layout,
             material_bind_group,
             material_table_buffer,
             material_table_len,
             gpu_textures,
             texture_sampler,
+            texture_bind_group_layout,
             texture_bind_group,
             mesh_bounds_min: mesh_data.bounds_min,
             mesh_bounds_max: mesh_data.bounds_max,
@@ -2039,6 +2043,62 @@ impl Renderer {
             mesh_data.vertices.len(),
             mesh_data.indices.len()
         );
+
+        self.gpu_textures =
+            Self::create_gpu_textures_for_scene(&self.device, &self.queue, &scene);
+
+        let material_table = if scene.materials.is_empty() {
+            vec![MaterialGpu::from_material(
+                &bif_core::Material::default(),
+                &self.gpu_textures,
+            )]
+        } else {
+            scene
+                .materials
+                .iter()
+                .map(|mat| MaterialGpu::from_material(mat.as_ref(), &self.gpu_textures))
+                .collect()
+        };
+        self.material_table_len = material_table.len() as u32;
+        self.material_table_buffer = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Material Table Buffer"),
+                contents: bytemuck::cast_slice(&material_table),
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            });
+
+        self.material_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Material Bind Group"),
+            layout: &self.material_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.material_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: self.material_table_buffer.as_entire_binding(),
+                },
+            ],
+        });
+
+        let texture_view_refs: Vec<&wgpu::TextureView> =
+            self.gpu_textures.views.iter().collect();
+        self.texture_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Texture Bind Group"),
+            layout: &self.texture_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureViewArray(&texture_view_refs),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&self.texture_sampler),
+                },
+            ],
+        });
         log::info!(
             "Mesh bounds: min={:?}, max={:?}",
             mesh_data.bounds_min,
@@ -2566,11 +2626,13 @@ impl Renderer {
             camera_bind_group,
             material_uniform,
             material_buffer,
+            material_bind_group_layout,
             material_bind_group,
             material_table_buffer,
             material_table_len,
             gpu_textures,
             texture_sampler,
+            texture_bind_group_layout,
             texture_bind_group,
             mesh_bounds_min: mesh_data.bounds_min,
             mesh_bounds_max: mesh_data.bounds_max,
