@@ -1,5 +1,6 @@
 // Basic PBR shader for rendering textured geometry with camera
 // Supports material properties: diffuse color, metallic, roughness
+// Uses primitive_index for per-triangle material lookup (GeomSubsets)
 
 struct CameraUniform {
     view_proj: mat4x4<f32>,
@@ -27,6 +28,9 @@ var<uniform> material: MaterialUniform;
 @group(1) @binding(1)
 var<storage, read> material_table: array<MaterialGpu>;
 
+@group(1) @binding(2)
+var<storage, read> triangle_materials: array<u32>;
+
 @group(2) @binding(0)
 var textures: binding_array<texture_2d<f32>>;
 
@@ -38,7 +42,7 @@ struct VertexInput {
     @location(1) normal: vec3<f32>,
     @location(2) color: vec3<f32>,
     @location(3) uv: vec2<f32>,
-    @location(4) vertex_material_id: u32,  // Per-vertex material (from GeomSubsets)
+    @location(4) vertex_material_id: u32,  // Unused now - kept for vertex layout compatibility
     @location(5) model_matrix_0: vec4<f32>,
     @location(6) model_matrix_1: vec4<f32>,
     @location(7) model_matrix_2: vec4<f32>,
@@ -51,7 +55,7 @@ struct VertexOutput {
     @location(0) normal_vs: vec3<f32>,   // View-space normal
     @location(1) uv: vec2<f32>,          // UV coordinates for texturing
     @location(2) view_dir: vec3<f32>,    // View direction for specular
-    @location(3) @interpolate(flat) material_id: u32,
+    @location(3) @interpolate(flat) instance_material_id: u32,  // Fallback when no triangle material
 }
 
 @vertex
@@ -80,20 +84,24 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     let view_pos = camera.view * world_position;
     out.view_dir = normalize(-view_pos.xyz);
 
-    // Use vertex material_id if valid (from GeomSubsets), otherwise use instance material_id
-    // 0xFFFFFFFF is the sentinel value for "use instance material"
-    if (in.vertex_material_id != 0xFFFFFFFFu) {
-        out.material_id = in.vertex_material_id;
-    } else {
-        out.material_id = in.instance_material_id;
-    }
+    // Pass instance material as fallback
+    out.instance_material_id = in.instance_material_id;
 
     return out;
 }
 
 @fragment
-fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    let mat = material_table[in.material_id];
+fn fs_main(
+    in: VertexOutput,
+    @builtin(primitive_index) primitive_id: u32,
+) -> @location(0) vec4<f32> {
+    // Look up per-triangle material, fall back to instance material if sentinel value
+    var material_id = triangle_materials[primitive_id];
+    if (material_id == 0xFFFFFFFFu) {
+        material_id = in.instance_material_id;
+    }
+
+    let mat = material_table[material_id];
     let metallic = mat.metallic_roughness.x;
     let roughness = mat.metallic_roughness.y;
     let specular = mat.metallic_roughness.z;
@@ -112,7 +120,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         // return vec4<f32>(in.uv.x, in.uv.y, 0.0, 1.0);
 
         // DEBUG: Uncomment to see material_id as color
-        // return vec4<f32>(f32(in.material_id) / 14.0, 0.0, 0.0, 1.0);
+        // return vec4<f32>(f32(material_id) / 14.0, 0.0, 0.0, 1.0);
     }
 
     // Simple PBR-inspired shading
