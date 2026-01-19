@@ -213,6 +213,8 @@ pub struct MeshData {
     pub indices: Vec<u32>,
     pub bounds_min: Vec3,
     pub bounds_max: Vec3,
+    /// Per-triangle material IDs (for GeomSubsets). If Some, use primitive_index to lookup.
+    pub triangle_material_ids: Option<Vec<u32>>,
 }
 
 impl MeshData {
@@ -456,6 +458,7 @@ impl MeshData {
             indices,
             bounds_min: min,
             bounds_max: max,
+            triangle_material_ids: None,
         }
     }
 
@@ -576,76 +579,19 @@ impl MeshData {
             indices: mesh.indices.clone(),
             bounds_min,
             bounds_max,
+            triangle_material_ids: None,
         })
     }
 
     /// Convert a bif_core::Mesh to GPU-ready MeshData
+    ///
+    /// Keeps vertices indexed (shared) for memory efficiency.
+    /// Per-triangle material IDs are stored separately for primitive_index lookup.
     pub fn from_core_mesh(mesh: &bif_core::Mesh) -> Self {
         let default_normal = Vec3::Y;
         let default_uv = [0.0f32, 0.0f32];
 
-        // Check if we have per-face materials (GeomSubsets)
-        if let Some(ref face_mat_ids) = mesh.face_material_ids {
-            // Count unique material IDs for debug
-            let unique: std::collections::HashSet<_> = face_mat_ids.iter().collect();
-            log::info!(
-                "Mesh with per-face materials: {} triangles, {} unique materials (IDs: {:?})",
-                face_mat_ids.len(),
-                unique.len(),
-                unique.iter().take(10).collect::<Vec<_>>()
-            );
-            // Unindex the mesh: create 3 vertices per triangle with face's material_id
-            let triangle_count = mesh.indices.len() / 3;
-            let mut vertices = Vec::with_capacity(triangle_count * 3);
-            let mut indices = Vec::with_capacity(triangle_count * 3);
-
-            for (tri_idx, chunk) in mesh.indices.chunks(3).enumerate() {
-                if chunk.len() < 3 {
-                    continue;
-                }
-
-                let mat_id = face_mat_ids.get(tri_idx).copied().unwrap_or(0xFFFFFFFF);
-
-                for &vertex_idx in chunk {
-                    let vi = vertex_idx as usize;
-                    let pos = mesh.positions.get(vi).copied().unwrap_or(Vec3::ZERO);
-                    let normal = mesh
-                        .normals
-                        .as_ref()
-                        .and_then(|n| n.get(vi))
-                        .unwrap_or(&default_normal);
-                    let uv = mesh
-                        .uvs
-                        .as_ref()
-                        .and_then(|uvs| uvs.get(vi))
-                        .copied()
-                        .unwrap_or(default_uv);
-
-                    let color = [normal.x.abs(), normal.y.abs(), normal.z.abs()];
-
-                    indices.push(vertices.len() as u32);
-                    vertices.push(Vertex {
-                        position: [pos.x, pos.y, pos.z],
-                        normal: [normal.x, normal.y, normal.z],
-                        color,
-                        uv,
-                        material_id: mat_id,
-                    });
-                }
-            }
-
-            let bounds_min = Vec3::new(mesh.bounds.x.min, mesh.bounds.y.min, mesh.bounds.z.min);
-            let bounds_max = Vec3::new(mesh.bounds.x.max, mesh.bounds.y.max, mesh.bounds.z.max);
-
-            return Self {
-                vertices,
-                indices,
-                bounds_min,
-                bounds_max,
-            };
-        }
-
-        // No per-face materials - use indexed mesh with shared vertices
+        // Build indexed vertices (shared across triangles)
         let mut vertices = Vec::with_capacity(mesh.positions.len());
 
         for (i, pos) in mesh.positions.iter().enumerate() {
@@ -669,18 +615,31 @@ impl MeshData {
                 normal: [normal.x, normal.y, normal.z],
                 color,
                 uv,
-                material_id: 0xFFFFFFFF, // Fallback to instance material
+                material_id: 0xFFFFFFFF, // Not used - material comes from triangle buffer
             });
         }
 
         let bounds_min = Vec3::new(mesh.bounds.x.min, mesh.bounds.y.min, mesh.bounds.z.min);
         let bounds_max = Vec3::new(mesh.bounds.x.max, mesh.bounds.y.max, mesh.bounds.z.max);
 
+        // Store per-triangle material IDs if present (for primitive_index lookup in shader)
+        let triangle_material_ids = mesh.face_material_ids.as_ref().map(|face_mat_ids| {
+            let unique: std::collections::HashSet<_> = face_mat_ids.iter().collect();
+            log::info!(
+                "Mesh with per-face materials: {} triangles, {} unique materials (IDs: {:?})",
+                face_mat_ids.len(),
+                unique.len(),
+                unique.iter().take(10).collect::<Vec<_>>()
+            );
+            face_mat_ids.clone()
+        });
+
         Self {
             vertices,
             indices: mesh.indices.clone(),
             bounds_min,
             bounds_max,
+            triangle_material_ids,
         }
     }
 }
@@ -960,6 +919,10 @@ pub struct Renderer {
     material_bind_group: wgpu::BindGroup,
     material_table_buffer: wgpu::Buffer,
     material_table_len: u32,
+    /// Per-triangle material IDs for primitive_index lookup (GeomSubsets)
+    triangle_material_buffer: wgpu::Buffer,
+    /// Whether we have per-triangle materials (vs instance materials)
+    has_triangle_materials: bool,
     gpu_textures: GpuTextureSet,
     texture_sampler: wgpu::Sampler,
     texture_bind_group_layout: wgpu::BindGroupLayout,
@@ -1575,9 +1538,11 @@ impl Renderer {
                 &wgpu::DeviceDescriptor {
                     label: Some("BIF Device"),
                     required_features: wgpu::Features::TEXTURE_BINDING_ARRAY
-                        | wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING,
+                        | wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING
+                        | wgpu::Features::SHADER_PRIMITIVE_INDEX,
                     required_limits: wgpu::Limits {
                         max_sampled_textures_per_shader_stage: MAX_VIEWPORT_TEXTURES as u32,
+                        max_buffer_size: 1 << 30, // 1GB for large meshes
                         ..Default::default()
                     },
                     memory_hints: Default::default(),
@@ -1617,6 +1582,7 @@ impl Renderer {
             indices: vec![],
             bounds_min: Vec3::new(0.0, 0.0, 0.0),
             bounds_max: Vec3::new(0.0, 0.0, 0.0),
+            triangle_material_ids: None,
         };
 
         // Create camera at default position looking at origin
@@ -1695,44 +1661,71 @@ impl Renderer {
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
         });
 
-        // Create bind group layout for material
+        // Create triangle material buffer (dummy for blank scene)
+        let triangle_material_buffer =
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Triangle Material Buffer"),
+                contents: bytemuck::cast_slice(&[0xFFFFFFFFu32]), // Sentinel: use instance material
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            });
+        let has_triangle_materials = false;
+
+        // Create bind group layout for material (includes triangle material buffer)
         let material_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("Material Bind Group Layout"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                }],
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
             });
 
         // Create bind group for material
         let material_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Material Bind Group"),
             layout: &material_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: material_buffer.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: material_table_buffer.as_entire_binding(),
-            }],
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: material_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: material_table_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: triangle_material_buffer.as_entire_binding(),
+                },
+            ],
         });
 
         let texture_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
@@ -2074,6 +2067,8 @@ impl Renderer {
             material_bind_group,
             material_table_buffer,
             material_table_len,
+            triangle_material_buffer,
+            has_triangle_materials,
             gpu_textures,
             texture_sampler,
             texture_bind_group_layout,
@@ -2165,9 +2160,11 @@ impl Renderer {
                 &wgpu::DeviceDescriptor {
                     label: Some("BIF Device"),
                     required_features: wgpu::Features::TEXTURE_BINDING_ARRAY
-                        | wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING,
+                        | wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING
+                        | wgpu::Features::SHADER_PRIMITIVE_INDEX,
                     required_limits: wgpu::Limits {
                         max_sampled_textures_per_shader_stage: MAX_VIEWPORT_TEXTURES as u32,
+                        max_buffer_size: 1 << 30, // 1GB for large meshes
                         ..Default::default()
                     },
                     memory_hints: Default::default(),
@@ -2343,44 +2340,88 @@ impl Renderer {
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
         });
 
-        // Create bind group layout for material
+        // Create triangle material buffer from mesh data
+        let (triangle_material_buffer, has_triangle_materials) =
+            if let Some(ref tri_mats) = mesh_data.triangle_material_ids {
+                log::info!(
+                    "Creating triangle material buffer with {} entries",
+                    tri_mats.len()
+                );
+                (
+                    device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("Triangle Material Buffer"),
+                        contents: bytemuck::cast_slice(tri_mats),
+                        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                    }),
+                    true,
+                )
+            } else {
+                (
+                    device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("Triangle Material Buffer"),
+                        contents: bytemuck::cast_slice(&[0xFFFFFFFFu32]),
+                        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                    }),
+                    false,
+                )
+            };
+
+        // Create bind group layout for material (includes triangle material buffer)
         let material_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("Material Bind Group Layout"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                }],
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
             });
 
         // Create bind group for material
         let material_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Material Bind Group"),
             layout: &material_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: material_buffer.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: material_table_buffer.as_entire_binding(),
-            }],
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: material_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: material_table_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: triangle_material_buffer.as_entire_binding(),
+                },
+            ],
         });
 
         let texture_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
@@ -2756,6 +2797,8 @@ impl Renderer {
             material_bind_group,
             material_table_buffer,
             material_table_len,
+            triangle_material_buffer,
+            has_triangle_materials,
             gpu_textures,
             texture_sampler,
             texture_bind_group_layout,
@@ -3109,6 +3152,31 @@ impl Renderer {
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             });
 
+        // Create triangle material buffer from mesh data
+        if let Some(ref tri_mats) = mesh_data.triangle_material_ids {
+            log::info!(
+                "Creating triangle material buffer with {} entries",
+                tri_mats.len()
+            );
+            self.triangle_material_buffer = self
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("Triangle Material Buffer"),
+                    contents: bytemuck::cast_slice(tri_mats),
+                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                });
+            self.has_triangle_materials = true;
+        } else {
+            self.triangle_material_buffer = self
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("Triangle Material Buffer"),
+                    contents: bytemuck::cast_slice(&[0xFFFFFFFFu32]),
+                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                });
+            self.has_triangle_materials = false;
+        }
+
         self.material_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Material Bind Group"),
             layout: &self.material_bind_group_layout,
@@ -3120,6 +3188,10 @@ impl Renderer {
                 wgpu::BindGroupEntry {
                     binding: 1,
                     resource: self.material_table_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: self.triangle_material_buffer.as_entire_binding(),
                 },
             ],
         });
