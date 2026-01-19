@@ -471,17 +471,23 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 
 ---
 
-### Milestone 17: Viewport PBR + Textures 🖼️
+### Milestone 17: Viewport PBR + Textures ✅
 
 - **Goal:** Textured PBR materials in Vulkan viewport
-- **Prerequisites:** Milestone 16 complete
-- **Key Tasks:**
-  - GPU texture upload (texture array or bindless)
-  - Texture bind group in render pipeline
-  - Update basic.wgsl for texture sampling
-  - Material ID per instance
-  - Basic PBR lighting (metallic/roughness)
-  - Normal mapping (stretch goal)
+- **Completed:** 2026-01-18
+- **Prerequisites:** Milestone 16 complete ✅
+- **Key Achievements:**
+  - GPU texture upload (binding_array with 64 texture slots)
+  - Texture bind group with sampler in render pipeline
+  - Updated basic.wgsl for texture sampling (diffuse maps)
+  - Per-vertex material IDs via GeomSubset support
+  - Per-instance material ID fallback
+  - Parallel texture loading (25s → 1s with rayon + sRGB LUT)
+  - Texture downscaling for GPU limits (8192 max dimension)
+- **Key Files:**
+  - `crates/bif_viewport/src/lib.rs` - GPU texture upload, parallel loading
+  - `crates/bif_viewport/src/shaders/basic.wgsl` - Texture sampling
+  - `cpp/usd_bridge/usd_bridge.cpp` - GeomSubset extraction
 - **Reference:** wgpu texture examples, LearnOpenGL PBR
 
 ---
@@ -574,6 +580,10 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
   - BSSRDF importance sampling (subsurface scattering)
   - Specular manifold sampling (caustics, glints)
   - Area light importance sampling (soft shadows)
+- **Texture Pipeline:**
+  - .tx texture support (OpenEXR tiled/mipmapped format)
+  - Automatic .tx generation from source textures
+  - Mipmapping for proper texture filtering
 - **Reference:** [Arnold Research Papers](https://blogs.autodesk.com/media-and-entertainment/2024/01/04/autodesk-arnold-research-papers/)
 
 ---
@@ -668,8 +678,8 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 | 0-13b | Foundation | Math, viewport, USD, Embree, UI | ✅ Complete |
 | 14 | GPU Instancing | 10K+ instances + frustum culling + LOD | ✅ Complete |
 | 15 | Materials | UsdPreviewSurface + Disney BSDF | ✅ Complete |
-| 16 | MaterialX | MaterialX standard_surface support | 🔄 In Progress |
-| 17 | Viewport PBR | Textured PBR in Vulkan viewport | Planned |
+| 16 | MaterialX | MaterialX standard_surface support | ✅ Complete |
+| 17 | Viewport PBR | Textured PBR in Vulkan viewport | ✅ Complete |
 | 18 | Animation | Time-sampled USD + motion blur | Planned |
 | 19 | Frame Rendering | Batch render to disk | Planned |
 | 20 | Interactivity | Move objects + keyframing | Planned |
@@ -728,7 +738,7 @@ Key papers for Milestone 20 (Renderer Polish):
 
 ---
 
-**Last Updated:** January 16, 2026
-**Status:** Milestones 0-15 Complete ✅, M16 In Progress
-**Current:** MaterialX standard_surface parsing implemented, awaiting test asset
-**Next:** Validate M16 with Houdini-exported MaterialX USD
+**Last Updated:** January 18, 2026
+**Status:** Milestones 0-17 Complete ✅
+**Current:** Viewport PBR with textures + GeomSubset per-face materials working
+**Next:** M18 Animation + Motion Blur
