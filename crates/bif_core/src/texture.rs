@@ -248,10 +248,13 @@ impl Default for TextureCache {
 
 /// Load a texture from a file path.
 fn load_texture_file(path: &Path) -> TextureResult<Texture> {
+    let start = std::time::Instant::now();
+
     // Load image using the image crate
     let img = image::open(path).map_err(|e| {
         TextureError::LoadError(format!("Failed to open {}: {}", path.display(), e))
     })?;
+    let decode_time = start.elapsed();
 
     let is_linear = is_linear_texture_path(path);
 
@@ -265,6 +268,15 @@ fn load_texture_file(path: &Path) -> TextureResult<Texture> {
             .map(|p| [p[0], p[1], p[2], p[3]])
             .collect();
 
+        let total_time = start.elapsed();
+        log::info!(
+            "Texture {} ({}x{}): decode={:.1}ms, total={:.1}ms",
+            path.file_name().unwrap_or_default().to_string_lossy(),
+            width, height,
+            decode_time.as_secs_f32() * 1000.0,
+            total_time.as_secs_f32() * 1000.0
+        );
+
         Ok(Texture::new(
             width,
             height,
@@ -273,21 +285,37 @@ fn load_texture_file(path: &Path) -> TextureResult<Texture> {
         ))
     } else {
         // Convert to RGBA8
+        let convert_start = std::time::Instant::now();
         let rgba = img.to_rgba8();
         let (width, height) = rgba.dimensions();
+        let convert_time = convert_start.elapsed();
 
-        // Convert to linear float RGBA
+        // Convert to linear float RGBA using lookup table for speed
+        let linear_start = std::time::Instant::now();
+        let lut = srgb_to_linear_lut();
         let pixels: Vec<[f32; 4]> = rgba
             .pixels()
             .map(|p| {
                 [
-                    srgb_to_linear(p[0]),
-                    srgb_to_linear(p[1]),
-                    srgb_to_linear(p[2]),
+                    lut[p[0] as usize],
+                    lut[p[1] as usize],
+                    lut[p[2] as usize],
                     p[3] as f32 / 255.0, // Alpha is linear
                 ]
             })
             .collect();
+        let linear_time = linear_start.elapsed();
+
+        let total_time = start.elapsed();
+        log::info!(
+            "Texture {} ({}x{}): decode={:.1}ms, convert={:.1}ms, linear={:.1}ms, total={:.1}ms",
+            path.file_name().unwrap_or_default().to_string_lossy(),
+            width, height,
+            decode_time.as_secs_f32() * 1000.0,
+            convert_time.as_secs_f32() * 1000.0,
+            linear_time.as_secs_f32() * 1000.0,
+            total_time.as_secs_f32() * 1000.0
+        );
 
         Ok(Texture::new(
             width,
@@ -297,6 +325,25 @@ fn load_texture_file(path: &Path) -> TextureResult<Texture> {
         ))
     }
 
+}
+
+/// Lookup table for sRGB to linear conversion (256 entries).
+/// Lazily initialized on first use to avoid expensive powf() calls per pixel.
+fn srgb_to_linear_lut() -> &'static [f32; 256] {
+    use std::sync::OnceLock;
+    static LUT: OnceLock<[f32; 256]> = OnceLock::new();
+    LUT.get_or_init(|| {
+        let mut lut = [0.0f32; 256];
+        for i in 0..256 {
+            let v = i as f32 / 255.0;
+            lut[i] = if v <= 0.04045 {
+                v / 12.92
+            } else {
+                ((v + 0.055) / 1.055).powf(2.4)
+            };
+        }
+        lut
+    })
 }
 
 /// Convert sRGB byte value to linear float.
