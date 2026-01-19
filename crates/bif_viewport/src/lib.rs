@@ -1294,57 +1294,79 @@ impl Renderer {
         scene: &bif_core::Scene,
         base_dir: Option<&Path>,
     ) -> GpuTextureSet {
+        use rayon::prelude::*;
+        use std::sync::Arc;
+
         let mut texture_set = Self::create_default_gpu_textures(device, queue);
-        let mut texture_cache = if let Some(base_dir) = base_dir {
-            TextureCache::with_base_dir(base_dir)
-        } else {
-            TextureCache::new()
-        };
         let max_dimension = device.limits().max_texture_dimension_2d;
 
         let texture_paths = Self::collect_scene_texture_paths(scene);
-        if texture_paths.len() >= MAX_VIEWPORT_TEXTURES {
+        let paths_to_load: Vec<_> = texture_paths
+            .into_iter()
+            .take(MAX_VIEWPORT_TEXTURES - 1) // Leave slot 0 for default
+            .collect();
+
+        if paths_to_load.len() >= MAX_VIEWPORT_TEXTURES - 1 {
             log::warn!(
-                "Texture count {} exceeds GPU limit {}. Extra textures will be skipped.",
-                texture_paths.len(),
+                "Texture count exceeds GPU limit {}. Extra textures will be skipped.",
                 MAX_VIEWPORT_TEXTURES - 1
             );
         }
 
-        for path in texture_paths {
-            if texture_set.textures.len() >= MAX_VIEWPORT_TEXTURES {
-                log::warn!(
-                    "Skipping texture {} (limit {} reached).",
-                    path,
-                    MAX_VIEWPORT_TEXTURES - 1
-                );
-                break;
-            }
-
-            match texture_cache.load(&path) {
-                Ok(texture) => {
-                    let is_linear = Self::is_linear_texture_path(&path);
-                    let label = format!("Viewport Texture: {}", path);
-                    let gpu_texture = Self::create_gpu_texture(
-                        device,
-                        queue,
-                        &texture,
-                        is_linear,
-                        &label,
-                        max_dimension,
-                    );
-                    let view = gpu_texture.create_view(&wgpu::TextureViewDescriptor::default());
-                    let index = texture_set.textures.len() as u32;
-
-                    texture_set.textures.push(gpu_texture);
-                    texture_set.views[index as usize] = view;
-                    texture_set.index_map.insert(path, index);
+        // Load all textures in parallel (CPU-bound: PNG decode + sRGB conversion)
+        let load_start = std::time::Instant::now();
+        let base_dir_owned = base_dir.map(|p| p.to_path_buf());
+        let loaded_textures: Vec<_> = paths_to_load
+            .par_iter()
+            .map(|path| {
+                let mut cache = if let Some(ref base) = base_dir_owned {
+                    TextureCache::with_base_dir(base)
+                } else {
+                    TextureCache::new()
+                };
+                match cache.load(path) {
+                    Ok(tex) => Some((path.clone(), tex)),
+                    Err(e) => {
+                        log::warn!("Failed to load texture {}: {}", path, e);
+                        None
+                    }
                 }
-                Err(err) => {
-                    log::warn!("Failed to load texture {}: {}", path, err);
-                }
-            }
+            })
+            .collect();
+        let load_time = load_start.elapsed();
+        log::info!(
+            "Loaded {} textures in parallel: {:.1}ms",
+            loaded_textures.iter().filter(|t| t.is_some()).count(),
+            load_time.as_secs_f32() * 1000.0
+        );
+
+        // Upload to GPU (must be sequential - wgpu API requirement)
+        let upload_start = std::time::Instant::now();
+        for item in loaded_textures.into_iter().flatten() {
+            let (path, texture) = item;
+            let is_linear = Self::is_linear_texture_path(&path);
+            let label = format!("Viewport Texture: {}", path);
+            let gpu_texture = Self::create_gpu_texture(
+                device,
+                queue,
+                &texture,
+                is_linear,
+                &label,
+                max_dimension,
+            );
+            let view = gpu_texture.create_view(&wgpu::TextureViewDescriptor::default());
+            let index = texture_set.textures.len() as u32;
+
+            texture_set.textures.push(gpu_texture);
+            texture_set.views[index as usize] = view;
+            texture_set.index_map.insert(path, index);
         }
+        let upload_time = upload_start.elapsed();
+        log::info!(
+            "Uploaded {} textures to GPU: {:.1}ms",
+            texture_set.textures.len() - 1, // -1 for default texture
+            upload_time.as_secs_f32() * 1000.0
+        );
 
         texture_set
     }
