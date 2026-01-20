@@ -292,9 +292,13 @@ static void cache_stage_data(UsdBridgeStage* bridge) {
                 cached.face_material_ids.push_back(face_material_map[orig_face]);
             }
 
-            // Get normals (optional)
+            // Get normals (optional) - track interpolation for UV seam split
             VtArray<GfVec3f> normals;
+            TfToken normalsInterpolation;
             if (mesh.GetNormalsAttr().Get(&normals, timeCode)) {
+                normalsInterpolation = mesh.GetNormalsInterpolation();
+                fprintf(stderr, "[USD_BRIDGE] Normals: count=%zu, interpolation=%s\n",
+                    normals.size(), normalsInterpolation.GetText());
                 cached.normals.reserve(normals.size() * 3);
                 for (const auto& n : normals) {
                     cached.normals.push_back(n[0]);
@@ -307,12 +311,130 @@ static void cache_stage_data(UsdBridgeStage* bridge) {
             UsdGeomPrimvarsAPI primvarsAPI(mesh);
             UsdGeomPrimvar stPrimvar = primvarsAPI.GetPrimvar(TfToken("st"));
             if (stPrimvar) {
+                TfToken interpolation = stPrimvar.GetInterpolation();
                 VtArray<GfVec2f> uvs;
+                VtIntArray uvIndices;
+                bool hasIndices = stPrimvar.GetIndices(&uvIndices, timeCode);
+
                 if (stPrimvar.Get(&uvs, timeCode)) {
-                    cached.uvs.reserve(uvs.size() * 2);
-                    for (const auto& uv : uvs) {
-                        cached.uvs.push_back(uv[0]);
-                        cached.uvs.push_back(uv[1]);
+                    fprintf(stderr, "[USD_BRIDGE] UV primvar: interpolation=%s, uvs=%zu, indices=%zu, vertices=%zu, face_vertex_indices=%zu\n",
+                        interpolation.GetText(), uvs.size(), uvIndices.size(), points.size(), face_vertex_indices.size());
+
+                    if (interpolation == UsdGeomTokens->faceVarying) {
+                        // faceVarying: one UV per face-vertex. Split vertices at UV seams.
+                        // Map (original_vertex, uv) -> new_vertex_index
+                        std::map<std::pair<int, std::pair<int,int>>, uint32_t> vertUvToNew;
+                        std::vector<float> newVertices;
+                        std::vector<float> newNormals;
+                        std::vector<float> newUvs;
+                        std::vector<uint32_t> newIndices;
+
+                        newVertices.reserve(cached.vertices.size());
+                        newNormals.reserve(cached.normals.size());
+                        newUvs.reserve(face_vertex_indices.size() * 2);
+                        newIndices.reserve(cached.indices.size());
+
+                        // Rebuild triangulated indices with UV-split vertices
+                        size_t faceVertIdx = 0;
+                        for (size_t faceIdx = 0; faceIdx < face_vertex_counts.size(); ++faceIdx) {
+                            int faceSize = face_vertex_counts[faceIdx];
+                            if (faceSize < 3) {
+                                faceVertIdx += faceSize;
+                                continue;
+                            }
+
+                            // Fan triangulation matching triangulate_mesh()
+                            for (int i = 1; i < faceSize - 1; ++i) {
+                                int localIndices[3] = {0, i, i + 1};
+                                for (int li = 0; li < 3; ++li) {
+                                    size_t fvIdx = faceVertIdx + localIndices[li];
+                                    int origVert = face_vertex_indices[fvIdx];
+
+                                    // Get UV for this face-vertex
+                                    GfVec2f uv(0, 0);
+                                    if (hasIndices && fvIdx < uvIndices.size()) {
+                                        int uvIdx = uvIndices[fvIdx];
+                                        if (uvIdx >= 0 && static_cast<size_t>(uvIdx) < uvs.size()) {
+                                            uv = uvs[uvIdx];
+                                        }
+                                    } else if (fvIdx < uvs.size()) {
+                                        uv = uvs[fvIdx];
+                                    }
+
+                                    // Quantize UV to detect "same" UVs (avoid float comparison issues)
+                                    int uvKeyU = static_cast<int>(uv[0] * 10000);
+                                    int uvKeyV = static_cast<int>(uv[1] * 10000);
+                                    auto key = std::make_pair(origVert, std::make_pair(uvKeyU, uvKeyV));
+
+                                    auto it = vertUvToNew.find(key);
+                                    if (it != vertUvToNew.end()) {
+                                        // Reuse existing vertex
+                                        newIndices.push_back(it->second);
+                                    } else {
+                                        // Create new vertex
+                                        uint32_t newIdx = static_cast<uint32_t>(newVertices.size() / 3);
+                                        vertUvToNew[key] = newIdx;
+
+                                        // Copy position
+                                        if (origVert >= 0 && static_cast<size_t>(origVert) < points.size()) {
+                                            newVertices.push_back(points[origVert][0]);
+                                            newVertices.push_back(points[origVert][1]);
+                                            newVertices.push_back(points[origVert][2]);
+                                        } else {
+                                            newVertices.push_back(0); newVertices.push_back(0); newVertices.push_back(0);
+                                        }
+
+                                        // Copy normal if available - handle faceVarying vs vertex interpolation
+                                        if (!normals.empty()) {
+                                            GfVec3f normal(0, 1, 0);
+                                            if (normalsInterpolation == UsdGeomTokens->faceVarying) {
+                                                // faceVarying: index by face-vertex position
+                                                if (fvIdx < normals.size()) {
+                                                    normal = normals[fvIdx];
+                                                }
+                                            } else {
+                                                // vertex interpolation: index by vertex
+                                                if (origVert >= 0 && static_cast<size_t>(origVert) < normals.size()) {
+                                                    normal = normals[origVert];
+                                                }
+                                            }
+                                            newNormals.push_back(normal[0]);
+                                            newNormals.push_back(normal[1]);
+                                            newNormals.push_back(normal[2]);
+                                        }
+
+                                        // Store UV
+                                        newUvs.push_back(uv[0]);
+                                        newUvs.push_back(uv[1]);
+
+                                        newIndices.push_back(newIdx);
+                                    }
+                                }
+                            }
+                            faceVertIdx += faceSize;
+                        }
+
+                        size_t oldVertCount = cached.vertices.size() / 3;
+                        size_t newVertCount = newVertices.size() / 3;
+                        fprintf(stderr, "[USD_BRIDGE] UV seam split: %zu -> %zu vertices (%.1f%% increase)\n",
+                            oldVertCount, newVertCount, 100.0 * (newVertCount - oldVertCount) / oldVertCount);
+
+                        // Replace cached data with UV-split version
+                        cached.vertices = std::move(newVertices);
+                        cached.normals = std::move(newNormals);
+                        cached.uvs = std::move(newUvs);
+                        cached.indices = std::move(newIndices);
+
+                        // Rebuild face_material_ids for new triangle count
+                        // (triangulate_mesh output is no longer valid, but we re-triangulated above)
+                        // The triangle order matches, so face_material_ids should still be correct
+                    } else {
+                        // vertex or constant interpolation: direct mapping
+                        cached.uvs.reserve(uvs.size() * 2);
+                        for (const auto& uv : uvs) {
+                            cached.uvs.push_back(uv[0]);
+                            cached.uvs.push_back(uv[1]);
+                        }
                     }
                 }
             }

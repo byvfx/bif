@@ -110,17 +110,19 @@ fn fs_main(
     let diffuse_tex_index = mat.texture_indices.x;
     if (diffuse_tex_index != 0u) {
         // Use texture color directly (not multiplied by diffuse_color which may be grey default)
-        let tex_sample = textureSample(textures[diffuse_tex_index], texture_sampler, in.uv);
+        // Flip V coordinate: USD uses bottom-left origin, textures often use top-left
+        let flipped_uv = vec2<f32>(in.uv.x, 1.0 - in.uv.y);
+        let tex_sample = textureSample(textures[diffuse_tex_index], texture_sampler, flipped_uv);
         base_color = tex_sample.rgb;
 
         // DEBUG: Uncomment to see raw texture without lighting
         // return vec4<f32>(base_color, 1.0);
 
         // DEBUG: Uncomment to see UV coordinates
-        // return vec4<f32>(in.uv.x, in.uv.y, 0.0, 1.0);
+        // return vec4<f32>(fract(in.uv.x), fract(in.uv.y), 0.0, 1.0);
 
         // DEBUG: Uncomment to see material_id as color
-        // return vec4<f32>(f32(material_id) / 14.0, 0.0, 0.0, 1.0);
+        // return vec4<f32>(f32(material_id % 5u) / 5.0, f32((material_id / 5u) % 5u) / 5.0, f32(material_id / 25u) / 5.0, 1.0);
     }
 
     // Simple PBR-inspired shading
