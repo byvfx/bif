@@ -74,6 +74,12 @@ pub struct DisneyBSDF {
     /// Normal map texture (TODO: implement normal mapping)
     #[allow(dead_code)]
     pub normal_texture: Option<Arc<Texture>>,
+
+    /// Opacity (0=transparent, 1=opaque)
+    pub opacity: f32,
+
+    /// Opacity texture (samples from R channel)
+    pub opacity_texture: Option<Arc<Texture>>,
 }
 
 impl Default for DisneyBSDF {
@@ -94,6 +100,8 @@ impl Default for DisneyBSDF {
             roughness_texture: None,
             metallic_texture: None,
             normal_texture: None,
+            opacity: 1.0,
+            opacity_texture: None,
         }
     }
 }
@@ -190,6 +198,8 @@ impl From<&bif_core::Material> for DisneyBSDF {
             roughness_texture: None,
             metallic_texture: None,
             normal_texture: None,
+            opacity: mat.opacity,
+            opacity_texture: None,
         }
     }
 }
@@ -224,6 +234,11 @@ impl DisneyBSDF {
             .as_ref()
             .and_then(|p| cache.load(p).ok());
 
+        let opacity_texture = mat
+            .opacity_texture
+            .as_ref()
+            .and_then(|p| cache.load(p).ok());
+
         Self {
             base_color: mat.diffuse_color,
             metallic: mat.metallic,
@@ -240,6 +255,8 @@ impl DisneyBSDF {
             roughness_texture,
             metallic_texture,
             normal_texture,
+            opacity: mat.opacity,
+            opacity_texture,
         }
     }
 
@@ -270,12 +287,22 @@ impl DisneyBSDF {
         }
     }
 
+    /// Sample opacity at given UV, using texture if available.
+    #[inline]
+    pub fn sample_opacity(&self, u: f32, v: f32) -> f32 {
+        match &self.opacity_texture {
+            Some(tex) => self.opacity * tex.sample_channel(u, v, 0),
+            None => self.opacity,
+        }
+    }
+
     /// Check if this material has any textures bound.
     pub fn has_textures(&self) -> bool {
         self.diffuse_texture.is_some()
             || self.roughness_texture.is_some()
             || self.metallic_texture.is_some()
             || self.normal_texture.is_some()
+            || self.opacity_texture.is_some()
     }
 }
 
@@ -286,6 +313,21 @@ impl Material for DisneyBSDF {
         rec: &HitRecord,
         rng: &mut dyn RngCore,
     ) -> Option<ScatterResult> {
+        // Opacity check: stochastic alpha cutout
+        let opacity = self.sample_opacity(rec.u, rec.v);
+        if opacity < 1.0 {
+            let r = gen_f32(rng);
+            if r > opacity {
+                // Pass through: continue ray in same direction
+                let scattered = Ray::new(rec.p, ray_in.direction(), ray_in.time());
+                return Some(ScatterResult {
+                    attenuation: Color::ONE,
+                    scattered,
+                    pdf: 1.0,
+                });
+            }
+        }
+
         let wo = -ray_in.direction().normalize();
         let n = rec.normal;
 
