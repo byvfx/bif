@@ -492,6 +492,30 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 
 ---
 
+### Milestone 17.1: OIIO + .tx Texture Pipeline 🔧
+
+- **Goal:** Replace image crate with OpenImageIO for industry-standard .tx support
+- **Status:** In Progress
+- **Prerequisites:** M17 complete ✅
+- **Key Achievements:**
+  - C++ OIIO bridge with FFI (`cpp/oiio_bridge/`)
+  - Automatic .tx conversion (maketx equivalent)
+  - Mipmap loading and GPU upload (trilinear + anisotropic filtering)
+  - Texture support in DisneyBSDF (base_color, roughness, metallic)
+  - Feature-gated: `--features oiio` to enable
+- **Key Files:**
+  - `cpp/oiio_bridge/` - C++ FFI bridge to OpenImageIO
+  - `crates/bif_core/src/oiio.rs` - Rust FFI wrapper
+  - `crates/bif_core/src/texture.rs` - TextureCache with OIIO support
+  - `crates/bif_renderer/src/disney.rs` - Texture sampling in BSDF
+  - `crates/bif_viewport/src/lib.rs` - Mipmap GPU upload
+- **Usage:**
+  - Build without OIIO: `cargo build` (uses image crate)
+  - Build with OIIO: `cargo build --features oiio` (requires vcpkg openimageio)
+- **Reference:** OpenImageIO documentation, VFX Reference Platform
+
+---
+
 ### Milestone 18: Animation + Motion Blur 🎬
 
 - **Goal:** Load and render time-sampled USD data with motion blur

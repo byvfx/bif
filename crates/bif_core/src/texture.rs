@@ -2,6 +2,9 @@
 //!
 //! Provides a texture cache that loads images from disk and stores them
 //! in a format suitable for both CPU (Ivar) and GPU (viewport) rendering.
+//!
+//! When the `oiio` feature is enabled, textures can be loaded via OpenImageIO
+//! with automatic .tx conversion and mipmap support.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -9,6 +12,9 @@ use std::sync::Arc;
 
 use bif_math::Vec3;
 use thiserror::Error;
+
+#[cfg(feature = "oiio")]
+use crate::oiio;
 
 /// Errors that can occur during texture loading.
 #[derive(Error, Debug)]
@@ -24,27 +30,50 @@ pub enum TextureError {
 
     #[error("Unsupported texture format: {0}")]
     UnsupportedFormat(String),
+
+    #[cfg(feature = "oiio")]
+    #[error("OIIO error: {0}")]
+    OiioError(#[from] oiio::OiioError),
 }
 
 pub type TextureResult<T> = Result<T, TextureError>;
 
-/// A loaded texture with pixel data.
+/// A single mipmap level.
+#[derive(Clone, Debug)]
+pub struct MipLevel {
+    /// Width in pixels
+    pub width: u32,
+    /// Height in pixels
+    pub height: u32,
+    /// Pixel data in RGBA format (linear, 0-1 range)
+    pub pixels: Vec<[f32; 4]>,
+}
+
+/// A loaded texture with pixel data and optional mipmaps.
 ///
 /// Stores pixels in linear RGB(A) float format for rendering.
 #[derive(Clone, Debug)]
 pub struct Texture {
-    /// Texture width in pixels
+    /// Texture width in pixels (base level)
     pub width: u32,
 
-    /// Texture height in pixels
+    /// Texture height in pixels (base level)
     pub height: u32,
 
     /// Pixel data in RGBA format (linear, 0-1 range)
     /// Stored as [R, G, B, A] per pixel, row-major order
+    /// This is the base mip level (level 0)
     pub pixels: Vec<[f32; 4]>,
+
+    /// Additional mip levels (level 1 and beyond)
+    /// Empty if texture has no mipmaps
+    pub mip_levels: Vec<MipLevel>,
 
     /// Original file path (for debugging)
     pub path: String,
+
+    /// Whether the source was linear (EXR/HDR) or sRGB
+    pub is_linear: bool,
 }
 
 impl Texture {
@@ -54,7 +83,28 @@ impl Texture {
             width,
             height,
             pixels,
+            mip_levels: Vec::new(),
             path: path.into(),
+            is_linear: false,
+        }
+    }
+
+    /// Create a new texture with mipmaps.
+    pub fn with_mips(
+        width: u32,
+        height: u32,
+        pixels: Vec<[f32; 4]>,
+        mip_levels: Vec<MipLevel>,
+        path: impl Into<String>,
+        is_linear: bool,
+    ) -> Self {
+        Self {
+            width,
+            height,
+            pixels,
+            mip_levels,
+            path: path.into(),
+            is_linear,
         }
     }
 
@@ -64,8 +114,20 @@ impl Texture {
             width: 1,
             height: 1,
             pixels: vec![[color.x, color.y, color.z, 1.0]],
+            mip_levels: Vec::new(),
             path: "<solid>".to_string(),
+            is_linear: false,
         }
+    }
+
+    /// Get the number of mip levels (including base).
+    pub fn mip_count(&self) -> u32 {
+        1 + self.mip_levels.len() as u32
+    }
+
+    /// Check if this texture has mipmaps.
+    pub fn has_mipmaps(&self) -> bool {
+        !self.mip_levels.is_empty()
     }
 
     /// Sample the texture at UV coordinates (bilinear filtering).
@@ -131,19 +193,44 @@ impl Texture {
 
     /// Get total size in bytes (approximate).
     pub fn size_bytes(&self) -> usize {
-        self.pixels.len() * std::mem::size_of::<[f32; 4]>()
+        let base_size = self.pixels.len() * std::mem::size_of::<[f32; 4]>();
+        let mip_size: usize = self
+            .mip_levels
+            .iter()
+            .map(|m| m.pixels.len() * std::mem::size_of::<[f32; 4]>())
+            .sum();
+        base_size + mip_size
+    }
+
+    /// Get a specific mip level (0 = base).
+    pub fn get_mip_level(&self, level: u32) -> Option<(&Vec<[f32; 4]>, u32, u32)> {
+        if level == 0 {
+            Some((&self.pixels, self.width, self.height))
+        } else {
+            self.mip_levels.get(level as usize - 1).map(|m| (&m.pixels, m.width, m.height))
+        }
     }
 }
 
 /// Cache for loaded textures.
 ///
 /// Textures are loaded on-demand and cached for reuse.
+/// When the `oiio` feature is enabled, textures can be loaded with mipmaps
+/// and automatically converted to .tx format.
 pub struct TextureCache {
     /// Cached textures by file path
     textures: HashMap<String, Arc<Texture>>,
 
     /// Base directory for resolving relative paths
     base_dir: Option<PathBuf>,
+
+    /// Whether to auto-convert textures to .tx (requires oiio feature)
+    #[cfg(feature = "oiio")]
+    pub auto_convert_tx: bool,
+
+    /// Whether to generate mipmaps when loading (requires oiio feature)
+    #[cfg(feature = "oiio")]
+    pub generate_mipmaps: bool,
 }
 
 impl TextureCache {
@@ -152,6 +239,10 @@ impl TextureCache {
         Self {
             textures: HashMap::new(),
             base_dir: None,
+            #[cfg(feature = "oiio")]
+            auto_convert_tx: true,
+            #[cfg(feature = "oiio")]
+            generate_mipmaps: true,
         }
     }
 
@@ -160,6 +251,10 @@ impl TextureCache {
         Self {
             textures: HashMap::new(),
             base_dir: Some(base_dir.into()),
+            #[cfg(feature = "oiio")]
+            auto_convert_tx: true,
+            #[cfg(feature = "oiio")]
+            generate_mipmaps: true,
         }
     }
 
@@ -169,6 +264,10 @@ impl TextureCache {
     }
 
     /// Load a texture from file, using cache if available.
+    ///
+    /// When the `oiio` feature is enabled and `auto_convert_tx` is true,
+    /// textures will be automatically converted to .tx format for better
+    /// performance and mipmap support.
     pub fn load(&mut self, path: &str) -> TextureResult<Arc<Texture>> {
         // Check cache first
         if let Some(texture) = self.textures.get(path) {
@@ -178,22 +277,98 @@ impl TextureCache {
         // Resolve path
         let full_path = self.resolve_path(path);
 
-        // Load the texture
+        // Load the texture (OIIO or fallback)
+        #[cfg(feature = "oiio")]
+        let texture = self.load_with_oiio(&full_path, path)?;
+
+        #[cfg(not(feature = "oiio"))]
         let texture = load_texture_file(&full_path)?;
+
         let texture = Arc::new(texture);
 
         // Cache it
         self.textures.insert(path.to_string(), texture.clone());
 
         log::debug!(
-            "Loaded texture: {} ({}x{}, {:.1} KB)",
+            "Loaded texture: {} ({}x{}, {} mips, {:.1} KB)",
             path,
             texture.width,
             texture.height,
+            texture.mip_count(),
             texture.size_bytes() as f32 / 1024.0
         );
 
         Ok(texture)
+    }
+
+    /// Load texture using OIIO with optional .tx conversion and mipmaps.
+    #[cfg(feature = "oiio")]
+    fn load_with_oiio(&self, full_path: &Path, original_path: &str) -> TextureResult<Texture> {
+        let load_path = if self.auto_convert_tx {
+            // Check for existing .tx or convert
+            let tx_path = oiio::get_tx_path(full_path);
+
+            if !oiio::tx_is_valid(full_path, &tx_path) {
+                // Need to convert
+                log::info!("Converting {} to .tx", full_path.display());
+                oiio::make_tx(full_path, &tx_path, None)?;
+            }
+
+            if tx_path.exists() {
+                tx_path
+            } else {
+                full_path.to_path_buf()
+            }
+        } else {
+            full_path.to_path_buf()
+        };
+
+        // Load with or without mipmaps
+        let oiio_tex = if self.generate_mipmaps {
+            oiio::load_texture_with_mips(&load_path)?
+        } else {
+            oiio::load_texture(&load_path)?
+        };
+
+        // Convert OIIO texture to our format
+        self.convert_oiio_texture(oiio_tex, original_path)
+    }
+
+    /// Convert OIIO texture data to our Texture format.
+    #[cfg(feature = "oiio")]
+    fn convert_oiio_texture(
+        &self,
+        oiio_tex: oiio::OiioTexture,
+        path: &str,
+    ) -> TextureResult<Texture> {
+        if oiio_tex.mip_levels.is_empty() {
+            return Err(TextureError::LoadError("No mip levels in texture".to_string()));
+        }
+
+        // Convert base level (u8 RGBA to f32 RGBA)
+        let base = &oiio_tex.mip_levels[0];
+        let pixels = convert_u8_to_f32_pixels(&base.data, oiio_tex.is_linear);
+
+        // Convert additional mip levels
+        let mip_levels: Vec<MipLevel> = oiio_tex
+            .mip_levels
+            .iter()
+            .skip(1)
+            .map(|mip| MipLevel {
+                width: mip.width,
+                height: mip.height,
+                pixels: convert_u8_to_f32_pixels(&mip.data, oiio_tex.is_linear),
+            })
+            .collect();
+
+        Ok(Texture::with_mips(
+            oiio_tex.width,
+            oiio_tex.height,
+            pixels,
+            mip_levels,
+            path,
+            oiio_tex.is_linear,
+        ))
     }
 
     /// Get a cached texture without loading.
@@ -334,9 +509,9 @@ fn srgb_to_linear_lut() -> &'static [f32; 256] {
     static LUT: OnceLock<[f32; 256]> = OnceLock::new();
     LUT.get_or_init(|| {
         let mut lut = [0.0f32; 256];
-        for i in 0..256 {
+        for (i, val) in lut.iter_mut().enumerate() {
             let v = i as f32 / 255.0;
-            lut[i] = if v <= 0.04045 {
+            *val = if v <= 0.04045 {
                 v / 12.92
             } else {
                 ((v + 0.055) / 1.055).powf(2.4)
@@ -347,6 +522,7 @@ fn srgb_to_linear_lut() -> &'static [f32; 256] {
 }
 
 /// Convert sRGB byte value to linear float.
+#[allow(dead_code)]
 fn srgb_to_linear(value: u8) -> f32 {
     let v = value as f32 / 255.0;
     if v <= 0.04045 {
@@ -359,9 +535,42 @@ fn srgb_to_linear(value: u8) -> f32 {
 /// Detect if a texture path should be treated as linear (HDR/EXR).
 fn is_linear_texture_path(path: &Path) -> bool {
     match path.extension().and_then(|ext| ext.to_str()) {
-        Some(ext) => matches!(ext.to_ascii_lowercase().as_str(), "exr" | "hdr"),
+        Some(ext) => matches!(ext.to_ascii_lowercase().as_str(), "exr" | "hdr" | "tx"),
         None => false,
     }
+}
+
+/// Convert u8 RGBA pixels to f32 RGBA.
+/// If source is sRGB, applies gamma correction. If linear, just normalizes.
+#[cfg(feature = "oiio")]
+fn convert_u8_to_f32_pixels(data: &[u8], is_linear: bool) -> Vec<[f32; 4]> {
+    let pixel_count = data.len() / 4;
+    let mut pixels = Vec::with_capacity(pixel_count);
+
+    if is_linear {
+        // Linear data - just normalize to 0-1
+        for chunk in data.chunks_exact(4) {
+            pixels.push([
+                chunk[0] as f32 / 255.0,
+                chunk[1] as f32 / 255.0,
+                chunk[2] as f32 / 255.0,
+                chunk[3] as f32 / 255.0,
+            ]);
+        }
+    } else {
+        // sRGB data - convert to linear
+        let lut = srgb_to_linear_lut();
+        for chunk in data.chunks_exact(4) {
+            pixels.push([
+                lut[chunk[0] as usize],
+                lut[chunk[1] as usize],
+                lut[chunk[2] as usize],
+                chunk[3] as f32 / 255.0, // Alpha is linear
+            ]);
+        }
+    }
+
+    pixels
 }
 
 #[cfg(test)]
