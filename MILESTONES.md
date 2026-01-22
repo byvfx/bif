@@ -492,27 +492,29 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 
 ---
 
-### Milestone 17.1: OIIO + .tx Texture Pipeline 🔧
+### Milestone 17.1: OIIO + .tx Texture Pipeline ✅
 
 - **Goal:** Replace image crate with OpenImageIO for industry-standard .tx support
-- **Status:** In Progress
+- **Completed:** 2026-01-21
 - **Prerequisites:** M17 complete ✅
 - **Key Achievements:**
   - C++ OIIO bridge with FFI (`cpp/oiio_bridge/`)
-  - Automatic .tx conversion (maketx equivalent)
-  - Mipmap loading and GPU upload (trilinear + anisotropic filtering)
-  - Texture support in DisneyBSDF (base_color, roughness, metallic)
+  - Automatic .tx conversion via `ImageBufAlgo::make_texture()`
+  - Mipmap generation and loading (box filter downsample)
+  - GPU upload with trilinear + anisotropic filtering (16x)
   - Feature-gated: `--features oiio` to enable
+  - Falls back to `image` crate when OIIO not enabled
 - **Key Files:**
   - `cpp/oiio_bridge/` - C++ FFI bridge to OpenImageIO
   - `crates/bif_core/src/oiio.rs` - Rust FFI wrapper
-  - `crates/bif_core/src/texture.rs` - TextureCache with OIIO support
-  - `crates/bif_renderer/src/disney.rs` - Texture sampling in BSDF
+  - `crates/bif_core/src/texture.rs` - TextureCache with OIIO/.tx support
+  - `crates/bif_renderer/src/disney.rs` - Texture fields in DisneyBSDF
   - `crates/bif_viewport/src/lib.rs` - Mipmap GPU upload
 - **Usage:**
-  - Build without OIIO: `cargo build` (uses image crate)
+  - Build without OIIO: `cargo build` (uses image crate, no mipmaps)
   - Build with OIIO: `cargo build --features oiio` (requires vcpkg openimageio)
-- **Reference:** OpenImageIO documentation, VFX Reference Platform
+- **Devlog:** [devlog/DEVLOG_2026-01-21.md](devlog/DEVLOG_2026-01-21.md)
+- **Reference:** OpenImageIO 3.0 documentation, VFX Reference Platform
 
 ---
 
@@ -704,6 +706,7 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 | 15 | Materials | UsdPreviewSurface + Disney BSDF | ✅ Complete |
 | 16 | MaterialX | MaterialX standard_surface support | ✅ Complete |
 | 17 | Viewport PBR | Textured PBR in Vulkan viewport | ✅ Complete |
+| 17.1 | OIIO/.tx | OpenImageIO texture pipeline (feature-gated) | ✅ Complete |
 | 18 | Animation | Time-sampled USD + motion blur | Planned |
 | 19 | Frame Rendering | Batch render to disk | Planned |
 | 20 | Interactivity | Move objects + keyframing | Planned |
@@ -762,7 +765,7 @@ Key papers for Milestone 20 (Renderer Polish):
 
 ---
 
-**Last Updated:** January 18, 2026
-**Status:** Milestones 0-17 Complete ✅
-**Current:** Viewport PBR with textures + GeomSubset per-face materials working
+**Last Updated:** January 21, 2026
+**Status:** Milestones 0-17.1 Complete ✅
+**Current:** OIIO/.tx texture pipeline with mipmaps (feature-gated)
 **Next:** M18 Animation + Motion Blur
