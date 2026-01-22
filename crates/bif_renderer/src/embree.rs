@@ -272,9 +272,10 @@ pub struct EmbreeScene {
     _index_data: Vec<u32>,
     _transform_data: Vec<[f32; 16]>,
 
-    // Per-vertex UV and normal data for interpolation (3 entries per triangle)
+    // Per-vertex UV, normal, and tangent data for interpolation (3 entries per triangle)
     uv_data: Vec<[f32; 2]>,
     normal_data: Vec<[f32; 3]>,
+    tangent_data: Vec<[f32; 3]>,
 
     // For debugging/stats
     instance_count: usize,
@@ -563,6 +564,34 @@ impl EmbreeScene {
                 }
             }
 
+            // Compute per-triangle tangent vectors from edge/deltaUV
+            let mut tangent_data = Vec::with_capacity(vertices.len() * 3);
+            for tri_idx in 0..vertices.len() {
+                let uv0 = if tri_idx < uvs.len() { uvs[tri_idx][0] } else { [0.0, 0.0] };
+                let uv1 = if tri_idx < uvs.len() { uvs[tri_idx][1] } else { [1.0, 0.0] };
+                let uv2 = if tri_idx < uvs.len() { uvs[tri_idx][2] } else { [0.0, 1.0] };
+
+                let edge1 = vertices[tri_idx][1] - vertices[tri_idx][0];
+                let edge2 = vertices[tri_idx][2] - vertices[tri_idx][0];
+                let duv1 = [uv1[0] - uv0[0], uv1[1] - uv0[1]];
+                let duv2 = [uv2[0] - uv0[0], uv2[1] - uv0[1]];
+
+                let det = duv1[0] * duv2[1] - duv2[0] * duv1[1];
+                let tangent = if det.abs() > 1e-8 {
+                    let r = 1.0 / det;
+                    let t = (edge1 * duv2[1] - edge2 * duv1[1]) * r;
+                    let len = t.length();
+                    if len > 1e-8 { (t / len).into() } else { [1.0, 0.0, 0.0] }
+                } else {
+                    [1.0, 0.0, 0.0] // Degenerate UV, use default tangent
+                };
+
+                // Same tangent for all 3 vertices of this triangle
+                tangent_data.push(tangent);
+                tangent_data.push(tangent);
+                tangent_data.push(tangent);
+            }
+
             // Build triangle material IDs (default to 0 if not provided)
             let tri_mat_ids = if triangle_material_ids.is_empty() {
                 vec![0u32; vertices.len()]
@@ -581,6 +610,7 @@ impl EmbreeScene {
                 _transform_data: transform_data,
                 uv_data,
                 normal_data,
+                tangent_data,
                 instance_count: transforms.len(),
                 triangle_count: vertices.len(),
             }
@@ -673,6 +703,21 @@ impl Hittable for EmbreeScene {
             );
             let normal = interp_normal.normalize();
             rec.normal = normal;
+
+            // Interpolate tangent and compute bitangent
+            let t0 = self.tangent_data[base];
+            let t1 = self.tangent_data[base + 1];
+            let t2 = self.tangent_data[base + 2];
+            let interp_tangent = Vec3::new(
+                bary_w * t0[0] + bary_u * t1[0] + bary_v * t2[0],
+                bary_w * t0[1] + bary_u * t1[1] + bary_v * t2[1],
+                bary_w * t0[2] + bary_u * t1[2] + bary_v * t2[2],
+            );
+            // Gram-Schmidt orthogonalize tangent against normal
+            let tangent = (interp_tangent - normal * normal.dot(interp_tangent)).normalize();
+            let bitangent = normal.cross(tangent);
+            rec.tangent = tangent;
+            rec.bitangent = bitangent;
 
             // Per-triangle material lookup
             let mat_id = self.triangle_material_ids[prim_id] as usize;
