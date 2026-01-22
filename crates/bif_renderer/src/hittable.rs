@@ -24,6 +24,10 @@ pub struct HitRecord<'a> {
     pub p: Vec3,
     /// Surface normal at intersection (always points against ray)
     pub normal: Vec3,
+    /// Tangent vector for normal mapping (in world space)
+    pub tangent: Vec3,
+    /// Bitangent vector for normal mapping (in world space)
+    pub bitangent: Vec3,
     /// Material at the intersection point
     pub material: &'a dyn Material,
     /// UV texture coordinates
@@ -40,6 +44,8 @@ impl<'a> Default for HitRecord<'a> {
         Self {
             p: Vec3::ZERO,
             normal: Vec3::ZERO,
+            tangent: Vec3::X,
+            bitangent: Vec3::Z,
             material: &DUMMY_MATERIAL,
             u: 0.0,
             v: 0.0,

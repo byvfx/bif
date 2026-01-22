@@ -162,6 +162,8 @@ mod tests {
         let mut rec = HitRecord {
             p: Vec3::ZERO,
             normal: Vec3::ZERO,
+            tangent: Vec3::X,
+            bitangent: Vec3::Z,
             material: &dummy_mat,
             u: 0.0,
             v: 0.0,
@@ -190,6 +192,8 @@ mod tests {
         let mut rec = HitRecord {
             p: Vec3::ZERO,
             normal: Vec3::ZERO,
+            tangent: Vec3::X,
+            bitangent: Vec3::Z,
             material: &dummy_mat,
             u: 0.0,
             v: 0.0,

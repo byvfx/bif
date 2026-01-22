@@ -71,8 +71,7 @@ pub struct DisneyBSDF {
     /// Metallic texture (samples from R channel)
     pub metallic_texture: Option<Arc<Texture>>,
 
-    /// Normal map texture (TODO: implement normal mapping)
-    #[allow(dead_code)]
+    /// Normal map texture
     pub normal_texture: Option<Arc<Texture>>,
 
     /// Opacity (0=transparent, 1=opaque)
@@ -296,6 +295,29 @@ impl DisneyBSDF {
         }
     }
 
+    /// Apply normal map to perturb the shading normal using tangent-space mapping.
+    ///
+    /// Samples the normal texture, remaps from [0,1] to [-1,1], and transforms
+    /// from tangent space to world space using the TBN matrix.
+    #[inline]
+    pub fn apply_normal_map(&self, normal: Vec3, tangent: Vec3, bitangent: Vec3, u: f32, v: f32) -> Vec3 {
+        match &self.normal_texture {
+            Some(tex) => {
+                let sampled = tex.sample(u, v);
+                // Remap from [0,1] to [-1,1]
+                let map_normal = Vec3::new(
+                    sampled.x * 2.0 - 1.0,
+                    sampled.y * 2.0 - 1.0,
+                    sampled.z * 2.0 - 1.0,
+                );
+                // Transform from tangent space to world space: T*x + B*y + N*z
+                let world_normal = tangent * map_normal.x + bitangent * map_normal.y + normal * map_normal.z;
+                world_normal.normalize()
+            }
+            None => normal,
+        }
+    }
+
     /// Check if this material has any textures bound.
     pub fn has_textures(&self) -> bool {
         self.diffuse_texture.is_some()
@@ -329,7 +351,9 @@ impl Material for DisneyBSDF {
         }
 
         let wo = -ray_in.direction().normalize();
-        let n = rec.normal;
+
+        // Apply normal map if present
+        let n = self.apply_normal_map(rec.normal, rec.tangent, rec.bitangent, rec.u, rec.v);
 
         // Sample material parameters from textures at hit UV coordinates
         let base_color = self.sample_base_color(rec.u, rec.v);
