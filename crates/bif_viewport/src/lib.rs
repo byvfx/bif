@@ -132,6 +132,10 @@ pub struct Renderer {
 
     // Material for Ivar rendering (from loaded USD scene)
     scene_material: bif_core::Material,
+    // All scene materials for multi-material Ivar rendering
+    scene_materials: Vec<std::sync::Arc<bif_core::Material>>,
+    // Base directory for resolving texture paths
+    texture_base_dir: Option<std::path::PathBuf>,
 
     // Frustum culling for GPU instancing optimization
     /// Maximum instances the buffer can hold (preallocated)
@@ -809,6 +813,8 @@ impl Renderer {
             instance_transforms: vec![], // Empty scene - no instances
             instance_material_ids: vec![],
             scene_material: bif_core::Material::default(),
+            scene_materials: vec![],
+            texture_base_dir: None,
             max_instances: MAX_INSTANCES,
             instance_aabbs: vec![],
             prototype_aabb: Aabb::empty(),
@@ -1546,6 +1552,8 @@ impl Renderer {
             instance_transforms,
             instance_material_ids,
             scene_material,
+            scene_materials: scene.materials.clone(),
+            texture_base_dir: None,
             max_instances: MAX_INSTANCES,
             instance_aabbs,
             prototype_aabb,
@@ -2016,6 +2024,8 @@ impl Renderer {
         self.mesh_data = mesh_data;
         self.instance_transforms = instance_transforms;
         self.scene_material = scene_material.clone();
+        self.scene_materials = scene.materials.clone();
+        self.texture_base_dir = path.parent().map(|p| p.to_path_buf());
 
         // Update material uniform buffer for viewport PBR
         self.material_uniform = MaterialUniform::from_material(&scene_material);
@@ -2141,6 +2151,7 @@ impl Renderer {
         let mesh_data = self.mesh_data.clone();
         let transforms = self.instance_transforms.clone();
         let material = self.scene_material.clone();
+        let texture_base_dir = self.texture_base_dir.clone();
 
         // Create channel for build completion
         let (tx, rx) = mpsc::channel();
@@ -2190,12 +2201,16 @@ impl Renderer {
             log::info!("Background thread: Extracted {} triangles, creating acceleration structure with {} instances...",
                 triangle_vertices.len(), transforms.len());
 
-            // Convert material to Disney BSDF
-            let disney_mat = DisneyBSDF::from(&material);
+            // Convert material to Disney BSDF with textures
+            let mut texture_cache = match texture_base_dir {
+                Some(dir) => bif_core::texture::TextureCache::with_base_dir(dir),
+                None => bif_core::texture::TextureCache::new(),
+            };
+            let disney_mat = DisneyBSDF::from_material_with_textures(&material, &mut texture_cache);
             log::info!(
-                "Using Disney BSDF: base_color=({:.2}, {:.2}, {:.2}), metallic={:.2}, roughness={:.2}",
+                "Using Disney BSDF: base_color=({:.2}, {:.2}, {:.2}), metallic={:.2}, roughness={:.2}, textures={}",
                 disney_mat.base_color.x, disney_mat.base_color.y, disney_mat.base_color.z,
-                disney_mat.metallic, disney_mat.roughness
+                disney_mat.metallic, disney_mat.roughness, disney_mat.has_textures()
             );
 
             // Try to create Embree scene first, fall back to CPU BVH if unavailable
