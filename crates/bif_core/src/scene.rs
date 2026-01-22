@@ -50,6 +50,9 @@ pub struct Material {
 
     /// Path to emissive texture
     pub emissive_texture: Option<String>,
+
+    /// Path to opacity texture
+    pub opacity_texture: Option<String>,
 }
 
 impl Default for Material {
@@ -67,6 +70,7 @@ impl Default for Material {
             metallic_texture: None,
             normal_texture: None,
             emissive_texture: None,
+            opacity_texture: None,
         }
     }
 }
@@ -88,6 +92,7 @@ impl Material {
             || self.metallic_texture.is_some()
             || self.normal_texture.is_some()
             || self.emissive_texture.is_some()
+            || self.opacity_texture.is_some()
     }
 
     /// Check if this material is emissive.

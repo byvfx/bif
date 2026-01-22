@@ -174,6 +174,7 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
             metallic_texture: mat_data.metallic_texture.clone(),
             normal_texture: mat_data.normal_texture.clone(),
             emissive_texture: mat_data.emissive_texture.clone(),
+            opacity_texture: None, // TODO: extract from USD when available
         };
         let mat_id = scene.add_material(material);
         material_map.insert(mat_data.path.clone(), mat_id);
