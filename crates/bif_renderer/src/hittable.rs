@@ -9,7 +9,12 @@ use rand::RngCore;
 struct DummyMaterial;
 
 impl Material for DummyMaterial {
-    fn scatter(&self, _ray_in: &Ray, _rec: &HitRecord, _rng: &mut dyn RngCore) -> Option<ScatterResult> {
+    fn scatter(
+        &self,
+        _ray_in: &Ray,
+        _rec: &HitRecord,
+        _rng: &mut dyn RngCore,
+    ) -> Option<ScatterResult> {
         None
     }
 }

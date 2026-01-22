@@ -61,7 +61,6 @@ pub struct DisneyBSDF {
     // =========================================================================
     // Texture maps (optional, override scalar values when present)
     // =========================================================================
-
     /// Base color / diffuse texture
     pub diffuse_texture: Option<Arc<Texture>>,
 
@@ -228,10 +227,7 @@ impl DisneyBSDF {
             .as_ref()
             .and_then(|p| cache.load(p).ok());
 
-        let normal_texture = mat
-            .normal_texture
-            .as_ref()
-            .and_then(|p| cache.load(p).ok());
+        let normal_texture = mat.normal_texture.as_ref().and_then(|p| cache.load(p).ok());
 
         let opacity_texture = mat
             .opacity_texture
@@ -300,7 +296,14 @@ impl DisneyBSDF {
     /// Samples the normal texture, remaps from [0,1] to [-1,1], and transforms
     /// from tangent space to world space using the TBN matrix.
     #[inline]
-    pub fn apply_normal_map(&self, normal: Vec3, tangent: Vec3, bitangent: Vec3, u: f32, v: f32) -> Vec3 {
+    pub fn apply_normal_map(
+        &self,
+        normal: Vec3,
+        tangent: Vec3,
+        bitangent: Vec3,
+        u: f32,
+        v: f32,
+    ) -> Vec3 {
         match &self.normal_texture {
             Some(tex) => {
                 let sampled = tex.sample(u, v);
@@ -311,7 +314,8 @@ impl DisneyBSDF {
                     sampled.z * 2.0 - 1.0,
                 );
                 // Transform from tangent space to world space: T*x + B*y + N*z
-                let world_normal = tangent * map_normal.x + bitangent * map_normal.y + normal * map_normal.z;
+                let world_normal =
+                    tangent * map_normal.x + bitangent * map_normal.y + normal * map_normal.z;
                 world_normal.normalize()
             }
             None => normal,
@@ -364,15 +368,23 @@ impl Material for DisneyBSDF {
         let diffuse_weight = (1.0 - metallic) * (1.0 - self.specular * 0.5);
         let specular_weight = 1.0 - diffuse_weight;
 
-        let do_diffuse =
-            gen_f32(rng) < diffuse_weight / (diffuse_weight + specular_weight);
+        let do_diffuse = gen_f32(rng) < diffuse_weight / (diffuse_weight + specular_weight);
 
         if do_diffuse {
             // Diffuse scattering (Burley diffuse approximation)
             self.scatter_diffuse_textured(wo, n, rec.p, ray_in.time(), rng, base_color, roughness)
         } else {
             // Specular scattering (GGX microfacet)
-            self.scatter_specular_textured(wo, n, rec.p, ray_in.time(), rng, base_color, metallic, roughness)
+            self.scatter_specular_textured(
+                wo,
+                n,
+                rec.p,
+                ray_in.time(),
+                rng,
+                base_color,
+                metallic,
+                roughness,
+            )
         }
     }
 }

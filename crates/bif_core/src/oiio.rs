@@ -114,9 +114,7 @@ fn convert_error(code: i32) -> OiioError {
     unsafe {
         let last_error = oiio_bridge_get_last_error();
         let detail = if !last_error.is_null() {
-            CStr::from_ptr(last_error)
-                .to_string_lossy()
-                .into_owned()
+            CStr::from_ptr(last_error).to_string_lossy().into_owned()
         } else {
             String::new()
         };

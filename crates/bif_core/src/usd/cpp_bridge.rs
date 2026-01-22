@@ -529,11 +529,8 @@ impl UsdStage {
                 None
             } else {
                 Some(
-                    std::slice::from_raw_parts(
-                        raw_data.face_material_ids,
-                        raw_data.triangle_count,
-                    )
-                    .to_vec(),
+                    std::slice::from_raw_parts(raw_data.face_material_ids, raw_data.triangle_count)
+                        .to_vec(),
                 )
             }
         };
