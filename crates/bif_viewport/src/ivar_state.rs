@@ -187,3 +187,57 @@ impl IvarState {
             .unwrap_or(0.0)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_render_mode_display_name() {
+        assert_eq!(RenderMode::Vulkan.display_name(), "Vulkan");
+        assert_eq!(RenderMode::Ivar.display_name(), "Ivar");
+    }
+
+    #[test]
+    fn test_camera_snapshot_has_changed() {
+        let snap1 = CameraSnapshot {
+            position: Vec3::ZERO,
+            target: Vec3::Z,
+            fov_y: 45.0,
+        };
+        let snap2 = CameraSnapshot {
+            position: Vec3::X * 0.001, // small change
+            target: Vec3::Z,
+            fov_y: 45.0,
+        };
+        assert!(snap1.has_changed(&snap2));
+
+        let snap3 = CameraSnapshot {
+            position: Vec3::ZERO,
+            target: Vec3::Z,
+            fov_y: 45.0,
+        };
+        assert!(!snap1.has_changed(&snap3));
+    }
+
+    #[test]
+    fn test_ivar_state_progress() {
+        let mut state = IvarState::default();
+        state.buckets = generate_buckets(100, 100, 32);
+        let total = state.buckets.len();
+        state.buckets_completed = total / 2;
+        assert!((state.progress() - 50.0).abs() < 1.0);
+    }
+
+    #[test]
+    fn test_ivar_state_progress_empty() {
+        let state = IvarState::default();
+        assert_eq!(state.progress(), 0.0);
+    }
+
+    #[test]
+    fn test_build_status_default() {
+        let state = IvarState::default();
+        assert_eq!(state.build_status, BuildStatus::NotStarted);
+    }
+}

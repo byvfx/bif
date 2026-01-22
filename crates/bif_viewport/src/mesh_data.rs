@@ -447,3 +447,34 @@ impl MeshData {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bif_math::{Aabb, Vec3};
+
+    #[test]
+    fn test_from_aabb_vertex_count() {
+        let aabb = Aabb::from_points(Vec3::new(-0.5, -0.5, -0.5), Vec3::new(0.5, 0.5, 0.5));
+        let mesh = MeshData::from_aabb(&aabb);
+        assert_eq!(mesh.vertices.len(), 24); // 6 faces * 4 verts
+        assert_eq!(mesh.indices.len(), 36); // 6 faces * 2 tris * 3
+    }
+
+    #[test]
+    fn test_from_aabb_bounds() {
+        let aabb = Aabb::from_points(Vec3::new(0.0, 1.0, 2.0), Vec3::new(2.0, 3.0, 4.0));
+        let mesh = MeshData::from_aabb(&aabb);
+        assert_eq!(mesh.bounds_min, Vec3::new(0.0, 1.0, 2.0));
+        assert_eq!(mesh.bounds_max, Vec3::new(2.0, 3.0, 4.0));
+    }
+
+    #[test]
+    fn test_center_and_size() {
+        let aabb = Aabb::from_points(Vec3::new(-1.0, -1.0, -1.0), Vec3::new(1.0, 1.0, 1.0));
+        let mesh = MeshData::from_aabb(&aabb);
+        assert!((mesh.center() - Vec3::ZERO).length() < 0.001);
+        // size = diagonal of 2x2x2 cube = sqrt(12) ≈ 3.46
+        assert!((mesh.size() - 3.464).abs() < 0.01);
+    }
+}

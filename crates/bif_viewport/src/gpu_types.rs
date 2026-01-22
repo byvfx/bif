@@ -283,3 +283,46 @@ impl CullingScratch {
         self.far_instances.clear();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_culling_scratch_new_and_clear() {
+        let mut scratch = CullingScratch::new(100);
+        scratch.visible_with_distance.push((1.0, 0));
+        scratch.near_instances.push(InstanceData {
+            model_matrix: [[0.0; 4]; 4],
+            material_id: 0,
+        });
+        scratch.clear();
+        assert!(scratch.visible_with_distance.is_empty());
+        assert!(scratch.near_instances.is_empty());
+        assert!(scratch.far_instances.is_empty());
+    }
+
+    #[test]
+    fn test_gnomon_vertex_create_axes() {
+        let axes = GnomonVertex::create_axes();
+        assert_eq!(axes.len(), 6); // 3 axes * 2 verts
+    }
+
+    #[test]
+    fn test_material_uniform_default() {
+        let mat = MaterialUniform::new();
+        assert_eq!(mat.diffuse_color[0], 0.5);
+        assert_eq!(mat.metallic_roughness[0], 0.0); // metallic
+        assert_eq!(mat.metallic_roughness[1], 0.5); // roughness
+    }
+
+    #[test]
+    fn test_camera_uniform_default() {
+        let cam = CameraUniform::new();
+        // Should be identity matrices
+        assert_eq!(cam.view_proj[0][0], 1.0);
+        assert_eq!(cam.view_proj[1][1], 1.0);
+        assert_eq!(cam.view_proj[2][2], 1.0);
+        assert_eq!(cam.view_proj[3][3], 1.0);
+    }
+}
