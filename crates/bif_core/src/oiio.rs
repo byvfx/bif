@@ -84,6 +84,7 @@ struct OiioTxOptionsRaw {
 }
 
 #[link(name = "oiio_bridge")]
+#[allow(dead_code)]
 extern "C" {
     fn oiio_bridge_error_message(error: i32) -> *const c_char;
     fn oiio_bridge_get_last_error() -> *const c_char;
