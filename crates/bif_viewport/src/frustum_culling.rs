@@ -129,3 +129,115 @@ pub fn update_visible_instances(
         far_count,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bif_math::{Aabb, Frustum, Mat4, Vec3};
+
+    #[test]
+    fn test_empty_instances() {
+        let mut scratch = CullingScratch::new(100);
+        let frustum = Frustum::from_view_projection(Mat4::IDENTITY);
+        let result = update_visible_instances(
+            &mut scratch,
+            &frustum,
+            Vec3::ZERO,
+            &[],
+            &[],
+            &[],
+            100,
+            10000,
+        );
+        assert_eq!(result.near_count, 0);
+        assert_eq!(result.far_count, 0);
+    }
+
+    /// Create a perspective frustum looking down -Z.
+    fn create_test_frustum() -> Frustum {
+        let view = Mat4::look_at_rh(Vec3::ZERO, -Vec3::Z, Vec3::Y);
+        let proj = Mat4::perspective_rh(std::f32::consts::FRAC_PI_2, 1.0, 0.1, 1000.0);
+        Frustum::from_view_projection(proj * view)
+    }
+
+    #[test]
+    fn test_all_near_within_budget() {
+        let mut scratch = CullingScratch::new(100);
+        let frustum = create_test_frustum();
+        // Place AABBs in front of camera (negative Z)
+        let aabbs = vec![
+            Aabb::from_points(Vec3::new(-0.5, -0.5, -5.5), Vec3::new(0.5, 0.5, -4.5)),
+            Aabb::from_points(Vec3::new(-0.5, -0.5, -10.5), Vec3::new(0.5, 0.5, -9.5)),
+        ];
+        let transforms = vec![Mat4::IDENTITY; 2];
+        let material_ids = vec![0u32; 2];
+
+        let result = update_visible_instances(
+            &mut scratch,
+            &frustum,
+            Vec3::ZERO,
+            &aabbs,
+            &transforms,
+            &material_ids,
+            100,
+            10000,
+        );
+        // Both should be visible and within budget
+        assert_eq!(result.near_count + result.far_count, 2);
+        assert_eq!(result.near_count, 2);
+    }
+
+    #[test]
+    fn test_lod_split_by_budget() {
+        let mut scratch = CullingScratch::new(100);
+        let frustum = create_test_frustum();
+        // 10 instances at increasing distances
+        let aabbs: Vec<_> = (0..10)
+            .map(|i| {
+                let z = -((i as f32 + 1.0) * 10.0);
+                Aabb::from_points(Vec3::new(-0.5, -0.5, z - 0.5), Vec3::new(0.5, 0.5, z + 0.5))
+            })
+            .collect();
+        let transforms = vec![Mat4::IDENTITY; 10];
+        let material_ids = vec![0u32; 10];
+
+        // Budget allows 3 full-mesh instances (300 tris / 100 tris each)
+        let result = update_visible_instances(
+            &mut scratch,
+            &frustum,
+            Vec3::ZERO,
+            &aabbs,
+            &transforms,
+            &material_ids,
+            100,
+            300,
+        );
+        assert_eq!(result.near_count, 3);
+        assert_eq!(result.far_count, 7);
+    }
+
+    #[test]
+    fn test_culled_outside_frustum() {
+        let mut scratch = CullingScratch::new(100);
+        let frustum = create_test_frustum();
+        // Place AABB behind the camera (positive Z) - should be culled
+        let aabbs = vec![Aabb::from_points(
+            Vec3::new(-0.5, -0.5, 4.5),
+            Vec3::new(0.5, 0.5, 5.5),
+        )];
+        let transforms = vec![Mat4::IDENTITY];
+        let material_ids = vec![0u32];
+
+        let result = update_visible_instances(
+            &mut scratch,
+            &frustum,
+            Vec3::ZERO,
+            &aabbs,
+            &transforms,
+            &material_ids,
+            100,
+            10000,
+        );
+        assert_eq!(result.near_count + result.far_count, 0);
+    }
+}

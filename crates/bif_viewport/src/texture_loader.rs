@@ -393,3 +393,45 @@ pub fn create_gpu_textures_for_scene(
 
     texture_set
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_linear_texture_path() {
+        assert!(is_linear_texture_path("foo.exr"));
+        assert!(is_linear_texture_path("bar.EXR"));
+        assert!(is_linear_texture_path("hdr.hdr"));
+        assert!(!is_linear_texture_path("diffuse.png"));
+        assert!(!is_linear_texture_path("normal.jpg"));
+        assert!(!is_linear_texture_path("noext"));
+    }
+
+    #[test]
+    fn test_linear_to_srgb_byte() {
+        assert_eq!(linear_to_srgb_byte(0.0), 0);
+        assert_eq!(linear_to_srgb_byte(1.0), 255);
+        assert_eq!(linear_to_srgb_byte(f32::NAN), 0);
+        assert_eq!(linear_to_srgb_byte(f32::INFINITY), 0);
+        // Mid-gray ~0.18 linear -> ~0.46 sRGB -> ~117 byte
+        let mid = linear_to_srgb_byte(0.18);
+        assert!(mid > 100 && mid < 140);
+    }
+
+    #[test]
+    fn test_linear_to_byte() {
+        assert_eq!(linear_to_byte(0.0), 0);
+        assert_eq!(linear_to_byte(1.0), 255);
+        assert_eq!(linear_to_byte(0.5), 128);
+        assert_eq!(linear_to_byte(-1.0), 0); // clamped
+        assert_eq!(linear_to_byte(2.0), 255); // clamped
+    }
+
+    #[test]
+    fn test_texture_to_rgba8() {
+        let pixels = vec![[0.0, 0.5, 1.0, 1.0]];
+        let bytes = texture_to_rgba8(1, 1, &pixels, true); // linear
+        assert_eq!(bytes, vec![0, 128, 255, 255]);
+    }
+}
