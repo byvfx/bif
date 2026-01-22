@@ -2,9 +2,9 @@
 
 > Production-grade renderer inspired by Isotropix Clarisse, built in Rust
 
-## Current Status: Milestones 0-16 Complete
+## Current Status: Milestones 0-17.1 Complete
 
-**Materials + MaterialX Done** - Full USD material pipeline working
+**Textured PBR + OIIO Pipeline** - Industry-standard texture workflow
 
 - Dual rendering: Vulkan viewport (60 FPS) + Ivar CPU path tracer
 - GPU instancing: 10K+ instances with LOD culling
@@ -12,10 +12,12 @@
 - Intel Embree 4: Production-quality ray tracing
 - Materials: UsdPreviewSurface + MaterialX standard_surface
 - Disney Principled BSDF in path tracer
+- Textured PBR viewport with per-face materials (GeomSubsets)
+- OpenImageIO integration with .tx auto-conversion (optional)
 - Node graph + scene browser + property inspector
 - 93+ tests passing across 4 crates
 
-**Next:** [Milestone 17](MILESTONES.md) (Viewport PBR Textures)
+**Next:** [Milestone 18](MILESTONES.md) (Animation + Motion Blur)
 
 ---
 
@@ -24,6 +26,9 @@
 ```bash
 # Build and run
 cargo run --package bif_viewer
+
+# Build with OIIO support (optional, requires vcpkg openimageio)
+cargo build --features oiio
 
 # Run tests
 cargo test
@@ -39,10 +44,12 @@ cargo run -p bif_viewer -- --usd assets/lucy/usd/assets/lucy/lucy.usd
 
 - **Massive Instancing:** 10K-1M instances via prototype/instance architecture
 - **Dual Renderers:**
-  - **GPU (Vulkan):** Real-time preview at 60+ FPS
+  - **GPU (Vulkan):** Real-time textured PBR at 60+ FPS
   - **CPU (Ivar):** Production path tracing with Disney BSDF
 - **USD Workflow:** Import USDA/USDC scenes from Houdini/Maya
 - **Materials:** UsdPreviewSurface + MaterialX standard_surface
+- **Textures:** Per-face materials via GeomSubsets, parallel loading
+- **OIIO Support:** Optional OpenImageIO with .tx auto-conversion and mipmaps
 - **Intel Embree 4:** Production two-level BVH ray tracing
 - **File References:** `@path.usda@</Prim>` resolved automatically
 
@@ -54,11 +61,13 @@ cargo run -p bif_viewer -- --usd assets/lucy/usd/assets/lucy/lucy.usd
 bif/
 ├── crates/
 │   ├── bif_math/       # Math primitives (Vec3, Ray, AABB, Camera, Transform)
-│   ├── bif_core/       # Scene graph, USD parser, mesh data, materials
+│   ├── bif_core/       # Scene graph, USD parser, mesh data, materials, textures
 │   ├── bif_viewport/   # GPU viewport (wgpu + Vulkan + egui)
 │   ├── bif_renderer/   # CPU path tracer "Ivar" (Embree + Disney BSDF)
 │   └── bif_viewer/     # Application entry point
-├── cpp/usd_bridge/     # C++ FFI bridge to Pixar USD
+├── cpp/
+│   ├── usd_bridge/     # C++ FFI bridge to Pixar USD
+│   └── oiio_bridge/    # C++ FFI bridge to OpenImageIO (optional)
 ├── devlog/             # Development session logs
 ├── legacy/             # Original Go raytracer (reference)
 └── renders/            # Render output files
@@ -86,13 +95,13 @@ bif/
 
 ---
 
-## Statistics (Milestones 0-16)
+## Statistics (Milestones 0-17.1)
 
 | Metric | Value |
 |--------|-------|
-| Total LOC | ~8,500 |
+| Total LOC | ~9,000 |
 | Tests Passing | 93+ |
-| Milestones Complete | 16 |
+| Milestones Complete | 17.1 |
 | Build Time (dev) | ~5s |
 | Runtime FPS | 60+ (VSync) |
 | Instances Rendered | 10K+ with LOD |
@@ -109,7 +118,8 @@ bif/
 - **Math:** glam 0.29 (SIMD)
 - **UI:** egui 0.29 + egui-snarl 0.5 (node graph)
 - **USD:** Pixar USD 25.11 (C++ bridge) + pure Rust parser
-- **Format:** USD (USDA/USDC), OBJ (legacy)
+- **Textures:** OpenImageIO 3.0 (optional, via vcpkg)
+- **Format:** USD (USDA/USDC), OBJ (legacy), .tx (tiled mipmapped)
 
 ---
 
@@ -180,7 +190,7 @@ Use the egui side panel to switch between:
 
 See [MILESTONES.md](MILESTONES.md) for complete history and future plans.
 
-### Completed (Milestones 0-16)
+### Completed (Milestones 0-17.1)
 
 - Math library, wgpu viewport, camera controls
 - OBJ/USD loading, GPU instancing, Embree 4
@@ -189,12 +199,14 @@ See [MILESTONES.md](MILESTONES.md) for complete history and future plans.
 - Scene browser, property inspector, node graph
 - UsdPreviewSurface + MaterialX materials
 - Disney Principled BSDF
+- Textured PBR viewport with GeomSubsets
+- OpenImageIO + .tx texture pipeline (optional)
 
 ### Next Up
 
-- **Milestone 17:** Viewport PBR Textures
 - **Milestone 18:** Animation + Motion Blur
 - **Milestone 19:** Frame Rendering
+- **Milestone 20:** Scene Interactivity + Keyframing
 
 ### Future
 
@@ -230,5 +242,5 @@ MIT License - See [LICENSE](LICENSE) for details
 
 ---
 
-**Last Updated:** January 17, 2026
-**Status:** Milestones 0-16 Complete | Next: M17 (Viewport Textures)
+**Last Updated:** January 21, 2026
+**Status:** Milestones 0-17.1 Complete | Next: M18 (Animation + Motion Blur)
