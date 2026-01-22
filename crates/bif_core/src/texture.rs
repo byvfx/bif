@@ -207,7 +207,9 @@ impl Texture {
         if level == 0 {
             Some((&self.pixels, self.width, self.height))
         } else {
-            self.mip_levels.get(level as usize - 1).map(|m| (&m.pixels, m.width, m.height))
+            self.mip_levels
+                .get(level as usize - 1)
+                .map(|m| (&m.pixels, m.width, m.height))
         }
     }
 }
@@ -342,7 +344,9 @@ impl TextureCache {
         path: &str,
     ) -> TextureResult<Texture> {
         if oiio_tex.mip_levels.is_empty() {
-            return Err(TextureError::LoadError("No mip levels in texture".to_string()));
+            return Err(TextureError::LoadError(
+                "No mip levels in texture".to_string(),
+            ));
         }
 
         // Convert base level (u8 RGBA to f32 RGBA)
@@ -439,16 +443,14 @@ fn load_texture_file(path: &Path) -> TextureResult<Texture> {
         let rgba = img.to_rgba32f();
         let (width, height) = rgba.dimensions();
 
-        let pixels: Vec<[f32; 4]> = rgba
-            .pixels()
-            .map(|p| [p[0], p[1], p[2], p[3]])
-            .collect();
+        let pixels: Vec<[f32; 4]> = rgba.pixels().map(|p| [p[0], p[1], p[2], p[3]]).collect();
 
         let total_time = start.elapsed();
         log::info!(
             "Texture {} ({}x{}): decode={:.1}ms, total={:.1}ms",
             path.file_name().unwrap_or_default().to_string_lossy(),
-            width, height,
+            width,
+            height,
             decode_time.as_secs_f32() * 1000.0,
             total_time.as_secs_f32() * 1000.0
         );
@@ -486,7 +488,8 @@ fn load_texture_file(path: &Path) -> TextureResult<Texture> {
         log::info!(
             "Texture {} ({}x{}): decode={:.1}ms, convert={:.1}ms, linear={:.1}ms, total={:.1}ms",
             path.file_name().unwrap_or_default().to_string_lossy(),
-            width, height,
+            width,
+            height,
             decode_time.as_secs_f32() * 1000.0,
             convert_time.as_secs_f32() * 1000.0,
             linear_time.as_secs_f32() * 1000.0,
@@ -500,7 +503,6 @@ fn load_texture_file(path: &Path) -> TextureResult<Texture> {
             path.to_string_lossy().to_string(),
         ))
     }
-
 }
 
 /// Lookup table for sRGB to linear conversion (256 entries).

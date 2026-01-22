@@ -301,7 +301,14 @@ impl EmbreeScene {
             }
             rtcReleaseDevice(test_device);
         }
-        Some(Self::new(vertices, uvs, normals, transforms, materials, triangle_material_ids))
+        Some(Self::new(
+            vertices,
+            uvs,
+            normals,
+            transforms,
+            materials,
+            triangle_material_ids,
+        ))
     }
 
     /// Create Embree scene with instanced geometry.
@@ -567,9 +574,21 @@ impl EmbreeScene {
             // Compute per-triangle tangent vectors from edge/deltaUV
             let mut tangent_data = Vec::with_capacity(vertices.len() * 3);
             for tri_idx in 0..vertices.len() {
-                let uv0 = if tri_idx < uvs.len() { uvs[tri_idx][0] } else { [0.0, 0.0] };
-                let uv1 = if tri_idx < uvs.len() { uvs[tri_idx][1] } else { [1.0, 0.0] };
-                let uv2 = if tri_idx < uvs.len() { uvs[tri_idx][2] } else { [0.0, 1.0] };
+                let uv0 = if tri_idx < uvs.len() {
+                    uvs[tri_idx][0]
+                } else {
+                    [0.0, 0.0]
+                };
+                let uv1 = if tri_idx < uvs.len() {
+                    uvs[tri_idx][1]
+                } else {
+                    [1.0, 0.0]
+                };
+                let uv2 = if tri_idx < uvs.len() {
+                    uvs[tri_idx][2]
+                } else {
+                    [0.0, 1.0]
+                };
 
                 let edge1 = vertices[tri_idx][1] - vertices[tri_idx][0];
                 let edge2 = vertices[tri_idx][2] - vertices[tri_idx][0];
@@ -581,7 +600,11 @@ impl EmbreeScene {
                     let r = 1.0 / det;
                     let t = (edge1 * duv2[1] - edge2 * duv1[1]) * r;
                     let len = t.length();
-                    if len > 1e-8 { (t / len).into() } else { [1.0, 0.0, 0.0] }
+                    if len > 1e-8 {
+                        (t / len).into()
+                    } else {
+                        [1.0, 0.0, 0.0]
+                    }
                 } else {
                     [1.0, 0.0, 0.0] // Degenerate UV, use default tangent
                 };

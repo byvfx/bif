@@ -186,11 +186,7 @@ fn sample_square(rng: &mut dyn RngCore) -> Vec3 {
 /// Sample a random point in the unit disk.
 fn random_in_unit_disk(rng: &mut dyn RngCore) -> Vec3 {
     loop {
-        let p = Vec3::new(
-            gen_f32(rng) * 2.0 - 1.0,
-            gen_f32(rng) * 2.0 - 1.0,
-            0.0,
-        );
+        let p = Vec3::new(gen_f32(rng) * 2.0 - 1.0, gen_f32(rng) * 2.0 - 1.0, 0.0);
         if p.length_squared() < 1.0 {
             return p;
         }

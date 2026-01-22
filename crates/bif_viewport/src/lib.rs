@@ -2209,25 +2209,43 @@ impl Renderer {
             };
             let materials: Vec<Arc<DisneyBSDF>> = if scene_materials.is_empty() {
                 // Single fallback material
-                vec![Arc::new(DisneyBSDF::from_material_with_textures(&fallback_material, &mut texture_cache))]
+                vec![Arc::new(DisneyBSDF::from_material_with_textures(
+                    &fallback_material,
+                    &mut texture_cache,
+                ))]
             } else {
-                scene_materials.iter().map(|mat| {
-                    Arc::new(DisneyBSDF::from_material_with_textures(mat.as_ref(), &mut texture_cache))
-                }).collect()
+                scene_materials
+                    .iter()
+                    .map(|mat| {
+                        Arc::new(DisneyBSDF::from_material_with_textures(
+                            mat.as_ref(),
+                            &mut texture_cache,
+                        ))
+                    })
+                    .collect()
             };
-            log::info!("Loaded {} materials for Ivar (textures cached: {})",
-                materials.len(), texture_cache.len());
+            log::info!(
+                "Loaded {} materials for Ivar (textures cached: {})",
+                materials.len(),
+                texture_cache.len()
+            );
 
             // Get per-triangle material IDs (default to all-0 if not present)
-            let tri_mat_ids: Vec<u32> = mesh_data.triangle_material_ids
+            let tri_mat_ids: Vec<u32> = mesh_data
+                .triangle_material_ids
                 .as_ref()
                 .cloned()
                 .unwrap_or_default();
 
             // Try to create Embree scene first, fall back to CPU BVH if unavailable
-            let world = if let Some(embree_scene) =
-                EmbreeScene::try_new(&triangle_vertices, &triangle_uvs, &triangle_normals, transforms.clone(), materials, &tri_mat_ids)
-            {
+            let world = if let Some(embree_scene) = EmbreeScene::try_new(
+                &triangle_vertices,
+                &triangle_uvs,
+                &triangle_normals,
+                transforms.clone(),
+                materials,
+                &tri_mat_ids,
+            ) {
                 log::info!("Using Embree for hardware-accelerated ray tracing");
                 // Wrap Embree scene in a BVH node (BVH contains just 1 object)
                 let objects: Vec<Box<dyn Hittable + Send + Sync>> = vec![Box::new(embree_scene)];

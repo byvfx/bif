@@ -130,7 +130,8 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
         } else {
             // New unique mesh, create prototype
             let face_material_ids = mesh_data.face_material_ids.clone();
-            let mut mesh = Mesh::new_with_materials(vertices, indices, normals, uvs, face_material_ids);
+            let mut mesh =
+                Mesh::new_with_materials(vertices, indices, normals, uvs, face_material_ids);
             mesh.ensure_normals();
 
             let mesh_arc = Arc::new(mesh);
@@ -195,7 +196,9 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
                         let mat = &scene.materials[mat_id];
                         log::debug!(
                             "Binding {} to prototype {} (diffuse={:?})",
-                            mat.name, proto_id, mat.diffuse_color
+                            mat.name,
+                            proto_id,
+                            mat.diffuse_color
                         );
                         updated_proto.material = Some(mat.clone());
                         scene.prototypes[proto_id] = Arc::new(updated_proto);
