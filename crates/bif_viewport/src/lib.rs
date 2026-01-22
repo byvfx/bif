@@ -1,7 +1,6 @@
 use anyhow::Result;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::num::NonZeroU32;
-use std::path::Path;
 use std::sync::mpsc;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -14,887 +13,44 @@ use wgpu::{util::DeviceExt, Device, Instance, Queue, Surface, SurfaceConfigurati
 use bif_math::{Aabb, Camera, Frustum, Mat4, Mat4Ext, Vec3};
 
 // USD stage for scene browser
-use bif_core::texture::TextureCache;
 use bif_core::usd::UsdStage;
 
 // Re-export bif_renderer types for Ivar integration
 use bif_renderer::{
-    generate_buckets, render_bucket, Bucket, BucketResult, BvhNode, Color, DisneyBSDF, EmbreeScene,
-    Hittable, ImageBuffer, RenderConfig, DEFAULT_BUCKET_SIZE,
+    render_bucket, BucketResult, BvhNode, Color, DisneyBSDF, EmbreeScene, Hittable, ImageBuffer,
+    RenderConfig,
 };
+
+// New modular architecture
+pub mod frustum_culling;
+pub mod gpu_types;
+pub mod ivar_renderer;
+pub mod ivar_state;
+pub mod mesh_data;
+pub mod texture_loader;
 
 // Scene browser and property inspector modules
 pub mod node_graph;
 pub mod property_inspector;
 pub mod scene_browser;
 
+// Re-exports from new modules
+pub use frustum_culling::{update_visible_instances, CullingResult};
+pub use gpu_types::{
+    CameraUniform, CullingScratch, GnomonUniform, GnomonVertex, GpuTextureSet, InstanceData,
+    MaterialGpu, MaterialUniform, Vertex, MAX_VIEWPORT_TEXTURES,
+};
+pub use ivar_renderer::{create_depth_texture, create_ivar_pipeline, create_ivar_texture};
+pub use ivar_state::{BuildStatus, CameraSnapshot, IvarMessage, IvarState, RenderMode};
+pub use mesh_data::MeshData;
+pub use texture_loader::{
+    collect_scene_texture_paths, create_default_gpu_textures, create_gpu_texture,
+    create_gpu_textures_for_scene,
+};
+
 pub use node_graph::{render_node_graph, NodeGraphEvent, NodeGraphState, SceneNode};
 pub use property_inspector::{render_property_inspector, PrimProperties};
 pub use scene_browser::{EmptyPrimProvider, PrimDataProvider, PrimDisplayInfo, SceneBrowserState};
-
-/// Render mode selection: GPU viewport or Ivar CPU path tracer
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum RenderMode {
-    /// Real-time GPU viewport rendering (wgpu)
-    #[default]
-    Vulkan,
-    /// Ivar CPU path tracer for production quality
-    Ivar,
-}
-
-impl RenderMode {
-    /// Get display name for UI
-    pub fn display_name(&self) -> &'static str {
-        match self {
-            RenderMode::Vulkan => "Vulkan",
-            RenderMode::Ivar => "Ivar",
-        }
-    }
-}
-
-/// Scene build status for async scene construction
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum BuildStatus {
-    /// Scene has not been built yet
-    #[default]
-    NotStarted,
-    /// Scene is currently being built in background thread
-    Building,
-    /// Scene build completed successfully
-    Complete,
-    /// Scene build failed
-    Failed,
-}
-
-/// Snapshot of camera state for dirty detection
-#[derive(Debug, Clone, Copy)]
-pub struct CameraSnapshot {
-    pub position: Vec3,
-    pub target: Vec3,
-    pub fov_y: f32,
-}
-
-impl CameraSnapshot {
-    /// Create snapshot from viewport camera
-    pub fn from_camera(camera: &Camera) -> Self {
-        Self {
-            position: camera.position,
-            target: camera.target,
-            fov_y: camera.fov_y,
-        }
-    }
-
-    /// Check if camera has changed significantly
-    pub fn has_changed(&self, other: &Self) -> bool {
-        const EPSILON: f32 = 0.0001;
-        (self.position - other.position).length() > EPSILON
-            || (self.target - other.target).length() > EPSILON
-            || (self.fov_y - other.fov_y).abs() > EPSILON
-    }
-}
-
-/// Message from Ivar background render thread
-#[derive(Debug)]
-pub enum IvarMessage {
-    /// A bucket has been completed
-    BucketComplete(BucketResult),
-    /// Entire render is complete
-    RenderComplete { elapsed_secs: f32 },
-    /// Render was cancelled
-    Cancelled,
-}
-
-/// State for Ivar progressive rendering
-pub struct IvarState {
-    /// Current render mode
-    pub mode: RenderMode,
-    /// Accumulated image buffer
-    pub image_buffer: Option<ImageBuffer>,
-    /// List of buckets for current render
-    pub buckets: Vec<Bucket>,
-    /// Number of buckets completed
-    pub buckets_completed: usize,
-    /// Whether render is complete
-    pub render_complete: bool,
-    /// Cancel flag for background thread
-    pub cancel_flag: Arc<AtomicBool>,
-    /// Receiver for bucket completion messages
-    pub receiver: Option<mpsc::Receiver<IvarMessage>>,
-    /// Last camera snapshot for dirty detection
-    pub last_camera_snapshot: Option<CameraSnapshot>,
-    /// Time when render started
-    pub render_start_time: Option<Instant>,
-    /// Cached world geometry (BVH of triangles)
-    /// TODO: Invalidate world cache when scene is reloaded or modified
-    /// TODO: Add "Rebuild Scene" button to manually invalidate cached BVH
-    pub world: Option<Arc<BvhNode>>,
-    /// Scene build status for async construction
-    pub build_status: BuildStatus,
-    /// Receiver for scene build completion
-    pub build_receiver: Option<mpsc::Receiver<Arc<BvhNode>>>,
-    /// Samples per pixel for rendering
-    /// TODO: Expose SPP in UI
-    pub samples_per_pixel: u32,
-    /// Max bounce depth
-    pub max_depth: u32,
-}
-
-impl Default for IvarState {
-    fn default() -> Self {
-        Self {
-            mode: RenderMode::Vulkan,
-            image_buffer: None,
-            buckets: Vec::new(),
-            buckets_completed: 0,
-            render_complete: false,
-            cancel_flag: Arc::new(AtomicBool::new(false)),
-            receiver: None,
-            last_camera_snapshot: None,
-            render_start_time: None,
-            world: None,
-            build_status: BuildStatus::NotStarted,
-            build_receiver: None,
-            samples_per_pixel: 16, // Lower for interactive preview
-            max_depth: 8,
-        }
-    }
-}
-
-impl IvarState {
-    /// Reset render state (call when starting new render)
-    pub fn reset_render(&mut self, width: u32, height: u32) {
-        // Cancel any existing render
-        self.cancel_flag.store(true, Ordering::Relaxed);
-
-        // Create new cancel flag
-        self.cancel_flag = Arc::new(AtomicBool::new(false));
-
-        // Clear state
-        self.image_buffer = Some(ImageBuffer::new(width, height));
-        self.buckets = generate_buckets(width, height, DEFAULT_BUCKET_SIZE);
-        self.buckets_completed = 0;
-        self.render_complete = false;
-        self.receiver = None;
-        self.render_start_time = Some(Instant::now());
-    }
-
-    /// Check if camera has moved and render needs restart
-    pub fn check_camera_dirty(&mut self, camera: &Camera) -> bool {
-        let current = CameraSnapshot::from_camera(camera);
-
-        match &self.last_camera_snapshot {
-            Some(last) if !last.has_changed(&current) => false,
-            _ => {
-                self.last_camera_snapshot = Some(current);
-                true
-            }
-        }
-    }
-
-    /// Get render progress as percentage
-    pub fn progress(&self) -> f32 {
-        if self.buckets.is_empty() {
-            return 0.0;
-        }
-        (self.buckets_completed as f32 / self.buckets.len() as f32) * 100.0
-    }
-
-    /// Get elapsed render time in seconds
-    pub fn elapsed_secs(&self) -> f32 {
-        self.render_start_time
-            .map(|t| t.elapsed().as_secs_f32())
-            .unwrap_or(0.0)
-    }
-}
-
-#[derive(Clone)]
-pub struct MeshData {
-    pub vertices: Vec<Vertex>,
-    pub indices: Vec<u32>,
-    pub bounds_min: Vec3,
-    pub bounds_max: Vec3,
-    /// Per-triangle material IDs (for GeomSubsets). If Some, use primitive_index to lookup.
-    pub triangle_material_ids: Option<Vec<u32>>,
-}
-
-impl MeshData {
-    /// Get mesh center
-    pub fn center(&self) -> Vec3 {
-        (self.bounds_min + self.bounds_max) * 0.5
-    }
-
-    /// Get mesh size (diagonal of bounding box)
-    pub fn size(&self) -> f32 {
-        (self.bounds_max - self.bounds_min).length()
-    }
-
-    /// Create a box mesh from AABB (for LOD proxy rendering)
-    ///
-    /// Generates a simple box with 8 vertices, 36 indices (12 triangles).
-    /// Uses clockwise winding to match USD mesh convention.
-    #[allow(clippy::vec_init_then_push)]
-    pub fn from_aabb(aabb: &Aabb) -> Self {
-        let min = aabb.min_point();
-        let max = aabb.max_point();
-
-        // 8 corner vertices of the box
-        let corners = [
-            Vec3::new(min.x, min.y, min.z), // 0: front-bottom-left
-            Vec3::new(max.x, min.y, min.z), // 1: front-bottom-right
-            Vec3::new(max.x, max.y, min.z), // 2: front-top-right
-            Vec3::new(min.x, max.y, min.z), // 3: front-top-left
-            Vec3::new(min.x, min.y, max.z), // 4: back-bottom-left
-            Vec3::new(max.x, min.y, max.z), // 5: back-bottom-right
-            Vec3::new(max.x, max.y, max.z), // 6: back-top-right
-            Vec3::new(min.x, max.y, max.z), // 7: back-top-left
-        ];
-
-        // Face normals
-        let normals = [
-            Vec3::new(0.0, 0.0, -1.0), // front (negative Z)
-            Vec3::new(0.0, 0.0, 1.0),  // back (positive Z)
-            Vec3::new(-1.0, 0.0, 0.0), // left (negative X)
-            Vec3::new(1.0, 0.0, 0.0),  // right (positive X)
-            Vec3::new(0.0, -1.0, 0.0), // bottom (negative Y)
-            Vec3::new(0.0, 1.0, 0.0),  // top (positive Y)
-        ];
-
-        let grey = [0.4, 0.4, 0.4]; // Slightly darker grey for LOD boxes
-
-        // Build vertices with per-face normals (24 vertices = 6 faces x 4 corners)
-        let mut vertices = Vec::with_capacity(24);
-
-        // Front face (z = min) - vertices 0,1,2,3, normal -Z
-        vertices.push(Vertex {
-            position: corners[0].into(),
-            normal: normals[0].into(),
-            color: grey,
-            uv: [0.0, 0.0],
-            material_id: 0xFFFFFFFF,
-        });
-        vertices.push(Vertex {
-            position: corners[1].into(),
-            normal: normals[0].into(),
-            color: grey,
-            uv: [0.0, 0.0],
-            material_id: 0xFFFFFFFF,
-        });
-        vertices.push(Vertex {
-            position: corners[2].into(),
-            normal: normals[0].into(),
-            color: grey,
-            uv: [0.0, 0.0],
-            material_id: 0xFFFFFFFF,
-        });
-        vertices.push(Vertex {
-            position: corners[3].into(),
-            normal: normals[0].into(),
-            color: grey,
-            uv: [0.0, 0.0],
-            material_id: 0xFFFFFFFF,
-        });
-
-        // Back face (z = max) - vertices 5,4,7,6, normal +Z
-        vertices.push(Vertex {
-            position: corners[5].into(),
-            normal: normals[1].into(),
-            color: grey,
-            uv: [0.0, 0.0],
-            material_id: 0xFFFFFFFF,
-        });
-        vertices.push(Vertex {
-            position: corners[4].into(),
-            normal: normals[1].into(),
-            color: grey,
-            uv: [0.0, 0.0],
-            material_id: 0xFFFFFFFF,
-        });
-        vertices.push(Vertex {
-            position: corners[7].into(),
-            normal: normals[1].into(),
-            color: grey,
-            uv: [0.0, 0.0],
-            material_id: 0xFFFFFFFF,
-        });
-        vertices.push(Vertex {
-            position: corners[6].into(),
-            normal: normals[1].into(),
-            color: grey,
-            uv: [0.0, 0.0],
-            material_id: 0xFFFFFFFF,
-        });
-
-        // Left face (x = min) - vertices 4,0,3,7, normal -X
-        vertices.push(Vertex {
-            position: corners[4].into(),
-            normal: normals[2].into(),
-            color: grey,
-            uv: [0.0, 0.0],
-            material_id: 0xFFFFFFFF,
-        });
-        vertices.push(Vertex {
-            position: corners[0].into(),
-            normal: normals[2].into(),
-            color: grey,
-            uv: [0.0, 0.0],
-            material_id: 0xFFFFFFFF,
-        });
-        vertices.push(Vertex {
-            position: corners[3].into(),
-            normal: normals[2].into(),
-            color: grey,
-            uv: [0.0, 0.0],
-            material_id: 0xFFFFFFFF,
-        });
-        vertices.push(Vertex {
-            position: corners[7].into(),
-            normal: normals[2].into(),
-            color: grey,
-            uv: [0.0, 0.0],
-            material_id: 0xFFFFFFFF,
-        });
-
-        // Right face (x = max) - vertices 1,5,6,2, normal +X
-        vertices.push(Vertex {
-            position: corners[1].into(),
-            normal: normals[3].into(),
-            color: grey,
-            uv: [0.0, 0.0],
-            material_id: 0xFFFFFFFF,
-        });
-        vertices.push(Vertex {
-            position: corners[5].into(),
-            normal: normals[3].into(),
-            color: grey,
-            uv: [0.0, 0.0],
-            material_id: 0xFFFFFFFF,
-        });
-        vertices.push(Vertex {
-            position: corners[6].into(),
-            normal: normals[3].into(),
-            color: grey,
-            uv: [0.0, 0.0],
-            material_id: 0xFFFFFFFF,
-        });
-        vertices.push(Vertex {
-            position: corners[2].into(),
-            normal: normals[3].into(),
-            color: grey,
-            uv: [0.0, 0.0],
-            material_id: 0xFFFFFFFF,
-        });
-
-        // Bottom face (y = min) - vertices 4,5,1,0, normal -Y
-        vertices.push(Vertex {
-            position: corners[4].into(),
-            normal: normals[4].into(),
-            color: grey,
-            uv: [0.0, 0.0],
-            material_id: 0xFFFFFFFF,
-        });
-        vertices.push(Vertex {
-            position: corners[5].into(),
-            normal: normals[4].into(),
-            color: grey,
-            uv: [0.0, 0.0],
-            material_id: 0xFFFFFFFF,
-        });
-        vertices.push(Vertex {
-            position: corners[1].into(),
-            normal: normals[4].into(),
-            color: grey,
-            uv: [0.0, 0.0],
-            material_id: 0xFFFFFFFF,
-        });
-        vertices.push(Vertex {
-            position: corners[0].into(),
-            normal: normals[4].into(),
-            color: grey,
-            uv: [0.0, 0.0],
-            material_id: 0xFFFFFFFF,
-        });
-
-        // Top face (y = max) - vertices 3,2,6,7, normal +Y
-        vertices.push(Vertex {
-            position: corners[3].into(),
-            normal: normals[5].into(),
-            color: grey,
-            uv: [0.0, 0.0],
-            material_id: 0xFFFFFFFF,
-        });
-        vertices.push(Vertex {
-            position: corners[2].into(),
-            normal: normals[5].into(),
-            color: grey,
-            uv: [0.0, 0.0],
-            material_id: 0xFFFFFFFF,
-        });
-        vertices.push(Vertex {
-            position: corners[6].into(),
-            normal: normals[5].into(),
-            color: grey,
-            uv: [0.0, 0.0],
-            material_id: 0xFFFFFFFF,
-        });
-        vertices.push(Vertex {
-            position: corners[7].into(),
-            normal: normals[5].into(),
-            color: grey,
-            uv: [0.0, 0.0],
-            material_id: 0xFFFFFFFF,
-        });
-
-        // Indices for 6 faces (clockwise winding for USD convention)
-        // Each face has 4 vertices and 2 triangles (6 indices)
-        let mut indices = Vec::with_capacity(36);
-        for face in 0..6 {
-            let base = face * 4;
-            // CW winding: 0,2,1 and 0,3,2
-            indices.extend_from_slice(&[base, base + 2, base + 1, base, base + 3, base + 2]);
-        }
-
-        Self {
-            vertices,
-            indices,
-            bounds_min: min,
-            bounds_max: max,
-            triangle_material_ids: None,
-        }
-    }
-
-    /// Load an OBJ file into mesh data
-    pub fn load_obj<P: AsRef<Path>>(path: P) -> Result<Self> {
-        let (models, _materials) = tobj::load_obj(
-            path.as_ref(),
-            &tobj::LoadOptions {
-                single_index: true,
-                triangulate: true,
-                ..Default::default()
-            },
-        )?;
-
-        if models.is_empty() {
-            anyhow::bail!("No models found in OBJ file");
-        }
-
-        // Take first model
-        let model = &models[0];
-        let mesh = &model.mesh;
-
-        // Build vertices with normals
-        let mut vertices = Vec::new();
-        let vertex_count = mesh.positions.len() / 3;
-
-        let has_normals = !mesh.normals.is_empty();
-        log::info!("Mesh has normals: {}", has_normals);
-
-        // If no normals, compute per-face normals
-        let computed_normals = if !has_normals {
-            log::info!("Computing per-face normals...");
-            let mut normals = vec![[0.0f32; 3]; vertex_count];
-
-            // Compute face normals and accumulate at vertices
-            for face in mesh.indices.chunks(3) {
-                let i0 = face[0] as usize;
-                let i1 = face[1] as usize;
-                let i2 = face[2] as usize;
-
-                let p0 = Vec3::from_slice(&mesh.positions[i0 * 3..i0 * 3 + 3]);
-                let p1 = Vec3::from_slice(&mesh.positions[i1 * 3..i1 * 3 + 3]);
-                let p2 = Vec3::from_slice(&mesh.positions[i2 * 3..i2 * 3 + 3]);
-
-                let edge1 = p1 - p0;
-                let edge2 = p2 - p0;
-                let face_normal = edge1.cross(edge2).normalize();
-
-                // Accumulate at each vertex
-                for &idx in &[i0, i1, i2] {
-                    normals[idx][0] += face_normal.x;
-                    normals[idx][1] += face_normal.y;
-                    normals[idx][2] += face_normal.z;
-                }
-            }
-
-            // Normalize accumulated normals
-            for normal in &mut normals {
-                let len =
-                    (normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2]).sqrt();
-                if len > 0.0 {
-                    normal[0] /= len;
-                    normal[1] /= len;
-                    normal[2] /= len;
-                }
-            }
-
-            Some(normals)
-        } else {
-            None
-        };
-
-        for i in 0..vertex_count {
-            let pos_idx = i * 3;
-
-            // Use computed normals if available, otherwise from file
-            let normal = if let Some(ref computed) = computed_normals {
-                computed[i]
-            } else if has_normals {
-                let norm_idx = i * 3;
-                [
-                    mesh.normals[norm_idx],
-                    mesh.normals[norm_idx + 1],
-                    mesh.normals[norm_idx + 2],
-                ]
-            } else {
-                [0.0, 1.0, 0.0]
-            };
-
-            // Color from normal (not needed anymore, shader uses normal directly)
-            let color = [normal[0].abs(), normal[1].abs(), normal[2].abs()];
-
-            vertices.push(Vertex {
-                position: [
-                    mesh.positions[pos_idx],
-                    mesh.positions[pos_idx + 1],
-                    mesh.positions[pos_idx + 2],
-                ],
-                normal,
-                color,
-                uv: [0.0, 0.0], // OBJ loading doesn't have UVs yet
-                material_id: 0xFFFFFFFF,
-            });
-        }
-
-        // Calculate bounding box
-        let mut bounds_min = Vec3::splat(f32::INFINITY);
-        let mut bounds_max = Vec3::splat(f32::NEG_INFINITY);
-
-        for vertex in &vertices {
-            let pos = Vec3::from_array(vertex.position);
-            bounds_min = bounds_min.min(pos);
-            bounds_max = bounds_max.max(pos);
-        }
-
-        Ok(Self {
-            vertices,
-            indices: mesh.indices.clone(),
-            bounds_min,
-            bounds_max,
-            triangle_material_ids: None,
-        })
-    }
-
-    /// Convert a bif_core::Mesh to GPU-ready MeshData
-    ///
-    /// Keeps vertices indexed (shared) for memory efficiency.
-    /// Per-triangle material IDs are stored separately for primitive_index lookup.
-    pub fn from_core_mesh(mesh: &bif_core::Mesh) -> Self {
-        let default_normal = Vec3::Y;
-        let default_uv = [0.0f32, 0.0f32];
-
-        // Build indexed vertices (shared across triangles)
-        let mut vertices = Vec::with_capacity(mesh.positions.len());
-
-        for (i, pos) in mesh.positions.iter().enumerate() {
-            let normal = mesh
-                .normals
-                .as_ref()
-                .and_then(|n| n.get(i))
-                .unwrap_or(&default_normal);
-
-            let uv = mesh
-                .uvs
-                .as_ref()
-                .and_then(|uvs| uvs.get(i))
-                .copied()
-                .unwrap_or(default_uv);
-
-            let color = [normal.x.abs(), normal.y.abs(), normal.z.abs()];
-
-            vertices.push(Vertex {
-                position: [pos.x, pos.y, pos.z],
-                normal: [normal.x, normal.y, normal.z],
-                color,
-                uv,
-                material_id: 0xFFFFFFFF, // Not used - material comes from triangle buffer
-            });
-        }
-
-        let bounds_min = Vec3::new(mesh.bounds.x.min, mesh.bounds.y.min, mesh.bounds.z.min);
-        let bounds_max = Vec3::new(mesh.bounds.x.max, mesh.bounds.y.max, mesh.bounds.z.max);
-
-        // Store per-triangle material IDs if present (for primitive_index lookup in shader)
-        let triangle_material_ids = mesh.face_material_ids.as_ref().map(|face_mat_ids| {
-            let unique: std::collections::HashSet<_> = face_mat_ids.iter().collect();
-            log::info!(
-                "Mesh with per-face materials: {} triangles, {} unique materials (IDs: {:?})",
-                face_mat_ids.len(),
-                unique.len(),
-                unique.iter().take(10).collect::<Vec<_>>()
-            );
-            face_mat_ids.clone()
-        });
-
-        Self {
-            vertices,
-            indices: mesh.indices.clone(),
-            bounds_min,
-            bounds_max,
-            triangle_material_ids,
-        }
-    }
-}
-
-/// Camera uniform data for GPU
-#[repr(C)]
-#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-struct CameraUniform {
-    view_proj: [[f32; 4]; 4],
-    view: [[f32; 4]; 4],
-}
-
-impl CameraUniform {
-    fn new() -> Self {
-        Self {
-            view_proj: Mat4::IDENTITY.to_cols_array_2d(),
-            view: Mat4::IDENTITY.to_cols_array_2d(),
-        }
-    }
-
-    fn update_view_proj(&mut self, camera: &Camera) {
-        self.view_proj = camera.view_projection_matrix().to_cols_array_2d();
-        self.view = camera.view_matrix().to_cols_array_2d();
-    }
-}
-
-/// Material uniform data for GPU (PBR properties)
-#[repr(C)]
-#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-struct MaterialUniform {
-    diffuse_color: [f32; 4],      // RGB + padding
-    metallic_roughness: [f32; 4], // metallic, roughness, specular, padding
-}
-
-impl MaterialUniform {
-    fn new() -> Self {
-        Self {
-            diffuse_color: [0.5, 0.5, 0.5, 1.0],      // Grey default
-            metallic_roughness: [0.0, 0.5, 0.5, 0.0], // dielectric, medium rough
-        }
-    }
-
-    fn from_material(mat: &bif_core::Material) -> Self {
-        Self {
-            diffuse_color: [
-                mat.diffuse_color.x,
-                mat.diffuse_color.y,
-                mat.diffuse_color.z,
-                1.0,
-            ],
-            metallic_roughness: [mat.metallic, mat.roughness, mat.specular, 0.0],
-        }
-    }
-}
-
-/// Material table entry for GPU sampling (per-material data).
-#[repr(C)]
-#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-struct MaterialGpu {
-    diffuse_color: [f32; 4],      // RGB + padding
-    metallic_roughness: [f32; 4], // metallic, roughness, specular, padding
-    texture_indices: [u32; 4],    // diffuse, roughness, metallic, emissive
-    extra_indices: [u32; 4],      // normal, reserved, reserved, reserved
-}
-
-impl MaterialGpu {
-    fn from_material(material: &bif_core::Material, textures: &GpuTextureSet) -> Self {
-        let resolve_index = |path: &Option<String>| -> u32 {
-            path.as_ref()
-                .and_then(|p| textures.index_map.get(p).copied())
-                .unwrap_or(0)
-        };
-
-        Self {
-            diffuse_color: [
-                material.diffuse_color.x,
-                material.diffuse_color.y,
-                material.diffuse_color.z,
-                1.0,
-            ],
-            metallic_roughness: [material.metallic, material.roughness, material.specular, 0.0],
-            texture_indices: [
-                resolve_index(&material.diffuse_texture),
-                resolve_index(&material.roughness_texture),
-                resolve_index(&material.metallic_texture),
-                resolve_index(&material.emissive_texture),
-            ],
-            extra_indices: [resolve_index(&material.normal_texture), 0, 0, 0],
-        }
-    }
-}
-
-/// Gnomon uniform data for GPU (camera rotation only)
-#[repr(C)]
-#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-struct GnomonUniform {
-    view_rotation: [[f32; 4]; 4],
-}
-
-impl GnomonUniform {
-    fn new() -> Self {
-        Self {
-            view_rotation: Mat4::IDENTITY.to_cols_array_2d(),
-        }
-    }
-
-    fn update_from_camera(&mut self, camera: &Camera) {
-        // Extract rotation from view matrix (zero out translation)
-        let view = camera.view_matrix();
-        // The view matrix is [R | t], we want just R with no translation
-        let rotation = Mat4::from_cols(
-            view.col(0),
-            view.col(1),
-            view.col(2),
-            bif_math::Vec4::new(0.0, 0.0, 0.0, 1.0),
-        );
-        self.view_rotation = rotation.to_cols_array_2d();
-    }
-}
-
-/// Gnomon vertex (position + color)
-#[repr(C)]
-#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-struct GnomonVertex {
-    position: [f32; 3],
-    color: [f32; 3],
-}
-
-impl GnomonVertex {
-    const ATTRIBS: [wgpu::VertexAttribute; 2] =
-        wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3];
-
-    fn desc<'a>() -> wgpu::VertexBufferLayout<'a> {
-        wgpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<GnomonVertex>() as wgpu::BufferAddress,
-            step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &Self::ATTRIBS,
-        }
-    }
-
-    /// Create gnomon axis vertices (origin to X, Y, Z with colors)
-    fn create_axes() -> Vec<Self> {
-        vec![
-            // X axis (red)
-            GnomonVertex {
-                position: [0.0, 0.0, 0.0],
-                color: [1.0, 0.2, 0.2],
-            },
-            GnomonVertex {
-                position: [1.0, 0.0, 0.0],
-                color: [1.0, 0.2, 0.2],
-            },
-            // Y axis (green)
-            GnomonVertex {
-                position: [0.0, 0.0, 0.0],
-                color: [0.2, 1.0, 0.2],
-            },
-            GnomonVertex {
-                position: [0.0, 1.0, 0.0],
-                color: [0.2, 1.0, 0.2],
-            },
-            // Z axis (blue)
-            GnomonVertex {
-                position: [0.0, 0.0, 0.0],
-                color: [0.2, 0.5, 1.0],
-            },
-            GnomonVertex {
-                position: [0.0, 0.0, 1.0],
-                color: [0.2, 0.5, 1.0],
-            },
-        ]
-    }
-}
-
-/// Vertex data for rendering
-#[repr(C)]
-#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct Vertex {
-    pub position: [f32; 3],
-    pub normal: [f32; 3],
-    pub color: [f32; 3],
-    pub uv: [f32; 2],
-    pub material_id: u32,
-}
-
-impl Vertex {
-    const ATTRIBS: [wgpu::VertexAttribute; 5] =
-        wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x3, 3 => Float32x2, 4 => Uint32];
-
-    pub fn desc<'a>() -> wgpu::VertexBufferLayout<'a> {
-        wgpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
-            step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &Self::ATTRIBS,
-        }
-    }
-}
-
-/// Instance data for GPU instancing
-#[repr(C)]
-#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct InstanceData {
-    pub model_matrix: [[f32; 4]; 4],
-    pub material_id: u32,
-}
-
-impl InstanceData {
-    // Shifted to slots 5-9 to make room for vertex material_id at slot 4
-    const ATTRIBS: [wgpu::VertexAttribute; 5] = wgpu::vertex_attr_array![
-        5 => Float32x4,
-        6 => Float32x4,
-        7 => Float32x4,
-        8 => Float32x4,
-        9 => Uint32
-    ];
-
-    pub fn desc<'a>() -> wgpu::VertexBufferLayout<'a> {
-        wgpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<InstanceData>() as wgpu::BufferAddress,
-            step_mode: wgpu::VertexStepMode::Instance,
-            attributes: &Self::ATTRIBS,
-        }
-    }
-}
-
-const MAX_VIEWPORT_TEXTURES: usize = 128;
-
-struct GpuTextureSet {
-    textures: Vec<wgpu::Texture>,
-    views: Vec<wgpu::TextureView>,
-    index_map: HashMap<String, u32>,
-}
-
-/// Scratch buffers for frustum culling to avoid per-frame allocations
-struct CullingScratch {
-    visible_with_distance: Vec<(f32, usize)>,
-    near_instances: Vec<InstanceData>,
-    far_instances: Vec<InstanceData>,
-}
-
-impl CullingScratch {
-    fn new(max_instances: usize) -> Self {
-        Self {
-            visible_with_distance: Vec::with_capacity(max_instances),
-            near_instances: Vec::with_capacity(max_instances),
-            far_instances: Vec::with_capacity(max_instances),
-        }
-    }
-
-    fn clear(&mut self) {
-        self.visible_with_distance.clear();
-        self.near_instances.clear();
-        self.far_instances.clear();
-    }
-}
 
 /// Core renderer managing wgpu state
 pub struct Renderer {
@@ -1028,542 +184,6 @@ pub struct Renderer {
 }
 
 impl Renderer {
-    fn is_linear_texture_path(path: &str) -> bool {
-        match Path::new(path).extension().and_then(|ext| ext.to_str()) {
-            Some(ext) => matches!(ext.to_ascii_lowercase().as_str(), "exr" | "hdr"),
-            None => false,
-        }
-    }
-
-    fn linear_to_srgb_byte(value: f32) -> u8 {
-        if !value.is_finite() {
-            return 0;
-        }
-        let v = value.clamp(0.0, 1.0);
-        let srgb = if v <= 0.0031308 {
-            v * 12.92
-        } else {
-            1.055 * v.powf(1.0 / 2.4) - 0.055
-        };
-        (srgb * 255.0 + 0.5) as u8
-    }
-
-    fn linear_to_byte(value: f32) -> u8 {
-        if !value.is_finite() {
-            return 0;
-        }
-        let v = value.clamp(0.0, 1.0);
-        (v * 255.0 + 0.5) as u8
-    }
-
-    fn texture_to_rgba8(
-        width: u32,
-        height: u32,
-        pixels: &[[f32; 4]],
-        is_linear: bool,
-    ) -> Vec<u8> {
-        let mut bytes = Vec::with_capacity((width * height * 4) as usize);
-        for pixel in pixels {
-            if is_linear {
-                bytes.push(Self::linear_to_byte(pixel[0]));
-                bytes.push(Self::linear_to_byte(pixel[1]));
-                bytes.push(Self::linear_to_byte(pixel[2]));
-                bytes.push(Self::linear_to_byte(pixel[3]));
-            } else {
-                bytes.push(Self::linear_to_srgb_byte(pixel[0]));
-                bytes.push(Self::linear_to_srgb_byte(pixel[1]));
-                bytes.push(Self::linear_to_srgb_byte(pixel[2]));
-                bytes.push(Self::linear_to_byte(pixel[3]));
-            }
-        }
-        bytes
-    }
-
-    fn downscale_texture_nearest(
-        texture: &bif_core::texture::Texture,
-        max_dimension: u32,
-    ) -> (u32, u32, Vec<[f32; 4]>) {
-        if texture.width <= max_dimension && texture.height <= max_dimension {
-            return (texture.width, texture.height, texture.pixels.clone());
-        }
-
-        let scale = (texture.width as f32 / max_dimension as f32)
-            .max(texture.height as f32 / max_dimension as f32);
-        let new_width = ((texture.width as f32 / scale).floor() as u32).max(1);
-        let new_height = ((texture.height as f32 / scale).floor() as u32).max(1);
-        let mut pixels = vec![[0.0; 4]; (new_width * new_height) as usize];
-
-        for y in 0..new_height {
-            let src_y = ((y as f32) * scale).floor() as u32;
-            let src_y = src_y.min(texture.height - 1);
-            for x in 0..new_width {
-                let src_x = ((x as f32) * scale).floor() as u32;
-                let src_x = src_x.min(texture.width - 1);
-                let src_index = (src_y * texture.width + src_x) as usize;
-                let dst_index = (y * new_width + x) as usize;
-                pixels[dst_index] = texture.pixels[src_index];
-            }
-        }
-
-        (new_width, new_height, pixels)
-    }
-
-    fn create_gpu_texture(
-        device: &Device,
-        queue: &Queue,
-        texture: &bif_core::texture::Texture,
-        is_linear: bool,
-        label: &str,
-        max_dimension: u32,
-    ) -> wgpu::Texture {
-        // Use texture's is_linear field if available, otherwise fall back to parameter
-        let is_linear = texture.is_linear || is_linear;
-        let format = if is_linear {
-            wgpu::TextureFormat::Rgba8Unorm
-        } else {
-            wgpu::TextureFormat::Rgba8UnormSrgb
-        };
-
-        // Check if we need to downscale (affects mipmaps too)
-        let needs_downscale = texture.width > max_dimension || texture.height > max_dimension;
-
-        if needs_downscale {
-            // Downscale path - no mipmaps (would need regeneration)
-            let (width, height, pixels) =
-                Self::downscale_texture_nearest(texture, max_dimension);
-            log::warn!(
-                "Downscaled texture {} from {}x{} to {}x{} (limit {}). Mipmaps disabled.",
-                texture.path,
-                texture.width,
-                texture.height,
-                width,
-                height,
-                max_dimension
-            );
-
-            let gpu_texture = device.create_texture(&wgpu::TextureDescriptor {
-                label: Some(label),
-                size: wgpu::Extent3d {
-                    width,
-                    height,
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-                view_formats: &[],
-            });
-
-            let rgba = Self::texture_to_rgba8(width, height, &pixels, is_linear);
-            queue.write_texture(
-                wgpu::ImageCopyTexture {
-                    texture: &gpu_texture,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d::ZERO,
-                    aspect: wgpu::TextureAspect::All,
-                },
-                &rgba,
-                wgpu::ImageDataLayout {
-                    offset: 0,
-                    bytes_per_row: Some(4 * width),
-                    rows_per_image: Some(height),
-                },
-                wgpu::Extent3d {
-                    width,
-                    height,
-                    depth_or_array_layers: 1,
-                },
-            );
-
-            return gpu_texture;
-        }
-
-        // Normal path - upload with mipmaps if available
-        let mip_count = texture.mip_count();
-
-        let gpu_texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some(label),
-            size: wgpu::Extent3d {
-                width: texture.width,
-                height: texture.height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: mip_count,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
-
-        // Upload base level (mip 0)
-        let rgba = Self::texture_to_rgba8(texture.width, texture.height, &texture.pixels, is_linear);
-        queue.write_texture(
-            wgpu::ImageCopyTexture {
-                texture: &gpu_texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            &rgba,
-            wgpu::ImageDataLayout {
-                offset: 0,
-                bytes_per_row: Some(4 * texture.width),
-                rows_per_image: Some(texture.height),
-            },
-            wgpu::Extent3d {
-                width: texture.width,
-                height: texture.height,
-                depth_or_array_layers: 1,
-            },
-        );
-
-        // Upload additional mip levels if present
-        for (mip_index, mip_level) in texture.mip_levels.iter().enumerate() {
-            let mip_rgba = Self::texture_to_rgba8(mip_level.width, mip_level.height, &mip_level.pixels, is_linear);
-            queue.write_texture(
-                wgpu::ImageCopyTexture {
-                    texture: &gpu_texture,
-                    mip_level: (mip_index + 1) as u32,
-                    origin: wgpu::Origin3d::ZERO,
-                    aspect: wgpu::TextureAspect::All,
-                },
-                &mip_rgba,
-                wgpu::ImageDataLayout {
-                    offset: 0,
-                    bytes_per_row: Some(4 * mip_level.width),
-                    rows_per_image: Some(mip_level.height),
-                },
-                wgpu::Extent3d {
-                    width: mip_level.width,
-                    height: mip_level.height,
-                    depth_or_array_layers: 1,
-                },
-            );
-        }
-
-        if mip_count > 1 {
-            log::debug!(
-                "Uploaded texture {} with {} mip levels",
-                label,
-                mip_count
-            );
-        }
-
-        gpu_texture
-    }
-
-    fn create_default_gpu_textures(device: &Device, queue: &Queue) -> GpuTextureSet {
-        let default_texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Default White Texture"),
-            size: wgpu::Extent3d {
-                width: 1,
-                height: 1,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
-
-        queue.write_texture(
-            wgpu::ImageCopyTexture {
-                texture: &default_texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            &[255u8, 255u8, 255u8, 255u8],
-            wgpu::ImageDataLayout {
-                offset: 0,
-                bytes_per_row: Some(4),
-                rows_per_image: Some(1),
-            },
-            wgpu::Extent3d {
-                width: 1,
-                height: 1,
-                depth_or_array_layers: 1,
-            },
-        );
-
-        let textures = vec![default_texture];
-        let mut views = Vec::with_capacity(MAX_VIEWPORT_TEXTURES);
-        for _ in 0..MAX_VIEWPORT_TEXTURES {
-            views.push(textures[0].create_view(&wgpu::TextureViewDescriptor::default()));
-        }
-
-        GpuTextureSet {
-            textures,
-            views,
-            index_map: HashMap::new(),
-        }
-    }
-
-    fn collect_scene_texture_paths(scene: &bif_core::Scene) -> Vec<String> {
-        let mut unique_paths = HashSet::new();
-        let mut paths = Vec::new();
-
-        for material in &scene.materials {
-            let material = material.as_ref();
-            let candidate_paths = [
-                material.diffuse_texture.as_deref(),
-                material.roughness_texture.as_deref(),
-                material.metallic_texture.as_deref(),
-                material.normal_texture.as_deref(),
-                material.emissive_texture.as_deref(),
-            ];
-
-            for path in candidate_paths.into_iter().flatten() {
-                if unique_paths.insert(path.to_string()) {
-                    paths.push(path.to_string());
-                }
-            }
-        }
-
-        if !paths.is_empty() {
-            log::info!("Collected {} texture paths from materials", paths.len());
-        }
-        paths
-    }
-
-    fn create_gpu_textures_for_scene(
-        device: &Device,
-        queue: &Queue,
-        scene: &bif_core::Scene,
-        base_dir: Option<&Path>,
-    ) -> GpuTextureSet {
-        use rayon::prelude::*;
-
-        let mut texture_set = Self::create_default_gpu_textures(device, queue);
-        let max_dimension = device.limits().max_texture_dimension_2d;
-
-        let texture_paths = Self::collect_scene_texture_paths(scene);
-        let paths_to_load: Vec<_> = texture_paths
-            .into_iter()
-            .take(MAX_VIEWPORT_TEXTURES - 1) // Leave slot 0 for default
-            .collect();
-
-        if paths_to_load.len() >= MAX_VIEWPORT_TEXTURES - 1 {
-            log::warn!(
-                "Texture count exceeds GPU limit {}. Extra textures will be skipped.",
-                MAX_VIEWPORT_TEXTURES - 1
-            );
-        }
-
-        // Load all textures in parallel (CPU-bound: PNG decode + sRGB conversion)
-        let load_start = std::time::Instant::now();
-        let base_dir_owned = base_dir.map(|p| p.to_path_buf());
-        let loaded_textures: Vec<_> = paths_to_load
-            .par_iter()
-            .map(|path| {
-                let mut cache = if let Some(ref base) = base_dir_owned {
-                    TextureCache::with_base_dir(base)
-                } else {
-                    TextureCache::new()
-                };
-                match cache.load(path) {
-                    Ok(tex) => Some((path.clone(), tex)),
-                    Err(e) => {
-                        log::warn!("Failed to load texture {}: {}", path, e);
-                        None
-                    }
-                }
-            })
-            .collect();
-        let load_time = load_start.elapsed();
-        log::info!(
-            "Loaded {} textures in parallel: {:.1}ms",
-            loaded_textures.iter().filter(|t| t.is_some()).count(),
-            load_time.as_secs_f32() * 1000.0
-        );
-
-        // Upload to GPU (must be sequential - wgpu API requirement)
-        let upload_start = std::time::Instant::now();
-        for item in loaded_textures.into_iter().flatten() {
-            let (path, texture) = item;
-            let is_linear = Self::is_linear_texture_path(&path);
-            let label = format!("Viewport Texture: {}", path);
-            let gpu_texture = Self::create_gpu_texture(
-                device,
-                queue,
-                &texture,
-                is_linear,
-                &label,
-                max_dimension,
-            );
-            let view = gpu_texture.create_view(&wgpu::TextureViewDescriptor::default());
-            let index = texture_set.textures.len() as u32;
-
-            texture_set.textures.push(gpu_texture);
-            texture_set.views[index as usize] = view;
-            texture_set.index_map.insert(path, index);
-        }
-        let upload_time = upload_start.elapsed();
-        log::info!(
-            "Uploaded {} textures to GPU: {:.1}ms",
-            texture_set.textures.len() - 1, // -1 for default texture
-            upload_time.as_secs_f32() * 1000.0
-        );
-
-        texture_set
-    }
-
-    /// Create a depth texture for the given size
-    fn create_depth_texture(
-        device: &Device,
-        size: (u32, u32),
-    ) -> (wgpu::Texture, wgpu::TextureView) {
-        let depth_texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Depth Texture"),
-            size: wgpu::Extent3d {
-                width: size.0,
-                height: size.1,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Depth24Plus,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
-
-        let depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
-
-        (depth_texture, depth_view)
-    }
-
-    /// Create Ivar texture for displaying path tracer output
-    fn create_ivar_texture(
-        device: &Device,
-        size: (u32, u32),
-    ) -> (wgpu::Texture, wgpu::TextureView) {
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Ivar Output Texture"),
-            size: wgpu::Extent3d {
-                width: size.0,
-                height: size.1,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
-
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-
-        (texture, view)
-    }
-
-    /// Create Ivar fullscreen pipeline and bind group
-    fn create_ivar_pipeline(
-        device: &Device,
-        surface_format: wgpu::TextureFormat,
-        texture_view: &wgpu::TextureView,
-        sampler: &wgpu::Sampler,
-    ) -> (wgpu::RenderPipeline, wgpu::BindGroup, wgpu::BindGroupLayout) {
-        // Create bind group layout
-        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Ivar Bind Group Layout"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        multisampled: false,
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-            ],
-        });
-
-        // Create bind group
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Ivar Bind Group"),
-            layout: &bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(texture_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(sampler),
-                },
-            ],
-        });
-
-        // Create shader
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("Ivar Fullscreen Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/fullscreen.wgsl").into()),
-        });
-
-        // Create pipeline layout
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("Ivar Pipeline Layout"),
-            bind_group_layouts: &[&bind_group_layout],
-            push_constant_ranges: &[],
-        });
-
-        // Create render pipeline
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Ivar Fullscreen Pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: "vs_main",
-                buffers: &[], // No vertex buffer needed for fullscreen triangle
-                compilation_options: Default::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: "fs_main",
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: surface_format,
-                    blend: Some(wgpu::BlendState::REPLACE),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                strip_index_format: None,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: None,
-                polygon_mode: wgpu::PolygonMode::Fill,
-                unclipped_depth: false,
-                conservative: false,
-            },
-            depth_stencil: None, // No depth for fullscreen quad
-            multisample: wgpu::MultisampleState {
-                count: 1,
-                mask: !0,
-                alpha_to_coverage_enabled: false,
-            },
-            multiview: None,
-            cache: None,
-        });
-
-        (pipeline, bind_group, bind_group_layout)
-    }
-
     /// Upload Ivar image buffer to GPU texture
     fn upload_ivar_pixels(&self, image: &ImageBuffer) {
         let rgba = image.to_rgba();
@@ -1727,7 +347,7 @@ impl Renderer {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
-        let gpu_textures = Self::create_default_gpu_textures(&device, &queue);
+        let gpu_textures = texture_loader::create_default_gpu_textures(&device, &queue);
 
         let material_table = vec![MaterialGpu::from_material(
             &bif_core::Material::default(),
@@ -1816,7 +436,7 @@ impl Renderer {
             min_filter: wgpu::FilterMode::Linear,
             mipmap_filter: wgpu::FilterMode::Linear, // Trilinear filtering
             lod_min_clamp: 0.0,
-            lod_max_clamp: 16.0, // Allow full mip range
+            lod_max_clamp: 16.0,  // Allow full mip range
             anisotropy_clamp: 16, // Enable anisotropic filtering
             ..Default::default()
         });
@@ -1844,8 +464,7 @@ impl Renderer {
                 ],
             });
 
-        let texture_view_refs: Vec<&wgpu::TextureView> =
-            gpu_textures.views.iter().collect();
+        let texture_view_refs: Vec<&wgpu::TextureView> = gpu_textures.views.iter().collect();
         let texture_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Texture Bind Group"),
             layout: &texture_bind_group_layout,
@@ -1945,7 +564,7 @@ impl Renderer {
 
         // Create depth texture
         let (depth_texture, depth_view) =
-            Self::create_depth_texture(&device, (size.width, size.height));
+            ivar_renderer::create_depth_texture(&device, (size.width, size.height));
 
         // No instances by default - empty scene
         let dummy_instance = InstanceData {
@@ -2109,7 +728,7 @@ impl Renderer {
 
         // Create Ivar resources for CPU path tracer display
         let (ivar_texture, ivar_texture_view) =
-            Self::create_ivar_texture(&device, (size.width, size.height));
+            ivar_renderer::create_ivar_texture(&device, (size.width, size.height));
 
         let ivar_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("Ivar Sampler"),
@@ -2122,8 +741,12 @@ impl Renderer {
             ..Default::default()
         });
 
-        let (ivar_pipeline, ivar_bind_group, _) =
-            Self::create_ivar_pipeline(&device, config.format, &ivar_texture_view, &ivar_sampler);
+        let (ivar_pipeline, ivar_bind_group, _) = ivar_renderer::create_ivar_pipeline(
+            &device,
+            config.format,
+            &ivar_texture_view,
+            &ivar_sampler,
+        );
 
         log::info!("Ivar resources initialized");
 
@@ -2401,7 +1024,8 @@ impl Renderer {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
-        let gpu_textures = Self::create_gpu_textures_for_scene(&device, &queue, scene, None);
+        let gpu_textures =
+            texture_loader::create_gpu_textures_for_scene(&device, &queue, scene, None);
 
         let material_table = if scene.materials.is_empty() {
             vec![MaterialGpu::from_material(
@@ -2515,7 +1139,7 @@ impl Renderer {
             min_filter: wgpu::FilterMode::Linear,
             mipmap_filter: wgpu::FilterMode::Linear, // Trilinear filtering
             lod_min_clamp: 0.0,
-            lod_max_clamp: 16.0, // Allow full mip range
+            lod_max_clamp: 16.0,  // Allow full mip range
             anisotropy_clamp: 16, // Enable anisotropic filtering
             ..Default::default()
         });
@@ -2543,8 +1167,7 @@ impl Renderer {
                 ],
             });
 
-        let texture_view_refs: Vec<&wgpu::TextureView> =
-            gpu_textures.views.iter().collect();
+        let texture_view_refs: Vec<&wgpu::TextureView> = gpu_textures.views.iter().collect();
         let texture_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Texture Bind Group"),
             layout: &texture_bind_group_layout,
@@ -2636,7 +1259,7 @@ impl Renderer {
 
         // Create depth texture
         let (depth_texture, depth_view) =
-            Self::create_depth_texture(&device, (size.width, size.height));
+            ivar_renderer::create_depth_texture(&device, (size.width, size.height));
 
         let material_index_by_name: HashMap<String, u32> = scene
             .materials
@@ -2842,7 +1465,7 @@ impl Renderer {
 
         // Create Ivar resources for CPU path tracer display
         let (ivar_texture, ivar_texture_view) =
-            Self::create_ivar_texture(&device, (size.width, size.height));
+            ivar_renderer::create_ivar_texture(&device, (size.width, size.height));
 
         let ivar_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("Ivar Sampler"),
@@ -2855,8 +1478,12 @@ impl Renderer {
             ..Default::default()
         });
 
-        let (ivar_pipeline, ivar_bind_group, _) =
-            Self::create_ivar_pipeline(&device, config.format, &ivar_texture_view, &ivar_sampler);
+        let (ivar_pipeline, ivar_bind_group, _) = ivar_renderer::create_ivar_pipeline(
+            &device,
+            config.format,
+            &ivar_texture_view,
+            &ivar_sampler,
+        );
 
         log::info!("Ivar resources initialized");
 
@@ -2963,18 +1590,19 @@ impl Renderer {
             self.surface.configure(&self.device, &self.config);
 
             // Recreate depth texture with new size
-            let (depth_texture, depth_view) = Self::create_depth_texture(&self.device, new_size);
+            let (depth_texture, depth_view) =
+                ivar_renderer::create_depth_texture(&self.device, new_size);
             self.depth_texture = depth_texture;
             self.depth_view = depth_view;
 
             // Recreate Ivar texture with new size
             let (ivar_texture, ivar_texture_view) =
-                Self::create_ivar_texture(&self.device, new_size);
+                ivar_renderer::create_ivar_texture(&self.device, new_size);
             self.ivar_texture = ivar_texture;
             self.ivar_texture_view = ivar_texture_view;
 
             // Recreate Ivar bind group with new texture view
-            let (_, ivar_bind_group, _) = Self::create_ivar_pipeline(
+            let (_, ivar_bind_group, _) = ivar_renderer::create_ivar_pipeline(
                 &self.device,
                 self.config.format,
                 &self.ivar_texture_view,
@@ -3083,11 +1711,7 @@ impl Renderer {
 
         for &(_distance_sq, idx) in &self.culling_scratch.visible_with_distance[..split_point] {
             let transform = &self.instance_transforms[idx];
-            let material_id = self
-                .instance_material_ids
-                .get(idx)
-                .copied()
-                .unwrap_or(0);
+            let material_id = self.instance_material_ids.get(idx).copied().unwrap_or(0);
             self.culling_scratch.near_instances.push(InstanceData {
                 model_matrix: transform.to_cols_array_2d(),
                 material_id,
@@ -3096,11 +1720,7 @@ impl Renderer {
 
         for &(_distance_sq, idx) in &self.culling_scratch.visible_with_distance[split_point..] {
             let transform = &self.instance_transforms[idx];
-            let material_id = self
-                .instance_material_ids
-                .get(idx)
-                .copied()
-                .unwrap_or(0);
+            let material_id = self.instance_material_ids.get(idx).copied().unwrap_or(0);
             self.culling_scratch.far_instances.push(InstanceData {
                 model_matrix: transform.to_cols_array_2d(),
                 material_id,
@@ -3209,7 +1829,7 @@ impl Renderer {
 
         // Refresh texture resources and material table for the new scene
         let base_dir = path.parent();
-        self.gpu_textures = Self::create_gpu_textures_for_scene(
+        self.gpu_textures = texture_loader::create_gpu_textures_for_scene(
             &self.device,
             &self.queue,
             &scene,
@@ -3229,13 +1849,13 @@ impl Renderer {
                 .collect()
         };
         self.material_table_len = material_table.len() as u32;
-        self.material_table_buffer = self
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Material Table Buffer"),
-                contents: bytemuck::cast_slice(&material_table),
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            });
+        self.material_table_buffer =
+            self.device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("Material Table Buffer"),
+                    contents: bytemuck::cast_slice(&material_table),
+                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                });
 
         // Create triangle material buffer from mesh data
         if let Some(ref tri_mats) = mesh_data.triangle_material_ids {
@@ -3243,22 +1863,22 @@ impl Renderer {
                 "Creating triangle material buffer with {} entries",
                 tri_mats.len()
             );
-            self.triangle_material_buffer = self
-                .device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("Triangle Material Buffer"),
-                    contents: bytemuck::cast_slice(tri_mats),
-                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-                });
+            self.triangle_material_buffer =
+                self.device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("Triangle Material Buffer"),
+                        contents: bytemuck::cast_slice(tri_mats),
+                        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                    });
             self.has_triangle_materials = true;
         } else {
-            self.triangle_material_buffer = self
-                .device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("Triangle Material Buffer"),
-                    contents: bytemuck::cast_slice(&[0xFFFFFFFFu32]),
-                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-                });
+            self.triangle_material_buffer =
+                self.device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("Triangle Material Buffer"),
+                        contents: bytemuck::cast_slice(&[0xFFFFFFFFu32]),
+                        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                    });
             self.has_triangle_materials = false;
         }
 
@@ -3281,8 +1901,7 @@ impl Renderer {
             ],
         });
 
-        let texture_view_refs: Vec<&wgpu::TextureView> =
-            self.gpu_textures.views.iter().collect();
+        let texture_view_refs: Vec<&wgpu::TextureView> = self.gpu_textures.views.iter().collect();
         self.texture_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Texture Bind Group"),
             layout: &self.texture_bind_group_layout,
@@ -4280,8 +2899,8 @@ impl Renderer {
                     if viewport_width >= gnomon_size + padding
                         && viewport_height >= gnomon_size + padding
                     {
-                        let x = (viewport_right - gnomon_size - padding)
-                            .max(viewport_left + padding);
+                        let x =
+                            (viewport_right - gnomon_size - padding).max(viewport_left + padding);
                         let y = (viewport_bottom - gnomon_size - padding).max(padding);
 
                         gnomon_pass.set_viewport(
