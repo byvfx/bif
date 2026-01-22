@@ -295,18 +295,19 @@ fn build_oiio_bridge() {
     }
 
     // Link OpenImageIO and its dependencies
+    // NOTE: Version numbers must match vcpkg installed versions
     let oiio_libs = [
         "OpenImageIO",
         "OpenImageIO_Util",
-        "OpenEXR-3_3",
-        "OpenEXRCore-3_3",
-        "OpenEXRUtil-3_3",
-        "Imath-3_1",
-        "IlmThread-3_3",
-        "Iex-3_3",
+        "OpenEXR-3_4",
+        "OpenEXRCore-3_4",
+        "OpenEXRUtil-3_4",
+        "Imath-3_2",
+        "IlmThread-3_4",
+        "Iex-3_4",
         "tiff",
         "jpeg",
-        "png16",
+        "libpng16",
         "zlib",
     ];
 

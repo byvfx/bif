@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cstring>
 #include <memory>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -446,87 +447,34 @@ OiioBridgeError oiio_make_tx(
         return OIIO_BRIDGE_ERROR_READ_FAILED;
     }
 
-    const ImageSpec& src_spec = src.spec();
-
-    // Create output spec with tiling
-    ImageSpec out_spec = src_spec;
-    out_spec.tile_width = opts.tile_size;
-    out_spec.tile_height = opts.tile_size;
-    out_spec.tile_depth = 1;
+    // Configure output spec
+    ImageSpec config;
+    config.tile_width = opts.tile_size;
+    config.tile_height = opts.tile_size;
+    config.tile_depth = 1;
 
     // Set compression
     if (opts.compression && strlen(opts.compression) > 0) {
-        out_spec.attribute("compression", opts.compression);
+        config.attribute("compression", opts.compression);
     }
 
-    // Open output file
-    auto out = ImageOutput::create(output_path);
-    if (!out) {
-        g_last_error = OIIO::geterror();
+    // Use make_texture for proper .tx creation with mipmaps
+    // MakeTxTexture mode creates a proper texture file with mipmaps
+    std::ostringstream err_stream;
+    bool success = ImageBufAlgo::make_texture(
+        opts.generate_mips ? ImageBufAlgo::MakeTxTexture : ImageBufAlgo::MakeTxShadow,
+        src,
+        output_path,
+        config,
+        &err_stream
+    );
+
+    if (!success) {
+        std::string err = err_stream.str();
+        g_last_error = err.empty() ? "make_texture failed" : err;
         return OIIO_BRIDGE_ERROR_WRITE_FAILED;
     }
 
-    // Calculate mip levels
-    int num_mips = 1;
-    if (opts.generate_mips) {
-        num_mips = oiio_calculate_mip_count(src_spec.width, src_spec.height);
-    }
-
-    // Open with mip levels
-    if (!out->open(output_path, out_spec)) {
-        g_last_error = out->geterror();
-        return OIIO_BRIDGE_ERROR_WRITE_FAILED;
-    }
-
-    // Write base level
-    if (!src.write(out.get())) {
-        g_last_error = src.geterror();
-        out->close();
-        return OIIO_BRIDGE_ERROR_WRITE_FAILED;
-    }
-
-    // Generate and write mip levels
-    if (opts.generate_mips && num_mips > 1) {
-        ImageBuf current = src;
-
-        for (int mip = 1; mip < num_mips; ++mip) {
-            // Calculate mip size
-            int mip_width = std::max(1, current.spec().width / 2);
-            int mip_height = std::max(1, current.spec().height / 2);
-
-            // Resize using OIIO
-            ImageBuf resized;
-            ROI roi(0, mip_width, 0, mip_height, 0, 1, 0, current.nchannels());
-            if (!ImageBufAlgo::resize(resized, current, "", 0, roi)) {
-                g_last_error = resized.geterror();
-                out->close();
-                return OIIO_BRIDGE_ERROR_WRITE_FAILED;
-            }
-
-            // Update spec for this mip level
-            ImageSpec mip_spec = resized.spec();
-            mip_spec.tile_width = opts.tile_size;
-            mip_spec.tile_height = opts.tile_size;
-            mip_spec.tile_depth = 1;
-
-            // Write mip level as subimage
-            if (!out->open(output_path, mip_spec, ImageOutput::AppendMIPLevel)) {
-                g_last_error = out->geterror();
-                out->close();
-                return OIIO_BRIDGE_ERROR_WRITE_FAILED;
-            }
-
-            if (!resized.write(out.get())) {
-                g_last_error = resized.geterror();
-                out->close();
-                return OIIO_BRIDGE_ERROR_WRITE_FAILED;
-            }
-
-            current = std::move(resized);
-        }
-    }
-
-    out->close();
     return OIIO_BRIDGE_SUCCESS;
 }
 

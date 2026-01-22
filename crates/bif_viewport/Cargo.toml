@@ -6,6 +6,10 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+default = []
+oiio = ["bif_core/oiio"]
+
 [dependencies]
 bif_math = { path = "../bif_math" }
 bif_core = { path = "../bif_core" }

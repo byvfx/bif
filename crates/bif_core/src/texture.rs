@@ -421,7 +421,8 @@ impl Default for TextureCache {
     }
 }
 
-/// Load a texture from a file path.
+/// Load a texture from a file path (fallback when OIIO not available).
+#[cfg(not(feature = "oiio"))]
 fn load_texture_file(path: &Path) -> TextureResult<Texture> {
     let start = std::time::Instant::now();
 
@@ -533,6 +534,7 @@ fn srgb_to_linear(value: u8) -> f32 {
 }
 
 /// Detect if a texture path should be treated as linear (HDR/EXR).
+#[cfg(not(feature = "oiio"))]
 fn is_linear_texture_path(path: &Path) -> bool {
     match path.extension().and_then(|ext| ext.to_str()) {
         Some(ext) => matches!(ext.to_ascii_lowercase().as_str(), "exr" | "hdr" | "tx"),
