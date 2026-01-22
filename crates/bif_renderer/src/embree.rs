@@ -251,11 +251,12 @@ impl RTCRayHit {
 /// # Example
 /// ```ignore
 /// let vertices = mesh.extract_triangle_vertices();
+/// let uvs = mesh.extract_triangle_uvs();
+/// let normals = mesh.extract_triangle_normals();
 /// let transforms = vec![Mat4::IDENTITY; 1000];
-/// let material = Lambertian::new(Color::new(0.7, 0.7, 0.7));
+/// let material = DisneyBSDF::default();
 ///
-/// let scene = EmbreeScene::new(&vertices, transforms, material);
-/// // Now you can trace rays with 1000 instances efficiently!
+/// let scene = EmbreeScene::new(&vertices, &uvs, &normals, transforms, material);
 /// ```
 pub struct EmbreeScene<M: Material + Clone + 'static> {
     device: RTCDevice,
@@ -268,6 +269,10 @@ pub struct EmbreeScene<M: Material + Clone + 'static> {
     _index_data: Vec<u32>,
     _transform_data: Vec<[f32; 16]>,
 
+    // Per-vertex UV and normal data for interpolation (3 entries per triangle)
+    uv_data: Vec<[f32; 2]>,
+    normal_data: Vec<[f32; 3]>,
+
     // For debugging/stats
     instance_count: usize,
     triangle_count: usize,
@@ -275,7 +280,13 @@ pub struct EmbreeScene<M: Material + Clone + 'static> {
 
 impl<M: Material + Clone + 'static> EmbreeScene<M> {
     /// Try to create Embree scene, returns None if Embree unavailable.
-    pub fn try_new(vertices: &[[Vec3; 3]], transforms: Vec<Mat4>, material: M) -> Option<Self> {
+    pub fn try_new(
+        vertices: &[[Vec3; 3]],
+        uvs: &[[[f32; 2]; 3]],
+        normals: &[[[f32; 3]; 3]],
+        transforms: Vec<Mat4>,
+        material: M,
+    ) -> Option<Self> {
         // Check if Embree is available
         unsafe {
             let test_device = rtcNewDevice(std::ptr::null());
@@ -285,19 +296,27 @@ impl<M: Material + Clone + 'static> EmbreeScene<M> {
             }
             rtcReleaseDevice(test_device);
         }
-        Some(Self::new(vertices, transforms, material))
+        Some(Self::new(vertices, uvs, normals, transforms, material))
     }
 
     /// Create Embree scene with instanced geometry.
     ///
     /// # Arguments
     /// * `vertices` - Triangle vertices as flat array of Vec3 triplets
+    /// * `uvs` - Per-triangle UV coordinates (3 UVs per triangle)
+    /// * `normals` - Per-triangle vertex normals (3 normals per triangle)
     /// * `transforms` - Instance transforms (local-to-world matrices)
     /// * `material` - Shared material for all instances
     ///
     /// # Safety
-    /// Requires Embree 3 library to be installed and linkable.
-    pub fn new(vertices: &[[Vec3; 3]], transforms: Vec<Mat4>, material: M) -> Self {
+    /// Requires Embree 4 library to be installed and linkable.
+    pub fn new(
+        vertices: &[[Vec3; 3]],
+        uvs: &[[[f32; 2]; 3]],
+        normals: &[[[f32; 3]; 3]],
+        transforms: Vec<Mat4>,
+        material: M,
+    ) -> Self {
         unsafe {
             // 1. Create Embree device
             let device = rtcNewDevice(std::ptr::null());
@@ -514,6 +533,30 @@ impl<M: Material + Clone + 'static> EmbreeScene<M> {
                 bounds.upper_z
             );
 
+            // Flatten per-triangle UVs and normals into per-vertex arrays
+            let mut uv_data = Vec::with_capacity(vertices.len() * 3);
+            let mut normal_data = Vec::with_capacity(vertices.len() * 3);
+            for tri_idx in 0..vertices.len() {
+                if tri_idx < uvs.len() {
+                    uv_data.push(uvs[tri_idx][0]);
+                    uv_data.push(uvs[tri_idx][1]);
+                    uv_data.push(uvs[tri_idx][2]);
+                } else {
+                    uv_data.push([0.0, 0.0]);
+                    uv_data.push([0.0, 0.0]);
+                    uv_data.push([0.0, 0.0]);
+                }
+                if tri_idx < normals.len() {
+                    normal_data.push(normals[tri_idx][0]);
+                    normal_data.push(normals[tri_idx][1]);
+                    normal_data.push(normals[tri_idx][2]);
+                } else {
+                    normal_data.push([0.0, 1.0, 0.0]);
+                    normal_data.push([0.0, 1.0, 0.0]);
+                    normal_data.push([0.0, 1.0, 0.0]);
+                }
+            }
+
             Self {
                 device,
                 scene,
@@ -522,6 +565,8 @@ impl<M: Material + Clone + 'static> EmbreeScene<M> {
                 _vertex_data: vertex_data,
                 _index_data: index_data,
                 _transform_data: transform_data,
+                uv_data,
+                normal_data,
                 instance_count: transforms.len(),
                 triangle_count: vertices.len(),
             }
@@ -589,19 +634,37 @@ impl<M: Material + Clone + 'static> Hittable for EmbreeScene<M> {
             rec.t = rayhit.ray.tfar;
             rec.p = ray.at(rec.t);
 
-            // Embree returns geometric normal (not interpolated)
-            let normal = Vec3::new(rayhit.hit.ng_x, rayhit.hit.ng_y, rayhit.hit.ng_z);
-            rec.normal = normal.normalize();
+            // Interpolate UVs and normals using barycentrics
+            let prim_id = rayhit.hit.prim_id as usize;
+            let bary_u = rayhit.hit.u;
+            let bary_v = rayhit.hit.v;
+            let bary_w = 1.0 - bary_u - bary_v;
 
-            // UV coordinates from barycentric
-            rec.u = rayhit.hit.u;
-            rec.v = rayhit.hit.v;
+            // Interpolate texture UVs: w*uv0 + u*uv1 + v*uv2
+            let base = prim_id * 3;
+            let uv0 = self.uv_data[base];
+            let uv1 = self.uv_data[base + 1];
+            let uv2 = self.uv_data[base + 2];
+            rec.u = bary_w * uv0[0] + bary_u * uv1[0] + bary_v * uv2[0];
+            rec.v = bary_w * uv0[1] + bary_u * uv1[1] + bary_v * uv2[1];
+
+            // Interpolate shading normal
+            let n0 = self.normal_data[base];
+            let n1 = self.normal_data[base + 1];
+            let n2 = self.normal_data[base + 2];
+            let interp_normal = Vec3::new(
+                bary_w * n0[0] + bary_u * n1[0] + bary_v * n2[0],
+                bary_w * n0[1] + bary_u * n1[1] + bary_v * n2[1],
+                bary_w * n0[2] + bary_u * n1[2] + bary_v * n2[2],
+            );
+            let normal = interp_normal.normalize();
+            rec.normal = normal;
 
             // Shared material
             rec.material = &*self.material;
 
             // Set front face
-            rec.set_face_normal(ray, rec.normal);
+            rec.set_face_normal(ray, normal);
 
             true
         }

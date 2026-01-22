@@ -2156,19 +2156,35 @@ impl Renderer {
                 transforms.len()
             );
 
-            // Extract triangle vertices for Embree
-            let mut triangle_vertices = Vec::with_capacity(mesh_data.indices.len() / 3);
+            // Extract triangle vertices, UVs, and normals for Embree
+            let tri_count = mesh_data.indices.len() / 3;
+            let mut triangle_vertices = Vec::with_capacity(tri_count);
+            let mut triangle_uvs: Vec<[[f32; 2]; 3]> = Vec::with_capacity(tri_count);
+            let mut triangle_normals: Vec<[[f32; 3]; 3]> = Vec::with_capacity(tri_count);
             for i in (0..mesh_data.indices.len()).step_by(3) {
                 let i0 = mesh_data.indices[i] as usize;
                 let i1 = mesh_data.indices[i + 1] as usize;
                 let i2 = mesh_data.indices[i + 2] as usize;
 
-                // Get vertices in LOCAL space (no transformation)
+                // Positions in LOCAL space
                 let v0 = Vec3::from_array(mesh_data.vertices[i0].position);
                 let v1 = Vec3::from_array(mesh_data.vertices[i1].position);
                 let v2 = Vec3::from_array(mesh_data.vertices[i2].position);
-
                 triangle_vertices.push([v0, v1, v2]);
+
+                // UVs per vertex
+                triangle_uvs.push([
+                    mesh_data.vertices[i0].uv,
+                    mesh_data.vertices[i1].uv,
+                    mesh_data.vertices[i2].uv,
+                ]);
+
+                // Normals per vertex
+                triangle_normals.push([
+                    mesh_data.vertices[i0].normal,
+                    mesh_data.vertices[i1].normal,
+                    mesh_data.vertices[i2].normal,
+                ]);
             }
 
             log::info!("Background thread: Extracted {} triangles, creating acceleration structure with {} instances...",
@@ -2184,7 +2200,7 @@ impl Renderer {
 
             // Try to create Embree scene first, fall back to CPU BVH if unavailable
             let world = if let Some(embree_scene) =
-                EmbreeScene::try_new(&triangle_vertices, transforms.clone(), disney_mat)
+                EmbreeScene::try_new(&triangle_vertices, &triangle_uvs, &triangle_normals, transforms.clone(), disney_mat)
             {
                 log::info!("Using Embree for hardware-accelerated ray tracing");
                 // Wrap Embree scene in a BVH node (BVH contains just 1 object)
