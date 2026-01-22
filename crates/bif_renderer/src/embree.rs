@@ -4,8 +4,9 @@
 //! Only includes the minimal API needed for instanced geometry rendering.
 
 use crate::{
+    disney::DisneyBSDF,
     hittable::{HitRecord, Hittable},
-    Material, Ray,
+    Ray,
 };
 use bif_math::{Aabb, Interval, Mat4, Vec3};
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -254,15 +255,17 @@ impl RTCRayHit {
 /// let uvs = mesh.extract_triangle_uvs();
 /// let normals = mesh.extract_triangle_normals();
 /// let transforms = vec![Mat4::IDENTITY; 1000];
-/// let material = DisneyBSDF::default();
+/// let materials = vec![Arc::new(DisneyBSDF::default())];
+/// let tri_mat_ids = vec![0u32; vertices.len()];
 ///
-/// let scene = EmbreeScene::new(&vertices, &uvs, &normals, transforms, material);
+/// let scene = EmbreeScene::new(&vertices, &uvs, &normals, transforms, materials, &tri_mat_ids);
 /// ```
-pub struct EmbreeScene<M: Material + Clone + 'static> {
+pub struct EmbreeScene {
     device: RTCDevice,
     scene: RTCScene,
     prototype_scene: RTCScene, // Must stay alive while instances reference it!
-    material: Arc<M>,
+    materials: Vec<Arc<DisneyBSDF>>,
+    triangle_material_ids: Vec<u32>,
 
     // Keep vertex, index, and transform data alive (Embree holds pointers to this)
     _vertex_data: Vec<f32>,
@@ -278,14 +281,15 @@ pub struct EmbreeScene<M: Material + Clone + 'static> {
     triangle_count: usize,
 }
 
-impl<M: Material + Clone + 'static> EmbreeScene<M> {
+impl EmbreeScene {
     /// Try to create Embree scene, returns None if Embree unavailable.
     pub fn try_new(
         vertices: &[[Vec3; 3]],
         uvs: &[[[f32; 2]; 3]],
         normals: &[[[f32; 3]; 3]],
         transforms: Vec<Mat4>,
-        material: M,
+        materials: Vec<Arc<DisneyBSDF>>,
+        triangle_material_ids: &[u32],
     ) -> Option<Self> {
         // Check if Embree is available
         unsafe {
@@ -296,7 +300,7 @@ impl<M: Material + Clone + 'static> EmbreeScene<M> {
             }
             rtcReleaseDevice(test_device);
         }
-        Some(Self::new(vertices, uvs, normals, transforms, material))
+        Some(Self::new(vertices, uvs, normals, transforms, materials, triangle_material_ids))
     }
 
     /// Create Embree scene with instanced geometry.
@@ -306,7 +310,8 @@ impl<M: Material + Clone + 'static> EmbreeScene<M> {
     /// * `uvs` - Per-triangle UV coordinates (3 UVs per triangle)
     /// * `normals` - Per-triangle vertex normals (3 normals per triangle)
     /// * `transforms` - Instance transforms (local-to-world matrices)
-    /// * `material` - Shared material for all instances
+    /// * `materials` - Materials for the scene (indexed by triangle_material_ids)
+    /// * `triangle_material_ids` - Per-triangle material index into materials vec
     ///
     /// # Safety
     /// Requires Embree 4 library to be installed and linkable.
@@ -315,7 +320,8 @@ impl<M: Material + Clone + 'static> EmbreeScene<M> {
         uvs: &[[[f32; 2]; 3]],
         normals: &[[[f32; 3]; 3]],
         transforms: Vec<Mat4>,
-        material: M,
+        materials: Vec<Arc<DisneyBSDF>>,
+        triangle_material_ids: &[u32],
     ) -> Self {
         unsafe {
             // 1. Create Embree device
@@ -557,11 +563,19 @@ impl<M: Material + Clone + 'static> EmbreeScene<M> {
                 }
             }
 
+            // Build triangle material IDs (default to 0 if not provided)
+            let tri_mat_ids = if triangle_material_ids.is_empty() {
+                vec![0u32; vertices.len()]
+            } else {
+                triangle_material_ids.to_vec()
+            };
+
             Self {
                 device,
                 scene,
                 prototype_scene, // Keep alive for instances
-                material: Arc::new(material),
+                materials,
+                triangle_material_ids: tri_mat_ids,
                 _vertex_data: vertex_data,
                 _index_data: index_data,
                 _transform_data: transform_data,
@@ -584,7 +598,7 @@ impl<M: Material + Clone + 'static> EmbreeScene<M> {
     }
 }
 
-impl<M: Material + Clone + 'static> Hittable for EmbreeScene<M> {
+impl Hittable for EmbreeScene {
     fn hit<'a>(&'a self, ray: &Ray, ray_t: Interval, rec: &mut HitRecord<'a>) -> bool {
         unsafe {
             // 1. Convert to Embree ray-hit
@@ -660,8 +674,10 @@ impl<M: Material + Clone + 'static> Hittable for EmbreeScene<M> {
             let normal = interp_normal.normalize();
             rec.normal = normal;
 
-            // Shared material
-            rec.material = &*self.material;
+            // Per-triangle material lookup
+            let mat_id = self.triangle_material_ids[prim_id] as usize;
+            let mat_id = mat_id.min(self.materials.len() - 1);
+            rec.material = &*self.materials[mat_id];
 
             // Set front face
             rec.set_face_normal(ray, normal);
@@ -683,7 +699,7 @@ impl<M: Material + Clone + 'static> Hittable for EmbreeScene<M> {
     }
 }
 
-impl<M: Material + Clone + 'static> Drop for EmbreeScene<M> {
+impl Drop for EmbreeScene {
     fn drop(&mut self) {
         unsafe {
             rtcReleaseScene(self.scene);
@@ -701,5 +717,5 @@ impl<M: Material + Clone + 'static> Drop for EmbreeScene<M> {
 // - Embree's RTCDevice/RTCScene are thread-safe after rtcCommitScene
 // - We store vertex_data to keep it alive (Embree holds pointers)
 // - Drop releases Embree resources before Rust data
-unsafe impl<M: Material + Clone + 'static> Send for EmbreeScene<M> {}
-unsafe impl<M: Material + Clone + 'static> Sync for EmbreeScene<M> {}
+unsafe impl Send for EmbreeScene {}
+unsafe impl Sync for EmbreeScene {}
