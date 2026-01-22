@@ -2150,7 +2150,8 @@ impl Renderer {
         // Clone data needed for background thread
         let mesh_data = self.mesh_data.clone();
         let transforms = self.instance_transforms.clone();
-        let material = self.scene_material.clone();
+        let scene_materials = self.scene_materials.clone();
+        let fallback_material = self.scene_material.clone();
         let texture_base_dir = self.texture_base_dir.clone();
 
         // Create channel for build completion
@@ -2201,21 +2202,31 @@ impl Renderer {
             log::info!("Background thread: Extracted {} triangles, creating acceleration structure with {} instances...",
                 triangle_vertices.len(), transforms.len());
 
-            // Convert material to Disney BSDF with textures
+            // Load all materials with textures
             let mut texture_cache = match texture_base_dir {
                 Some(dir) => bif_core::texture::TextureCache::with_base_dir(dir),
                 None => bif_core::texture::TextureCache::new(),
             };
-            let disney_mat = DisneyBSDF::from_material_with_textures(&material, &mut texture_cache);
-            log::info!(
-                "Using Disney BSDF: base_color=({:.2}, {:.2}, {:.2}), metallic={:.2}, roughness={:.2}, textures={}",
-                disney_mat.base_color.x, disney_mat.base_color.y, disney_mat.base_color.z,
-                disney_mat.metallic, disney_mat.roughness, disney_mat.has_textures()
-            );
+            let materials: Vec<Arc<DisneyBSDF>> = if scene_materials.is_empty() {
+                // Single fallback material
+                vec![Arc::new(DisneyBSDF::from_material_with_textures(&fallback_material, &mut texture_cache))]
+            } else {
+                scene_materials.iter().map(|mat| {
+                    Arc::new(DisneyBSDF::from_material_with_textures(mat.as_ref(), &mut texture_cache))
+                }).collect()
+            };
+            log::info!("Loaded {} materials for Ivar (textures cached: {})",
+                materials.len(), texture_cache.len());
+
+            // Get per-triangle material IDs (default to all-0 if not present)
+            let tri_mat_ids: Vec<u32> = mesh_data.triangle_material_ids
+                .as_ref()
+                .cloned()
+                .unwrap_or_default();
 
             // Try to create Embree scene first, fall back to CPU BVH if unavailable
             let world = if let Some(embree_scene) =
-                EmbreeScene::try_new(&triangle_vertices, &triangle_uvs, &triangle_normals, transforms.clone(), disney_mat)
+                EmbreeScene::try_new(&triangle_vertices, &triangle_uvs, &triangle_normals, transforms.clone(), materials, &tri_mat_ids)
             {
                 log::info!("Using Embree for hardware-accelerated ray tracing");
                 // Wrap Embree scene in a BVH node (BVH contains just 1 object)
