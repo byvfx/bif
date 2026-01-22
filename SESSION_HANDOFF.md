@@ -1,6 +1,6 @@
-# Session Handoff - January 21, 2026
+# Session Handoff - January 22, 2026
 
-**Last Updated:** Milestone 17.1 Complete (OIIO + .tx Texture Pipeline)
+**Last Updated:** bif_viewport modularization
 **Next Milestone:** 18 (Animation + Motion Blur)
 **Project:** BIF - VFX Scene Assembler & Renderer
 
@@ -18,6 +18,19 @@
 ---
 
 ## Recent Work
+
+### bif_viewport Modularization - Complete (Jan 22, 2026)
+
+Split `lib.rs` (4380 lines) into 6 focused modules (~32% reduction):
+
+| Module | Lines | Contents |
+|--------|-------|----------|
+| `gpu_types.rs` | 285 | Uniforms, Vertex, InstanceData |
+| `mesh_data.rs` | 449 | MeshData + loading |
+| `ivar_state.rs` | 189 | RenderMode, IvarState |
+| `texture_loader.rs` | 395 | Texture loading free fns |
+| `ivar_renderer.rs` | 156 | Ivar pipeline creation |
+| `frustum_culling.rs` | 131 | Culling free fn |
 
 ### Milestone 17.1: OIIO + .tx Texture Pipeline - Complete (Jan 21, 2026)
 
