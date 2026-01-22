@@ -6,6 +6,10 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+default = []
+oiio = []  # Enable OIIO/.tx texture support
+
 [dependencies]
 bif_math = { path = "../bif_math" }
 glam = { workspace = true }

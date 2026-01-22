@@ -2,16 +2,21 @@
 //!
 //! Based on the 2012 Disney paper "Physically Based Shading at Disney"
 //! and the 2015 extension for clearcoat and sheen.
+//!
+//! Supports optional texture maps for base_color, roughness, metallic, and normals.
 
 use crate::material::{cosine_weighted_hemisphere, gen_f32, reflect, Color, ScatterResult};
 use crate::{hittable::HitRecord, Material, Ray};
+use bif_core::texture::Texture;
 use bif_math::Vec3;
 use rand::RngCore;
 use std::f32::consts::PI;
+use std::sync::Arc;
 
 /// Disney Principled BSDF material.
 ///
 /// A physically-based material with intuitive artist-friendly parameters.
+/// Supports optional texture maps that override scalar values when present.
 #[derive(Clone)]
 pub struct DisneyBSDF {
     /// Base color (albedo for dielectrics, reflectance for metals)
@@ -52,6 +57,23 @@ pub struct DisneyBSDF {
     /// TODO: Implement anisotropic GGX sampling
     #[allow(dead_code)]
     pub anisotropic: f32,
+
+    // =========================================================================
+    // Texture maps (optional, override scalar values when present)
+    // =========================================================================
+
+    /// Base color / diffuse texture
+    pub diffuse_texture: Option<Arc<Texture>>,
+
+    /// Roughness texture (samples from R channel)
+    pub roughness_texture: Option<Arc<Texture>>,
+
+    /// Metallic texture (samples from R channel)
+    pub metallic_texture: Option<Arc<Texture>>,
+
+    /// Normal map texture (TODO: implement normal mapping)
+    #[allow(dead_code)]
+    pub normal_texture: Option<Arc<Texture>>,
 }
 
 impl Default for DisneyBSDF {
@@ -68,6 +90,10 @@ impl Default for DisneyBSDF {
             clearcoat_gloss: 1.0,
             subsurface: 0.0,
             anisotropic: 0.0,
+            diffuse_texture: None,
+            roughness_texture: None,
+            metallic_texture: None,
+            normal_texture: None,
         }
     }
 }
@@ -144,7 +170,8 @@ impl DisneyBSDF {
 /// - roughness → roughness
 /// - specular → specular
 ///
-/// Note: Texture support requires additional integration (Phase 8).
+/// Note: This version does not load textures. Use `from_material_with_textures`
+/// if you have a TextureCache available.
 impl From<&bif_core::Material> for DisneyBSDF {
     fn from(mat: &bif_core::Material) -> Self {
         Self {
@@ -159,7 +186,96 @@ impl From<&bif_core::Material> for DisneyBSDF {
             clearcoat_gloss: 1.0,
             subsurface: 0.0,
             anisotropic: 0.0,
+            diffuse_texture: None,
+            roughness_texture: None,
+            metallic_texture: None,
+            normal_texture: None,
         }
+    }
+}
+
+impl DisneyBSDF {
+    /// Create a DisneyBSDF from a bif_core::Material, loading textures via cache.
+    ///
+    /// This is the preferred method when you have access to a TextureCache,
+    /// as it will load and bind texture maps for proper rendering.
+    pub fn from_material_with_textures(
+        mat: &bif_core::Material,
+        cache: &mut bif_core::texture::TextureCache,
+    ) -> Self {
+        // Load textures via cache (returns Arc<Texture>)
+        let diffuse_texture = mat
+            .diffuse_texture
+            .as_ref()
+            .and_then(|p| cache.load(p).ok());
+
+        let roughness_texture = mat
+            .roughness_texture
+            .as_ref()
+            .and_then(|p| cache.load(p).ok());
+
+        let metallic_texture = mat
+            .metallic_texture
+            .as_ref()
+            .and_then(|p| cache.load(p).ok());
+
+        let normal_texture = mat
+            .normal_texture
+            .as_ref()
+            .and_then(|p| cache.load(p).ok());
+
+        Self {
+            base_color: mat.diffuse_color,
+            metallic: mat.metallic,
+            roughness: mat.roughness,
+            specular: mat.specular,
+            specular_tint: 0.0,
+            sheen: 0.0,
+            sheen_tint: 0.5,
+            clearcoat: 0.0,
+            clearcoat_gloss: 1.0,
+            subsurface: 0.0,
+            anisotropic: 0.0,
+            diffuse_texture,
+            roughness_texture,
+            metallic_texture,
+            normal_texture,
+        }
+    }
+
+    /// Sample base color at given UV, using texture if available.
+    #[inline]
+    pub fn sample_base_color(&self, u: f32, v: f32) -> Color {
+        match &self.diffuse_texture {
+            Some(tex) => tex.sample(u, v),
+            None => self.base_color,
+        }
+    }
+
+    /// Sample roughness at given UV, using texture if available.
+    #[inline]
+    pub fn sample_roughness(&self, u: f32, v: f32) -> f32 {
+        match &self.roughness_texture {
+            Some(tex) => tex.sample_channel(u, v, 0), // R channel
+            None => self.roughness,
+        }
+    }
+
+    /// Sample metallic at given UV, using texture if available.
+    #[inline]
+    pub fn sample_metallic(&self, u: f32, v: f32) -> f32 {
+        match &self.metallic_texture {
+            Some(tex) => tex.sample_channel(u, v, 0), // R channel
+            None => self.metallic,
+        }
+    }
+
+    /// Check if this material has any textures bound.
+    pub fn has_textures(&self) -> bool {
+        self.diffuse_texture.is_some()
+            || self.roughness_texture.is_some()
+            || self.metallic_texture.is_some()
+            || self.normal_texture.is_some()
     }
 }
 
@@ -173,8 +289,13 @@ impl Material for DisneyBSDF {
         let wo = -ray_in.direction().normalize();
         let n = rec.normal;
 
+        // Sample material parameters from textures at hit UV coordinates
+        let base_color = self.sample_base_color(rec.u, rec.v);
+        let metallic = self.sample_metallic(rec.u, rec.v);
+        let roughness = self.sample_roughness(rec.u, rec.v);
+
         // Decide between diffuse and specular based on material parameters
-        let diffuse_weight = (1.0 - self.metallic) * (1.0 - self.specular * 0.5);
+        let diffuse_weight = (1.0 - metallic) * (1.0 - self.specular * 0.5);
         let specular_weight = 1.0 - diffuse_weight;
 
         let do_diffuse =
@@ -182,16 +303,19 @@ impl Material for DisneyBSDF {
 
         if do_diffuse {
             // Diffuse scattering (Burley diffuse approximation)
-            self.scatter_diffuse(wo, n, rec.p, ray_in.time(), rng)
+            self.scatter_diffuse_textured(wo, n, rec.p, ray_in.time(), rng, base_color, roughness)
         } else {
             // Specular scattering (GGX microfacet)
-            self.scatter_specular(wo, n, rec.p, ray_in.time(), rng)
+            self.scatter_specular_textured(wo, n, rec.p, ray_in.time(), rng, base_color, metallic, roughness)
         }
     }
 }
 
 impl DisneyBSDF {
     /// Scatter with diffuse (Burley) lobe.
+    /// Note: Currently unused as we always use texture-sampling version.
+    /// Kept for potential optimization when no textures are bound.
+    #[allow(dead_code)]
     fn scatter_diffuse(
         &self,
         wo: Vec3,
@@ -254,6 +378,8 @@ impl DisneyBSDF {
     }
 
     /// Scatter with specular (GGX) lobe.
+    /// Note: Currently unused as we always use texture-sampling version.
+    #[allow(dead_code)]
     fn scatter_specular(
         &self,
         wo: Vec3,
@@ -309,6 +435,8 @@ impl DisneyBSDF {
     }
 
     /// Compute F0 (Fresnel at normal incidence) based on material parameters.
+    /// Note: Currently unused as we always use texture-sampling version.
+    #[allow(dead_code)]
     fn fresnel_0(&self) -> Color {
         // For dielectrics, F0 is based on specular parameter (maps to IOR)
         // specular=0.5 corresponds to IOR=1.5 (common glass/plastic)
@@ -328,6 +456,127 @@ impl DisneyBSDF {
 
         // Blend between dielectric and metallic
         lerp3(c_spec, self.base_color, self.metallic)
+    }
+
+    /// Compute F0 with textured base_color and metallic.
+    fn fresnel_0_textured(&self, base_color: Color, metallic: f32) -> Color {
+        let dielectric_f0 = 0.08 * self.specular;
+
+        let c_tint = if base_color.length_squared() > 0.0 {
+            base_color / luminance(base_color)
+        } else {
+            Color::ONE
+        };
+        let c_spec = lerp3(
+            Color::new(dielectric_f0, dielectric_f0, dielectric_f0),
+            dielectric_f0 * c_tint,
+            self.specular_tint,
+        );
+
+        lerp3(c_spec, base_color, metallic)
+    }
+
+    /// Scatter with diffuse (Burley) lobe using texture-sampled values.
+    #[allow(clippy::too_many_arguments)]
+    fn scatter_diffuse_textured(
+        &self,
+        wo: Vec3,
+        n: Vec3,
+        hit_point: Vec3,
+        time: f32,
+        rng: &mut dyn RngCore,
+        base_color: Color,
+        roughness: f32,
+    ) -> Option<ScatterResult> {
+        let wi = cosine_weighted_hemisphere(n, rng);
+
+        let n_dot_l = n.dot(wi).max(0.0);
+        let n_dot_v = n.dot(wo).max(0.0);
+
+        if n_dot_l <= 0.0 {
+            return None;
+        }
+
+        let h = (wo + wi).normalize();
+        let l_dot_h = wi.dot(h).max(0.0);
+
+        let fd90 = 0.5 + 2.0 * roughness * l_dot_h * l_dot_h;
+        let fl = schlick_weight(n_dot_l);
+        let fv = schlick_weight(n_dot_v);
+        let fd = lerp(1.0, fd90, fl) * lerp(1.0, fd90, fv);
+
+        let fss90 = l_dot_h * l_dot_h * roughness;
+        let fss = lerp(1.0, fss90, fl) * lerp(1.0, fss90, fv);
+        let ss = 1.25 * (fss * (1.0 / (n_dot_l + n_dot_v).max(0.001) - 0.5) + 0.5);
+
+        let diffuse = lerp(fd, ss, self.subsurface);
+
+        let sheen = if self.sheen > 0.0 {
+            let c_tint = if base_color.length_squared() > 0.0 {
+                base_color / luminance(base_color)
+            } else {
+                Color::ONE
+            };
+            let c_sheen = lerp3(Color::ONE, c_tint, self.sheen_tint);
+            schlick_weight(l_dot_h) * self.sheen * c_sheen
+        } else {
+            Color::ZERO
+        };
+
+        let attenuation = base_color * diffuse / PI + sheen;
+        let scattered = Ray::new(hit_point, wi, time);
+        let pdf = (n_dot_l / PI).max(0.0001);
+
+        Some(ScatterResult {
+            attenuation,
+            scattered,
+            pdf,
+        })
+    }
+
+    /// Scatter with specular (GGX) lobe using texture-sampled values.
+    #[allow(clippy::too_many_arguments)]
+    fn scatter_specular_textured(
+        &self,
+        wo: Vec3,
+        n: Vec3,
+        hit_point: Vec3,
+        time: f32,
+        rng: &mut dyn RngCore,
+        base_color: Color,
+        metallic: f32,
+        roughness: f32,
+    ) -> Option<ScatterResult> {
+        let alpha = roughness * roughness;
+        let alpha = alpha.max(0.001);
+
+        let h = sample_ggx(n, alpha, rng);
+        let wi = reflect(-wo, h);
+
+        let n_dot_l = n.dot(wi);
+        if n_dot_l <= 0.0 {
+            return None;
+        }
+
+        let n_dot_v = n.dot(wo).max(0.0);
+        let n_dot_h = n.dot(h).max(0.0);
+        let l_dot_h = wi.dot(h).max(0.0);
+
+        let d = ggx_d(n_dot_h, alpha);
+        let g = smith_g_ggx(n_dot_l, n_dot_v, alpha);
+        let f0 = self.fresnel_0_textured(base_color, metallic);
+        let f = schlick_fresnel3(f0, l_dot_h);
+
+        let weight = (g * l_dot_h) / (n_dot_h * n_dot_v.max(0.001));
+        let attenuation = f * weight.max(0.0);
+        let scattered = Ray::new(hit_point, wi, time);
+        let pdf = (d * n_dot_h / (4.0 * l_dot_h)).max(0.0001);
+
+        Some(ScatterResult {
+            attenuation,
+            scattered,
+            pdf,
+        })
     }
 }
 

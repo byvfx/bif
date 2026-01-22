@@ -1,6 +1,7 @@
 //! Build script for bif_core.
 //!
 //! Compiles the USD C++ bridge via CMake and links the resulting library.
+//! Optionally compiles the OIIO bridge when the `oiio` feature is enabled.
 //! Uses caching to avoid rebuilding when source files haven't changed.
 
 use std::env;
@@ -9,6 +10,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn main() {
+    // Build OIIO bridge if feature enabled
+    #[cfg(feature = "oiio")]
+    build_oiio_bridge();
     // Paths
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
     let workspace_root = Path::new(&manifest_dir).parent().unwrap().parent().unwrap();
@@ -212,5 +216,155 @@ fn build_usd_bridge(cpp_dir: &Path, build_dir: &Path) {
 
     if !build_status.success() {
         panic!("CMake build failed");
+    }
+}
+
+// ============================================================================
+// OIIO Bridge Build (feature-gated)
+// ============================================================================
+
+#[cfg(feature = "oiio")]
+fn build_oiio_bridge() {
+    let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
+    let workspace_root = Path::new(&manifest_dir).parent().unwrap().parent().unwrap();
+    let cpp_dir = workspace_root.join("cpp").join("oiio_bridge");
+    let out_dir = env::var("OUT_DIR").unwrap();
+    let build_dir = Path::new(&out_dir).join("oiio_bridge_build");
+
+    // Output library path
+    let lib_path = if cfg!(windows) {
+        build_dir.join("Release").join("oiio_bridge.lib")
+    } else {
+        build_dir.join("liboiio_bridge.a")
+    };
+
+    // Source files to track for changes
+    let source_files = vec![
+        cpp_dir.join("oiio_bridge.cpp"),
+        cpp_dir.join("oiio_bridge.h"),
+        cpp_dir.join("CMakeLists.txt"),
+    ];
+
+    // Emit rerun-if-changed for all source files
+    for src in &source_files {
+        println!("cargo:rerun-if-changed={}", src.display());
+    }
+
+    // Check if rebuild is needed
+    let needs_rebuild = needs_cmake_rebuild(&lib_path, &source_files);
+
+    if needs_rebuild {
+        println!("cargo:warning=Building OIIO bridge via CMake...");
+        build_oiio_bridge_cmake(&cpp_dir, &build_dir);
+    } else {
+        println!("cargo:warning=OIIO bridge up to date, skipping CMake");
+    }
+
+    // Link the OIIO bridge library
+    println!(
+        "cargo:rustc-link-search=native={}",
+        build_dir.join("Release").display()
+    );
+    println!("cargo:rustc-link-lib=static=oiio_bridge");
+
+    // Link OIIO libraries from vcpkg
+    if let Ok(vcpkg_root) = env::var("VCPKG_ROOT") {
+        let lib_path = format!("{}\\installed\\x64-windows\\lib", vcpkg_root);
+        let bin_path = format!("{}\\installed\\x64-windows\\bin", vcpkg_root);
+        println!("cargo:rustc-link-search=native={}", lib_path);
+        println!("cargo:rustc-link-search=native={}", bin_path);
+    } else {
+        // Try to find vcpkg in common locations
+        let possible_vcpkg_paths = vec![
+            (
+                "D:\\__projects\\_programming\\vcpkg\\installed\\x64-windows\\lib",
+                "D:\\__projects\\_programming\\vcpkg\\installed\\x64-windows\\bin",
+            ),
+            (
+                "C:\\vcpkg\\installed\\x64-windows\\lib",
+                "C:\\vcpkg\\installed\\x64-windows\\bin",
+            ),
+        ];
+        for (lib_path, bin_path) in possible_vcpkg_paths {
+            if Path::new(lib_path).exists() {
+                println!("cargo:rustc-link-search=native={}", lib_path);
+                println!("cargo:rustc-link-search=native={}", bin_path);
+                break;
+            }
+        }
+    }
+
+    // Link OpenImageIO and its dependencies
+    let oiio_libs = [
+        "OpenImageIO",
+        "OpenImageIO_Util",
+        "OpenEXR-3_3",
+        "OpenEXRCore-3_3",
+        "OpenEXRUtil-3_3",
+        "Imath-3_1",
+        "IlmThread-3_3",
+        "Iex-3_3",
+        "tiff",
+        "jpeg",
+        "png16",
+        "zlib",
+    ];
+
+    for lib in oiio_libs {
+        println!("cargo:rustc-link-lib={}", lib);
+    }
+
+    // C++ standard library
+    if cfg!(windows) {
+        // MSVC links automatically
+    } else {
+        println!("cargo:rustc-link-lib=stdc++");
+    }
+}
+
+#[cfg(feature = "oiio")]
+fn build_oiio_bridge_cmake(cpp_dir: &Path, build_dir: &Path) {
+    // Create build directory
+    fs::create_dir_all(build_dir).expect("Failed to create OIIO build directory");
+
+    // Find CMake
+    let cmake = find_cmake();
+
+    // Find vcpkg toolchain file
+    let vcpkg_root = env::var("VCPKG_ROOT")
+        .unwrap_or_else(|_| "D:\\__projects\\_programming\\vcpkg".to_string());
+    let toolchain = format!("{}/scripts/buildsystems/vcpkg.cmake", vcpkg_root);
+
+    // CMake configure
+    let configure_status = Command::new(&cmake)
+        .current_dir(build_dir)
+        .args([
+            "-S",
+            cpp_dir.to_str().unwrap(),
+            "-B",
+            ".",
+            "-G",
+            "Visual Studio 17 2022",
+            "-A",
+            "x64",
+            &format!("-DCMAKE_TOOLCHAIN_FILE={}", toolchain),
+            "-DCMAKE_BUILD_TYPE=Release",
+        ])
+        .status()
+        .expect("Failed to run cmake configure for OIIO bridge");
+
+    if !configure_status.success() {
+        panic!("CMake configure failed for OIIO bridge");
+    }
+
+    // CMake build
+    let build_status = Command::new(&cmake)
+        .current_dir(build_dir)
+        .args(["--build", ".", "--config", "Release", "--parallel"])
+        .status()
+        .expect("Failed to run cmake build for OIIO bridge");
+
+    if !build_status.success() {
+        panic!("CMake build failed for OIIO bridge");
     }
 }

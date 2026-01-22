@@ -1116,17 +1116,23 @@ impl Renderer {
         label: &str,
         max_dimension: u32,
     ) -> wgpu::Texture {
+        // Use texture's is_linear field if available, otherwise fall back to parameter
+        let is_linear = texture.is_linear || is_linear;
         let format = if is_linear {
             wgpu::TextureFormat::Rgba8Unorm
         } else {
             wgpu::TextureFormat::Rgba8UnormSrgb
         };
 
-        let (width, height, pixels) =
-            Self::downscale_texture_nearest(texture, max_dimension);
-        if width != texture.width || height != texture.height {
+        // Check if we need to downscale (affects mipmaps too)
+        let needs_downscale = texture.width > max_dimension || texture.height > max_dimension;
+
+        if needs_downscale {
+            // Downscale path - no mipmaps (would need regeneration)
+            let (width, height, pixels) =
+                Self::downscale_texture_nearest(texture, max_dimension);
             log::warn!(
-                "Downscaled texture {} from {}x{} to {}x{} (limit {}).",
+                "Downscaled texture {} from {}x{} to {}x{} (limit {}). Mipmaps disabled.",
                 texture.path,
                 texture.width,
                 texture.height,
@@ -1134,16 +1140,57 @@ impl Renderer {
                 height,
                 max_dimension
             );
+
+            let gpu_texture = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some(label),
+                size: wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            });
+
+            let rgba = Self::texture_to_rgba8(width, height, &pixels, is_linear);
+            queue.write_texture(
+                wgpu::ImageCopyTexture {
+                    texture: &gpu_texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                &rgba,
+                wgpu::ImageDataLayout {
+                    offset: 0,
+                    bytes_per_row: Some(4 * width),
+                    rows_per_image: Some(height),
+                },
+                wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
+            );
+
+            return gpu_texture;
         }
+
+        // Normal path - upload with mipmaps if available
+        let mip_count = texture.mip_count();
 
         let gpu_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some(label),
             size: wgpu::Extent3d {
-                width,
-                height,
+                width: texture.width,
+                height: texture.height,
                 depth_or_array_layers: 1,
             },
-            mip_level_count: 1,
+            mip_level_count: mip_count,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format,
@@ -1151,7 +1198,8 @@ impl Renderer {
             view_formats: &[],
         });
 
-        let rgba = Self::texture_to_rgba8(width, height, &pixels, is_linear);
+        // Upload base level (mip 0)
+        let rgba = Self::texture_to_rgba8(texture.width, texture.height, &texture.pixels, is_linear);
         queue.write_texture(
             wgpu::ImageCopyTexture {
                 texture: &gpu_texture,
@@ -1162,15 +1210,47 @@ impl Renderer {
             &rgba,
             wgpu::ImageDataLayout {
                 offset: 0,
-                bytes_per_row: Some(4 * width),
-                rows_per_image: Some(height),
+                bytes_per_row: Some(4 * texture.width),
+                rows_per_image: Some(texture.height),
             },
             wgpu::Extent3d {
-                width,
-                height,
+                width: texture.width,
+                height: texture.height,
                 depth_or_array_layers: 1,
             },
         );
+
+        // Upload additional mip levels if present
+        for (mip_index, mip_level) in texture.mip_levels.iter().enumerate() {
+            let mip_rgba = Self::texture_to_rgba8(mip_level.width, mip_level.height, &mip_level.pixels, is_linear);
+            queue.write_texture(
+                wgpu::ImageCopyTexture {
+                    texture: &gpu_texture,
+                    mip_level: (mip_index + 1) as u32,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                &mip_rgba,
+                wgpu::ImageDataLayout {
+                    offset: 0,
+                    bytes_per_row: Some(4 * mip_level.width),
+                    rows_per_image: Some(mip_level.height),
+                },
+                wgpu::Extent3d {
+                    width: mip_level.width,
+                    height: mip_level.height,
+                    depth_or_array_layers: 1,
+                },
+            );
+        }
+
+        if mip_count > 1 {
+            log::debug!(
+                "Uploaded texture {} with {} mip levels",
+                label,
+                mip_count
+            );
+        }
 
         gpu_texture
     }
@@ -1258,7 +1338,6 @@ impl Renderer {
         base_dir: Option<&Path>,
     ) -> GpuTextureSet {
         use rayon::prelude::*;
-        use std::sync::Arc;
 
         let mut texture_set = Self::create_default_gpu_textures(device, queue);
         let max_dimension = device.limits().max_texture_dimension_2d;
@@ -1735,7 +1814,10 @@ impl Renderer {
             address_mode_w: wgpu::AddressMode::ClampToEdge,
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::FilterMode::Linear, // Trilinear filtering
+            lod_min_clamp: 0.0,
+            lod_max_clamp: 16.0, // Allow full mip range
+            anisotropy_clamp: 16, // Enable anisotropic filtering
             ..Default::default()
         });
 
@@ -2431,7 +2513,10 @@ impl Renderer {
             address_mode_w: wgpu::AddressMode::ClampToEdge,
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::FilterMode::Linear, // Trilinear filtering
+            lod_min_clamp: 0.0,
+            lod_max_clamp: 16.0, // Allow full mip range
+            anisotropy_clamp: 16, // Enable anisotropic filtering
             ..Default::default()
         });
 
