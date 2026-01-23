@@ -10,6 +10,7 @@ mod bvh;
 mod camera;
 pub mod disney;
 mod embree;
+pub mod hdri;
 mod hittable;
 mod instanced_geometry;
 mod material;
@@ -23,6 +24,7 @@ pub use bvh::BvhNode;
 pub use camera::Camera;
 pub use disney::DisneyBSDF;
 pub use embree::EmbreeScene;
+pub use hdri::HdriEnvironment;
 pub use hittable::{HitRecord, Hittable, HittableList};
 pub use instanced_geometry::InstancedGeometry;
 pub use material::{

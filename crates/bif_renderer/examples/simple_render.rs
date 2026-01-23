@@ -35,6 +35,7 @@ fn main() {
         max_depth: 50,
         background: Color::new(0.7, 0.8, 1.0),
         use_sky_gradient: true,
+        ..Default::default()
     };
 
     println!(
