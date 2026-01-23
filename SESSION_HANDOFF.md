@@ -1,6 +1,6 @@
 # Session Handoff - January 22, 2026
 
-**Last Updated:** bif_viewport modularization
+**Last Updated:** Ivar texture/shader integration (5 phases complete)
 **Next Milestone:** 18 (Animation + Motion Blur)
 **Project:** BIF - VFX Scene Assembler & Renderer
 
@@ -19,18 +19,21 @@
 
 ## Recent Work
 
+### Ivar Texture/Shader Integration - Complete (Jan 22, 2026)
+
+Full texture pipeline for CPU path tracer across 5 phases:
+
+| Phase | Feature |
+|-------|---------|
+| 1 | UV + normal interpolation via barycentrics |
+| 2 | Texture loading via TextureCache on build thread |
+| 3 | Per-triangle materials (GeomSubsets, non-generic EmbreeScene) |
+| 4 | Stochastic opacity/alpha cutout |
+| 5 | Tangent-space normal mapping (TBN, Gram-Schmidt) |
+
 ### bif_viewport Modularization - Complete (Jan 22, 2026)
 
-Split `lib.rs` (4380 lines) into 6 focused modules (~32% reduction):
-
-| Module | Lines | Contents |
-|--------|-------|----------|
-| `gpu_types.rs` | 285 | Uniforms, Vertex, InstanceData |
-| `mesh_data.rs` | 449 | MeshData + loading |
-| `ivar_state.rs` | 189 | RenderMode, IvarState |
-| `texture_loader.rs` | 395 | Texture loading free fns |
-| `ivar_renderer.rs` | 156 | Ivar pipeline creation |
-| `frustum_culling.rs` | 131 | Culling free fn |
+Split `lib.rs` (4380 lines) into 6 focused modules (~32% reduction).
 
 ### Milestone 17.1: OIIO + .tx Texture Pipeline - Complete (Jan 21, 2026)
 
@@ -94,8 +97,12 @@ cargo build --features oiio    # With OIIO (requires vcpkg openimageio)
 
 **Ivar (CPU Path Tracer):**
 - Disney Principled BSDF with Burley diffuse + GGX specular
+- Full texture sampling (base_color, roughness, metallic, normal, opacity)
+- Per-triangle materials via GeomSubsets
+- Smooth shading via interpolated normals
+- Tangent-space normal mapping
+- Stochastic opacity/alpha cutout
 - Materials from USD (UsdPreviewSurface + MaterialX)
-- Metallic/roughness/specular properties
 
 **USD Import:**
 - USDA (pure Rust) + USDC (C++ bridge)
@@ -106,9 +113,9 @@ cargo build --features oiio    # With OIIO (requires vcpkg openimageio)
 
 ### Known Limitations
 
-- Ivar doesn't sample textures yet (DisneyBSDF has fields but scatter() doesn't use them)
-- No normal mapping yet
 - GPU upload still ~3s for large textures
+- No environment lighting in Ivar (solid background only)
+- USD loader doesn't parse opacity_texture paths yet (field exists, needs parser update)
 
 ---
 
@@ -154,12 +161,13 @@ I'm continuing work on BIF (VFX renderer in Rust).
 #file:CLAUDE.md
 #codebase
 
-Status: Milestone 17.1 Complete!
+Status: Milestone 17.1 Complete + Ivar textures done!
 
 Milestones 0-17.1 done
 - Textured PBR viewport
 - Per-face materials (GeomSubsets)
 - OIIO + .tx pipeline (feature-gated)
+- Ivar: full texture/normal/opacity support
 - 93+ tests passing
 
 Current state:
@@ -167,7 +175,7 @@ Current state:
 - GeomSubsets for per-face material assignment
 - GPU texture sampling working
 - OIIO auto-converts to .tx with mipmaps
-- Disney BSDF renders in Ivar (no textures yet)
+- Ivar: textures, multi-material, normal maps, opacity
 
 Next: M18 (Animation + Motion Blur)
 
