@@ -2793,6 +2793,26 @@ impl Renderer {
                 .data_mut(|d| d.remove::<bool>(egui::Id::new("rebuild_scene_requested")));
         }
 
+        // Handle prim selection from scene browser
+        let selected_prim: Option<String> = self
+            .egui_ctx
+            .data(|d| d.get_temp(egui::Id::new("prim_selection_changed")));
+        if let Some(prim_path) = selected_prim {
+            self.egui_ctx
+                .data_mut(|d| d.remove::<String>(egui::Id::new("prim_selection_changed")));
+            self.selected_prim_path = Some(prim_path.clone());
+            let provider: Option<&dyn PrimDataProvider> =
+                self.usd_stage.as_ref().map(|s| s as &dyn PrimDataProvider);
+            if let Some(info) = provider.and_then(|p| p.get_prim_info(&prim_path)) {
+                self.selected_prim_properties = Some(PrimProperties::from_display_info(&info));
+            } else {
+                self.selected_prim_properties = Some(PrimProperties {
+                    path: prim_path,
+                    ..Default::default()
+                });
+            }
+        }
+
         // Handle node graph events (USD loading, render start, etc.)
         let node_graph_events: Vec<NodeGraphEvent> = self.egui_ctx.data(|d| {
             d.get_temp(egui::Id::new("node_graph_events"))
