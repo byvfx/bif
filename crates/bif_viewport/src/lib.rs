@@ -2446,6 +2446,7 @@ impl Renderer {
                 }
                 IvarMessage::RenderComplete { elapsed_secs } => {
                     self.ivar_state.render_complete = true;
+                    self.node_graph_state.mark_ivar_render_complete();
                     log::info!("Ivar render complete in {:.2}s", elapsed_secs);
                 }
                 IvarMessage::Cancelled => {
