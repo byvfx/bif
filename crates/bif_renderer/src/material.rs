@@ -1,7 +1,7 @@
 //! Material trait for surface scattering.
 
 use crate::{hittable::HitRecord, Ray};
-use bif_math::Vec3;
+use bif_math::{build_orthonormal_basis, Vec3};
 use rand::RngCore;
 use std::f32::consts::PI;
 
@@ -17,6 +17,8 @@ pub struct ScatterResult {
     pub scattered: Ray,
     /// Probability density function value for this sample
     pub pdf: f32,
+    /// Whether this scatter is a pass-through (opacity cutout) that shouldn't consume depth
+    pub pass_through: bool,
 }
 
 /// Trait for materials that describe how light interacts with surfaces.
@@ -130,6 +132,7 @@ impl Material for Lambertian {
             attenuation: self.albedo,
             scattered,
             pdf,
+            pass_through: false,
         })
     }
 
@@ -181,6 +184,7 @@ impl Material for Metal {
                 attenuation: self.albedo,
                 scattered,
                 pdf: 1.0,
+                pass_through: false,
             })
         } else {
             None
@@ -243,6 +247,7 @@ impl Material for Dielectric {
             attenuation,
             scattered,
             pdf: 1.0,
+            pass_through: false,
         })
     }
 }
@@ -337,20 +342,8 @@ pub fn cosine_weighted_hemisphere(normal: Vec3, rng: &mut dyn RngCore) -> Vec3 {
     let z = (1.0 - r1).sqrt();
 
     // Build orthonormal basis from normal
-    let (tangent, bitangent) = build_tangent_basis(normal);
+    let (tangent, bitangent) = build_orthonormal_basis(normal);
 
     // Transform to world space
     x * tangent + y * bitangent + z * normal
-}
-
-/// Build orthonormal tangent/bitangent from a normal.
-fn build_tangent_basis(n: Vec3) -> (Vec3, Vec3) {
-    let sign = if n.z >= 0.0 { 1.0 } else { -1.0 };
-    let a = -1.0 / (sign + n.z);
-    let b = n.x * n.y * a;
-
-    let tangent = Vec3::new(1.0 + sign * n.x * n.x * a, sign * b, -sign * n.x);
-    let bitangent = Vec3::new(b, sign + n.y * n.y * a, -n.y);
-
-    (tangent, bitangent)
 }

@@ -9,6 +9,7 @@ use crate::{
     Ray,
 };
 use bif_math::{Aabb, Interval, Mat4, Vec3};
+#[cfg(debug_assertions)]
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
@@ -571,8 +572,8 @@ impl EmbreeScene {
                 }
             }
 
-            // Compute per-triangle tangent vectors from edge/deltaUV
-            let mut tangent_data = Vec::with_capacity(vertices.len() * 3);
+            // Compute per-triangle tangent vectors from edge/deltaUV (1 per triangle)
+            let mut tangent_data = Vec::with_capacity(vertices.len());
             for tri_idx in 0..vertices.len() {
                 let uv0 = if tri_idx < uvs.len() {
                     uvs[tri_idx][0]
@@ -609,9 +610,6 @@ impl EmbreeScene {
                     [1.0, 0.0, 0.0] // Degenerate UV, use default tangent
                 };
 
-                // Same tangent for all 3 vertices of this triangle
-                tangent_data.push(tangent);
-                tangent_data.push(tangent);
                 tangent_data.push(tangent);
             }
 
@@ -662,39 +660,43 @@ impl Hittable for EmbreeScene {
 
             // 3. Check if hit
             if rayhit.hit.geom_id == RTC_INVALID_GEOMETRY_ID {
-                // Debug first few misses
-                static MISS_COUNT: AtomicU32 = AtomicU32::new(0);
-                let count = MISS_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
-                if count <= 5 {
-                    log::debug!(
-                        "Ray miss #{}: origin=({}, {}, {}), dir=({}, {}, {}), tfar={}",
-                        count,
-                        rayhit.ray.org_x,
-                        rayhit.ray.org_y,
-                        rayhit.ray.org_z,
-                        rayhit.ray.dir_x,
-                        rayhit.ray.dir_y,
-                        rayhit.ray.dir_z,
-                        rayhit.ray.tfar
-                    );
+                #[cfg(debug_assertions)]
+                {
+                    static MISS_COUNT: AtomicU32 = AtomicU32::new(0);
+                    let count = MISS_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
+                    if count <= 5 {
+                        log::debug!(
+                            "Ray miss #{}: origin=({}, {}, {}), dir=({}, {}, {}), tfar={}",
+                            count,
+                            rayhit.ray.org_x,
+                            rayhit.ray.org_y,
+                            rayhit.ray.org_z,
+                            rayhit.ray.dir_x,
+                            rayhit.ray.dir_y,
+                            rayhit.ray.dir_z,
+                            rayhit.ray.tfar
+                        );
+                    }
                 }
                 return false;
             }
 
-            // Debug first few hits
-            static HIT_COUNT: AtomicU32 = AtomicU32::new(0);
-            let count = HIT_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
-            if count <= 5 {
-                log::info!(
-                    "Ray hit #{}: t={}, geom_id={}, prim_id={}, normal=({}, {}, {})",
-                    count,
-                    rayhit.ray.tfar,
-                    rayhit.hit.geom_id,
-                    rayhit.hit.prim_id,
-                    rayhit.hit.ng_x,
-                    rayhit.hit.ng_y,
-                    rayhit.hit.ng_z
-                );
+            #[cfg(debug_assertions)]
+            {
+                static HIT_COUNT: AtomicU32 = AtomicU32::new(0);
+                let count = HIT_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
+                if count <= 5 {
+                    log::info!(
+                        "Ray hit #{}: t={}, geom_id={}, prim_id={}, normal=({}, {}, {})",
+                        count,
+                        rayhit.ray.tfar,
+                        rayhit.hit.geom_id,
+                        rayhit.hit.prim_id,
+                        rayhit.hit.ng_x,
+                        rayhit.hit.ng_y,
+                        rayhit.hit.ng_z
+                    );
+                }
             }
 
             // 4. Fill HitRecord
@@ -709,6 +711,15 @@ impl Hittable for EmbreeScene {
 
             // Interpolate texture UVs: w*uv0 + u*uv1 + v*uv2
             let base = prim_id * 3;
+            debug_assert!(base + 2 < self.uv_data.len(), "prim_id OOB on uv_data");
+            debug_assert!(
+                base + 2 < self.normal_data.len(),
+                "prim_id OOB on normal_data"
+            );
+            debug_assert!(
+                prim_id < self.tangent_data.len(),
+                "prim_id OOB on tangent_data"
+            );
             let uv0 = self.uv_data[base];
             let uv1 = self.uv_data[base + 1];
             let uv2 = self.uv_data[base + 2];
@@ -727,18 +738,16 @@ impl Hittable for EmbreeScene {
             let normal = interp_normal.normalize();
             rec.normal = normal;
 
-            // Interpolate tangent and compute bitangent
-            let t0 = self.tangent_data[base];
-            let t1 = self.tangent_data[base + 1];
-            let t2 = self.tangent_data[base + 2];
-            let interp_tangent = Vec3::new(
-                bary_w * t0[0] + bary_u * t1[0] + bary_v * t2[0],
-                bary_w * t0[1] + bary_u * t1[1] + bary_v * t2[1],
-                bary_w * t0[2] + bary_u * t1[2] + bary_v * t2[2],
-            );
+            // Per-triangle tangent (constant across triangle, no interpolation needed)
+            let raw_tangent = Vec3::from_array(self.tangent_data[prim_id]);
             // Gram-Schmidt orthogonalize tangent against normal
-            let tangent = (interp_tangent - normal * normal.dot(interp_tangent)).normalize();
-            let bitangent = normal.cross(tangent);
+            let gs = raw_tangent - normal * normal.dot(raw_tangent);
+            let (tangent, bitangent) = if gs.length_squared() > 1e-8 {
+                let t = gs.normalize();
+                (t, normal.cross(t))
+            } else {
+                bif_math::build_orthonormal_basis(normal)
+            };
             rec.tangent = tangent;
             rec.bitangent = bitangent;
 
@@ -749,6 +758,11 @@ impl Hittable for EmbreeScene {
 
             // Set front face
             rec.set_face_normal(ray, normal);
+
+            // Flip bitangent for back-face hits to keep TBN consistent
+            if !rec.front_face {
+                rec.bitangent = -rec.bitangent;
+            }
 
             true
         }

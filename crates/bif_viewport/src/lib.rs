@@ -2242,7 +2242,7 @@ impl Renderer {
                 &triangle_vertices,
                 &triangle_uvs,
                 &triangle_normals,
-                transforms.clone(),
+                transforms,
                 materials,
                 &tri_mat_ids,
             ) {

@@ -171,15 +171,31 @@ impl Texture {
         top * (1.0 - fy) + bottom * fy
     }
 
-    /// Sample a single channel (for roughness/metallic maps).
+    /// Sample a single channel with bilinear filtering (for roughness/metallic maps).
     pub fn sample_channel(&self, u: f32, v: f32, channel: usize) -> f32 {
         let u = u.rem_euclid(1.0);
         let v = v.rem_euclid(1.0);
+        let ch = channel.min(3);
 
-        let x = (u * (self.width as f32 - 1.0)) as u32;
-        let y = ((1.0 - v) * (self.height as f32 - 1.0)) as u32;
+        let x = u * (self.width as f32 - 1.0);
+        let y = (1.0 - v) * (self.height as f32 - 1.0);
 
-        self.get_pixel(x.min(self.width - 1), y.min(self.height - 1))[channel.min(3)]
+        let x0 = x.floor() as u32;
+        let y0 = y.floor() as u32;
+        let x1 = (x0 + 1).min(self.width - 1);
+        let y1 = (y0 + 1).min(self.height - 1);
+
+        let fx = x.fract();
+        let fy = y.fract();
+
+        let p00 = self.get_pixel(x0, y0)[ch];
+        let p10 = self.get_pixel(x1, y0)[ch];
+        let p01 = self.get_pixel(x0, y1)[ch];
+        let p11 = self.get_pixel(x1, y1)[ch];
+
+        let top = p00 * (1.0 - fx) + p10 * fx;
+        let bottom = p01 * (1.0 - fx) + p11 * fx;
+        top * (1.0 - fy) + bottom * fy
     }
 
     /// Get pixel at integer coordinates.
@@ -297,6 +313,32 @@ impl TextureCache {
             texture.width,
             texture.height,
             texture.mip_count(),
+            texture.size_bytes() as f32 / 1024.0
+        );
+
+        Ok(texture)
+    }
+
+    /// Load a data texture (normal/roughness/metallic/opacity) without sRGB→linear.
+    ///
+    /// Data textures store linear values (not perceptual color), so we just
+    /// divide by 255 instead of applying the sRGB transfer function.
+    pub fn load_linear(&mut self, path: &str) -> TextureResult<Arc<Texture>> {
+        let cache_key = format!("{}_linear", path);
+        if let Some(texture) = self.textures.get(&cache_key) {
+            return Ok(texture.clone());
+        }
+
+        let full_path = self.resolve_path(path);
+        let texture = load_texture_linear(&full_path)?;
+        let texture = Arc::new(texture);
+        self.textures.insert(cache_key, texture.clone());
+
+        log::debug!(
+            "Loaded linear texture: {} ({}x{}, {:.1} KB)",
+            path,
+            texture.width,
+            texture.height,
             texture.size_bytes() as f32 / 1024.0
         );
 
@@ -533,6 +575,35 @@ fn srgb_to_linear(value: u8) -> f32 {
     } else {
         ((v + 0.055) / 1.055).powf(2.4)
     }
+}
+
+/// Load a texture treating all channels as linear data (no sRGB conversion).
+fn load_texture_linear(path: &Path) -> TextureResult<Texture> {
+    let img = image::open(path).map_err(|e| {
+        TextureError::LoadError(format!("Failed to open {}: {}", path.display(), e))
+    })?;
+
+    let rgba = img.to_rgba8();
+    let (width, height) = rgba.dimensions();
+
+    let pixels: Vec<[f32; 4]> = rgba
+        .pixels()
+        .map(|p| {
+            [
+                p[0] as f32 / 255.0,
+                p[1] as f32 / 255.0,
+                p[2] as f32 / 255.0,
+                p[3] as f32 / 255.0,
+            ]
+        })
+        .collect();
+
+    Ok(Texture::new(
+        width,
+        height,
+        pixels,
+        path.to_string_lossy().to_string(),
+    ))
 }
 
 /// Detect if a texture path should be treated as linear (HDR/EXR).

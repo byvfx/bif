@@ -8,7 +8,7 @@
 use crate::material::{cosine_weighted_hemisphere, gen_f32, reflect, Color, ScatterResult};
 use crate::{hittable::HitRecord, Material, Ray};
 use bif_core::texture::Texture;
-use bif_math::Vec3;
+use bif_math::{build_orthonormal_basis, Vec3};
 use rand::RngCore;
 use std::f32::consts::PI;
 use std::sync::Arc;
@@ -212,6 +212,7 @@ impl DisneyBSDF {
         cache: &mut bif_core::texture::TextureCache,
     ) -> Self {
         // Load textures via cache (returns Arc<Texture>)
+        // Diffuse uses sRGB→linear; data textures (normal/roughness/metallic/opacity) use linear
         let diffuse_texture = mat
             .diffuse_texture
             .as_ref()
@@ -220,19 +221,22 @@ impl DisneyBSDF {
         let roughness_texture = mat
             .roughness_texture
             .as_ref()
-            .and_then(|p| cache.load(p).ok());
+            .and_then(|p| cache.load_linear(p).ok());
 
         let metallic_texture = mat
             .metallic_texture
             .as_ref()
-            .and_then(|p| cache.load(p).ok());
+            .and_then(|p| cache.load_linear(p).ok());
 
-        let normal_texture = mat.normal_texture.as_ref().and_then(|p| cache.load(p).ok());
+        let normal_texture = mat
+            .normal_texture
+            .as_ref()
+            .and_then(|p| cache.load_linear(p).ok());
 
         let opacity_texture = mat
             .opacity_texture
             .as_ref()
-            .and_then(|p| cache.load(p).ok());
+            .and_then(|p| cache.load_linear(p).ok());
 
         Self {
             base_color: mat.diffuse_color,
@@ -316,7 +320,12 @@ impl DisneyBSDF {
                 // Transform from tangent space to world space: T*x + B*y + N*z
                 let world_normal =
                     tangent * map_normal.x + bitangent * map_normal.y + normal * map_normal.z;
-                world_normal.normalize()
+                let len_sq = world_normal.length_squared();
+                if len_sq > 1e-8 {
+                    world_normal / len_sq.sqrt()
+                } else {
+                    normal
+                }
             }
             None => normal,
         }
@@ -350,6 +359,7 @@ impl Material for DisneyBSDF {
                     attenuation: Color::ONE,
                     scattered,
                     pdf: 1.0,
+                    pass_through: true,
                 });
             }
         }
@@ -452,6 +462,7 @@ impl DisneyBSDF {
             attenuation,
             scattered,
             pdf,
+            pass_through: false,
         })
     }
 
@@ -509,6 +520,7 @@ impl DisneyBSDF {
             attenuation,
             scattered,
             pdf,
+            pass_through: false,
         })
     }
 
@@ -609,6 +621,7 @@ impl DisneyBSDF {
             attenuation,
             scattered,
             pdf,
+            pass_through: false,
         })
     }
 
@@ -654,6 +667,7 @@ impl DisneyBSDF {
             attenuation,
             scattered,
             pdf,
+            pass_through: false,
         })
     }
 }
@@ -732,18 +746,6 @@ fn sample_ggx(n: Vec3, alpha: f32, rng: &mut dyn RngCore) -> Vec3 {
     // Transform to world space
     let (tangent, bitangent) = build_orthonormal_basis(n);
     h_local.x * tangent + h_local.y * bitangent + h_local.z * n
-}
-
-/// Build an orthonormal basis from a normal vector.
-fn build_orthonormal_basis(n: Vec3) -> (Vec3, Vec3) {
-    let sign = if n.z >= 0.0 { 1.0 } else { -1.0 };
-    let a = -1.0 / (sign + n.z);
-    let b = n.x * n.y * a;
-
-    let tangent = Vec3::new(1.0 + sign * n.x * n.x * a, sign * b, -sign * n.x);
-    let bitangent = Vec3::new(b, sign + n.y * n.y * a, -n.y);
-
-    (tangent, bitangent)
 }
 
 #[cfg(test)]
