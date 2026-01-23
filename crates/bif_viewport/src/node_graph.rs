@@ -413,6 +413,15 @@ impl NodeGraphState {
             }
         }
     }
+
+    pub fn mark_ivar_render_complete(&mut self) {
+        let node_ids: Vec<_> = self.snarl.node_ids().map(|(id, _)| id).collect();
+        for node_id in node_ids {
+            if let SceneNode::IvarRender { is_rendering, .. } = &mut self.snarl[node_id] {
+                *is_rendering = false;
+            }
+        }
+    }
 }
 
 /// Render the node graph UI
