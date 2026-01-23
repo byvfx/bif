@@ -20,6 +20,9 @@ pub use transform::Mat4Ext;
 mod frustum;
 pub use frustum::Frustum;
 
+mod basis;
+pub use basis::build_orthonormal_basis;
+
 #[cfg(test)]
 mod tests {
     use super::*;

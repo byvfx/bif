@@ -35,8 +35,8 @@ impl Default for RenderConfig {
 
 /// Compute the color seen by a ray.
 ///
-/// This is the core path tracing function. It traces the ray through
-/// the scene, bouncing off surfaces and accumulating color.
+/// Iterative path tracing with throughput accumulation.
+/// Pass-through scatters (opacity cutout) do not consume bounce depth.
 pub fn ray_color(
     ray: &Ray,
     world: &dyn Hittable,
@@ -44,37 +44,47 @@ pub fn ray_color(
     config: &RenderConfig,
     rng: &mut dyn RngCore,
 ) -> Color {
-    // If we've exceeded max depth, return black (no light)
-    if depth == 0 {
-        return Color::ZERO;
+    let mut current_ray = *ray;
+    let mut throughput = Color::ONE;
+    let mut accumulated = Color::ZERO;
+    let mut remaining_depth = depth;
+
+    loop {
+        if remaining_depth == 0 {
+            break;
+        }
+
+        let mut rec = HitRecord::default();
+
+        if !world.hit(&current_ray, Interval::new(0.001, f32::INFINITY), &mut rec) {
+            let bg = if config.use_sky_gradient {
+                sky_gradient(&current_ray)
+            } else {
+                config.background
+            };
+            accumulated += throughput * bg;
+            break;
+        }
+
+        // Accumulate emission
+        let emission = rec.material.emitted(rec.u, rec.v, rec.p);
+        accumulated += throughput * emission;
+
+        match rec.material.scatter(&current_ray, &rec, rng) {
+            Some(result) => {
+                current_ray = result.scattered;
+                throughput *= result.attenuation;
+                if !result.pass_through {
+                    remaining_depth -= 1;
+                }
+            }
+            None => {
+                break;
+            }
+        }
     }
 
-    let mut rec = HitRecord::default();
-
-    // Check if ray hits anything
-    if !world.hit(ray, Interval::new(0.001, f32::INFINITY), &mut rec) {
-        // Ray didn't hit anything - return background
-        if config.use_sky_gradient {
-            return sky_gradient(ray);
-        }
-        return config.background;
-    }
-
-    // Get emission from material (for lights)
-    let emission = rec.material.emitted(rec.u, rec.v, rec.p);
-
-    // Try to scatter the ray
-    match rec.material.scatter(ray, &rec, rng) {
-        Some(result) => {
-            // Ray scattered - continue tracing
-            let scattered_color = ray_color(&result.scattered, world, depth - 1, config, rng);
-            emission + result.attenuation * scattered_color
-        }
-        None => {
-            // Ray was absorbed - just return emission
-            emission
-        }
-    }
+    accumulated
 }
 
 /// Compute sky gradient background.
