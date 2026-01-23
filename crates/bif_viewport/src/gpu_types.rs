@@ -17,6 +17,7 @@ pub const MAX_VIEWPORT_TEXTURES: usize = 128;
 pub struct CameraUniform {
     pub view_proj: [[f32; 4]; 4],
     pub view: [[f32; 4]; 4],
+    pub camera_position: [f32; 4],
 }
 
 impl CameraUniform {
@@ -24,12 +25,41 @@ impl CameraUniform {
         Self {
             view_proj: Mat4::IDENTITY.to_cols_array_2d(),
             view: Mat4::IDENTITY.to_cols_array_2d(),
+            camera_position: [0.0, 0.0, 5.0, 1.0],
         }
     }
 
     pub fn update_view_proj(&mut self, camera: &Camera) {
         self.view_proj = camera.view_projection_matrix().to_cols_array_2d();
         self.view = camera.view_matrix().to_cols_array_2d();
+        self.camera_position = [camera.position.x, camera.position.y, camera.position.z, 1.0];
+    }
+}
+
+/// Environment IBL parameters uniform.
+#[repr(C)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct EnvironmentParamsUniform {
+    pub intensity: f32,
+    pub rotation: f32,
+    pub has_environment: u32,
+    pub show_background: u32,
+}
+
+impl EnvironmentParamsUniform {
+    pub fn new() -> Self {
+        Self {
+            intensity: 1.0,
+            rotation: 0.0,
+            has_environment: 0,
+            show_background: 0,
+        }
+    }
+}
+
+impl Default for EnvironmentParamsUniform {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -324,5 +354,7 @@ mod tests {
         assert_eq!(cam.view_proj[1][1], 1.0);
         assert_eq!(cam.view_proj[2][2], 1.0);
         assert_eq!(cam.view_proj[3][3], 1.0);
+        // Camera position default
+        assert_eq!(cam.camera_position[2], 5.0);
     }
 }

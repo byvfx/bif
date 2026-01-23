@@ -1,6 +1,6 @@
-# Session Handoff - January 22, 2026
+# Session Handoff - January 23, 2026
 
-**Last Updated:** Ivar texture/shader integration (5 phases complete)
+**Last Updated:** HDR Environment Lighting (all 5 phases complete)
 **Next Milestone:** 18 (Animation + Motion Blur)
 **Project:** BIF - VFX Scene Assembler & Renderer
 
@@ -10,14 +10,26 @@
 
 | Status | Details |
 |--------|---------|
-| Complete | Milestones 0-17.1 |
+| Complete | Milestones 0-17.1, HDR Environment Lighting |
 | Next | M18 (Animation + Motion Blur) |
-| Tests | 93+ passing |
+| Tests | 134+ passing |
 | Performance | 60 FPS viewport, 10K instances with LOD |
 
 ---
 
 ## Recent Work
+
+### HDR Environment Lighting - Complete (Jan 23, 2026)
+
+Full IBL pipeline: HDR loading, prefiltering, viewport split-sum, Ivar importance sampling, node graph UI.
+
+| Phase | Feature | Files |
+|-------|---------|-------|
+| 1 | HDR file loading + equirect sampling | `bif_core/src/hdr.rs` |
+| 2 | IBL prefiltering (irradiance, GGX specular, BRDF LUT) | `bif_core/src/ibl.rs` |
+| 3 | Viewport IBL shader (split-sum + headlight fallback) | `environment.rs`, `basic.wgsl`, `gpu_types.rs` |
+| 4 | Ivar HDRI importance sampling (2D CDF) | `bif_renderer/src/hdri.rs` |
+| 5 | HdriEnvironment node + UI wiring | `node_graph.rs`, `lib.rs` |
 
 ### Ivar Texture/Shader Integration - Complete (Jan 22, 2026)
 

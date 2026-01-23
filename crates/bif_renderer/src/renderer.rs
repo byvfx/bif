@@ -5,6 +5,9 @@
 //! - Gamma correction
 //! - Anti-aliasing via multi-sampling
 
+use std::sync::Arc;
+
+use crate::hdri::HdriEnvironment;
 use crate::{Camera, Color, HitRecord, Hittable, Ray};
 use bif_math::Interval;
 use rand::RngCore;
@@ -20,6 +23,8 @@ pub struct RenderConfig {
     pub background: Color,
     /// Whether to use sky gradient instead of solid background
     pub use_sky_gradient: bool,
+    /// HDRI environment for lighting (overrides background/sky when set)
+    pub environment: Option<Arc<HdriEnvironment>>,
 }
 
 impl Default for RenderConfig {
@@ -29,6 +34,7 @@ impl Default for RenderConfig {
             max_depth: 50,
             background: Color::ZERO,
             use_sky_gradient: false,
+            environment: None,
         }
     }
 }
@@ -57,7 +63,9 @@ pub fn ray_color(
         let mut rec = HitRecord::default();
 
         if !world.hit(&current_ray, Interval::new(0.001, f32::INFINITY), &mut rec) {
-            let bg = if config.use_sky_gradient {
+            let bg = if let Some(ref env) = config.environment {
+                env.sample(current_ray.direction().normalize())
+            } else if config.use_sky_gradient {
                 sky_gradient(&current_ray)
             } else {
                 config.background
@@ -256,6 +264,7 @@ mod tests {
             max_depth: 5,
             background: Color::new(0.5, 0.7, 1.0),
             use_sky_gradient: false,
+            environment: None,
         };
 
         let mut rng = StdRng::seed_from_u64(42);

@@ -25,6 +25,19 @@ pub enum NodeGraphEvent {
     LoadUsdFile(String),
     /// Start an Ivar render with the given SPP
     StartRender { spp: u32 },
+    /// Load an HDRI environment map
+    LoadHdri {
+        path: String,
+        rotation: f32,
+        intensity: f32,
+        show_background: bool,
+    },
+    /// Update HDRI parameters (no reload needed)
+    UpdateHdriParams {
+        rotation: f32,
+        intensity: f32,
+        show_background: bool,
+    },
 }
 
 /// Pin types for node connections
@@ -34,6 +47,8 @@ pub enum PinType {
     Scene,
     /// Rendered image output
     Image,
+    /// Environment lighting data
+    Environment,
 }
 
 impl PinType {
@@ -42,6 +57,7 @@ impl PinType {
         match self {
             PinType::Scene => egui::Color32::from_rgb(100, 200, 100), // Green for scene data
             PinType::Image => egui::Color32::from_rgb(200, 150, 50),  // Orange for images
+            PinType::Environment => egui::Color32::from_rgb(100, 150, 255), // Blue for environment
         }
     }
 }
@@ -64,6 +80,21 @@ pub enum SceneNode {
         spp: u32,
         /// Whether currently rendering
         is_rendering: bool,
+    },
+    /// HDRI environment map for IBL lighting
+    HdriEnvironment {
+        /// Path to the HDR file
+        file_path: String,
+        /// Whether the file is loaded
+        is_loaded: bool,
+        /// Rotation in degrees
+        rotation: f32,
+        /// Intensity multiplier
+        intensity: f32,
+        /// Whether to show environment as background
+        show_background: bool,
+        /// Error message if loading failed
+        error: Option<String>,
     },
 }
 
@@ -94,11 +125,24 @@ impl SceneNode {
         }
     }
 
+    /// Create a new HDRI Environment node
+    pub fn hdri_environment() -> Self {
+        Self::HdriEnvironment {
+            file_path: String::new(),
+            is_loaded: false,
+            rotation: 0.0,
+            intensity: 1.0,
+            show_background: true,
+            error: None,
+        }
+    }
+
     /// Get the display name for this node
     pub fn name(&self) -> &'static str {
         match self {
             SceneNode::UsdRead { .. } => "USD Read",
             SceneNode::IvarRender { .. } => "Ivar Render",
+            SceneNode::HdriEnvironment { .. } => "HDRI Environment",
         }
     }
 
@@ -106,7 +150,8 @@ impl SceneNode {
     pub fn input_count(&self) -> usize {
         match self {
             SceneNode::UsdRead { .. } => 0,
-            SceneNode::IvarRender { .. } => 1,
+            SceneNode::IvarRender { .. } => 2, // scene + environment
+            SceneNode::HdriEnvironment { .. } => 0,
         }
     }
 
@@ -115,6 +160,7 @@ impl SceneNode {
         match self {
             SceneNode::UsdRead { .. } => 1,
             SceneNode::IvarRender { .. } => 1,
+            SceneNode::HdriEnvironment { .. } => 1,
         }
     }
 
@@ -124,8 +170,10 @@ impl SceneNode {
             SceneNode::UsdRead { .. } => None,
             SceneNode::IvarRender { .. } => match index {
                 0 => Some(("scene", PinType::Scene)),
+                1 => Some(("env", PinType::Environment)),
                 _ => None,
             },
+            SceneNode::HdriEnvironment { .. } => None,
         }
     }
 
@@ -138,6 +186,10 @@ impl SceneNode {
             },
             SceneNode::IvarRender { .. } => match index {
                 0 => Some(("image", PinType::Image)),
+                _ => None,
+            },
+            SceneNode::HdriEnvironment { .. } => match index {
+                0 => Some(("env", PinType::Environment)),
                 _ => None,
             },
         }
@@ -269,10 +321,99 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer {
                 });
 
                 if *is_rendering {
-                    ui.colored_label(egui::Color32::YELLOW, "⟳ Rendering...");
+                    ui.colored_label(egui::Color32::YELLOW, "Rendering...");
                 } else if ui.button("Render").clicked() {
                     self.events.push(NodeGraphEvent::StartRender { spp: *spp });
                     *is_rendering = true;
+                }
+            }
+            SceneNode::HdriEnvironment {
+                file_path,
+                is_loaded,
+                rotation,
+                intensity,
+                show_background,
+                error,
+            } => {
+                ui.horizontal(|ui| {
+                    ui.label("File:");
+                    if ui.text_edit_singleline(file_path).changed() {
+                        *is_loaded = false;
+                        *error = None;
+                    }
+                });
+
+                ui.horizontal(|ui| {
+                    if ui.button("Browse...").clicked() {
+                        if let Some(path) = rfd::FileDialog::new()
+                            .add_filter("HDR Files", &["hdr", "exr"])
+                            .add_filter("All Files", &["*"])
+                            .pick_file()
+                        {
+                            *file_path = path.display().to_string();
+                            *is_loaded = false;
+                            *error = None;
+                            self.events.push(NodeGraphEvent::LoadHdri {
+                                path: file_path.clone(),
+                                rotation: *rotation,
+                                intensity: *intensity,
+                                show_background: *show_background,
+                            });
+                        }
+                    }
+
+                    if ui.button("Load").clicked() && !file_path.is_empty() {
+                        self.events.push(NodeGraphEvent::LoadHdri {
+                            path: file_path.clone(),
+                            rotation: *rotation,
+                            intensity: *intensity,
+                            show_background: *show_background,
+                        });
+                    }
+                });
+
+                let mut params_changed = false;
+
+                ui.horizontal(|ui| {
+                    ui.label("Rotation:");
+                    if ui
+                        .add(egui::DragValue::new(rotation).speed(1.0).suffix("deg"))
+                        .changed()
+                    {
+                        params_changed = true;
+                    }
+                });
+
+                ui.horizontal(|ui| {
+                    ui.label("Intensity:");
+                    if ui
+                        .add(
+                            egui::DragValue::new(intensity)
+                                .speed(0.01)
+                                .range(0.0..=10.0),
+                        )
+                        .changed()
+                    {
+                        params_changed = true;
+                    }
+                });
+
+                if ui.checkbox(show_background, "Show Background").changed() {
+                    params_changed = true;
+                }
+
+                if params_changed && *is_loaded {
+                    self.events.push(NodeGraphEvent::UpdateHdriParams {
+                        rotation: *rotation,
+                        intensity: *intensity,
+                        show_background: *show_background,
+                    });
+                }
+
+                if *is_loaded {
+                    ui.colored_label(egui::Color32::GREEN, "Loaded");
+                } else if let Some(err) = error {
+                    ui.colored_label(egui::Color32::RED, format!("Error: {}", err));
                 }
             }
         }
@@ -369,6 +510,11 @@ impl NodeGraphState {
         self.snarl.insert_node(pos, SceneNode::ivar_render())
     }
 
+    /// Add an HDRI Environment node at the given position
+    pub fn add_hdri_environment(&mut self, pos: egui::Pos2) -> NodeId {
+        self.snarl.insert_node(pos, SceneNode::hdri_environment())
+    }
+
     /// Delete the selected node
     pub fn delete_selected(&mut self) {
         if let Some(node_id) = self.selected_node.take() {
@@ -422,6 +568,44 @@ impl NodeGraphState {
             }
         }
     }
+
+    /// Mark an HDRI Environment node as loaded.
+    pub fn mark_hdri_loaded(&mut self, path: &str) {
+        let node_ids: Vec<_> = self.snarl.node_ids().map(|(id, _)| id).collect();
+        for node_id in node_ids {
+            if let SceneNode::HdriEnvironment {
+                file_path,
+                is_loaded,
+                error,
+                ..
+            } = &mut self.snarl[node_id]
+            {
+                if file_path == path {
+                    *is_loaded = true;
+                    *error = None;
+                }
+            }
+        }
+    }
+
+    /// Mark an HDRI Environment node as having an error.
+    pub fn mark_hdri_error(&mut self, path: &str, err_msg: String) {
+        let node_ids: Vec<_> = self.snarl.node_ids().map(|(id, _)| id).collect();
+        for node_id in node_ids {
+            if let SceneNode::HdriEnvironment {
+                file_path,
+                is_loaded,
+                error,
+                ..
+            } = &mut self.snarl[node_id]
+            {
+                if file_path == path {
+                    *is_loaded = false;
+                    *error = Some(err_msg.clone());
+                }
+            }
+        }
+    }
 }
 
 /// Render the node graph UI
@@ -440,15 +624,16 @@ pub fn render_node_graph(ui: &mut egui::Ui, state: &mut NodeGraphState) -> Vec<N
         if ui.button("+ USD Read").clicked() {
             state.add_usd_read(egui::pos2(50.0, 50.0));
         }
+        if ui.button("+ HDRI Env").clicked() {
+            state.add_hdri_environment(egui::pos2(50.0, 200.0));
+        }
         if ui.button("+ Ivar Render").clicked() {
-            state.add_ivar_render(egui::pos2(200.0, 50.0));
+            state.add_ivar_render(egui::pos2(350.0, 100.0));
         }
         ui.separator();
-        if ui.button("🗑 Delete Selected").clicked() {
+        if ui.button("Del Selected").clicked() {
             state.delete_selected();
         }
-        ui.separator();
-        ui.label("(Del key to delete, drag to pan, scroll to zoom)");
     });
 
     ui.separator();
@@ -477,8 +662,13 @@ mod tests {
 
         let render_node = SceneNode::ivar_render();
         assert_eq!(render_node.name(), "Ivar Render");
-        assert_eq!(render_node.input_count(), 1);
+        assert_eq!(render_node.input_count(), 2); // scene + environment
         assert_eq!(render_node.output_count(), 1);
+
+        let hdri_node = SceneNode::hdri_environment();
+        assert_eq!(hdri_node.name(), "HDRI Environment");
+        assert_eq!(hdri_node.input_count(), 0);
+        assert_eq!(hdri_node.output_count(), 1);
     }
 
     #[test]
@@ -488,7 +678,14 @@ mod tests {
 
         let render_node = SceneNode::ivar_render();
         assert_eq!(render_node.input_pin(0), Some(("scene", PinType::Scene)));
+        assert_eq!(
+            render_node.input_pin(1),
+            Some(("env", PinType::Environment))
+        );
         assert_eq!(render_node.output_pin(0), Some(("image", PinType::Image)));
+
+        let hdri_node = SceneNode::hdri_environment();
+        assert_eq!(hdri_node.output_pin(0), Some(("env", PinType::Environment)));
     }
 
     #[test]

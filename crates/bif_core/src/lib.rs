@@ -18,6 +18,8 @@
 //!     scene.instance_count());
 //! ```
 
+pub mod hdr;
+pub mod ibl;
 pub mod mesh;
 pub mod scene;
 pub mod texture;

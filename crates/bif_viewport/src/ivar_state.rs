@@ -118,6 +118,8 @@ pub struct IvarState {
     pub samples_per_pixel: u32,
     /// Max bounce depth.
     pub max_depth: u32,
+    /// HDRI environment for lighting.
+    pub environment: Option<Arc<bif_renderer::HdriEnvironment>>,
 }
 
 impl Default for IvarState {
@@ -137,6 +139,7 @@ impl Default for IvarState {
             build_receiver: None,
             samples_per_pixel: 16, // Lower for interactive preview
             max_depth: 8,
+            environment: None,
         }
     }
 }

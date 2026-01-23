@@ -374,6 +374,7 @@ dependencies = [
  "glam",
  "image",
  "log",
+ "rayon",
  "serde",
  "thiserror 1.0.69",
 ]
@@ -430,6 +431,7 @@ dependencies = [
  "egui-snarl",
  "egui-wgpu",
  "egui-winit",
+ "half",
  "log",
  "pollster",
  "rayon",

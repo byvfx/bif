@@ -22,6 +22,7 @@ use bif_renderer::{
 };
 
 // New modular architecture
+pub mod environment;
 pub mod frustum_culling;
 pub mod gpu_types;
 pub mod ivar_renderer;
@@ -35,10 +36,11 @@ pub mod property_inspector;
 pub mod scene_browser;
 
 // Re-exports from new modules
+pub use environment::GpuEnvironment;
 pub use frustum_culling::{update_visible_instances, CullingResult};
 pub use gpu_types::{
-    CameraUniform, CullingScratch, GnomonUniform, GnomonVertex, GpuTextureSet, InstanceData,
-    MaterialGpu, MaterialUniform, Vertex, MAX_VIEWPORT_TEXTURES,
+    CameraUniform, CullingScratch, EnvironmentParamsUniform, GnomonUniform, GnomonVertex,
+    GpuTextureSet, InstanceData, MaterialGpu, MaterialUniform, Vertex, MAX_VIEWPORT_TEXTURES,
 };
 pub use ivar_renderer::{create_depth_texture, create_ivar_pipeline, create_ivar_texture};
 pub use ivar_state::{BuildStatus, CameraSnapshot, IvarMessage, IvarState, RenderMode};
@@ -185,6 +187,9 @@ pub struct Renderer {
 
     // Node graph state for scene assembly
     pub node_graph_state: NodeGraphState,
+
+    // Environment IBL state
+    pub gpu_environment: GpuEnvironment,
 }
 
 impl Renderer {
@@ -323,7 +328,7 @@ impl Renderer {
                 label: Some("Camera Bind Group Layout"),
                 entries: &[wgpu::BindGroupLayoutEntry {
                     binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX,
+                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
@@ -484,6 +489,9 @@ impl Renderer {
             ],
         });
 
+        // Create environment IBL resources (fallback black cubemaps)
+        let gpu_environment = GpuEnvironment::new_default(&device, &queue);
+
         // Create shader module
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Basic Shader"),
@@ -497,6 +505,7 @@ impl Renderer {
                 &camera_bind_group_layout,
                 &material_bind_group_layout,
                 &texture_bind_group_layout,
+                &gpu_environment.bind_group_layout,
             ],
             push_constant_ranges: &[],
         });
@@ -836,6 +845,7 @@ impl Renderer {
             selected_prim_properties: None,
             usd_stage: None,
             node_graph_state: NodeGraphState::new(),
+            gpu_environment,
         })
     }
 
@@ -1003,7 +1013,7 @@ impl Renderer {
                 label: Some("Camera Bind Group Layout"),
                 entries: &[wgpu::BindGroupLayoutEntry {
                     binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX,
+                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
@@ -1189,6 +1199,9 @@ impl Renderer {
             ],
         });
 
+        // Create environment IBL resources (fallback black cubemaps)
+        let gpu_environment = GpuEnvironment::new_default(&device, &queue);
+
         // Create shader module
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Basic Shader"),
@@ -1202,6 +1215,7 @@ impl Renderer {
                 &camera_bind_group_layout,
                 &material_bind_group_layout,
                 &texture_bind_group_layout,
+                &gpu_environment.bind_group_layout,
             ],
             push_constant_ranges: &[],
         });
@@ -1575,6 +1589,7 @@ impl Renderer {
             selected_prim_properties: None,
             usd_stage: None,
             node_graph_state: NodeGraphState::new(),
+            gpu_environment,
         })
     }
 
@@ -1646,6 +1661,24 @@ impl Renderer {
             0,
             bytemuck::cast_slice(&[self.gnomon_uniform]),
         );
+    }
+
+    /// Upload precomputed environment maps to GPU for IBL rendering.
+    pub fn load_environment(&mut self, maps: &bif_core::ibl::EnvironmentMaps) {
+        self.gpu_environment.upload(&self.device, &self.queue, maps);
+    }
+
+    /// Update environment parameters without regenerating maps.
+    pub fn update_environment_params(
+        &mut self,
+        intensity: f32,
+        rotation: f32,
+        show_background: bool,
+    ) {
+        self.gpu_environment.params.intensity = intensity;
+        self.gpu_environment.params.rotation = rotation;
+        self.gpu_environment.params.show_background = if show_background { 1 } else { 0 };
+        self.gpu_environment.update_params(&self.queue);
     }
 
     /// Perform frustum culling and LOD selection, updating visible instance buffers.
@@ -2376,6 +2409,7 @@ impl Renderer {
             max_depth: self.ivar_state.max_depth,
             background: Color::new(0.1, 0.1, 0.1),
             use_sky_gradient: true,
+            environment: self.ivar_state.environment.clone(),
         };
 
         let start_time = Instant::now();
@@ -2845,6 +2879,49 @@ impl Renderer {
                         self.ivar_state.mode = RenderMode::Ivar;
                         self.start_ivar_render();
                     }
+                    NodeGraphEvent::LoadHdri {
+                        path,
+                        rotation,
+                        intensity,
+                        show_background,
+                    } => {
+                        log::info!("Node graph: Loading HDRI: {}", path);
+                        match bif_core::hdr::HdrImage::load(&path) {
+                            Ok(hdr) => {
+                                let rotation_rad = rotation.to_radians();
+                                // Generate IBL maps for viewport
+                                let maps =
+                                    bif_core::ibl::generate_environment_maps(&hdr, rotation_rad);
+                                self.load_environment(&maps);
+                                self.update_environment_params(
+                                    intensity,
+                                    rotation_rad,
+                                    show_background,
+                                );
+                                // Create Ivar environment
+                                let ivar_env = bif_renderer::HdriEnvironment::new(
+                                    hdr,
+                                    rotation_rad,
+                                    intensity,
+                                );
+                                self.ivar_state.environment = Some(Arc::new(ivar_env));
+                                self.node_graph_state.mark_hdri_loaded(&path);
+                                log::info!("HDRI loaded: {}", path);
+                            }
+                            Err(e) => {
+                                log::error!("Failed to load HDRI: {}", e);
+                                self.node_graph_state.mark_hdri_error(&path, e.to_string());
+                            }
+                        }
+                    }
+                    NodeGraphEvent::UpdateHdriParams {
+                        rotation,
+                        intensity,
+                        show_background,
+                    } => {
+                        let rotation_rad = rotation.to_radians();
+                        self.update_environment_params(intensity, rotation_rad, show_background);
+                    }
                 }
             }
         }
@@ -2921,6 +2998,7 @@ impl Renderer {
                     render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
                     render_pass.set_bind_group(1, &self.material_bind_group, &[]);
                     render_pass.set_bind_group(2, &self.texture_bind_group, &[]);
+                    render_pass.set_bind_group(3, &self.gpu_environment.bind_group, &[]);
                     render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
                     render_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
                     render_pass
