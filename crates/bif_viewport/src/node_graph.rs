@@ -87,6 +87,8 @@ pub enum SceneNode {
         file_path: String,
         /// Whether the file is loaded
         is_loaded: bool,
+        /// Whether IBL is currently being generated
+        is_loading: bool,
         /// Rotation in degrees
         rotation: f32,
         /// Intensity multiplier
@@ -130,6 +132,7 @@ impl SceneNode {
         Self::HdriEnvironment {
             file_path: String::new(),
             is_loaded: false,
+            is_loading: false,
             rotation: 0.0,
             intensity: 1.0,
             show_background: true,
@@ -330,6 +333,7 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer {
             SceneNode::HdriEnvironment {
                 file_path,
                 is_loaded,
+                is_loading,
                 rotation,
                 intensity,
                 show_background,
@@ -337,22 +341,35 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer {
             } => {
                 ui.horizontal(|ui| {
                     ui.label("File:");
-                    if ui.text_edit_singleline(file_path).changed() {
-                        *is_loaded = false;
-                        *error = None;
-                    }
+                    ui.add_enabled_ui(!*is_loading, |ui| {
+                        if ui.text_edit_singleline(file_path).changed() {
+                            *is_loaded = false;
+                            *error = None;
+                        }
+                    });
                 });
 
                 ui.horizontal(|ui| {
-                    if ui.button("Browse...").clicked() {
-                        if let Some(path) = rfd::FileDialog::new()
-                            .add_filter("HDR Files", &["hdr", "exr"])
-                            .add_filter("All Files", &["*"])
-                            .pick_file()
-                        {
-                            *file_path = path.display().to_string();
-                            *is_loaded = false;
-                            *error = None;
+                    ui.add_enabled_ui(!*is_loading, |ui| {
+                        if ui.button("Browse...").clicked() {
+                            if let Some(path) = rfd::FileDialog::new()
+                                .add_filter("HDR Files", &["hdr", "exr"])
+                                .add_filter("All Files", &["*"])
+                                .pick_file()
+                            {
+                                *file_path = path.display().to_string();
+                                *is_loaded = false;
+                                *error = None;
+                                self.events.push(NodeGraphEvent::LoadHdri {
+                                    path: file_path.clone(),
+                                    rotation: *rotation,
+                                    intensity: *intensity,
+                                    show_background: *show_background,
+                                });
+                            }
+                        }
+
+                        if ui.button("Load").clicked() && !file_path.is_empty() {
                             self.events.push(NodeGraphEvent::LoadHdri {
                                 path: file_path.clone(),
                                 rotation: *rotation,
@@ -360,16 +377,7 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer {
                                 show_background: *show_background,
                             });
                         }
-                    }
-
-                    if ui.button("Load").clicked() && !file_path.is_empty() {
-                        self.events.push(NodeGraphEvent::LoadHdri {
-                            path: file_path.clone(),
-                            rotation: *rotation,
-                            intensity: *intensity,
-                            show_background: *show_background,
-                        });
-                    }
+                    });
                 });
 
                 let mut params_changed = false;
@@ -410,7 +418,9 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer {
                     });
                 }
 
-                if *is_loaded {
+                if *is_loading {
+                    ui.colored_label(egui::Color32::YELLOW, "Generating IBL...");
+                } else if *is_loaded {
                     ui.colored_label(egui::Color32::GREEN, "Loaded");
                 } else if let Some(err) = error {
                     ui.colored_label(egui::Color32::RED, format!("Error: {}", err));
@@ -569,6 +579,23 @@ impl NodeGraphState {
         }
     }
 
+    /// Mark an HDRI Environment node as loading (IBL generation in progress).
+    pub fn mark_hdri_loading(&mut self, path: &str) {
+        let node_ids: Vec<_> = self.snarl.node_ids().map(|(id, _)| id).collect();
+        for node_id in node_ids {
+            if let SceneNode::HdriEnvironment {
+                file_path,
+                is_loading,
+                ..
+            } = &mut self.snarl[node_id]
+            {
+                if file_path == path {
+                    *is_loading = true;
+                }
+            }
+        }
+    }
+
     /// Mark an HDRI Environment node as loaded.
     pub fn mark_hdri_loaded(&mut self, path: &str) {
         let node_ids: Vec<_> = self.snarl.node_ids().map(|(id, _)| id).collect();
@@ -576,12 +603,14 @@ impl NodeGraphState {
             if let SceneNode::HdriEnvironment {
                 file_path,
                 is_loaded,
+                is_loading,
                 error,
                 ..
             } = &mut self.snarl[node_id]
             {
                 if file_path == path {
                     *is_loaded = true;
+                    *is_loading = false;
                     *error = None;
                 }
             }
@@ -595,12 +624,14 @@ impl NodeGraphState {
             if let SceneNode::HdriEnvironment {
                 file_path,
                 is_loaded,
+                is_loading,
                 error,
                 ..
             } = &mut self.snarl[node_id]
             {
                 if file_path == path {
                     *is_loaded = false;
+                    *is_loading = false;
                     *error = Some(err_msg.clone());
                 }
             }

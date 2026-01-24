@@ -58,6 +58,22 @@ pub trait Material: Send + Sync {
     fn emitted(&self, _u: f32, _v: f32, _p: Vec3) -> Color {
         Color::ZERO
     }
+
+    /// Whether this material has a delta distribution (perfect specular).
+    ///
+    /// Delta materials cannot use Next Event Estimation since their BSDF
+    /// is zero for all directions except the mirror/refraction direction.
+    fn is_delta(&self) -> bool {
+        false
+    }
+}
+
+/// Power heuristic for Multiple Importance Sampling (beta=2).
+#[inline]
+pub fn power_heuristic(pdf_a: f32, pdf_b: f32) -> f32 {
+    let a2 = pdf_a * pdf_a;
+    let b2 = pdf_b * pdf_b;
+    a2 / (a2 + b2).max(1e-10)
 }
 
 // =============================================================================
@@ -75,7 +91,7 @@ pub fn gen_f32(rng: &mut dyn RngCore) -> f32 {
 
 /// Generic version of gen_f32 for monomorphization (avoids vtable dispatch).
 #[inline]
-pub fn gen_f32_generic<R: RngCore>(rng: &mut R) -> f32 {
+pub fn gen_f32_generic<R: RngCore + ?Sized>(rng: &mut R) -> f32 {
     let bits = rng.next_u32();
     (bits >> 8) as f32 * (1.0 / (1u32 << 24) as f32)
 }
@@ -196,6 +212,10 @@ impl Material for Metal {
             None
         }
     }
+
+    fn is_delta(&self) -> bool {
+        self.fuzz < 0.001
+    }
 }
 
 /// Dielectric (glass) material.
@@ -255,6 +275,10 @@ impl Material for Dielectric {
             pdf: 1.0,
             pass_through: false,
         })
+    }
+
+    fn is_delta(&self) -> bool {
+        true
     }
 }
 

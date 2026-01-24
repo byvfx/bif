@@ -28,7 +28,7 @@ pub use hdri::HdriEnvironment;
 pub use hittable::{HitRecord, Hittable, HittableList};
 pub use instanced_geometry::InstancedGeometry;
 pub use material::{
-    cosine_weighted_hemisphere, gen_f32, gen_f32_generic, random_in_hemisphere,
+    cosine_weighted_hemisphere, gen_f32, gen_f32_generic, power_heuristic, random_in_hemisphere,
     random_unit_vector, Color, Dielectric, DiffuseLight, Lambertian, Material, Metal,
     ScatterResult,
 };

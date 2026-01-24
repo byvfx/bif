@@ -5,7 +5,7 @@
 
 use wgpu::{Device, Queue};
 
-use bif_core::ibl::{BrdfLut, EnvironmentMaps};
+use bif_core::ibl::BrdfLut;
 
 use crate::gpu_types::EnvironmentParamsUniform;
 
@@ -29,8 +29,6 @@ pub struct GpuEnvironment {
     pub bind_group: wgpu::BindGroup,
     /// Bind group layout.
     pub bind_group_layout: wgpu::BindGroupLayout,
-    /// Whether BRDF LUT has been generated and uploaded.
-    brdf_lut_ready: bool,
 }
 
 impl GpuEnvironment {
@@ -104,55 +102,20 @@ impl GpuEnvironment {
             params,
             bind_group,
             bind_group_layout,
-            brdf_lut_ready: true,
         }
     }
 
-    /// Upload precomputed environment maps to GPU and rebuild bind group.
-    pub fn upload(&mut self, device: &Device, queue: &Queue, maps: &EnvironmentMaps) {
-        // Create properly sized textures
-        let irr_size = maps.irradiance[0].size;
-        let pref_size = maps.prefiltered[0][0].size;
-        let mip_count = maps.mip_count;
+    /// Load environment from GPU compute output textures (no CPU upload needed).
+    pub fn load_from_compute(
+        &mut self,
+        device: &Device,
+        queue: &Queue,
+        output: crate::compute_ibl::ComputeIblOutput,
+        mip_count: u32,
+    ) {
+        self.irradiance_texture = output.irradiance;
+        self.prefiltered_texture = output.prefiltered;
 
-        self.irradiance_texture = create_cubemap_texture(device, irr_size, 1, "Irradiance Cubemap");
-        self.prefiltered_texture =
-            create_cubemap_texture(device, pref_size, mip_count, "Prefiltered Cubemap");
-
-        // Upload irradiance faces
-        for (face_idx, face) in maps.irradiance.iter().enumerate() {
-            upload_cubemap_face(
-                queue,
-                &self.irradiance_texture,
-                face.size,
-                face_idx as u32,
-                0,
-                &face.pixels,
-            );
-        }
-
-        // Upload prefiltered faces for each mip level
-        for (mip, faces) in maps.prefiltered.iter().enumerate() {
-            for (face_idx, face) in faces.iter().enumerate() {
-                upload_cubemap_face(
-                    queue,
-                    &self.prefiltered_texture,
-                    face.size,
-                    face_idx as u32,
-                    mip as u32,
-                    &face.pixels,
-                );
-            }
-        }
-
-        // Upload BRDF LUT only if not already cached
-        if !self.brdf_lut_ready {
-            upload_brdf_lut(queue, &self.brdf_lut_texture, &maps.brdf_lut);
-            self.brdf_lut_view = self.brdf_lut_texture.create_view(&Default::default());
-            self.brdf_lut_ready = true;
-        }
-
-        // Recreate cubemap views
         self.irradiance_view = self
             .irradiance_texture
             .create_view(&wgpu::TextureViewDescriptor {
@@ -167,11 +130,9 @@ impl GpuEnvironment {
                     ..Default::default()
                 });
 
-        // Update params
         self.params.has_environment = 1;
         queue.write_buffer(&self.params_buffer, 0, bytemuck::cast_slice(&[self.params]));
 
-        // Rebuild bind group
         self.bind_group = Self::create_bind_group(
             device,
             &self.bind_group_layout,
@@ -182,7 +143,7 @@ impl GpuEnvironment {
             &self.params_buffer,
         );
 
-        log::info!("Environment maps uploaded to GPU");
+        log::info!("Environment maps loaded from GPU compute output");
     }
 
     /// Update just the environment parameters (rotation, intensity, background toggle).

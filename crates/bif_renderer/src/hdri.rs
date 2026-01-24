@@ -59,7 +59,7 @@ impl HdriEnvironment {
     /// Importance-sample a direction from the environment.
     ///
     /// Returns (direction, emission_color, pdf_value).
-    pub fn sample_direction<R: RngCore>(&self, rng: &mut R) -> (Vec3, Color, f32) {
+    pub fn sample_direction<R: RngCore + ?Sized>(&self, rng: &mut R) -> (Vec3, Color, f32) {
         if self.total_power <= 0.0 {
             // Fallback: uniform sphere
             let dir = random_unit_sphere(rng);
@@ -190,7 +190,7 @@ impl HdriEnvironment {
 }
 
 /// Random unit vector on sphere (uniform distribution).
-fn random_unit_sphere<R: RngCore>(rng: &mut R) -> Vec3 {
+fn random_unit_sphere<R: RngCore + ?Sized>(rng: &mut R) -> Vec3 {
     let z = 2.0 * gen_f32_generic(rng) - 1.0;
     let r = (1.0 - z * z).sqrt();
     let phi = 2.0 * PI * gen_f32_generic(rng);

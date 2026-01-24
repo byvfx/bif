@@ -342,6 +342,80 @@ impl DisneyBSDF {
 }
 
 impl Material for DisneyBSDF {
+    fn bsdf(&self, ray_in: &Ray, rec: &HitRecord, scattered: &Ray) -> Color {
+        let wo = -ray_in.direction().normalize();
+        let wi = scattered.direction().normalize();
+        let n = self.apply_normal_map(rec.normal, rec.tangent, rec.bitangent, rec.u, rec.v);
+
+        let n_dot_l = n.dot(wi);
+        let n_dot_v = n.dot(wo);
+        if n_dot_l <= 0.0 || n_dot_v <= 0.0 {
+            return Color::ZERO;
+        }
+
+        let base_color = self.sample_base_color(rec.u, rec.v);
+        let metallic = self.sample_metallic(rec.u, rec.v);
+        let roughness = self.sample_roughness(rec.u, rec.v);
+        let alpha = (roughness * roughness).max(0.001);
+
+        let h = (wo + wi).normalize();
+        let n_dot_h = n.dot(h).max(0.0);
+        let l_dot_h = wi.dot(h).max(0.0);
+
+        // Diffuse (Burley)
+        let fd90 = 0.5 + 2.0 * roughness * l_dot_h * l_dot_h;
+        let fl = schlick_weight(n_dot_l);
+        let fv = schlick_weight(n_dot_v);
+        let fd = lerp(1.0, fd90, fl) * lerp(1.0, fd90, fv);
+        let diffuse = base_color * fd * (1.0 - metallic) / PI;
+
+        // Specular (GGX)
+        let d = ggx_d(n_dot_h, alpha);
+        let g = smith_g_ggx(n_dot_l, n_dot_v, alpha);
+        let f0 = self.fresnel_0_textured(base_color, metallic);
+        let f = schlick_fresnel3(f0, l_dot_h);
+        let specular = f * (d * g / (4.0 * n_dot_l * n_dot_v).max(0.001));
+
+        diffuse + specular
+    }
+
+    fn pdf(&self, ray_in: &Ray, rec: &HitRecord, scattered: &Ray) -> f32 {
+        let wo = -ray_in.direction().normalize();
+        let wi = scattered.direction().normalize();
+        let n = self.apply_normal_map(rec.normal, rec.tangent, rec.bitangent, rec.u, rec.v);
+
+        let n_dot_l = n.dot(wi);
+        if n_dot_l <= 0.0 {
+            return 0.0001;
+        }
+
+        let metallic = self.sample_metallic(rec.u, rec.v);
+        let roughness = self.sample_roughness(rec.u, rec.v);
+        let alpha = (roughness * roughness).max(0.001);
+
+        let diffuse_weight = (1.0 - metallic) * (1.0 - self.specular * 0.5);
+        let specular_weight = 1.0 - diffuse_weight;
+        let total = diffuse_weight + specular_weight;
+        let p_diffuse = diffuse_weight / total;
+        let p_specular = specular_weight / total;
+
+        // Cosine-weighted hemisphere PDF
+        let cos_pdf = (n_dot_l / PI).max(0.0001);
+
+        // GGX PDF
+        let h = (wo + wi).normalize();
+        let n_dot_h = n.dot(h).max(0.0);
+        let l_dot_h = wi.dot(h).max(0.0);
+        let d = ggx_d(n_dot_h, alpha);
+        let ggx_pdf = (d * n_dot_h / (4.0 * l_dot_h)).max(0.0001);
+
+        (p_diffuse * cos_pdf + p_specular * ggx_pdf).max(0.0001)
+    }
+
+    fn is_delta(&self) -> bool {
+        self.roughness < 0.001 && self.metallic > 0.999
+    }
+
     fn scatter(
         &self,
         ray_in: &Ray,
