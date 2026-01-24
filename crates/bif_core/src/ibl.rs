@@ -21,7 +21,6 @@ pub const PREFILTERED_MIP_COUNT: u32 = 5;
 pub const BRDF_LUT_SIZE: u32 = 256;
 
 /// A single cubemap face stored as RGBA f16-compatible floats.
-#[derive(Clone)]
 pub struct CubemapFace {
     pub size: u32,
     /// RGBA pixels, row-major.
@@ -43,7 +42,6 @@ impl CubemapFace {
 }
 
 /// BRDF integration lookup table (split-sum approximation).
-#[derive(Clone)]
 pub struct BrdfLut {
     pub size: u32,
     /// RG pixels: (scale, bias) per texel.
@@ -51,7 +49,6 @@ pub struct BrdfLut {
 }
 
 /// Complete set of environment maps for IBL rendering.
-#[derive(Clone)]
 pub struct EnvironmentMaps {
     /// Base cubemap for skybox display (CUBEMAP_SIZE per face).
     pub cubemap: [CubemapFace; 6],
@@ -145,7 +142,7 @@ fn generate_cubemap(hdr: &HdrImage, size: u32, rotation: f32) -> [CubemapFace; 6
 
 /// Generate irradiance cubemap via cosine-weighted hemisphere convolution.
 fn generate_irradiance(hdr: &HdrImage, size: u32, rotation: f32) -> [CubemapFace; 6] {
-    let sample_delta = 0.025; // Angular step for hemisphere integration
+    let sample_delta = 0.1; // Angular step for hemisphere integration
 
     let faces: Vec<CubemapFace> = (0..FACE_COUNT)
         .into_par_iter()
@@ -240,6 +237,7 @@ fn generate_prefiltered(
             let sample_count = if roughness == 0.0 { 1 } else { 1024 };
 
             let faces: Vec<CubemapFace> = (0..FACE_COUNT)
+                .into_par_iter()
                 .map(|face| {
                     let mut f = CubemapFace::new(mip_size);
                     for y in 0..mip_size {
