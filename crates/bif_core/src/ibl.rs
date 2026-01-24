@@ -412,13 +412,8 @@ fn hammersley(i: u32, n: u32) -> [f32; 2] {
 }
 
 /// Van der Corput radical inverse (base 2).
-fn radical_inverse_vdc(mut bits: u32) -> f32 {
-    bits = bits.rotate_right(16);
-    bits = ((bits & 0x55555555) << 1) | ((bits & 0xAAAAAAAA) >> 1);
-    bits = ((bits & 0x33333333) << 2) | ((bits & 0xCCCCCCCC) >> 2);
-    bits = ((bits & 0x0F0F0F0F) << 4) | ((bits & 0xF0F0F0F0) >> 4);
-    bits = ((bits & 0x00FF00FF) << 8) | ((bits & 0xFF00FF00) >> 8);
-    bits as f32 * 2.328_306_4e-10 // 1.0 / 0x100000000
+fn radical_inverse_vdc(bits: u32) -> f32 {
+    bits.reverse_bits() as f32 * 2.328_306_4e-10 // 1.0 / 0x100000000
 }
 
 /// Importance-sample the GGX NDF to get a half-vector.
@@ -513,6 +508,13 @@ mod tests {
             "Scale at NdotV=1, rough=0 should be ~1: {}",
             corner[0]
         );
+    }
+
+    #[test]
+    fn radical_inverse_vdc_known_values() {
+        assert!((radical_inverse_vdc(1) - 0.5).abs() < 1e-6);
+        assert!((radical_inverse_vdc(2) - 0.25).abs() < 1e-6);
+        assert_eq!(radical_inverse_vdc(0), 0.0);
     }
 
     #[test]
