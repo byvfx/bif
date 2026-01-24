@@ -2313,6 +2313,10 @@ impl Renderer {
                 Some(dir) => bif_core::texture::TextureCache::with_base_dir(dir),
                 None => bif_core::texture::TextureCache::new(),
             };
+            #[cfg(feature = "oiio")]
+            {
+                texture_cache.auto_convert_tx = false;
+            }
             let materials: Vec<Arc<DisneyBSDF>> = if scene_materials.is_empty() {
                 // Single fallback material
                 vec![Arc::new(DisneyBSDF::from_material_with_textures(
