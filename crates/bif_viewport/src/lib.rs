@@ -2943,9 +2943,9 @@ impl Renderer {
                         match bif_core::hdr::HdrImage::load(&path) {
                             Ok(hdr) => {
                                 let rotation_rad = rotation.to_radians();
-                                // Generate IBL maps for viewport
+                                // Generate IBL maps for viewport (rotation=0, shader handles rotation)
                                 let maps =
-                                    bif_core::ibl::generate_environment_maps(&hdr, rotation_rad);
+                                    bif_core::ibl::generate_environment_maps(&hdr);
                                 self.load_environment(&maps);
                                 self.update_environment_params(
                                     intensity,

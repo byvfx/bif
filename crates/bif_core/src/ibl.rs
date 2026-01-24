@@ -67,20 +67,21 @@ const FACE_COUNT: usize = 6;
 
 /// Generate all IBL maps from an equirectangular HDR image.
 ///
+/// Cubemaps are generated at rotation=0; the shader applies rotation live.
 /// Uses rayon for parallel face/mip generation.
-pub fn generate_environment_maps(hdr: &HdrImage, rotation: f32) -> EnvironmentMaps {
+pub fn generate_environment_maps(hdr: &HdrImage) -> EnvironmentMaps {
     log::info!("Generating IBL environment maps...");
 
-    // Generate base cubemap
-    let cubemap = generate_cubemap(hdr, CUBEMAP_SIZE, rotation);
+    // Generate base cubemap (rotation=0, shader handles rotation)
+    let cubemap = generate_cubemap(hdr, CUBEMAP_SIZE);
     log::info!("  Cubemap {}x{} done", CUBEMAP_SIZE, CUBEMAP_SIZE);
 
     // Generate irradiance map
-    let irradiance = generate_irradiance(hdr, IRRADIANCE_SIZE, rotation);
+    let irradiance = generate_irradiance(hdr, IRRADIANCE_SIZE);
     log::info!("  Irradiance {}x{} done", IRRADIANCE_SIZE, IRRADIANCE_SIZE);
 
     // Generate prefiltered specular mip chain
-    let prefiltered = generate_prefiltered(hdr, PREFILTERED_SIZE, PREFILTERED_MIP_COUNT, rotation);
+    let prefiltered = generate_prefiltered(hdr, PREFILTERED_SIZE, PREFILTERED_MIP_COUNT);
     log::info!(
         "  Prefiltered {}x{} ({} mips) done",
         PREFILTERED_SIZE,
@@ -121,7 +122,7 @@ fn face_texel_to_dir(face: usize, x: u32, y: u32, size: u32) -> [f32; 3] {
 }
 
 /// Generate base cubemap from equirectangular HDR.
-fn generate_cubemap(hdr: &HdrImage, size: u32, rotation: f32) -> [CubemapFace; 6] {
+fn generate_cubemap(hdr: &HdrImage, size: u32) -> [CubemapFace; 6] {
     let faces: Vec<CubemapFace> = (0..FACE_COUNT)
         .into_par_iter()
         .map(|face| {
@@ -129,7 +130,7 @@ fn generate_cubemap(hdr: &HdrImage, size: u32, rotation: f32) -> [CubemapFace; 6
             for y in 0..size {
                 for x in 0..size {
                     let dir = face_texel_to_dir(face, x, y, size);
-                    let rgb = hdr.sample(dir, rotation);
+                    let rgb = hdr.sample(dir, 0.0);
                     f.set_pixel(x, y, rgb);
                 }
             }
@@ -141,7 +142,7 @@ fn generate_cubemap(hdr: &HdrImage, size: u32, rotation: f32) -> [CubemapFace; 6
 }
 
 /// Generate irradiance cubemap via cosine-weighted hemisphere convolution.
-fn generate_irradiance(hdr: &HdrImage, size: u32, rotation: f32) -> [CubemapFace; 6] {
+fn generate_irradiance(hdr: &HdrImage, size: u32) -> [CubemapFace; 6] {
     let sample_delta = 0.1; // Angular step for hemisphere integration
 
     let faces: Vec<CubemapFace> = (0..FACE_COUNT)
@@ -151,7 +152,7 @@ fn generate_irradiance(hdr: &HdrImage, size: u32, rotation: f32) -> [CubemapFace
             for y in 0..size {
                 for x in 0..size {
                     let normal = face_texel_to_dir(face, x, y, size);
-                    let irr = convolve_irradiance(hdr, normal, rotation, sample_delta);
+                    let irr = convolve_irradiance(hdr, normal, sample_delta);
                     f.set_pixel(x, y, irr);
                 }
             }
@@ -166,7 +167,6 @@ fn generate_irradiance(hdr: &HdrImage, size: u32, rotation: f32) -> [CubemapFace
 fn convolve_irradiance(
     hdr: &HdrImage,
     normal: [f32; 3],
-    rotation: f32,
     sample_delta: f32,
 ) -> [f32; 3] {
     // Build tangent frame from normal
@@ -200,7 +200,7 @@ fn convolve_irradiance(
                     + tangent_sample[2] * normal[2],
             ];
 
-            let color = hdr.sample(sample_dir, rotation);
+            let color = hdr.sample(sample_dir, 0.0);
 
             // cos(theta) * sin(theta) is the hemisphere solid angle weighting
             let weight = cos_theta * sin_theta;
@@ -227,7 +227,6 @@ fn generate_prefiltered(
     hdr: &HdrImage,
     base_size: u32,
     mip_count: u32,
-    rotation: f32,
 ) -> Vec<[CubemapFace; 6]> {
     (0..mip_count)
         .into_par_iter()
@@ -244,7 +243,7 @@ fn generate_prefiltered(
                         for x in 0..mip_size {
                             let normal = face_texel_to_dir(face, x, y, mip_size);
                             let color =
-                                prefilter_ggx(hdr, normal, roughness, rotation, sample_count);
+                                prefilter_ggx(hdr, normal, roughness, sample_count);
                             f.set_pixel(x, y, color);
                         }
                     }
@@ -262,12 +261,11 @@ fn prefilter_ggx(
     hdr: &HdrImage,
     normal: [f32; 3],
     roughness: f32,
-    rotation: f32,
     sample_count: u32,
 ) -> [f32; 3] {
     // For roughness 0, just sample the reflection direction
     if roughness == 0.0 {
-        return hdr.sample(normal, rotation);
+        return hdr.sample(normal, 0.0);
     }
 
     let view = normal; // Assume V == N (split-sum approximation)
@@ -290,7 +288,7 @@ fn prefilter_ggx(
 
         let n_dot_l = dot(normal, l).max(0.0);
         if n_dot_l > 0.0 {
-            let sample = hdr.sample(l, rotation);
+            let sample = hdr.sample(l, 0.0);
             color[0] += sample[0] * n_dot_l;
             color[1] += sample[1] * n_dot_l;
             color[2] += sample[2] * n_dot_l;
@@ -533,7 +531,7 @@ mod tests {
     #[test]
     fn generate_cubemap_from_hdr() {
         let hdr = HdrImage::load(test_hdr_path()).expect("Failed to load HDR");
-        let cubemap = generate_cubemap(&hdr, 16, 0.0);
+        let cubemap = generate_cubemap(&hdr, 16);
 
         assert_eq!(cubemap.len(), 6);
         for face in &cubemap {
@@ -551,7 +549,7 @@ mod tests {
     #[test]
     fn irradiance_is_smooth() {
         let hdr = HdrImage::load(test_hdr_path()).expect("Failed to load HDR");
-        let irradiance = generate_irradiance(&hdr, 4, 0.0);
+        let irradiance = generate_irradiance(&hdr, 4);
 
         // Irradiance should be relatively smooth - all values positive
         for face in &irradiance {
