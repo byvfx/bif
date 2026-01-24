@@ -5,6 +5,7 @@ struct CameraUniform {
     view_proj: mat4x4<f32>,
     view: mat4x4<f32>,
     camera_position: vec4<f32>,
+    inv_view_proj: mat4x4<f32>,
 }
 
 struct MaterialUniform {
@@ -23,7 +24,7 @@ struct EnvironmentParams {
     intensity: f32,
     rotation: f32,
     has_environment: u32,
-    show_background: u32,
+    max_mip: f32,
 }
 
 @group(0) @binding(0)
@@ -94,8 +95,10 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     let world_position = model_matrix * vec4<f32>(in.position, 1.0);
     out.clip_position = camera.view_proj * world_position;
 
-    // World-space normal for IBL sampling
-    out.normal_ws = normalize((model_matrix * vec4<f32>(in.normal, 0.0)).xyz);
+    // World-space normal via adjugate (correct for non-uniform scale)
+    let n = mat3x3<f32>(model_matrix[0].xyz, model_matrix[1].xyz, model_matrix[2].xyz);
+    let adj = mat3x3<f32>(cross(n[1], n[2]), cross(n[2], n[0]), cross(n[0], n[1]));
+    out.normal_ws = normalize(adj * in.normal);
     out.world_pos = world_position.xyz;
     out.uv = in.uv;
     out.instance_material_id = in.instance_material_id;
@@ -112,6 +115,17 @@ fn rotate_y(dir: vec3<f32>, angle: f32) -> vec3<f32> {
         dir.y,
         -s * dir.x + c * dir.z,
     );
+}
+
+// ACES filmic tone mapping
+fn aces_tonemap(color: vec3<f32>) -> vec3<f32> {
+    let a = color * (color * 2.51 + vec3(0.03));
+    let b = color * (color * 2.43 + vec3(0.59)) + vec3(0.14);
+    return saturate(a / b);
+}
+
+fn linear_to_srgb(c: vec3<f32>) -> vec3<f32> {
+    return pow(c, vec3(1.0 / 2.2));
 }
 
 // Fresnel-Schlick approximation
@@ -164,13 +178,12 @@ fn fs_main(
         // Specular IBL: sample prefiltered cubemap + BRDF LUT
         let reflect_dir = reflect(-view_dir, normal);
         let pref_dir = rotate_y(reflect_dir, env_params.rotation);
-        let max_mip = 4.0; // PREFILTERED_MIP_COUNT - 1
-        let prefiltered = textureSampleLevel(prefiltered_map, env_sampler, pref_dir, roughness * max_mip).rgb;
+        let prefiltered = textureSampleLevel(prefiltered_map, env_sampler, pref_dir, roughness * env_params.max_mip).rgb;
         let brdf = textureSample(brdf_lut, env_sampler, vec2<f32>(n_dot_v, roughness)).rg;
         let specular_ibl = prefiltered * (fresnel * brdf.x + brdf.y);
 
         let color = (diffuse_ibl + specular_ibl) * env_params.intensity;
-        return vec4<f32>(color, 1.0);
+        return vec4<f32>(linear_to_srgb(aces_tonemap(color)), 1.0);
     }
 
     // Fallback: headlight shading (no environment loaded)
@@ -194,5 +207,5 @@ fn fs_main(
     let ambient = base_color * 0.15;
     let lit_color = ambient + dielectric_contrib * 0.7 + metal_contrib * 0.5;
 
-    return vec4<f32>(lit_color, 1.0);
+    return vec4<f32>(linear_to_srgb(aces_tonemap(lit_color)), 1.0);
 }
