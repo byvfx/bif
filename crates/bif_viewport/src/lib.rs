@@ -22,6 +22,7 @@ use bif_renderer::{
 };
 
 // New modular architecture
+pub mod compute_ibl;
 pub mod environment;
 pub mod frustum_culling;
 pub mod gpu_types;
@@ -54,6 +55,26 @@ pub use texture_loader::{
 pub use node_graph::{render_node_graph, NodeGraphEvent, NodeGraphState, SceneNode};
 pub use property_inspector::{render_property_inspector, PrimProperties};
 pub use scene_browser::{EmptyPrimProvider, PrimDataProvider, PrimDisplayInfo, SceneBrowserState};
+
+/// Result from background IBL generation thread.
+enum IblResult {
+    Success {
+        /// HDR pixels for GPU compute IBL (viewport)
+        hdr_pixels: Vec<[f32; 3]>,
+        hdr_width: u32,
+        hdr_height: u32,
+        /// Ivar CPU path tracer environment
+        ivar_env: Arc<bif_renderer::HdriEnvironment>,
+        path: String,
+        rotation_rad: f32,
+        intensity: f32,
+        show_background: bool,
+    },
+    Error {
+        path: String,
+        message: String,
+    },
+}
 
 /// Core renderer managing wgpu state
 pub struct Renderer {
@@ -196,6 +217,11 @@ pub struct Renderer {
     // Skybox rendering
     skybox_pipeline: wgpu::RenderPipeline,
     skybox_bind_group: wgpu::BindGroup,
+
+    // Async IBL generation
+    ibl_receiver: Option<mpsc::Receiver<IblResult>>,
+    // GPU compute IBL pipelines
+    compute_ibl: compute_ibl::ComputeIbl,
 }
 
 impl Renderer {
@@ -785,6 +811,8 @@ impl Renderer {
             &gpu_environment.params_buffer,
         );
 
+        let compute_ibl = compute_ibl::ComputeIbl::new(&device);
+
         Ok(Self {
             surface,
             device,
@@ -871,6 +899,8 @@ impl Renderer {
             show_background: true,
             skybox_pipeline,
             skybox_bind_group,
+            ibl_receiver: None,
+            compute_ibl,
         })
     }
 
@@ -1548,6 +1578,8 @@ impl Renderer {
             &gpu_environment.params_buffer,
         );
 
+        let compute_ibl = compute_ibl::ComputeIbl::new(&device);
+
         Ok(Self {
             surface,
             device,
@@ -1634,6 +1666,8 @@ impl Renderer {
             show_background: true,
             skybox_pipeline,
             skybox_bind_group,
+            ibl_receiver: None,
+            compute_ibl,
         })
     }
 
@@ -1704,21 +1738,6 @@ impl Renderer {
             &self.gnomon_buffer,
             0,
             bytemuck::cast_slice(&[self.gnomon_uniform]),
-        );
-    }
-
-    /// Upload precomputed environment maps to GPU for IBL rendering.
-    pub fn load_environment(&mut self, maps: &bif_core::ibl::EnvironmentMaps) {
-        self.gpu_environment.params.max_mip = (maps.mip_count - 1).max(1) as f32;
-        self.gpu_environment.upload(&self.device, &self.queue, maps);
-        // Rebuild skybox bind group with new prefiltered texture view
-        let skybox_bind_group_layout = skybox::create_skybox_bind_group_layout(&self.device);
-        self.skybox_bind_group = skybox::create_skybox_bind_group(
-            &self.device,
-            &skybox_bind_group_layout,
-            &self.gpu_environment.prefiltered_view,
-            &self.gpu_environment.sampler,
-            &self.gpu_environment.params_buffer,
         );
     }
 
@@ -2550,6 +2569,55 @@ impl Renderer {
         clear_color: wgpu::Color,
         window: &winit::window::Window,
     ) -> Result<()> {
+        // Poll for completed async IBL generation
+        let ibl_result = self.ibl_receiver.as_ref().and_then(|rx| rx.try_recv().ok());
+        if let Some(result) = ibl_result {
+            match result {
+                IblResult::Success {
+                    hdr_pixels,
+                    hdr_width,
+                    hdr_height,
+                    ivar_env,
+                    path,
+                    rotation_rad,
+                    intensity,
+                    show_background,
+                } => {
+                    // GPU compute IBL for viewport
+                    let output = self.compute_ibl.generate(
+                        &self.device,
+                        &self.queue,
+                        hdr_width,
+                        hdr_height,
+                        &hdr_pixels,
+                    );
+                    let mip_count = compute_ibl::PREFILTER_MIP_COUNT;
+                    self.gpu_environment.params.max_mip = (mip_count - 1).max(1) as f32;
+                    self.gpu_environment
+                        .load_from_compute(&self.device, &self.queue, output, mip_count);
+                    self.update_environment_params(intensity, rotation_rad, show_background);
+                    // Rebuild skybox bind group
+                    let skybox_bgl = skybox::create_skybox_bind_group_layout(&self.device);
+                    self.skybox_bind_group = skybox::create_skybox_bind_group(
+                        &self.device,
+                        &skybox_bgl,
+                        &self.gpu_environment.prefiltered_view,
+                        &self.gpu_environment.sampler,
+                        &self.gpu_environment.params_buffer,
+                    );
+                    // Set Ivar CPU environment
+                    self.ivar_state.environment = Some(ivar_env);
+                    self.node_graph_state.mark_hdri_loaded(&path);
+                    log::info!("HDRI loaded (GPU compute): {}", path);
+                }
+                IblResult::Error { path, message } => {
+                    log::error!("Failed to load HDRI: {}", message);
+                    self.node_graph_state.mark_hdri_error(&path, message);
+                }
+            }
+            self.ibl_receiver = None;
+        }
+
         // Update frustum culling before rendering (in Vulkan mode)
         if self.ivar_state.mode == RenderMode::Vulkan {
             self.update_visible_instances();
@@ -2939,34 +3007,41 @@ impl Renderer {
                         intensity,
                         show_background,
                     } => {
-                        log::info!("Node graph: Loading HDRI: {}", path);
-                        match bif_core::hdr::HdrImage::load(&path) {
-                            Ok(hdr) => {
-                                let rotation_rad = rotation.to_radians();
-                                // Generate IBL maps for viewport (rotation=0, shader handles rotation)
-                                let maps =
-                                    bif_core::ibl::generate_environment_maps(&hdr);
-                                self.load_environment(&maps);
-                                self.update_environment_params(
-                                    intensity,
-                                    rotation_rad,
-                                    show_background,
-                                );
-                                // Create Ivar environment
-                                let ivar_env = bif_renderer::HdriEnvironment::new(
-                                    hdr,
-                                    rotation_rad,
-                                    intensity,
-                                );
-                                self.ivar_state.environment = Some(Arc::new(ivar_env));
-                                self.node_graph_state.mark_hdri_loaded(&path);
-                                log::info!("HDRI loaded: {}", path);
+                        log::info!("Node graph: Loading HDRI (async): {}", path);
+                        self.node_graph_state.mark_hdri_loading(&path);
+                        let (tx, rx) = mpsc::channel();
+                        self.ibl_receiver = Some(rx);
+                        let rotation_rad = rotation.to_radians();
+                        let path_clone = path.clone();
+                        std::thread::spawn(move || {
+                            match bif_core::hdr::HdrImage::load(&path_clone) {
+                                Ok(hdr) => {
+                                    // Clone pixels for GPU compute (Ivar takes ownership of HdrImage)
+                                    let hdr_pixels = hdr.pixels.clone();
+                                    let hdr_width = hdr.width;
+                                    let hdr_height = hdr.height;
+                                    let ivar_env = bif_renderer::HdriEnvironment::new(
+                                        hdr, rotation_rad, intensity,
+                                    );
+                                    let _ = tx.send(IblResult::Success {
+                                        hdr_pixels,
+                                        hdr_width,
+                                        hdr_height,
+                                        ivar_env: Arc::new(ivar_env),
+                                        path: path_clone,
+                                        rotation_rad,
+                                        intensity,
+                                        show_background,
+                                    });
+                                }
+                                Err(e) => {
+                                    let _ = tx.send(IblResult::Error {
+                                        path: path_clone,
+                                        message: e.to_string(),
+                                    });
+                                }
                             }
-                            Err(e) => {
-                                log::error!("Failed to load HDRI: {}", e);
-                                self.node_graph_state.mark_hdri_error(&path, e.to_string());
-                            }
-                        }
+                        });
                     }
                     NodeGraphEvent::UpdateHdriParams {
                         rotation,

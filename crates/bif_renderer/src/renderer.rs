@@ -8,6 +8,7 @@
 use std::sync::Arc;
 
 use crate::hdri::HdriEnvironment;
+use crate::material::power_heuristic;
 use crate::{Camera, Color, HitRecord, Hittable, Ray};
 use bif_math::Interval;
 use rand::RngCore;
@@ -42,6 +43,8 @@ impl Default for RenderConfig {
 /// Compute the color seen by a ray.
 ///
 /// Iterative path tracing with throughput accumulation.
+/// Uses Next Event Estimation (NEE) with Multiple Importance Sampling (MIS)
+/// for environment lighting when an HDRI is present.
 /// Pass-through scatters (opacity cutout) do not consume bounce depth.
 pub fn ray_color(
     ray: &Ray,
@@ -55,6 +58,10 @@ pub fn ray_color(
     let mut accumulated = Color::ZERO;
     let mut remaining_depth = depth;
 
+    // Track last scatter PDF for MIS weighting when hitting environment
+    let mut last_scatter_pdf = 0.0_f32;
+    let mut last_was_delta = true; // First ray from camera is treated as delta (no MIS weight)
+
     loop {
         if remaining_depth == 0 {
             break;
@@ -63,8 +70,18 @@ pub fn ray_color(
         let mut rec = HitRecord::default();
 
         if !world.hit(&current_ray, Interval::new(0.001, f32::INFINITY), &mut rec) {
+            // Ray escaped - sample environment/background
             let bg = if let Some(ref env) = config.environment {
-                env.sample(current_ray.direction().normalize())
+                let dir = current_ray.direction().normalize();
+                let emission = env.sample(dir);
+                // MIS weight for BSDF path hitting environment
+                if last_was_delta {
+                    emission
+                } else {
+                    let env_pdf = env.pdf_for_direction(dir);
+                    let mis_w = power_heuristic(last_scatter_pdf, env_pdf);
+                    emission * mis_w
+                }
             } else if config.use_sky_gradient {
                 sky_gradient(&current_ray)
             } else {
@@ -74,12 +91,41 @@ pub fn ray_color(
             break;
         }
 
-        // Accumulate emission
+        // Accumulate emission from hit surfaces
         let emission = rec.material.emitted(rec.u, rec.v, rec.p);
         accumulated += throughput * emission;
 
+        // NEE: sample environment light directly (non-delta materials only)
+        if !rec.material.is_delta() {
+            if let Some(ref env) = config.environment {
+                let (light_dir, light_emission, light_pdf) = env.sample_direction(rng);
+                // Shadow ray
+                let shadow_ray = Ray::new(rec.p, light_dir, current_ray.time());
+                let mut shadow_rec = HitRecord::default();
+                if !world.hit(
+                    &shadow_ray,
+                    Interval::new(0.001, f32::INFINITY),
+                    &mut shadow_rec,
+                ) {
+                    // Unoccluded - evaluate BSDF and MIS weight
+                    let bsdf_val = rec.material.bsdf(&current_ray, &rec, &shadow_ray);
+                    let bsdf_pdf = rec.material.pdf(&current_ray, &rec, &shadow_ray);
+                    let mis_w = power_heuristic(light_pdf, bsdf_pdf);
+                    let cos_theta = rec.normal.dot(light_dir).max(0.0);
+                    accumulated += throughput
+                        * bsdf_val
+                        * light_emission
+                        * cos_theta
+                        * mis_w
+                        / light_pdf.max(1e-10);
+                }
+            }
+        }
+
         match rec.material.scatter(&current_ray, &rec, rng) {
             Some(result) => {
+                last_scatter_pdf = result.pdf;
+                last_was_delta = rec.material.is_delta();
                 current_ray = result.scattered;
                 throughput *= result.attenuation;
                 if !result.pass_through {
