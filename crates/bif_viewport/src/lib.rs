@@ -34,6 +34,7 @@ pub mod texture_loader;
 pub mod node_graph;
 pub mod property_inspector;
 pub mod scene_browser;
+pub mod skybox;
 
 // Re-exports from new modules
 pub use environment::GpuEnvironment;
@@ -190,6 +191,11 @@ pub struct Renderer {
 
     // Environment IBL state
     pub gpu_environment: GpuEnvironment,
+    /// Whether to render the skybox background
+    pub show_background: bool,
+    // Skybox rendering
+    skybox_pipeline: wgpu::RenderPipeline,
+    skybox_bind_group: wgpu::BindGroup,
 }
 
 impl Renderer {
@@ -763,6 +769,22 @@ impl Renderer {
 
         log::info!("Ivar resources initialized");
 
+        // Skybox pipeline
+        let skybox_bind_group_layout = skybox::create_skybox_bind_group_layout(&device);
+        let skybox_pipeline = skybox::create_skybox_pipeline(
+            &device,
+            &camera_bind_group_layout,
+            &skybox_bind_group_layout,
+            config.format,
+        );
+        let skybox_bind_group = skybox::create_skybox_bind_group(
+            &device,
+            &skybox_bind_group_layout,
+            &gpu_environment.prefiltered_view,
+            &gpu_environment.sampler,
+            &gpu_environment.params_buffer,
+        );
+
         Ok(Self {
             surface,
             device,
@@ -846,6 +868,9 @@ impl Renderer {
             usd_stage: None,
             node_graph_state: NodeGraphState::new(),
             gpu_environment,
+            show_background: true,
+            skybox_pipeline,
+            skybox_bind_group,
         })
     }
 
@@ -1507,6 +1532,22 @@ impl Renderer {
 
         log::info!("Ivar resources initialized");
 
+        // Skybox pipeline
+        let skybox_bind_group_layout = skybox::create_skybox_bind_group_layout(&device);
+        let skybox_pipeline = skybox::create_skybox_pipeline(
+            &device,
+            &camera_bind_group_layout,
+            &skybox_bind_group_layout,
+            config.format,
+        );
+        let skybox_bind_group = skybox::create_skybox_bind_group(
+            &device,
+            &skybox_bind_group_layout,
+            &gpu_environment.prefiltered_view,
+            &gpu_environment.sampler,
+            &gpu_environment.params_buffer,
+        );
+
         Ok(Self {
             surface,
             device,
@@ -1590,6 +1631,9 @@ impl Renderer {
             usd_stage: None,
             node_graph_state: NodeGraphState::new(),
             gpu_environment,
+            show_background: true,
+            skybox_pipeline,
+            skybox_bind_group,
         })
     }
 
@@ -1665,7 +1709,17 @@ impl Renderer {
 
     /// Upload precomputed environment maps to GPU for IBL rendering.
     pub fn load_environment(&mut self, maps: &bif_core::ibl::EnvironmentMaps) {
+        self.gpu_environment.params.max_mip = (maps.mip_count - 1).max(1) as f32;
         self.gpu_environment.upload(&self.device, &self.queue, maps);
+        // Rebuild skybox bind group with new prefiltered texture view
+        let skybox_bind_group_layout = skybox::create_skybox_bind_group_layout(&self.device);
+        self.skybox_bind_group = skybox::create_skybox_bind_group(
+            &self.device,
+            &skybox_bind_group_layout,
+            &self.gpu_environment.prefiltered_view,
+            &self.gpu_environment.sampler,
+            &self.gpu_environment.params_buffer,
+        );
     }
 
     /// Update environment parameters without regenerating maps.
@@ -1677,7 +1731,7 @@ impl Renderer {
     ) {
         self.gpu_environment.params.intensity = intensity;
         self.gpu_environment.params.rotation = rotation;
-        self.gpu_environment.params.show_background = if show_background { 1 } else { 0 };
+        self.show_background = show_background;
         self.gpu_environment.update_params(&self.queue);
     }
 
@@ -2963,21 +3017,70 @@ impl Renderer {
         match self.ivar_state.mode {
             RenderMode::Vulkan => {
                 // Standard GPU viewport rendering
+
+                // Skybox pass (renders environment background before geometry)
+                if self.show_background && self.gpu_environment.params.has_environment != 0 {
+                    let mut skybox_pass =
+                        encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                            label: Some("Skybox Pass"),
+                            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                                view: &view,
+                                resolve_target: None,
+                                ops: wgpu::Operations {
+                                    load: wgpu::LoadOp::Clear(clear_color),
+                                    store: wgpu::StoreOp::Store,
+                                },
+                            })],
+                            depth_stencil_attachment: Some(
+                                wgpu::RenderPassDepthStencilAttachment {
+                                    view: &self.depth_view,
+                                    depth_ops: Some(wgpu::Operations {
+                                        load: wgpu::LoadOp::Clear(1.0),
+                                        store: wgpu::StoreOp::Store,
+                                    }),
+                                    stencil_ops: None,
+                                },
+                            ),
+                            timestamp_writes: None,
+                            occlusion_query_set: None,
+                        });
+                    skybox_pass.set_pipeline(&self.skybox_pipeline);
+                    skybox_pass.set_bind_group(0, &self.camera_bind_group, &[]);
+                    skybox_pass.set_bind_group(1, &self.skybox_bind_group, &[]);
+                    skybox_pass.draw(0..3, 0..1);
+                }
+
+                // Geometry pass
                 {
+                    let color_load = if self.show_background
+                        && self.gpu_environment.params.has_environment != 0
+                    {
+                        wgpu::LoadOp::Load
+                    } else {
+                        wgpu::LoadOp::Clear(clear_color)
+                    };
+                    let depth_load = if self.show_background
+                        && self.gpu_environment.params.has_environment != 0
+                    {
+                        wgpu::LoadOp::Load
+                    } else {
+                        wgpu::LoadOp::Clear(1.0)
+                    };
+
                     let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                         label: Some("Render Pass"),
                         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                             view: &view,
                             resolve_target: None,
                             ops: wgpu::Operations {
-                                load: wgpu::LoadOp::Clear(clear_color),
+                                load: color_load,
                                 store: wgpu::StoreOp::Store,
                             },
                         })],
                         depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                             view: &self.depth_view,
                             depth_ops: Some(wgpu::Operations {
-                                load: wgpu::LoadOp::Clear(1.0),
+                                load: depth_load,
                                 store: wgpu::StoreOp::Store,
                             }),
                             stencil_ops: None,

@@ -18,6 +18,7 @@ pub struct CameraUniform {
     pub view_proj: [[f32; 4]; 4],
     pub view: [[f32; 4]; 4],
     pub camera_position: [f32; 4],
+    pub inv_view_proj: [[f32; 4]; 4],
 }
 
 impl CameraUniform {
@@ -26,13 +27,16 @@ impl CameraUniform {
             view_proj: Mat4::IDENTITY.to_cols_array_2d(),
             view: Mat4::IDENTITY.to_cols_array_2d(),
             camera_position: [0.0, 0.0, 5.0, 1.0],
+            inv_view_proj: Mat4::IDENTITY.to_cols_array_2d(),
         }
     }
 
     pub fn update_view_proj(&mut self, camera: &Camera) {
-        self.view_proj = camera.view_projection_matrix().to_cols_array_2d();
+        let vp = camera.view_projection_matrix();
+        self.view_proj = vp.to_cols_array_2d();
         self.view = camera.view_matrix().to_cols_array_2d();
         self.camera_position = [camera.position.x, camera.position.y, camera.position.z, 1.0];
+        self.inv_view_proj = vp.inverse().to_cols_array_2d();
     }
 }
 
@@ -43,7 +47,7 @@ pub struct EnvironmentParamsUniform {
     pub intensity: f32,
     pub rotation: f32,
     pub has_environment: u32,
-    pub show_background: u32,
+    pub max_mip: f32,
 }
 
 impl EnvironmentParamsUniform {
@@ -52,7 +56,7 @@ impl EnvironmentParamsUniform {
             intensity: 1.0,
             rotation: 0.0,
             has_environment: 0,
-            show_background: 0,
+            max_mip: 4.0,
         }
     }
 }
