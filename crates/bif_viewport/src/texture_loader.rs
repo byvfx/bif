@@ -354,12 +354,6 @@ pub fn create_gpu_textures_for_scene(
         } else {
             TextureCache::new()
         };
-        // Disable .tx conversion - OIIO's make_texture crashes on Windows.
-        // Mipmaps are generated in-memory from the source file instead.
-        #[cfg(feature = "oiio")]
-        {
-            cache.auto_convert_tx = false;
-        }
         match cache.load(path) {
             Ok(tex) => Some((path.clone(), tex)),
             Err(e) => {

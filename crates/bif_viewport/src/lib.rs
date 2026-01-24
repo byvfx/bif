@@ -220,6 +220,8 @@ pub struct Renderer {
 
     // Async IBL generation
     ibl_receiver: Option<mpsc::Receiver<IblResult>>,
+    // Async .tx conversion result
+    tx_conversion_receiver: Option<mpsc::Receiver<String>>,
     // GPU compute IBL pipelines
     compute_ibl: compute_ibl::ComputeIbl,
 }
@@ -900,6 +902,7 @@ impl Renderer {
             skybox_pipeline,
             skybox_bind_group,
             ibl_receiver: None,
+            tx_conversion_receiver: None,
             compute_ibl,
         })
     }
@@ -1667,6 +1670,7 @@ impl Renderer {
             skybox_pipeline,
             skybox_bind_group,
             ibl_receiver: None,
+            tx_conversion_receiver: None,
             compute_ibl,
         })
     }
@@ -2313,10 +2317,6 @@ impl Renderer {
                 Some(dir) => bif_core::texture::TextureCache::with_base_dir(dir),
                 None => bif_core::texture::TextureCache::new(),
             };
-            #[cfg(feature = "oiio")]
-            {
-                texture_cache.auto_convert_tx = false;
-            }
             let materials: Vec<Arc<DisneyBSDF>> = if scene_materials.is_empty() {
                 // Single fallback material
                 vec![Arc::new(DisneyBSDF::from_material_with_textures(
@@ -2456,6 +2456,28 @@ impl Renderer {
 
         camera.initialize();
         camera
+    }
+
+    /// Collect unique texture paths from current scene materials.
+    #[cfg(feature = "oiio")]
+    fn collect_material_texture_paths(&self) -> Vec<String> {
+        let mut paths = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for mat in &self.scene_materials {
+            let candidates = [
+                mat.diffuse_texture.as_deref(),
+                mat.roughness_texture.as_deref(),
+                mat.metallic_texture.as_deref(),
+                mat.normal_texture.as_deref(),
+                mat.emissive_texture.as_deref(),
+            ];
+            for path in candidates.into_iter().flatten() {
+                if seen.insert(path.to_string()) {
+                    paths.push(path.to_string());
+                }
+            }
+        }
+        paths
     }
 
     /// Start Ivar background render
@@ -2620,6 +2642,16 @@ impl Renderer {
                 }
             }
             self.ibl_receiver = None;
+        }
+
+        // Poll for completed .tx conversion
+        let tx_result = self
+            .tx_conversion_receiver
+            .as_ref()
+            .and_then(|rx| rx.try_recv().ok());
+        if let Some(status) = tx_result {
+            self.node_graph_state.mark_tx_conversion_complete(status);
+            self.tx_conversion_receiver = None;
         }
 
         // Update frustum culling before rendering (in Vulkan mode)
@@ -3004,6 +3036,41 @@ impl Renderer {
                         self.ivar_state.samples_per_pixel = spp;
                         self.ivar_state.mode = RenderMode::Ivar;
                         self.start_ivar_render();
+                    }
+                    NodeGraphEvent::ConvertTexturesToTx => {
+                        #[cfg(feature = "oiio")]
+                        {
+                            let paths = self.collect_material_texture_paths();
+                            if paths.is_empty() {
+                                self.node_graph_state
+                                    .mark_tx_conversion_complete("No textures".into());
+                            } else {
+                                log::info!("Converting {} textures to .tx", paths.len());
+                                let (tx, rx) = mpsc::channel();
+                                self.tx_conversion_receiver = Some(rx);
+                                let base_dir = self.texture_base_dir.clone();
+                                std::thread::spawn(move || {
+                                    let cache = match base_dir {
+                                        Some(dir) => {
+                                            bif_core::texture::TextureCache::with_base_dir(dir)
+                                        }
+                                        None => bif_core::texture::TextureCache::new(),
+                                    };
+                                    let count = cache.convert_textures_to_tx(&paths);
+                                    let status = if count > 0 {
+                                        format!("{}/{} converted", count, paths.len())
+                                    } else {
+                                        "All up to date".into()
+                                    };
+                                    let _ = tx.send(status);
+                                });
+                            }
+                        }
+                        #[cfg(not(feature = "oiio"))]
+                        {
+                            self.node_graph_state
+                                .mark_tx_conversion_complete("OIIO not available".into());
+                        }
                     }
                     NodeGraphEvent::LoadHdri {
                         path,

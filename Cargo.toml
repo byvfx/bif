@@ -6,6 +6,7 @@ members = [
     "crates/bif_renderer",
     "crates/bif_viewport",
     "crates/bif_viewer",
+    "crates/bif_maketx",
 ]
 
 [workspace.package]

@@ -25,6 +25,8 @@ pub enum NodeGraphEvent {
     LoadUsdFile(String),
     /// Start an Ivar render with the given SPP
     StartRender { spp: u32 },
+    /// Pre-convert scene textures to .tx format
+    ConvertTexturesToTx,
     /// Load an HDRI environment map
     LoadHdri {
         path: String,
@@ -80,6 +82,10 @@ pub enum SceneNode {
         spp: u32,
         /// Whether currently rendering
         is_rendering: bool,
+        /// Whether .tx conversion is in progress
+        is_converting_tx: bool,
+        /// Status message from last .tx conversion
+        tx_status: Option<String>,
     },
     /// HDRI environment map for IBL lighting
     HdriEnvironment {
@@ -124,6 +130,8 @@ impl SceneNode {
         Self::IvarRender {
             spp: 16,
             is_rendering: false,
+            is_converting_tx: false,
+            tx_status: None,
         }
     }
 
@@ -317,7 +325,12 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer {
                     ui.colored_label(egui::Color32::RED, format!("✗ {}", err));
                 }
             }
-            SceneNode::IvarRender { spp, is_rendering } => {
+            SceneNode::IvarRender {
+                spp,
+                is_rendering,
+                is_converting_tx,
+                tx_status,
+            } => {
                 ui.horizontal(|ui| {
                     ui.label("SPP:");
                     ui.add(egui::DragValue::new(spp).range(1..=1024));
@@ -328,6 +341,19 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer {
                 } else if ui.button("Render").clicked() {
                     self.events.push(NodeGraphEvent::StartRender { spp: *spp });
                     *is_rendering = true;
+                }
+
+                ui.separator();
+
+                if *is_converting_tx {
+                    ui.colored_label(egui::Color32::YELLOW, "Converting .tx...");
+                } else if ui.button("Convert to .tx").clicked() {
+                    self.events.push(NodeGraphEvent::ConvertTexturesToTx);
+                    *is_converting_tx = true;
+                    *tx_status = None;
+                }
+                if let Some(status) = tx_status {
+                    ui.colored_label(egui::Color32::GREEN, status.as_str());
                 }
             }
             SceneNode::HdriEnvironment {
@@ -575,6 +601,22 @@ impl NodeGraphState {
         for node_id in node_ids {
             if let SceneNode::IvarRender { is_rendering, .. } = &mut self.snarl[node_id] {
                 *is_rendering = false;
+            }
+        }
+    }
+
+    /// Mark .tx conversion as complete with a status message.
+    pub fn mark_tx_conversion_complete(&mut self, status: String) {
+        let node_ids: Vec<_> = self.snarl.node_ids().map(|(id, _)| id).collect();
+        for node_id in node_ids {
+            if let SceneNode::IvarRender {
+                is_converting_tx,
+                tx_status,
+                ..
+            } = &mut self.snarl[node_id]
+            {
+                *is_converting_tx = false;
+                *tx_status = Some(status.clone());
             }
         }
     }

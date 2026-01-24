@@ -2,20 +2,21 @@
 
 > Production-grade renderer inspired by Isotropix Clarisse, built in Rust
 
-## Current Status: Milestones 0-17.1 Complete
+## Current Status: Milestones 0-17.2 Complete
 
-**Textured PBR + OIIO Pipeline** - Industry-standard texture workflow
+**Textured PBR + IBL + OIIO Pipeline** - Industry-standard texture workflow
 
 - Dual rendering: Vulkan viewport (60 FPS) + Ivar CPU path tracer
 - GPU instancing: 10K+ instances with LOD culling
 - USD support: USDA (pure Rust) + USDC/references (C++ bridge)
 - Intel Embree 4: Production-quality ray tracing
 - Materials: UsdPreviewSurface + MaterialX standard_surface
-- Disney Principled BSDF in path tracer
+- Disney Principled BSDF with NEE/MIS environment lighting
+- HDRI environment maps: GPU compute IBL (irradiance + prefiltered + BRDF LUT)
 - Textured PBR viewport with per-face materials (GeomSubsets)
-- OpenImageIO integration with .tx auto-conversion (optional)
+- OpenImageIO integration with subprocess .tx conversion (optional)
 - Node graph + scene browser + property inspector
-- 93+ tests passing across 4 crates
+- 135+ tests passing across 4 crates
 
 **Next:** [Milestone 18](MILESTONES.md) (Animation + Motion Blur)
 
@@ -49,7 +50,8 @@ cargo run -p bif_viewer -- --usd assets/lucy/usd/assets/lucy/lucy.usd
 - **USD Workflow:** Import USDA/USDC scenes from Houdini/Maya
 - **Materials:** UsdPreviewSurface + MaterialX standard_surface
 - **Textures:** Per-face materials via GeomSubsets, parallel loading
-- **OIIO Support:** Optional OpenImageIO with .tx auto-conversion and mipmaps
+- **OIIO Support:** Optional OpenImageIO with subprocess .tx conversion and mipmaps
+- **IBL:** GPU compute environment maps (irradiance, prefiltered, BRDF LUT)
 - **Intel Embree 4:** Production two-level BVH ray tracing
 - **File References:** `@path.usda@</Prim>` resolved automatically
 
@@ -64,7 +66,8 @@ bif/
 │   ├── bif_core/       # Scene graph, USD parser, mesh data, materials, textures
 │   ├── bif_viewport/   # GPU viewport (wgpu + Vulkan + egui)
 │   ├── bif_renderer/   # CPU path tracer "Ivar" (Embree + Disney BSDF)
-│   └── bif_viewer/     # Application entry point
+│   ├── bif_viewer/     # Application entry point
+│   └── bif_maketx/     # Standalone .tx converter (subprocess, OIIO)
 ├── cpp/
 │   ├── usd_bridge/     # C++ FFI bridge to Pixar USD
 │   └── oiio_bridge/    # C++ FFI bridge to OpenImageIO (optional)
@@ -95,13 +98,13 @@ bif/
 
 ---
 
-## Statistics (Milestones 0-17.1)
+## Statistics (Milestones 0-17.2)
 
 | Metric | Value |
 |--------|-------|
-| Total LOC | ~9,000 |
-| Tests Passing | 93+ |
-| Milestones Complete | 17.1 |
+| Total LOC | ~10,000 |
+| Tests Passing | 135+ |
+| Milestones Complete | 17.2 |
 | Build Time (dev) | ~5s |
 | Runtime FPS | 60+ (VSync) |
 | Instances Rendered | 10K+ with LOD |
@@ -190,7 +193,7 @@ Use the egui side panel to switch between:
 
 See [MILESTONES.md](MILESTONES.md) for complete history and future plans.
 
-### Completed (Milestones 0-17.1)
+### Completed (Milestones 0-17.2)
 
 - Math library, wgpu viewport, camera controls
 - OBJ/USD loading, GPU instancing, Embree 4
@@ -198,9 +201,10 @@ See [MILESTONES.md](MILESTONES.md) for complete history and future plans.
 - USD C++ bridge (USDC, references)
 - Scene browser, property inspector, node graph
 - UsdPreviewSurface + MaterialX materials
-- Disney Principled BSDF
+- Disney Principled BSDF with NEE/MIS
 - Textured PBR viewport with GeomSubsets
-- OpenImageIO + .tx texture pipeline (optional)
+- OpenImageIO + .tx texture pipeline (subprocess)
+- HDRI IBL: GPU compute prefiltering, async loading
 
 ### Next Up
 
@@ -242,5 +246,5 @@ MIT License - See [LICENSE](LICENSE) for details
 
 ---
 
-**Last Updated:** January 21, 2026
-**Status:** Milestones 0-17.1 Complete | Next: M18 (Animation + Motion Blur)
+**Last Updated:** January 24, 2026
+**Status:** Milestones 0-17.2 Complete | Next: M18 (Animation + Motion Blur)

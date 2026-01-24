@@ -380,6 +380,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "bif_maketx"
+version = "0.1.0"
+dependencies = [
+ "bif_core",
+]
+
+[[package]]
 name = "bif_math"
 version = "0.1.0"
 dependencies = [

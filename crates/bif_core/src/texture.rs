@@ -242,9 +242,10 @@ pub struct TextureCache {
     /// Base directory for resolving relative paths
     base_dir: Option<PathBuf>,
 
-    /// Whether to auto-convert textures to .tx (requires oiio feature)
+    /// Whether to prefer existing .tx files over source textures.
+    /// Use `convert_textures_to_tx` to pre-convert before rendering.
     #[cfg(feature = "oiio")]
-    pub auto_convert_tx: bool,
+    pub prefer_tx: bool,
 
     /// Whether to generate mipmaps when loading (requires oiio feature)
     #[cfg(feature = "oiio")]
@@ -258,7 +259,7 @@ impl TextureCache {
             textures: HashMap::new(),
             base_dir: None,
             #[cfg(feature = "oiio")]
-            auto_convert_tx: true,
+            prefer_tx: false,
             #[cfg(feature = "oiio")]
             generate_mipmaps: true,
         }
@@ -270,7 +271,7 @@ impl TextureCache {
             textures: HashMap::new(),
             base_dir: Some(base_dir.into()),
             #[cfg(feature = "oiio")]
-            auto_convert_tx: true,
+            prefer_tx: false,
             #[cfg(feature = "oiio")]
             generate_mipmaps: true,
         }
@@ -283,9 +284,9 @@ impl TextureCache {
 
     /// Load a texture from file, using cache if available.
     ///
-    /// When the `oiio` feature is enabled and `auto_convert_tx` is true,
-    /// textures will be automatically converted to .tx format for better
-    /// performance and mipmap support.
+    /// When the `oiio` feature is enabled and `prefer_tx` is true,
+    /// existing .tx files will be preferred over source textures.
+    /// Use `convert_textures_to_tx` to pre-generate .tx files.
     pub fn load(&mut self, path: &str) -> TextureResult<Arc<Texture>> {
         // Check cache first
         if let Some(texture) = self.textures.get(path) {
@@ -345,20 +346,90 @@ impl TextureCache {
         Ok(texture)
     }
 
-    /// Load texture using OIIO with optional .tx conversion and mipmaps.
+    /// Pre-convert a list of texture paths to .tx via subprocess.
+    /// Returns number of successful conversions.
+    /// Call this from GUI before rendering to pre-generate .tx files.
+    #[cfg(feature = "oiio")]
+    pub fn convert_textures_to_tx(&self, paths: &[String]) -> usize {
+        let mut converted = 0;
+        for path in paths {
+            let full_path = self.resolve_path(path);
+            let tx_path = oiio::get_tx_path(&full_path);
+            if oiio::tx_is_valid(&full_path, &tx_path) {
+                continue; // Already up to date
+            }
+            log::info!("Converting to .tx: {}", full_path.display());
+            if Self::make_tx_subprocess(&full_path, &tx_path) {
+                converted += 1;
+            }
+        }
+        if converted > 0 {
+            log::info!("Converted {} textures to .tx", converted);
+        }
+        converted
+    }
+
+    /// Convert single texture to .tx via subprocess (isolates OIIO crashes).
+    /// Returns true only if conversion succeeded cleanly.
+    #[cfg(feature = "oiio")]
+    pub fn make_tx_subprocess(input: &Path, output: &Path) -> bool {
+        use std::process::Command;
+
+        // Find bif_maketx next to current executable
+        let exe_dir = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|d| d.to_path_buf()));
+
+        let maketx_name = if cfg!(windows) {
+            "bif_maketx.exe"
+        } else {
+            "bif_maketx"
+        };
+
+        let maketx_path = exe_dir
+            .as_ref()
+            .map(|d| d.join(maketx_name))
+            .filter(|p| p.exists())
+            .unwrap_or_else(|| PathBuf::from(maketx_name));
+
+        let success = match Command::new(&maketx_path)
+            .arg(input.to_string_lossy().as_ref())
+            .arg(output.to_string_lossy().as_ref())
+            .output()
+        {
+            Ok(result) if result.status.success() => {
+                log::info!("Created .tx: {}", output.display());
+                true
+            }
+            Ok(result) => {
+                let stderr = String::from_utf8_lossy(&result.stderr);
+                log::warn!(
+                    "bif_maketx failed (exit {}): {}",
+                    result.status.code().unwrap_or(-1),
+                    stderr.trim()
+                );
+                false
+            }
+            Err(e) => {
+                log::warn!("Failed to spawn bif_maketx: {}", e);
+                false
+            }
+        };
+
+        // Remove partial .tx on failure
+        if !success {
+            let _ = std::fs::remove_file(output);
+        }
+        success
+    }
+
+    /// Load texture using OIIO with optional .tx preference and mipmaps.
     #[cfg(feature = "oiio")]
     fn load_with_oiio(&self, full_path: &Path, original_path: &str) -> TextureResult<Texture> {
-        let load_path = if self.auto_convert_tx {
-            // Check for existing .tx or convert
+        let load_path = if self.prefer_tx {
             let tx_path = oiio::get_tx_path(full_path);
-
-            if !oiio::tx_is_valid(full_path, &tx_path) {
-                // Need to convert
-                log::info!("Converting {} to .tx", full_path.display());
-                oiio::make_tx(full_path, &tx_path, None)?;
-            }
-
-            if tx_path.exists() {
+            if oiio::tx_is_valid(full_path, &tx_path) {
+                log::debug!("Using .tx: {}", tx_path.display());
                 tx_path
             } else {
                 full_path.to_path_buf()
