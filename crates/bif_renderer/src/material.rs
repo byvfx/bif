@@ -69,7 +69,13 @@ pub trait Material: Send + Sync {
 /// This is needed because `dyn RngCore` can't use `Rng::gen()` directly.
 #[inline]
 pub fn gen_f32(rng: &mut dyn RngCore) -> f32 {
-    // Same algorithm as rand's Standard distribution for f32
+    let bits = rng.next_u32();
+    (bits >> 8) as f32 * (1.0 / (1u32 << 24) as f32)
+}
+
+/// Generic version of gen_f32 for monomorphization (avoids vtable dispatch).
+#[inline]
+pub fn gen_f32_generic<R: RngCore>(rng: &mut R) -> f32 {
     let bits = rng.next_u32();
     (bits >> 8) as f32 * (1.0 / (1u32 << 24) as f32)
 }

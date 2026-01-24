@@ -9,7 +9,7 @@ use std::f32::consts::PI;
 use bif_core::hdr::HdrImage;
 use rand::RngCore;
 
-use crate::{gen_f32, Color, Vec3};
+use crate::{gen_f32_generic, Color, Vec3};
 
 /// HDRI environment map for path tracing with importance sampling.
 pub struct HdriEnvironment {
@@ -20,9 +20,7 @@ pub struct HdriEnvironment {
     // Importance sampling tables
     marginal_cdf: Vec<f32>,
     conditional_cdfs: Vec<Vec<f32>>,
-    row_sums: Vec<f32>,
     total_power: f32,
-    pdf: Vec<f32>,
 }
 
 impl std::fmt::Debug for HdriEnvironment {
@@ -45,9 +43,7 @@ impl HdriEnvironment {
             intensity,
             marginal_cdf: Vec::new(),
             conditional_cdfs: Vec::new(),
-            row_sums: Vec::new(),
             total_power: 0.0,
-            pdf: Vec::new(),
         };
         env.build_distribution();
         env
@@ -63,7 +59,7 @@ impl HdriEnvironment {
     /// Importance-sample a direction from the environment.
     ///
     /// Returns (direction, emission_color, pdf_value).
-    pub fn sample_direction(&self, rng: &mut dyn RngCore) -> (Vec3, Color, f32) {
+    pub fn sample_direction<R: RngCore>(&self, rng: &mut R) -> (Vec3, Color, f32) {
         if self.total_power <= 0.0 {
             // Fallback: uniform sphere
             let dir = random_unit_sphere(rng);
@@ -72,8 +68,8 @@ impl HdriEnvironment {
             return (dir, emission, pdf);
         }
 
-        let xi1 = gen_f32(rng);
-        let xi2 = gen_f32(rng);
+        let xi1 = gen_f32_generic(rng);
+        let xi2 = gen_f32_generic(rng);
 
         // Sample row via marginal CDF
         let y = self.marginal_cdf.partition_point(|&v| v <= xi1)
@@ -118,7 +114,10 @@ impl HdriEnvironment {
         let x = x.min(self.hdr.width as usize - 1);
         let y = y.min(self.hdr.height as usize - 1);
 
-        let idx = y * self.hdr.width as usize + x;
+        // Reconstruct pixel PDF from CDFs
+        let marginal_pdf = self.marginal_cdf[y + 1] - self.marginal_cdf[y];
+        let conditional_pdf = self.conditional_cdfs[y][x + 1] - self.conditional_cdfs[y][x];
+        let pixel_pdf = marginal_pdf * conditional_pdf;
 
         // Convert pixel PDF to solid angle PDF
         let theta = (0.5 - v) * PI;
@@ -127,7 +126,7 @@ impl HdriEnvironment {
         let width = self.hdr.width as f32;
         let height = self.hdr.height as f32;
 
-        let pdf_solid_angle = self.pdf[idx] * (width * height) / (2.0 * PI * PI * sin_polar);
+        let pdf_solid_angle = pixel_pdf * (width * height) / (2.0 * PI * PI * sin_polar);
 
         pdf_solid_angle.max(1e-10)
     }
@@ -136,21 +135,18 @@ impl HdriEnvironment {
     fn build_distribution(&mut self) {
         let width = self.hdr.width as usize;
         let height = self.hdr.height as usize;
-        let total_pixels = width * height;
 
-        self.pdf = vec![0.0; total_pixels];
         self.marginal_cdf = vec![0.0; height + 1];
         self.conditional_cdfs = vec![vec![0.0; width + 1]; height];
-        self.row_sums = vec![0.0; height];
         self.total_power = 0.0;
 
-        // Compute luminance-weighted PDF with sin(theta) correction
-        for y in 0..height {
+        let mut row_sums = vec![0.0f32; height];
+
+        // Compute luminance-weighted CDF with sin(polar) correction
+        for (y, row_sum) in row_sums.iter_mut().enumerate() {
             let v = (y as f32 + 0.5) / height as f32;
             let theta = (0.5 - v) * PI;
             let sin_polar = theta.cos(); // cos(elevation) = sin(polar angle)
-
-            self.conditional_cdfs[y][0] = 0.0;
 
             for x in 0..width {
                 let idx = y * width + x;
@@ -158,8 +154,7 @@ impl HdriEnvironment {
                 let luminance = HdrImage::luminance(pixel);
                 let weight = (luminance * sin_polar).max(0.0);
 
-                self.pdf[idx] = weight;
-                self.row_sums[y] += weight;
+                *row_sum += weight;
                 self.total_power += weight;
 
                 self.conditional_cdfs[y][x + 1] = self.conditional_cdfs[y][x] + weight;
@@ -167,27 +162,21 @@ impl HdriEnvironment {
         }
 
         // Normalize conditional CDFs
-        for y in 0..height {
-            if self.row_sums[y] > 0.0 {
+        for (y, row_sum) in row_sums.iter().enumerate() {
+            if *row_sum > 0.0 {
                 for x in 0..=width {
-                    self.conditional_cdfs[y][x] /= self.row_sums[y];
+                    self.conditional_cdfs[y][x] /= *row_sum;
                 }
             }
         }
 
-        // Build marginal CDF
-        self.marginal_cdf[0] = 0.0;
-        for y in 0..height {
-            self.marginal_cdf[y + 1] = self.marginal_cdf[y] + self.row_sums[y];
+        // Build and normalize marginal CDF
+        for (y, row_sum) in row_sums.iter().enumerate() {
+            self.marginal_cdf[y + 1] = self.marginal_cdf[y] + *row_sum;
         }
-
-        // Normalize
         if self.total_power > 0.0 {
             for y in 0..=height {
                 self.marginal_cdf[y] /= self.total_power;
-            }
-            for p in &mut self.pdf {
-                *p /= self.total_power;
             }
         }
 
@@ -201,10 +190,10 @@ impl HdriEnvironment {
 }
 
 /// Random unit vector on sphere (uniform distribution).
-fn random_unit_sphere(rng: &mut dyn RngCore) -> Vec3 {
-    let z = 2.0 * gen_f32(rng) - 1.0;
+fn random_unit_sphere<R: RngCore>(rng: &mut R) -> Vec3 {
+    let z = 2.0 * gen_f32_generic(rng) - 1.0;
     let r = (1.0 - z * z).sqrt();
-    let phi = 2.0 * PI * gen_f32(rng);
+    let phi = 2.0 * PI * gen_f32_generic(rng);
     Vec3::new(r * phi.cos(), r * phi.sin(), z)
 }
 
