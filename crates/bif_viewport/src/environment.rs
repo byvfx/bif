@@ -29,6 +29,8 @@ pub struct GpuEnvironment {
     pub bind_group: wgpu::BindGroup,
     /// Bind group layout.
     pub bind_group_layout: wgpu::BindGroupLayout,
+    /// Whether BRDF LUT has been generated and uploaded.
+    brdf_lut_ready: bool,
 }
 
 impl GpuEnvironment {
@@ -39,16 +41,18 @@ impl GpuEnvironment {
         // Create 1x1 black fallback cubemaps
         let irradiance_texture = create_cubemap_texture(device, 1, 1, "Irradiance Fallback");
         let prefiltered_texture = create_cubemap_texture(device, 1, 1, "Prefiltered Fallback");
-        let brdf_lut_texture = create_lut_texture(device, 1, "BRDF LUT Fallback");
 
-        // Upload black pixels
+        // Upload black pixels for cubemaps
         let black_face = [[0.0f32, 0.0, 0.0, 1.0]; 1];
         for face in 0..6u32 {
             upload_cubemap_face(queue, &irradiance_texture, 1, face, 0, &black_face);
             upload_cubemap_face(queue, &prefiltered_texture, 1, face, 0, &black_face);
         }
-        let black_lut = [[0.0f32, 0.0]; 1];
-        upload_lut(queue, &brdf_lut_texture, 1, &black_lut);
+
+        // Pre-generate and upload BRDF LUT (environment-independent, only needs computing once)
+        let brdf_lut = bif_core::ibl::generate_brdf_lut(bif_core::ibl::BRDF_LUT_SIZE);
+        let brdf_lut_texture = create_lut_texture(device, brdf_lut.size, "BRDF LUT");
+        upload_brdf_lut(queue, &brdf_lut_texture, &brdf_lut);
 
         let irradiance_view = irradiance_texture.create_view(&wgpu::TextureViewDescriptor {
             dimension: Some(wgpu::TextureViewDimension::Cube),
@@ -100,6 +104,7 @@ impl GpuEnvironment {
             params,
             bind_group,
             bind_group_layout,
+            brdf_lut_ready: true,
         }
     }
 
@@ -113,7 +118,6 @@ impl GpuEnvironment {
         self.irradiance_texture = create_cubemap_texture(device, irr_size, 1, "Irradiance Cubemap");
         self.prefiltered_texture =
             create_cubemap_texture(device, pref_size, mip_count, "Prefiltered Cubemap");
-        self.brdf_lut_texture = create_lut_texture(device, maps.brdf_lut.size, "BRDF LUT");
 
         // Upload irradiance faces
         for (face_idx, face) in maps.irradiance.iter().enumerate() {
@@ -141,10 +145,14 @@ impl GpuEnvironment {
             }
         }
 
-        // Upload BRDF LUT
-        upload_brdf_lut(queue, &self.brdf_lut_texture, &maps.brdf_lut);
+        // Upload BRDF LUT only if not already cached
+        if !self.brdf_lut_ready {
+            upload_brdf_lut(queue, &self.brdf_lut_texture, &maps.brdf_lut);
+            self.brdf_lut_view = self.brdf_lut_texture.create_view(&Default::default());
+            self.brdf_lut_ready = true;
+        }
 
-        // Recreate views
+        // Recreate cubemap views
         self.irradiance_view = self
             .irradiance_texture
             .create_view(&wgpu::TextureViewDescriptor {
@@ -158,7 +166,6 @@ impl GpuEnvironment {
                     mip_level_count: Some(mip_count),
                     ..Default::default()
                 });
-        self.brdf_lut_view = self.brdf_lut_texture.create_view(&Default::default());
 
         // Update params
         self.params.has_environment = 1;
@@ -407,39 +414,5 @@ fn upload_brdf_lut(queue: &Queue, texture: &wgpu::Texture, lut: &BrdfLut) {
     );
 }
 
-/// Upload a 1x1 black RG LUT.
-fn upload_lut(queue: &Queue, texture: &wgpu::Texture, size: u32, pixels: &[[f32; 2]]) {
-    let f16_data: Vec<u8> = pixels
-        .iter()
-        .flat_map(|p| {
-            [
-                half::f16::from_f32(p[0]).to_le_bytes(),
-                half::f16::from_f32(p[1]).to_le_bytes(),
-            ]
-            .into_iter()
-            .flatten()
-        })
-        .collect();
-
-    queue.write_texture(
-        wgpu::ImageCopyTexture {
-            texture,
-            mip_level: 0,
-            origin: wgpu::Origin3d::ZERO,
-            aspect: wgpu::TextureAspect::All,
-        },
-        &f16_data,
-        wgpu::ImageDataLayout {
-            offset: 0,
-            bytes_per_row: Some(size * 4),
-            rows_per_image: Some(size),
-        },
-        wgpu::Extent3d {
-            width: size,
-            height: size,
-            depth_or_array_layers: 1,
-        },
-    );
-}
 
 use wgpu::util::DeviceExt;
