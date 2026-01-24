@@ -76,9 +76,13 @@ impl HdriEnvironment {
         let xi2 = gen_f32(rng);
 
         // Sample row via marginal CDF
-        let y = search_cdf(&self.marginal_cdf, xi1);
+        let y = self.marginal_cdf.partition_point(|&v| v <= xi1)
+            .saturating_sub(1)
+            .min(self.hdr.height as usize - 1);
         // Sample column via conditional CDF for this row
-        let x = search_cdf(&self.conditional_cdfs[y], xi2);
+        let x = self.conditional_cdfs[y].partition_point(|&v| v <= xi2)
+            .saturating_sub(1)
+            .min(self.hdr.width as usize - 1);
 
         let width = self.hdr.width as f32;
         let height = self.hdr.height as f32;
@@ -118,12 +122,12 @@ impl HdriEnvironment {
 
         // Convert pixel PDF to solid angle PDF
         let theta = (0.5 - v) * PI;
-        let sin_theta = theta.cos().max(1e-10); // cos(elevation) = sin(polar)
+        let sin_polar = theta.cos().max(1e-10); // cos(elevation) = sin(polar angle)
 
         let width = self.hdr.width as f32;
         let height = self.hdr.height as f32;
 
-        let pdf_solid_angle = self.pdf[idx] * (width * height) / (2.0 * PI * PI * sin_theta);
+        let pdf_solid_angle = self.pdf[idx] * (width * height) / (2.0 * PI * PI * sin_polar);
 
         pdf_solid_angle.max(1e-10)
     }
@@ -144,7 +148,7 @@ impl HdriEnvironment {
         for y in 0..height {
             let v = (y as f32 + 0.5) / height as f32;
             let theta = (0.5 - v) * PI;
-            let sin_theta = theta.cos(); // cos(elevation) = sin(polar angle)
+            let sin_polar = theta.cos(); // cos(elevation) = sin(polar angle)
 
             self.conditional_cdfs[y][0] = 0.0;
 
@@ -152,7 +156,7 @@ impl HdriEnvironment {
                 let idx = y * width + x;
                 let pixel = self.hdr.pixels[idx];
                 let luminance = HdrImage::luminance(pixel);
-                let weight = (luminance * sin_theta).max(0.0);
+                let weight = (luminance * sin_polar).max(0.0);
 
                 self.pdf[idx] = weight;
                 self.row_sums[y] += weight;
@@ -194,24 +198,6 @@ impl HdriEnvironment {
             self.total_power
         );
     }
-}
-
-/// Binary search on a CDF to find the sample index.
-fn search_cdf(cdf: &[f32], xi: f32) -> usize {
-    let n = cdf.len() - 1;
-    let mut low = 0usize;
-    let mut high = n;
-
-    while low < high {
-        let mid = (low + high) / 2;
-        if cdf[mid + 1] <= xi {
-            low = mid + 1;
-        } else {
-            high = mid;
-        }
-    }
-
-    low.min(n.saturating_sub(1))
 }
 
 /// Random unit vector on sphere (uniform distribution).
