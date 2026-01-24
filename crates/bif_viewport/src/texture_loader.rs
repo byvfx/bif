@@ -324,6 +324,7 @@ pub fn create_gpu_textures_for_scene(
     scene: &bif_core::Scene,
     base_dir: Option<&Path>,
 ) -> GpuTextureSet {
+    #[cfg(not(feature = "oiio"))]
     use rayon::prelude::*;
 
     let mut texture_set = create_default_gpu_textures(device, queue);
@@ -342,29 +343,41 @@ pub fn create_gpu_textures_for_scene(
         );
     }
 
-    // Load all textures in parallel (CPU-bound: PNG decode + sRGB conversion)
+    // Load textures. OIIO is not thread-safe for concurrent make_tx/load,
+    // so we serialize when using OIIO. Without OIIO, par_iter is safe.
     let load_start = std::time::Instant::now();
     let base_dir_owned = base_dir.map(|p| p.to_path_buf());
-    let loaded_textures: Vec<_> = paths_to_load
-        .par_iter()
-        .map(|path| {
-            let mut cache = if let Some(ref base) = base_dir_owned {
-                TextureCache::with_base_dir(base)
-            } else {
-                TextureCache::new()
-            };
-            match cache.load(path) {
-                Ok(tex) => Some((path.clone(), tex)),
-                Err(e) => {
-                    log::warn!("Failed to load texture {}: {}", path, e);
-                    None
-                }
+
+    let load_one = |path: &String| {
+        let mut cache = if let Some(ref base) = base_dir_owned {
+            TextureCache::with_base_dir(base)
+        } else {
+            TextureCache::new()
+        };
+        // Disable .tx conversion - OIIO's make_texture crashes on Windows.
+        // Mipmaps are generated in-memory from the source file instead.
+        #[cfg(feature = "oiio")]
+        {
+            cache.auto_convert_tx = false;
+        }
+        match cache.load(path) {
+            Ok(tex) => Some((path.clone(), tex)),
+            Err(e) => {
+                log::warn!("Failed to load texture {}: {}", path, e);
+                None
             }
-        })
-        .collect();
+        }
+    };
+
+    #[cfg(feature = "oiio")]
+    let loaded_textures: Vec<_> = paths_to_load.iter().map(load_one).collect();
+
+    #[cfg(not(feature = "oiio"))]
+    let loaded_textures: Vec<_> = paths_to_load.par_iter().map(load_one).collect();
+
     let load_time = load_start.elapsed();
     log::info!(
-        "Loaded {} textures in parallel: {:.1}ms",
+        "Loaded {} textures: {:.1}ms",
         loaded_textures.iter().filter(|t| t.is_some()).count(),
         load_time.as_secs_f32() * 1000.0
     );

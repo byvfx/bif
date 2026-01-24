@@ -428,54 +428,62 @@ OiioBridgeError oiio_make_tx(
         return OIIO_BRIDGE_ERROR_NULL_POINTER;
     }
 
-    if (!file_exists(input_path)) {
-        g_last_error = std::string("Source file not found: ") + input_path;
-        return OIIO_BRIDGE_ERROR_FILE_NOT_FOUND;
-    }
+    try {
+        if (!file_exists(input_path)) {
+            g_last_error = std::string("Source file not found: ") + input_path;
+            return OIIO_BRIDGE_ERROR_FILE_NOT_FOUND;
+        }
 
-    OiioTxOptions opts = options ? *options : oiio_tx_default_options();
+        OiioTxOptions opts = options ? *options : oiio_tx_default_options();
 
-    // Check if conversion is needed
-    if (!opts.force && oiio_tx_is_valid(input_path, output_path)) {
+        // Check if conversion is needed
+        if (!opts.force && oiio_tx_is_valid(input_path, output_path)) {
+            return OIIO_BRIDGE_SUCCESS;
+        }
+
+        // Read source image
+        ImageBuf src(input_path);
+        if (!src.read()) {
+            g_last_error = src.geterror();
+            return OIIO_BRIDGE_ERROR_READ_FAILED;
+        }
+
+        // Configure output spec
+        ImageSpec config;
+        config.tile_width = opts.tile_size;
+        config.tile_height = opts.tile_size;
+        config.tile_depth = 1;
+
+        // Set compression
+        if (opts.compression && strlen(opts.compression) > 0) {
+            config.attribute("compression", opts.compression);
+        }
+
+        // Use make_texture for proper .tx creation with mipmaps
+        // MakeTxTexture mode creates a proper texture file with mipmaps
+        std::ostringstream err_stream;
+        bool success = ImageBufAlgo::make_texture(
+            opts.generate_mips ? ImageBufAlgo::MakeTxTexture : ImageBufAlgo::MakeTxShadow,
+            src,
+            output_path,
+            config,
+            &err_stream
+        );
+
+        if (!success) {
+            std::string err = err_stream.str();
+            g_last_error = err.empty() ? "make_texture failed" : err;
+            return OIIO_BRIDGE_ERROR_WRITE_FAILED;
+        }
+
         return OIIO_BRIDGE_SUCCESS;
+    } catch (const std::exception& e) {
+        g_last_error = std::string("Exception in make_tx: ") + e.what();
+        return OIIO_BRIDGE_ERROR_UNKNOWN;
+    } catch (...) {
+        g_last_error = "Unknown exception in make_tx";
+        return OIIO_BRIDGE_ERROR_UNKNOWN;
     }
-
-    // Read source image
-    ImageBuf src(input_path);
-    if (!src.read()) {
-        g_last_error = src.geterror();
-        return OIIO_BRIDGE_ERROR_READ_FAILED;
-    }
-
-    // Configure output spec
-    ImageSpec config;
-    config.tile_width = opts.tile_size;
-    config.tile_height = opts.tile_size;
-    config.tile_depth = 1;
-
-    // Set compression
-    if (opts.compression && strlen(opts.compression) > 0) {
-        config.attribute("compression", opts.compression);
-    }
-
-    // Use make_texture for proper .tx creation with mipmaps
-    // MakeTxTexture mode creates a proper texture file with mipmaps
-    std::ostringstream err_stream;
-    bool success = ImageBufAlgo::make_texture(
-        opts.generate_mips ? ImageBufAlgo::MakeTxTexture : ImageBufAlgo::MakeTxShadow,
-        src,
-        output_path,
-        config,
-        &err_stream
-    );
-
-    if (!success) {
-        std::string err = err_stream.str();
-        g_last_error = err.empty() ? "make_texture failed" : err;
-        return OIIO_BRIDGE_ERROR_WRITE_FAILED;
-    }
-
-    return OIIO_BRIDGE_SUCCESS;
 }
 
 int oiio_tx_is_valid(const char* source_path, const char* tx_path) {
