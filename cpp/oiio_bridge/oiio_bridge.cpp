@@ -99,6 +99,8 @@ OiioBridgeError oiio_load_texture(const char* path, OiioTextureData** out_data) 
 
     *out_data = nullptr;
 
+    try {
+
     if (!file_exists(path)) {
         g_last_error = std::string("File not found: ") + path;
         return OIIO_BRIDGE_ERROR_FILE_NOT_FOUND;
@@ -190,6 +192,14 @@ OiioBridgeError oiio_load_texture(const char* path, OiioTextureData** out_data) 
 
     *out_data = data;
     return OIIO_BRIDGE_SUCCESS;
+
+    } catch (const std::exception& e) {
+        g_last_error = std::string("Exception in load_texture: ") + e.what();
+        return OIIO_BRIDGE_ERROR_READ_FAILED;
+    } catch (...) {
+        g_last_error = "Unknown exception in load_texture";
+        return OIIO_BRIDGE_ERROR_READ_FAILED;
+    }
 }
 
 OiioBridgeError oiio_load_texture_with_mips(const char* path, OiioTextureData** out_data) {
@@ -198,6 +208,8 @@ OiioBridgeError oiio_load_texture_with_mips(const char* path, OiioTextureData** 
     }
 
     *out_data = nullptr;
+
+    try {
 
     if (!file_exists(path)) {
         g_last_error = std::string("File not found: ") + path;
@@ -392,6 +404,14 @@ OiioBridgeError oiio_load_texture_with_mips(const char* path, OiioTextureData** 
 
     *out_data = data;
     return OIIO_BRIDGE_SUCCESS;
+
+    } catch (const std::exception& e) {
+        g_last_error = std::string("Exception in load_texture_with_mips: ") + e.what();
+        return OIIO_BRIDGE_ERROR_READ_FAILED;
+    } catch (...) {
+        g_last_error = "Unknown exception in load_texture_with_mips";
+        return OIIO_BRIDGE_ERROR_READ_FAILED;
+    }
 }
 
 void oiio_free_texture(OiioTextureData* data) {

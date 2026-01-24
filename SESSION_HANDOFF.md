@@ -1,6 +1,6 @@
-# Session Handoff - January 23, 2026
+# Session Handoff - January 24, 2026
 
-**Last Updated:** HDR Environment Lighting (all 5 phases complete)
+**Last Updated:** Subprocess .tx conversion, GUI button, IBL GPU compute
 **Next Milestone:** 18 (Animation + Motion Blur)
 **Project:** BIF - VFX Scene Assembler & Renderer
 
@@ -10,76 +10,42 @@
 
 | Status | Details |
 |--------|---------|
-| Complete | Milestones 0-17.1, HDR Environment Lighting |
+| Complete | Milestones 0-17.2, IBL GPU Compute, NEE/MIS, .tx subprocess |
 | Next | M18 (Animation + Motion Blur) |
-| Tests | 134+ passing |
+| Tests | 135+ passing |
 | Performance | 60 FPS viewport, 10K instances with LOD |
 
 ---
 
 ## Recent Work
 
-### HDR Environment Lighting - Complete (Jan 23, 2026)
+### Subprocess .tx Conversion + GUI (Jan 24, 2026)
 
-Full IBL pipeline: HDR loading, prefiltering, viewport split-sum, Ivar importance sampling, node graph UI.
+Arnold/Karma-style .tx workflow: pre-convert via subprocess, no auto-convert at load time.
 
-| Phase | Feature | Files |
-|-------|---------|-------|
-| 1 | HDR file loading + equirect sampling | `bif_core/src/hdr.rs` |
-| 2 | IBL prefiltering (irradiance, GGX specular, BRDF LUT) | `bif_core/src/ibl.rs` |
-| 3 | Viewport IBL shader (split-sum + headlight fallback) | `environment.rs`, `basic.wgsl`, `gpu_types.rs` |
-| 4 | Ivar HDRI importance sampling (2D CDF) | `bif_renderer/src/hdri.rs` |
-| 5 | HdriEnvironment node + UI wiring | `node_graph.rs`, `lib.rs` |
+| Component | Details |
+|-----------|---------|
+| `bif_maketx` | Standalone binary wrapping `oiio::make_tx` (crash-isolated) |
+| `TextureCache` | `prefer_tx` flag (default false), `convert_textures_to_tx()` batch API |
+| GUI | "Convert to .tx" button in Ivar Render node, async with status |
+| C++ bridge | try/catch on load functions (won't catch SEH though) |
 
-### Ivar Texture/Shader Integration - Complete (Jan 22, 2026)
+**Known issue:** OIIO crashes when reading .tx files back on Windows (SEH). Conversion works, loading doesn't. `prefer_tx` left at `false` for now.
 
-Full texture pipeline for CPU path tracer across 5 phases:
+### IBL GPU Compute + NEE/MIS (Jan 23-24, 2026)
+
+Full 8-phase VFX code review implementation:
 
 | Phase | Feature |
 |-------|---------|
-| 1 | UV + normal interpolation via barycentrics |
-| 2 | Texture loading via TextureCache on build thread |
-| 3 | Per-triangle materials (GeomSubsets, non-generic EmbreeScene) |
-| 4 | Stochastic opacity/alpha cutout |
-| 5 | Tangent-space normal mapping (TBN, Gram-Schmidt) |
-
-### bif_viewport Modularization - Complete (Jan 22, 2026)
-
-Split `lib.rs` (4380 lines) into 6 focused modules (~32% reduction).
-
-### Milestone 17.1: OIIO + .tx Texture Pipeline - Complete (Jan 21, 2026)
-
-**Goal:** Industry-standard texture workflow with OpenImageIO
-
-**Key Achievements:**
-- C++ OIIO bridge (`cpp/oiio_bridge/`) with FFI
-- Automatic .tx conversion via `ImageBufAlgo::make_texture()`
-- Mipmap generation (box filter downsample)
-- GPU upload with trilinear + anisotropic filtering (16x)
-- Feature-gated: `--features oiio` to enable
-- Falls back to `image` crate when OIIO not enabled
-
-**Key Files:**
-- [oiio_bridge.cpp](cpp/oiio_bridge/oiio_bridge.cpp) - C++ OIIO implementation
-- [oiio.rs](crates/bif_core/src/oiio.rs) - Rust FFI wrapper
-- [texture.rs](crates/bif_core/src/texture.rs) - TextureCache with OIIO support
-
-**Build Commands:**
-```bash
-cargo build                    # Without OIIO (uses image crate)
-cargo build --features oiio    # With OIIO (requires vcpkg openimageio)
-```
-
-### Milestone 17: Viewport PBR + Textures - Complete (Jan 18, 2026)
-
-**Goal:** Textured PBR materials in Vulkan viewport
-
-**Key Achievements:**
-- GPU texture upload with binding_array (64 texture slots)
-- Per-vertex material IDs via GeomSubset extraction
-- Per-instance material ID fallback
-- Parallel texture loading (25s -> 1s with rayon + sRGB LUT)
-- Texture downscaling for GPU limits (8192 max dimension)
+| 1 | Bug fixes: radical_inverse_vdc, sin_theta naming, partition_point CDF |
+| 2 | Shader: ACES tonemap, max_mip uniform, normal inverse-transpose, skybox |
+| 3 | CPU IBL: coarsen irradiance, cache BRDF LUT, parallelize prefiltered |
+| 4 | Live preview: cubemaps at rotation=0, shader handles rotation |
+| 5 | Generic RNG, remove redundant pdf Vec |
+| 6 | Async IBL: background thread for HDR load + generation |
+| 7 | NEE/MIS: environment direct lighting in path tracer |
+| 8 | GPU compute: equirect→cubemap→irradiance→prefilter (all on GPU) |
 
 ---
 
@@ -88,46 +54,42 @@ cargo build --features oiio    # With OIIO (requires vcpkg openimageio)
 | Metric | Value |
 |--------|-------|
 | Build (dev) | ~5s |
-| Build (release) | ~2m |
-| Tests | 93+ passing |
+| Tests | 135+ passing |
 | Vulkan FPS | 60+ (VSync) |
-| Embree BVH | 28ms |
-| Instances | 10K+ with LOD |
+| Crates | 6 (math, core, renderer, viewport, viewer, maketx) |
 
-### What Works Now
+### What Works
 
 **Viewport (GPU):**
 - Textured PBR materials from USD
 - Per-face materials via GeomSubsets
-- binding_array with 64 texture slots
-- Parallel texture loading (25x faster)
+- HDRI environment: GPU compute IBL (irradiance + prefiltered + BRDF LUT)
+- Skybox pass with rotation/intensity controls
+- ACES tonemapping + gamma correction
 
-**Textures (OIIO mode):**
-- Auto-.tx conversion on first load
-- Mipmap generation and loading
-- Trilinear + anisotropic filtering
+**Textures:**
+- OIIO loading with in-memory mipmap generation
+- Subprocess .tx conversion (bif_maketx, crash-isolated)
+- GUI button for batch pre-conversion
+- Falls back to `image` crate without oiio feature
 
 **Ivar (CPU Path Tracer):**
-- Disney Principled BSDF with Burley diffuse + GGX specular
+- Disney Principled BSDF
+- NEE/MIS for HDRI direct lighting
 - Full texture sampling (base_color, roughness, metallic, normal, opacity)
-- Per-triangle materials via GeomSubsets
-- Smooth shading via interpolated normals
-- Tangent-space normal mapping
-- Stochastic opacity/alpha cutout
-- Materials from USD (UsdPreviewSurface + MaterialX)
+- Importance-sampled environment lighting
+- Per-triangle materials, normal mapping, stochastic opacity
 
 **USD Import:**
 - USDA (pure Rust) + USDC (C++ bridge)
-- UsdPreviewSurface materials
-- MaterialX standard_surface materials
+- UsdPreviewSurface + MaterialX standard_surface
 - GeomSubset per-face material assignment
-- File references resolved
 
-### Known Limitations
+### Known Issues
 
-- GPU upload still ~3s for large textures
-- No environment lighting in Ivar (solid background only)
-- USD loader doesn't parse opacity_texture paths yet (field exists, needs parser update)
+- OIIO `load_texture_with_mips` crashes on .tx files on Windows (SEH)
+- Vulkan viewport has some display issues (unrelated to textures)
+- `prefer_tx` disabled until OIIO read-back is fixed
 
 ---
 
@@ -147,51 +109,20 @@ cargo build --features oiio    # With OIIO (requires vcpkg openimageio)
 ```bash
 # Build
 cargo build                    # Dev (~5s)
-cargo build --release          # Release (~2m)
 cargo build --features oiio    # With OIIO support
 
 # Test
-cargo test                     # All tests (needs USD env)
+cargo test                     # All tests
 
 # Run
-cargo run -p bif_viewer                                 # Empty viewport
-cargo run -p bif_viewer -- --usd assets/lucy/usd/assets/lucy/lucy.usd  # Load USD
+cargo run -p bif_viewer                          # Without OIIO
+cargo run -p bif_viewer --features oiio          # With OIIO
 
-# USD environment (required for USDC/references)
+# USD environment (required for USDC)
 . .\setup_usd_env.ps1
-```
 
----
-
-## Session Start Prompt Template
-
-```text
-I'm continuing work on BIF (VFX renderer in Rust).
-
-#file:SESSION_HANDOFF.md
-#file:MILESTONES.md
-#file:CLAUDE.md
-#codebase
-
-Status: Milestone 17.1 Complete + Ivar textures done!
-
-Milestones 0-17.1 done
-- Textured PBR viewport
-- Per-face materials (GeomSubsets)
-- OIIO + .tx pipeline (feature-gated)
-- Ivar: full texture/normal/opacity support
-- 93+ tests passing
-
-Current state:
-- Materials from USD (MaterialX + UsdPreviewSurface)
-- GeomSubsets for per-face material assignment
-- GPU texture sampling working
-- OIIO auto-converts to .tx with mipmaps
-- Ivar: textures, multi-material, normal maps, opacity
-
-Next: M18 (Animation + Motion Blur)
-
-Let's implement timeline and animation next.
+# Convert textures to .tx (standalone)
+cargo run -p bif_maketx -- <input> <output>
 ```
 
 ---

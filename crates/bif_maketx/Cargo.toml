@@ -1,0 +1,10 @@
+[package]
+name = "bif_maketx"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+bif_core = { path = "../bif_core", features = ["oiio"] }
