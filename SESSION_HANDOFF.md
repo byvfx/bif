@@ -1,7 +1,7 @@
-# Session Handoff - January 26, 2026
+# Session Handoff - January 25, 2026
 
-**Last Updated:** M18 Animation timeline, multi-mesh rendering
-**Next Milestone:** 18.1 (Vertex Animation for Combined Meshes)
+**Last Updated:** M18.1 Vertex Animation for Multi-Mesh Complete
+**Next Milestone:** 19 (Frame Rendering)
 **Project:** BIF - VFX Scene Assembler & Renderer
 
 ---
@@ -10,14 +10,27 @@
 
 | Status | Details |
 |--------|---------|
-| Complete | Milestones 0-18, Animation timeline + transform animation |
-| Next | M18.1 (Vertex animation for multi-mesh scenes) |
+| Complete | Milestones 0-18.1, Animation + vertex animation for multi-mesh |
+| Next | M19 (Frame Rendering) |
 | Tests | 135+ passing |
 | Performance | 60 FPS viewport, 10K instances with LOD |
 
 ---
 
 ## Recent Work
+
+### M18.1: Vertex Animation for Multi-Mesh (Jan 25, 2026)
+
+Fixed vertex animation failing when multiple meshes are combined into single buffer.
+
+| Component | Details |
+|-----------|---------|
+| `MeshRange` | New struct: usd_mesh_index, vertex_offset, vertex_count |
+| `mesh_ranges` | New field in MeshData for tracking per-mesh ranges |
+| `combine_with_transforms` | Now accepts mesh_idx, builds mesh_ranges |
+| `update_vertex_animation` | Uses mesh_ranges to update correct vertex range |
+
+**The fix:** When ground (100 verts) + cube (8 verts) = 108 combined, USD returns 8 for cube animation. Now we track each mesh's range and update only that portion.
 
 ### M18: Animation + Timeline (Jan 26, 2026)
 
@@ -29,25 +42,6 @@ Time-sampled USD animation support with viewport playback.
 | AnimatedTransform | Keyframe storage + lerp interpolation |
 | C++ bridge | Timeline metadata, xform samples, vertex animation API |
 | Multi-mesh | Combine prototypes with baked transforms |
-
-**Working:**
-- Transform animation (xformOp.timeSamples) - objects move/rotate
-- Multi-mesh scenes now render all meshes
-- Timeline playback controls
-
-**Known issue:** Vertex animation (points.timeSamples) doesn't work for combined meshes - vertex offset mismatch between USD indices and combined buffer.
-
-### Subprocess .tx Conversion + GUI (Jan 24, 2026)
-
-Arnold/Karma-style .tx workflow: pre-convert via subprocess, no auto-convert at load time.
-
-| Component | Details |
-|-----------|---------   |
-| `bif_maketx` | Standalone binary wrapping `oiio::make_tx` (crash-isolated) |
-| `TextureCache` | `prefer_tx` flag (default false), `convert_textures_to_tx()` batch API |
-| GUI | "Convert to .tx" button in Ivar Render node, async with status |
-
-**Known issue:** OIIO crashes when reading .tx files back on Windows (SEH). `prefer_tx` left at `false`.
 
 ---
 
@@ -65,8 +59,8 @@ Arnold/Karma-style .tx workflow: pre-convert via subprocess, no auto-convert at 
 **Animation:**
 - Timeline UI with playback controls
 - Transform animation (xformOp time samples)
+- Vertex animation for multi-mesh combined scenes
 - AnimatedTransform with keyframe interpolation
-- Multi-mesh scene rendering (combined buffer)
 
 **Viewport (GPU):**
 - Textured PBR materials from USD
@@ -86,26 +80,20 @@ Arnold/Karma-style .tx workflow: pre-convert via subprocess, no auto-convert at 
 
 ### Known Issues
 
-- Vertex animation fails for combined meshes (offset mismatch)
 - USD camera toggle not implemented
 - OIIO `load_texture_with_mips` crashes on .tx files on Windows
 
 ---
 
-## Next Session: M18.1 Vertex Animation
+## Next Session: M19 Frame Rendering
 
-**Goal:** Fix vertex animation for multi-mesh scenes
+**Goal:** Render animated sequences to disk
 
-1. Track vertex offset per mesh in combined buffer
-2. Map USD mesh index to combined buffer range
-3. Update correct vertex range during animation
-4. (Optional) Implement USD camera toggle
-
-**The bug:**
-```
-[WARN] Vertex count mismatch: USD has 8 vertices, mesh_data has 108
-```
-Combined mesh has 108 verts (100 ground + 8 cube), but USD returns 8 for the cube.
+1. Frame range UI (start/end/step)
+2. Batch render loop with frame substitution
+3. Progress tracking with cancellation
+4. Output naming patterns (`render.####.exr`)
+5. EXR output with AOVs (beauty, depth, normals)
 
 ---
 
@@ -134,4 +122,4 @@ cargo run -p bif_viewer -- --usd assets/test_animated.usda
 ---
 
 **Branch:** main
-**Ready for:** M18.1 (Vertex Animation for Combined Meshes)
+**Ready for:** M19 (Frame Rendering)

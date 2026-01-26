@@ -518,17 +518,31 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 
 ---
 
-### Milestone 18: Animation + Motion Blur 🎬
+### Milestone 18: Animation + Timeline ✅
 
-- **Goal:** Load and render time-sampled USD data with motion blur
-- **Estimated Time:** 15-20 hours
-- **Key Tasks:**
-  - Parse time-sampled attributes (`xformOp:translate.timeSamples`)
-  - Timeline UI widget (frame slider, play/pause, frame range)
-  - Animate transforms in Vulkan viewport
-  - Motion blur in Ivar renderer (transformation + deformation)
-  - Support `UsdSkelAnimation` basics (stretch goal)
-- **Reference:** Arnold paper "Motion Blur Corner Cases"
+- **Completed:** 2026-01-26
+- **Goal:** Load and render time-sampled USD data
+- **Key Achievements:**
+  - Timeline UI (play/pause, frame slider, loop, fps display)
+  - AnimatedTransform with keyframe storage + lerp interpolation
+  - C++ bridge: timeline metadata, xform samples, vertex animation API
+  - Multi-mesh rendering via combined vertex buffer
+- **Devlog:** [devlog/DEVLOG_2026-01-26.md](devlog/DEVLOG_2026-01-26.md)
+
+---
+
+### Milestone 18.1: Vertex Animation for Multi-Mesh ✅
+
+- **Completed:** 2026-01-25
+- **Goal:** Fix vertex animation when multiple meshes are combined
+- **Problem:** Combined buffer (ground 100 verts + cube 8 verts = 108) caused vertex count mismatch with USD's per-mesh animation data
+- **Solution:**
+  - Added `MeshRange` struct tracking USD mesh index, vertex offset, vertex count
+  - `combine_with_transforms()` now builds `mesh_ranges` during combining
+  - `update_vertex_animation()` uses `mesh_ranges` to update correct vertex range
+- **Key Files:**
+  - `crates/bif_viewport/src/mesh_data.rs` - MeshRange, mesh_ranges field
+  - `crates/bif_viewport/src/lib.rs` - update_vertex_animation rewrite
 
 ---
 
@@ -707,7 +721,8 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 | 16 | MaterialX | MaterialX standard_surface support | ✅ Complete |
 | 17 | Viewport PBR | Textured PBR in Vulkan viewport | ✅ Complete |
 | 17.1 | OIIO/.tx | OpenImageIO texture pipeline (feature-gated) | ✅ Complete |
-| 18 | Animation | Time-sampled USD + motion blur | Planned |
+| 18 | Animation | Time-sampled USD + timeline UI | ✅ Complete |
+| 18.1 | Vertex Animation | Multi-mesh vertex animation fix | ✅ Complete |
 | 19 | Frame Rendering | Batch render to disk | Planned |
 | 20 | Interactivity | Move objects + keyframing | Planned |
 | 21 | Point Instancing | Scatter + paint tools | Planned |
@@ -765,7 +780,7 @@ Key papers for Milestone 20 (Renderer Polish):
 
 ---
 
-**Last Updated:** January 21, 2026
-**Status:** Milestones 0-17.1 Complete ✅
-**Current:** OIIO/.tx texture pipeline with mipmaps (feature-gated)
-**Next:** M18 Animation + Motion Blur
+**Last Updated:** January 25, 2026
+**Status:** Milestones 0-18.1 Complete ✅
+**Current:** Animation timeline + vertex animation for multi-mesh
+**Next:** M19 Frame Rendering
