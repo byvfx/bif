@@ -10,6 +10,14 @@ use bif_math::{Aabb, Vec3};
 
 use crate::gpu_types::Vertex;
 
+/// Tracks a mesh's vertex range within a combined buffer.
+#[derive(Clone, Debug)]
+pub struct MeshRange {
+    pub usd_mesh_index: usize, // USD bridge mesh index
+    pub vertex_offset: u32,    // Start in combined buffer
+    pub vertex_count: u32,     // Number of vertices
+}
+
 /// GPU-ready mesh data with vertices, indices, and bounds.
 #[derive(Clone)]
 pub struct MeshData {
@@ -19,6 +27,8 @@ pub struct MeshData {
     pub bounds_max: Vec3,
     /// Per-triangle material IDs (for GeomSubsets). If Some, use primitive_index to lookup.
     pub triangle_material_ids: Option<Vec<u32>>,
+    /// Per-mesh vertex ranges for multi-mesh combined buffers (for vertex animation).
+    pub mesh_ranges: Option<Vec<MeshRange>>,
 }
 
 impl MeshData {
@@ -263,6 +273,7 @@ impl MeshData {
             bounds_min: min,
             bounds_max: max,
             triangle_material_ids: None,
+            mesh_ranges: None,
         }
     }
 
@@ -384,6 +395,7 @@ impl MeshData {
             bounds_min,
             bounds_max,
             triangle_material_ids: None,
+            mesh_ranges: None,
         })
     }
 
@@ -444,6 +456,7 @@ impl MeshData {
             bounds_min,
             bounds_max,
             triangle_material_ids,
+            mesh_ranges: None,
         }
     }
 
@@ -451,9 +464,9 @@ impl MeshData {
     ///
     /// This is used when a scene has multiple different prototypes that need
     /// to be rendered together. Each mesh is transformed by its instance transform
-    /// before being combined.
+    /// before being combined. The mesh_idx is stored for vertex animation lookup.
     pub fn combine_with_transforms(
-        meshes: &[(&bif_core::Mesh, bif_math::Mat4)],
+        meshes: &[(&bif_core::Mesh, bif_math::Mat4, usize)], // (mesh, transform, mesh_idx)
     ) -> Self {
         let default_normal = Vec3::Y;
         let default_uv = [0.0f32, 0.0f32];
@@ -461,11 +474,19 @@ impl MeshData {
         let mut all_vertices = Vec::new();
         let mut all_indices = Vec::new();
         let mut all_triangle_material_ids = Vec::new();
+        let mut mesh_ranges = Vec::new();
         let mut bounds_min = Vec3::splat(f32::INFINITY);
         let mut bounds_max = Vec3::splat(f32::NEG_INFINITY);
 
-        for (mesh, transform) in meshes {
+        for (mesh, transform, mesh_idx) in meshes {
             let vertex_offset = all_vertices.len() as u32;
+
+            // Track mesh range for vertex animation
+            mesh_ranges.push(MeshRange {
+                usd_mesh_index: *mesh_idx,
+                vertex_offset,
+                vertex_count: mesh.positions.len() as u32,
+            });
 
             // Transform and add vertices
             for (i, pos) in mesh.positions.iter().enumerate() {
@@ -505,7 +526,11 @@ impl MeshData {
 
                 all_vertices.push(Vertex {
                     position: [transformed_pos.x, transformed_pos.y, transformed_pos.z],
-                    normal: [transformed_normal.x, transformed_normal.y, transformed_normal.z],
+                    normal: [
+                        transformed_normal.x,
+                        transformed_normal.y,
+                        transformed_normal.z,
+                    ],
                     color,
                     uv,
                     material_id: 0xFFFFFFFF,
@@ -543,6 +568,7 @@ impl MeshData {
             bounds_min,
             bounds_max,
             triangle_material_ids,
+            mesh_ranges: Some(mesh_ranges),
         }
     }
 }
