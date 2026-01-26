@@ -416,6 +416,7 @@ impl Renderer {
             bounds_min: Vec3::new(0.0, 0.0, 0.0),
             bounds_max: Vec3::new(0.0, 0.0, 0.0),
             triangle_material_ids: None,
+            mesh_ranges: None,
         };
 
         // Create camera at default position looking at origin
@@ -2039,12 +2040,12 @@ impl Renderer {
                 scene.prototypes.len()
             );
 
-            // Collect all prototype meshes with their instance transforms
-            let mut meshes_with_transforms: Vec<(&bif_core::Mesh, Mat4)> = Vec::new();
+            // Collect all prototype meshes with their instance transforms and USD mesh indices
+            let mut meshes_with_transforms: Vec<(&bif_core::Mesh, Mat4, usize)> = Vec::new();
 
-            for inst in &scene.instances {
+            for (mesh_idx, inst) in scene.instances.iter().enumerate() {
                 if let Some(proto) = scene.prototypes.get(inst.prototype_id) {
-                    meshes_with_transforms.push((&proto.mesh, inst.model_matrix()));
+                    meshes_with_transforms.push((&proto.mesh, inst.model_matrix(), mesh_idx));
                 }
             }
 
@@ -2172,13 +2173,13 @@ impl Renderer {
             ],
         });
 
-        // Create new vertex buffer
+        // Create new vertex buffer (COPY_DST needed for vertex animation updates)
         let vertex_buffer = self
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("Vertex Buffer"),
                 contents: bytemuck::cast_slice(&mesh_data.vertices),
-                usage: wgpu::BufferUsages::VERTEX,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             });
 
         // Create new index buffer
@@ -2199,41 +2200,44 @@ impl Renderer {
 
         // Generate instances from scene
         // If we combined meshes, use a single identity instance (transforms are baked in)
-        let (instance_transforms, instance_material_ids, instances): (Vec<Mat4>, Vec<u32>, Vec<InstanceData>) =
-            if use_single_instance {
-                let identity = Mat4::IDENTITY;
-                (
-                    vec![identity],
-                    vec![0],
-                    vec![InstanceData {
-                        model_matrix: identity.to_cols_array_2d(),
-                        material_id: 0,
-                    }],
-                )
-            } else {
-                let mut transforms = Vec::with_capacity(scene.instances.len());
-                let mut mat_ids = Vec::with_capacity(scene.instances.len());
-                let insts: Vec<InstanceData> = scene
-                    .instances
-                    .iter()
-                    .map(|inst| {
-                        let model_matrix = inst.model_matrix();
-                        transforms.push(model_matrix);
-                        let material_id = scene
-                            .prototypes
-                            .get(inst.prototype_id)
-                            .and_then(|proto| proto.material.as_ref())
-                            .and_then(|mat| material_index_by_name.get(&mat.name).copied())
-                            .unwrap_or(0);
-                        mat_ids.push(material_id);
-                        InstanceData {
-                            model_matrix: model_matrix.to_cols_array_2d(),
-                            material_id,
-                        }
-                    })
-                    .collect();
-                (transforms, mat_ids, insts)
-            };
+        let (instance_transforms, instance_material_ids, instances): (
+            Vec<Mat4>,
+            Vec<u32>,
+            Vec<InstanceData>,
+        ) = if use_single_instance {
+            let identity = Mat4::IDENTITY;
+            (
+                vec![identity],
+                vec![0],
+                vec![InstanceData {
+                    model_matrix: identity.to_cols_array_2d(),
+                    material_id: 0,
+                }],
+            )
+        } else {
+            let mut transforms = Vec::with_capacity(scene.instances.len());
+            let mut mat_ids = Vec::with_capacity(scene.instances.len());
+            let insts: Vec<InstanceData> = scene
+                .instances
+                .iter()
+                .map(|inst| {
+                    let model_matrix = inst.model_matrix();
+                    transforms.push(model_matrix);
+                    let material_id = scene
+                        .prototypes
+                        .get(inst.prototype_id)
+                        .and_then(|proto| proto.material.as_ref())
+                        .and_then(|mat| material_index_by_name.get(&mat.name).copied())
+                        .unwrap_or(0);
+                    mat_ids.push(material_id);
+                    InstanceData {
+                        model_matrix: model_matrix.to_cols_array_2d(),
+                        material_id,
+                    }
+                })
+                .collect();
+            (transforms, mat_ids, insts)
+        };
 
         // Warn if instance count exceeds buffer capacity
         if instances.len() > self.max_instances as usize {
@@ -2269,7 +2273,11 @@ impl Renderer {
             .filter(|opt| opt.as_ref().is_some_and(|anim| anim.is_animated()))
             .count();
         if animated_count > 0 {
-            log::info!("{} of {} instances have animation data", animated_count, instances.len());
+            log::info!(
+                "{} of {} instances have animation data",
+                animated_count,
+                instances.len()
+            );
         }
 
         // Detect meshes with vertex animation (deformation)
@@ -2278,7 +2286,11 @@ impl Renderer {
         for mesh_idx in 0..mesh_count {
             if let Ok(times) = stage.get_mesh_vertex_animation_times(mesh_idx) {
                 if !times.is_empty() {
-                    log::info!("Mesh {} has vertex animation ({} time samples)", mesh_idx, times.len());
+                    log::info!(
+                        "Mesh {} has vertex animation ({} time samples)",
+                        mesh_idx,
+                        times.len()
+                    );
                     self.vertex_animated_meshes.push(mesh_idx);
                 }
             }
@@ -2547,71 +2559,80 @@ impl Renderer {
 
     /// Update vertex buffer for meshes with vertex animation (deformation).
     fn update_vertex_animation(&mut self, frame: f64) {
-        // Need access to the USD stage to query vertices at this frame
         let stage = match &self.usd_stage {
             Some(s) => s,
-            None => {
-                log::warn!("No USD stage available for vertex animation");
-                return;
-            }
+            None => return,
         };
 
-        // Currently we only support single-mesh scenes for vertex animation
-        // TODO: Support multi-mesh scenes with separate vertex buffers
-        if self.vertex_animated_meshes.len() != 1 {
-            log::warn!(
-                "Vertex animation currently only supports single-mesh scenes (found {} meshes)",
-                self.vertex_animated_meshes.len()
-            );
-            return;
-        }
+        // Multi-mesh: use mesh_ranges to update correct vertex range
+        if let Some(ref ranges) = self.mesh_data.mesh_ranges {
+            let mut updated_any = false;
 
-        let mesh_idx = self.vertex_animated_meshes[0];
+            for &mesh_idx in &self.vertex_animated_meshes {
+                let range = match ranges.iter().find(|r| r.usd_mesh_index == mesh_idx) {
+                    Some(r) => r,
+                    None => continue,
+                };
 
-        // Query vertex positions at current frame (returns Vec<f32> as x,y,z triplets)
-        match stage.get_mesh_vertices_at_time(mesh_idx, frame) {
-            Ok(positions) => {
+                let positions = match stage.get_mesh_vertices_at_time(mesh_idx, frame) {
+                    Ok(p) => p,
+                    Err(_) => continue,
+                };
+
                 let vertex_count = positions.len() / 3;
-                if vertex_count == 0 {
-                    log::warn!("No vertices returned for mesh {} at frame {}", mesh_idx, frame);
-                    return;
-                }
-
-                // Check that vertex count matches
-                if vertex_count != self.mesh_data.vertices.len() {
+                if vertex_count != range.vertex_count as usize {
                     log::warn!(
-                        "Vertex count mismatch: USD has {} vertices, mesh_data has {}",
+                        "Vertex count mismatch for mesh {}: USD {} vs range {}",
+                        mesh_idx,
                         vertex_count,
-                        self.mesh_data.vertices.len()
+                        range.vertex_count
                     );
-                    return;
+                    continue;
                 }
 
-                // Update only the position field of each vertex, preserving normals, colors, UVs
-                for (i, vertex) in self.mesh_data.vertices.iter_mut().enumerate() {
-                    vertex.position = [
-                        positions[i * 3],
-                        positions[i * 3 + 1],
-                        positions[i * 3 + 2],
-                    ];
+                // Update only this mesh's range
+                let start = range.vertex_offset as usize;
+                for (i, vertex) in self.mesh_data.vertices[start..start + vertex_count]
+                    .iter_mut()
+                    .enumerate()
+                {
+                    vertex.position =
+                        [positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2]];
                 }
+                updated_any = true;
+            }
 
-                // Write updated vertices to GPU buffer
+            if updated_any {
                 self.queue.write_buffer(
                     &self.vertex_buffer,
                     0,
                     bytemuck::cast_slice(&self.mesh_data.vertices),
                 );
+            }
+            return;
+        }
 
-                log::debug!(
-                    "Updated vertex buffer at frame {:.1} ({} vertices)",
-                    frame,
-                    vertex_count
-                );
+        // Single-mesh fallback (original logic)
+        if self.vertex_animated_meshes.len() != 1 {
+            return;
+        }
+
+        let mesh_idx = self.vertex_animated_meshes[0];
+        if let Ok(positions) = stage.get_mesh_vertices_at_time(mesh_idx, frame) {
+            let vertex_count = positions.len() / 3;
+            if vertex_count == 0 || vertex_count != self.mesh_data.vertices.len() {
+                return;
             }
-            Err(e) => {
-                log::warn!("Failed to get vertices at frame {}: {:?}", frame, e);
+
+            for (i, vertex) in self.mesh_data.vertices.iter_mut().enumerate() {
+                vertex.position = [positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2]];
             }
+
+            self.queue.write_buffer(
+                &self.vertex_buffer,
+                0,
+                bytemuck::cast_slice(&self.mesh_data.vertices),
+            );
         }
     }
 
@@ -3007,8 +3028,12 @@ impl Renderer {
                     );
                     let mip_count = compute_ibl::PREFILTER_MIP_COUNT;
                     self.gpu_environment.params.max_mip = (mip_count - 1).max(1) as f32;
-                    self.gpu_environment
-                        .load_from_compute(&self.device, &self.queue, output, mip_count);
+                    self.gpu_environment.load_from_compute(
+                        &self.device,
+                        &self.queue,
+                        output,
+                        mip_count,
+                    );
                     self.update_environment_params(intensity, rotation_rad, show_background);
                     // Rebuild skybox bind group
                     let skybox_bgl = skybox::create_skybox_bind_group_layout(&self.device);
@@ -3539,7 +3564,9 @@ impl Renderer {
                                     let hdr_width = hdr.width;
                                     let hdr_height = hdr.height;
                                     let ivar_env = bif_renderer::HdriEnvironment::new(
-                                        hdr, rotation_rad, intensity,
+                                        hdr,
+                                        rotation_rad,
+                                        intensity,
                                     );
                                     let _ = tx.send(IblResult::Success {
                                         hdr_pixels,
@@ -3613,30 +3640,27 @@ impl Renderer {
 
                 // Skybox pass (renders environment background before geometry)
                 if self.show_background && self.gpu_environment.params.has_environment != 0 {
-                    let mut skybox_pass =
-                        encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                            label: Some("Skybox Pass"),
-                            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                                view: &view,
-                                resolve_target: None,
-                                ops: wgpu::Operations {
-                                    load: wgpu::LoadOp::Clear(clear_color),
-                                    store: wgpu::StoreOp::Store,
-                                },
-                            })],
-                            depth_stencil_attachment: Some(
-                                wgpu::RenderPassDepthStencilAttachment {
-                                    view: &self.depth_view,
-                                    depth_ops: Some(wgpu::Operations {
-                                        load: wgpu::LoadOp::Clear(1.0),
-                                        store: wgpu::StoreOp::Store,
-                                    }),
-                                    stencil_ops: None,
-                                },
-                            ),
-                            timestamp_writes: None,
-                            occlusion_query_set: None,
-                        });
+                    let mut skybox_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("Skybox Pass"),
+                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                            view: &view,
+                            resolve_target: None,
+                            ops: wgpu::Operations {
+                                load: wgpu::LoadOp::Clear(clear_color),
+                                store: wgpu::StoreOp::Store,
+                            },
+                        })],
+                        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                            view: &self.depth_view,
+                            depth_ops: Some(wgpu::Operations {
+                                load: wgpu::LoadOp::Clear(1.0),
+                                store: wgpu::StoreOp::Store,
+                            }),
+                            stencil_ops: None,
+                        }),
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
+                    });
                     skybox_pass.set_pipeline(&self.skybox_pipeline);
                     skybox_pass.set_bind_group(0, &self.camera_bind_group, &[]);
                     skybox_pass.set_bind_group(1, &self.skybox_bind_group, &[]);
