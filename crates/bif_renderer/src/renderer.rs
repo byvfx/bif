@@ -112,11 +112,7 @@ pub fn ray_color(
                     let bsdf_pdf = rec.material.pdf(&current_ray, &rec, &shadow_ray);
                     let mis_w = power_heuristic(light_pdf, bsdf_pdf);
                     let cos_theta = rec.normal.dot(light_dir).max(0.0);
-                    accumulated += throughput
-                        * bsdf_val
-                        * light_emission
-                        * cos_theta
-                        * mis_w
+                    accumulated += throughput * bsdf_val * light_emission * cos_theta * mis_w
                         / light_pdf.max(1e-10);
                 }
             }

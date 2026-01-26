@@ -164,11 +164,7 @@ fn generate_irradiance(hdr: &HdrImage, size: u32) -> [CubemapFace; 6] {
 }
 
 /// Cosine-weighted hemisphere convolution for a single normal direction.
-fn convolve_irradiance(
-    hdr: &HdrImage,
-    normal: [f32; 3],
-    sample_delta: f32,
-) -> [f32; 3] {
+fn convolve_irradiance(hdr: &HdrImage, normal: [f32; 3], sample_delta: f32) -> [f32; 3] {
     // Build tangent frame from normal
     let (tangent, bitangent) = build_tangent_frame(normal);
 
@@ -223,11 +219,7 @@ fn convolve_irradiance(
 }
 
 /// Generate prefiltered specular cubemap with multiple roughness mip levels.
-fn generate_prefiltered(
-    hdr: &HdrImage,
-    base_size: u32,
-    mip_count: u32,
-) -> Vec<[CubemapFace; 6]> {
+fn generate_prefiltered(hdr: &HdrImage, base_size: u32, mip_count: u32) -> Vec<[CubemapFace; 6]> {
     (0..mip_count)
         .into_par_iter()
         .map(|mip| {
@@ -242,8 +234,7 @@ fn generate_prefiltered(
                     for y in 0..mip_size {
                         for x in 0..mip_size {
                             let normal = face_texel_to_dir(face, x, y, mip_size);
-                            let color =
-                                prefilter_ggx(hdr, normal, roughness, sample_count);
+                            let color = prefilter_ggx(hdr, normal, roughness, sample_count);
                             f.set_pixel(x, y, color);
                         }
                     }
@@ -257,12 +248,7 @@ fn generate_prefiltered(
 }
 
 /// Importance-sample GGX for a single direction and roughness.
-fn prefilter_ggx(
-    hdr: &HdrImage,
-    normal: [f32; 3],
-    roughness: f32,
-    sample_count: u32,
-) -> [f32; 3] {
+fn prefilter_ggx(hdr: &HdrImage, normal: [f32; 3], roughness: f32, sample_count: u32) -> [f32; 3] {
     // For roughness 0, just sample the reflection direction
     if roughness == 0.0 {
         return hdr.sample(normal, 0.0);
