@@ -446,6 +446,105 @@ impl MeshData {
             triangle_material_ids,
         }
     }
+
+    /// Combine multiple meshes with transforms into a single MeshData.
+    ///
+    /// This is used when a scene has multiple different prototypes that need
+    /// to be rendered together. Each mesh is transformed by its instance transform
+    /// before being combined.
+    pub fn combine_with_transforms(
+        meshes: &[(&bif_core::Mesh, bif_math::Mat4)],
+    ) -> Self {
+        let default_normal = Vec3::Y;
+        let default_uv = [0.0f32, 0.0f32];
+
+        let mut all_vertices = Vec::new();
+        let mut all_indices = Vec::new();
+        let mut all_triangle_material_ids = Vec::new();
+        let mut bounds_min = Vec3::splat(f32::INFINITY);
+        let mut bounds_max = Vec3::splat(f32::NEG_INFINITY);
+
+        for (mesh, transform) in meshes {
+            let vertex_offset = all_vertices.len() as u32;
+
+            // Transform and add vertices
+            for (i, pos) in mesh.positions.iter().enumerate() {
+                let normal = mesh
+                    .normals
+                    .as_ref()
+                    .and_then(|n| n.get(i))
+                    .unwrap_or(&default_normal);
+
+                let uv = mesh
+                    .uvs
+                    .as_ref()
+                    .and_then(|uvs| uvs.get(i))
+                    .copied()
+                    .unwrap_or(default_uv);
+
+                // Transform position by instance matrix
+                let pos4 = bif_math::Vec4::new(pos.x, pos.y, pos.z, 1.0);
+                let transformed = *transform * pos4;
+                let transformed_pos = Vec3::new(transformed.x, transformed.y, transformed.z);
+
+                // Transform normal (use upper-left 3x3, ignore translation)
+                let normal4 = bif_math::Vec4::new(normal.x, normal.y, normal.z, 0.0);
+                let transformed_normal = *transform * normal4;
+                let transformed_normal = Vec3::new(
+                    transformed_normal.x,
+                    transformed_normal.y,
+                    transformed_normal.z,
+                )
+                .normalize();
+
+                let color = [
+                    transformed_normal.x.abs(),
+                    transformed_normal.y.abs(),
+                    transformed_normal.z.abs(),
+                ];
+
+                all_vertices.push(Vertex {
+                    position: [transformed_pos.x, transformed_pos.y, transformed_pos.z],
+                    normal: [transformed_normal.x, transformed_normal.y, transformed_normal.z],
+                    color,
+                    uv,
+                    material_id: 0xFFFFFFFF,
+                });
+
+                // Update bounds
+                bounds_min = bounds_min.min(transformed_pos);
+                bounds_max = bounds_max.max(transformed_pos);
+            }
+
+            // Add indices with offset
+            for idx in &mesh.indices {
+                all_indices.push(*idx + vertex_offset);
+            }
+
+            // Add per-triangle material IDs if present
+            if let Some(ref face_mat_ids) = mesh.face_material_ids {
+                all_triangle_material_ids.extend(face_mat_ids.iter().copied());
+            } else {
+                // No face materials - fill with default
+                let triangle_count = mesh.indices.len() / 3;
+                all_triangle_material_ids.extend(std::iter::repeat_n(0u32, triangle_count));
+            }
+        }
+
+        let triangle_material_ids = if all_triangle_material_ids.iter().all(|&id| id == 0) {
+            None
+        } else {
+            Some(all_triangle_material_ids)
+        };
+
+        Self {
+            vertices: all_vertices,
+            indices: all_indices,
+            bounds_min,
+            bounds_max,
+            triangle_material_ids,
+        }
+    }
 }
 
 #[cfg(test)]

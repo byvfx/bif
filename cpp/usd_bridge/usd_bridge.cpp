@@ -9,6 +9,8 @@
 #include <pxr/usd/usdGeom/mesh.h>
 #include <pxr/usd/usdGeom/pointInstancer.h>
 #include <pxr/usd/usdGeom/xformCache.h>
+#include <pxr/usd/usdGeom/camera.h>
+#include <pxr/usd/usdGeom/xformable.h>
 #include <pxr/usd/usdGeom/primvarsAPI.h>
 #include <pxr/usd/usdShade/material.h>
 #include <pxr/usd/usdShade/materialBindingAPI.h>
@@ -23,6 +25,7 @@
 #include <string>
 #include <memory>
 #include <iostream>
+#include <set>
 
 PXR_NAMESPACE_USING_DIRECTIVE
 
@@ -61,6 +64,38 @@ struct CachedPrimInfo {
     std::vector<const char*> child_path_ptrs;  // For C API
 };
 
+/// Cached animation sample for a single time
+struct CachedXformSample {
+    double time;
+    float transform[16];
+};
+
+/// Cached mesh animation data
+struct CachedMeshAnimation {
+    std::vector<CachedXformSample> xform_samples;
+};
+
+/// Cached vertex animation info for a mesh
+struct CachedVertexAnimation {
+    bool has_animated_vertices = false;
+    std::vector<double> time_samples;
+    // Temporary buffer for vertices at a specific time (reused to avoid allocations)
+    mutable std::vector<float> temp_vertices;
+};
+
+/// Cached instancer animation data
+struct CachedInstancerAnimation {
+    std::vector<double> time_samples;
+    size_t instance_count;
+    std::vector<float> transforms;  // Flattened: time_sample_count * instance_count * 16
+};
+
+/// Cached camera animation data
+struct CachedCameraAnimation {
+    std::string path;
+    std::vector<CachedXformSample> xform_samples;
+};
+
 /// Cached material data for FFI transfer (UsdPreviewSurface or MaterialX)
 struct CachedMaterial {
     std::string path;
@@ -92,8 +127,16 @@ struct UsdBridgeStage {
     bool cached;
     bool prims_cached;
     bool materials_cached;
+    bool animation_cached;
 
-    UsdBridgeStage() : cached(false), prims_cached(false), materials_cached(false) {}
+    // Animation caches
+    std::vector<CachedMeshAnimation> mesh_animations;
+    std::vector<CachedInstancerAnimation> instancer_animations;
+    std::vector<CachedCameraAnimation> camera_animations;
+    std::vector<CachedVertexAnimation> vertex_animations;
+    bool vertex_animation_cached;
+
+    UsdBridgeStage() : cached(false), prims_cached(false), materials_cached(false), animation_cached(false), vertex_animation_cached(false) {}
 
     ~UsdBridgeStage() {
         // Clear cached data to ensure proper cleanup
@@ -211,10 +254,28 @@ static void cache_stage_data(UsdBridgeStage* bridge) {
             CachedMesh cached;
             cached.path = prim.GetPath().GetString();
 
-            // Get points at earliest authored time for animated geometry
+            // Get points at first time sample for animated geometry
+            // Use stage's startTimeCode if available, otherwise first authored sample
             VtArray<GfVec3f> points;
             UsdTimeCode timeCode = UsdTimeCode::EarliestTime();
+
+            // Check if points have time samples - if so, use startTimeCode
+            UsdAttribute pointsAttr = mesh.GetPointsAttr();
+            std::vector<double> pointTimeSamples;
+            if (pointsAttr.GetTimeSamples(&pointTimeSamples) && !pointTimeSamples.empty()) {
+                // Use stage's startTimeCode or first sample time
+                double startTime = bridge->stage->GetStartTimeCode();
+                if (startTime >= pointTimeSamples.front() && startTime <= pointTimeSamples.back()) {
+                    timeCode = UsdTimeCode(startTime);
+                } else {
+                    timeCode = UsdTimeCode(pointTimeSamples.front());
+                }
+                std::cout << "[USD_BRIDGE] Mesh " << prim.GetPath() << " has animated points ("
+                          << pointTimeSamples.size() << " samples), using time=" << timeCode.GetValue() << std::endl;
+            }
+
             mesh.GetPointsAttr().Get(&points, timeCode);
+            std::cout << "[USD_BRIDGE] Mesh " << prim.GetPath() << ": " << points.size() << " vertices" << std::endl;
             
             // Pre-allocate to exact size to minimize memory overhead
             cached.vertices.reserve(points.size() * 3);
@@ -225,11 +286,14 @@ static void cache_stage_data(UsdBridgeStage* bridge) {
                 cached.vertices.push_back(p[2]);
             }
 
-            // Get face topology and triangulate
+            // Get face topology and triangulate (use same timeCode as points)
             VtArray<int> face_vertex_counts;
             VtArray<int> face_vertex_indices;
             mesh.GetFaceVertexCountsAttr().Get(&face_vertex_counts, timeCode);
             mesh.GetFaceVertexIndicesAttr().Get(&face_vertex_indices, timeCode);
+
+            std::cout << "[USD_BRIDGE] Mesh " << prim.GetPath() << ": " << face_vertex_counts.size()
+                      << " faces, " << face_vertex_indices.size() << " face vertex indices" << std::endl;
 
             std::vector<uint32_t> triangle_face_indices;
             triangulate_mesh(face_vertex_counts, face_vertex_indices, cached.indices, triangle_face_indices);
@@ -1357,4 +1421,403 @@ UsdBridgeError usd_bridge_get_prim_info_by_path(
     }
 
     return USD_BRIDGE_ERROR_INVALID_PRIM;
+}
+
+// ============================================================================
+// Animation Data Caching
+// ============================================================================
+
+/// Cache animation data for all meshes and instancers
+static void cache_animation_data(UsdBridgeStage* bridge) {
+    if (bridge->animation_cached) return;
+
+    // Ensure stage data is cached first
+    cache_stage_data(bridge);
+
+    bridge->mesh_animations.clear();
+    bridge->instancer_animations.clear();
+    bridge->camera_animations.clear();
+
+    // Cache mesh animations
+    for (size_t mesh_idx = 0; mesh_idx < bridge->meshes.size(); ++mesh_idx) {
+        const auto& mesh = bridge->meshes[mesh_idx];
+        UsdPrim prim = bridge->stage->GetPrimAtPath(SdfPath(mesh.path));
+        if (!prim) {
+            bridge->mesh_animations.push_back(CachedMeshAnimation{});
+            continue;
+        }
+
+        CachedMeshAnimation anim;
+
+        // Collect time samples from the prim AND all its ancestors
+        // (animation may be on parent Xform, not the Mesh itself)
+        std::set<double> time_set;
+        UsdPrim current = prim;
+        while (current) {
+            UsdGeomXformable xformable(current);
+            if (xformable) {
+                std::vector<double> prim_times;
+                xformable.GetTimeSamples(&prim_times);
+                for (double t : prim_times) {
+                    time_set.insert(t);
+                }
+            }
+            current = current.GetParent();
+        }
+
+        // Convert set to sorted vector
+        std::vector<double> times(time_set.begin(), time_set.end());
+
+        if (!times.empty()) {
+            std::cout << "[USD_BRIDGE] Mesh " << mesh.path << " has " << times.size() << " time samples" << std::endl;
+            UsdGeomXformCache xform_cache;
+            for (double t : times) {
+                CachedXformSample sample;
+                sample.time = t;
+
+                xform_cache.SetTime(UsdTimeCode(t));
+                GfMatrix4d world_xform = xform_cache.GetLocalToWorldTransform(prim);
+                matrix_to_float16(world_xform, sample.transform);
+
+                // Debug: print translation component
+                GfVec3d translation = world_xform.ExtractTranslation();
+                std::cout << "  t=" << t << ": pos=(" << translation[0] << ", " << translation[1] << ", " << translation[2] << ")" << std::endl;
+
+                anim.xform_samples.push_back(sample);
+            }
+        } else {
+            std::cout << "[USD_BRIDGE] Mesh " << mesh.path << " has no animation" << std::endl;
+        }
+
+        bridge->mesh_animations.push_back(std::move(anim));
+    }
+
+    // Cache instancer animations
+    for (size_t inst_idx = 0; inst_idx < bridge->instancers.size(); ++inst_idx) {
+        const auto& instancer_data = bridge->instancers[inst_idx];
+        UsdPrim prim = bridge->stage->GetPrimAtPath(SdfPath(instancer_data.path));
+        if (!prim) {
+            bridge->instancer_animations.push_back(CachedInstancerAnimation{});
+            continue;
+        }
+
+        UsdGeomPointInstancer instancer(prim);
+        if (!instancer) {
+            bridge->instancer_animations.push_back(CachedInstancerAnimation{});
+            continue;
+        }
+
+        CachedInstancerAnimation anim;
+        anim.instance_count = instancer_data.transforms.size() / 16;
+
+        // Get time samples from positions attribute (most common animated attribute)
+        std::vector<double> times;
+        instancer.GetPositionsAttr().GetTimeSamples(&times);
+
+        if (times.empty()) {
+            // Try orientations
+            instancer.GetOrientationsAttr().GetTimeSamples(&times);
+        }
+        if (times.empty()) {
+            // Try scales
+            instancer.GetScalesAttr().GetTimeSamples(&times);
+        }
+
+        if (!times.empty()) {
+            anim.time_samples = times;
+            anim.transforms.reserve(times.size() * anim.instance_count * 16);
+
+            for (double t : times) {
+                VtArray<GfMatrix4d> instance_transforms;
+                if (instancer.ComputeInstanceTransformsAtTime(
+                        &instance_transforms,
+                        UsdTimeCode(t),
+                        UsdTimeCode(t))) {
+
+                    for (const auto& mat : instance_transforms) {
+                        float mat_data[16];
+                        matrix_to_float16(mat, mat_data);
+                        for (int i = 0; i < 16; ++i) {
+                            anim.transforms.push_back(mat_data[i]);
+                        }
+                    }
+                }
+            }
+        }
+
+        bridge->instancer_animations.push_back(std::move(anim));
+    }
+
+    // Cache camera animations
+    for (const UsdPrim& prim : bridge->stage->Traverse()) {
+        if (!prim.IsA<UsdGeomCamera>()) continue;
+
+        UsdGeomXformable xformable(prim);
+        if (!xformable) continue;
+
+        std::vector<double> times;
+        xformable.GetTimeSamples(&times);
+
+        if (!times.empty()) {
+            CachedCameraAnimation cam_anim;
+            cam_anim.path = prim.GetPath().GetString();
+
+            UsdGeomXformCache xform_cache;
+            for (double t : times) {
+                CachedXformSample sample;
+                sample.time = t;
+
+                xform_cache.SetTime(UsdTimeCode(t));
+                GfMatrix4d world_xform = xform_cache.GetLocalToWorldTransform(prim);
+                matrix_to_float16(world_xform, sample.transform);
+
+                cam_anim.xform_samples.push_back(sample);
+            }
+
+            bridge->camera_animations.push_back(std::move(cam_anim));
+        }
+    }
+
+    bridge->animation_cached = true;
+}
+
+// ============================================================================
+// Timeline / Animation API Implementation
+// ============================================================================
+
+UsdBridgeError usd_bridge_get_timeline(
+    const UsdBridgeStage* stage,
+    UsdBridgeTimelineData* out_data
+) {
+    if (!stage || !out_data) {
+        return USD_BRIDGE_ERROR_NULL_POINTER;
+    }
+
+    // Check if the stage has authored time metadata
+    bool has_authored = stage->stage->HasAuthoredTimeCodeRange();
+
+    if (has_authored) {
+        out_data->start_time_code = stage->stage->GetStartTimeCode();
+        out_data->end_time_code = stage->stage->GetEndTimeCode();
+        out_data->has_authored_time_range = 1;
+    } else {
+        // Default values when no time range is authored
+        out_data->start_time_code = 0.0;
+        out_data->end_time_code = 0.0;
+        out_data->has_authored_time_range = 0;
+    }
+
+    // FPS - use stage metadata or default to 24
+    out_data->frames_per_second = stage->stage->GetFramesPerSecond();
+
+    return USD_BRIDGE_SUCCESS;
+}
+
+UsdBridgeError usd_bridge_get_mesh_animation(
+    const UsdBridgeStage* stage,
+    size_t mesh_index,
+    UsdBridgeAnimatedMeshData* out_data
+) {
+    if (!stage || !out_data) {
+        return USD_BRIDGE_ERROR_NULL_POINTER;
+    }
+
+    cache_animation_data(const_cast<UsdBridgeStage*>(stage));
+
+    if (mesh_index >= stage->mesh_animations.size()) {
+        return USD_BRIDGE_ERROR_INVALID_PRIM;
+    }
+
+    const auto& anim = stage->mesh_animations[mesh_index];
+    out_data->mesh_index = mesh_index;
+
+    if (anim.xform_samples.empty()) {
+        out_data->xform_samples = nullptr;
+        out_data->xform_sample_count = 0;
+    } else {
+        // Cast is safe: CachedXformSample has same layout as UsdBridgeXformSample
+        out_data->xform_samples = reinterpret_cast<const UsdBridgeXformSample*>(anim.xform_samples.data());
+        out_data->xform_sample_count = anim.xform_samples.size();
+    }
+
+    return USD_BRIDGE_SUCCESS;
+}
+
+UsdBridgeError usd_bridge_get_instancer_animation(
+    const UsdBridgeStage* stage,
+    size_t instancer_index,
+    UsdBridgeAnimatedInstancerData* out_data
+) {
+    if (!stage || !out_data) {
+        return USD_BRIDGE_ERROR_NULL_POINTER;
+    }
+
+    cache_animation_data(const_cast<UsdBridgeStage*>(stage));
+
+    if (instancer_index >= stage->instancer_animations.size()) {
+        return USD_BRIDGE_ERROR_INVALID_PRIM;
+    }
+
+    const auto& anim = stage->instancer_animations[instancer_index];
+    out_data->instancer_index = instancer_index;
+    out_data->instance_count = anim.instance_count;
+
+    if (anim.time_samples.empty()) {
+        out_data->time_samples = nullptr;
+        out_data->time_sample_count = 0;
+        out_data->transforms = nullptr;
+    } else {
+        out_data->time_samples = anim.time_samples.data();
+        out_data->time_sample_count = anim.time_samples.size();
+        out_data->transforms = anim.transforms.data();
+    }
+
+    return USD_BRIDGE_SUCCESS;
+}
+
+UsdBridgeError usd_bridge_get_camera_xform_samples(
+    const UsdBridgeStage* stage,
+    const char* camera_path,
+    const UsdBridgeXformSample** out_samples,
+    size_t* out_count
+) {
+    if (!stage || !camera_path || !out_samples || !out_count) {
+        return USD_BRIDGE_ERROR_NULL_POINTER;
+    }
+
+    cache_animation_data(const_cast<UsdBridgeStage*>(stage));
+
+    std::string path_str(camera_path);
+
+    for (const auto& cam_anim : stage->camera_animations) {
+        if (cam_anim.path == path_str) {
+            if (cam_anim.xform_samples.empty()) {
+                *out_samples = nullptr;
+                *out_count = 0;
+            } else {
+                *out_samples = reinterpret_cast<const UsdBridgeXformSample*>(cam_anim.xform_samples.data());
+                *out_count = cam_anim.xform_samples.size();
+            }
+            return USD_BRIDGE_SUCCESS;
+        }
+    }
+
+    // Camera not found or has no animation
+    *out_samples = nullptr;
+    *out_count = 0;
+    return USD_BRIDGE_SUCCESS;
+}
+
+// ============================================================================
+// Vertex Animation
+// ============================================================================
+
+/// Cache vertex animation info for all meshes
+static void cache_vertex_animation_data(UsdBridgeStage* bridge) {
+    if (bridge->vertex_animation_cached) return;
+
+    // Ensure stage data is cached first
+    cache_stage_data(bridge);
+
+    bridge->vertex_animations.clear();
+    bridge->vertex_animations.reserve(bridge->meshes.size());
+
+    for (size_t mesh_idx = 0; mesh_idx < bridge->meshes.size(); ++mesh_idx) {
+        const auto& mesh = bridge->meshes[mesh_idx];
+        UsdPrim prim = bridge->stage->GetPrimAtPath(SdfPath(mesh.path));
+
+        CachedVertexAnimation anim;
+
+        if (prim && prim.IsA<UsdGeomMesh>()) {
+            UsdGeomMesh geomMesh(prim);
+            UsdAttribute pointsAttr = geomMesh.GetPointsAttr();
+
+            std::vector<double> timeSamples;
+            if (pointsAttr.GetTimeSamples(&timeSamples) && timeSamples.size() > 1) {
+                anim.has_animated_vertices = true;
+                anim.time_samples = std::move(timeSamples);
+                std::cout << "[USD_BRIDGE] Mesh " << mesh.path << " has vertex animation ("
+                          << anim.time_samples.size() << " time samples)" << std::endl;
+            }
+        }
+
+        bridge->vertex_animations.push_back(std::move(anim));
+    }
+
+    bridge->vertex_animation_cached = true;
+}
+
+UsdBridgeError usd_bridge_get_mesh_vertex_animation_info(
+    const UsdBridgeStage* stage,
+    size_t mesh_index,
+    UsdBridgeVertexAnimationInfo* out_info
+) {
+    if (!stage || !out_info) {
+        return USD_BRIDGE_ERROR_NULL_POINTER;
+    }
+
+    cache_vertex_animation_data(const_cast<UsdBridgeStage*>(stage));
+
+    if (mesh_index >= stage->vertex_animations.size()) {
+        return USD_BRIDGE_ERROR_INVALID_PRIM;
+    }
+
+    const auto& anim = stage->vertex_animations[mesh_index];
+    out_info->has_animated_vertices = anim.has_animated_vertices ? 1 : 0;
+    out_info->time_sample_count = anim.time_samples.size();
+    out_info->time_samples = anim.time_samples.empty() ? nullptr : anim.time_samples.data();
+
+    return USD_BRIDGE_SUCCESS;
+}
+
+UsdBridgeError usd_bridge_get_mesh_vertices_at_time(
+    const UsdBridgeStage* stage,
+    size_t mesh_index,
+    double time,
+    const float** out_vertices,
+    size_t* out_vertex_count
+) {
+    if (!stage || !out_vertices || !out_vertex_count) {
+        return USD_BRIDGE_ERROR_NULL_POINTER;
+    }
+
+    cache_vertex_animation_data(const_cast<UsdBridgeStage*>(stage));
+
+    if (mesh_index >= stage->meshes.size()) {
+        return USD_BRIDGE_ERROR_INVALID_PRIM;
+    }
+
+    const auto& mesh = stage->meshes[mesh_index];
+    auto& anim = const_cast<CachedVertexAnimation&>(stage->vertex_animations[mesh_index]);
+
+    // If not animated, return cached static vertices
+    if (!anim.has_animated_vertices) {
+        *out_vertices = mesh.vertices.data();
+        *out_vertex_count = mesh.vertices.size() / 3;
+        return USD_BRIDGE_SUCCESS;
+    }
+
+    // Get mesh prim and query vertices at the specified time
+    UsdPrim prim = stage->stage->GetPrimAtPath(SdfPath(mesh.path));
+    if (!prim || !prim.IsA<UsdGeomMesh>()) {
+        return USD_BRIDGE_ERROR_INVALID_PRIM;
+    }
+
+    UsdGeomMesh geomMesh(prim);
+    VtArray<GfVec3f> points;
+    geomMesh.GetPointsAttr().Get(&points, UsdTimeCode(time));
+
+    // Copy to temp buffer
+    anim.temp_vertices.clear();
+    anim.temp_vertices.reserve(points.size() * 3);
+    for (const auto& p : points) {
+        anim.temp_vertices.push_back(p[0]);
+        anim.temp_vertices.push_back(p[1]);
+        anim.temp_vertices.push_back(p[2]);
+    }
+
+    *out_vertices = anim.temp_vertices.data();
+    *out_vertex_count = points.size();
+
+    return USD_BRIDGE_SUCCESS;
 }

@@ -142,6 +142,121 @@ impl Prototype {
     }
 }
 
+/// Timeline information from the USD stage.
+#[derive(Clone, Debug)]
+pub struct TimelineInfo {
+    /// Start frame
+    pub start_frame: f64,
+    /// End frame
+    pub end_frame: f64,
+    /// Frames per second
+    pub fps: f64,
+}
+
+impl Default for TimelineInfo {
+    fn default() -> Self {
+        Self {
+            start_frame: 0.0,
+            end_frame: 0.0,
+            fps: 24.0,
+        }
+    }
+}
+
+/// A transform keyframe at a specific time.
+#[derive(Clone, Debug)]
+pub struct TransformKeyframe {
+    /// Time code for this keyframe
+    pub time: f64,
+    /// Transform at this time
+    pub transform: Transform,
+}
+
+/// An animated transform with optional keyframes.
+#[derive(Clone, Debug)]
+pub struct AnimatedTransform {
+    /// Static transform (used when no keyframes or for base evaluation)
+    pub static_transform: Transform,
+    /// Optional keyframes for animation
+    pub keyframes: Option<Vec<TransformKeyframe>>,
+}
+
+impl AnimatedTransform {
+    /// Create a static (non-animated) transform.
+    pub fn static_only(transform: Transform) -> Self {
+        Self {
+            static_transform: transform,
+            keyframes: None,
+        }
+    }
+
+    /// Create an animated transform with keyframes.
+    pub fn with_keyframes(static_transform: Transform, keyframes: Vec<TransformKeyframe>) -> Self {
+        Self {
+            static_transform,
+            keyframes: if keyframes.is_empty() {
+                None
+            } else {
+                Some(keyframes)
+            },
+        }
+    }
+
+    /// Check if this transform has animation.
+    pub fn is_animated(&self) -> bool {
+        self.keyframes.as_ref().is_some_and(|k| !k.is_empty())
+    }
+
+    /// Evaluate the transform at a given time.
+    ///
+    /// Returns the interpolated transform between keyframes, or the static
+    /// transform if there are no keyframes.
+    pub fn evaluate(&self, time: f64) -> Transform {
+        let keyframes = match &self.keyframes {
+            Some(kf) if !kf.is_empty() => kf,
+            _ => return self.static_transform.clone(),
+        };
+
+        // Handle edge cases
+        if keyframes.len() == 1 {
+            return keyframes[0].transform.clone();
+        }
+
+        let first = &keyframes[0];
+        let last = &keyframes[keyframes.len() - 1];
+
+        // Before first keyframe
+        if time <= first.time {
+            return first.transform.clone();
+        }
+
+        // After last keyframe
+        if time >= last.time {
+            return last.transform.clone();
+        }
+
+        // Find surrounding keyframes
+        for i in 0..keyframes.len() - 1 {
+            let kf0 = &keyframes[i];
+            let kf1 = &keyframes[i + 1];
+
+            if time >= kf0.time && time <= kf1.time {
+                // Compute interpolation factor
+                let t = if (kf1.time - kf0.time).abs() < 1e-10 {
+                    0.0
+                } else {
+                    ((time - kf0.time) / (kf1.time - kf0.time)) as f32
+                };
+
+                return Transform::lerp(&kf0.transform, &kf1.transform, t);
+            }
+        }
+
+        // Fallback
+        self.static_transform.clone()
+    }
+}
+
 /// Transform components that can be composed into a matrix.
 #[derive(Clone, Debug)]
 pub struct Transform {
@@ -192,6 +307,18 @@ impl Transform {
     pub fn to_matrix(&self) -> Mat4 {
         Mat4::from_scale_rotation_translation(self.scale, self.rotation, self.translation)
     }
+
+    /// Linearly interpolate between two transforms.
+    ///
+    /// Translation and scale use linear interpolation.
+    /// Rotation uses spherical linear interpolation (slerp).
+    pub fn lerp(a: &Transform, b: &Transform, t: f32) -> Transform {
+        Transform {
+            translation: a.translation.lerp(b.translation, t),
+            rotation: a.rotation.slerp(b.rotation, t),
+            scale: a.scale.lerp(b.scale, t),
+        }
+    }
 }
 
 /// An instance of a prototype with a transform.
@@ -238,11 +365,18 @@ pub struct Scene {
     /// Instances referencing prototypes
     pub instances: Vec<Instance>,
 
+    /// Animated transforms for instances (parallel to instances vec)
+    /// If Some, contains animation data for the corresponding instance.
+    pub instance_animations: Vec<Option<AnimatedTransform>>,
+
     /// Materials used in the scene
     pub materials: Vec<Arc<Material>>,
 
     /// Scene name (usually from filename)
     pub name: String,
+
+    /// Timeline info (optional, only if stage has authored time range)
+    pub timeline: Option<TimelineInfo>,
 }
 
 impl Scene {
@@ -265,6 +399,27 @@ impl Scene {
     /// Add an instance of a prototype.
     pub fn add_instance(&mut self, prototype_id: usize, transform: Transform) {
         self.instances.push(Instance::new(prototype_id, transform));
+        self.instance_animations.push(None);
+    }
+
+    /// Add an instance with animation data.
+    pub fn add_animated_instance(
+        &mut self,
+        prototype_id: usize,
+        transform: Transform,
+        animation: AnimatedTransform,
+    ) {
+        self.instances.push(Instance::new(prototype_id, transform));
+        self.instance_animations.push(Some(animation));
+    }
+
+    /// Check if the scene has any animation.
+    pub fn has_animation(&self) -> bool {
+        self.timeline.is_some()
+            && self
+                .instance_animations
+                .iter()
+                .any(|opt| opt.as_ref().is_some_and(|a| a.is_animated()))
     }
 
     /// Add a material to the scene and return its ID.
@@ -384,5 +539,64 @@ mod tests {
 
         assert!((recovered.translation - transform.translation).length() < 0.001);
         assert!((recovered.scale - transform.scale).length() < 0.001);
+    }
+
+    #[test]
+    fn test_animated_transform_static() {
+        let transform = Transform::from_translation(Vec3::new(1.0, 2.0, 3.0));
+        let animated = AnimatedTransform::static_only(transform.clone());
+
+        assert!(!animated.is_animated());
+        let result = animated.evaluate(0.0);
+        assert!((result.translation - transform.translation).length() < 0.001);
+    }
+
+    #[test]
+    fn test_animated_transform_interpolation() {
+        let t0 = Transform::from_translation(Vec3::new(0.0, 0.0, 0.0));
+        let t1 = Transform::from_translation(Vec3::new(10.0, 0.0, 0.0));
+
+        let keyframes = vec![
+            TransformKeyframe {
+                time: 0.0,
+                transform: t0.clone(),
+            },
+            TransformKeyframe {
+                time: 10.0,
+                transform: t1.clone(),
+            },
+        ];
+
+        let animated = AnimatedTransform::with_keyframes(t0, keyframes);
+
+        assert!(animated.is_animated());
+
+        // At keyframe
+        let at_0 = animated.evaluate(0.0);
+        assert!((at_0.translation.x - 0.0).abs() < 0.001);
+
+        let at_10 = animated.evaluate(10.0);
+        assert!((at_10.translation.x - 10.0).abs() < 0.001);
+
+        // Midpoint
+        let at_5 = animated.evaluate(5.0);
+        assert!((at_5.translation.x - 5.0).abs() < 0.001);
+
+        // Before first keyframe
+        let before = animated.evaluate(-1.0);
+        assert!((before.translation.x - 0.0).abs() < 0.001);
+
+        // After last keyframe
+        let after = animated.evaluate(15.0);
+        assert!((after.translation.x - 10.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_transform_lerp() {
+        let a = Transform::from_translation(Vec3::new(0.0, 0.0, 0.0));
+        let b = Transform::from_translation(Vec3::new(10.0, 20.0, 30.0));
+
+        let mid = Transform::lerp(&a, &b, 0.5);
+        assert!((mid.translation - Vec3::new(5.0, 10.0, 15.0)).length() < 0.001);
     }
 }

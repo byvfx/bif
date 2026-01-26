@@ -64,6 +64,143 @@ void usd_bridge_close_stage(UsdBridgeStage* stage);
 void usd_bridge_clear_cache(UsdBridgeStage* stage);
 
 // ============================================================================
+// Timeline / Animation
+// ============================================================================
+
+/// Timeline metadata from the USD stage
+typedef struct UsdBridgeTimelineData {
+    /// Start time code (first frame)
+    double start_time_code;
+    /// End time code (last frame)
+    double end_time_code;
+    /// Frames per second
+    double frames_per_second;
+    /// 1 if the stage has authored time range metadata, 0 otherwise
+    int has_authored_time_range;
+} UsdBridgeTimelineData;
+
+/// Get timeline metadata from the stage.
+///
+/// @param stage Stage handle
+/// @param out_data Pointer to receive timeline data
+/// @return USD_BRIDGE_SUCCESS on success
+UsdBridgeError usd_bridge_get_timeline(
+    const UsdBridgeStage* stage,
+    UsdBridgeTimelineData* out_data
+);
+
+/// A single transform sample at a specific time
+typedef struct UsdBridgeXformSample {
+    /// Time code for this sample
+    double time;
+    /// 4x4 column-major transform matrix
+    float transform[16];
+} UsdBridgeXformSample;
+
+/// Animated mesh data with time samples
+typedef struct UsdBridgeAnimatedMeshData {
+    /// Mesh index this animation applies to
+    size_t mesh_index;
+    /// Array of transform samples (NULL if static)
+    const UsdBridgeXformSample* xform_samples;
+    /// Number of transform samples (0 if static)
+    size_t xform_sample_count;
+} UsdBridgeAnimatedMeshData;
+
+/// Get animated transform samples for a mesh.
+/// Returns the xform time samples for the mesh's world transform.
+///
+/// @param stage Stage handle
+/// @param mesh_index Mesh index
+/// @param out_data Pointer to receive animation data
+/// @return USD_BRIDGE_SUCCESS on success
+UsdBridgeError usd_bridge_get_mesh_animation(
+    const UsdBridgeStage* stage,
+    size_t mesh_index,
+    UsdBridgeAnimatedMeshData* out_data
+);
+
+/// Animated instancer data - transforms at multiple time samples
+typedef struct UsdBridgeAnimatedInstancerData {
+    /// Instancer index this animation applies to
+    size_t instancer_index;
+    /// Array of time sample values
+    const double* time_samples;
+    /// Number of time samples
+    size_t time_sample_count;
+    /// Number of instances
+    size_t instance_count;
+    /// Flattened transforms: [time_idx * instance_count + instance_idx] -> float[16]
+    /// Total size: time_sample_count * instance_count * 16 floats
+    const float* transforms;
+} UsdBridgeAnimatedInstancerData;
+
+/// Get animated instance transforms for a point instancer.
+///
+/// @param stage Stage handle
+/// @param instancer_index Instancer index
+/// @param out_data Pointer to receive animation data
+/// @return USD_BRIDGE_SUCCESS on success
+UsdBridgeError usd_bridge_get_instancer_animation(
+    const UsdBridgeStage* stage,
+    size_t instancer_index,
+    UsdBridgeAnimatedInstancerData* out_data
+);
+
+/// Get animated transform samples for a camera by path.
+///
+/// @param stage Stage handle
+/// @param camera_path Path to the UsdGeomCamera prim
+/// @param out_samples Pointer to receive sample array (owned by stage, freed on close)
+/// @param out_count Pointer to receive sample count
+/// @return USD_BRIDGE_SUCCESS on success, USD_BRIDGE_ERROR_INVALID_PRIM if not found
+UsdBridgeError usd_bridge_get_camera_xform_samples(
+    const UsdBridgeStage* stage,
+    const char* camera_path,
+    const UsdBridgeXformSample** out_samples,
+    size_t* out_count
+);
+
+/// Vertex animation info for a mesh
+typedef struct UsdBridgeVertexAnimationInfo {
+    /// 1 if mesh has animated vertices, 0 otherwise
+    int has_animated_vertices;
+    /// Number of time samples (0 if not animated)
+    size_t time_sample_count;
+    /// Array of time sample values (NULL if not animated)
+    const double* time_samples;
+} UsdBridgeVertexAnimationInfo;
+
+/// Check if a mesh has animated vertices (point deformation).
+///
+/// @param stage Stage handle
+/// @param mesh_index Mesh index
+/// @param out_info Pointer to receive animation info
+/// @return USD_BRIDGE_SUCCESS on success
+UsdBridgeError usd_bridge_get_mesh_vertex_animation_info(
+    const UsdBridgeStage* stage,
+    size_t mesh_index,
+    UsdBridgeVertexAnimationInfo* out_info
+);
+
+/// Get mesh vertices at a specific time.
+/// For animated meshes, this returns the interpolated vertex positions.
+///
+/// @param stage Stage handle
+/// @param mesh_index Mesh index
+/// @param time Time code to sample at
+/// @param out_vertices Pointer to receive vertex array (x,y,z triplets)
+/// @param out_vertex_count Pointer to receive vertex count
+/// @return USD_BRIDGE_SUCCESS on success
+UsdBridgeError usd_bridge_get_mesh_vertices_at_time(
+    const UsdBridgeStage* stage,
+    size_t mesh_index,
+    double time,
+    const float** out_vertices,
+    size_t* out_vertex_count
+);
+
+// ============================================================================
 // Scene Traversal
 // ============================================================================
 
