@@ -30,7 +30,10 @@ pub mod oiio;
 
 // Re-export commonly used types
 pub use mesh::Mesh;
-pub use scene::{AnimatedTransform, Instance, Material, Prototype, Scene, TimelineInfo, Transform, TransformKeyframe};
+pub use scene::{
+    AnimatedTransform, Instance, Material, Prototype, Scene, TimelineInfo, Transform,
+    TransformKeyframe,
+};
 pub use texture::{Texture, TextureCache, TextureError, TextureResult};
 pub use usd::{load_usd, load_usda, load_usda_from_string};
 

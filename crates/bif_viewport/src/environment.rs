@@ -375,5 +375,4 @@ fn upload_brdf_lut(queue: &Queue, texture: &wgpu::Texture, lut: &BrdfLut) {
     );
 }
 
-
 use wgpu::util::DeviceExt;

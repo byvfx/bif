@@ -1056,9 +1056,8 @@ impl UsdStage {
             Vec::new()
         } else {
             let total_matrices = raw_data.time_sample_count * raw_data.instance_count;
-            let flat_data = unsafe {
-                std::slice::from_raw_parts(raw_data.transforms, total_matrices * 16)
-            };
+            let flat_data =
+                unsafe { std::slice::from_raw_parts(raw_data.transforms, total_matrices * 16) };
 
             // Reshape: [time_sample_count][instance_count] -> Vec<Vec<Mat4>>
             let mut result = Vec::with_capacity(raw_data.time_sample_count);
@@ -1095,7 +1094,12 @@ impl UsdStage {
         let mut count: usize = 0;
 
         let result = unsafe {
-            usd_bridge_get_camera_xform_samples(self.raw, c_path.as_ptr(), &mut samples_ptr, &mut count)
+            usd_bridge_get_camera_xform_samples(
+                self.raw,
+                c_path.as_ptr(),
+                &mut samples_ptr,
+                &mut count,
+            )
         };
 
         if result != UsdBridgeErrorCode::Success {
@@ -1182,9 +1186,8 @@ impl UsdStage {
         }
 
         // Copy the vertices (C++ uses a temporary buffer that may be reused)
-        let vertices = unsafe {
-            std::slice::from_raw_parts(vertices_ptr, vertex_count * 3).to_vec()
-        };
+        let vertices =
+            unsafe { std::slice::from_raw_parts(vertices_ptr, vertex_count * 3).to_vec() };
 
         Ok(vertices)
     }

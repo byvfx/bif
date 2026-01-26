@@ -72,11 +72,14 @@ impl HdriEnvironment {
         let xi2 = gen_f32_generic(rng);
 
         // Sample row via marginal CDF
-        let y = self.marginal_cdf.partition_point(|&v| v <= xi1)
+        let y = self
+            .marginal_cdf
+            .partition_point(|&v| v <= xi1)
             .saturating_sub(1)
             .min(self.hdr.height as usize - 1);
         // Sample column via conditional CDF for this row
-        let x = self.conditional_cdfs[y].partition_point(|&v| v <= xi2)
+        let x = self.conditional_cdfs[y]
+            .partition_point(|&v| v <= xi2)
             .saturating_sub(1)
             .min(self.hdr.width as usize - 1);
 

@@ -96,8 +96,7 @@ impl ComputeIbl {
 
         // 2. Create output cubemap textures (with STORAGE_BINDING)
         let cubemap = create_storage_cubemap(device, CUBEMAP_SIZE, 1, "Compute Cubemap");
-        let irradiance =
-            create_storage_cubemap(device, IRRADIANCE_SIZE, 1, "Compute Irradiance");
+        let irradiance = create_storage_cubemap(device, IRRADIANCE_SIZE, 1, "Compute Irradiance");
         let prefiltered = create_storage_cubemap(
             device,
             PREFILTER_SIZE,
@@ -341,14 +340,10 @@ impl ComputeIbl {
         }
     }
 
-    fn create_equirect_pipeline(
-        device: &Device,
-    ) -> (wgpu::ComputePipeline, wgpu::BindGroupLayout) {
+    fn create_equirect_pipeline(device: &Device) -> (wgpu::ComputePipeline, wgpu::BindGroupLayout) {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Equirect to Cube Shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!("shaders/equirect_to_cube.wgsl").into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/equirect_to_cube.wgsl").into()),
         });
 
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -465,9 +460,7 @@ impl ComputeIbl {
     ) -> (wgpu::ComputePipeline, wgpu::BindGroupLayout) {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Prefilter Compute Shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!("shaders/prefilter_compute.wgsl").into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/prefilter_compute.wgsl").into()),
         });
 
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {

@@ -201,11 +201,18 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
                             mesh_data.path,
                             keyframes.len()
                         );
-                        Some(AnimatedTransform::with_keyframes(transform.clone(), keyframes))
+                        Some(AnimatedTransform::with_keyframes(
+                            transform.clone(),
+                            keyframes,
+                        ))
                     }
                 }
                 Err(e) => {
-                    log::warn!("Failed to get animation for mesh {}: {:?}", mesh_data.path, e);
+                    log::warn!(
+                        "Failed to get animation for mesh {}: {:?}",
+                        mesh_data.path,
+                        e
+                    );
                     None
                 }
             }
