@@ -2,13 +2,14 @@
 
 > Production-grade renderer inspired by Isotropix Clarisse, built in Rust
 
-## Current Status: Milestones 0-17.2 Complete
+## Current Status: Milestone 18 Complete
 
-**Textured PBR + IBL + OIIO Pipeline** - Industry-standard texture workflow
+**Animation + Timeline Playback** - Time-sampled USD animation support
 
 - Dual rendering: Vulkan viewport (60 FPS) + Ivar CPU path tracer
 - GPU instancing: 10K+ instances with LOD culling
 - USD support: USDA (pure Rust) + USDC/references (C++ bridge)
+- **Animation:** Timeline UI, transform animation, multi-mesh rendering
 - Intel Embree 4: Production-quality ray tracing
 - Materials: UsdPreviewSurface + MaterialX standard_surface
 - Disney Principled BSDF with NEE/MIS environment lighting
@@ -16,9 +17,9 @@
 - Textured PBR viewport with per-face materials (GeomSubsets)
 - OpenImageIO integration with subprocess .tx conversion (optional)
 - Node graph + scene browser + property inspector
-- 135+ tests passing across 4 crates
+- 135+ tests passing across 6 crates
 
-**Next:** [Milestone 18](MILESTONES.md) (Animation + Motion Blur)
+**Next:** [Milestone 18.1](MILESTONES.md) (Vertex Animation)
 
 ---
 
@@ -98,13 +99,13 @@ bif/
 
 ---
 
-## Statistics (Milestones 0-17.2)
+## Statistics (Milestone 18)
 
 | Metric | Value |
 |--------|-------|
-| Total LOC | ~10,000 |
+| Total LOC | ~12,000 |
 | Tests Passing | 135+ |
-| Milestones Complete | 17.2 |
+| Milestones Complete | 18 |
 | Build Time (dev) | ~5s |
 | Runtime FPS | 60+ (VSync) |
 | Instances Rendered | 10K+ with LOD |
@@ -193,7 +194,7 @@ Use the egui side panel to switch between:
 
 See [MILESTONES.md](MILESTONES.md) for complete history and future plans.
 
-### Completed (Milestones 0-17.2)
+### Completed (Milestone 18)
 
 - Math library, wgpu viewport, camera controls
 - OBJ/USD loading, GPU instancing, Embree 4
@@ -205,10 +206,11 @@ See [MILESTONES.md](MILESTONES.md) for complete history and future plans.
 - Textured PBR viewport with GeomSubsets
 - OpenImageIO + .tx texture pipeline (subprocess)
 - HDRI IBL: GPU compute prefiltering, async loading
+- **Animation:** Timeline UI, transform animation, multi-mesh rendering
 
 ### Next Up
 
-- **Milestone 18:** Animation + Motion Blur
+- **Milestone 18.1:** Vertex Animation (point deformation)
 - **Milestone 19:** Frame Rendering
 - **Milestone 20:** Scene Interactivity + Keyframing
 
@@ -246,5 +248,5 @@ MIT License - See [LICENSE](LICENSE) for details
 
 ---
 
-**Last Updated:** January 24, 2026
-**Status:** Milestones 0-17.2 Complete | Next: M18 (Animation + Motion Blur)
+**Last Updated:** January 26, 2026
+**Status:** Milestone 18 Complete | Next: M18.1 (Vertex Animation)
