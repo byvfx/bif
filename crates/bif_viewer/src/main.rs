@@ -340,9 +340,10 @@ impl ApplicationHandler for App {
                 let delta_time = (now - self.last_frame_time).as_secs_f32();
                 self.last_frame_time = now;
 
-                // Update FPS counter
+                // Update FPS counter and animation
                 if let Some(renderer) = &mut self.renderer {
                     renderer.update_fps(delta_time);
+                    renderer.update_animation(delta_time);
                 }
 
                 // Handle keyboard movement

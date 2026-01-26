@@ -37,7 +37,10 @@ mod loader;
 mod parser;
 mod types;
 
-pub use cpp_bridge::{UsdBridgeError, UsdInstancerData, UsdMeshData, UsdStage};
+pub use cpp_bridge::{
+    TransformSample, UsdAnimatedInstancerData, UsdAnimatedMeshData, UsdBridgeError,
+    UsdInstancerData, UsdMeshData, UsdStage, UsdTimelineData,
+};
 pub use loader::*;
 pub use parser::*;
 pub use types::*;

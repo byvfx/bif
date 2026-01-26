@@ -83,6 +83,49 @@ struct UsdBridgePrimInfoRaw {
     child_count: usize,
 }
 
+/// Timeline data from C API
+#[repr(C)]
+struct UsdBridgeTimelineDataRaw {
+    start_time_code: f64,
+    end_time_code: f64,
+    frames_per_second: f64,
+    has_authored_time_range: i32,
+}
+
+/// A single transform sample at a specific time
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct UsdBridgeXformSampleRaw {
+    time: f64,
+    transform: [f32; 16],
+}
+
+/// Animated mesh data from C API
+#[repr(C)]
+struct UsdBridgeAnimatedMeshDataRaw {
+    mesh_index: usize,
+    xform_samples: *const UsdBridgeXformSampleRaw,
+    xform_sample_count: usize,
+}
+
+/// Animated instancer data from C API
+#[repr(C)]
+struct UsdBridgeAnimatedInstancerDataRaw {
+    instancer_index: usize,
+    time_samples: *const f64,
+    time_sample_count: usize,
+    instance_count: usize,
+    transforms: *const f32,
+}
+
+/// Vertex animation info from C API
+#[repr(C)]
+struct UsdBridgeVertexAnimationInfoRaw {
+    has_animated_vertices: i32,
+    time_sample_count: usize,
+    time_samples: *const f64,
+}
+
 /// Material data from C API (UsdPreviewSurface or MaterialX)
 #[repr(C)]
 struct UsdBridgeMaterialDataRaw {
@@ -197,6 +240,46 @@ extern "C" {
         stage: *const UsdBridgeStageRaw,
         mesh_index: usize,
         out_path: *mut *const std::ffi::c_char,
+    ) -> UsdBridgeErrorCode;
+
+    // Timeline APIs
+    fn usd_bridge_get_timeline(
+        stage: *const UsdBridgeStageRaw,
+        out_data: *mut UsdBridgeTimelineDataRaw,
+    ) -> UsdBridgeErrorCode;
+
+    // Animation APIs
+    fn usd_bridge_get_mesh_animation(
+        stage: *const UsdBridgeStageRaw,
+        mesh_index: usize,
+        out_data: *mut UsdBridgeAnimatedMeshDataRaw,
+    ) -> UsdBridgeErrorCode;
+
+    fn usd_bridge_get_instancer_animation(
+        stage: *const UsdBridgeStageRaw,
+        instancer_index: usize,
+        out_data: *mut UsdBridgeAnimatedInstancerDataRaw,
+    ) -> UsdBridgeErrorCode;
+
+    fn usd_bridge_get_camera_xform_samples(
+        stage: *const UsdBridgeStageRaw,
+        camera_path: *const std::ffi::c_char,
+        out_samples: *mut *const UsdBridgeXformSampleRaw,
+        out_count: *mut usize,
+    ) -> UsdBridgeErrorCode;
+
+    fn usd_bridge_get_mesh_vertex_animation_info(
+        stage: *const UsdBridgeStageRaw,
+        mesh_index: usize,
+        out_info: *mut UsdBridgeVertexAnimationInfoRaw,
+    ) -> UsdBridgeErrorCode;
+
+    fn usd_bridge_get_mesh_vertices_at_time(
+        stage: *const UsdBridgeStageRaw,
+        mesh_index: usize,
+        time: f64,
+        out_vertices: *mut *const f32,
+        out_vertex_count: *mut usize,
     ) -> UsdBridgeErrorCode;
 }
 
@@ -360,6 +443,69 @@ pub struct UsdMaterialData {
 
     /// True if material is from MaterialX, false for UsdPreviewSurface
     pub is_materialx: bool,
+}
+
+/// Timeline metadata extracted from USD stage.
+#[derive(Clone, Debug)]
+pub struct UsdTimelineData {
+    /// Start time code (first frame)
+    pub start_time_code: f64,
+
+    /// End time code (last frame)
+    pub end_time_code: f64,
+
+    /// Frames per second
+    pub frames_per_second: f64,
+
+    /// Whether the stage has authored time range metadata
+    pub has_authored_time_range: bool,
+}
+
+impl Default for UsdTimelineData {
+    fn default() -> Self {
+        Self {
+            start_time_code: 0.0,
+            end_time_code: 0.0,
+            frames_per_second: 24.0,
+            has_authored_time_range: false,
+        }
+    }
+}
+
+/// A single transform sample at a specific time.
+#[derive(Clone, Debug)]
+pub struct TransformSample {
+    /// Time code for this sample
+    pub time: f64,
+
+    /// 4x4 transform matrix
+    pub transform: Mat4,
+}
+
+/// Animated mesh data with time samples.
+#[derive(Clone, Debug)]
+pub struct UsdAnimatedMeshData {
+    /// Mesh index this animation applies to
+    pub mesh_index: usize,
+
+    /// Transform samples (empty if static)
+    pub xform_samples: Vec<TransformSample>,
+}
+
+/// Animated instancer data with per-instance transforms at multiple times.
+#[derive(Clone, Debug)]
+pub struct UsdAnimatedInstancerData {
+    /// Instancer index this animation applies to
+    pub instancer_index: usize,
+
+    /// Time sample values
+    pub time_samples: Vec<f64>,
+
+    /// Number of instances
+    pub instance_count: usize,
+
+    /// Transforms per time sample: transforms[time_idx][instance_idx]
+    pub transforms: Vec<Vec<Mat4>>,
 }
 
 // ============================================================================
@@ -794,6 +940,253 @@ impl UsdStage {
         }
 
         Ok(())
+    }
+
+    // ========================================================================
+    // Timeline / Animation
+    // ========================================================================
+
+    /// Get timeline metadata from the stage.
+    ///
+    /// Returns start/end time codes, FPS, and whether the stage has authored time range.
+    pub fn get_timeline(&self) -> UsdBridgeResult<UsdTimelineData> {
+        let mut raw_data = UsdBridgeTimelineDataRaw {
+            start_time_code: 0.0,
+            end_time_code: 0.0,
+            frames_per_second: 24.0,
+            has_authored_time_range: 0,
+        };
+
+        let result = unsafe { usd_bridge_get_timeline(self.raw, &mut raw_data) };
+
+        if result != UsdBridgeErrorCode::Success {
+            return Err(result.into());
+        }
+
+        Ok(UsdTimelineData {
+            start_time_code: raw_data.start_time_code,
+            end_time_code: raw_data.end_time_code,
+            frames_per_second: raw_data.frames_per_second,
+            has_authored_time_range: raw_data.has_authored_time_range != 0,
+        })
+    }
+
+    /// Get animation data for a mesh by index.
+    ///
+    /// Returns transform samples if the mesh has animated transforms.
+    pub fn get_mesh_animation(&self, mesh_index: usize) -> UsdBridgeResult<UsdAnimatedMeshData> {
+        let mut raw_data = UsdBridgeAnimatedMeshDataRaw {
+            mesh_index: 0,
+            xform_samples: ptr::null(),
+            xform_sample_count: 0,
+        };
+
+        let result = unsafe { usd_bridge_get_mesh_animation(self.raw, mesh_index, &mut raw_data) };
+
+        if result != UsdBridgeErrorCode::Success {
+            return Err(match result {
+                UsdBridgeErrorCode::InvalidPrim => {
+                    UsdBridgeError::InvalidPrim(format!("mesh index {}", mesh_index))
+                }
+                other => other.into(),
+            });
+        }
+
+        let xform_samples = if raw_data.xform_samples.is_null() || raw_data.xform_sample_count == 0
+        {
+            Vec::new()
+        } else {
+            unsafe {
+                std::slice::from_raw_parts(raw_data.xform_samples, raw_data.xform_sample_count)
+                    .iter()
+                    .map(|s| TransformSample {
+                        time: s.time,
+                        transform: Mat4::from_cols_array(&s.transform),
+                    })
+                    .collect()
+            }
+        };
+
+        Ok(UsdAnimatedMeshData {
+            mesh_index: raw_data.mesh_index,
+            xform_samples,
+        })
+    }
+
+    /// Get animation data for an instancer by index.
+    ///
+    /// Returns per-instance transforms at each time sample.
+    pub fn get_instancer_animation(
+        &self,
+        instancer_index: usize,
+    ) -> UsdBridgeResult<UsdAnimatedInstancerData> {
+        let mut raw_data = UsdBridgeAnimatedInstancerDataRaw {
+            instancer_index: 0,
+            time_samples: ptr::null(),
+            time_sample_count: 0,
+            instance_count: 0,
+            transforms: ptr::null(),
+        };
+
+        let result =
+            unsafe { usd_bridge_get_instancer_animation(self.raw, instancer_index, &mut raw_data) };
+
+        if result != UsdBridgeErrorCode::Success {
+            return Err(match result {
+                UsdBridgeErrorCode::InvalidPrim => {
+                    UsdBridgeError::InvalidPrim(format!("instancer index {}", instancer_index))
+                }
+                other => other.into(),
+            });
+        }
+
+        let time_samples = if raw_data.time_samples.is_null() || raw_data.time_sample_count == 0 {
+            Vec::new()
+        } else {
+            unsafe {
+                std::slice::from_raw_parts(raw_data.time_samples, raw_data.time_sample_count)
+                    .to_vec()
+            }
+        };
+
+        let transforms = if raw_data.transforms.is_null()
+            || raw_data.time_sample_count == 0
+            || raw_data.instance_count == 0
+        {
+            Vec::new()
+        } else {
+            let total_matrices = raw_data.time_sample_count * raw_data.instance_count;
+            let flat_data = unsafe {
+                std::slice::from_raw_parts(raw_data.transforms, total_matrices * 16)
+            };
+
+            // Reshape: [time_sample_count][instance_count] -> Vec<Vec<Mat4>>
+            let mut result = Vec::with_capacity(raw_data.time_sample_count);
+            for time_idx in 0..raw_data.time_sample_count {
+                let mut instances = Vec::with_capacity(raw_data.instance_count);
+                for inst_idx in 0..raw_data.instance_count {
+                    let offset = (time_idx * raw_data.instance_count + inst_idx) * 16;
+                    let mut arr = [0.0f32; 16];
+                    arr.copy_from_slice(&flat_data[offset..offset + 16]);
+                    instances.push(Mat4::from_cols_array(&arr));
+                }
+                result.push(instances);
+            }
+            result
+        };
+
+        Ok(UsdAnimatedInstancerData {
+            instancer_index: raw_data.instancer_index,
+            time_samples,
+            instance_count: raw_data.instance_count,
+            transforms,
+        })
+    }
+
+    /// Get animated transform samples for a camera by path.
+    ///
+    /// Returns transform samples if the camera has animated transforms.
+    pub fn get_camera_xform_samples(
+        &self,
+        camera_path: &str,
+    ) -> UsdBridgeResult<Vec<TransformSample>> {
+        let c_path = CString::new(camera_path).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let mut samples_ptr: *const UsdBridgeXformSampleRaw = ptr::null();
+        let mut count: usize = 0;
+
+        let result = unsafe {
+            usd_bridge_get_camera_xform_samples(self.raw, c_path.as_ptr(), &mut samples_ptr, &mut count)
+        };
+
+        if result != UsdBridgeErrorCode::Success {
+            return Err(result.into());
+        }
+
+        if samples_ptr.is_null() || count == 0 {
+            return Ok(Vec::new());
+        }
+
+        let samples = unsafe {
+            std::slice::from_raw_parts(samples_ptr, count)
+                .iter()
+                .map(|s| TransformSample {
+                    time: s.time,
+                    transform: Mat4::from_cols_array(&s.transform),
+                })
+                .collect()
+        };
+
+        Ok(samples)
+    }
+
+    // ========================================================================
+    // Vertex Animation (Point Deformation)
+    // ========================================================================
+
+    /// Check if a mesh has animated vertices (point deformation).
+    ///
+    /// Returns the time samples if animated, or empty vec if static.
+    pub fn get_mesh_vertex_animation_times(&self, mesh_index: usize) -> UsdBridgeResult<Vec<f64>> {
+        let mut info = UsdBridgeVertexAnimationInfoRaw {
+            has_animated_vertices: 0,
+            time_sample_count: 0,
+            time_samples: ptr::null(),
+        };
+
+        let result =
+            unsafe { usd_bridge_get_mesh_vertex_animation_info(self.raw, mesh_index, &mut info) };
+
+        if result != UsdBridgeErrorCode::Success {
+            return Err(result.into());
+        }
+
+        if info.has_animated_vertices == 0 || info.time_samples.is_null() {
+            return Ok(Vec::new());
+        }
+
+        let times = unsafe {
+            std::slice::from_raw_parts(info.time_samples, info.time_sample_count).to_vec()
+        };
+
+        Ok(times)
+    }
+
+    /// Get mesh vertices at a specific time.
+    ///
+    /// For animated meshes, this queries the USD stage for interpolated vertices.
+    /// For static meshes, returns the cached vertices.
+    pub fn get_mesh_vertices_at_time(
+        &self,
+        mesh_index: usize,
+        time: f64,
+    ) -> UsdBridgeResult<Vec<f32>> {
+        let mut vertices_ptr: *const f32 = ptr::null();
+        let mut vertex_count: usize = 0;
+
+        let result = unsafe {
+            usd_bridge_get_mesh_vertices_at_time(
+                self.raw,
+                mesh_index,
+                time,
+                &mut vertices_ptr,
+                &mut vertex_count,
+            )
+        };
+
+        if result != UsdBridgeErrorCode::Success {
+            return Err(result.into());
+        }
+
+        if vertices_ptr.is_null() || vertex_count == 0 {
+            return Ok(Vec::new());
+        }
+
+        // Copy the vertices (C++ uses a temporary buffer that may be reused)
+        let vertices = unsafe {
+            std::slice::from_raw_parts(vertices_ptr, vertex_count * 3).to_vec()
+        };
+
+        Ok(vertices)
     }
 
     // ========================================================================

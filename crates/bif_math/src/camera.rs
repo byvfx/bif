@@ -107,6 +107,29 @@ impl Camera {
 
         self.position = self.target + Vec3::new(x, y, z);
     }
+
+    /// Set camera from a world transform matrix (e.g., from USD camera animation).
+    ///
+    /// The matrix is treated as the camera's world transform, where:
+    /// - Translation gives camera position
+    /// - -Z axis gives view direction (camera looks down -Z in its local space)
+    pub fn set_from_matrix(&mut self, matrix: Mat4) {
+        // Extract position from translation column
+        self.position = Vec3::new(matrix.w_axis.x, matrix.w_axis.y, matrix.w_axis.z);
+
+        // Camera looks down -Z in its local space
+        let forward = -Vec3::new(matrix.z_axis.x, matrix.z_axis.y, matrix.z_axis.z).normalize();
+        let up = Vec3::new(matrix.y_axis.x, matrix.y_axis.y, matrix.y_axis.z).normalize();
+
+        // Set target along view direction
+        self.target = self.position + forward * self.distance;
+        self.up = up;
+
+        // Recalculate yaw/pitch from new direction
+        let direction = (self.position - self.target).normalize();
+        self.yaw = direction.z.atan2(direction.x);
+        self.pitch = direction.y.asin();
+    }
 }
 
 #[cfg(test)]

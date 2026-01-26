@@ -56,6 +56,83 @@ pub use node_graph::{render_node_graph, NodeGraphEvent, NodeGraphState, SceneNod
 pub use property_inspector::{render_property_inspector, PrimProperties};
 pub use scene_browser::{EmptyPrimProvider, PrimDataProvider, PrimDisplayInfo, SceneBrowserState};
 
+/// Timeline state for animation playback.
+#[derive(Clone, Debug)]
+pub struct TimelineState {
+    /// Whether animation is playing
+    pub is_playing: bool,
+    /// Current frame
+    pub current_frame: f64,
+    /// Start frame from USD stage
+    pub start_frame: f64,
+    /// End frame from USD stage
+    pub end_frame: f64,
+    /// Frames per second
+    pub fps: f64,
+    /// Loop playback when reaching end
+    pub loop_playback: bool,
+    /// Use USD camera instead of viewport camera
+    pub use_usd_camera: bool,
+}
+
+impl Default for TimelineState {
+    fn default() -> Self {
+        Self {
+            is_playing: false,
+            current_frame: 0.0,
+            start_frame: 0.0,
+            end_frame: 0.0,
+            fps: 24.0,
+            loop_playback: true,
+            use_usd_camera: false,
+        }
+    }
+}
+
+impl TimelineState {
+    /// Check if the timeline has a valid frame range.
+    pub fn has_range(&self) -> bool {
+        self.end_frame > self.start_frame
+    }
+
+    /// Advance the timeline by delta time.
+    pub fn advance(&mut self, delta_time: f32) {
+        if !self.is_playing || !self.has_range() {
+            return;
+        }
+
+        let frame_delta = delta_time as f64 * self.fps;
+        self.current_frame += frame_delta;
+
+        if self.current_frame > self.end_frame {
+            if self.loop_playback {
+                self.current_frame = self.start_frame;
+            } else {
+                self.current_frame = self.end_frame;
+                self.is_playing = false;
+            }
+        }
+    }
+
+    /// Go to start frame.
+    pub fn go_to_start(&mut self) {
+        self.current_frame = self.start_frame;
+    }
+
+    /// Go to end frame.
+    pub fn go_to_end(&mut self) {
+        self.current_frame = self.end_frame;
+    }
+
+    /// Set timeline from scene info.
+    pub fn set_from_scene(&mut self, start: f64, end: f64, fps: f64) {
+        self.start_frame = start;
+        self.end_frame = end;
+        self.fps = fps;
+        self.current_frame = start;
+    }
+}
+
 /// Result from background IBL generation thread.
 enum IblResult {
     Success {
@@ -151,8 +228,19 @@ pub struct Renderer {
     mesh_data: MeshData,
 
     // Instance transforms for Ivar (stored as Mat4 arrays)
+    /// Base transforms (from scene load) - used for re-evaluation
     instance_transforms: Vec<Mat4>,
+    /// Current transforms (after animation evaluation) - used for rendering
+    current_transforms: Vec<Mat4>,
     instance_material_ids: Vec<u32>,
+
+    // Animation data for viewport playback
+    /// Animated transforms for instances (parallel to instances)
+    instance_animations: Vec<Option<bif_core::AnimatedTransform>>,
+    /// Last evaluated frame (for change detection)
+    last_evaluated_frame: f64,
+    /// Mesh indices that have vertex animation (deformation)
+    vertex_animated_meshes: Vec<usize>,
 
     // Material for Ivar rendering (from loaded USD scene)
     scene_material: bif_core::Material,
@@ -209,6 +297,9 @@ pub struct Renderer {
 
     // Node graph state for scene assembly
     pub node_graph_state: NodeGraphState,
+
+    // Timeline state for animation playback
+    pub timeline_state: TimelineState,
 
     // Environment IBL state
     pub gpu_environment: GpuEnvironment,
@@ -872,7 +963,11 @@ impl Renderer {
             ivar_pipeline,
             mesh_data,
             instance_transforms: vec![], // Empty scene - no instances
+            current_transforms: vec![],
             instance_material_ids: vec![],
+            instance_animations: vec![],
+            last_evaluated_frame: 0.0,
+            vertex_animated_meshes: vec![],
             scene_material: bif_core::Material::default(),
             scene_materials: vec![],
             texture_base_dir: None,
@@ -897,6 +992,7 @@ impl Renderer {
             selected_prim_properties: None,
             usd_stage: None,
             node_graph_state: NodeGraphState::new(),
+            timeline_state: TimelineState::default(),
             gpu_environment,
             show_background: true,
             skybox_pipeline,
@@ -1639,8 +1735,12 @@ impl Renderer {
             ivar_bind_group,
             ivar_pipeline,
             mesh_data,
+            current_transforms: instance_transforms.clone(),
             instance_transforms,
             instance_material_ids,
+            instance_animations: scene.instance_animations.clone(),
+            last_evaluated_frame: 0.0,
+            vertex_animated_meshes: vec![], // Detected during reload_scene with stage
             scene_material,
             scene_materials: scene.materials.clone(),
             texture_base_dir: None,
@@ -1665,6 +1765,7 @@ impl Renderer {
             selected_prim_properties: None,
             usd_stage: None,
             node_graph_state: NodeGraphState::new(),
+            timeline_state: TimelineState::default(),
             gpu_environment,
             show_background: true,
             skybox_pipeline,
@@ -1828,7 +1929,7 @@ impl Renderer {
         let split_point = budget_count.min(visible_count);
 
         for &(_distance_sq, idx) in &self.culling_scratch.visible_with_distance[..split_point] {
-            let transform = &self.instance_transforms[idx];
+            let transform = &self.current_transforms[idx];
             let material_id = self.instance_material_ids.get(idx).copied().unwrap_or(0);
             self.culling_scratch.near_instances.push(InstanceData {
                 model_matrix: transform.to_cols_array_2d(),
@@ -1837,7 +1938,7 @@ impl Renderer {
         }
 
         for &(_distance_sq, idx) in &self.culling_scratch.visible_with_distance[split_point..] {
-            let transform = &self.instance_transforms[idx];
+            let transform = &self.current_transforms[idx];
             let material_id = self.instance_material_ids.get(idx).copied().unwrap_or(0);
             self.culling_scratch.far_instances.push(InstanceData {
                 model_matrix: transform.to_cols_array_2d(),
@@ -1914,22 +2015,58 @@ impl Renderer {
         let path = path.as_ref();
         log::info!("Loading USD scene: {:?}", path);
 
-        // Load USD file
-        let (scene, stage) =
-            load_usd_with_stage(path).map_err(|e| anyhow::anyhow!("Failed to load USD: {}", e))?;
+        // Check if file exists
+        if !path.exists() {
+            return Err(anyhow::anyhow!("File not found: {:?}", path));
+        }
+
+        // Load USD file via C++ bridge (handles usda, usdc, usd)
+        let (scene, stage) = load_usd_with_stage(path).map_err(|e| {
+            log::error!("USD bridge error: {:?}", e);
+            log::error!("Hint: Ensure USD environment is set up. Run: . .\\setup_usd_env.ps1");
+            anyhow::anyhow!("Failed to load USD: {}", e)
+        })?;
 
         if scene.prototypes.is_empty() {
             return Err(anyhow::anyhow!("Scene has no geometry"));
         }
 
-        // Convert first prototype to MeshData
-        let proto = &scene.prototypes[0];
-        let mesh_data = MeshData::from_core_mesh(&proto.mesh);
+        // Check if we have multiple different prototypes
+        // If so, combine them into a single mesh (baking instance transforms)
+        let (mesh_data, use_single_instance) = if scene.prototypes.len() > 1 {
+            log::info!(
+                "Scene has {} prototypes - combining into single mesh",
+                scene.prototypes.len()
+            );
 
-        // Get material from prototype (or use default)
-        let scene_material = proto
-            .material
-            .as_ref()
+            // Collect all prototype meshes with their instance transforms
+            let mut meshes_with_transforms: Vec<(&bif_core::Mesh, Mat4)> = Vec::new();
+
+            for inst in &scene.instances {
+                if let Some(proto) = scene.prototypes.get(inst.prototype_id) {
+                    meshes_with_transforms.push((&proto.mesh, inst.model_matrix()));
+                }
+            }
+
+            let combined = MeshData::combine_with_transforms(&meshes_with_transforms);
+            log::info!(
+                "Combined mesh: {} vertices, {} indices",
+                combined.vertices.len(),
+                combined.indices.len()
+            );
+
+            (combined, true)
+        } else {
+            // Single prototype - use normal instancing
+            let proto = &scene.prototypes[0];
+            (MeshData::from_core_mesh(&proto.mesh), false)
+        };
+
+        // Get material from first prototype (or use default)
+        let scene_material = scene
+            .prototypes
+            .first()
+            .and_then(|p| p.material.as_ref())
             .map(|m| (**m).clone())
             .unwrap_or_default();
         log::info!(
@@ -2061,27 +2198,42 @@ impl Renderer {
             .collect();
 
         // Generate instances from scene
-        let mut instance_transforms: Vec<Mat4> = Vec::with_capacity(scene.instances.len());
-        let mut instance_material_ids: Vec<u32> = Vec::with_capacity(scene.instances.len());
-        let instances: Vec<InstanceData> = scene
-            .instances
-            .iter()
-            .map(|inst| {
-                let model_matrix = inst.model_matrix();
-                instance_transforms.push(model_matrix);
-                let material_id = scene
-                    .prototypes
-                    .get(inst.prototype_id)
-                    .and_then(|proto| proto.material.as_ref())
-                    .and_then(|mat| material_index_by_name.get(&mat.name).copied())
-                    .unwrap_or(0);
-                instance_material_ids.push(material_id);
-                InstanceData {
-                    model_matrix: model_matrix.to_cols_array_2d(),
-                    material_id,
-                }
-            })
-            .collect();
+        // If we combined meshes, use a single identity instance (transforms are baked in)
+        let (instance_transforms, instance_material_ids, instances): (Vec<Mat4>, Vec<u32>, Vec<InstanceData>) =
+            if use_single_instance {
+                let identity = Mat4::IDENTITY;
+                (
+                    vec![identity],
+                    vec![0],
+                    vec![InstanceData {
+                        model_matrix: identity.to_cols_array_2d(),
+                        material_id: 0,
+                    }],
+                )
+            } else {
+                let mut transforms = Vec::with_capacity(scene.instances.len());
+                let mut mat_ids = Vec::with_capacity(scene.instances.len());
+                let insts: Vec<InstanceData> = scene
+                    .instances
+                    .iter()
+                    .map(|inst| {
+                        let model_matrix = inst.model_matrix();
+                        transforms.push(model_matrix);
+                        let material_id = scene
+                            .prototypes
+                            .get(inst.prototype_id)
+                            .and_then(|proto| proto.material.as_ref())
+                            .and_then(|mat| material_index_by_name.get(&mat.name).copied())
+                            .unwrap_or(0);
+                        mat_ids.push(material_id);
+                        InstanceData {
+                            model_matrix: model_matrix.to_cols_array_2d(),
+                            material_id,
+                        }
+                    })
+                    .collect();
+                (transforms, mat_ids, insts)
+            };
 
         // Warn if instance count exceeds buffer capacity
         if instances.len() > self.max_instances as usize {
@@ -2106,6 +2258,31 @@ impl Renderer {
         log::info!("Created {} instances from USD scene", instances.len());
 
         self.instance_material_ids = instance_material_ids;
+
+        // Store animation data for viewport playback
+        self.instance_animations = scene.instance_animations.clone();
+        self.last_evaluated_frame = 0.0;
+
+        let animated_count = self
+            .instance_animations
+            .iter()
+            .filter(|opt| opt.as_ref().is_some_and(|anim| anim.is_animated()))
+            .count();
+        if animated_count > 0 {
+            log::info!("{} of {} instances have animation data", animated_count, instances.len());
+        }
+
+        // Detect meshes with vertex animation (deformation)
+        self.vertex_animated_meshes.clear();
+        let mesh_count = stage.mesh_count().unwrap_or(0);
+        for mesh_idx in 0..mesh_count {
+            if let Ok(times) = stage.get_mesh_vertex_animation_times(mesh_idx) {
+                if !times.is_empty() {
+                    log::info!("Mesh {} has vertex animation ({} time samples)", mesh_idx, times.len());
+                    self.vertex_animated_meshes.push(mesh_idx);
+                }
+            }
+        }
 
         // Calculate world bounds for camera framing
         let world_bounds = scene.world_bounds();
@@ -2132,6 +2309,7 @@ impl Renderer {
         self.mesh_bounds_min = mesh_data.bounds_min;
         self.mesh_bounds_max = mesh_data.bounds_max;
         self.mesh_data = mesh_data;
+        self.current_transforms = instance_transforms.clone();
         self.instance_transforms = instance_transforms;
         self.scene_material = scene_material.clone();
         self.scene_materials = scene.materials.clone();
@@ -2195,6 +2373,23 @@ impl Renderer {
         self.ivar_state.cancel_flag.store(true, Ordering::Relaxed);
         self.ivar_state.render_complete = false;
 
+        // Initialize timeline from scene data
+        if let Some(ref timeline) = scene.timeline {
+            self.timeline_state.set_from_scene(
+                timeline.start_frame,
+                timeline.end_frame,
+                timeline.fps,
+            );
+            log::info!(
+                "Timeline initialized: frames {:.0}-{:.0} @ {:.0} fps",
+                timeline.start_frame,
+                timeline.end_frame,
+                timeline.fps
+            );
+        } else {
+            self.timeline_state = TimelineState::default();
+        }
+
         log::info!(
             "USD scene loaded successfully: {} triangles x {} instances",
             self.num_indices / 3,
@@ -2224,6 +2419,199 @@ impl Renderer {
             self.fps = self.frame_count as f32 / self.fps_update_timer;
             self.frame_count = 0;
             self.fps_update_timer = 0.0;
+        }
+    }
+
+    /// Update timeline animation (call each frame with delta_time).
+    ///
+    /// Advances the timeline if playing and updates instance transforms.
+    pub fn update_animation(&mut self, delta_time: f32) {
+        // Advance timeline if playing
+        let was_playing = self.timeline_state.is_playing;
+        self.timeline_state.advance(delta_time);
+
+        // Check if frame changed
+        let current_frame = self.timeline_state.current_frame;
+        let frame_tolerance = 0.001;
+        if (current_frame - self.last_evaluated_frame).abs() < frame_tolerance {
+            return; // No change
+        }
+
+        // Debug: log frame changes when playing
+        if was_playing {
+            log::debug!(
+                "Animation frame: {:.1} (instances: {}, animations: {})",
+                current_frame,
+                self.instance_animations.len(),
+                self.instance_animations
+                    .iter()
+                    .filter(|a| a.is_some())
+                    .count()
+            );
+        }
+
+        // Check if we have any animations (transform or vertex)
+        let animated_count = self
+            .instance_animations
+            .iter()
+            .filter(|opt| opt.as_ref().is_some_and(|anim| anim.is_animated()))
+            .count();
+        let has_transform_animations = animated_count > 0;
+        let has_vertex_animations = !self.vertex_animated_meshes.is_empty();
+        let has_animations = has_transform_animations || has_vertex_animations;
+
+        if !has_animations {
+            if was_playing {
+                log::warn!(
+                    "No animations found! instance_animations.len()={}, animated_count={}, vertex_animated={}",
+                    self.instance_animations.len(),
+                    animated_count,
+                    self.vertex_animated_meshes.len()
+                );
+            }
+            self.last_evaluated_frame = current_frame;
+            return;
+        }
+
+        // Evaluate transforms and update GPU buffer
+        log::info!("Evaluating animation at frame {:.1}", current_frame);
+        if has_transform_animations {
+            self.evaluate_animation_frame(current_frame);
+        }
+
+        // Update vertex buffer for meshes with vertex animation
+        if has_vertex_animations {
+            self.update_vertex_animation(current_frame);
+        }
+
+        self.last_evaluated_frame = current_frame;
+    }
+
+    /// Evaluate all animated transforms at the given frame and update GPU buffer.
+    fn evaluate_animation_frame(&mut self, frame: f64) {
+        // Build updated instances
+        let mut instances: Vec<InstanceData> = Vec::with_capacity(self.instance_transforms.len());
+        let mut updated_transforms: Vec<Mat4> = Vec::with_capacity(self.instance_transforms.len());
+
+        for (i, (base_transform, anim)) in self
+            .instance_transforms
+            .iter()
+            .zip(self.instance_animations.iter())
+            .enumerate()
+        {
+            let model_matrix = if let Some(anim) = anim {
+                // Evaluate animated transform
+                let evaluated = anim.evaluate(frame);
+                let mat = evaluated.to_matrix();
+                // Debug: show first animated instance's transform
+                if i == 0 && frame as i32 % 12 == 0 {
+                    log::debug!(
+                        "Instance {} at frame {}: pos=({:.2}, {:.2}, {:.2})",
+                        i,
+                        frame,
+                        evaluated.translation.x,
+                        evaluated.translation.y,
+                        evaluated.translation.z
+                    );
+                }
+                mat
+            } else {
+                // Use static transform
+                *base_transform
+            };
+
+            updated_transforms.push(model_matrix);
+
+            let material_id = self.instance_material_ids.get(i).copied().unwrap_or(0);
+            instances.push(InstanceData {
+                model_matrix: model_matrix.to_cols_array_2d(),
+                material_id,
+            });
+        }
+
+        // Store evaluated transforms for use by update_visible_instances
+        // base transforms stay in instance_transforms for re-evaluation
+        self.current_transforms = updated_transforms;
+
+        // Recompute instance AABBs for frustum culling
+        let prototype_aabb = self.prototype_aabb;
+        self.instance_aabbs = self
+            .current_transforms
+            .iter()
+            .map(|t| t.transform_aabb(&prototype_aabb))
+            .collect();
+
+        // Invalidate frustum cache
+        self.frustum_camera_snapshot = CameraSnapshot::default();
+    }
+
+    /// Update vertex buffer for meshes with vertex animation (deformation).
+    fn update_vertex_animation(&mut self, frame: f64) {
+        // Need access to the USD stage to query vertices at this frame
+        let stage = match &self.usd_stage {
+            Some(s) => s,
+            None => {
+                log::warn!("No USD stage available for vertex animation");
+                return;
+            }
+        };
+
+        // Currently we only support single-mesh scenes for vertex animation
+        // TODO: Support multi-mesh scenes with separate vertex buffers
+        if self.vertex_animated_meshes.len() != 1 {
+            log::warn!(
+                "Vertex animation currently only supports single-mesh scenes (found {} meshes)",
+                self.vertex_animated_meshes.len()
+            );
+            return;
+        }
+
+        let mesh_idx = self.vertex_animated_meshes[0];
+
+        // Query vertex positions at current frame (returns Vec<f32> as x,y,z triplets)
+        match stage.get_mesh_vertices_at_time(mesh_idx, frame) {
+            Ok(positions) => {
+                let vertex_count = positions.len() / 3;
+                if vertex_count == 0 {
+                    log::warn!("No vertices returned for mesh {} at frame {}", mesh_idx, frame);
+                    return;
+                }
+
+                // Check that vertex count matches
+                if vertex_count != self.mesh_data.vertices.len() {
+                    log::warn!(
+                        "Vertex count mismatch: USD has {} vertices, mesh_data has {}",
+                        vertex_count,
+                        self.mesh_data.vertices.len()
+                    );
+                    return;
+                }
+
+                // Update only the position field of each vertex, preserving normals, colors, UVs
+                for (i, vertex) in self.mesh_data.vertices.iter_mut().enumerate() {
+                    vertex.position = [
+                        positions[i * 3],
+                        positions[i * 3 + 1],
+                        positions[i * 3 + 2],
+                    ];
+                }
+
+                // Write updated vertices to GPU buffer
+                self.queue.write_buffer(
+                    &self.vertex_buffer,
+                    0,
+                    bytemuck::cast_slice(&self.mesh_data.vertices),
+                );
+
+                log::debug!(
+                    "Updated vertex buffer at frame {:.1} ({} vertices)",
+                    frame,
+                    vertex_count
+                );
+            }
+            Err(e) => {
+                log::warn!("Failed to get vertices at frame {}: {:?}", frame, e);
+            }
         }
     }
 
@@ -2933,6 +3321,65 @@ impl Renderer {
                 });
             right_panel_width = property_panel.response.rect.width();
 
+            // Timeline panel (always visible, like Houdini/Maya/Blender)
+            let timeline_panel = egui::TopBottomPanel::bottom("timeline_panel")
+                .exact_height(32.0)
+                .show(ctx, |ui| {
+                    let has_animation = self.timeline_state.has_range();
+
+                    ui.horizontal_centered(|ui| {
+                        // Play/Pause button (disabled if no animation)
+                        ui.add_enabled_ui(has_animation, |ui| {
+                            let play_text = if self.timeline_state.is_playing {
+                                "⏸"
+                            } else {
+                                "▶"
+                            };
+                            if ui.button(play_text).clicked() {
+                                self.timeline_state.is_playing = !self.timeline_state.is_playing;
+                            }
+
+                            // Go to start
+                            if ui.button("|◀").clicked() {
+                                self.timeline_state.go_to_start();
+                            }
+                        });
+
+                        // Frame slider (use 0-100 default range if no animation)
+                        let (start, end) = if has_animation {
+                            (
+                                self.timeline_state.start_frame as f32,
+                                self.timeline_state.end_frame as f32,
+                            )
+                        } else {
+                            (1.0, 100.0)
+                        };
+                        let mut frame = self.timeline_state.current_frame as f32;
+                        let slider = egui::Slider::new(&mut frame, start..=end).show_value(false);
+                        if ui.add_sized([200.0, 18.0], slider).changed() {
+                            self.timeline_state.current_frame = frame as f64;
+                        }
+
+                        // Go to end (disabled if no animation)
+                        ui.add_enabled_ui(has_animation, |ui| {
+                            if ui.button("▶|").clicked() {
+                                self.timeline_state.go_to_end();
+                            }
+                        });
+
+                        // Loop toggle
+                        ui.checkbox(&mut self.timeline_state.loop_playback, "Loop");
+
+                        // Frame display
+                        ui.label(format!("Frame: {:.0}", self.timeline_state.current_frame));
+                        ui.label(format!("FPS: {:.0}", self.timeline_state.fps));
+
+                        // USD camera toggle
+                        ui.checkbox(&mut self.timeline_state.use_usd_camera, "USD Cam");
+                    });
+                });
+            let timeline_height = timeline_panel.response.rect.height();
+
             // Node Graph (bottom panel)
             let node_graph_panel = egui::TopBottomPanel::bottom("node_graph_panel")
                 .default_height(200.0)
@@ -2950,7 +3397,7 @@ impl Renderer {
                         });
                     }
                 });
-            bottom_panel_height = node_graph_panel.response.rect.height();
+            bottom_panel_height = node_graph_panel.response.rect.height() + timeline_height;
         });
 
         // Update gnomon size from UI

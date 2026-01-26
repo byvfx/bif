@@ -16,7 +16,7 @@ use bif_math::Mat4;
 use thiserror::Error;
 
 use crate::mesh::Mesh;
-use crate::scene::{Scene, Transform};
+use crate::scene::{AnimatedTransform, Scene, TimelineInfo, Transform, TransformKeyframe};
 use crate::usd::cpp_bridge::{UsdBridgeError, UsdStage};
 use crate::usd::parser::{parse_usda, ParseError};
 use crate::usd::types::{UsdMesh, UsdPointInstancer, UsdPrim, UsdReference, UsdXform};
@@ -91,6 +91,23 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
     let mut scene = Scene::new(name);
     let mut prototype_map: HashMap<String, usize> = HashMap::new();
 
+    // Extract timeline metadata
+    if let Ok(timeline_data) = stage.get_timeline() {
+        if timeline_data.has_authored_time_range {
+            scene.timeline = Some(TimelineInfo {
+                start_frame: timeline_data.start_time_code,
+                end_frame: timeline_data.end_time_code,
+                fps: timeline_data.frames_per_second,
+            });
+            log::info!(
+                "Timeline: frames {:.0}-{:.0} @ {:.0} fps",
+                timeline_data.start_time_code,
+                timeline_data.end_time_code,
+                timeline_data.frames_per_second
+            );
+        }
+    }
+
     // Mesh deduplication: (vertex_count, index_count, first_vertex_hash) -> proto_id
     // This handles referenced meshes that appear multiple times with different transforms
     let mut mesh_dedup: HashMap<(usize, usize, u64), usize> = HashMap::new();
@@ -143,7 +160,64 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
 
         // Add an instance with this mesh's world transform
         let transform = Transform::from_matrix(mesh_data.transform);
-        scene.add_instance(proto_id, transform);
+
+        // Check for animation data
+        let mesh_idx = meshes
+            .iter()
+            .position(|m| m.path == mesh_data.path)
+            .unwrap_or(0);
+        let animation = if scene.timeline.is_some() {
+            match stage.get_mesh_animation(mesh_idx) {
+                Ok(anim_data) => {
+                    log::debug!(
+                        "Mesh {} (idx {}): {} xform samples",
+                        mesh_data.path,
+                        mesh_idx,
+                        anim_data.xform_samples.len()
+                    );
+                    if anim_data.xform_samples.is_empty() {
+                        None
+                    } else {
+                        let keyframes: Vec<TransformKeyframe> = anim_data
+                            .xform_samples
+                            .iter()
+                            .map(|sample| {
+                                let t = Transform::from_matrix(sample.transform);
+                                log::debug!(
+                                    "  Keyframe t={}: pos=({:.3}, {:.3}, {:.3})",
+                                    sample.time,
+                                    t.translation.x,
+                                    t.translation.y,
+                                    t.translation.z
+                                );
+                                TransformKeyframe {
+                                    time: sample.time,
+                                    transform: t,
+                                }
+                            })
+                            .collect();
+                        log::info!(
+                            "Mesh {} has {} animation keyframes",
+                            mesh_data.path,
+                            keyframes.len()
+                        );
+                        Some(AnimatedTransform::with_keyframes(transform.clone(), keyframes))
+                    }
+                }
+                Err(e) => {
+                    log::warn!("Failed to get animation for mesh {}: {:?}", mesh_data.path, e);
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        if let Some(anim) = animation {
+            scene.add_animated_instance(proto_id, transform, anim);
+        } else {
+            scene.add_instance(proto_id, transform);
+        }
     }
 
     // Load materials
@@ -217,7 +291,7 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
 
     // Load point instancers
     let instancers = stage.instancers()?;
-    for instancer_data in &instancers {
+    for (instancer_idx, instancer_data) in instancers.iter().enumerate() {
         // Resolve prototypes
         let proto_ids: Vec<usize> = instancer_data
             .prototype_paths
@@ -233,6 +307,13 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
             continue;
         }
 
+        // Get animation data for instancer if timeline exists
+        let instancer_anim = if scene.timeline.is_some() {
+            stage.get_instancer_animation(instancer_idx).ok()
+        } else {
+            None
+        };
+
         // Create instances
         for (i, transform) in instancer_data.transforms.iter().enumerate() {
             let proto_idx = instancer_data.proto_indices.get(i).copied().unwrap_or(0) as usize;
@@ -243,7 +324,43 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
                 .copied()
                 .unwrap_or(0);
 
-            scene.add_instance(proto_id, Transform::from_matrix(*transform));
+            let base_transform = Transform::from_matrix(*transform);
+
+            // Build animation for this instance if available
+            let animation = instancer_anim.as_ref().and_then(|anim| {
+                if anim.time_samples.is_empty() || i >= anim.instance_count {
+                    return None;
+                }
+
+                let keyframes: Vec<TransformKeyframe> = anim
+                    .time_samples
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(time_idx, &time)| {
+                        anim.transforms.get(time_idx).and_then(|instances| {
+                            instances.get(i).map(|mat| TransformKeyframe {
+                                time,
+                                transform: Transform::from_matrix(*mat),
+                            })
+                        })
+                    })
+                    .collect();
+
+                if keyframes.is_empty() {
+                    None
+                } else {
+                    Some(AnimatedTransform::with_keyframes(
+                        base_transform.clone(),
+                        keyframes,
+                    ))
+                }
+            });
+
+            if let Some(anim) = animation {
+                scene.add_animated_instance(proto_id, base_transform, anim);
+            } else {
+                scene.add_instance(proto_id, base_transform);
+            }
         }
     }
 

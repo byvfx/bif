@@ -55,6 +55,17 @@ pub struct CameraSnapshot {
     pub fov_y: f32,
 }
 
+impl Default for CameraSnapshot {
+    fn default() -> Self {
+        // Use extreme values that will always trigger a change detection
+        Self {
+            position: Vec3::splat(f32::MAX),
+            target: Vec3::splat(f32::MAX),
+            fov_y: f32::MAX,
+        }
+    }
+}
+
 impl CameraSnapshot {
     /// Create snapshot from viewport camera.
     pub fn from_camera(camera: &Camera) -> Self {
