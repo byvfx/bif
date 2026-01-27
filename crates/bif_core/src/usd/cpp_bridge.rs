@@ -519,7 +519,11 @@ pub struct UsdStage {
     raw: *mut UsdBridgeStageRaw,
 }
 
-// UsdStage is Send because the underlying C++ code is thread-safe for reading
+// SAFETY: UsdStage is Send because the underlying C++ code is thread-safe:
+// - All USD data is pre-cached at load time in usd_bridge_open_stage()
+// - All getter functions read from immutable caches without mutation
+// - usd_bridge_get_mesh_vertices_at_time() uses thread_local storage for its return buffer
+// - The USD stage itself (UsdStageRefPtr) is read-only after caching
 unsafe impl Send for UsdStage {}
 
 impl UsdStage {
