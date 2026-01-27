@@ -79,8 +79,6 @@ struct CachedMeshAnimation {
 struct CachedVertexAnimation {
     bool has_animated_vertices = false;
     std::vector<double> time_samples;
-    // Temporary buffer for vertices at a specific time (reused to avoid allocations)
-    mutable std::vector<float> temp_vertices;
 };
 
 /// Cached instancer animation data
@@ -1016,6 +1014,12 @@ const char* usd_bridge_error_message(UsdBridgeError error) {
     }
 }
 
+// Forward declarations for pre-caching
+static void cache_stage_data(UsdBridgeStage* bridge);
+static void cache_prim_data(UsdBridgeStage* bridge);
+static void cache_animation_data(UsdBridgeStage* bridge);
+static void cache_vertex_animation_data(UsdBridgeStage* bridge);
+
 UsdBridgeError usd_bridge_open_stage(const char* path, UsdBridgeStage** out_stage) {
     if (!path || !out_stage) {
         return USD_BRIDGE_ERROR_NULL_POINTER;
@@ -1029,6 +1033,14 @@ UsdBridgeError usd_bridge_open_stage(const char* path, UsdBridgeStage** out_stag
 
         auto* bridge = new UsdBridgeStage();
         bridge->stage = stage;
+
+        // Pre-cache all data at load time for thread safety.
+        // All getter functions will read from these caches without mutation.
+        cache_stage_data(bridge);
+        cache_prim_data(bridge);
+        cache_animation_data(bridge);
+        cache_vertex_animation_data(bridge);
+
         *out_stage = bridge;
         return USD_BRIDGE_SUCCESS;
 
@@ -1080,8 +1092,7 @@ UsdBridgeError usd_bridge_get_mesh_count(
         return USD_BRIDGE_ERROR_NULL_POINTER;
     }
 
-    // Need to cache first (const_cast for lazy caching)
-    cache_stage_data(const_cast<UsdBridgeStage*>(stage));
+    // Data pre-cached at load time - just read
     *out_count = stage->meshes.size();
     return USD_BRIDGE_SUCCESS;
 }
@@ -1094,7 +1105,7 @@ UsdBridgeError usd_bridge_get_instancer_count(
         return USD_BRIDGE_ERROR_NULL_POINTER;
     }
 
-    cache_stage_data(const_cast<UsdBridgeStage*>(stage));
+    // Data pre-cached at load time - just read
     *out_count = stage->instancers.size();
     return USD_BRIDGE_SUCCESS;
 }
@@ -1108,7 +1119,7 @@ UsdBridgeError usd_bridge_get_mesh(
         return USD_BRIDGE_ERROR_NULL_POINTER;
     }
 
-    cache_stage_data(const_cast<UsdBridgeStage*>(stage));
+    // Data pre-cached at load time - just read
 
     if (index >= stage->meshes.size()) {
         return USD_BRIDGE_ERROR_INVALID_PRIM;
@@ -1148,8 +1159,7 @@ UsdBridgeError usd_bridge_get_instancer(
         return USD_BRIDGE_ERROR_NULL_POINTER;
     }
 
-    cache_stage_data(const_cast<UsdBridgeStage*>(stage));
-
+    // Data pre-cached at load time - just read
     if (index >= stage->instancers.size()) {
         return USD_BRIDGE_ERROR_INVALID_PRIM;
     }
@@ -1173,10 +1183,7 @@ UsdBridgeError usd_bridge_get_material_count(
         return USD_BRIDGE_ERROR_NULL_POINTER;
     }
 
-    // Ensure mesh data is cached first (needed for material bindings)
-    cache_stage_data(const_cast<UsdBridgeStage*>(stage));
-    cache_material_data(const_cast<UsdBridgeStage*>(stage));
-
+    // Data pre-cached at load time - just read
     *out_count = stage->materials.size();
     return USD_BRIDGE_SUCCESS;
 }
@@ -1190,9 +1197,7 @@ UsdBridgeError usd_bridge_get_material(
         return USD_BRIDGE_ERROR_NULL_POINTER;
     }
 
-    cache_stage_data(const_cast<UsdBridgeStage*>(stage));
-    cache_material_data(const_cast<UsdBridgeStage*>(stage));
-
+    // Data pre-cached at load time - just read
     if (index >= stage->materials.size()) {
         return USD_BRIDGE_ERROR_INVALID_PRIM;
     }
@@ -1228,9 +1233,7 @@ UsdBridgeError usd_bridge_get_mesh_material_path(
         return USD_BRIDGE_ERROR_NULL_POINTER;
     }
 
-    cache_stage_data(const_cast<UsdBridgeStage*>(stage));
-    cache_material_data(const_cast<UsdBridgeStage*>(stage));
-
+    // Data pre-cached at load time - just read
     if (mesh_index >= stage->mesh_material_paths.size()) {
         return USD_BRIDGE_ERROR_INVALID_PRIM;
     }
@@ -1269,7 +1272,7 @@ UsdBridgeError usd_bridge_get_prim_count(
         return USD_BRIDGE_ERROR_NULL_POINTER;
     }
 
-    cache_prim_data(const_cast<UsdBridgeStage*>(stage));
+    // Data pre-cached at load time
     *out_count = stage->all_prims.size();
     return USD_BRIDGE_SUCCESS;
 }
@@ -1283,7 +1286,7 @@ UsdBridgeError usd_bridge_get_prim_info(
         return USD_BRIDGE_ERROR_NULL_POINTER;
     }
 
-    cache_prim_data(const_cast<UsdBridgeStage*>(stage));
+    // Data pre-cached at load time
 
     if (index >= stage->all_prims.size()) {
         return USD_BRIDGE_ERROR_INVALID_PRIM;
@@ -1307,7 +1310,7 @@ UsdBridgeError usd_bridge_get_root_prim_count(
         return USD_BRIDGE_ERROR_NULL_POINTER;
     }
 
-    cache_prim_data(const_cast<UsdBridgeStage*>(stage));
+    // Data pre-cached at load time
     *out_count = stage->root_paths.size();
     return USD_BRIDGE_SUCCESS;
 }
@@ -1321,7 +1324,7 @@ UsdBridgeError usd_bridge_get_root_prim_path(
         return USD_BRIDGE_ERROR_NULL_POINTER;
     }
 
-    cache_prim_data(const_cast<UsdBridgeStage*>(stage));
+    // Data pre-cached at load time
 
     if (index >= stage->root_paths.size()) {
         return USD_BRIDGE_ERROR_INVALID_PRIM;
@@ -1340,7 +1343,7 @@ UsdBridgeError usd_bridge_get_children_count(
         return USD_BRIDGE_ERROR_NULL_POINTER;
     }
 
-    cache_prim_data(const_cast<UsdBridgeStage*>(stage));
+    // Data pre-cached at load time
 
     // Handle pseudo-root case
     std::string path_str(parent_path);
@@ -1370,7 +1373,7 @@ UsdBridgeError usd_bridge_get_child_path(
         return USD_BRIDGE_ERROR_NULL_POINTER;
     }
 
-    cache_prim_data(const_cast<UsdBridgeStage*>(stage));
+    // Data pre-cached at load time
 
     std::string path_str(parent_path);
     
@@ -1406,7 +1409,7 @@ UsdBridgeError usd_bridge_get_prim_info_by_path(
         return USD_BRIDGE_ERROR_NULL_POINTER;
     }
 
-    cache_prim_data(const_cast<UsdBridgeStage*>(stage));
+    // Data pre-cached at load time
 
     std::string path_str(path);
     for (const auto& info : stage->all_prims) {
@@ -1622,7 +1625,7 @@ UsdBridgeError usd_bridge_get_mesh_animation(
         return USD_BRIDGE_ERROR_NULL_POINTER;
     }
 
-    cache_animation_data(const_cast<UsdBridgeStage*>(stage));
+    // Data pre-cached at load time
 
     if (mesh_index >= stage->mesh_animations.size()) {
         return USD_BRIDGE_ERROR_INVALID_PRIM;
@@ -1652,7 +1655,7 @@ UsdBridgeError usd_bridge_get_instancer_animation(
         return USD_BRIDGE_ERROR_NULL_POINTER;
     }
 
-    cache_animation_data(const_cast<UsdBridgeStage*>(stage));
+    // Data pre-cached at load time
 
     if (instancer_index >= stage->instancer_animations.size()) {
         return USD_BRIDGE_ERROR_INVALID_PRIM;
@@ -1685,7 +1688,7 @@ UsdBridgeError usd_bridge_get_camera_xform_samples(
         return USD_BRIDGE_ERROR_NULL_POINTER;
     }
 
-    cache_animation_data(const_cast<UsdBridgeStage*>(stage));
+    // Data pre-cached at load time
 
     std::string path_str(camera_path);
 
@@ -1756,7 +1759,7 @@ UsdBridgeError usd_bridge_get_mesh_vertex_animation_info(
         return USD_BRIDGE_ERROR_NULL_POINTER;
     }
 
-    cache_vertex_animation_data(const_cast<UsdBridgeStage*>(stage));
+    // Data pre-cached at load time
 
     if (mesh_index >= stage->vertex_animations.size()) {
         return USD_BRIDGE_ERROR_INVALID_PRIM;
@@ -1781,14 +1784,14 @@ UsdBridgeError usd_bridge_get_mesh_vertices_at_time(
         return USD_BRIDGE_ERROR_NULL_POINTER;
     }
 
-    cache_vertex_animation_data(const_cast<UsdBridgeStage*>(stage));
+    // Data pre-cached at load time
 
     if (mesh_index >= stage->meshes.size()) {
         return USD_BRIDGE_ERROR_INVALID_PRIM;
     }
 
     const auto& mesh = stage->meshes[mesh_index];
-    auto& anim = const_cast<CachedVertexAnimation&>(stage->vertex_animations[mesh_index]);
+    const auto& anim = stage->vertex_animations[mesh_index];
 
     // If not animated, return cached static vertices
     if (!anim.has_animated_vertices) {
@@ -1807,16 +1810,18 @@ UsdBridgeError usd_bridge_get_mesh_vertices_at_time(
     VtArray<GfVec3f> points;
     geomMesh.GetPointsAttr().Get(&points, UsdTimeCode(time));
 
-    // Copy to temp buffer
-    anim.temp_vertices.clear();
-    anim.temp_vertices.reserve(points.size() * 3);
+    // Use thread_local buffer to avoid race conditions.
+    // Each thread gets its own buffer, making this function thread-safe.
+    static thread_local std::vector<float> return_buffer;
+    return_buffer.clear();
+    return_buffer.reserve(points.size() * 3);
     for (const auto& p : points) {
-        anim.temp_vertices.push_back(p[0]);
-        anim.temp_vertices.push_back(p[1]);
-        anim.temp_vertices.push_back(p[2]);
+        return_buffer.push_back(p[0]);
+        return_buffer.push_back(p[1]);
+        return_buffer.push_back(p[2]);
     }
 
-    *out_vertices = anim.temp_vertices.data();
+    *out_vertices = return_buffer.data();
     *out_vertex_count = points.size();
 
     return USD_BRIDGE_SUCCESS;

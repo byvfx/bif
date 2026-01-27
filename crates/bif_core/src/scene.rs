@@ -362,12 +362,13 @@ pub struct Scene {
     /// Shared prototype definitions (meshes)
     pub prototypes: Vec<Arc<Prototype>>,
 
-    /// Instances referencing prototypes
-    pub instances: Vec<Instance>,
+    /// Instances referencing prototypes.
+    /// Private - use accessor methods to maintain invariant with instance_animations.
+    instances: Vec<Instance>,
 
-    /// Animated transforms for instances (parallel to instances vec)
-    /// If Some, contains animation data for the corresponding instance.
-    pub instance_animations: Vec<Option<AnimatedTransform>>,
+    /// Animated transforms for instances (parallel to instances vec).
+    /// Private - use accessor methods to maintain invariant with instances.
+    instance_animations: Vec<Option<AnimatedTransform>>,
 
     /// Materials used in the scene
     pub materials: Vec<Arc<Material>>,
@@ -420,6 +421,45 @@ impl Scene {
                 .instance_animations
                 .iter()
                 .any(|opt| opt.as_ref().is_some_and(|a| a.is_animated()))
+    }
+
+    /// Iterate over instances with their optional animations.
+    ///
+    /// Returns an iterator of (instance, optional_animation) pairs.
+    pub fn instances_with_animations(
+        &self,
+    ) -> impl Iterator<Item = (&Instance, Option<&AnimatedTransform>)> {
+        debug_assert_eq!(
+            self.instances.len(),
+            self.instance_animations.len(),
+            "instances and instance_animations must have same length"
+        );
+        self.instances
+            .iter()
+            .zip(self.instance_animations.iter())
+            .map(|(inst, anim)| (inst, anim.as_ref()))
+    }
+
+    /// Get an instance and its optional animation by index.
+    pub fn get_instance(&self, idx: usize) -> Option<(&Instance, Option<&AnimatedTransform>)> {
+        debug_assert_eq!(
+            self.instances.len(),
+            self.instance_animations.len(),
+            "instances and instance_animations must have same length"
+        );
+        let inst = self.instances.get(idx)?;
+        let anim = self.instance_animations.get(idx)?.as_ref();
+        Some((inst, anim))
+    }
+
+    /// Get read-only access to the instances slice.
+    pub fn instances(&self) -> &[Instance] {
+        &self.instances
+    }
+
+    /// Get read-only access to the instance animations slice.
+    pub fn instance_animations(&self) -> &[Option<AnimatedTransform>] {
+        &self.instance_animations
     }
 
     /// Add a material to the scene and return its ID.
