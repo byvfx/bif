@@ -724,7 +724,7 @@ def Xform "World" {
         assert_eq!(scene.instance_count(), 1);
 
         // Check that the transform was applied to the instance
-        let matrix = scene.instances[0].model_matrix();
+        let matrix = scene.instances()[0].model_matrix();
         let origin = matrix.transform_point3(bif_math::Vec3::ZERO);
         assert!((origin.x - 10.0).abs() < 0.001);
     }
