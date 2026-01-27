@@ -295,6 +295,33 @@ pub struct GpuTextureSet {
     pub index_map: HashMap<String, u32>,
 }
 
+/// Per-prototype GPU buffers for multi-draw rendering.
+///
+/// Instead of combining all meshes into a single buffer, each prototype
+/// has its own vertex/index buffers. This enables:
+/// - Per-instance transforms (no baked transforms)
+/// - Simpler vertex animation (update one prototype's buffer)
+/// - Multiple draw calls indexed by prototype
+pub struct PrototypeGpuData {
+    /// Vertex buffer for this prototype's mesh
+    pub vertex_buffer: wgpu::Buffer,
+    /// Index buffer for this prototype's mesh
+    pub index_buffer: wgpu::Buffer,
+    /// Number of indices to draw
+    pub num_indices: u32,
+    /// Number of vertices in the buffer
+    pub num_vertices: u32,
+    /// Prototype ID in the scene
+    pub prototype_id: usize,
+    /// USD mesh index (for vertex animation lookup)
+    pub mesh_idx: usize,
+    /// Per-triangle material IDs buffer (optional, for GeomSubsets)
+    pub triangle_material_buffer: Option<wgpu::Buffer>,
+    /// Original vertices (CPU-side) for vertex animation updates.
+    /// Stores normals/UVs so we can update just positions.
+    pub vertices: Vec<Vertex>,
+}
+
 /// Scratch buffers for frustum culling to avoid per-frame allocations.
 pub struct CullingScratch {
     pub visible_with_distance: Vec<(f32, usize)>,

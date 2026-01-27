@@ -52,7 +52,7 @@ fn main() {
             }
 
             println!("\n--- Instances ---");
-            for (i, instance) in scene.instances.iter().enumerate() {
+            for (i, instance) in scene.instances().iter().enumerate() {
                 let matrix = instance.model_matrix();
                 let pos = matrix.transform_point3(bif_math::Vec3::ZERO);
                 println!(
