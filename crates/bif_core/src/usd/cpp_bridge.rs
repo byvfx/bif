@@ -1399,6 +1399,95 @@ mod tests {
         let _ = UsdBridgeError::from(UsdBridgeErrorCode::InvalidStage);
     }
 
-    // Integration tests require USD to be installed
-    // Run with: cargo test --features usd-integration-tests
+    /// Test loading USD file with relative references (Xform refs).
+    /// lucy_100.usda has 100 Xform prims each referencing @./lucy_low.usda@
+    #[test]
+    fn test_load_relative_reference_usda() {
+        let path = "../../assets/lucy_100.usda";
+        let stage = match UsdStage::open(path) {
+            Ok(s) => s,
+            Err(e) => {
+                // Skip test if USD library not available or file not found
+                eprintln!("Skipping test - could not open stage: {e}");
+                return;
+            }
+        };
+
+        // Should have 100 meshes (one lucy_low mesh per Xform reference)
+        let mesh_count = stage.mesh_count().expect("mesh_count failed");
+        assert_eq!(
+            mesh_count, 100,
+            "Expected 100 meshes from lucy_100.usda, got {mesh_count}"
+        );
+
+        // Verify first mesh has vertices
+        if mesh_count > 0 {
+            let mesh = stage.get_mesh(0).expect("get_mesh(0) failed");
+            assert!(
+                !mesh.vertices.is_empty(),
+                "First mesh should have vertices from referenced lucy_low.usda"
+            );
+            eprintln!(
+                "First mesh: {} with {} vertices",
+                mesh.path,
+                mesh.vertices.len()
+            );
+        }
+    }
+
+    /// Test loading PointInstancer with external prototype reference.
+    /// lucy_100_fixed.usda has a PointInstancer with prototype referencing @./lucy_low.usda@
+    #[test]
+    fn test_load_pointinstancer_external_prototype() {
+        let path = "../../assets/lucy_100_fixed.usda";
+        let stage = match UsdStage::open(path) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("Skipping test - could not open stage: {e}");
+                return;
+            }
+        };
+
+        // Should have 1 instancer
+        let instancer_count = stage.instancer_count().expect("instancer_count failed");
+        assert_eq!(
+            instancer_count, 1,
+            "Expected 1 instancer from lucy_100_fixed.usda"
+        );
+
+        // Instancer should have 100 instances
+        let instancer = stage.get_instancer(0).expect("get_instancer(0) failed");
+        assert_eq!(
+            instancer.transforms.len(),
+            100,
+            "Expected 100 instances, got {}",
+            instancer.transforms.len()
+        );
+        assert_eq!(
+            instancer.prototype_paths.len(),
+            1,
+            "Expected 1 prototype path"
+        );
+
+        eprintln!(
+            "Instancer: {} with {} instances, prototype: {:?}",
+            instancer.path,
+            instancer.transforms.len(),
+            instancer.prototype_paths
+        );
+
+        // Should have 1 mesh (the lucy prototype)
+        let mesh_count = stage.mesh_count().expect("mesh_count failed");
+        assert!(
+            mesh_count >= 1,
+            "Expected at least 1 mesh (prototype), got {mesh_count}"
+        );
+
+        // Verify prototype mesh has vertices
+        let mesh = stage.get_mesh(0).expect("get_mesh(0) failed");
+        assert!(
+            !mesh.vertices.is_empty(),
+            "Prototype mesh should have vertices from referenced lucy_low.usda"
+        );
+    }
 }

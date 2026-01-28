@@ -20,12 +20,16 @@
 #include <pxr/base/gf/vec3f.h>
 #include <pxr/base/gf/quath.h>
 #include <pxr/base/vt/array.h>
+#include <pxr/base/tf/pathUtils.h>
+#include <pxr/usd/ar/resolver.h>
+#include <pxr/usd/ar/resolverContextBinder.h>
 
 #include <vector>
 #include <string>
 #include <memory>
 #include <iostream>
 #include <set>
+#include <algorithm>
 
 PXR_NAMESPACE_USING_DIRECTIVE
 
@@ -1026,16 +1030,37 @@ UsdBridgeError usd_bridge_open_stage(const char* path, UsdBridgeStage** out_stag
     }
 
     try {
-        UsdStageRefPtr stage = UsdStage::Open(path);
+        // Normalize path: convert backslashes to forward slashes for USD
+        std::string normalized_path(path);
+        std::replace(normalized_path.begin(), normalized_path.end(), '\\', '/');
+
+        std::cout << "[USD_BRIDGE] Opening stage: " << normalized_path << std::endl;
+
+        // Get the asset resolver and create a context for relative path resolution.
+        // This is critical for files that reference other files with relative paths
+        // like @./lucy_low.usda@. Without the resolver context, USD can't find
+        // the referenced files because it doesn't know the base directory.
+        ArResolver& resolver = ArGetResolver();
+        ArResolverContext context = resolver.CreateDefaultContextForAsset(normalized_path);
+        ArResolverContextBinder binder(context);
+
+        std::cout << "[USD_BRIDGE] Created resolver context for asset" << std::endl;
+
+        UsdStageRefPtr stage = UsdStage::Open(normalized_path);
         if (!stage) {
+            std::cerr << "[USD_BRIDGE] ERROR: Failed to open stage" << std::endl;
             return USD_BRIDGE_ERROR_FILE_NOT_FOUND;
         }
+
+        std::cout << "[USD_BRIDGE] Stage opened successfully" << std::endl;
 
         auto* bridge = new UsdBridgeStage();
         bridge->stage = stage;
 
         // Pre-cache all data at load time for thread safety.
         // All getter functions will read from these caches without mutation.
+        // Note: The resolver context binder is still active during caching,
+        // so all reference resolution during traversal will work correctly.
         cache_stage_data(bridge);
         cache_prim_data(bridge);
         cache_animation_data(bridge);
@@ -1044,7 +1069,11 @@ UsdBridgeError usd_bridge_open_stage(const char* path, UsdBridgeStage** out_stag
         *out_stage = bridge;
         return USD_BRIDGE_SUCCESS;
 
+    } catch (const std::exception& e) {
+        std::cerr << "[USD_BRIDGE] Exception: " << e.what() << std::endl;
+        return USD_BRIDGE_ERROR_UNKNOWN;
     } catch (...) {
+        std::cerr << "[USD_BRIDGE] Unknown exception" << std::endl;
         return USD_BRIDGE_ERROR_UNKNOWN;
     }
 }
