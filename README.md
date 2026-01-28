@@ -2,13 +2,14 @@
 
 > Production-grade renderer inspired by Isotropix Clarisse, built in Rust
 
-## Current Status: Milestone 18.1 Complete
+## Current Status: Milestone 18.3 Complete
 
-**Animation + Vertex Animation** - Time-sampled USD with multi-mesh support
+**USD Import Refinement** - Relative references + thread-safe loading
 
 - Dual rendering: Vulkan viewport (60 FPS) + Ivar CPU path tracer
 - GPU instancing: 10K+ instances with LOD culling
 - USD support: USDA (pure Rust) + USDC/references (C++ bridge)
+- **USD:** Relative refs (`@./file.usda@`), PointInstancer with external prototypes
 - **Animation:** Timeline UI, transform + vertex animation, multi-mesh rendering
 - Intel Embree 4: Production-quality ray tracing
 - Materials: UsdPreviewSurface + MaterialX standard_surface
@@ -17,7 +18,7 @@
 - Textured PBR viewport with per-face materials (GeomSubsets)
 - OpenImageIO integration with subprocess .tx conversion (optional)
 - Node graph + scene browser + property inspector
-- 135+ tests passing across 6 crates
+- 137+ tests passing across 6 crates
 
 **Next:** [Milestone 19](MILESTONES.md) (Frame Rendering)
 

@@ -546,6 +546,36 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 
 ---
 
+### Milestone 18.2: Thread Safety + Instance Encapsulation ✅
+
+- **Completed:** 2026-01-26
+- **Goal:** Make UsdStage thread-safe for background loading
+- **Key Achievements:**
+  - Pre-cache all data at load time in `usd_bridge_open_stage()`
+  - All getter functions read from immutable caches
+  - `thread_local` storage for `get_mesh_vertices_at_time()` return buffer
+  - `unsafe impl Send for UsdStage` with documented safety invariants
+  - Encapsulated `Scene.instances` behind accessor method
+
+---
+
+### Milestone 18.3: USD Import Refinement ✅
+
+- **Completed:** 2026-01-27
+- **Goal:** Fix USD files with relative references failing to load
+- **Problem:** `@./lucy_low.usda@` references not resolved by C++ bridge
+- **Solution:**
+  - Added `ArResolverContextBinder` for asset resolution context
+  - Normalized Windows backslashes to forward slashes
+  - Added `ar` and `usdShade` libraries to CMake
+- **Key Files:**
+  - `cpp/usd_bridge/usd_bridge.cpp` - Resolver context, path normalization
+  - `cpp/usd_bridge/CMakeLists.txt` - Added dependencies
+- **Tests:** `test_load_relative_reference_usda`, `test_load_pointinstancer_external_prototype`
+- **Devlog:** [devlog/DEVLOG_2026-01-27_usd-refinement.md](devlog/DEVLOG_2026-01-27_usd-refinement.md)
+
+---
+
 ### Milestone 19: Frame Rendering 🎞️
 
 - **Goal:** Render animated sequences to disk
@@ -723,6 +753,8 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 | 17.1 | OIIO/.tx | OpenImageIO texture pipeline (feature-gated) | ✅ Complete |
 | 18 | Animation | Time-sampled USD + timeline UI | ✅ Complete |
 | 18.1 | Vertex Animation | Multi-mesh vertex animation fix | ✅ Complete |
+| 18.2 | Thread Safety | UsdStage thread-safe + instance encapsulation | ✅ Complete |
+| 18.3 | USD Refinement | Relative reference resolution fix | ✅ Complete |
 | 19 | Frame Rendering | Batch render to disk | Planned |
 | 20 | Interactivity | Move objects + keyframing | Planned |
 | 21 | Point Instancing | Scatter + paint tools | Planned |
@@ -780,7 +812,7 @@ Key papers for Milestone 20 (Renderer Polish):
 
 ---
 
-**Last Updated:** January 25, 2026
-**Status:** Milestones 0-18.1 Complete ✅
-**Current:** Animation timeline + vertex animation for multi-mesh
+**Last Updated:** January 27, 2026
+**Status:** Milestones 0-18.3 Complete ✅
+**Current:** USD relative reference resolution fixed
 **Next:** M19 Frame Rendering

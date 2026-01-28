@@ -1,6 +1,6 @@
-# Session Handoff - January 25, 2026
+# Session Handoff - January 27, 2026
 
-**Last Updated:** M18.1 Vertex Animation for Multi-Mesh Complete
+**Last Updated:** M18.3 USD Import Refinement Complete
 **Next Milestone:** 19 (Frame Rendering)
 **Project:** BIF - VFX Scene Assembler & Renderer
 
@@ -10,14 +10,31 @@
 
 | Status | Details |
 |--------|---------|
-| Complete | Milestones 0-18.1, Animation + vertex animation for multi-mesh |
+| Complete | Milestones 0-18.3, USD relative reference resolution |
 | Next | M19 (Frame Rendering) |
-| Tests | 135+ passing |
+| Tests | 137+ passing |
 | Performance | 60 FPS viewport, 10K instances with LOD |
 
 ---
 
 ## Recent Work
+
+### M18.3: USD Import Refinement (Jan 27, 2026)
+
+Fixed USD files with relative references (`@./file.usda@`) failing to load.
+
+| Component | Details |
+|-----------|---------|
+| `usd_bridge.cpp` | Added ArResolverContextBinder for asset resolution |
+| `CMakeLists.txt` | Added `ar` and `usdShade` libraries |
+| `lucy_100.usda` | Fixed USDA syntax (proper xformOpOrder) |
+| Tests | Added `test_load_relative_reference_usda`, `test_load_pointinstancer_external_prototype` |
+
+**The fix:** USD's `ArResolver` needs a context to resolve `@./relative.usda@` paths. Without `ArResolverContextBinder`, USD doesn't know the base directory. Also normalized Windows backslashes to forward slashes.
+
+### M18.2: Thread Safety + Instance Encapsulation (Jan 26, 2026)
+
+Made UsdStage thread-safe with pre-caching at load time.
 
 ### M18.1: Vertex Animation for Multi-Mesh (Jan 25, 2026)
 
@@ -30,19 +47,6 @@ Fixed vertex animation failing when multiple meshes are combined into single buf
 | `combine_with_transforms` | Now accepts mesh_idx, builds mesh_ranges |
 | `update_vertex_animation` | Uses mesh_ranges to update correct vertex range |
 
-**The fix:** When ground (100 verts) + cube (8 verts) = 108 combined, USD returns 8 for cube animation. Now we track each mesh's range and update only that portion.
-
-### M18: Animation + Timeline (Jan 26, 2026)
-
-Time-sampled USD animation support with viewport playback.
-
-| Component | Details |
-|-----------|---------|
-| Timeline UI | Play/pause, frame slider, loop, fps display |
-| AnimatedTransform | Keyframe storage + lerp interpolation |
-| C++ bridge | Timeline metadata, xform samples, vertex animation API |
-| Multi-mesh | Combine prototypes with baked transforms |
-
 ---
 
 ## Current State
@@ -50,11 +54,18 @@ Time-sampled USD animation support with viewport playback.
 | Metric | Value |
 |--------|-------|
 | Build (dev) | ~5s |
-| Tests | 135+ passing |
+| Tests | 137+ passing |
 | Vulkan FPS | 60+ (VSync) |
 | Crates | 6 (math, core, renderer, viewport, viewer, maketx) |
 
 ### What Works
+
+**USD Import:**
+- USDA (pure Rust) + USDC (C++ bridge)
+- **Relative references** (`@./file.usda@`) now resolve correctly
+- **PointInstancer with external prototypes** working
+- UsdPreviewSurface + MaterialX standard_surface
+- Timeline metadata extraction
 
 **Animation:**
 - Timeline UI with playback controls
@@ -72,11 +83,6 @@ Time-sampled USD animation support with viewport playback.
 - Disney Principled BSDF
 - NEE/MIS for HDRI direct lighting
 - Full texture sampling
-
-**USD Import:**
-- USDA (pure Rust) + USDC (C++ bridge)
-- UsdPreviewSurface + MaterialX standard_surface
-- Timeline metadata extraction
 
 ### Known Issues
 
@@ -114,9 +120,9 @@ cargo run -p bif_viewer --features oiio          # With OIIO
 # USD environment (required for USDC)
 . .\setup_usd_env.ps1
 
-# Test animation
-cargo run -p bif_viewer -- --usd assets/animated_cube.usda
-cargo run -p bif_viewer -- --usd assets/test_animated.usda
+# Test relative references
+cargo run -p bif_viewer -- --usd assets/lucy_100.usda
+cargo run -p bif_viewer -- --usd assets/lucy_100_fixed.usda
 ```
 
 ---

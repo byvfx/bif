@@ -26,8 +26,10 @@ target_include_directories(usd_bridge PUBLIC
 # Link USD libraries
 # The pxr package provides these targets
 target_link_libraries(usd_bridge PUBLIC
+    ar
     usd
     usdGeom
+    usdShade
     sdf
     tf
     gf
