@@ -10,6 +10,7 @@ mod bvh;
 mod camera;
 pub mod disney;
 mod embree;
+pub mod exr_writer;
 pub mod hdri;
 mod hittable;
 mod instanced_geometry;
@@ -19,11 +20,15 @@ mod renderer;
 mod sphere;
 mod triangle;
 
-pub use bucket::{generate_buckets, render_bucket, Bucket, BucketResult, DEFAULT_BUCKET_SIZE};
+pub use bucket::{
+    generate_buckets, render_bucket, render_bucket_with_aovs, Bucket, BucketResult,
+    BucketResultWithAovs, DEFAULT_BUCKET_SIZE,
+};
 pub use bvh::BvhNode;
 pub use camera::Camera;
 pub use disney::DisneyBSDF;
 pub use embree::EmbreeScene;
+pub use exr_writer::{format_frame_path, write_exr, ExrCompression, ExrError, ExrOutput};
 pub use hdri::HdriEnvironment;
 pub use hittable::{HitRecord, Hittable, HittableList};
 pub use instanced_geometry::InstancedGeometry;
@@ -33,7 +38,10 @@ pub use material::{
     ScatterResult,
 };
 pub use ray::Ray;
-pub use renderer::{color_to_rgba, ray_color, render, render_pixel, ImageBuffer, RenderConfig};
+pub use renderer::{
+    color_to_rgba, ray_color, ray_color_with_aovs, render, render_pixel, render_pixel_with_aovs,
+    AovData, ImageBuffer, RenderConfig,
+};
 pub use sphere::Sphere;
 pub use triangle::Triangle;
 
