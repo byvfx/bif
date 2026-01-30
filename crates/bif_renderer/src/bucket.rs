@@ -3,7 +3,7 @@
 //! Divides the image into tiles (buckets) that can be rendered
 //! independently and in parallel using rayon.
 
-use crate::renderer::render_pixel;
+use crate::renderer::{render_pixel, render_pixel_with_aovs};
 use crate::{Camera, Color, Hittable, RenderConfig};
 use rand::rngs::StdRng;
 use rand::SeedableRng;
@@ -144,6 +144,68 @@ impl BucketResult {
     pub fn new(bucket: Bucket, pixels: Vec<Color>) -> Self {
         Self { bucket, pixels }
     }
+}
+
+/// Result of rendering a bucket with AOV data.
+#[derive(Debug, Clone)]
+pub struct BucketResultWithAovs {
+    /// The bucket that was rendered.
+    pub bucket: Bucket,
+    /// Pixel colors in row-major order.
+    pub pixels: Vec<Color>,
+    /// Depth values (distance to first hit) in row-major order.
+    pub depths: Vec<f32>,
+    /// World-space normals in row-major order.
+    pub normals: Vec<[f32; 3]>,
+}
+
+impl BucketResultWithAovs {
+    /// Create a new bucket result with AOVs.
+    pub fn new(
+        bucket: Bucket,
+        pixels: Vec<Color>,
+        depths: Vec<f32>,
+        normals: Vec<[f32; 3]>,
+    ) -> Self {
+        Self {
+            bucket,
+            pixels,
+            depths,
+            normals,
+        }
+    }
+}
+
+/// Render a single bucket with AOV capture.
+///
+/// Returns pixels, depths, and normals in row-major order within the bucket.
+pub fn render_bucket_with_aovs(
+    bucket: &Bucket,
+    camera: &Camera,
+    world: &dyn Hittable,
+    config: &RenderConfig,
+) -> BucketResultWithAovs {
+    let seed = ((bucket.x as u64) << 32) | (bucket.y as u64) ^ 0xDEAD_BEEF;
+    let mut rng = StdRng::seed_from_u64(seed);
+
+    let capacity = (bucket.width * bucket.height) as usize;
+    let mut pixels = Vec::with_capacity(capacity);
+    let mut depths = Vec::with_capacity(capacity);
+    let mut normals = Vec::with_capacity(capacity);
+
+    for local_y in 0..bucket.height {
+        for local_x in 0..bucket.width {
+            let global_x = bucket.x + local_x;
+            let global_y = bucket.y + local_y;
+            let (color, aov) =
+                render_pixel_with_aovs(camera, world, global_x, global_y, config, &mut rng);
+            pixels.push(color);
+            depths.push(aov.depth);
+            normals.push([aov.normal.x, aov.normal.y, aov.normal.z]);
+        }
+    }
+
+    BucketResultWithAovs::new(*bucket, pixels, depths, normals)
 }
 
 #[cfg(test)]

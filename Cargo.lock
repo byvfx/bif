@@ -400,7 +400,9 @@ version = "0.1.0"
 dependencies = [
  "bif_core",
  "bif_math",
+ "exr",
  "glam",
+ "half",
  "image",
  "log",
  "rand",

@@ -137,6 +137,167 @@ pub fn ray_color(
     accumulated
 }
 
+/// AOV (Arbitrary Output Variable) data captured from the primary ray.
+#[derive(Debug, Clone, Copy)]
+pub struct AovData {
+    /// Distance to first hit (f32::INFINITY if no hit).
+    pub depth: f32,
+    /// World-space normal at first hit (zero if no hit).
+    pub normal: Color,
+}
+
+impl Default for AovData {
+    fn default() -> Self {
+        Self {
+            depth: f32::INFINITY,
+            normal: Color::ZERO,
+        }
+    }
+}
+
+/// Compute the color and AOV data seen by a ray.
+///
+/// This is identical to `ray_color` but also captures depth and normal
+/// from the first hit for AOV output.
+pub fn ray_color_with_aovs(
+    ray: &Ray,
+    world: &dyn Hittable,
+    depth: u32,
+    config: &RenderConfig,
+    rng: &mut dyn RngCore,
+) -> (Color, AovData) {
+    let mut current_ray = *ray;
+    let mut throughput = Color::ONE;
+    let mut accumulated = Color::ZERO;
+    let mut remaining_depth = depth;
+
+    // AOV data - captured from first hit only
+    let mut aov = AovData::default();
+    let mut first_hit = true;
+
+    // Track last scatter PDF for MIS weighting when hitting environment
+    let mut last_scatter_pdf = 0.0_f32;
+    let mut last_was_delta = true;
+
+    loop {
+        if remaining_depth == 0 {
+            break;
+        }
+
+        let mut rec = HitRecord::default();
+
+        if !world.hit(&current_ray, Interval::new(0.001, f32::INFINITY), &mut rec) {
+            // Ray escaped - sample environment/background
+            let bg = if let Some(ref env) = config.environment {
+                let dir = current_ray.direction().normalize();
+                let emission = env.sample(dir);
+                if last_was_delta {
+                    emission
+                } else {
+                    let env_pdf = env.pdf_for_direction(dir);
+                    let mis_w = power_heuristic(last_scatter_pdf, env_pdf);
+                    emission * mis_w
+                }
+            } else if config.use_sky_gradient {
+                sky_gradient(&current_ray)
+            } else {
+                config.background
+            };
+            accumulated += throughput * bg;
+            break;
+        }
+
+        // Capture AOV data from first hit
+        if first_hit {
+            aov.depth = rec.t;
+            aov.normal = rec.normal;
+            first_hit = false;
+        }
+
+        // Accumulate emission from hit surfaces
+        let emission = rec.material.emitted(rec.u, rec.v, rec.p);
+        accumulated += throughput * emission;
+
+        // NEE: sample environment light directly (non-delta materials only)
+        if !rec.material.is_delta() {
+            if let Some(ref env) = config.environment {
+                let (light_dir, light_emission, light_pdf) = env.sample_direction(rng);
+                let shadow_ray = Ray::new(rec.p, light_dir, current_ray.time());
+                let mut shadow_rec = HitRecord::default();
+                if !world.hit(
+                    &shadow_ray,
+                    Interval::new(0.001, f32::INFINITY),
+                    &mut shadow_rec,
+                ) {
+                    let bsdf_val = rec.material.bsdf(&current_ray, &rec, &shadow_ray);
+                    let bsdf_pdf = rec.material.pdf(&current_ray, &rec, &shadow_ray);
+                    let mis_w = power_heuristic(light_pdf, bsdf_pdf);
+                    let cos_theta = rec.normal.dot(light_dir).max(0.0);
+                    accumulated += throughput * bsdf_val * light_emission * cos_theta * mis_w
+                        / light_pdf.max(1e-10);
+                }
+            }
+        }
+
+        match rec.material.scatter(&current_ray, &rec, rng) {
+            Some(result) => {
+                last_scatter_pdf = result.pdf;
+                last_was_delta = rec.material.is_delta();
+                current_ray = result.scattered;
+                throughput *= result.attenuation;
+                if !result.pass_through {
+                    remaining_depth -= 1;
+                }
+            }
+            None => {
+                break;
+            }
+        }
+    }
+
+    (accumulated, aov)
+}
+
+/// Render a single pixel with multi-sampling, returning color and AOV data.
+pub fn render_pixel_with_aovs(
+    camera: &Camera,
+    world: &dyn Hittable,
+    x: u32,
+    y: u32,
+    config: &RenderConfig,
+    rng: &mut dyn RngCore,
+) -> (Color, AovData) {
+    let mut pixel_color = Color::ZERO;
+    let mut depth_sum = 0.0_f32;
+    let mut normal_sum = Color::ZERO;
+    let mut hit_count = 0u32;
+
+    for _ in 0..config.samples_per_pixel {
+        let ray = camera.get_ray(x, y, rng);
+        let (color, aov) = ray_color_with_aovs(&ray, world, config.max_depth, config, rng);
+        pixel_color += color;
+
+        // Only average depth/normal from rays that hit something
+        if aov.depth < f32::INFINITY {
+            depth_sum += aov.depth;
+            normal_sum += aov.normal;
+            hit_count += 1;
+        }
+    }
+
+    let avg_color = pixel_color / config.samples_per_pixel as f32;
+    let avg_aov = if hit_count > 0 {
+        AovData {
+            depth: depth_sum / hit_count as f32,
+            normal: (normal_sum / hit_count as f32).normalize(),
+        }
+    } else {
+        AovData::default()
+    };
+
+    (avg_color, avg_aov)
+}
+
 /// Compute sky gradient background.
 fn sky_gradient(ray: &Ray) -> Color {
     let unit_direction = ray.direction().normalize();
