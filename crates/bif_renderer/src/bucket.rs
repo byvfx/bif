@@ -157,6 +157,8 @@ pub struct BucketResultWithAovs {
     pub depths: Vec<f32>,
     /// World-space normals in row-major order.
     pub normals: Vec<[f32; 3]>,
+    /// Alpha values (1.0 = hit, 0.0 = miss) in row-major order.
+    pub alphas: Vec<f32>,
 }
 
 impl BucketResultWithAovs {
@@ -166,19 +168,21 @@ impl BucketResultWithAovs {
         pixels: Vec<Color>,
         depths: Vec<f32>,
         normals: Vec<[f32; 3]>,
+        alphas: Vec<f32>,
     ) -> Self {
         Self {
             bucket,
             pixels,
             depths,
             normals,
+            alphas,
         }
     }
 }
 
 /// Render a single bucket with AOV capture.
 ///
-/// Returns pixels, depths, and normals in row-major order within the bucket.
+/// Returns pixels, depths, normals, and alphas in row-major order within the bucket.
 pub fn render_bucket_with_aovs(
     bucket: &Bucket,
     camera: &Camera,
@@ -192,6 +196,7 @@ pub fn render_bucket_with_aovs(
     let mut pixels = Vec::with_capacity(capacity);
     let mut depths = Vec::with_capacity(capacity);
     let mut normals = Vec::with_capacity(capacity);
+    let mut alphas = Vec::with_capacity(capacity);
 
     for local_y in 0..bucket.height {
         for local_x in 0..bucket.width {
@@ -202,10 +207,11 @@ pub fn render_bucket_with_aovs(
             pixels.push(color);
             depths.push(aov.depth);
             normals.push([aov.normal.x, aov.normal.y, aov.normal.z]);
+            alphas.push(aov.alpha);
         }
     }
 
-    BucketResultWithAovs::new(*bucket, pixels, depths, normals)
+    BucketResultWithAovs::new(*bucket, pixels, depths, normals, alphas)
 }
 
 #[cfg(test)]

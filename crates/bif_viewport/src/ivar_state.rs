@@ -10,7 +10,7 @@ use std::time::Instant;
 
 use bif_math::{Camera, Vec3};
 use bif_renderer::{
-    generate_buckets, Bucket, BucketResult, BvhNode, ImageBuffer, DEFAULT_BUCKET_SIZE,
+    generate_buckets, Bucket, BucketResultWithAovs, BvhNode, ImageBuffer, DEFAULT_BUCKET_SIZE,
 };
 
 /// Render mode selection: GPU viewport or Ivar CPU path tracer.
@@ -21,6 +21,42 @@ pub enum RenderMode {
     Vulkan,
     /// Ivar CPU path tracer for production quality.
     Ivar,
+}
+
+/// AOV channel for viewport preview.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AovChannel {
+    /// Beauty pass (RGB).
+    #[default]
+    Beauty,
+    /// Alpha channel (grayscale).
+    Alpha,
+    /// Depth (normalized grayscale).
+    Depth,
+    /// Normal (RGB from XYZ).
+    Normal,
+}
+
+impl AovChannel {
+    /// Display name for UI dropdown.
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            AovChannel::Beauty => "Beauty",
+            AovChannel::Alpha => "Alpha",
+            AovChannel::Depth => "Depth",
+            AovChannel::Normal => "Normal",
+        }
+    }
+
+    /// All channels for UI dropdown.
+    pub fn all() -> &'static [AovChannel] {
+        &[
+            AovChannel::Beauty,
+            AovChannel::Alpha,
+            AovChannel::Depth,
+            AovChannel::Normal,
+        ]
+    }
 }
 
 impl RenderMode {
@@ -67,6 +103,36 @@ impl CameraSource {
     }
 }
 
+/// Per-AOV settings for batch rendering.
+#[derive(Debug, Clone)]
+pub struct AovSettings {
+    /// Include alpha channel in EXR output.
+    pub include_alpha: bool,
+    /// Include depth (Z) channel in EXR output.
+    pub include_depth: bool,
+    /// Include normal (N.X, N.Y, N.Z) channels in EXR output.
+    pub include_normal: bool,
+    /// Near clipping distance for depth visualization.
+    pub depth_near: f32,
+    /// Far clipping distance for depth visualization.
+    pub depth_far: f32,
+    /// Auto-compute depth bounds from scene AABB.
+    pub auto_depth_bounds: bool,
+}
+
+impl Default for AovSettings {
+    fn default() -> Self {
+        Self {
+            include_alpha: true,
+            include_depth: true,
+            include_normal: true,
+            depth_near: 0.01,
+            depth_far: 10000.0,
+            auto_depth_bounds: false,
+        }
+    }
+}
+
 /// Settings for batch rendering to disk.
 #[derive(Debug, Clone)]
 pub struct BatchRenderSettings {
@@ -88,8 +154,8 @@ pub struct BatchRenderSettings {
     pub samples_per_pixel: u32,
     /// Maximum ray bounce depth.
     pub max_depth: u32,
-    /// Whether to include depth and normal AOVs.
-    pub include_aovs: bool,
+    /// Per-AOV settings (alpha, depth, normal).
+    pub aov_settings: AovSettings,
     /// EXR compression setting.
     pub compression: bif_renderer::ExrCompression,
     /// Camera source (viewport or USD camera).
@@ -108,7 +174,7 @@ impl Default for BatchRenderSettings {
             resolution_y: 1080,
             samples_per_pixel: 64,
             max_depth: 8,
-            include_aovs: true,
+            aov_settings: AovSettings::default(),
             compression: bif_renderer::ExrCompression::default(),
             camera_source: CameraSource::default(),
         }
@@ -218,8 +284,8 @@ impl CameraSnapshot {
 /// Message from Ivar background render thread.
 #[derive(Debug)]
 pub enum IvarMessage {
-    /// A bucket has been completed.
-    BucketComplete(BucketResult),
+    /// A bucket has been completed with AOV data.
+    BucketComplete(BucketResultWithAovs),
     /// Entire render is complete.
     RenderComplete { elapsed_secs: f32 },
     /// Render was cancelled.
@@ -265,6 +331,14 @@ pub struct IvarState {
     pub batch_settings: BatchRenderSettings,
     /// Batch render status.
     pub batch_status: BatchRenderStatus,
+    /// AOV channel to preview in viewport.
+    pub preview_aov: AovChannel,
+    /// Alpha buffer for AOV preview (stored per pixel).
+    pub alpha_buffer: Option<Vec<f32>>,
+    /// Depth buffer for AOV preview (stored per pixel).
+    pub depth_buffer: Option<Vec<f32>>,
+    /// Normal buffer for AOV preview (stored per pixel as [x, y, z]).
+    pub normal_buffer: Option<Vec<[f32; 3]>>,
 }
 
 impl Default for IvarState {
@@ -287,6 +361,10 @@ impl Default for IvarState {
             environment: None,
             batch_settings: BatchRenderSettings::default(),
             batch_status: BatchRenderStatus::default(),
+            preview_aov: AovChannel::default(),
+            alpha_buffer: None,
+            depth_buffer: None,
+            normal_buffer: None,
         }
     }
 }
@@ -301,12 +379,18 @@ impl IvarState {
         self.cancel_flag = Arc::new(AtomicBool::new(false));
 
         // Clear state
+        let pixel_count = (width * height) as usize;
         self.image_buffer = Some(ImageBuffer::new(width, height));
         self.buckets = generate_buckets(width, height, DEFAULT_BUCKET_SIZE);
         self.buckets_completed = 0;
         self.render_complete = false;
         self.receiver = None;
         self.render_start_time = Some(Instant::now());
+
+        // Allocate AOV buffers
+        self.alpha_buffer = Some(vec![0.0; pixel_count]);
+        self.depth_buffer = Some(vec![f32::INFINITY; pixel_count]);
+        self.normal_buffer = Some(vec![[0.0; 3]; pixel_count]);
     }
 
     /// Check if camera has moved and render needs restart.
