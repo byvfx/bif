@@ -47,7 +47,10 @@ pub use gpu_types::{
     MAX_VIEWPORT_TEXTURES,
 };
 pub use ivar_renderer::{create_depth_texture, create_ivar_pipeline, create_ivar_texture};
-pub use ivar_state::{BuildStatus, CameraSnapshot, IvarMessage, IvarState, RenderMode};
+pub use ivar_state::{
+    BatchRenderSettings, BatchRenderStatus, BuildStatus, CameraSnapshot, CameraSource, IvarMessage,
+    IvarState, RenderMode,
+};
 pub use mesh_data::MeshData;
 pub use texture_loader::{
     collect_scene_texture_paths, create_default_gpu_textures, create_gpu_texture,
@@ -57,6 +60,8 @@ pub use texture_loader::{
 pub use node_graph::{render_node_graph, NodeGraphEvent, NodeGraphState, SceneNode};
 pub use property_inspector::{render_property_inspector, PrimProperties};
 pub use scene_browser::{EmptyPrimProvider, PrimDataProvider, PrimDisplayInfo, SceneBrowserState};
+
+use batch_render::{BatchMessage, BatchSceneData};
 
 /// Timeline state for animation playback.
 #[derive(Clone, Debug)]
@@ -318,7 +323,8 @@ pub struct Renderer {
     pub selected_prim_properties: Option<PrimProperties>,
 
     // USD stage for scene browser hierarchy (None if loaded via pure Rust parser)
-    usd_stage: Option<UsdStage>,
+    // Wrapped in Arc for sharing with batch render thread
+    usd_stage: Option<Arc<UsdStage>>,
 
     // Node graph state for scene assembly
     pub node_graph_state: NodeGraphState,
@@ -340,6 +346,10 @@ pub struct Renderer {
     tx_conversion_receiver: Option<mpsc::Receiver<String>>,
     // GPU compute IBL pipelines
     compute_ibl: compute_ibl::ComputeIbl,
+
+    // Batch render state
+    batch_receiver: Option<mpsc::Receiver<BatchMessage>>,
+    batch_cancel_flag: Option<Arc<AtomicBool>>,
 }
 
 impl Renderer {
@@ -1030,6 +1040,8 @@ impl Renderer {
             ibl_receiver: None,
             tx_conversion_receiver: None,
             compute_ibl,
+            batch_receiver: None,
+            batch_cancel_flag: None,
         })
     }
 
@@ -1809,6 +1821,8 @@ impl Renderer {
             ibl_receiver: None,
             tx_conversion_receiver: None,
             compute_ibl,
+            batch_receiver: None,
+            batch_cancel_flag: None,
         })
     }
 
@@ -1819,7 +1833,7 @@ impl Renderer {
         stage: UsdStage,
     ) -> Result<Self> {
         let mut renderer = Self::new_with_scene(window, scene).await?;
-        renderer.usd_stage = Some(stage);
+        renderer.usd_stage = Some(Arc::new(stage));
         Ok(renderer)
     }
 
@@ -2035,6 +2049,54 @@ impl Renderer {
             mesh_center,
             camera_distance
         );
+    }
+
+    /// Sync viewport camera to a USD camera at the current timeline frame
+    pub fn sync_viewport_to_usd_camera(&mut self, camera_path: &str) {
+        let Some(ref stage) = self.usd_stage else {
+            log::warn!("No USD stage loaded");
+            return;
+        };
+
+        let time = self.timeline_state.current_frame;
+
+        match stage.get_camera_xform_at_time(camera_path, time) {
+            Ok(xform) => {
+                // USD stores translation in row 3, not column 3
+                let position = xform.row(3).truncate();
+
+                // Extract forward direction (negative Z in camera space)
+                // USD row-major: row 2 is the Z axis
+                let forward = -Vec3::new(xform.row(0).z, xform.row(1).z, xform.row(2).z).normalize();
+
+                // Target is position + forward * reasonable distance
+                let target = position + forward * 10.0;
+
+                // Extract up vector (Y axis) from rows
+                let up = Vec3::new(xform.row(0).y, xform.row(1).y, xform.row(2).y).normalize();
+
+                log::info!(
+                    "USD camera '{}' at frame {}: pos={:?}, target={:?}, up={:?}",
+                    camera_path, time, position, target, up
+                );
+
+                // Update viewport camera
+                self.camera.position = position;
+                self.camera.target = target;
+                self.camera.up = up;
+                self.camera.distance = 10.0;
+
+                // Recalculate yaw/pitch from the new orientation
+                let dir = (position - target).normalize();
+                self.camera.yaw = dir.x.atan2(dir.z);
+                self.camera.pitch = (-dir.y).asin();
+
+                self.update_camera();
+            }
+            Err(e) => {
+                log::error!("Failed to get USD camera transform: {:?}", e);
+            }
+        }
     }
 
     /// Load a USD scene file and update the viewport
@@ -2472,7 +2534,22 @@ impl Renderer {
             prototype_aabb.max_point()
         );
 
-        // Update USD stage for scene browser
+        // Update USD stage for scene browser (wrapped in Arc for batch render sharing)
+        let stage = Arc::new(stage);
+
+        // Log available cameras for batch render
+        match stage.camera_paths() {
+            Ok(paths) if !paths.is_empty() => {
+                log::info!("Found {} USD camera(s): {:?}", paths.len(), paths);
+            }
+            Ok(_) => {
+                log::info!("No USD cameras found in scene");
+            }
+            Err(e) => {
+                log::warn!("Failed to query cameras: {:?}", e);
+            }
+        }
+
         self.usd_stage = Some(stage);
 
         // Reset scene browser selection
@@ -3035,6 +3112,99 @@ impl Renderer {
         });
     }
 
+    /// Build Ivar scene synchronously (blocking). Used for batch render.
+    fn build_ivar_scene_sync(&self) -> Arc<BvhNode> {
+        let start_time = Instant::now();
+
+        log::info!(
+            "Building Ivar scene (sync): {} triangles, {} instances",
+            self.mesh_data.indices.len() / 3,
+            self.instance_transforms.len()
+        );
+
+        // Extract triangle vertices, UVs, and normals
+        let tri_count = self.mesh_data.indices.len() / 3;
+        let mut triangle_vertices = Vec::with_capacity(tri_count);
+        let mut triangle_uvs: Vec<[[f32; 2]; 3]> = Vec::with_capacity(tri_count);
+        let mut triangle_normals: Vec<[[f32; 3]; 3]> = Vec::with_capacity(tri_count);
+
+        for i in (0..self.mesh_data.indices.len()).step_by(3) {
+            let i0 = self.mesh_data.indices[i] as usize;
+            let i1 = self.mesh_data.indices[i + 1] as usize;
+            let i2 = self.mesh_data.indices[i + 2] as usize;
+
+            let v0 = Vec3::from_array(self.mesh_data.vertices[i0].position);
+            let v1 = Vec3::from_array(self.mesh_data.vertices[i1].position);
+            let v2 = Vec3::from_array(self.mesh_data.vertices[i2].position);
+            triangle_vertices.push([v0, v1, v2]);
+
+            triangle_uvs.push([
+                self.mesh_data.vertices[i0].uv,
+                self.mesh_data.vertices[i1].uv,
+                self.mesh_data.vertices[i2].uv,
+            ]);
+
+            triangle_normals.push([
+                self.mesh_data.vertices[i0].normal,
+                self.mesh_data.vertices[i1].normal,
+                self.mesh_data.vertices[i2].normal,
+            ]);
+        }
+
+        // Load materials with textures
+        let mut texture_cache = match &self.texture_base_dir {
+            Some(dir) => bif_core::texture::TextureCache::with_base_dir(dir.clone()),
+            None => bif_core::texture::TextureCache::new(),
+        };
+
+        let materials: Vec<Arc<DisneyBSDF>> = if self.scene_materials.is_empty() {
+            vec![Arc::new(DisneyBSDF::from_material_with_textures(
+                &self.scene_material,
+                &mut texture_cache,
+            ))]
+        } else {
+            self.scene_materials
+                .iter()
+                .map(|mat| {
+                    Arc::new(DisneyBSDF::from_material_with_textures(
+                        mat.as_ref(),
+                        &mut texture_cache,
+                    ))
+                })
+                .collect()
+        };
+
+        let tri_mat_ids: Vec<u32> = self
+            .mesh_data
+            .triangle_material_ids
+            .as_ref()
+            .cloned()
+            .unwrap_or_default();
+
+        // Create Embree scene or fallback
+        let world = if let Some(embree_scene) = EmbreeScene::try_new(
+            &triangle_vertices,
+            &triangle_uvs,
+            &triangle_normals,
+            self.instance_transforms.clone(),
+            materials,
+            &tri_mat_ids,
+        ) {
+            log::info!("Using Embree for batch render");
+            let objects: Vec<Box<dyn Hittable + Send + Sync>> = vec![Box::new(embree_scene)];
+            Arc::new(BvhNode::new(objects))
+        } else {
+            log::warn!("Embree not available for batch render");
+            let objects: Vec<Box<dyn Hittable + Send + Sync>> = vec![];
+            Arc::new(BvhNode::new(objects))
+        };
+
+        let elapsed = start_time.elapsed();
+        log::info!("Scene built in {:.2}ms", elapsed.as_secs_f64() * 1000.0);
+
+        world
+    }
+
     /// Invalidate cached Ivar scene (call when geometry changes or user requests rebuild).
     ///
     /// This will:
@@ -3243,6 +3413,62 @@ impl Renderer {
         }
     }
 
+    /// Start a batch render to disk
+    fn start_batch_render(&mut self) {
+        // Build scene synchronously if not already built
+        if self.ivar_state.world.is_none() {
+            log::info!("Building scene for batch render...");
+            self.ivar_state.batch_status = BatchRenderStatus::Rendering {
+                current_frame: 0,
+                total_frames: self.ivar_state.batch_settings.frame_count(),
+                frame_progress: 0.0,
+            };
+
+            // Build synchronously (same logic as async build_ivar_scene)
+            let world = self.build_ivar_scene_sync();
+            self.ivar_state.world = Some(world.clone());
+            self.ivar_state.build_status = BuildStatus::Complete;
+        }
+
+        let Some(world) = self.ivar_state.world.clone() else {
+            log::error!("Cannot start batch render: no scene");
+            self.ivar_state.batch_status =
+                BatchRenderStatus::Failed("No scene loaded".to_string());
+            return;
+        };
+
+        // Create scene data for batch render
+        let scene_data = BatchSceneData {
+            world,
+            environment: self.ivar_state.environment.clone(),
+            stage: self.usd_stage.clone(),
+            viewport_camera: self.camera,
+        };
+
+        // Clone settings (they're stored in ivar_state)
+        let settings = self.ivar_state.batch_settings.clone();
+
+        log::info!(
+            "Starting batch render: frames {}-{} step {}, {}x{} @ {} SPP",
+            settings.start_frame,
+            settings.end_frame,
+            settings.frame_step,
+            settings.resolution_x,
+            settings.resolution_y,
+            settings.samples_per_pixel
+        );
+
+        // Start the batch render
+        let (rx, cancel_flag) = batch_render::start_batch_render(settings, scene_data);
+        self.batch_receiver = Some(rx);
+        self.batch_cancel_flag = Some(cancel_flag);
+        self.ivar_state.batch_status = BatchRenderStatus::Rendering {
+            current_frame: 1,
+            total_frames: self.ivar_state.batch_settings.frame_count(),
+            frame_progress: 0.0,
+        };
+    }
+
     /// Render a frame with the given clear color
     pub fn render(
         &mut self,
@@ -3310,6 +3536,49 @@ impl Renderer {
         if let Some(status) = tx_result {
             self.node_graph_state.mark_tx_conversion_complete(status);
             self.tx_conversion_receiver = None;
+        }
+
+        // Poll for batch render messages
+        let mut clear_batch_state = false;
+        if let Some(ref rx) = self.batch_receiver {
+            while let Ok(msg) = rx.try_recv() {
+                match msg {
+                    BatchMessage::Progress {
+                        current_frame,
+                        total_frames,
+                        frame_progress,
+                    } => {
+                        self.ivar_state.batch_status = BatchRenderStatus::Rendering {
+                            current_frame,
+                            total_frames,
+                            frame_progress,
+                        };
+                    }
+                    BatchMessage::FrameComplete { frame, elapsed_secs } => {
+                        log::info!("Batch frame {} complete in {:.1}s", frame, elapsed_secs);
+                    }
+                    BatchMessage::Complete { total_elapsed_secs } => {
+                        log::info!("Batch render complete in {:.1}s", total_elapsed_secs);
+                        self.ivar_state.batch_status =
+                            BatchRenderStatus::Complete { total_elapsed_secs };
+                        clear_batch_state = true;
+                    }
+                    BatchMessage::Cancelled => {
+                        log::info!("Batch render cancelled");
+                        self.ivar_state.batch_status = BatchRenderStatus::Cancelled;
+                        clear_batch_state = true;
+                    }
+                    BatchMessage::Error(e) => {
+                        log::error!("Batch render error: {}", e);
+                        self.ivar_state.batch_status = BatchRenderStatus::Failed(e);
+                        clear_batch_state = true;
+                    }
+                }
+            }
+        }
+        if clear_batch_state {
+            self.batch_receiver = None;
+            self.batch_cancel_flag = None;
         }
 
         // Update frustum culling before rendering (in Vulkan mode)
@@ -3687,49 +3956,69 @@ impl Renderer {
                             ui.text_edit_singleline(&mut settings.output_directory);
                         });
 
-                        // Status and buttons
+                        // Sync viewport to USD camera button
+                        if let ivar_state::CameraSource::UsdCamera(ref cam_path) = settings.camera_source {
+                            if ui.button("Sync Viewport to Camera").clicked() {
+                                ctx.data_mut(|d| {
+                                    d.insert_temp(egui::Id::new("sync_viewport_to_usd_camera"), cam_path.clone())
+                                });
+                            }
+                        }
+
+                        ui.separator();
+
+                        // Render button and status on same line
                         let status = &self.ivar_state.batch_status;
-                        match status {
-                            ivar_state::BatchRenderStatus::Idle => {
-                                let can_render = self.ivar_state.build_status == BuildStatus::Complete
-                                    && !settings.output_directory.is_empty();
-                                if ui.add_enabled(can_render, egui::Button::new("Render")).clicked() {
-                                    ctx.data_mut(|d| {
-                                        d.insert_temp(egui::Id::new("start_batch_render"), true)
-                                    });
+                        let is_rendering = matches!(status, ivar_state::BatchRenderStatus::Rendering { .. });
+                        let can_render = !settings.output_directory.is_empty() && !is_rendering;
+
+                        ui.horizontal(|ui| {
+                            if ui.add_enabled(can_render, egui::Button::new("Render")).clicked() {
+                                ctx.data_mut(|d| {
+                                    d.insert_temp(egui::Id::new("start_batch_render"), true)
+                                });
+                            }
+
+                            // Show status next to button
+                            match status {
+                                ivar_state::BatchRenderStatus::Idle => {
+                                    if settings.output_directory.is_empty() {
+                                        ui.label("Set output directory");
+                                    }
                                 }
-                                if !can_render {
-                                    ui.label("Build scene first");
+                                ivar_state::BatchRenderStatus::Complete { total_elapsed_secs } => {
+                                    ui.colored_label(
+                                        egui::Color32::GREEN,
+                                        format!("Done ({:.1}s)", total_elapsed_secs),
+                                    );
                                 }
-                            }
-                            ivar_state::BatchRenderStatus::Rendering {
-                                current_frame,
-                                total_frames,
-                                frame_progress,
-                            } => {
-                                let overall = ((*current_frame - 1) as f32 + frame_progress)
-                                    / *total_frames as f32;
-                                ui.add(
-                                    egui::ProgressBar::new(overall)
-                                        .text(format!("Frame {}/{}", current_frame, total_frames)),
-                                );
-                                if ui.button("Cancel").clicked() {
-                                    ctx.data_mut(|d| {
-                                        d.insert_temp(egui::Id::new("cancel_batch_render"), true)
-                                    });
+                                ivar_state::BatchRenderStatus::Cancelled => {
+                                    ui.colored_label(egui::Color32::YELLOW, "Cancelled");
                                 }
+                                ivar_state::BatchRenderStatus::Failed(msg) => {
+                                    ui.colored_label(egui::Color32::RED, format!("Failed: {}", msg));
+                                }
+                                _ => {}
                             }
-                            ivar_state::BatchRenderStatus::Complete { total_elapsed_secs } => {
-                                ui.colored_label(
-                                    egui::Color32::GREEN,
-                                    format!("Complete ({:.1}s)", total_elapsed_secs),
-                                );
-                            }
-                            ivar_state::BatchRenderStatus::Cancelled => {
-                                ui.colored_label(egui::Color32::YELLOW, "Cancelled");
-                            }
-                            ivar_state::BatchRenderStatus::Failed(msg) => {
-                                ui.colored_label(egui::Color32::RED, format!("Failed: {}", msg));
+                        });
+
+                        // Progress bar and cancel button when rendering
+                        if let ivar_state::BatchRenderStatus::Rendering {
+                            current_frame,
+                            total_frames,
+                            frame_progress,
+                        } = status
+                        {
+                            let overall = ((*current_frame - 1) as f32 + frame_progress)
+                                / *total_frames as f32;
+                            ui.add(
+                                egui::ProgressBar::new(overall)
+                                    .text(format!("Frame {}/{}", current_frame, total_frames)),
+                            );
+                            if ui.button("Cancel").clicked() {
+                                ctx.data_mut(|d| {
+                                    d.insert_temp(egui::Id::new("cancel_batch_render"), true)
+                                });
                             }
                         }
                     });
@@ -3741,7 +4030,7 @@ impl Renderer {
                         // Use USD stage if available, otherwise empty provider
                         let empty_provider = EmptyPrimProvider;
                         let provider: &dyn PrimDataProvider = match &self.usd_stage {
-                            Some(stage) => stage,
+                            Some(stage) => stage.as_ref(),
                             None => &empty_provider,
                         };
 
@@ -3885,6 +4174,40 @@ impl Renderer {
                 .data_mut(|d| d.remove::<bool>(egui::Id::new("rebuild_scene_requested")));
         }
 
+        // Handle batch render start request
+        let start_batch = self.egui_ctx.data(|d| {
+            d.get_temp::<bool>(egui::Id::new("start_batch_render"))
+                .unwrap_or(false)
+        });
+        if start_batch {
+            self.egui_ctx
+                .data_mut(|d| d.remove::<bool>(egui::Id::new("start_batch_render")));
+            self.start_batch_render();
+        }
+
+        // Handle batch render cancel request
+        let cancel_batch = self.egui_ctx.data(|d| {
+            d.get_temp::<bool>(egui::Id::new("cancel_batch_render"))
+                .unwrap_or(false)
+        });
+        if cancel_batch {
+            self.egui_ctx
+                .data_mut(|d| d.remove::<bool>(egui::Id::new("cancel_batch_render")));
+            if let Some(ref flag) = self.batch_cancel_flag {
+                flag.store(true, Ordering::Relaxed);
+            }
+        }
+
+        // Handle sync viewport to USD camera request
+        let sync_camera: Option<String> = self
+            .egui_ctx
+            .data(|d| d.get_temp(egui::Id::new("sync_viewport_to_usd_camera")));
+        if let Some(camera_path) = sync_camera {
+            self.egui_ctx
+                .data_mut(|d| d.remove::<String>(egui::Id::new("sync_viewport_to_usd_camera")));
+            self.sync_viewport_to_usd_camera(&camera_path);
+        }
+
         // Handle prim selection from scene browser
         let selected_prim: Option<String> = self
             .egui_ctx
@@ -3894,7 +4217,7 @@ impl Renderer {
                 .data_mut(|d| d.remove::<String>(egui::Id::new("prim_selection_changed")));
             self.selected_prim_path = Some(prim_path.clone());
             let provider: Option<&dyn PrimDataProvider> =
-                self.usd_stage.as_ref().map(|s| s as &dyn PrimDataProvider);
+                self.usd_stage.as_ref().map(|s| s.as_ref() as &dyn PrimDataProvider);
             if let Some(info) = provider.and_then(|p| p.get_prim_info(&prim_path)) {
                 self.selected_prim_properties = Some(PrimProperties::from_display_info(&info));
             } else {

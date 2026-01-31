@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
 
 use bif_core::usd::cpp_bridge::UsdStage;
-use bif_math::Mat4;
+use bif_math::{Mat4, Vec3};
 use bif_renderer::{
     format_frame_path, generate_buckets, render_bucket_with_aovs, write_exr, BvhNode, Camera,
     Color, ExrOutput, HdriEnvironment, RenderConfig, DEFAULT_BUCKET_SIZE,
@@ -89,10 +89,16 @@ fn batch_render_loop(
     let render_config = RenderConfig {
         samples_per_pixel: settings.samples_per_pixel,
         max_depth: settings.max_depth,
-        background: Color::ZERO,
-        use_sky_gradient: false,
+        background: Color::new(0.1, 0.1, 0.1),
+        use_sky_gradient: true, // Fallback lighting if no HDRI
         environment: scene.environment.clone(),
     };
+
+    log::info!(
+        "Batch render: camera_source={}, stage_present={}",
+        settings.camera_source.display_name(),
+        scene.stage.is_some()
+    );
 
     // Render each frame
     for (frame_idx, &frame) in frames.iter().enumerate() {
@@ -180,10 +186,12 @@ fn build_camera_for_frame(
     match source {
         CameraSource::Viewport => {
             // Use viewport camera settings
+            // Note: viewport camera stores fov_y in radians, renderer expects degrees
             let vc = &scene.viewport_camera;
+            let focus_distance = (vc.target - vc.position).length();
             let mut camera = Camera::new()
                 .with_resolution(width, height)
-                .with_lens(vc.fov_y, 0.0, 1.0)
+                .with_lens(vc.fov_y.to_degrees(), 0.0, focus_distance)
                 .with_position(vc.position, vc.target, vc.up);
             camera.initialize();
             camera
@@ -191,15 +199,30 @@ fn build_camera_for_frame(
         CameraSource::UsdCamera(path) => {
             // Query USD stage for camera transform at time
             if let Some(ref stage) = scene.stage {
-                if let Ok(xform) = stage.get_camera_xform_at_time(path, time) {
-                    return camera_from_usd_transform(xform, width, height);
+                match stage.get_camera_xform_at_time(path, time) {
+                    Ok(xform) => {
+                        log::info!(
+                            "USD camera '{}' at frame {}: pos={:?}",
+                            path,
+                            time,
+                            xform.col(3).truncate()
+                        );
+                        return camera_from_usd_transform(xform, width, height);
+                    }
+                    Err(e) => {
+                        log::warn!("Failed to get USD camera xform: {:?}", e);
+                    }
                 }
+            } else {
+                log::warn!("No USD stage available for camera query");
             }
             // Fallback to viewport camera if USD query fails
+            log::warn!("Falling back to viewport camera");
             let vc = &scene.viewport_camera;
+            let focus_distance = (vc.target - vc.position).length();
             let mut camera = Camera::new()
                 .with_resolution(width, height)
-                .with_lens(vc.fov_y, 0.0, 1.0)
+                .with_lens(vc.fov_y.to_degrees(), 0.0, focus_distance)
                 .with_position(vc.position, vc.target, vc.up);
             camera.initialize();
             camera
@@ -209,21 +232,26 @@ fn build_camera_for_frame(
 
 /// Create an Ivar camera from a USD transform matrix.
 fn camera_from_usd_transform(xform: Mat4, width: u32, height: u32) -> Camera {
-    // Extract position from the matrix (translation is in the 4th column)
-    let position = xform.col(3).truncate();
+    // USD stores translation in row 3, not column 3
+    let position = xform.row(3).truncate();
 
     // Extract forward direction (negative Z in camera space)
-    // USD cameras look down -Z, so we negate the Z column
-    let forward = -xform.col(2).truncate().normalize();
+    // USD row-major: row 2 is the Z axis
+    let forward = -Vec3::new(xform.row(0).z, xform.row(1).z, xform.row(2).z).normalize();
 
-    // Target is position + forward
-    let target = position + forward;
+    // Target is position + forward (scale forward to reasonable distance)
+    let target = position + forward * 10.0;
 
-    // Extract up vector from Y column
-    let up = xform.col(1).truncate().normalize();
+    // Extract up vector (Y axis) from rows
+    let up = Vec3::new(xform.row(0).y, xform.row(1).y, xform.row(2).y).normalize();
 
     // Default FOV (USD cameras have focal length, but we use a reasonable default)
     let fov_y = 45.0_f32;
+
+    log::debug!(
+        "USD camera: pos={:?}, target={:?}, up={:?}, fov={}",
+        position, target, up, fov_y
+    );
 
     let mut camera = Camera::new()
         .with_resolution(width, height)

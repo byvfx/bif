@@ -1,7 +1,7 @@
-# Session Handoff - January 27, 2026
+# Session Handoff - January 31, 2026
 
-**Last Updated:** M18.3 USD Import Refinement Complete
-**Next Milestone:** 19 (Frame Rendering)
+**Last Updated:** M19 Batch Render + USD Camera Animation
+**Next Milestone:** M19 continued (geometry animation per frame)
 **Project:** BIF - VFX Scene Assembler & Renderer
 
 ---
@@ -10,8 +10,8 @@
 
 | Status | Details |
 |--------|---------|
-| Complete | Milestones 0-18.3, USD relative reference resolution |
-| Next | M19 (Frame Rendering) |
+| Complete | Milestones 0-18.3, M19 batch render with USD camera |
+| Current | USD camera animation working in batch render |
 | Tests | 137+ passing |
 | Performance | 60 FPS viewport, 10K instances with LOD |
 
@@ -19,33 +19,29 @@
 
 ## Recent Work
 
+### M19: Batch Render to Disk (Jan 31, 2026)
+
+Implemented batch rendering with USD camera animation support.
+
+| Component | Details |
+|-----------|---------|
+| `batch_render.rs` | Frame sequence rendering with EXR output |
+| FOV fix | Convert viewport FOV from radians to degrees |
+| Fallback lighting | Sky gradient when no HDRI loaded |
+| UNC paths | Fixed network path handling (`\\server\share\...`) |
+| Sync build | Scene builds synchronously when Render clicked |
+| USD camera | Matrix row/column fix - translation in row 3 |
+| Viewport sync | "Sync Viewport to Camera" button for debugging |
+| UI | Render button stays visible during render |
+
+**Key fixes:**
+- Black renders: FOV was in radians, renderer expected degrees
+- Camera pos (0,0,0): USD matrix uses row-major, was reading col(3) instead of row(3)
+- UNC paths: `canonicalize()` returns `\\?\UNC\...`, needed conversion back to `\\server\...`
+
 ### M18.3: USD Import Refinement (Jan 27, 2026)
 
 Fixed USD files with relative references (`@./file.usda@`) failing to load.
-
-| Component | Details |
-|-----------|---------|
-| `usd_bridge.cpp` | Added ArResolverContextBinder for asset resolution |
-| `CMakeLists.txt` | Added `ar` and `usdShade` libraries |
-| `lucy_100.usda` | Fixed USDA syntax (proper xformOpOrder) |
-| Tests | Added `test_load_relative_reference_usda`, `test_load_pointinstancer_external_prototype` |
-
-**The fix:** USD's `ArResolver` needs a context to resolve `@./relative.usda@` paths. Without `ArResolverContextBinder`, USD doesn't know the base directory. Also normalized Windows backslashes to forward slashes.
-
-### M18.2: Thread Safety + Instance Encapsulation (Jan 26, 2026)
-
-Made UsdStage thread-safe with pre-caching at load time.
-
-### M18.1: Vertex Animation for Multi-Mesh (Jan 25, 2026)
-
-Fixed vertex animation failing when multiple meshes are combined into single buffer.
-
-| Component | Details |
-|-----------|---------|
-| `MeshRange` | New struct: usd_mesh_index, vertex_offset, vertex_count |
-| `mesh_ranges` | New field in MeshData for tracking per-mesh ranges |
-| `combine_with_transforms` | Now accepts mesh_idx, builds mesh_ranges |
-| `update_vertex_animation` | Uses mesh_ranges to update correct vertex range |
 
 ---
 
@@ -60,18 +56,26 @@ Fixed vertex animation failing when multiple meshes are combined into single buf
 
 ### What Works
 
+**Batch Render:**
+- EXR output with AOVs (depth, normals)
+- USD camera animation (position changes per frame)
+- Frame range with step
+- Progress bar with cancellation
+- ZIP compression
+
 **USD Import:**
 - USDA (pure Rust) + USDC (C++ bridge)
-- **Relative references** (`@./file.usda@`) now resolve correctly
-- **PointInstancer with external prototypes** working
+- Relative references (`@./file.usda@`)
+- UNC network paths (`\\server\share\file.usd`)
+- PointInstancer with external prototypes
 - UsdPreviewSurface + MaterialX standard_surface
-- Timeline metadata extraction
+- Camera animation (xformOp time samples)
 
 **Animation:**
 - Timeline UI with playback controls
 - Transform animation (xformOp time samples)
 - Vertex animation for multi-mesh combined scenes
-- AnimatedTransform with keyframe interpolation
+- USD camera sync to viewport
 
 **Viewport (GPU):**
 - Textured PBR materials from USD
@@ -86,20 +90,18 @@ Fixed vertex animation failing when multiple meshes are combined into single buf
 
 ### Known Issues
 
-- USD camera toggle not implemented
+- Geometry animation not yet evaluated per frame in batch render (static BVH)
 - OIIO `load_texture_with_mips` crashes on .tx files on Windows
 
 ---
 
-## Next Session: M19 Frame Rendering
+## Next Session
 
-**Goal:** Render animated sequences to disk
+**Goal:** Per-frame geometry animation in batch render
 
-1. Frame range UI (start/end/step)
-2. Batch render loop with frame substitution
-3. Progress tracking with cancellation
-4. Output naming patterns (`render.####.exr`)
-5. EXR output with AOVs (beauty, depth, normals)
+1. Rebuild BVH per frame with animated vertex positions
+2. Or: Transform-only animation (cheaper, just update instance matrices)
+3. Test with vertex-animated USD scenes
 
 ---
 
@@ -120,12 +122,11 @@ cargo run -p bif_viewer --features oiio          # With OIIO
 # USD environment (required for USDC)
 . .\setup_usd_env.ps1
 
-# Test relative references
-cargo run -p bif_viewer -- --usd assets/lucy_100.usda
-cargo run -p bif_viewer -- --usd assets/lucy_100_fixed.usda
+# Test camera animation
+cargo run -p bif_viewer -- --usd assets/moving_cam_usd.usd_rop1.usda
 ```
 
 ---
 
 **Branch:** main
-**Ready for:** M19 (Frame Rendering)
+**Ready for:** M19 continued (geometry animation)

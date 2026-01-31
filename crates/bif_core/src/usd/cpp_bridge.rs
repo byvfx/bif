@@ -555,12 +555,22 @@ impl UsdStage {
         let abs_path = std::fs::canonicalize(path.as_ref())
             .map_err(|_| UsdBridgeError::FileNotFound(path.as_ref().display().to_string()))?;
 
-        // Convert to forward slashes for USD compatibility
         let path_str = abs_path.to_str().ok_or(UsdBridgeError::InvalidPath)?;
-        // Remove Windows extended path prefix if present (\\?\)
-        let path_str = path_str.strip_prefix(r"\\?\").unwrap_or(path_str);
 
-        let c_path = CString::new(path_str).map_err(|_| UsdBridgeError::InvalidPath)?;
+        // Handle Windows extended path prefixes from canonicalize():
+        // - Local paths: \\?\C:\... -> C:\...
+        // - UNC paths: \\?\UNC\server\share\... -> \\server\share\...
+        let path_str = if let Some(unc_path) = path_str.strip_prefix(r"\\?\UNC\") {
+            // UNC path - convert back to standard \\server\share format
+            format!(r"\\{}", unc_path)
+        } else if let Some(local_path) = path_str.strip_prefix(r"\\?\") {
+            // Local extended path - just strip the prefix
+            local_path.to_string()
+        } else {
+            path_str.to_string()
+        };
+
+        let c_path = CString::new(path_str.as_str()).map_err(|_| UsdBridgeError::InvalidPath)?;
 
         let mut raw: *mut UsdBridgeStageRaw = ptr::null_mut();
 
