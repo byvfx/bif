@@ -2,15 +2,16 @@
 
 > Production-grade renderer inspired by Isotropix Clarisse, built in Rust
 
-## Current Status: Milestone 18.3 Complete
+## Current Status: Milestone 19 In Progress
 
-**USD Import Refinement** - Relative references + thread-safe loading
+**Batch Render to Disk** - USD camera animation working
 
 - Dual rendering: Vulkan viewport (60 FPS) + Ivar CPU path tracer
+- **Batch render:** EXR sequences with AOVs, USD camera animation
 - GPU instancing: 10K+ instances with LOD culling
 - USD support: USDA (pure Rust) + USDC/references (C++ bridge)
-- **USD:** Relative refs (`@./file.usda@`), PointInstancer with external prototypes
-- **Animation:** Timeline UI, transform + vertex animation, multi-mesh rendering
+- **USD:** Relative refs, UNC network paths, camera animation
+- **Animation:** Timeline UI, transform + vertex animation, viewport camera sync
 - Intel Embree 4: Production-quality ray tracing
 - Materials: UsdPreviewSurface + MaterialX standard_surface
 - Disney Principled BSDF with NEE/MIS environment lighting
@@ -20,7 +21,7 @@
 - Node graph + scene browser + property inspector
 - 137+ tests passing across 6 crates
 
-**Next:** [Milestone 19](MILESTONES.md) (Frame Rendering)
+**Next:** M19 geometry animation per frame
 
 ---
 
@@ -249,5 +250,5 @@ MIT License - See [LICENSE](LICENSE) for details
 
 ---
 
-**Last Updated:** January 25, 2026
-**Status:** Milestone 18.1 Complete | Next: M19 (Frame Rendering)
+**Last Updated:** January 31, 2026
+**Status:** M19 In Progress | Batch render with USD camera animation

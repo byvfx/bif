@@ -1580,34 +1580,34 @@ static void cache_animation_data(UsdBridgeStage* bridge) {
         bridge->instancer_animations.push_back(std::move(anim));
     }
 
-    // Cache camera animations
+    // Cache camera animations (add ALL cameras, not just animated ones)
     for (const UsdPrim& prim : bridge->stage->Traverse()) {
         if (!prim.IsA<UsdGeomCamera>()) continue;
 
+        CachedCameraAnimation cam_anim;
+        cam_anim.path = prim.GetPath().GetString();
+
         UsdGeomXformable xformable(prim);
-        if (!xformable) continue;
+        if (xformable) {
+            std::vector<double> times;
+            xformable.GetTimeSamples(&times);
 
-        std::vector<double> times;
-        xformable.GetTimeSamples(&times);
+            if (!times.empty()) {
+                UsdGeomXformCache xform_cache;
+                for (double t : times) {
+                    CachedXformSample sample;
+                    sample.time = t;
 
-        if (!times.empty()) {
-            CachedCameraAnimation cam_anim;
-            cam_anim.path = prim.GetPath().GetString();
+                    xform_cache.SetTime(UsdTimeCode(t));
+                    GfMatrix4d world_xform = xform_cache.GetLocalToWorldTransform(prim);
+                    matrix_to_float16(world_xform, sample.transform);
 
-            UsdGeomXformCache xform_cache;
-            for (double t : times) {
-                CachedXformSample sample;
-                sample.time = t;
-
-                xform_cache.SetTime(UsdTimeCode(t));
-                GfMatrix4d world_xform = xform_cache.GetLocalToWorldTransform(prim);
-                matrix_to_float16(world_xform, sample.transform);
-
-                cam_anim.xform_samples.push_back(sample);
+                    cam_anim.xform_samples.push_back(sample);
+                }
             }
-
-            bridge->camera_animations.push_back(std::move(cam_anim));
         }
+
+        bridge->camera_animations.push_back(std::move(cam_anim));
     }
 
     bridge->animation_cached = true;
@@ -1794,6 +1794,17 @@ UsdBridgeError usd_bridge_get_camera_xform_at_time(
 
     // Evaluate transform at time
     GfMatrix4d localToWorld = xformable.ComputeLocalToWorldTransform(UsdTimeCode(time));
+
+    // Debug: print the matrix
+    fprintf(stderr, "USD camera xform at time %.2f:\n", time);
+    fprintf(stderr, "  Row 0: [%.4f, %.4f, %.4f, %.4f]\n",
+            localToWorld[0][0], localToWorld[0][1], localToWorld[0][2], localToWorld[0][3]);
+    fprintf(stderr, "  Row 1: [%.4f, %.4f, %.4f, %.4f]\n",
+            localToWorld[1][0], localToWorld[1][1], localToWorld[1][2], localToWorld[1][3]);
+    fprintf(stderr, "  Row 2: [%.4f, %.4f, %.4f, %.4f]\n",
+            localToWorld[2][0], localToWorld[2][1], localToWorld[2][2], localToWorld[2][3]);
+    fprintf(stderr, "  Row 3 (translation): [%.4f, %.4f, %.4f, %.4f]\n",
+            localToWorld[3][0], localToWorld[3][1], localToWorld[3][2], localToWorld[3][3]);
 
     // Convert to column-major float array
     for (int col = 0; col < 4; ++col) {

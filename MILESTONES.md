@@ -576,16 +576,43 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 
 ---
 
-### Milestone 19: Frame Rendering 🎞️
+### Milestone 19: Frame Rendering 🎞️ (In Progress)
 
 - **Goal:** Render animated sequences to disk
-- **Estimated Time:** 8-12 hours
-- **Key Tasks:**
-  - Frame range UI (start/end/step)
-  - Batch render loop with frame substitution
-  - Progress tracking with cancellation
-  - Output naming patterns (`render.####.exr`)
+- **Status:** Camera animation working, geometry animation TODO
+- **Started:** January 31, 2026
+- **Key Achievements:**
+
+  **Phase 1: Batch Render Infrastructure ✅**
+  - Frame range UI (start/end/step) in Render to Disk panel
+  - Batch render loop with frame substitution (`render.####.exr`)
+  - Progress bar with frame count and cancellation
   - EXR output with AOVs (beauty, depth, normals)
+  - ZIP compression option
+
+  **Phase 2: USD Camera Animation ✅**
+  - USD camera selection dropdown (lists cameras from stage)
+  - Camera transform evaluation at each frame time
+  - Fixed matrix row/column major conversion (USD row 3 = translation)
+  - "Sync Viewport to Camera" button for debugging
+  - Viewport camera syncs to USD camera position
+
+  **Phase 3: Bug Fixes ✅**
+  - FOV conversion: viewport radians → renderer degrees
+  - Fallback lighting: sky gradient when no HDRI
+  - UNC network paths: `\\?\UNC\...` → `\\server\...`
+  - Sync scene build on Render click (no pre-render required)
+
+  **Phase 4: Geometry Animation (TODO)**
+  - Rebuild BVH per frame with animated vertices
+  - Instance transform animation per frame
+  - Test with vertex-animated USD scenes
+
+- **Key Files:**
+  - `crates/bif_viewport/src/batch_render.rs` - Batch render loop
+  - `crates/bif_viewport/src/lib.rs` - UI, viewport camera sync
+  - `crates/bif_core/src/usd/cpp_bridge.rs` - UNC path fix
+  - `cpp/usd_bridge/usd_bridge.cpp` - Camera xform evaluation
 
 ---
 
@@ -755,7 +782,7 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 | 18.1 | Vertex Animation | Multi-mesh vertex animation fix | ✅ Complete |
 | 18.2 | Thread Safety | UsdStage thread-safe + instance encapsulation | ✅ Complete |
 | 18.3 | USD Refinement | Relative reference resolution fix | ✅ Complete |
-| 19 | Frame Rendering | Batch render to disk | Planned |
+| 19 | Frame Rendering | Batch render + USD camera animation | 🔄 In Progress |
 | 20 | Interactivity | Move objects + keyframing | Planned |
 | 21 | Point Instancing | Scatter + paint tools | Planned |
 | 22 | Viewport Perf | Vulkan 1.3, lazy loading | Planned |
@@ -812,7 +839,7 @@ Key papers for Milestone 20 (Renderer Polish):
 
 ---
 
-**Last Updated:** January 27, 2026
-**Status:** Milestones 0-18.3 Complete ✅
-**Current:** USD relative reference resolution fixed
-**Next:** M19 Frame Rendering
+**Last Updated:** January 31, 2026
+**Status:** Milestones 0-18.3 Complete, M19 In Progress
+**Current:** Batch render with USD camera animation
+**Next:** M19 geometry animation per frame
