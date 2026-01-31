@@ -17,8 +17,7 @@ use bif_core::usd::UsdStage;
 
 // Re-export bif_renderer types for Ivar integration
 use bif_renderer::{
-    render_bucket, BucketResult, BvhNode, Color, DisneyBSDF, EmbreeScene, Hittable, ImageBuffer,
-    RenderConfig,
+    render_bucket_with_aovs, BvhNode, Color, DisneyBSDF, EmbreeScene, Hittable, RenderConfig,
 };
 
 // New modular architecture
@@ -353,9 +352,72 @@ pub struct Renderer {
 }
 
 impl Renderer {
-    /// Upload Ivar image buffer to GPU texture
-    fn upload_ivar_pixels(&self, image: &ImageBuffer) {
-        let rgba = image.to_rgba();
+    /// Upload Ivar image buffer to GPU texture, using selected AOV channel.
+    fn upload_ivar_pixels(&self) {
+        let Some(ref image) = self.ivar_state.image_buffer else {
+            return;
+        };
+        let width = image.width;
+        let height = image.height;
+
+        // Generate RGBA bytes based on selected AOV channel
+        let rgba = match self.ivar_state.preview_aov {
+            ivar_state::AovChannel::Beauty => image.to_rgba(),
+            ivar_state::AovChannel::Alpha => {
+                // Alpha as grayscale
+                if let Some(ref alpha) = self.ivar_state.alpha_buffer {
+                    alpha
+                        .iter()
+                        .flat_map(|&a| {
+                            let v = (a.clamp(0.0, 1.0) * 255.0) as u8;
+                            [v, v, v, 255]
+                        })
+                        .collect()
+                } else {
+                    image.to_rgba()
+                }
+            }
+            ivar_state::AovChannel::Depth => {
+                // Depth normalized to [0, 1] as grayscale
+                if let Some(ref depth) = self.ivar_state.depth_buffer {
+                    let depth_near = self.ivar_state.batch_settings.aov_settings.depth_near;
+                    let depth_far = self.ivar_state.batch_settings.aov_settings.depth_far;
+                    let range = depth_far - depth_near;
+                    depth
+                        .iter()
+                        .flat_map(|&d| {
+                            let normalized = if d >= f32::INFINITY || range <= 0.0 {
+                                0.0
+                            } else {
+                                ((d - depth_near) / range).clamp(0.0, 1.0)
+                            };
+                            let v = (normalized * 255.0) as u8;
+                            [v, v, v, 255]
+                        })
+                        .collect()
+                } else {
+                    image.to_rgba()
+                }
+            }
+            ivar_state::AovChannel::Normal => {
+                // Normal mapped from [-1,1] to [0,1] as RGB
+                if let Some(ref normal) = self.ivar_state.normal_buffer {
+                    normal
+                        .iter()
+                        .flat_map(|n| {
+                            // Map [-1, 1] to [0, 255]
+                            let r = ((n[0] * 0.5 + 0.5).clamp(0.0, 1.0) * 255.0) as u8;
+                            let g = ((n[1] * 0.5 + 0.5).clamp(0.0, 1.0) * 255.0) as u8;
+                            let b = ((n[2] * 0.5 + 0.5).clamp(0.0, 1.0) * 255.0) as u8;
+                            [r, g, b, 255]
+                        })
+                        .collect()
+                } else {
+                    image.to_rgba()
+                }
+            }
+        };
+
         self.queue.write_texture(
             wgpu::ImageCopyTexture {
                 texture: &self.ivar_texture,
@@ -366,12 +428,12 @@ impl Renderer {
             &rgba,
             wgpu::ImageDataLayout {
                 offset: 0,
-                bytes_per_row: Some(4 * image.width),
-                rows_per_image: Some(image.height),
+                bytes_per_row: Some(4 * width),
+                rows_per_image: Some(height),
             },
             wgpu::Extent3d {
-                width: image.width,
-                height: image.height,
+                width,
+                height,
                 depth_or_array_layers: 1,
             },
         );
@@ -3356,11 +3418,10 @@ impl Renderer {
                     return;
                 }
 
-                // Render bucket
-                let pixels = render_bucket(bucket, &ivar_camera, world.as_ref(), &config);
+                // Render bucket with AOVs
+                let result =
+                    render_bucket_with_aovs(bucket, &ivar_camera, world.as_ref(), &config);
 
-                // Send result
-                let result = BucketResult::new(*bucket, pixels);
                 let _ = tx.send(IvarMessage::BucketComplete(result));
             });
 
@@ -3386,15 +3447,37 @@ impl Renderer {
         while let Ok(msg) = receiver.try_recv() {
             match msg {
                 IvarMessage::BucketComplete(result) => {
-                    // Copy pixels to image buffer
-                    if let Some(ref mut image) = self.ivar_state.image_buffer {
-                        for local_y in 0..result.bucket.height {
-                            for local_x in 0..result.bucket.width {
-                                let global_x = result.bucket.x + local_x;
-                                let global_y = result.bucket.y + local_y;
-                                let pixel_idx = (local_y * result.bucket.width + local_x) as usize;
+                    let image_width = self.ivar_state.image_buffer.as_ref().map_or(0, |img| img.width);
+
+                    // Copy pixels to image buffer and AOV buffers
+                    for local_y in 0..result.bucket.height {
+                        for local_x in 0..result.bucket.width {
+                            let global_x = result.bucket.x + local_x;
+                            let global_y = result.bucket.y + local_y;
+                            let pixel_idx = (local_y * result.bucket.width + local_x) as usize;
+                            let global_idx = (global_y * image_width + global_x) as usize;
+
+                            // Copy beauty
+                            if let Some(ref mut image) = self.ivar_state.image_buffer {
                                 if pixel_idx < result.pixels.len() {
                                     image.set(global_x, global_y, result.pixels[pixel_idx]);
+                                }
+                            }
+
+                            // Copy AOVs
+                            if let Some(ref mut alpha) = self.ivar_state.alpha_buffer {
+                                if pixel_idx < result.alphas.len() && global_idx < alpha.len() {
+                                    alpha[global_idx] = result.alphas[pixel_idx];
+                                }
+                            }
+                            if let Some(ref mut depth) = self.ivar_state.depth_buffer {
+                                if pixel_idx < result.depths.len() && global_idx < depth.len() {
+                                    depth[global_idx] = result.depths[pixel_idx];
+                                }
+                            }
+                            if let Some(ref mut normal) = self.ivar_state.normal_buffer {
+                                if pixel_idx < result.normals.len() && global_idx < normal.len() {
+                                    normal[global_idx] = result.normals[pixel_idx];
                                 }
                             }
                         }
@@ -3445,8 +3528,22 @@ impl Renderer {
             viewport_camera: self.camera,
         };
 
-        // Clone settings (they're stored in ivar_state)
-        let settings = self.ivar_state.batch_settings.clone();
+        // Clone settings and compute auto depth bounds if enabled
+        let mut settings = self.ivar_state.batch_settings.clone();
+        if settings.aov_settings.auto_depth_bounds && settings.aov_settings.include_depth {
+            // Compute scene diagonal length for depth far
+            let scene_size = (self.mesh_bounds_max - self.mesh_bounds_min).length();
+            if scene_size > 0.0 {
+                settings.aov_settings.depth_far = scene_size * 2.0;
+                settings.aov_settings.depth_near = 0.01;
+                log::info!(
+                    "Auto depth bounds: near={}, far={} (scene_size={})",
+                    settings.aov_settings.depth_near,
+                    settings.aov_settings.depth_far,
+                    scene_size
+                );
+            }
+        }
 
         log::info!(
             "Starting batch render: frames {}-{} step {}, {}x{} @ {} SPP",
@@ -3693,6 +3790,22 @@ impl Renderer {
                                 }
                             }
                         }
+
+                        // AOV preview dropdown
+                        ui.horizontal(|ui| {
+                            ui.label("Preview:");
+                            egui::ComboBox::from_id_salt("aov_preview")
+                                .selected_text(self.ivar_state.preview_aov.display_name())
+                                .show_ui(ui, |ui| {
+                                    for channel in ivar_state::AovChannel::all() {
+                                        ui.selectable_value(
+                                            &mut self.ivar_state.preview_aov,
+                                            *channel,
+                                            channel.display_name(),
+                                        );
+                                    }
+                                });
+                        });
 
                         // Rebuild Scene button
                         ui.separator();
@@ -3942,8 +4055,28 @@ impl Renderer {
                                 });
                         });
 
-                        // AOVs checkbox
-                        ui.checkbox(&mut settings.include_aovs, "Include AOVs (Z, N)");
+                        // Per-AOV checkboxes
+                        ui.collapsing("AOVs", |ui| {
+                            let aov = &mut settings.aov_settings;
+                            ui.checkbox(&mut aov.include_alpha, "Alpha (A)");
+                            ui.horizontal(|ui| {
+                                ui.checkbox(&mut aov.include_depth, "Depth (Z)");
+                                if aov.include_depth {
+                                    ui.add(egui::DragValue::new(&mut aov.depth_near)
+                                        .speed(0.1)
+                                        .range(0.001..=aov.depth_far)
+                                        .prefix("Near: "));
+                                    ui.add(egui::DragValue::new(&mut aov.depth_far)
+                                        .speed(10.0)
+                                        .range(aov.depth_near..=100000.0)
+                                        .prefix("Far: "));
+                                }
+                            });
+                            if aov.include_depth {
+                                ui.checkbox(&mut aov.auto_depth_bounds, "Auto bounds from scene");
+                            }
+                            ui.checkbox(&mut aov.include_normal, "Normal (N)");
+                        });
 
                         // Output path
                         ui.horizontal(|ui| {
@@ -4618,10 +4751,8 @@ impl Renderer {
                 // Poll for completed buckets
                 self.poll_ivar_messages();
 
-                // Upload current image buffer to texture
-                if let Some(ref image) = self.ivar_state.image_buffer {
-                    self.upload_ivar_pixels(image);
-                }
+                // Upload current image buffer to texture (uses selected AOV channel)
+                self.upload_ivar_pixels();
 
                 // Render fullscreen quad with Ivar texture
                 {

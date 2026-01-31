@@ -14,7 +14,7 @@ use bif_renderer::{
 };
 use rayon::prelude::*;
 
-use crate::ivar_state::{BatchRenderSettings, CameraSource};
+use crate::ivar_state::{AovSettings, BatchRenderSettings, CameraSource};
 
 /// Message sent during batch render.
 #[derive(Debug)]
@@ -132,7 +132,7 @@ fn batch_render_loop(
             &render_config,
             settings.resolution_x,
             settings.resolution_y,
-            settings.include_aovs,
+            &settings.aov_settings,
             &cancel_flag,
             |progress| {
                 let _ = tx.send(BatchMessage::Progress {
@@ -269,7 +269,7 @@ fn render_frame_with_aovs<F>(
     config: &RenderConfig,
     width: u32,
     height: u32,
-    include_aovs: bool,
+    aov_settings: &AovSettings,
     cancel_flag: &Arc<AtomicBool>,
     progress_callback: F,
 ) -> ExrOutput
@@ -279,15 +279,20 @@ where
     let buckets = generate_buckets(width, height, DEFAULT_BUCKET_SIZE);
     let total_buckets = buckets.len();
 
-    // Allocate output buffers
+    // Allocate output buffers based on per-AOV settings
     let pixel_count = (width * height) as usize;
     let mut beauty = vec![Color::ZERO; pixel_count];
-    let mut depth = if include_aovs {
+    let mut alpha = if aov_settings.include_alpha {
+        Some(vec![0.0f32; pixel_count])
+    } else {
+        None
+    };
+    let mut depth = if aov_settings.include_depth {
         Some(vec![f32::INFINITY; pixel_count])
     } else {
         None
     };
-    let mut normal = if include_aovs {
+    let mut normal = if aov_settings.include_normal {
         Some(vec![[0.0f32; 3]; pixel_count])
     } else {
         None
@@ -326,6 +331,9 @@ where
 
                 beauty[global_idx] = result.pixels[local_idx];
 
+                if let Some(ref mut a) = alpha {
+                    a[global_idx] = result.alphas[local_idx];
+                }
                 if let Some(ref mut d) = depth {
                     d[global_idx] = result.depths[local_idx];
                 }
@@ -340,6 +348,7 @@ where
         width,
         height,
         beauty,
+        alpha,
         depth,
         normal,
     }

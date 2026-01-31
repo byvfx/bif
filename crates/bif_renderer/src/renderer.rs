@@ -144,6 +144,8 @@ pub struct AovData {
     pub depth: f32,
     /// World-space normal at first hit (zero if no hit).
     pub normal: Color,
+    /// Alpha channel (1.0 = hit, 0.0 = miss).
+    pub alpha: f32,
 }
 
 impl Default for AovData {
@@ -151,6 +153,7 @@ impl Default for AovData {
         Self {
             depth: f32::INFINITY,
             normal: Color::ZERO,
+            alpha: 0.0,
         }
     }
 }
@@ -211,6 +214,7 @@ pub fn ray_color_with_aovs(
         if first_hit {
             aov.depth = rec.t;
             aov.normal = rec.normal;
+            aov.alpha = 1.0;
             first_hit = false;
         }
 
@@ -270,12 +274,14 @@ pub fn render_pixel_with_aovs(
     let mut pixel_color = Color::ZERO;
     let mut depth_sum = 0.0_f32;
     let mut normal_sum = Color::ZERO;
+    let mut alpha_sum = 0.0_f32;
     let mut hit_count = 0u32;
 
     for _ in 0..config.samples_per_pixel {
         let ray = camera.get_ray(x, y, rng);
         let (color, aov) = ray_color_with_aovs(&ray, world, config.max_depth, config, rng);
         pixel_color += color;
+        alpha_sum += aov.alpha;
 
         // Only average depth/normal from rays that hit something
         if aov.depth < f32::INFINITY {
@@ -286,13 +292,18 @@ pub fn render_pixel_with_aovs(
     }
 
     let avg_color = pixel_color / config.samples_per_pixel as f32;
+    let avg_alpha = alpha_sum / config.samples_per_pixel as f32;
     let avg_aov = if hit_count > 0 {
         AovData {
             depth: depth_sum / hit_count as f32,
             normal: (normal_sum / hit_count as f32).normalize(),
+            alpha: avg_alpha,
         }
     } else {
-        AovData::default()
+        AovData {
+            alpha: avg_alpha,
+            ..AovData::default()
+        }
     };
 
     (avg_color, avg_aov)
