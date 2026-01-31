@@ -3557,6 +3557,185 @@ impl Renderer {
 
                     ui.separator();
 
+                    // Render to Disk
+                    ui.collapsing("Render to Disk", |ui| {
+                        let settings = &mut self.ivar_state.batch_settings;
+
+                        // Camera source
+                        ui.horizontal(|ui| {
+                            ui.label("Camera:");
+                            egui::ComboBox::from_id_salt("batch_camera")
+                                .selected_text(settings.camera_source.display_name())
+                                .show_ui(ui, |ui| {
+                                    ui.selectable_value(
+                                        &mut settings.camera_source,
+                                        ivar_state::CameraSource::Viewport,
+                                        "Viewport",
+                                    );
+                                    // List USD cameras if stage available
+                                    if let Some(ref stage) = self.usd_stage {
+                                        if let Ok(paths) = stage.camera_paths() {
+                                            for path in paths {
+                                                let is_selected = matches!(
+                                                    &settings.camera_source,
+                                                    ivar_state::CameraSource::UsdCamera(p) if p == &path
+                                                );
+                                                if ui
+                                                    .selectable_label(is_selected, &path)
+                                                    .clicked()
+                                                {
+                                                    settings.camera_source =
+                                                        ivar_state::CameraSource::UsdCamera(path.clone());
+                                                }
+                                            }
+                                        }
+                                    }
+                                });
+                        });
+
+                        // Frame range
+                        ui.horizontal(|ui| {
+                            ui.label("Frames:");
+                            ui.add(
+                                egui::DragValue::new(&mut settings.start_frame)
+                                    .speed(1.0)
+                                    .prefix(""),
+                            );
+                            ui.label("-");
+                            ui.add(
+                                egui::DragValue::new(&mut settings.end_frame)
+                                    .speed(1.0)
+                                    .prefix(""),
+                            );
+                        });
+
+                        // Use timeline range button
+                        if ui.button("Use Timeline Range").clicked()
+                            && self.timeline_state.has_range()
+                        {
+                            settings.start_frame = self.timeline_state.start_frame as i32;
+                            settings.end_frame = self.timeline_state.end_frame as i32;
+                        }
+
+                        ui.horizontal(|ui| {
+                            ui.label("Step:");
+                            ui.add(egui::DragValue::new(&mut settings.frame_step).speed(1.0).range(1..=100));
+                        });
+
+                        // Resolution
+                        ui.horizontal(|ui| {
+                            ui.label("Resolution:");
+                            ui.add(
+                                egui::DragValue::new(&mut settings.resolution_x)
+                                    .speed(10.0)
+                                    .range(64..=8192),
+                            );
+                            ui.label("x");
+                            ui.add(
+                                egui::DragValue::new(&mut settings.resolution_y)
+                                    .speed(10.0)
+                                    .range(64..=8192),
+                            );
+                        });
+
+                        // Quality
+                        ui.horizontal(|ui| {
+                            ui.label("SPP:");
+                            ui.add(
+                                egui::DragValue::new(&mut settings.samples_per_pixel)
+                                    .speed(1.0)
+                                    .range(1..=1024),
+                            );
+                        });
+
+                        ui.horizontal(|ui| {
+                            ui.label("Max Depth:");
+                            ui.add(
+                                egui::DragValue::new(&mut settings.max_depth)
+                                    .speed(1.0)
+                                    .range(1..=32),
+                            );
+                        });
+
+                        // Compression
+                        ui.horizontal(|ui| {
+                            ui.label("Compression:");
+                            egui::ComboBox::from_id_salt("batch_compression")
+                                .selected_text(settings.compression.display_name())
+                                .show_ui(ui, |ui| {
+                                    for comp in bif_renderer::ExrCompression::all() {
+                                        ui.selectable_value(
+                                            &mut settings.compression,
+                                            *comp,
+                                            comp.display_name(),
+                                        );
+                                    }
+                                });
+                        });
+
+                        // AOVs checkbox
+                        ui.checkbox(&mut settings.include_aovs, "Include AOVs (Z, N)");
+
+                        // Output path
+                        ui.horizontal(|ui| {
+                            ui.label("Output:");
+                            ui.text_edit_singleline(&mut settings.output_pattern);
+                        });
+
+                        ui.horizontal(|ui| {
+                            ui.label("Dir:");
+                            ui.text_edit_singleline(&mut settings.output_directory);
+                        });
+
+                        // Status and buttons
+                        let status = &self.ivar_state.batch_status;
+                        match status {
+                            ivar_state::BatchRenderStatus::Idle => {
+                                let can_render = self.ivar_state.build_status == BuildStatus::Complete
+                                    && !settings.output_directory.is_empty();
+                                if ui.add_enabled(can_render, egui::Button::new("Render")).clicked() {
+                                    ctx.data_mut(|d| {
+                                        d.insert_temp(egui::Id::new("start_batch_render"), true)
+                                    });
+                                }
+                                if !can_render {
+                                    ui.label("Build scene first");
+                                }
+                            }
+                            ivar_state::BatchRenderStatus::Rendering {
+                                current_frame,
+                                total_frames,
+                                frame_progress,
+                            } => {
+                                let overall = ((*current_frame - 1) as f32 + frame_progress)
+                                    / *total_frames as f32;
+                                ui.add(
+                                    egui::ProgressBar::new(overall)
+                                        .text(format!("Frame {}/{}", current_frame, total_frames)),
+                                );
+                                if ui.button("Cancel").clicked() {
+                                    ctx.data_mut(|d| {
+                                        d.insert_temp(egui::Id::new("cancel_batch_render"), true)
+                                    });
+                                }
+                            }
+                            ivar_state::BatchRenderStatus::Complete { total_elapsed_secs } => {
+                                ui.colored_label(
+                                    egui::Color32::GREEN,
+                                    format!("Complete ({:.1}s)", total_elapsed_secs),
+                                );
+                            }
+                            ivar_state::BatchRenderStatus::Cancelled => {
+                                ui.colored_label(egui::Color32::YELLOW, "Cancelled");
+                            }
+                            ivar_state::BatchRenderStatus::Failed(msg) => {
+                                ui.colored_label(egui::Color32::RED, format!("Failed: {}", msg));
+                            }
+                        }
+                    });
+
+                    ui.separator();
+
                     // Scene Browser (collapsible)
                     ui.collapsing("Scene Browser", |ui| {
                         // Use USD stage if available, otherwise empty provider
