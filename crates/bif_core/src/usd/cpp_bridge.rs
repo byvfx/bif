@@ -268,6 +268,24 @@ extern "C" {
         out_count: *mut usize,
     ) -> UsdBridgeErrorCode;
 
+    fn usd_bridge_get_camera_count(
+        stage: *const UsdBridgeStageRaw,
+        out_count: *mut usize,
+    ) -> UsdBridgeErrorCode;
+
+    fn usd_bridge_get_camera_path(
+        stage: *const UsdBridgeStageRaw,
+        index: usize,
+        out_path: *mut *const std::ffi::c_char,
+    ) -> UsdBridgeErrorCode;
+
+    fn usd_bridge_get_camera_xform_at_time(
+        stage: *const UsdBridgeStageRaw,
+        camera_path: *const std::ffi::c_char,
+        time: f64,
+        out_transform: *mut f32,
+    ) -> UsdBridgeErrorCode;
+
     fn usd_bridge_get_mesh_vertex_animation_info(
         stage: *const UsdBridgeStageRaw,
         mesh_index: usize,
@@ -1125,6 +1143,63 @@ impl UsdStage {
         };
 
         Ok(samples)
+    }
+
+    /// Get the number of cameras in the stage.
+    pub fn camera_count(&self) -> UsdBridgeResult<usize> {
+        let mut count: usize = 0;
+        let result = unsafe { usd_bridge_get_camera_count(self.raw, &mut count) };
+        if result != UsdBridgeErrorCode::Success {
+            return Err(result.into());
+        }
+        Ok(count)
+    }
+
+    /// Get all camera paths in the stage.
+    pub fn camera_paths(&self) -> UsdBridgeResult<Vec<String>> {
+        let count = self.camera_count()?;
+        let mut paths = Vec::with_capacity(count);
+
+        for i in 0..count {
+            let mut path_ptr: *const std::ffi::c_char = ptr::null();
+            let result = unsafe { usd_bridge_get_camera_path(self.raw, i, &mut path_ptr) };
+            if result != UsdBridgeErrorCode::Success {
+                return Err(result.into());
+            }
+            if path_ptr.is_null() {
+                continue;
+            }
+            let path_str = unsafe { CStr::from_ptr(path_ptr) }
+                .to_str()
+                .unwrap_or("")
+                .to_string();
+            paths.push(path_str);
+        }
+
+        Ok(paths)
+    }
+
+    /// Get camera transform at a specific time.
+    ///
+    /// Returns the interpolated world transform matrix for the camera at the given time.
+    pub fn get_camera_xform_at_time(&self, camera_path: &str, time: f64) -> UsdBridgeResult<Mat4> {
+        let c_path = CString::new(camera_path).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let mut transform = [0.0f32; 16];
+
+        let result = unsafe {
+            usd_bridge_get_camera_xform_at_time(
+                self.raw,
+                c_path.as_ptr(),
+                time,
+                transform.as_mut_ptr(),
+            )
+        };
+
+        if result != UsdBridgeErrorCode::Success {
+            return Err(result.into());
+        }
+
+        Ok(Mat4::from_cols_array(&transform))
     }
 
     // ========================================================================
