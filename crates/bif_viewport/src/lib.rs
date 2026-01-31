@@ -22,6 +22,7 @@ use bif_renderer::{
 };
 
 // New modular architecture
+pub mod batch_render;
 pub mod compute_ibl;
 pub mod environment;
 pub mod frustum_culling;
