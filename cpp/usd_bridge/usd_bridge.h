@@ -161,6 +161,43 @@ UsdBridgeError usd_bridge_get_camera_xform_samples(
     size_t* out_count
 );
 
+/// Get the number of cameras in the stage.
+///
+/// @param stage Stage handle
+/// @param out_count Pointer to receive camera count
+/// @return USD_BRIDGE_SUCCESS on success
+UsdBridgeError usd_bridge_get_camera_count(
+    const UsdBridgeStage* stage,
+    size_t* out_count
+);
+
+/// Get a camera path by index.
+///
+/// @param stage Stage handle
+/// @param index Camera index (0 to camera_count-1)
+/// @param out_path Pointer to receive path string (owned by stage)
+/// @return USD_BRIDGE_SUCCESS on success
+UsdBridgeError usd_bridge_get_camera_path(
+    const UsdBridgeStage* stage,
+    size_t index,
+    const char** out_path
+);
+
+/// Evaluate camera transform at a specific time.
+/// Returns the interpolated world transform matrix at the given time.
+///
+/// @param stage Stage handle
+/// @param camera_path Path to the UsdGeomCamera prim
+/// @param time Time code to evaluate at
+/// @param out_transform Pointer to receive 16 floats (4x4 column-major matrix)
+/// @return USD_BRIDGE_SUCCESS on success
+UsdBridgeError usd_bridge_get_camera_xform_at_time(
+    const UsdBridgeStage* stage,
+    const char* camera_path,
+    double time,
+    float* out_transform
+);
+
 /// Vertex animation info for a mesh
 typedef struct UsdBridgeVertexAnimationInfo {
     /// 1 if mesh has animated vertices, 0 otherwise

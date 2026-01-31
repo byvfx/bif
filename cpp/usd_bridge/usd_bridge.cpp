@@ -1740,6 +1740,71 @@ UsdBridgeError usd_bridge_get_camera_xform_samples(
     return USD_BRIDGE_SUCCESS;
 }
 
+UsdBridgeError usd_bridge_get_camera_count(
+    const UsdBridgeStage* stage,
+    size_t* out_count
+) {
+    if (!stage || !out_count) {
+        return USD_BRIDGE_ERROR_NULL_POINTER;
+    }
+
+    *out_count = stage->camera_animations.size();
+    return USD_BRIDGE_SUCCESS;
+}
+
+UsdBridgeError usd_bridge_get_camera_path(
+    const UsdBridgeStage* stage,
+    size_t index,
+    const char** out_path
+) {
+    if (!stage || !out_path) {
+        return USD_BRIDGE_ERROR_NULL_POINTER;
+    }
+
+    if (index >= stage->camera_animations.size()) {
+        return USD_BRIDGE_ERROR_INVALID_PRIM;
+    }
+
+    *out_path = stage->camera_animations[index].path.c_str();
+    return USD_BRIDGE_SUCCESS;
+}
+
+UsdBridgeError usd_bridge_get_camera_xform_at_time(
+    const UsdBridgeStage* stage,
+    const char* camera_path,
+    double time,
+    float* out_transform
+) {
+    if (!stage || !camera_path || !out_transform) {
+        return USD_BRIDGE_ERROR_NULL_POINTER;
+    }
+
+    // Find camera prim
+    SdfPath path(camera_path);
+    UsdPrim prim = stage->stage->GetPrimAtPath(path);
+    if (!prim || !prim.IsA<UsdGeomCamera>()) {
+        return USD_BRIDGE_ERROR_INVALID_PRIM;
+    }
+
+    // Get xformable interface
+    UsdGeomXformable xformable(prim);
+    if (!xformable) {
+        return USD_BRIDGE_ERROR_INVALID_PRIM;
+    }
+
+    // Evaluate transform at time
+    GfMatrix4d localToWorld = xformable.ComputeLocalToWorldTransform(UsdTimeCode(time));
+
+    // Convert to column-major float array
+    for (int col = 0; col < 4; ++col) {
+        for (int row = 0; row < 4; ++row) {
+            out_transform[col * 4 + row] = static_cast<float>(localToWorld[row][col]);
+        }
+    }
+
+    return USD_BRIDGE_SUCCESS;
+}
+
 // ============================================================================
 // Vertex Animation
 // ============================================================================
