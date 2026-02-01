@@ -101,7 +101,7 @@ bif/
 
 ---
 
-## Statistics (Milestone 18.1)
+## Statistics (Milestone 18.4)
 
 | Metric | Value |
 |--------|-------|

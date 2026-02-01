@@ -1,600 +1,500 @@
-# BIF Code Reference - Milestones 0-11 Patterns
+# BIF Code Reference
 
-> Best practices and patterns learned from implementing Milestones 0-11
+> Patterns and techniques from Milestones 0-18.4
 
-**Last Updated:** December 31, 2025
-
-This document captures actual code patterns, solutions, and lessons from completing Milestones 0-11. For milestone history, see [MILESTONES.md](MILESTONES.md).
+**Last Updated:** January 31, 2026
 
 ---
 
-## Code Patterns
+## Table of Contents
 
-### 1. Instance-Aware Rendering
+1. [GPU Instancing](#1-gpu-instancing)
+2. [C++ FFI Bridge](#2-c-ffi-bridge)
+3. [Multi-Prototype Rendering](#3-multi-prototype-rendering)
+4. [Animation System](#4-animation-system)
+5. [Background Threading](#5-background-threading)
+6. [Batch Rendering](#6-batch-rendering)
+7. [Material Pipeline](#7-material-pipeline)
+8. [Texture Loading](#8-texture-loading)
+9. [Common Pitfalls](#9-common-pitfalls)
 
-**Problem:** Rendering 100+ instances without duplicating geometry
+---
+
+## 1. GPU Instancing
+
+**Problem:** Render 10K+ instances without duplicating geometry
 
 **Solution:** Per-instance transform buffer + instanced draw call
 
-**Example:**
-
 ```rust
-// See: crates/bif_viewport/src/lib.rs:1200-1250
+// crates/bif_viewport/src/lib.rs
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct InstanceData {
     pub model_matrix: [[f32; 4]; 4],
+    pub material_id: u32,
 }
 
-// Generate instances
-let instance_data: Vec<InstanceData> = self.instance_transforms
-    .iter()
-    .map(|transform| InstanceData {
-        model_matrix: transform.to_cols_array_2d(),
-    })
-    .collect();
-
-// Single draw call for all 100 instances
-render_pass.draw_indexed(0..self.index_count, 0, 0..instance_count);
+// Single draw call for all instances
+render_pass.draw_indexed(0..self.num_indices, 0, 0..visible_count);
 ```
 
 **Key Files:**
+- `crates/bif_viewport/src/lib.rs` - GPU instancing
+- `crates/bif_viewport/src/shaders/basic.wgsl` - Per-instance transforms
 
-- [bif_viewport/src/lib.rs:1200-1250](crates/bif_viewport/src/lib.rs#L1200-L1250) - GPU instancing
-- [bif_viewport/src/shaders/basic.wgsl](crates/bif_viewport/src/shaders/basic.wgsl) - Shader instance handling
-
-**Performance:** 100 instances @ 60+ FPS, single draw call, 28M triangles
+**Performance:** 10K instances @ 60+ FPS with LOD culling
 
 ---
 
-### 2. Background Scene Building
+## 2. C++ FFI Bridge
 
-**Problem:** 4-second UI freeze when building BVH for 28M triangles
+**Problem:** USD requires C++ library (no pure Rust binding)
 
-**Solution:** Background thread + non-blocking status polling
+**Solution:** Extern "C" wrapper with CMake integration
 
-**Example:**
+```cpp
+// cpp/usd_bridge/usd_bridge.cpp
+extern "C" {
+    UsdBridgeError usd_bridge_open_stage(const char* path, UsdBridgeStage** out);
+    UsdBridgeError usd_bridge_get_mesh(const UsdBridgeStage* stage, size_t idx, UsdBridgeMeshData* out);
+}
+```
 
 ```rust
-// See: crates/bif_viewport/src/lib.rs:1651-1736
-enum BuildStatus {
-    NotStarted,
-    Building,
-    Complete { scene: IvarScene },
-    Failed(String),
+// crates/bif_core/src/usd/cpp_bridge.rs
+extern "C" {
+    fn usd_bridge_open_stage(path: *const c_char, out: *mut *mut UsdBridgeStage) -> i32;
 }
 
+pub struct UsdStage {
+    ptr: *mut UsdBridgeStage,
+}
+
+// SAFETY: All data is pre-cached at load time, getters are read-only
+unsafe impl Send for UsdStage {}
+```
+
+**Key Files:**
+- `cpp/usd_bridge/` - C++ FFI bridge
+- `crates/bif_core/src/usd/cpp_bridge.rs` - Rust wrapper
+- `crates/bif_core/build.rs` - CMake automation
+
+**Pattern:** Pre-cache all data at load time for thread safety
+
+---
+
+## 3. Multi-Prototype Rendering
+
+**Problem:** Multiple mesh types with different geometry need efficient rendering
+
+**Solution:** Per-prototype GPU buffers + instance grouping
+
+```rust
+// Multi-draw architecture
+struct PrototypeGpuData {
+    vertex_buffer: wgpu::Buffer,
+    index_buffer: wgpu::Buffer,
+    num_indices: u32,
+    triangle_material_buffer: Option<wgpu::Buffer>,
+}
+
+// Group instances by prototype
+let instance_groups: HashMap<usize, Vec<InstanceData>> = ...;
+
+// Render each group
+for (proto_id, instances) in &instance_groups {
+    let proto = &self.prototype_gpu_data[proto_id];
+    render_pass.set_vertex_buffer(0, proto.vertex_buffer.slice(..));
+    render_pass.draw_indexed(0..proto.num_indices, 0, 0..instances.len());
+}
+```
+
+**For Ivar (ray tracing):** Combined mesh with baked transforms
+
+```rust
+// When multi-prototype, combine meshes for Ivar
+let mesh_data = if scene.prototypes.len() > 1 {
+    MeshData::combine_with_transforms(&meshes_with_transforms)
+} else {
+    MeshData::from_core_mesh(&scene.prototypes[0].mesh)
+};
+
+// Use identity transform for Embree (transforms already baked)
+let ivar_transforms = if self.use_multi_draw {
+    vec![Mat4::IDENTITY]
+} else {
+    self.instance_transforms.clone()
+};
+```
+
+**Key Files:**
+- `crates/bif_viewport/src/lib.rs` - Multi-draw rendering
+- `crates/bif_viewport/src/mesh_data.rs` - `combine_with_transforms()`
+
+---
+
+## 4. Animation System
+
+**Problem:** Animate transforms and vertices over time
+
+**Solution:** Keyframe storage + interpolation
+
+```rust
+// crates/bif_core/src/scene.rs
+pub struct AnimatedTransform {
+    base: Transform,
+    keyframes: Vec<TransformKeyframe>,
+}
+
+pub struct TransformKeyframe {
+    pub time: f64,
+    pub transform: Transform,
+}
+
+impl AnimatedTransform {
+    pub fn evaluate(&self, time: f64) -> Transform {
+        // Binary search + lerp between keyframes
+        ...
+    }
+}
+```
+
+**Multi-mesh vertex animation:**
+
+```rust
+// crates/bif_viewport/src/mesh_data.rs
+pub struct MeshRange {
+    pub usd_mesh_index: usize,
+    pub vertex_offset: usize,
+    pub vertex_count: usize,
+}
+
+// Update correct vertex range per mesh
+for range in &self.mesh_data.mesh_ranges {
+    let vertices = stage.get_mesh_vertices_at_time(range.usd_mesh_index, time)?;
+    // Update buffer at range.vertex_offset
+}
+```
+
+**Key Files:**
+- `crates/bif_core/src/scene.rs` - AnimatedTransform
+- `crates/bif_viewport/src/mesh_data.rs` - MeshRange for multi-mesh
+- `cpp/usd_bridge/usd_bridge.cpp` - Time-sampled vertex queries
+
+---
+
+## 5. Background Threading
+
+**Problem:** BVH builds and scene loading freeze UI
+
+**Solution:** Background thread + channel communication
+
+```rust
 // Spawn background thread
 let (tx, rx) = mpsc::channel();
 std::thread::spawn(move || {
-    let scene = build_ivar_scene(...);
+    let scene = build_embree_scene(...);
     tx.send(scene).unwrap();
 });
 
-// Poll without blocking
-if let Ok(scene) = self.scene_rx.try_recv() {
+// Poll without blocking in render loop
+if let Ok(scene) = self.build_receiver.try_recv() {
     self.ivar_scene = Some(scene);
-    self.build_status = BuildStatus::Complete { scene };
+    self.build_status = BuildStatus::Complete;
+}
+```
+
+**Thread-safe USD stage:**
+
+```rust
+// Pre-cache all data at load time
+fn usd_bridge_open_stage(...) {
+    cache_stage_data(bridge);      // Meshes, materials
+    cache_prim_data(bridge);       // Hierarchy
+    cache_animation_data(bridge);  // Keyframes
+}
+
+// Getters are read-only, no mutation
+fn usd_bridge_get_mesh(...) {
+    // Just read from cache
+    *out_data = stage->meshes[index];
 }
 ```
 
 **Key Files:**
-
-- [bif_viewport/src/lib.rs:1651-1736](crates/bif_viewport/src/lib.rs#L1651-L1736) - Background threading
-- [bif_renderer/src/instanced_geometry.rs](crates/bif_renderer/src/instanced_geometry.rs) - Instance-aware BVH
-
-**Performance:** 0ms UI freeze (was 4s), ~40ms BVH build time
+- `crates/bif_viewport/src/lib.rs` - Background scene building
+- `cpp/usd_bridge/usd_bridge.cpp` - Pre-caching pattern
 
 ---
 
-### 3. USD Left-Handed Orientation Fix
+## 6. Batch Rendering
 
-**Problem:** Meshes from Houdini render inside-out due to winding order
+**Problem:** Render frame sequences to disk
 
-**Solution:** Detect `orientation = "leftHanded"` and swap triangle indices
-
-**Example:**
+**Solution:** Frame loop with EXR output
 
 ```rust
-// See: crates/bif_core/src/usd/parser.rs:150-180
+// crates/bif_viewport/src/batch_render.rs
+pub fn render_frame_sequence(
+    settings: &BatchRenderSettings,
+    world: &Arc<BvhNode>,
+    camera_fn: impl Fn(f64) -> IvarCamera,
+    progress_tx: Sender<BatchRenderProgress>,
+) {
+    for frame in (settings.start_frame..=settings.end_frame).step_by(settings.frame_step) {
+        let camera = camera_fn(frame as f64);
+        let pixels = render_frame(&camera, world, settings);
+
+        let path = format_frame_path(&settings.output_path, frame);
+        write_exr(&path, &pixels, settings.compression)?;
+
+        progress_tx.send(BatchRenderProgress { current_frame: frame, ... })?;
+    }
+}
+```
+
+**USD camera evaluation:**
+
+```rust
+// Get camera transform at specific time
+let transform = stage.get_camera_xform_at_time(&camera_path, frame as f64)?;
+let camera = IvarCamera::from_usd_transform(transform, fov, aspect);
+```
+
+**Key Files:**
+- `crates/bif_viewport/src/batch_render.rs` - Batch render loop
+- `crates/bif_renderer/src/exr_writer.rs` - EXR output with AOVs
+- `cpp/usd_bridge/usd_bridge.cpp` - `usd_bridge_get_camera_xform_at_time()`
+
+---
+
+## 7. Material Pipeline
+
+**Problem:** Load UsdPreviewSurface + MaterialX materials
+
+**Solution:** C++ extraction → Rust structs → Disney BSDF
+
+```cpp
+// cpp/usd_bridge/usd_bridge.cpp
+struct CachedMaterial {
+    float diffuse_color[3];
+    float metallic, roughness, specular, opacity;
+    std::string diffuse_texture;
+    bool is_materialx;
+};
+
+// Detect MaterialX vs UsdPreviewSurface
+if (is_materialx_standard_surface(shader_id)) {
+    // Use base_color, metalness, specular_roughness
+} else {
+    // Use diffuseColor, metallic, roughness
+}
+```
+
+```rust
+// crates/bif_renderer/src/disney.rs
+impl From<&bif_core::Material> for DisneyBSDF {
+    fn from(mat: &Material) -> Self {
+        DisneyBSDF {
+            base_color: Vec3::from(mat.diffuse_color),
+            metallic: mat.metallic,
+            roughness: mat.roughness,
+            ...
+        }
+    }
+}
+```
+
+**Key Files:**
+- `cpp/usd_bridge/usd_bridge.cpp` - Material extraction
+- `crates/bif_core/src/scene.rs` - Material struct
+- `crates/bif_renderer/src/disney.rs` - Disney BSDF
+
+---
+
+## 8. Texture Loading
+
+**Problem:** Load textures efficiently with proper color space
+
+**Solution:** Parallel loading + sRGB conversion
+
+```rust
+// crates/bif_viewport/src/texture_loader.rs
+pub fn create_gpu_textures_for_scene(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    scene: &Scene,
+    base_dir: Option<&Path>,
+) -> GpuTextures {
+    // Parallel texture loading with rayon
+    let textures: Vec<_> = paths.par_iter()
+        .map(|path| load_texture(path, base_dir))
+        .collect();
+
+    // Upload to GPU with mipmaps
+    for tex in textures {
+        let gpu_tex = device.create_texture(...);
+        queue.write_texture(...);
+    }
+}
+```
+
+**sRGB to linear conversion:**
+
+```rust
+fn srgb_to_linear(srgb: u8) -> f32 {
+    let s = srgb as f32 / 255.0;
+    if s <= 0.04045 {
+        s / 12.92
+    } else {
+        ((s + 0.055) / 1.055).powf(2.4)
+    }
+}
+```
+
+**Key Files:**
+- `crates/bif_viewport/src/texture_loader.rs` - GPU texture upload
+- `crates/bif_core/src/texture.rs` - TextureCache with OIIO support
+
+---
+
+## 9. Common Pitfalls
+
+### Mat4 Row vs Column Major
+
+**Problem:** USD uses row-major, glam uses column-major
+
+```rust
+// USD: translation in row 3 (indices 12,13,14)
+// glam: translation in col 3 (w_axis)
+
+// WRONG: Reading USD matrix as column-major
+let pos = mat.col(3).truncate();
+
+// CORRECT: USD matrix layout
+let pos = Vec3::new(mat[12], mat[13], mat[14]); // Row 3
+// Or convert properly in C++
+```
+
+### Combined Mesh + Embree Transforms
+
+**Problem:** Double transform when mesh has baked transforms
+
+```rust
+// BAD: Baked transforms + Embree transforms
+let mesh_data = combine_with_transforms(...); // Transforms baked
+EmbreeScene::new(&triangles, instance_transforms, ...); // Applied again!
+
+// GOOD: Identity for Embree when using combined mesh
+let ivar_transforms = if use_multi_draw {
+    vec![Mat4::IDENTITY]
+} else {
+    instance_transforms
+};
+```
+
+### egui Borrow Checker
+
+**Problem:** Cannot borrow `self` mutably inside closure
+
+```rust
+// BAD
+egui_ctx.run(input, |ctx| {
+    ui.label(format!("{}", self.fps)); // Borrow error!
+});
+
+// GOOD: Extract before closure
+let fps = self.fps;
+egui_ctx.run(input, |ctx| {
+    ui.label(format!("{fps}"));
+});
+```
+
+### USD Left-Handed Orientation
+
+**Problem:** Houdini exports use left-handed winding
+
+```rust
+// Detect and swap indices
 if mesh.left_handed {
-    // Swap i1 and i2 to convert left-handed → CCW for GPU/Ivar
-    triangles.push([i0, i2, i1]);
+    triangles.push([i0, i2, i1]); // Swap i1/i2
 } else {
     triangles.push([i0, i1, i2]);
 }
 ```
 
-**Key Files:**
+### UNC Network Paths
 
-- [bif_core/src/usd/parser.rs:150-180](crates/bif_core/src/usd/parser.rs#L150-L180) - Orientation detection
-- [bif_core/src/usd/types.rs](crates/bif_core/src/usd/types.rs) - `left_handed` field
-- [HOUDINI_EXPORT.md](HOUDINI_EXPORT.md) - Best practices guide
-
-**Rationale:** Houdini USD exports use left-handed coordinates, but both Vulkan and Ivar expect CCW winding.
-
----
-
-### 4. egui Integration with wgpu
-
-**Problem:** egui requires specific initialization and lifetime management with wgpu
-
-**Solution:** Two-pass rendering (3D scene, then egui overlay) with `.forget_lifetime()`
-
-**Example:**
+**Problem:** `canonicalize()` returns `\\?\UNC\...` format
 
 ```rust
-// See: crates/bif_viewport/src/lib.rs:1800-1900
-// Pass 1: 3D scene
-{
-    let mut render_pass = encoder.begin_render_pass(&RenderPassDescriptor {
-        depth_stencil_attachment: Some(...),
-        ...
-    });
-    render_pass.draw_indexed(0..index_count, 0, 0..instance_count);
-}
-
-// Pass 2: egui overlay
-{
-    let mut render_pass = encoder.begin_render_pass(&RenderPassDescriptor {
-        depth_stencil_attachment: None,  // No depth for UI
-        ...
-    }).forget_lifetime();  // Required for egui's 'static requirement
-
-    self.egui_renderer.render(&mut render_pass, &paint_jobs, &screen_descriptor);
-}
-```
-
-**Key Files:**
-
-- [bif_viewport/src/lib.rs:1800-1900](crates/bif_viewport/src/lib.rs#L1800-L1900) - egui rendering
-
-**Challenges Solved:**
-
-- egui `State::new()` requires 6 parameters, `Renderer::new()` requires 5
-- Borrow checker: Extract UI data BEFORE `egui_ctx.run()` closure
-- Lifetime issues: Use `.forget_lifetime()` on RenderPass for egui's `'static` requirement
-
----
-
-### 5. Progressive Bucket Rendering
-
-**Problem:** Long-running Ivar renders need to show progress
-
-**Solution:** Divide image into buckets, render in parallel, composite incrementally
-
-**Example:**
-
-```rust
-// See: crates/bif_renderer/src/lib.rs:200-300
-const BUCKET_SIZE: u32 = 64;
-
-// Generate buckets
-let buckets: Vec<(u32, u32, u32, u32)> = (0..height)
-    .step_by(BUCKET_SIZE)
-    .flat_map(|y| {
-        (0..width).step_by(BUCKET_SIZE).map(move |x| {
-            (x, y,
-             (x + BUCKET_SIZE).min(width),
-             (y + BUCKET_SIZE).min(height))
-        })
-    })
-    .collect();
-
-// Render buckets in parallel
-buckets.par_iter().for_each(|(x0, y0, x1, y1)| {
-    for y in *y0..*y1 {
-        for x in *x0..*x1 {
-            let color = render_pixel(x, y, scene, camera);
-            tx.send((x, y, color)).unwrap();
-        }
-    }
-});
-```
-
-**Key Files:**
-
-- [bif_renderer/src/lib.rs:200-300](crates/bif_renderer/src/lib.rs#L200-L300) - Bucket system
-
-**Performance:** Progressive display allows UI interaction during render
-
----
-
-### 6. Mat4 Transform Operations
-
-**Problem:** Need to transform rays and AABBs for instance-aware BVH
-
-**Solution:** Extension trait on `Mat4` with `glam` integration
-
-**Example:**
-
-```rust
-// See: crates/bif_math/src/transform.rs
-pub trait Mat4Ext {
-    fn transform_vector3(&self, v: Vec3) -> Vec3;
-    fn transform_aabb(&self, aabb: &Aabb) -> Aabb;
-}
-
-impl Mat4Ext for Mat4 {
-    fn transform_vector3(&self, v: Vec3) -> Vec3 {
-        let v4 = self.mul_vec4(v.extend(0.0));
-        Vec3::new(v4.x, v4.y, v4.z)
-    }
-
-    fn transform_aabb(&self, aabb: &Aabb) -> Aabb {
-        // Transform all 8 corners and recompute bounds
-        ...
+// Convert back to standard UNC
+fn normalize_unc_path(path: &Path) -> PathBuf {
+    let s = path.to_string_lossy();
+    if s.starts_with("\\\\?\\UNC\\") {
+        PathBuf::from(format!("\\\\{}", &s[8..]))
+    } else if s.starts_with("\\\\?\\") {
+        PathBuf::from(&s[4..])
+    } else {
+        path.to_path_buf()
     }
 }
 ```
 
-**Key Files:**
-
-- [bif_math/src/transform.rs](crates/bif_math/src/transform.rs) - Mat4 extensions
-
-**Tests:** 8 unit tests covering identity, translation, rotation, AABB transforms
-
 ---
 
-### 7. Instance-Aware BVH Architecture
-
-**Problem:** Building 28M triangles (100 instances × 280K triangles) caused 4s freeze
-
-**Solution:** ONE BVH for prototype, transform rays per-instance
-
-**Example:**
-
-```rust
-// See: crates/bif_renderer/src/instanced_geometry.rs
-pub struct InstancedGeometry {
-    prototype_bvh: BvhNode,           // ONE BVH (280K triangles)
-    instance_transforms: Vec<Mat4>,   // 100 transforms
-}
-
-impl Hittable for InstancedGeometry {
-    fn hit(&self, ray: &Ray, ray_t: Interval) -> bool {
-        for transform in &self.instance_transforms {
-            // Transform ray: world → local
-            let inverse = transform.inverse();
-            let local_ray = Ray {
-                origin: inverse.transform_point3(ray.origin),
-                direction: inverse.transform_vector3(ray.direction),
-                ...
-            };
-
-            // Test against prototype BVH
-            if self.prototype_bvh.hit(&local_ray, ray_t) {
-                // Transform hit back: local → world
-                ...
-                return true;
-            }
-        }
-        false
-    }
-}
-```
-
-**Key Files:**
-
-- [bif_renderer/src/instanced_geometry.rs](crates/bif_renderer/src/instanced_geometry.rs) - Full implementation
-
-**Performance:**
-
-- BVH build: 4000ms → 40ms (100x faster)
-- Memory: 5GB → 50MB (100x reduction)
-- Trade-off: ~3x slower rendering due to linear instance search O(100)
-
-**Tests:** 5 unit tests (identity transform, multiple instances, correctness, rotation)
-
----
-
-### 8. USD USDA Parser (Pure Rust)
-
-**Problem:** Need to load USD files without C++ dependencies
-
-**Solution:** Hand-written parser for USDA text format
-
-**Example:**
-
-```rust
-// See: crates/bif_core/src/usd/parser.rs
-pub fn parse_usda(path: &Path) -> Result<UsdScene> {
-    let content = fs::read_to_string(path)?;
-    let mut scene = UsdScene::default();
-
-    // Parse primitives
-    for line in content.lines() {
-        if line.contains("def Mesh") {
-            let mesh = parse_mesh(&mut lines)?;
-            scene.meshes.push(mesh);
-        }
-        if line.contains("def PointInstancer") {
-            let instancer = parse_point_instancer(&mut lines)?;
-            scene.instancers.push(instancer);
-        }
-    }
-
-    Ok(scene)
-}
-```
-
-**Supported:**
-
-- `UsdGeomMesh` - positions, normals, faceVertexCounts, faceVertexIndices
-- `UsdGeomPointInstancer` - protoIndices, positions, orientations, scales
-- `orientation = "leftHanded"` detection
-- N-gon triangulation via fan triangulation
-
-**Key Files:**
-
-- [bif_core/src/usd/parser.rs](crates/bif_core/src/usd/parser.rs) - USDA Parser
-- [bif_core/src/usd/types.rs](crates/bif_core/src/usd/types.rs) - USD types
-
-**Tests:** 15 tests in `bif_core` covering mesh loading, instancing, orientation
-
-**Limitations:** Text format only (no USDC binary), no references yet
-
----
-
-## Performance Targets vs Actuals
-
-| Target | Actual (Milestones 0-11) | Notes |
-|--------|--------------------------|-------|
-| 10K instances @ 60 FPS | 100 instances @ 60+ FPS | VSync-limited, Milestone 12 (Embree) needed for 10K+ |
-| BVH build < 100ms | ~40ms | Instance-aware approach |
-| Memory for 100 instances | ~50MB | 100x reduction vs duplicating geometry |
-| Ivar render time | ~52s (479 objects, 800x450, 100spp) | Acceptable baseline, ~3x slower than Embree would be |
-| UI freeze on mode switch | **0ms** | Was 4s before background threading |
-
----
-
-## Testing Strategy
-
-### Unit Tests (60+ passing)
-
-**bif_math (26 tests):**
-
-- `Vec3` operations (dot, cross, length)
-- `Ray::at()` position calculation
-- `Interval` contains/clamp/expand
-- `Aabb` hit testing, combining, longest axis
-- `Camera` view/projection matrices
-- `Transform` Mat4 extensions
-
-**bif_renderer (19 tests):**
-
-- Material scattering (Lambertian, Metal, Dielectric)
-- BVH construction and hit testing
-- Sphere/Triangle hit testing
-- InstancedGeometry correctness
-
-**bif_core (15 tests):**
-
-- USD mesh parsing
-- Point instancer parsing
-- Triangulation (quads, N-gons)
-
-**Pattern:**
-
-```rust
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_transform_point() {
-        let transform = Mat4::from_translation(Vec3::new(1.0, 2.0, 3.0));
-        let point = Vec3::ZERO;
-        let result = transform.transform_point3(point);
-        assert_eq!(result, Vec3::new(1.0, 2.0, 3.0));
-    }
-}
-```
-
-### Integration Tests
-
-- Load [assets/lucy_low.usda](assets/lucy_low.usda) and verify vertex count (140,278)
-- Render 100 instances and measure FPS (60+)
-- Switch Vulkan ↔ Ivar and verify no freeze (0ms)
-- Compare output with reference renders
-
----
-
-## Code Organization Principles
-
-1. **Crate Separation:** Math → Core → Viewport/Renderer → Viewer
-   - `bif_math`: No dependencies, pure math
-   - `bif_core`: Depends on `bif_math`, scene graph + USD
-   - `bif_viewport`, `bif_renderer`: Depend on `bif_core`, `bif_math`
-   - `bif_viewer`: Application entry, depends on all
-
-2. **Shared Ownership:** Use `Arc<T>` for geometry, materials
-   - Cheap clones across thread boundaries
-   - Example: `Arc<Mesh>` shared by 100 instances
-
-3. **Background Work:** Move expensive operations off main thread
-   - BVH builds in `std::thread::spawn`
-   - Ivar rendering in rayon thread pool
-   - Use `mpsc::channel()` for completion notification
-
-4. **Progressive Display:** Update UI during long operations
-   - Bucket rendering with incremental compositing
-   - Status enums (NotStarted → Building → Complete)
-
-5. **Instance-Aware:** Build BVH once, transform rays per-instance
-   - 100x memory savings for 100 instances
-   - Trade-off: ~3x slower rendering (acceptable for 100, not 10K+)
-
----
-
-## Common Pitfalls
-
-### 1. Forgetting to Mark Instances as Modified
-
-**Problem:** Adding transforms but GPU buffer not updated
-
-**Solution:**
-
-```rust
-self.instance_transforms.push(transform);
-self.needs_instance_buffer_update = true;  // DON'T FORGET!
-```
-
-### 2. egui Borrow Checker Issues
-
-**Problem:** Cannot borrow `self` mutably inside `egui_ctx.run()` closure
-
-**Solution:** Extract data BEFORE closure
-
-```rust
-// BAD
-egui_ctx.run(input, |ctx| {
-    ui.label(format!("FPS: {}", self.fps));  // Borrow error!
-});
-
-// GOOD
-let fps = self.fps;
-egui_ctx.run(input, |ctx| {
-    ui.label(format!("FPS: {fps}"));
-});
-```
-
-### 3. Mat4 Column-Major vs Row-Major
-
-**Problem:** glam uses column-major, but GPU expects specific format
-
-**Solution:** Always use `.to_cols_array_2d()` for GPU upload
-
-```rust
-// Correct
-let matrix_data = transform.to_cols_array_2d();  // [[f32; 4]; 4]
-```
-
-### 4. USD USDA Parsing Edge Cases
-
-**Challenges:**
-
-- Missing normals → compute from face geometry
-- N-gon faces (5+ vertices) → fan triangulation
-- Left-handed orientation → swap triangle indices i1/i2
-
-**Solution:** See [bif_core/src/usd/parser.rs](crates/bif_core/src/usd/parser.rs)
-
-### 5. wgpu Surface Loss on Resize
-
-**Problem:** Window resize invalidates surface
-
-**Solution:** Recreate surface configuration
-
-```rust
-if self.config.width != new_width || self.config.height != new_height {
-    self.config.width = new_width;
-    self.config.height = new_height;
-    self.surface.configure(&self.device, &self.config);
-}
-```
-
----
-
-## Dependencies (Actual)
+## Dependencies
 
 ```toml
 [workspace.dependencies]
 # Math
-glam = "0.29"              # SIMD-optimized vector math
+glam = "0.29"
 
 # GPU
-wgpu = "22.1"              # Vulkan/DX12/Metal abstraction
-winit = "0.30"             # Window management
-bytemuck = "1.24"          # Zero-copy GPU buffer casting
-pollster = "0.3"           # Async executor for wgpu init
+wgpu = "22.1"
+winit = "0.30"
+bytemuck = "1.24"
 
 # UI
-egui = "0.29"              # Immediate-mode UI
-egui-wgpu = "0.29"         # egui + wgpu integration
-egui-winit = "0.29"        # egui + winit integration
+egui = "0.29"
+egui-wgpu = "0.29"
+egui-snarl = "0.5"
 
-# I/O
-tobj = "4.0"               # OBJ file parser (legacy)
-image = "0.24"             # PNG/JPG loading (Rust 1.86 compatible)
+# Ray Tracing
+embree = "4.4.0"  # via vcpkg
 
-# Parallelism
-rayon = "1.10"             # Data parallelism
+# Rendering
+image = "0.24"
+rayon = "1.10"
 
-# Utilities
-anyhow = "1.0"             # Error handling
+# USD (C++ bridge)
+pxr = "25.11"  # via vcpkg
 ```
 
 ---
 
-## File Structure (Actual)
+## File Structure
 
 ```
 bif/
-├── Cargo.toml              # Rust workspace
 ├── crates/
-│   ├── bif_math/           # Vec3, Ray, Interval, Aabb, Camera, Transform
-│   │   ├── src/
-│   │   │   ├── lib.rs      # Re-exports
-│   │   │   ├── vec3.rs     # (empty, uses glam directly)
-│   │   │   ├── ray.rs      # Ray struct
-│   │   │   ├── interval.rs # Interval struct
-│   │   │   ├── aabb.rs     # AABB struct
-│   │   │   ├── camera.rs   # Camera with view/proj matrices
-│   │   │   └── transform.rs # Mat4Ext trait (NEW in Freeze Fix)
-│   ├── bif_core/           # Scene graph, USD parser, mesh data
-│   │   ├── src/
-│   │   │   ├── mesh.rs     # Mesh struct
-│   │   │   ├── scene.rs    # Scene struct (minimal)
-│   │   │   └── usd/        # USD parser
-│   │   │       ├── mod.rs
-│   │   │       ├── parser.rs  # USDA text parser
-│   │   │       └── types.rs   # UsdMesh, UsdPointInstancer
-│   ├── bif_viewport/       # GPU viewport (wgpu + Vulkan + egui)
-│   │   ├── src/
-│   │   │   ├── lib.rs      # Renderer struct (~2000 LOC)
-│   │   │   └── shaders/
-│   │   │       └── basic.wgsl  # Vertex + fragment shaders
-│   ├── bif_renderer/       # CPU path tracer "Ivar"
-│   │   ├── src/
-│   │   │   ├── lib.rs
-│   │   │   ├── hittable.rs    # Hittable trait
-│   │   │   ├── material.rs    # Material trait
-│   │   │   ├── materials/     # Lambertian, Metal, Dielectric, DiffuseLight
-│   │   │   ├── sphere.rs      # Sphere primitive
-│   │   │   ├── triangle.rs    # Triangle primitive (Möller-Trumbore)
-│   │   │   ├── bvh.rs         # BVH acceleration
-│   │   │   ├── instanced_geometry.rs  # Instance-aware BVH (NEW in Freeze Fix)
-│   │   │   ├── camera.rs      # Ivar camera (separate from viewport camera)
-│   │   │   └── renderer.rs    # Progressive rendering
-│   └── bif_viewer/         # Application entry point
-│       └── src/
-│           └── main.rs     # winit event loop
-├── legacy/
-│   └── go-raytracing/      # Original Go raytracer (reference)
-├── devlog/                 # Development session logs
-│   ├── DEVLOG_2025-12-27_milestone1.md
-│   ├── ...
-│   └── DEVLOG_2025-12-31_freeze-fix.md
-├── docs/archive/           # Archived documentation
-│   └── GO_API_REFERENCE.md
-├── renders/                # Render output files
-│   ├── output.png
-│   └── output.ppm
-└── assets/                 # Test scenes, meshes
-    └── lucy_low.usda
+│   ├── bif_math/       # Vec3, Ray, Aabb, Camera, Transform, Frustum
+│   ├── bif_core/       # Scene, Mesh, Material, USD parser, Texture
+│   ├── bif_viewport/   # GPU viewport, egui UI, node graph
+│   ├── bif_renderer/   # Ivar CPU path tracer, Embree, Disney BSDF
+│   ├── bif_viewer/     # Application entry point
+│   └── bif_maketx/     # Standalone .tx converter
+├── cpp/
+│   ├── usd_bridge/     # C++ FFI to Pixar USD
+│   └── oiio_bridge/    # C++ FFI to OpenImageIO (optional)
+├── devlog/             # Session logs
+└── assets/             # Test scenes
 ```
 
 ---
 
-## Next Steps
-
-For Milestone 12 (Embree Integration) and beyond, see:
-
-- [MILESTONES.md](MILESTONES.md) - Complete roadmap
+**See Also:**
+- [MILESTONES.md](MILESTONES.md) - Complete history
 - [SESSION_HANDOFF.md](SESSION_HANDOFF.md) - Current status
-- [ARCHITECTURE.md](ARCHITECTURE.md) - System design
-
----
-
-**Last Updated:** December 31, 2025 (Milestones 0-11 Complete)
+- [ARCHITECTURE.md](ARCHITECTURE.md) - Design principles

@@ -2410,7 +2410,10 @@ impl Renderer {
             .map(|(idx, mat)| (mat.name.clone(), idx as u32))
             .collect();
 
-        // Generate instances from scene (no longer baking transforms, multi-draw uses per-instance transforms)
+        // Generate instances from scene
+        // Multi-draw (wgpu viewport) uses per-instance transforms
+        // For Ivar (ray tracing): if multi-prototype, transforms are baked into combined mesh_data
+        // so build_ivar_scene* will use identity transform when use_multi_draw is true
         let mut instance_transforms = Vec::with_capacity(scene.instance_count());
         let mut instance_material_ids = Vec::with_capacity(scene.instance_count());
         let mut instance_prototype_ids = Vec::with_capacity(scene.instance_count());
@@ -2434,6 +2437,7 @@ impl Renderer {
                 }
             })
             .collect();
+
 
         // Warn if instance count exceeds buffer capacity
         if instances.len() > self.max_instances as usize {
@@ -3052,7 +3056,16 @@ impl Renderer {
 
         // Clone data needed for background thread
         let mesh_data = self.mesh_data.clone();
-        let transforms = self.instance_transforms.clone();
+        // When using multi-draw (combined mesh), transforms are already baked into vertices
+        // Use single identity transform to avoid double-transforming
+        let transforms = if self.use_multi_draw {
+            log::info!(
+                "Multi-prototype: using identity transform for Ivar (transforms baked into combined mesh)"
+            );
+            vec![Mat4::IDENTITY]
+        } else {
+            self.instance_transforms.clone()
+        };
         let scene_materials = self.scene_materials.clone();
         let fallback_material = self.scene_material.clone();
         let texture_base_dir = self.texture_base_dir.clone();
@@ -3243,12 +3256,20 @@ impl Renderer {
             .cloned()
             .unwrap_or_default();
 
+        // When using multi-draw (combined mesh), transforms are already baked into vertices
+        // Use single identity transform to avoid double-transforming
+        let ivar_transforms = if self.use_multi_draw {
+            vec![Mat4::IDENTITY]
+        } else {
+            self.instance_transforms.clone()
+        };
+
         // Create Embree scene or fallback
         let world = if let Some(embree_scene) = EmbreeScene::try_new(
             &triangle_vertices,
             &triangle_uvs,
             &triangle_normals,
-            self.instance_transforms.clone(),
+            ivar_transforms,
             materials,
             &tri_mat_ids,
         ) {
