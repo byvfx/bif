@@ -17,6 +17,7 @@ use rayon::prelude::*;
 
 use crate::gpu_types::Vertex;
 use crate::ivar_state::{AovSettings, BatchRenderSettings, CameraSource};
+use crate::mesh_data::MeshRange;
 
 /// Message sent during batch render.
 #[derive(Debug)]
@@ -66,6 +67,8 @@ pub struct SceneBuilderData {
     pub vertex_animated_meshes: Vec<usize>,
     /// USD stage for querying animated vertices.
     pub stage: Option<Arc<UsdStage>>,
+    /// Mesh ranges for multi-mesh scenes (vertex offset/count per mesh).
+    pub mesh_ranges: Option<Vec<MeshRange>>,
 }
 
 impl SceneBuilderData {
@@ -78,13 +81,52 @@ impl SceneBuilderData {
 
         // Query animated vertices if applicable and update positions in-place
         // Clone vertices so we can update positions while keeping UVs/normals
-        let vertices: Vec<Vertex> = if self.vertex_animated_meshes.is_empty()
-            || self.use_multi_draw
-            || self.vertex_animated_meshes.len() != 1
-        {
-            // No animation or unsupported config - use static vertices
+        let vertices: Vec<Vertex> = if self.vertex_animated_meshes.is_empty() {
+            // No animation or multi-draw mode - use static vertices
             self.vertices.clone()
-        } else {
+        } else if let Some(ref ranges) = self.mesh_ranges {
+            // Multi-mesh scene: update each animated mesh's vertex range
+            let mut updated = self.vertices.clone();
+            let stage = match self.stage.as_ref() {
+                Some(s) => s,
+                None => return self.build_static_triangles(),
+            };
+
+            for &mesh_idx in &self.vertex_animated_meshes {
+                let range = match ranges.iter().find(|r| r.usd_mesh_index == mesh_idx) {
+                    Some(r) => r,
+                    None => continue,
+                };
+
+                let positions = match stage.get_mesh_vertices_at_time(mesh_idx, time) {
+                    Ok(p) => p,
+                    Err(_) => continue,
+                };
+
+                let vertex_count = positions.len() / 3;
+                if vertex_count != range.vertex_count as usize {
+                    log::warn!(
+                        "Vertex count mismatch for mesh {}: USD {} vs range {}",
+                        mesh_idx,
+                        vertex_count,
+                        range.vertex_count
+                    );
+                    continue;
+                }
+
+                // Update only this mesh's vertex range
+                let start = range.vertex_offset as usize;
+                for (i, v) in updated[start..start + vertex_count].iter_mut().enumerate() {
+                    v.position = [
+                        positions[i * 3],
+                        positions[i * 3 + 1],
+                        positions[i * 3 + 2],
+                    ];
+                }
+            }
+            updated
+        } else if self.vertex_animated_meshes.len() == 1 {
+            // Single-mesh fallback (original logic)
             let mesh_idx = self.vertex_animated_meshes[0];
             match self
                 .stage
@@ -115,6 +157,9 @@ impl SceneBuilderData {
                 }
                 None => self.vertices.clone(),
             }
+        } else {
+            // Multiple animated meshes but no mesh_ranges - can't update
+            self.vertices.clone()
         };
 
         for i in (0..self.indices.len()).step_by(3) {
@@ -131,6 +176,40 @@ impl SceneBuilderData {
             triangle_uvs.push([vertices[i0].uv, vertices[i1].uv, vertices[i2].uv]);
 
             triangle_normals.push([vertices[i0].normal, vertices[i1].normal, vertices[i2].normal]);
+        }
+
+        (triangle_vertices, triangle_uvs, triangle_normals)
+    }
+
+    /// Helper to build static triangles (no animation).
+    fn build_static_triangles(&self) -> TriangleData {
+        let tri_count = self.indices.len() / 3;
+        let mut triangle_vertices = Vec::with_capacity(tri_count);
+        let mut triangle_uvs: Vec<[[f32; 2]; 3]> = Vec::with_capacity(tri_count);
+        let mut triangle_normals: Vec<[[f32; 3]; 3]> = Vec::with_capacity(tri_count);
+
+        for i in (0..self.indices.len()).step_by(3) {
+            let i0 = self.indices[i] as usize;
+            let i1 = self.indices[i + 1] as usize;
+            let i2 = self.indices[i + 2] as usize;
+
+            triangle_vertices.push([
+                Vec3::from_array(self.vertices[i0].position),
+                Vec3::from_array(self.vertices[i1].position),
+                Vec3::from_array(self.vertices[i2].position),
+            ]);
+
+            triangle_uvs.push([
+                self.vertices[i0].uv,
+                self.vertices[i1].uv,
+                self.vertices[i2].uv,
+            ]);
+
+            triangle_normals.push([
+                self.vertices[i0].normal,
+                self.vertices[i1].normal,
+                self.vertices[i2].normal,
+            ]);
         }
 
         (triangle_vertices, triangle_uvs, triangle_normals)

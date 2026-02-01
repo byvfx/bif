@@ -627,6 +627,12 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
   - `EmbreeScene::drop()`: Logs resource cleanup for memory tracking
   - Static scenes skip per-frame rebuild (no animation detected)
 
+  **Phase 4b: Multi-Prototype Vertex Animation Fix ✅ (M19.1c)**
+  - Fixed `use_multi_draw` gate blocking animation in Ivar/batch render
+  - GUI Ivar: Build triangles on main thread with `build_triangles_at_time(current_time)`
+  - Auto-invalidate Ivar scene cache when vertex animation frame changes
+  - Both batch render and GUI Ivar now animate multi-prototype scenes
+
   **Phase 5: Instance Transform Animation (TODO)**
   - Per-frame instance matrix evaluation
   - Test with transform-animated USD scenes
@@ -864,7 +870,7 @@ Key papers for Milestone 20 (Renderer Polish):
 
 ---
 
-**Last Updated:** January 31, 2026
-**Status:** Milestones 0-18.4 Complete, M19.1 Complete
-**Current:** Batch render with camera + vertex animation
+**Last Updated:** February 1, 2026
+**Status:** Milestones 0-18.4 Complete, M19.1c Complete
+**Current:** Multi-prototype vertex animation in Ivar
 **Next:** M19.2 instance transform animation per frame
