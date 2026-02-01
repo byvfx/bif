@@ -200,19 +200,9 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
                         let keyframes: Vec<TransformKeyframe> = anim_data
                             .xform_samples
                             .iter()
-                            .map(|sample| {
-                                let t = Transform::from_matrix(sample.transform);
-                                log::debug!(
-                                    "  Keyframe t={}: pos=({:.3}, {:.3}, {:.3})",
-                                    sample.time,
-                                    t.translation.x,
-                                    t.translation.y,
-                                    t.translation.z
-                                );
-                                TransformKeyframe {
-                                    time: sample.time,
-                                    transform: t,
-                                }
+                            .map(|sample| TransformKeyframe {
+                                time: sample.time,
+                                transform: Transform::from_matrix(sample.transform),
                             })
                             .collect();
                         log::debug!(

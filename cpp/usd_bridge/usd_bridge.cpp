@@ -30,6 +30,7 @@
 #include <iostream>
 #include <set>
 #include <algorithm>
+#include <chrono>
 
 PXR_NAMESPACE_USING_DIRECTIVE
 
@@ -290,12 +291,9 @@ static void cache_stage_data(UsdBridgeStage* bridge) {
                 } else {
                     timeCode = UsdTimeCode(pointTimeSamples.front());
                 }
-                std::cout << "[USD_BRIDGE] Mesh " << prim.GetPath() << " has animated points ("
-                          << pointTimeSamples.size() << " samples), using time=" << timeCode.GetValue() << std::endl;
             }
 
             mesh.GetPointsAttr().Get(&points, timeCode);
-            std::cout << "[USD_BRIDGE] Mesh " << prim.GetPath() << ": " << points.size() << " vertices" << std::endl;
             
             // Pre-allocate to exact size to minimize memory overhead
             cached.vertices.reserve(points.size() * 3);
@@ -312,9 +310,6 @@ static void cache_stage_data(UsdBridgeStage* bridge) {
             mesh.GetFaceVertexCountsAttr().Get(&face_vertex_counts, timeCode);
             mesh.GetFaceVertexIndicesAttr().Get(&face_vertex_indices, timeCode);
 
-            std::cout << "[USD_BRIDGE] Mesh " << prim.GetPath() << ": " << face_vertex_counts.size()
-                      << " faces, " << face_vertex_indices.size() << " face vertex indices" << std::endl;
-
             std::vector<uint32_t> triangle_face_indices;
             triangulate_mesh(face_vertex_counts, face_vertex_indices, cached.indices, triangle_face_indices);
 
@@ -323,15 +318,12 @@ static void cache_stage_data(UsdBridgeStage* bridge) {
             std::vector<uint32_t> face_material_map(num_faces, 0);  // Default material 0
 
             std::vector<UsdGeomSubset> subsets = UsdGeomSubset::GetAllGeomSubsets(mesh);
-            fprintf(stderr, "[USD_BRIDGE] Mesh %s: found %zu GeomSubsets, %zu faces\n",
-                cached.path.c_str(), subsets.size(), num_faces);
 
             if (!subsets.empty()) {
                 // Build material path -> index map
                 std::map<std::string, uint32_t> material_path_to_index;
                 for (size_t i = 0; i < bridge->materials.size(); ++i) {
                     material_path_to_index[bridge->materials[i].path] = static_cast<uint32_t>(i);
-                    fprintf(stderr, "[USD_BRIDGE]   Material[%zu]: %s\n", i, bridge->materials[i].path.c_str());
                 }
 
                 for (const auto& subset : subsets) {
@@ -341,15 +333,12 @@ static void cache_stage_data(UsdBridgeStage* bridge) {
 
                     // Skip subsets without valid material bindings (e.g., __subdivs__ from Houdini)
                     if (!bound_material) {
-                        fprintf(stderr, "[USD_BRIDGE]   Skipping subset %s (no material binding)\n",
-                            subset.GetPath().GetName().c_str());
                         continue;
                     }
 
                     std::string mat_path = bound_material.GetPath().GetString();
                     auto it = material_path_to_index.find(mat_path);
                     if (it == material_path_to_index.end()) {
-                        fprintf(stderr, "[USD_BRIDGE]   WARNING: subset material '%s' not found in map!\n", mat_path.c_str());
                         continue;
                     }
                     uint32_t material_idx = it->second;
@@ -357,9 +346,6 @@ static void cache_stage_data(UsdBridgeStage* bridge) {
                     // Get face indices for this subset
                     VtArray<int> subset_indices;
                     subset.GetIndicesAttr().Get(&subset_indices);
-
-                    fprintf(stderr, "[USD_BRIDGE]   Subset %s: %zu faces, material='%s' (idx=%u)\n",
-                        subset.GetPath().GetName().c_str(), subset_indices.size(), mat_path.c_str(), material_idx);
 
                     // Assign material to these faces
                     for (int face_idx : subset_indices) {
@@ -381,8 +367,6 @@ static void cache_stage_data(UsdBridgeStage* bridge) {
             TfToken normalsInterpolation;
             if (mesh.GetNormalsAttr().Get(&normals, timeCode)) {
                 normalsInterpolation = mesh.GetNormalsInterpolation();
-                fprintf(stderr, "[USD_BRIDGE] Normals: count=%zu, interpolation=%s\n",
-                    normals.size(), normalsInterpolation.GetText());
                 cached.normals.reserve(normals.size() * 3);
                 for (const auto& n : normals) {
                     cached.normals.push_back(n[0]);
@@ -401,9 +385,6 @@ static void cache_stage_data(UsdBridgeStage* bridge) {
                 bool hasIndices = stPrimvar.GetIndices(&uvIndices, timeCode);
 
                 if (stPrimvar.Get(&uvs, timeCode)) {
-                    fprintf(stderr, "[USD_BRIDGE] UV primvar: interpolation=%s, uvs=%zu, indices=%zu, vertices=%zu, face_vertex_indices=%zu\n",
-                        interpolation.GetText(), uvs.size(), uvIndices.size(), points.size(), face_vertex_indices.size());
-
                     if (interpolation == UsdGeomTokens->faceVarying) {
                         // faceVarying: one UV per face-vertex. Split vertices at UV seams.
                         // Map (original_vertex, uv) -> new_vertex_index
@@ -502,11 +483,6 @@ static void cache_stage_data(UsdBridgeStage* bridge) {
                             }
                             faceVertIdx += faceSize;
                         }
-
-                        size_t oldVertCount = cached.vertices.size() / 3;
-                        size_t newVertCount = newVertices.size() / 3;
-                        fprintf(stderr, "[USD_BRIDGE] UV seam split: %zu -> %zu vertices (%.1f%% increase)\n",
-                            oldVertCount, newVertCount, 100.0 * (newVertCount - oldVertCount) / oldVertCount);
 
                         // Replace cached data with UV-split version
                         cached.vertices = std::move(newVertices);
@@ -734,7 +710,6 @@ static void cache_material_data(UsdBridgeStage* bridge) {
                 std::string child_name = child.GetName().GetString();
                 if (child_name.find("mtlxstandard_surface") != std::string::npos ||
                     child_name.find("standard_surface") != std::string::npos) {
-                    fprintf(stderr, "[USD_BRIDGE] Found standard_surface child: %s\n", child_name.c_str());
                     UsdShadeShader potential_shader(child);
                     if (potential_shader) {
                         mtlx_shader = potential_shader;
@@ -1055,6 +1030,9 @@ UsdBridgeError usd_bridge_open_stage(const char* path, UsdBridgeStage** out_stag
     }
 
     try {
+        using namespace std::chrono;
+        auto total_start = high_resolution_clock::now();
+
         // Normalize path: convert backslashes to forward slashes for USD
         std::string normalized_path(path);
         std::replace(normalized_path.begin(), normalized_path.end(), '\\', '/');
@@ -1065,19 +1043,22 @@ UsdBridgeError usd_bridge_open_stage(const char* path, UsdBridgeStage** out_stag
         // This is critical for files that reference other files with relative paths
         // like @./lucy_low.usda@. Without the resolver context, USD can't find
         // the referenced files because it doesn't know the base directory.
+        auto resolver_start = high_resolution_clock::now();
         ArResolver& resolver = ArGetResolver();
         ArResolverContext context = resolver.CreateDefaultContextForAsset(normalized_path);
         ArResolverContextBinder binder(context);
+        auto resolver_time = duration_cast<milliseconds>(high_resolution_clock::now() - resolver_start).count();
+        std::cout << "[USD_BRIDGE]   Resolver context: " << resolver_time << "ms" << std::endl;
 
-        std::cout << "[USD_BRIDGE] Created resolver context for asset" << std::endl;
-
+        auto stage_open_start = high_resolution_clock::now();
         UsdStageRefPtr stage = UsdStage::Open(normalized_path);
+        auto stage_open_time = duration_cast<milliseconds>(high_resolution_clock::now() - stage_open_start).count();
+        std::cout << "[USD_BRIDGE]   UsdStage::Open(): " << stage_open_time << "ms" << std::endl;
+
         if (!stage) {
             std::cerr << "[USD_BRIDGE] ERROR: Failed to open stage" << std::endl;
             return USD_BRIDGE_ERROR_FILE_NOT_FOUND;
         }
-
-        std::cout << "[USD_BRIDGE] Stage opened successfully" << std::endl;
 
         auto* bridge = new UsdBridgeStage();
         bridge->stage = stage;
@@ -1086,10 +1067,31 @@ UsdBridgeError usd_bridge_open_stage(const char* path, UsdBridgeStage** out_stag
         // All getter functions will read from these caches without mutation.
         // Note: The resolver context binder is still active during caching,
         // so all reference resolution during traversal will work correctly.
+        auto cache_start = high_resolution_clock::now();
         cache_stage_data(bridge);
+        auto cache_stage_time = duration_cast<milliseconds>(high_resolution_clock::now() - cache_start).count();
+        std::cout << "[USD_BRIDGE]   cache_stage_data(): " << cache_stage_time << "ms"
+                  << " (" << bridge->meshes.size() << " meshes, "
+                  << bridge->instancers.size() << " instancers)" << std::endl;
+
+        cache_start = high_resolution_clock::now();
         cache_prim_data(bridge);
+        auto cache_prim_time = duration_cast<milliseconds>(high_resolution_clock::now() - cache_start).count();
+        std::cout << "[USD_BRIDGE]   cache_prim_data(): " << cache_prim_time << "ms"
+                  << " (" << bridge->all_prims.size() << " prims)" << std::endl;
+
+        cache_start = high_resolution_clock::now();
         cache_animation_data(bridge);
+        auto cache_anim_time = duration_cast<milliseconds>(high_resolution_clock::now() - cache_start).count();
+        std::cout << "[USD_BRIDGE]   cache_animation_data(): " << cache_anim_time << "ms" << std::endl;
+
+        cache_start = high_resolution_clock::now();
         cache_vertex_animation_data(bridge);
+        auto cache_vert_anim_time = duration_cast<milliseconds>(high_resolution_clock::now() - cache_start).count();
+        std::cout << "[USD_BRIDGE]   cache_vertex_animation_data(): " << cache_vert_anim_time << "ms" << std::endl;
+
+        auto total_time = duration_cast<milliseconds>(high_resolution_clock::now() - total_start).count();
+        std::cout << "[USD_BRIDGE]   TOTAL: " << total_time << "ms" << std::endl;
 
         *out_stage = bridge;
         return USD_BRIDGE_SUCCESS;
@@ -1526,7 +1528,6 @@ static void cache_animation_data(UsdBridgeStage* bridge) {
         std::vector<double> times(time_set.begin(), time_set.end());
 
         if (!times.empty()) {
-            std::cout << "[USD_BRIDGE] Mesh " << mesh.path << " has " << times.size() << " time samples" << std::endl;
             UsdGeomXformCache xform_cache;
             for (double t : times) {
                 CachedXformSample sample;
@@ -1536,14 +1537,8 @@ static void cache_animation_data(UsdBridgeStage* bridge) {
                 GfMatrix4d world_xform = xform_cache.GetLocalToWorldTransform(prim);
                 matrix_to_float16(world_xform, sample.transform);
 
-                // Debug: print translation component
-                GfVec3d translation = world_xform.ExtractTranslation();
-                std::cout << "  t=" << t << ": pos=(" << translation[0] << ", " << translation[1] << ", " << translation[2] << ")" << std::endl;
-
                 anim.xform_samples.push_back(sample);
             }
-        } else {
-            std::cout << "[USD_BRIDGE] Mesh " << mesh.path << " has no animation" << std::endl;
         }
 
         bridge->mesh_animations.push_back(std::move(anim));
@@ -1820,17 +1815,6 @@ UsdBridgeError usd_bridge_get_camera_xform_at_time(
     // Evaluate transform at time
     GfMatrix4d localToWorld = xformable.ComputeLocalToWorldTransform(UsdTimeCode(time));
 
-    // Debug: print the matrix
-    fprintf(stderr, "USD camera xform at time %.2f:\n", time);
-    fprintf(stderr, "  Row 0: [%.4f, %.4f, %.4f, %.4f]\n",
-            localToWorld[0][0], localToWorld[0][1], localToWorld[0][2], localToWorld[0][3]);
-    fprintf(stderr, "  Row 1: [%.4f, %.4f, %.4f, %.4f]\n",
-            localToWorld[1][0], localToWorld[1][1], localToWorld[1][2], localToWorld[1][3]);
-    fprintf(stderr, "  Row 2: [%.4f, %.4f, %.4f, %.4f]\n",
-            localToWorld[2][0], localToWorld[2][1], localToWorld[2][2], localToWorld[2][3]);
-    fprintf(stderr, "  Row 3 (translation): [%.4f, %.4f, %.4f, %.4f]\n",
-            localToWorld[3][0], localToWorld[3][1], localToWorld[3][2], localToWorld[3][3]);
-
     // Convert to column-major float array
     for (int col = 0; col < 4; ++col) {
         for (int row = 0; row < 4; ++row) {
@@ -1869,8 +1853,6 @@ static void cache_vertex_animation_data(UsdBridgeStage* bridge) {
             if (pointsAttr.GetTimeSamples(&timeSamples) && timeSamples.size() > 1) {
                 anim.has_animated_vertices = true;
                 anim.time_samples = std::move(timeSamples);
-                std::cout << "[USD_BRIDGE] Mesh " << mesh.path << " has vertex animation ("
-                          << anim.time_samples.size() << " time samples)" << std::endl;
             }
         }
 
