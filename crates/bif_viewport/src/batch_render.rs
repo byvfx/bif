@@ -76,17 +76,45 @@ impl SceneBuilderData {
         let mut triangle_uvs: Vec<[[f32; 2]; 3]> = Vec::with_capacity(tri_count);
         let mut triangle_normals: Vec<[[f32; 3]; 3]> = Vec::with_capacity(tri_count);
 
-        // Query animated vertices if applicable
-        let animated_positions: Option<Vec<f32>> = if self.vertex_animated_meshes.is_empty() {
-            None
-        } else if self.use_multi_draw || self.vertex_animated_meshes.len() != 1 {
-            // Multi-draw has baked transforms, not supported yet
-            None
+        // Query animated vertices if applicable and update positions in-place
+        // Clone vertices so we can update positions while keeping UVs/normals
+        let vertices: Vec<Vertex> = if self.vertex_animated_meshes.is_empty()
+            || self.use_multi_draw
+            || self.vertex_animated_meshes.len() != 1
+        {
+            // No animation or unsupported config - use static vertices
+            self.vertices.clone()
         } else {
             let mesh_idx = self.vertex_animated_meshes[0];
-            self.stage
+            match self
+                .stage
                 .as_ref()
                 .and_then(|stage| stage.get_mesh_vertices_at_time(mesh_idx, time).ok())
+            {
+                Some(positions) => {
+                    let vertex_count = positions.len() / 3;
+                    if vertex_count != self.vertices.len() {
+                        log::warn!(
+                            "Vertex count mismatch: USD {} vs mesh {} - using static",
+                            vertex_count,
+                            self.vertices.len()
+                        );
+                        self.vertices.clone()
+                    } else {
+                        // Update positions while preserving UVs/normals
+                        let mut updated = self.vertices.clone();
+                        for (i, v) in updated.iter_mut().enumerate() {
+                            v.position = [
+                                positions[i * 3],
+                                positions[i * 3 + 1],
+                                positions[i * 3 + 2],
+                            ];
+                        }
+                        updated
+                    }
+                }
+                None => self.vertices.clone(),
+            }
         };
 
         for i in (0..self.indices.len()).step_by(3) {
@@ -94,44 +122,15 @@ impl SceneBuilderData {
             let i1 = self.indices[i + 1] as usize;
             let i2 = self.indices[i + 2] as usize;
 
-            let (v0, v1, v2) = if let Some(ref positions) = animated_positions {
-                (
-                    Vec3::new(
-                        positions[i0 * 3],
-                        positions[i0 * 3 + 1],
-                        positions[i0 * 3 + 2],
-                    ),
-                    Vec3::new(
-                        positions[i1 * 3],
-                        positions[i1 * 3 + 1],
-                        positions[i1 * 3 + 2],
-                    ),
-                    Vec3::new(
-                        positions[i2 * 3],
-                        positions[i2 * 3 + 1],
-                        positions[i2 * 3 + 2],
-                    ),
-                )
-            } else {
-                (
-                    Vec3::from_array(self.vertices[i0].position),
-                    Vec3::from_array(self.vertices[i1].position),
-                    Vec3::from_array(self.vertices[i2].position),
-                )
-            };
-            triangle_vertices.push([v0, v1, v2]);
-
-            triangle_uvs.push([
-                self.vertices[i0].uv,
-                self.vertices[i1].uv,
-                self.vertices[i2].uv,
+            triangle_vertices.push([
+                Vec3::from_array(vertices[i0].position),
+                Vec3::from_array(vertices[i1].position),
+                Vec3::from_array(vertices[i2].position),
             ]);
 
-            triangle_normals.push([
-                self.vertices[i0].normal,
-                self.vertices[i1].normal,
-                self.vertices[i2].normal,
-            ]);
+            triangle_uvs.push([vertices[i0].uv, vertices[i1].uv, vertices[i2].uv]);
+
+            triangle_normals.push([vertices[i0].normal, vertices[i1].normal, vertices[i2].normal]);
         }
 
         (triangle_vertices, triangle_uvs, triangle_normals)

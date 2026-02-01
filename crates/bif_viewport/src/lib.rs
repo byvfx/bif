@@ -3197,65 +3197,62 @@ impl Renderer {
         let mut triangle_uvs: Vec<[[f32; 2]; 3]> = Vec::with_capacity(tri_count);
         let mut triangle_normals: Vec<[[f32; 3]; 3]> = Vec::with_capacity(tri_count);
 
-        // Check if we need to query animated vertices
-        let animated_positions: Option<Vec<f32>> = time.and_then(|t| {
-            if self.vertex_animated_meshes.is_empty() {
-                return None;
-            }
-            // For now, handle single-mesh animation (multi-mesh would need mesh_ranges)
-            // In multi-draw mode, vertices are pre-baked so we use static mesh_data
-            if self.use_multi_draw || self.vertex_animated_meshes.len() != 1 {
+        // Get vertices - update positions from USD if animated, otherwise use static
+        let vertices: &[gpu_types::Vertex] = &self.mesh_data.vertices;
+        let updated_vertices: Option<Vec<gpu_types::Vertex>> = time.and_then(|t| {
+            if self.vertex_animated_meshes.is_empty()
+                || self.use_multi_draw
+                || self.vertex_animated_meshes.len() != 1
+            {
                 return None;
             }
             let mesh_idx = self.vertex_animated_meshes[0];
-            self.usd_stage
+            let positions = self
+                .usd_stage
                 .as_ref()
-                .and_then(|stage| stage.get_mesh_vertices_at_time(mesh_idx, t).ok())
+                .and_then(|stage| stage.get_mesh_vertices_at_time(mesh_idx, t).ok())?;
+
+            let vertex_count = positions.len() / 3;
+            if vertex_count != self.mesh_data.vertices.len() {
+                log::warn!(
+                    "Vertex count mismatch: USD {} vs mesh {} - using static",
+                    vertex_count,
+                    self.mesh_data.vertices.len()
+                );
+                return None;
+            }
+
+            // Clone and update positions
+            let mut updated = self.mesh_data.vertices.clone();
+            for (i, v) in updated.iter_mut().enumerate() {
+                v.position = [
+                    positions[i * 3],
+                    positions[i * 3 + 1],
+                    positions[i * 3 + 2],
+                ];
+            }
+            Some(updated)
         });
+
+        let vertices = updated_vertices.as_deref().unwrap_or(vertices);
 
         for i in (0..self.mesh_data.indices.len()).step_by(3) {
             let i0 = self.mesh_data.indices[i] as usize;
             let i1 = self.mesh_data.indices[i + 1] as usize;
             let i2 = self.mesh_data.indices[i + 2] as usize;
 
-            // Get positions - either from animated query or static mesh_data
-            let (v0, v1, v2) = if let Some(ref positions) = animated_positions {
-                (
-                    Vec3::new(
-                        positions[i0 * 3],
-                        positions[i0 * 3 + 1],
-                        positions[i0 * 3 + 2],
-                    ),
-                    Vec3::new(
-                        positions[i1 * 3],
-                        positions[i1 * 3 + 1],
-                        positions[i1 * 3 + 2],
-                    ),
-                    Vec3::new(
-                        positions[i2 * 3],
-                        positions[i2 * 3 + 1],
-                        positions[i2 * 3 + 2],
-                    ),
-                )
-            } else {
-                (
-                    Vec3::from_array(self.mesh_data.vertices[i0].position),
-                    Vec3::from_array(self.mesh_data.vertices[i1].position),
-                    Vec3::from_array(self.mesh_data.vertices[i2].position),
-                )
-            };
-            triangle_vertices.push([v0, v1, v2]);
-
-            triangle_uvs.push([
-                self.mesh_data.vertices[i0].uv,
-                self.mesh_data.vertices[i1].uv,
-                self.mesh_data.vertices[i2].uv,
+            triangle_vertices.push([
+                Vec3::from_array(vertices[i0].position),
+                Vec3::from_array(vertices[i1].position),
+                Vec3::from_array(vertices[i2].position),
             ]);
 
+            triangle_uvs.push([vertices[i0].uv, vertices[i1].uv, vertices[i2].uv]);
+
             triangle_normals.push([
-                self.mesh_data.vertices[i0].normal,
-                self.mesh_data.vertices[i1].normal,
-                self.mesh_data.vertices[i2].normal,
+                vertices[i0].normal,
+                vertices[i1].normal,
+                vertices[i2].normal,
             ]);
         }
 
