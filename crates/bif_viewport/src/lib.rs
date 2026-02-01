@@ -227,7 +227,7 @@ pub struct Renderer {
     fps_update_timer: f32,
 
     // Stats - TODO: Track polygon count from source data for accuracy
-    num_triangles: u32,
+    num_triangles: u64,
     pub gnomon_size: u32,
 
     // UI layout metrics (for viewport-safe overlays)
@@ -1741,7 +1741,7 @@ impl Renderer {
         log::info!("Gnomon initialized");
 
         // Calculate stats - TODO: Track polygon count from source mesh for accuracy
-        let num_triangles = mesh_data.indices.len() as u32 / 3;
+        let num_triangles = mesh_data.indices.len() as u64 / 3;
 
         // Create Ivar resources for CPU path tracer display
         let (ivar_texture, ivar_texture_view) =
@@ -1860,7 +1860,7 @@ impl Renderer {
             visible_instance_count: instances.len() as u32,
             lod_distance_threshold: 100.0,
             lod_max_polys: 5_000_000, // 5M poly budget default
-            triangles_per_instance: num_triangles,
+            triangles_per_instance: num_triangles as u32,
             lod_box_vertex_buffer,
             lod_box_index_buffer,
             lod_box_num_indices: lod_box_mesh.indices.len() as u32,
@@ -2583,7 +2583,7 @@ impl Renderer {
         self.instance_aabbs = instance_aabbs;
         self.prototype_aabb = prototype_aabb;
         self.triangles_per_instance = self.num_indices / 3;
-        self.num_triangles = self.triangles_per_instance * self.num_instances;
+        self.num_triangles = self.triangles_per_instance as u64 * self.num_instances as u64;
         self.lod_box_instance_count = 0;
 
         // Regenerate LOD box mesh for new prototype AABB
