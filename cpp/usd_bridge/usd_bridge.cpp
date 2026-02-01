@@ -250,8 +250,18 @@ static void cache_prim_data(UsdBridgeStage* bridge) {
 static void cache_stage_data(UsdBridgeStage* bridge) {
     if (bridge->cached) return;
 
+    using namespace std::chrono;
+    auto func_start = high_resolution_clock::now();
+
     // Cache materials first - needed for GeomSubset material assignment
+    auto mat_start = high_resolution_clock::now();
     cache_material_data(bridge);
+    auto mat_time = duration_cast<milliseconds>(high_resolution_clock::now() - mat_start).count();
+
+    // Timing accumulators for mesh processing
+    long long time_vertices = 0, time_triangulate = 0, time_subsets = 0;
+    long long time_normals = 0, time_uvs = 0, time_transform = 0;
+    size_t total_verts = 0, total_tris = 0;
 
     UsdGeomXformCache xform_cache;
 
@@ -280,6 +290,8 @@ static void cache_stage_data(UsdBridgeStage* bridge) {
             VtArray<GfVec3f> points;
             UsdTimeCode timeCode = UsdTimeCode::EarliestTime();
 
+            auto vert_start = high_resolution_clock::now();
+
             // Check if points have time samples - if so, use startTimeCode
             UsdAttribute pointsAttr = mesh.GetPointsAttr();
             std::vector<double> pointTimeSamples;
@@ -294,7 +306,7 @@ static void cache_stage_data(UsdBridgeStage* bridge) {
             }
 
             mesh.GetPointsAttr().Get(&points, timeCode);
-            
+
             // Pre-allocate to exact size to minimize memory overhead
             cached.vertices.reserve(points.size() * 3);
             cached.vertices.shrink_to_fit();
@@ -303,8 +315,11 @@ static void cache_stage_data(UsdBridgeStage* bridge) {
                 cached.vertices.push_back(p[1]);
                 cached.vertices.push_back(p[2]);
             }
+            time_vertices += duration_cast<milliseconds>(high_resolution_clock::now() - vert_start).count();
+            total_verts += points.size();
 
             // Get face topology and triangulate (use same timeCode as points)
+            auto tri_start = high_resolution_clock::now();
             VtArray<int> face_vertex_counts;
             VtArray<int> face_vertex_indices;
             mesh.GetFaceVertexCountsAttr().Get(&face_vertex_counts, timeCode);
@@ -312,8 +327,11 @@ static void cache_stage_data(UsdBridgeStage* bridge) {
 
             std::vector<uint32_t> triangle_face_indices;
             triangulate_mesh(face_vertex_counts, face_vertex_indices, cached.indices, triangle_face_indices);
+            time_triangulate += duration_cast<milliseconds>(high_resolution_clock::now() - tri_start).count();
+            total_tris += cached.indices.size() / 3;
 
             // Extract GeomSubsets for per-face material assignment
+            auto subset_start = high_resolution_clock::now();
             size_t num_faces = face_vertex_counts.size();
             std::vector<uint32_t> face_material_map(num_faces, 0);  // Default material 0
 
@@ -361,8 +379,10 @@ static void cache_stage_data(UsdBridgeStage* bridge) {
             for (uint32_t orig_face : triangle_face_indices) {
                 cached.face_material_ids.push_back(face_material_map[orig_face]);
             }
+            time_subsets += duration_cast<milliseconds>(high_resolution_clock::now() - subset_start).count();
 
             // Get normals (optional) - track interpolation for UV seam split
+            auto normal_start = high_resolution_clock::now();
             VtArray<GfVec3f> normals;
             TfToken normalsInterpolation;
             if (mesh.GetNormalsAttr().Get(&normals, timeCode)) {
@@ -374,8 +394,10 @@ static void cache_stage_data(UsdBridgeStage* bridge) {
                     cached.normals.push_back(n[2]);
                 }
             }
+            time_normals += duration_cast<milliseconds>(high_resolution_clock::now() - normal_start).count();
 
             // Get UV coordinates from primvars:st (optional)
+            auto uv_start = high_resolution_clock::now();
             UsdGeomPrimvarsAPI primvarsAPI(mesh);
             UsdGeomPrimvar stPrimvar = primvarsAPI.GetPrimvar(TfToken("st"));
             if (stPrimvar) {
@@ -505,9 +527,12 @@ static void cache_stage_data(UsdBridgeStage* bridge) {
                     }
                 }
             }
+            time_uvs += duration_cast<milliseconds>(high_resolution_clock::now() - uv_start).count();
 
             // Get world transform
+            auto xform_start = high_resolution_clock::now();
             cached.transform = xform_cache.GetLocalToWorldTransform(prim);
+            time_transform += duration_cast<milliseconds>(high_resolution_clock::now() - xform_start).count();
 
             bridge->meshes.push_back(std::move(cached));
         }
@@ -556,6 +581,18 @@ static void cache_stage_data(UsdBridgeStage* bridge) {
             bridge->instancers.push_back(std::move(cached));
         }
     }
+
+    // Print timing breakdown
+    auto total_time = duration_cast<milliseconds>(high_resolution_clock::now() - func_start).count();
+    std::cout << "[USD_BRIDGE] cache_stage_data breakdown:" << std::endl;
+    std::cout << "[USD_BRIDGE]   Materials:    " << mat_time << "ms" << std::endl;
+    std::cout << "[USD_BRIDGE]   Vertices:     " << time_vertices << "ms (" << total_verts << " verts)" << std::endl;
+    std::cout << "[USD_BRIDGE]   Triangulate:  " << time_triangulate << "ms (" << total_tris << " tris)" << std::endl;
+    std::cout << "[USD_BRIDGE]   GeomSubsets:  " << time_subsets << "ms" << std::endl;
+    std::cout << "[USD_BRIDGE]   Normals:      " << time_normals << "ms" << std::endl;
+    std::cout << "[USD_BRIDGE]   UVs:          " << time_uvs << "ms" << std::endl;
+    std::cout << "[USD_BRIDGE]   Transforms:   " << time_transform << "ms" << std::endl;
+    std::cout << "[USD_BRIDGE]   SUBTOTAL:     " << total_time << "ms" << std::endl;
 
     bridge->cached = true;
 }
