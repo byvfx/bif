@@ -596,7 +596,7 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 ### Milestone 19: Frame Rendering 🎞️ (In Progress)
 
 - **Goal:** Render animated sequences to disk
-- **Status:** Camera animation working, geometry animation TODO
+- **Status:** Camera + vertex animation working, instance transform animation TODO
 - **Started:** January 31, 2026
 - **Key Achievements:**
 
@@ -620,16 +620,23 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
   - UNC network paths: `\\?\UNC\...` → `\\server\...`
   - Sync scene build on Render click (no pre-render required)
 
-  **Phase 4: Geometry Animation (TODO)**
-  - Rebuild BVH per frame with animated vertices
-  - Instance transform animation per frame
-  - Test with vertex-animated USD scenes
+  **Phase 4: Vertex Animation in Batch Render ✅ (M19.1)**
+  - `build_triangles_at_time()`: Extract triangles with USD time query
+  - `SceneBuilderData`: Holds mesh/material data for per-frame rebuilds
+  - `batch_render_loop`: Rebuilds Embree BVH each frame for animated geometry
+  - `EmbreeScene::drop()`: Logs resource cleanup for memory tracking
+  - Static scenes skip per-frame rebuild (no animation detected)
+
+  **Phase 5: Instance Transform Animation (TODO)**
+  - Per-frame instance matrix evaluation
+  - Test with transform-animated USD scenes
 
 - **Key Files:**
-  - `crates/bif_viewport/src/batch_render.rs` - Batch render loop
-  - `crates/bif_viewport/src/lib.rs` - UI, viewport camera sync
-  - `crates/bif_core/src/usd/cpp_bridge.rs` - UNC path fix
-  - `cpp/usd_bridge/usd_bridge.cpp` - Camera xform evaluation
+  - `crates/bif_viewport/src/batch_render.rs` - Batch render loop, SceneBuilderData
+  - `crates/bif_viewport/src/lib.rs` - UI, viewport camera sync, build_triangles_at_time
+  - `crates/bif_renderer/src/embree.rs` - Embree scene with Drop logging
+  - `crates/bif_core/src/usd/cpp_bridge.rs` - UNC path fix, get_mesh_vertices_at_time
+  - `cpp/usd_bridge/usd_bridge.cpp` - Camera xform evaluation, vertex animation
 
 ---
 
@@ -858,6 +865,6 @@ Key papers for Milestone 20 (Renderer Polish):
 ---
 
 **Last Updated:** January 31, 2026
-**Status:** Milestones 0-18.4 Complete, M19 In Progress
-**Current:** Batch render with USD camera animation
-**Next:** M19 geometry animation per frame
+**Status:** Milestones 0-18.4 Complete, M19.1 Complete
+**Current:** Batch render with camera + vertex animation
+**Next:** M19.2 instance transform animation per frame
