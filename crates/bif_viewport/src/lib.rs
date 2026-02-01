@@ -2240,7 +2240,7 @@ impl Renderer {
                             })
                     });
 
-                log::info!(
+                log::debug!(
                     "Prototype {}: {} vertices, {} indices",
                     proto_id,
                     mesh_data.vertices.len(),
@@ -2778,7 +2778,7 @@ impl Renderer {
         let eval_frame = self.timeline_state.effective_frame();
 
         // Evaluate transforms and update GPU buffer
-        log::info!("Evaluating animation at frame {:.1}", eval_frame);
+        log::debug!("Evaluating animation at frame {:.1}", eval_frame);
         if has_transform_animations {
             self.evaluate_animation_frame(eval_frame);
         }
