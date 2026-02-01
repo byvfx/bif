@@ -783,6 +783,11 @@ impl Hittable for EmbreeScene {
 
 impl Drop for EmbreeScene {
     fn drop(&mut self) {
+        log::debug!(
+            "Releasing Embree scene: {} instances, {} triangles",
+            self.instance_count,
+            self.triangle_count
+        );
         unsafe {
             rtcReleaseScene(self.scene);
             rtcReleaseScene(self.prototype_scene); // Release prototype after top-level scene
