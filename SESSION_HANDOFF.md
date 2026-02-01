@@ -1,6 +1,6 @@
-# Session Handoff - January 31, 2026
+# Session Handoff - February 1, 2026
 
-**Last Updated:** M19.1 Ivar Vertex Animation in Batch Render
+**Last Updated:** M19.1c Multi-Prototype Vertex Animation Fix
 **Next Milestone:** M19.2 (instance transform animation per frame)
 **Project:** BIF - VFX Scene Assembler & Renderer
 
@@ -18,6 +18,18 @@
 ---
 
 ## Recent Work
+
+### M19.1c: Multi-Prototype Vertex Animation Fix (Feb 1, 2026)
+
+Fixed vertex animation not working in Ivar GUI render for multi-prototype scenes.
+
+| Component | Details |
+|-----------|---------|
+| Root cause | `use_multi_draw` gate incorrectly blocked animation path |
+| lib.rs fix | Removed `\|\| self.use_multi_draw` from `build_triangles_at_time()` |
+| batch_render.rs fix | Same gate removal for batch export path |
+| GUI Ivar fix | Build triangles on main thread before spawning background thread |
+| Auto-invalidate | Ivar scene cache invalidates when vertex animation frame changes |
 
 ### M19.1: Vertex Animation in Batch Render (Jan 31, 2026)
 

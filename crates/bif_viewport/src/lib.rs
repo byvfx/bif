@@ -2264,14 +2264,23 @@ impl Renderer {
         // and for Ivar rendering (which expects a single mesh)
         let mesh_data = if scene.prototypes.len() == 1 {
             MeshData::from_core_mesh(&scene.prototypes[0].mesh)
-        } else {
-            // For Ivar, create combined mesh (Ivar doesn't support multi-draw yet)
+        } else if !scene.instances().is_empty() {
+            // Instanced scene: combine prototypes with instance transforms
             let mut meshes_with_transforms: Vec<(&bif_core::Mesh, Mat4, usize)> = Vec::new();
             for (mesh_idx, inst) in scene.instances().iter().enumerate() {
                 if let Some(proto) = scene.prototypes.get(inst.prototype_id) {
                     meshes_with_transforms.push((&proto.mesh, inst.model_matrix(), mesh_idx));
                 }
             }
+            MeshData::combine_with_transforms(&meshes_with_transforms)
+        } else {
+            // Direct meshes (no instancers): combine prototypes with identity transforms
+            let meshes_with_transforms: Vec<(&bif_core::Mesh, Mat4, usize)> = scene
+                .prototypes
+                .iter()
+                .enumerate()
+                .map(|(idx, proto)| (proto.mesh.as_ref(), Mat4::IDENTITY, idx))
+                .collect();
             MeshData::combine_with_transforms(&meshes_with_transforms)
         };
 
@@ -2777,6 +2786,8 @@ impl Renderer {
         // Update vertex buffer for meshes with vertex animation
         if has_vertex_animations {
             self.update_vertex_animation(eval_frame);
+            // Invalidate Ivar scene cache so it rebuilds with new vertex positions
+            self.invalidate_ivar_scene();
         }
 
         self.last_evaluated_frame = current_frame;
@@ -3054,8 +3065,15 @@ impl Renderer {
         // Mark as building
         self.ivar_state.build_status = BuildStatus::Building;
 
-        // Clone data needed for background thread
-        let mesh_data = self.mesh_data.clone();
+        // Build triangles on main thread (handles animation via USD queries)
+        let current_time = if self.vertex_animated_meshes.is_empty() {
+            None
+        } else {
+            Some(self.timeline_state.current_frame)
+        };
+        let (triangle_vertices, triangle_uvs, triangle_normals) =
+            self.build_triangles_at_time(current_time);
+
         // When using multi-draw (combined mesh), transforms are already baked into vertices
         // Use single identity transform to avoid double-transforming
         let transforms = if self.use_multi_draw {
@@ -3069,10 +3087,19 @@ impl Renderer {
         let scene_materials = self.scene_materials.clone();
         let fallback_material = self.scene_material.clone();
         let texture_base_dir = self.texture_base_dir.clone();
+        let tri_mat_ids: Vec<u32> = self
+            .mesh_data
+            .triangle_material_ids
+            .as_ref()
+            .cloned()
+            .unwrap_or_default();
 
         // Create channel for build completion
         let (tx, rx) = mpsc::channel();
         self.ivar_state.build_receiver = Some(rx);
+
+        let tri_count = triangle_vertices.len();
+        let instance_count = transforms.len();
 
         // Spawn background thread to build scene
         std::thread::spawn(move || {
@@ -3080,43 +3107,9 @@ impl Renderer {
 
             log::info!(
                 "Background thread: Building Embree scene ({} triangles, {} instances)...",
-                mesh_data.indices.len() / 3,
-                transforms.len()
+                tri_count,
+                instance_count
             );
-
-            // Extract triangle vertices, UVs, and normals for Embree
-            let tri_count = mesh_data.indices.len() / 3;
-            let mut triangle_vertices = Vec::with_capacity(tri_count);
-            let mut triangle_uvs: Vec<[[f32; 2]; 3]> = Vec::with_capacity(tri_count);
-            let mut triangle_normals: Vec<[[f32; 3]; 3]> = Vec::with_capacity(tri_count);
-            for i in (0..mesh_data.indices.len()).step_by(3) {
-                let i0 = mesh_data.indices[i] as usize;
-                let i1 = mesh_data.indices[i + 1] as usize;
-                let i2 = mesh_data.indices[i + 2] as usize;
-
-                // Positions in LOCAL space
-                let v0 = Vec3::from_array(mesh_data.vertices[i0].position);
-                let v1 = Vec3::from_array(mesh_data.vertices[i1].position);
-                let v2 = Vec3::from_array(mesh_data.vertices[i2].position);
-                triangle_vertices.push([v0, v1, v2]);
-
-                // UVs per vertex
-                triangle_uvs.push([
-                    mesh_data.vertices[i0].uv,
-                    mesh_data.vertices[i1].uv,
-                    mesh_data.vertices[i2].uv,
-                ]);
-
-                // Normals per vertex
-                triangle_normals.push([
-                    mesh_data.vertices[i0].normal,
-                    mesh_data.vertices[i1].normal,
-                    mesh_data.vertices[i2].normal,
-                ]);
-            }
-
-            log::info!("Background thread: Extracted {} triangles, creating acceleration structure with {} instances...",
-                triangle_vertices.len(), transforms.len());
 
             // Load all materials with textures
             let mut texture_cache = match texture_base_dir {
@@ -3145,13 +3138,6 @@ impl Renderer {
                 materials.len(),
                 texture_cache.len()
             );
-
-            // Get per-triangle material IDs (default to all-0 if not present)
-            let tri_mat_ids: Vec<u32> = mesh_data
-                .triangle_material_ids
-                .as_ref()
-                .cloned()
-                .unwrap_or_default();
 
             // Try to create Embree scene first, fall back to CPU BVH if unavailable
             let world = if let Some(embree_scene) = EmbreeScene::try_new(
@@ -3200,17 +3186,58 @@ impl Renderer {
         // Get vertices - update positions from USD if animated, otherwise use static
         let vertices: &[gpu_types::Vertex] = &self.mesh_data.vertices;
         let updated_vertices: Option<Vec<gpu_types::Vertex>> = time.and_then(|t| {
-            if self.vertex_animated_meshes.is_empty()
-                || self.use_multi_draw
-                || self.vertex_animated_meshes.len() != 1
-            {
+            if self.vertex_animated_meshes.is_empty() {
                 return None;
             }
+
+            let stage = self.usd_stage.as_ref()?;
+
+            // Multi-mesh scene: use mesh_ranges to update each animated mesh's vertices
+            if let Some(ref ranges) = self.mesh_data.mesh_ranges {
+                let mut updated = self.mesh_data.vertices.clone();
+
+                for &mesh_idx in &self.vertex_animated_meshes {
+                    let range = match ranges.iter().find(|r| r.usd_mesh_index == mesh_idx) {
+                        Some(r) => r,
+                        None => continue,
+                    };
+
+                    let positions = match stage.get_mesh_vertices_at_time(mesh_idx, t) {
+                        Ok(p) => p,
+                        Err(_) => continue,
+                    };
+
+                    let vertex_count = positions.len() / 3;
+                    if vertex_count != range.vertex_count as usize {
+                        log::warn!(
+                            "Vertex count mismatch for mesh {}: USD {} vs range {}",
+                            mesh_idx,
+                            vertex_count,
+                            range.vertex_count
+                        );
+                        continue;
+                    }
+
+                    // Update only this mesh's vertex range
+                    let start = range.vertex_offset as usize;
+                    for (i, v) in updated[start..start + vertex_count].iter_mut().enumerate() {
+                        v.position = [
+                            positions[i * 3],
+                            positions[i * 3 + 1],
+                            positions[i * 3 + 2],
+                        ];
+                    }
+                }
+                return Some(updated);
+            }
+
+            // Single-mesh fallback
+            if self.vertex_animated_meshes.len() != 1 {
+                return None;
+            }
+
             let mesh_idx = self.vertex_animated_meshes[0];
-            let positions = self
-                .usd_stage
-                .as_ref()
-                .and_then(|stage| stage.get_mesh_vertices_at_time(mesh_idx, t).ok())?;
+            let positions = stage.get_mesh_vertices_at_time(mesh_idx, t).ok()?;
 
             let vertex_count = positions.len() / 3;
             if vertex_count != self.mesh_data.vertices.len() {
@@ -3610,6 +3637,7 @@ impl Renderer {
                 use_multi_draw: self.use_multi_draw,
                 vertex_animated_meshes: self.vertex_animated_meshes.clone(),
                 stage: self.usd_stage.clone(),
+                mesh_ranges: self.mesh_data.mesh_ranges.clone(),
             };
             Some(Box::new(move |time: f64| builder_data.build_scene_at_time(time)))
         } else {

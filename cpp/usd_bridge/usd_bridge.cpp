@@ -46,6 +46,12 @@ struct CachedMesh {
     std::vector<float> uvs;  // u,v pairs from primvars:st
     std::vector<uint32_t> face_material_ids;  // Material index per triangle (for GeomSubsets)
     GfMatrix4d transform;
+
+    // UV seam split tracking for vertex animation
+    // Maps split vertex index -> original USD vertex index
+    // Used to expand animated vertices to match split mesh
+    std::vector<uint32_t> vertex_index_map;
+    bool has_uv_split = false;
 };
 
 /// Cached instancer data for FFI transfer
@@ -406,11 +412,13 @@ static void cache_stage_data(UsdBridgeStage* bridge) {
                         std::vector<float> newNormals;
                         std::vector<float> newUvs;
                         std::vector<uint32_t> newIndices;
+                        std::vector<uint32_t> newVertexIndexMap;  // Maps split vertex -> original USD vertex
 
                         newVertices.reserve(cached.vertices.size());
                         newNormals.reserve(cached.normals.size());
                         newUvs.reserve(face_vertex_indices.size() * 2);
                         newIndices.reserve(cached.indices.size());
+                        newVertexIndexMap.reserve(cached.vertices.size() / 3);
 
                         // Rebuild triangulated indices with UV-split vertices
                         size_t faceVertIdx = 0;
@@ -452,6 +460,9 @@ static void cache_stage_data(UsdBridgeStage* bridge) {
                                         // Create new vertex
                                         uint32_t newIdx = static_cast<uint32_t>(newVertices.size() / 3);
                                         vertUvToNew[key] = newIdx;
+
+                                        // Track original vertex for animation
+                                        newVertexIndexMap.push_back(static_cast<uint32_t>(origVert >= 0 ? origVert : 0));
 
                                         // Copy position
                                         if (origVert >= 0 && static_cast<size_t>(origVert) < points.size()) {
@@ -502,6 +513,8 @@ static void cache_stage_data(UsdBridgeStage* bridge) {
                         cached.normals = std::move(newNormals);
                         cached.uvs = std::move(newUvs);
                         cached.indices = std::move(newIndices);
+                        cached.vertex_index_map = std::move(newVertexIndexMap);
+                        cached.has_uv_split = true;
 
                         // Rebuild face_material_ids for new triangle count
                         // (triangulate_mesh output is no longer valid, but we re-triangulated above)
@@ -1931,15 +1944,39 @@ UsdBridgeError usd_bridge_get_mesh_vertices_at_time(
     // Each thread gets its own buffer, making this function thread-safe.
     static thread_local std::vector<float> return_buffer;
     return_buffer.clear();
-    return_buffer.reserve(points.size() * 3);
-    for (const auto& p : points) {
-        return_buffer.push_back(p[0]);
-        return_buffer.push_back(p[1]);
-        return_buffer.push_back(p[2]);
-    }
 
-    *out_vertices = return_buffer.data();
-    *out_vertex_count = points.size();
+    // If mesh was UV-split, expand animated positions to match split vertex count
+    if (mesh.has_uv_split && !mesh.vertex_index_map.empty()) {
+        size_t split_count = mesh.vertex_index_map.size();
+        return_buffer.resize(split_count * 3);
+
+        for (size_t i = 0; i < split_count; i++) {
+            uint32_t orig_idx = mesh.vertex_index_map[i];
+            if (orig_idx < points.size()) {
+                return_buffer[i * 3 + 0] = points[orig_idx][0];
+                return_buffer[i * 3 + 1] = points[orig_idx][1];
+                return_buffer[i * 3 + 2] = points[orig_idx][2];
+            } else {
+                return_buffer[i * 3 + 0] = 0.0f;
+                return_buffer[i * 3 + 1] = 0.0f;
+                return_buffer[i * 3 + 2] = 0.0f;
+            }
+        }
+
+        *out_vertices = return_buffer.data();
+        *out_vertex_count = split_count;
+    } else {
+        // No UV split - return raw USD points
+        return_buffer.reserve(points.size() * 3);
+        for (const auto& p : points) {
+            return_buffer.push_back(p[0]);
+            return_buffer.push_back(p[1]);
+            return_buffer.push_back(p[2]);
+        }
+
+        *out_vertices = return_buffer.data();
+        *out_vertex_count = points.size();
+    }
 
     return USD_BRIDGE_SUCCESS;
 }
