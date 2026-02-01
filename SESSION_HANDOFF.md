@@ -1,6 +1,6 @@
 # Session Handoff - February 1, 2026
 
-**Last Updated:** M19.1c Multi-Prototype Vertex Animation Fix
+**Last Updated:** M18.5 USD Implementation Polish
 **Next Milestone:** M19.2 (instance transform animation per frame)
 **Project:** BIF - VFX Scene Assembler & Renderer
 
@@ -10,7 +10,7 @@
 
 | Status | Details |
 |--------|---------|
-| Complete | Milestones 0-18.4, M19.1 vertex animation in batch render |
+| Complete | Milestones 0-18.5, M19.1 vertex animation in batch render |
 | Current | Per-frame BVH rebuild for vertex-animated geometry |
 | Tests | 137+ passing |
 | Performance | 60 FPS viewport, 10K instances with LOD |
@@ -18,6 +18,16 @@
 ---
 
 ## Recent Work
+
+### M18.5: USD Implementation Polish (Feb 1, 2026)
+
+Fixed overflow and added timing visibility for USD loading.
+
+| Component | Details |
+|-----------|---------|
+| Overflow fix | `num_triangles` u32→u64 to handle 100K tri × 100K instances |
+| Debug cleanup | Per-item logs demoted to `log::debug!` |
+| Load timing | Stage/meshes/materials/instancers/GPU/textures breakdown |
 
 ### M19.1c: Multi-Prototype Vertex Animation Fix (Feb 1, 2026)
 
