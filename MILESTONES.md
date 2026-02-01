@@ -593,6 +593,33 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 
 ---
 
+### Milestone 18.5: USD Implementation Polish ✅
+
+- **Completed:** 2026-02-01
+- **Goal:** Fix bugs and add timing visibility for USD loading
+- **Key Changes:**
+  - **Overflow fix:** Changed `num_triangles` from `u32` to `u64` to handle large scenes (100K triangles × 100K instances)
+  - **Debug cleanup:** Reduced verbose per-item logging (per-prototype, per-keyframe, per-frame) to `log::debug!`
+  - **Load timing:** Added instrumentation to measure stage open, mesh extract, materials, instancers, GPU buffers, textures
+- **Key Files:**
+  - `crates/bif_viewport/src/lib.rs` - Overflow fix, debug cleanup, viewport timing
+  - `crates/bif_core/src/usd/loader.rs` - Debug cleanup, loader timing
+- **Example Output:**
+  ```
+  USD Load: scene.usd (5 meshes, 150,000 verts, 3 materials, 1,000 instances)
+    Stage open:    123.4ms
+    Meshes:         45.2ms
+    Materials:      12.1ms
+    Instancers:     34.5ms
+    Total:         215.2ms
+  Viewport Setup:
+    GPU buffers:    56.3ms
+    Textures:      890.1ms (4 textures)
+    Total:        1160.5ms
+  ```
+
+---
+
 ### Milestone 19: Frame Rendering 🎞️ (In Progress)
 
 - **Goal:** Render animated sequences to disk
