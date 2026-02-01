@@ -1,7 +1,7 @@
 # Session Handoff - January 31, 2026
 
-**Last Updated:** M18.4 Multi-Prototype Ivar Fix
-**Next Milestone:** M19 continued (geometry animation per frame)
+**Last Updated:** M19.1 Ivar Vertex Animation in Batch Render
+**Next Milestone:** M19.2 (instance transform animation per frame)
 **Project:** BIF - VFX Scene Assembler & Renderer
 
 ---
@@ -10,14 +10,26 @@
 
 | Status | Details |
 |--------|---------|
-| Complete | Milestones 0-18.4, M19 batch render with USD camera |
-| Current | Multi-prototype Ivar rendering fixed |
+| Complete | Milestones 0-18.4, M19.1 vertex animation in batch render |
+| Current | Per-frame BVH rebuild for vertex-animated geometry |
 | Tests | 137+ passing |
 | Performance | 60 FPS viewport, 10K instances with LOD |
 
 ---
 
 ## Recent Work
+
+### M19.1: Vertex Animation in Batch Render (Jan 31, 2026)
+
+Batch render now rebuilds Embree BVH each frame for vertex-animated geometry.
+
+| Component | Details |
+|-----------|---------|
+| `build_triangles_at_time()` | Extract triangles with USD time query for animated verts |
+| `SceneBuilderData` | Holds mesh/material data for per-frame scene rebuilds |
+| `batch_render_loop` | Conditionally rebuilds Embree scene when animation detected |
+| `EmbreeScene::drop()` | Logs instance/triangle counts for memory tracking |
+| Static optimization | Scenes without vertex animation skip per-frame rebuild |
 
 ### M18.4: Multi-Prototype Ivar Fix (Jan 31, 2026)
 
@@ -101,18 +113,18 @@ Fixed USD files with relative references (`@./file.usda@`) failing to load.
 
 ### Known Issues
 
-- Geometry animation not yet evaluated per frame in batch render (static BVH)
+- Instance transform animation not yet evaluated per frame in batch render
 - OIIO `load_texture_with_mips` crashes on .tx files on Windows
 
 ---
 
 ## Next Session
 
-**Goal:** Per-frame geometry animation in batch render
+**Goal:** Per-frame instance transform animation in batch render
 
-1. Rebuild BVH per frame with animated vertex positions
-2. Or: Transform-only animation (cheaper, just update instance matrices)
-3. Test with vertex-animated USD scenes
+1. Evaluate instance transforms at each frame time
+2. Update Embree instance matrices per frame (cheaper than full rebuild)
+3. Test with transform-animated USD scenes
 
 ---
 
@@ -140,4 +152,4 @@ cargo run -p bif_viewer -- --usd assets/moving_cam_usd.usd_rop1.usda
 ---
 
 **Branch:** main
-**Ready for:** M19 continued (geometry animation)
+**Ready for:** M19.2 (instance transform animation per frame)
