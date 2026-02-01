@@ -11,6 +11,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Instant;
 
 use bif_math::Mat4;
 use thiserror::Error;
@@ -42,6 +43,19 @@ pub enum LoadError {
 
 /// Result type for loading operations.
 pub type LoadResult<T> = Result<T, LoadError>;
+
+/// Format a number with comma separators for readability.
+fn format_number(n: usize) -> String {
+    let s = n.to_string();
+    let mut result = String::with_capacity(s.len() + s.len() / 3);
+    for (i, c) in s.chars().enumerate() {
+        if i > 0 && (s.len() - i).is_multiple_of(3) {
+            result.push(',');
+        }
+        result.push(c);
+    }
+    result
+}
 
 /// Load a USD file and return a BIF Scene.
 ///
@@ -85,8 +99,12 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
         .and_then(|s| s.to_str())
         .unwrap_or("unnamed");
 
+    let load_start = Instant::now();
+
     // Open stage via C++ bridge
+    let stage_start = Instant::now();
     let stage = UsdStage::open(path)?;
+    let stage_time = stage_start.elapsed();
 
     let mut scene = Scene::new(name);
     let mut prototype_map: HashMap<String, usize> = HashMap::new();
@@ -113,6 +131,7 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
     let mut mesh_dedup: HashMap<(usize, usize, u64), usize> = HashMap::new();
 
     // Load all meshes as prototypes (with deduplication)
+    let mesh_start = Instant::now();
     let meshes = stage.meshes()?;
     for mesh_data in &meshes {
         let vertices = mesh_data.vertices.clone();
@@ -226,8 +245,11 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
             scene.add_instance(proto_id, transform);
         }
     }
+    let mesh_time = mesh_start.elapsed();
+    let total_verts: usize = meshes.iter().map(|m| m.vertices.len()).sum();
 
     // Load materials
+    let material_start = Instant::now();
     let usd_materials = stage.materials().unwrap_or_default();
     let mut material_map: HashMap<String, usize> = HashMap::new();
     let mut materialx_count = 0;
@@ -289,6 +311,8 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
         }
     }
 
+    let material_time = material_start.elapsed();
+
     log::info!(
         "Loaded {} unique prototypes from {} meshes, {} materials",
         scene.prototype_count(),
@@ -297,6 +321,7 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
     );
 
     // Load point instancers
+    let instancer_start = Instant::now();
     let instancers = stage.instancers()?;
     for (instancer_idx, instancer_data) in instancers.iter().enumerate() {
         // Resolve prototypes
@@ -370,10 +395,43 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
             }
         }
     }
+    let instancer_time = instancer_start.elapsed();
 
     if scene.prototypes.is_empty() {
         return Err(LoadError::NoGeometry);
     }
+
+    // Log timing breakdown
+    let total_time = load_start.elapsed();
+    let instance_count: usize = instancers.iter().map(|i| i.transforms.len()).sum();
+    log::info!(
+        "USD Load: {} ({} meshes, {} verts, {} materials, {} instances)",
+        path.display(),
+        meshes.len(),
+        format_number(total_verts),
+        scene.material_count(),
+        format_number(instance_count)
+    );
+    log::info!(
+        "  Stage open: {:>7.1}ms",
+        stage_time.as_secs_f64() * 1000.0
+    );
+    log::info!(
+        "  Meshes:     {:>7.1}ms",
+        mesh_time.as_secs_f64() * 1000.0
+    );
+    log::info!(
+        "  Materials:  {:>7.1}ms",
+        material_time.as_secs_f64() * 1000.0
+    );
+    log::info!(
+        "  Instancers: {:>7.1}ms",
+        instancer_time.as_secs_f64() * 1000.0
+    );
+    log::info!(
+        "  Total:      {:>7.1}ms",
+        total_time.as_secs_f64() * 1000.0
+    );
 
     Ok((scene, stage))
 }

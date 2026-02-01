@@ -2171,9 +2171,11 @@ impl Renderer {
     pub fn load_usd_scene<P: AsRef<std::path::Path>>(&mut self, path: P) -> Result<()> {
         use bif_core::usd::load_usd_with_stage;
         use std::sync::atomic::Ordering;
+        use std::time::Instant;
 
         let path = path.as_ref();
         log::info!("Loading USD scene: {:?}", path);
+        let viewport_load_start = Instant::now();
 
         // Check if file exists
         if !path.exists() {
@@ -2203,6 +2205,7 @@ impl Renderer {
         }
 
         // Create per-prototype GPU data
+        let gpu_start = Instant::now();
         let prototype_gpu_data: Vec<PrototypeGpuData> = scene
             .prototypes
             .iter()
@@ -2303,8 +2306,10 @@ impl Renderer {
             mesh_data.vertices.len(),
             mesh_data.indices.len()
         );
+        let gpu_time = gpu_start.elapsed();
 
         // Refresh texture resources and material table for the new scene
+        let texture_start = Instant::now();
         let base_dir = path.parent();
         self.gpu_textures = texture_loader::create_gpu_textures_for_scene(
             &self.device,
@@ -2312,6 +2317,8 @@ impl Renderer {
             &scene,
             base_dir,
         );
+        let texture_time = texture_start.elapsed();
+        let texture_count = self.gpu_textures.textures.len();
 
         let material_table = if scene.materials.is_empty() {
             vec![MaterialGpu::from_material(
@@ -2695,6 +2702,23 @@ impl Renderer {
             "USD scene loaded successfully: {} triangles x {} instances",
             self.num_indices / 3,
             self.num_instances
+        );
+
+        // Log viewport timing breakdown
+        let total_viewport_time = viewport_load_start.elapsed();
+        log::info!("Viewport Setup:");
+        log::info!(
+            "  GPU buffers: {:>7.1}ms",
+            gpu_time.as_secs_f64() * 1000.0
+        );
+        log::info!(
+            "  Textures:    {:>7.1}ms ({} textures)",
+            texture_time.as_secs_f64() * 1000.0,
+            texture_count
+        );
+        log::info!(
+            "  Total:       {:>7.1}ms",
+            total_viewport_time.as_secs_f64() * 1000.0
         );
 
         Ok(())
