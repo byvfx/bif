@@ -3187,30 +3187,66 @@ impl Renderer {
         });
     }
 
-    /// Build Ivar scene synchronously (blocking). Used for batch render.
-    fn build_ivar_scene_sync(&self) -> Arc<BvhNode> {
-        let start_time = Instant::now();
-
-        log::info!(
-            "Building Ivar scene (sync): {} triangles, {} instances",
-            self.mesh_data.indices.len() / 3,
-            self.instance_transforms.len()
-        );
-
-        // Extract triangle vertices, UVs, and normals
+    /// Extract triangles from mesh data, optionally querying USD for animated vertices at a time.
+    ///
+    /// For static geometry (no stage or no animation), uses cached mesh_data vertices.
+    /// For animated geometry with a stage and time, queries USD for interpolated positions.
+    fn build_triangles_at_time(
+        &self,
+        time: Option<f64>,
+    ) -> (Vec<[Vec3; 3]>, Vec<[[f32; 2]; 3]>, Vec<[[f32; 3]; 3]>) {
         let tri_count = self.mesh_data.indices.len() / 3;
         let mut triangle_vertices = Vec::with_capacity(tri_count);
         let mut triangle_uvs: Vec<[[f32; 2]; 3]> = Vec::with_capacity(tri_count);
         let mut triangle_normals: Vec<[[f32; 3]; 3]> = Vec::with_capacity(tri_count);
+
+        // Check if we need to query animated vertices
+        let animated_positions: Option<Vec<f32>> = time.and_then(|t| {
+            if self.vertex_animated_meshes.is_empty() {
+                return None;
+            }
+            // For now, handle single-mesh animation (multi-mesh would need mesh_ranges)
+            // In multi-draw mode, vertices are pre-baked so we use static mesh_data
+            if self.use_multi_draw || self.vertex_animated_meshes.len() != 1 {
+                return None;
+            }
+            let mesh_idx = self.vertex_animated_meshes[0];
+            self.usd_stage
+                .as_ref()
+                .and_then(|stage| stage.get_mesh_vertices_at_time(mesh_idx, t).ok())
+        });
 
         for i in (0..self.mesh_data.indices.len()).step_by(3) {
             let i0 = self.mesh_data.indices[i] as usize;
             let i1 = self.mesh_data.indices[i + 1] as usize;
             let i2 = self.mesh_data.indices[i + 2] as usize;
 
-            let v0 = Vec3::from_array(self.mesh_data.vertices[i0].position);
-            let v1 = Vec3::from_array(self.mesh_data.vertices[i1].position);
-            let v2 = Vec3::from_array(self.mesh_data.vertices[i2].position);
+            // Get positions - either from animated query or static mesh_data
+            let (v0, v1, v2) = if let Some(ref positions) = animated_positions {
+                (
+                    Vec3::new(
+                        positions[i0 * 3],
+                        positions[i0 * 3 + 1],
+                        positions[i0 * 3 + 2],
+                    ),
+                    Vec3::new(
+                        positions[i1 * 3],
+                        positions[i1 * 3 + 1],
+                        positions[i1 * 3 + 2],
+                    ),
+                    Vec3::new(
+                        positions[i2 * 3],
+                        positions[i2 * 3 + 1],
+                        positions[i2 * 3 + 2],
+                    ),
+                )
+            } else {
+                (
+                    Vec3::from_array(self.mesh_data.vertices[i0].position),
+                    Vec3::from_array(self.mesh_data.vertices[i1].position),
+                    Vec3::from_array(self.mesh_data.vertices[i2].position),
+                )
+            };
             triangle_vertices.push([v0, v1, v2]);
 
             triangle_uvs.push([
@@ -3225,6 +3261,29 @@ impl Renderer {
                 self.mesh_data.vertices[i2].normal,
             ]);
         }
+
+        (triangle_vertices, triangle_uvs, triangle_normals)
+    }
+
+    /// Build Ivar scene synchronously (blocking). Used for batch render.
+    fn build_ivar_scene_sync(&self) -> Arc<BvhNode> {
+        self.build_ivar_scene_at_time(None)
+    }
+
+    /// Build Ivar scene at a specific time. Used for animated batch render.
+    fn build_ivar_scene_at_time(&self, time: Option<f64>) -> Arc<BvhNode> {
+        let start_time = Instant::now();
+
+        log::info!(
+            "Building Ivar scene (sync): {} triangles, {} instances, time={:?}",
+            self.mesh_data.indices.len() / 3,
+            self.instance_transforms.len(),
+            time
+        );
+
+        // Extract triangle vertices, UVs, and normals
+        let (triangle_vertices, triangle_uvs, triangle_normals) =
+            self.build_triangles_at_time(time);
 
         // Load materials with textures
         let mut texture_cache = match &self.texture_base_dir {
