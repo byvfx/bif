@@ -576,6 +576,23 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 
 ---
 
+### Milestone 18.4: Multi-Prototype Ivar Fix ✅
+
+- **Completed:** 2026-01-31
+- **Goal:** Fix double mesh instances in Ivar rendering for multi-prototype USD scenes
+- **Problem:** Meshes appeared duplicated in ray tracer (viewport correct)
+- **Root Cause:** Combined mesh has transforms baked into vertices, but Embree was also applying instance transforms → double transform
+- **Solution:**
+  - C++ bridge: Added mesh path deduplication via `std::set<std::string>` to prevent duplicate caching
+  - `build_ivar_scene()`: Use single identity transform for Embree when `use_multi_draw` is true
+  - `build_ivar_scene_sync()`: Same fix for batch rendering path
+- **Key Files:**
+  - `cpp/usd_bridge/usd_bridge.cpp` - Mesh deduplication in `cache_stage_data()`
+  - `crates/bif_viewport/src/lib.rs` - Identity transform for combined mesh
+- **Devlog:** [devlog/DEVLOG_2026-01-31_double-mesh-fix.md](devlog/DEVLOG_2026-01-31_double-mesh-fix.md)
+
+---
+
 ### Milestone 19: Frame Rendering 🎞️ (In Progress)
 
 - **Goal:** Render animated sequences to disk
@@ -782,6 +799,7 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 | 18.1 | Vertex Animation | Multi-mesh vertex animation fix | ✅ Complete |
 | 18.2 | Thread Safety | UsdStage thread-safe + instance encapsulation | ✅ Complete |
 | 18.3 | USD Refinement | Relative reference resolution fix | ✅ Complete |
+| 18.4 | Multi-Prototype Fix | Ivar double mesh fix for combined scenes | ✅ Complete |
 | 19 | Frame Rendering | Batch render + USD camera animation | 🔄 In Progress |
 | 20 | Interactivity | Move objects + keyframing | Planned |
 | 21 | Point Instancing | Scatter + paint tools | Planned |
@@ -840,6 +858,6 @@ Key papers for Milestone 20 (Renderer Polish):
 ---
 
 **Last Updated:** January 31, 2026
-**Status:** Milestones 0-18.3 Complete, M19 In Progress
+**Status:** Milestones 0-18.4 Complete, M19 In Progress
 **Current:** Batch render with USD camera animation
 **Next:** M19 geometry animation per frame

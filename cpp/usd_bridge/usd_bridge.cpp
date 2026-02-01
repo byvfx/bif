@@ -248,10 +248,22 @@ static void cache_stage_data(UsdBridgeStage* bridge) {
 
     UsdGeomXformCache xform_cache;
 
+    // Track seen mesh paths to avoid duplicates
+    // (USD traverse can visit same prim multiple times via different composition arcs)
+    std::set<std::string> seen_mesh_paths;
+
     // Traverse all prims
     for (const UsdPrim& prim : bridge->stage->Traverse()) {
         // Check for UsdGeomMesh
         if (prim.IsA<UsdGeomMesh>()) {
+            std::string prim_path = prim.GetPath().GetString();
+
+            // Skip if already processed (deduplication)
+            // USD traverse can visit same prim multiple times via different composition arcs
+            if (seen_mesh_paths.count(prim_path) > 0) {
+                continue;
+            }
+            seen_mesh_paths.insert(prim_path);
             UsdGeomMesh mesh(prim);
             CachedMesh cached;
             cached.path = prim.GetPath().GetString();

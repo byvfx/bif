@@ -1,6 +1,6 @@
 # Session Handoff - January 31, 2026
 
-**Last Updated:** M19 Batch Render + USD Camera Animation
+**Last Updated:** M18.4 Multi-Prototype Ivar Fix
 **Next Milestone:** M19 continued (geometry animation per frame)
 **Project:** BIF - VFX Scene Assembler & Renderer
 
@@ -10,14 +10,25 @@
 
 | Status | Details |
 |--------|---------|
-| Complete | Milestones 0-18.3, M19 batch render with USD camera |
-| Current | USD camera animation working in batch render |
+| Complete | Milestones 0-18.4, M19 batch render with USD camera |
+| Current | Multi-prototype Ivar rendering fixed |
 | Tests | 137+ passing |
 | Performance | 60 FPS viewport, 10K instances with LOD |
 
 ---
 
 ## Recent Work
+
+### M18.4: Multi-Prototype Ivar Fix (Jan 31, 2026)
+
+Fixed double mesh instances in Ivar rendering for multi-prototype USD scenes.
+
+| Component | Details |
+|-----------|---------|
+| Problem | Meshes appeared duplicated in ray tracer (viewport correct) |
+| Root cause | Combined mesh has baked transforms + Embree applied transforms again |
+| C++ fix | Mesh path deduplication via `std::set` in `cache_stage_data()` |
+| Rust fix | Use identity transform for Embree when `use_multi_draw` is true |
 
 ### M19: Batch Render to Disk (Jan 31, 2026)
 
