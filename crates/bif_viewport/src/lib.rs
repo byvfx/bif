@@ -60,7 +60,7 @@ pub use node_graph::{render_node_graph, NodeGraphEvent, NodeGraphState, SceneNod
 pub use property_inspector::{render_property_inspector, PrimProperties};
 pub use scene_browser::{EmptyPrimProvider, PrimDataProvider, PrimDisplayInfo, SceneBrowserState};
 
-use batch_render::{BatchMessage, BatchSceneData};
+use batch_render::{BatchMessage, BatchSceneData, SceneBuilderData, TriangleData};
 
 /// Timeline state for animation playback.
 #[derive(Clone, Debug)]
@@ -3191,10 +3191,7 @@ impl Renderer {
     ///
     /// For static geometry (no stage or no animation), uses cached mesh_data vertices.
     /// For animated geometry with a stage and time, queries USD for interpolated positions.
-    fn build_triangles_at_time(
-        &self,
-        time: Option<f64>,
-    ) -> (Vec<[Vec3; 3]>, Vec<[[f32; 2]; 3]>, Vec<[[f32; 3]; 3]>) {
+    fn build_triangles_at_time(&self, time: Option<f64>) -> TriangleData {
         let tri_count = self.mesh_data.indices.len() / 3;
         let mut triangle_vertices = Vec::with_capacity(tri_count);
         let mut triangle_uvs: Vec<[[f32; 2]; 3]> = Vec::with_capacity(tri_count);
@@ -3600,12 +3597,36 @@ impl Renderer {
             return;
         };
 
+        // Check for animated geometry
+        let has_animated_geometry = !self.vertex_animated_meshes.is_empty();
+
+        // Create scene builder for animated geometry
+        let scene_builder: Option<batch_render::SceneBuilderFn> = if has_animated_geometry {
+            let builder_data = SceneBuilderData {
+                vertices: self.mesh_data.vertices.clone(),
+                indices: self.mesh_data.indices.clone(),
+                triangle_material_ids: self.mesh_data.triangle_material_ids.clone(),
+                scene_materials: self.scene_materials.clone(),
+                scene_material: self.scene_material.clone(),
+                texture_base_dir: self.texture_base_dir.clone(),
+                instance_transforms: self.instance_transforms.clone(),
+                use_multi_draw: self.use_multi_draw,
+                vertex_animated_meshes: self.vertex_animated_meshes.clone(),
+                stage: self.usd_stage.clone(),
+            };
+            Some(Box::new(move |time: f64| builder_data.build_scene_at_time(time)))
+        } else {
+            None
+        };
+
         // Create scene data for batch render
         let scene_data = BatchSceneData {
             world,
             environment: self.ivar_state.environment.clone(),
             stage: self.usd_stage.clone(),
             viewport_camera: self.camera,
+            has_animated_geometry,
+            scene_builder,
         };
 
         // Clone settings and compute auto depth bounds if enabled

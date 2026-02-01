@@ -2,7 +2,7 @@
 //!
 //! Renders frame sequences to EXR files with optional AOVs (depth, normals).
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
 
@@ -10,10 +10,12 @@ use bif_core::usd::cpp_bridge::UsdStage;
 use bif_math::{Mat4, Vec3};
 use bif_renderer::{
     format_frame_path, generate_buckets, render_bucket_with_aovs, write_exr, BvhNode, Camera,
-    Color, ExrOutput, HdriEnvironment, RenderConfig, DEFAULT_BUCKET_SIZE,
+    Color, DisneyBSDF, EmbreeScene, ExrOutput, HdriEnvironment, Hittable, RenderConfig,
+    DEFAULT_BUCKET_SIZE,
 };
 use rayon::prelude::*;
 
+use crate::gpu_types::Vertex;
 use crate::ivar_state::{AovSettings, BatchRenderSettings, CameraSource};
 
 /// Message sent during batch render.
@@ -35,9 +37,167 @@ pub enum BatchMessage {
     Error(String),
 }
 
+/// Scene builder function type for per-frame geometry updates.
+pub type SceneBuilderFn = Box<dyn Fn(f64) -> Arc<BvhNode> + Send + Sync>;
+
+/// Triangle data type: (vertices, UVs, normals).
+pub type TriangleData = (Vec<[Vec3; 3]>, Vec<[[f32; 2]; 3]>, Vec<[[f32; 3]; 3]>);
+
+/// Data needed to rebuild the Embree scene for animated geometry.
+#[derive(Clone)]
+pub struct SceneBuilderData {
+    /// Mesh vertices (GPU format with positions, normals, UVs).
+    pub vertices: Vec<Vertex>,
+    /// Triangle indices.
+    pub indices: Vec<u32>,
+    /// Per-triangle material IDs.
+    pub triangle_material_ids: Option<Vec<u32>>,
+    /// Scene materials (from USD).
+    pub scene_materials: Vec<Arc<bif_core::Material>>,
+    /// Fallback material.
+    pub scene_material: bif_core::Material,
+    /// Texture base directory.
+    pub texture_base_dir: Option<PathBuf>,
+    /// Instance transforms.
+    pub instance_transforms: Vec<Mat4>,
+    /// Whether using multi-draw mode (transforms baked into vertices).
+    pub use_multi_draw: bool,
+    /// Mesh indices with vertex animation.
+    pub vertex_animated_meshes: Vec<usize>,
+    /// USD stage for querying animated vertices.
+    pub stage: Option<Arc<UsdStage>>,
+}
+
+impl SceneBuilderData {
+    /// Build triangles at a specific time, querying USD for animated vertices.
+    pub fn build_triangles_at_time(&self, time: f64) -> TriangleData {
+        let tri_count = self.indices.len() / 3;
+        let mut triangle_vertices = Vec::with_capacity(tri_count);
+        let mut triangle_uvs: Vec<[[f32; 2]; 3]> = Vec::with_capacity(tri_count);
+        let mut triangle_normals: Vec<[[f32; 3]; 3]> = Vec::with_capacity(tri_count);
+
+        // Query animated vertices if applicable
+        let animated_positions: Option<Vec<f32>> = if self.vertex_animated_meshes.is_empty() {
+            None
+        } else if self.use_multi_draw || self.vertex_animated_meshes.len() != 1 {
+            // Multi-draw has baked transforms, not supported yet
+            None
+        } else {
+            let mesh_idx = self.vertex_animated_meshes[0];
+            self.stage
+                .as_ref()
+                .and_then(|stage| stage.get_mesh_vertices_at_time(mesh_idx, time).ok())
+        };
+
+        for i in (0..self.indices.len()).step_by(3) {
+            let i0 = self.indices[i] as usize;
+            let i1 = self.indices[i + 1] as usize;
+            let i2 = self.indices[i + 2] as usize;
+
+            let (v0, v1, v2) = if let Some(ref positions) = animated_positions {
+                (
+                    Vec3::new(
+                        positions[i0 * 3],
+                        positions[i0 * 3 + 1],
+                        positions[i0 * 3 + 2],
+                    ),
+                    Vec3::new(
+                        positions[i1 * 3],
+                        positions[i1 * 3 + 1],
+                        positions[i1 * 3 + 2],
+                    ),
+                    Vec3::new(
+                        positions[i2 * 3],
+                        positions[i2 * 3 + 1],
+                        positions[i2 * 3 + 2],
+                    ),
+                )
+            } else {
+                (
+                    Vec3::from_array(self.vertices[i0].position),
+                    Vec3::from_array(self.vertices[i1].position),
+                    Vec3::from_array(self.vertices[i2].position),
+                )
+            };
+            triangle_vertices.push([v0, v1, v2]);
+
+            triangle_uvs.push([
+                self.vertices[i0].uv,
+                self.vertices[i1].uv,
+                self.vertices[i2].uv,
+            ]);
+
+            triangle_normals.push([
+                self.vertices[i0].normal,
+                self.vertices[i1].normal,
+                self.vertices[i2].normal,
+            ]);
+        }
+
+        (triangle_vertices, triangle_uvs, triangle_normals)
+    }
+
+    /// Build Embree scene at a specific time.
+    pub fn build_scene_at_time(&self, time: f64) -> Arc<BvhNode> {
+        let (triangle_vertices, triangle_uvs, triangle_normals) =
+            self.build_triangles_at_time(time);
+
+        // Load materials with textures
+        let mut texture_cache = match &self.texture_base_dir {
+            Some(dir) => bif_core::texture::TextureCache::with_base_dir(dir.clone()),
+            None => bif_core::texture::TextureCache::new(),
+        };
+
+        let materials: Vec<Arc<DisneyBSDF>> = if self.scene_materials.is_empty() {
+            vec![Arc::new(DisneyBSDF::from_material_with_textures(
+                &self.scene_material,
+                &mut texture_cache,
+            ))]
+        } else {
+            self.scene_materials
+                .iter()
+                .map(|mat| {
+                    Arc::new(DisneyBSDF::from_material_with_textures(
+                        mat.as_ref(),
+                        &mut texture_cache,
+                    ))
+                })
+                .collect()
+        };
+
+        let tri_mat_ids: Vec<u32> = self
+            .triangle_material_ids
+            .as_ref()
+            .cloned()
+            .unwrap_or_default();
+
+        // Use identity if multi-draw (transforms already baked)
+        let ivar_transforms = if self.use_multi_draw {
+            vec![Mat4::IDENTITY]
+        } else {
+            self.instance_transforms.clone()
+        };
+
+        if let Some(embree_scene) = EmbreeScene::try_new(
+            &triangle_vertices,
+            &triangle_uvs,
+            &triangle_normals,
+            ivar_transforms,
+            materials,
+            &tri_mat_ids,
+        ) {
+            let objects: Vec<Box<dyn Hittable + Send + Sync>> = vec![Box::new(embree_scene)];
+            Arc::new(BvhNode::new(objects))
+        } else {
+            log::warn!("Embree not available for animated scene rebuild");
+            Arc::new(BvhNode::new(vec![]))
+        }
+    }
+}
+
 /// Scene data required for batch rendering.
 pub struct BatchSceneData {
-    /// Pre-built BVH for the scene.
+    /// Pre-built BVH for static scenes.
     pub world: Arc<BvhNode>,
     /// HDRI environment for lighting (optional).
     pub environment: Option<Arc<HdriEnvironment>>,
@@ -45,6 +205,10 @@ pub struct BatchSceneData {
     pub stage: Option<Arc<UsdStage>>,
     /// Viewport camera (used if CameraSource::Viewport).
     pub viewport_camera: bif_math::Camera,
+    /// Whether the scene has animated geometry requiring per-frame BVH rebuild.
+    pub has_animated_geometry: bool,
+    /// Scene builder for animated geometry (called per frame if has_animated_geometry).
+    pub scene_builder: Option<SceneBuilderFn>,
 }
 
 /// Start a batch render in a background thread.
@@ -95,10 +259,14 @@ fn batch_render_loop(
     };
 
     log::info!(
-        "Batch render: camera_source={}, stage_present={}",
+        "Batch render: camera_source={}, stage_present={}, animated_geometry={}",
         settings.camera_source.display_name(),
-        scene.stage.is_some()
+        scene.stage.is_some(),
+        scene.has_animated_geometry
     );
+
+    // Track current world (may be rebuilt per frame for animated geometry)
+    let mut current_world = scene.world.clone();
 
     // Render each frame
     for (frame_idx, &frame) in frames.iter().enumerate() {
@@ -108,6 +276,21 @@ fn batch_render_loop(
         }
 
         let frame_start = std::time::Instant::now();
+
+        // Rebuild scene for animated geometry (skip first frame, already built)
+        if scene.has_animated_geometry && frame_idx > 0 {
+            if let Some(ref builder) = scene.scene_builder {
+                log::info!("Rebuilding BVH for frame {}", frame);
+                let rebuild_start = std::time::Instant::now();
+                // Drop old scene before building new one to free Embree resources
+                drop(current_world);
+                current_world = builder(frame as f64);
+                log::debug!(
+                    "BVH rebuilt in {:.2}ms",
+                    rebuild_start.elapsed().as_secs_f64() * 1000.0
+                );
+            }
+        }
 
         // Build camera for this frame
         let camera = build_camera_for_frame(
@@ -128,7 +311,7 @@ fn batch_render_loop(
         // Render frame with AOVs
         let result = render_frame_with_aovs(
             &camera,
-            &scene.world,
+            &current_world,
             &render_config,
             settings.resolution_x,
             settings.resolution_y,
