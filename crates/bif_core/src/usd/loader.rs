@@ -196,7 +196,7 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
                                 }
                             })
                             .collect();
-                        log::info!(
+                        log::debug!(
                             "Mesh {} has {} animation keyframes",
                             mesh_data.path,
                             keyframes.len()
