@@ -126,6 +126,32 @@ struct UsdBridgeVertexAnimationInfoRaw {
     time_samples: *const f64,
 }
 
+/// Light type enumeration from C API
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UsdBridgeLightType {
+    Distant = 0,
+    Sphere = 1,
+    Rect = 2,
+    Dome = 3,
+}
+
+/// Light data from C API
+#[repr(C)]
+struct UsdBridgeLightDataRaw {
+    path: *const std::ffi::c_char,
+    light_type: UsdBridgeLightType,
+    color: [f32; 3],
+    intensity: f32,
+    exposure: f32,
+    transform: [f32; 16],
+    angle: f32,
+    radius: f32,
+    width: f32,
+    height: f32,
+    texture_path: *const std::ffi::c_char,
+}
+
 /// Material data from C API (UsdPreviewSurface or MaterialX)
 #[repr(C)]
 struct UsdBridgeMaterialDataRaw {
@@ -299,6 +325,18 @@ extern "C" {
         out_vertices: *mut *const f32,
         out_vertex_count: *mut usize,
     ) -> UsdBridgeErrorCode;
+
+    // Light APIs
+    fn usd_bridge_get_light_count(
+        stage: *const UsdBridgeStageRaw,
+        out_count: *mut usize,
+    ) -> UsdBridgeErrorCode;
+
+    fn usd_bridge_get_light(
+        stage: *const UsdBridgeStageRaw,
+        index: usize,
+        out_data: *mut UsdBridgeLightDataRaw,
+    ) -> UsdBridgeErrorCode;
 }
 
 // ============================================================================
@@ -461,6 +499,64 @@ pub struct UsdMaterialData {
 
     /// True if material is from MaterialX, false for UsdPreviewSurface
     pub is_materialx: bool,
+}
+
+/// Light type extracted from USD.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UsdLightType {
+    /// Directional/distant light (like sun)
+    Distant,
+    /// Point/sphere light
+    Sphere,
+    /// Area/rect light
+    Rect,
+    /// Environment/dome light
+    Dome,
+}
+
+impl From<UsdBridgeLightType> for UsdLightType {
+    fn from(t: UsdBridgeLightType) -> Self {
+        match t {
+            UsdBridgeLightType::Distant => UsdLightType::Distant,
+            UsdBridgeLightType::Sphere => UsdLightType::Sphere,
+            UsdBridgeLightType::Rect => UsdLightType::Rect,
+            UsdBridgeLightType::Dome => UsdLightType::Dome,
+        }
+    }
+}
+
+/// Light data extracted from USD (UsdLux).
+#[derive(Clone, Debug)]
+pub struct UsdLightData {
+    /// Prim path in the USD hierarchy
+    pub path: String,
+
+    /// Light type
+    pub light_type: UsdLightType,
+
+    /// Light color (RGB, 0-1)
+    pub color: Vec3,
+
+    /// Combined intensity: intensity * 2^exposure
+    pub intensity: f32,
+
+    /// World transform matrix
+    pub transform: Mat4,
+
+    /// Distant light: angular diameter in degrees
+    pub angle: f32,
+
+    /// Sphere light: radius
+    pub radius: f32,
+
+    /// Rect light: width
+    pub width: f32,
+
+    /// Rect light: height
+    pub height: f32,
+
+    /// Dome light: texture path (if any)
+    pub texture_path: Option<String>,
 }
 
 /// Timeline metadata extracted from USD stage.
@@ -957,6 +1053,93 @@ impl UsdStage {
             materials.push(self.get_material(i)?);
         }
         Ok(materials)
+    }
+
+    // ========================================================================
+    // Light Data (UsdLux)
+    // ========================================================================
+
+    /// Get the number of lights in the stage.
+    pub fn light_count(&self) -> UsdBridgeResult<usize> {
+        let mut count: usize = 0;
+        let result = unsafe { usd_bridge_get_light_count(self.raw, &mut count) };
+
+        if result != UsdBridgeErrorCode::Success {
+            return Err(result.into());
+        }
+
+        Ok(count)
+    }
+
+    /// Get light data by index.
+    pub fn get_light(&self, index: usize) -> UsdBridgeResult<UsdLightData> {
+        let mut raw_data = UsdBridgeLightDataRaw {
+            path: ptr::null(),
+            light_type: UsdBridgeLightType::Distant,
+            color: [1.0, 1.0, 1.0],
+            intensity: 1.0,
+            exposure: 0.0,
+            transform: [0.0; 16],
+            angle: 0.0,
+            radius: 0.0,
+            width: 0.0,
+            height: 0.0,
+            texture_path: ptr::null(),
+        };
+
+        let result = unsafe { usd_bridge_get_light(self.raw, index, &mut raw_data) };
+
+        if result != UsdBridgeErrorCode::Success {
+            return Err(match result {
+                UsdBridgeErrorCode::InvalidPrim => {
+                    UsdBridgeError::InvalidPrim(format!("light index {}", index))
+                }
+                other => other.into(),
+            });
+        }
+
+        // Convert path
+        let path = unsafe {
+            if raw_data.path.is_null() {
+                String::new()
+            } else {
+                CStr::from_ptr(raw_data.path).to_string_lossy().into_owned()
+            }
+        };
+
+        // Convert texture path
+        let texture_path = if raw_data.texture_path.is_null() {
+            None
+        } else {
+            let s = unsafe { CStr::from_ptr(raw_data.texture_path).to_string_lossy().into_owned() };
+            if s.is_empty() { None } else { Some(s) }
+        };
+
+        // Combine intensity * 2^exposure
+        let combined_intensity = raw_data.intensity * (2.0_f32).powf(raw_data.exposure);
+
+        Ok(UsdLightData {
+            path,
+            light_type: raw_data.light_type.into(),
+            color: Vec3::new(raw_data.color[0], raw_data.color[1], raw_data.color[2]),
+            intensity: combined_intensity,
+            transform: Mat4::from_cols_array(&raw_data.transform),
+            angle: raw_data.angle,
+            radius: raw_data.radius,
+            width: raw_data.width,
+            height: raw_data.height,
+            texture_path,
+        })
+    }
+
+    /// Get all lights in the stage.
+    pub fn lights(&self) -> UsdBridgeResult<Vec<UsdLightData>> {
+        let count = self.light_count()?;
+        let mut lights = Vec::with_capacity(count);
+        for i in 0..count {
+            lights.push(self.get_light(i)?);
+        }
+        Ok(lights)
     }
 
     /// Export the stage to a file.

@@ -31,7 +31,7 @@ pub mod oiio;
 // Re-export commonly used types
 pub use mesh::Mesh;
 pub use scene::{
-    AnimatedTransform, Instance, Material, Prototype, Scene, TimelineInfo, Transform,
+    AnimatedTransform, Instance, Light, Material, Prototype, Scene, TimelineInfo, Transform,
     TransformKeyframe,
 };
 pub use texture::{Texture, TextureCache, TextureError, TextureResult};

@@ -656,7 +656,14 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
   - Auto-invalidate Ivar scene cache when vertex animation frame changes
   - Both batch render and GUI Ivar now animate multi-prototype scenes
 
-  **Phase 5: Instance Transform Animation (TODO)**
+  **Phase 5: USD Light Support ✅ (M19.2)**
+  - C++ bridge: UsdLux extraction (Distant, Sphere, Rect, Dome)
+  - Rust FFI: `UsdLightData`, `Light` enum in scene graph
+  - Viewport: Direct lighting with Cook-Torrance BRDF in shader
+  - Ivar: NEE sampling for explicit lights alongside HDRI
+  - Key files: `cpp/usd_bridge.cpp`, `bif_core/scene.rs`, `bif_viewport/basic.wgsl`, `bif_renderer/light.rs`
+
+  **Phase 6: Instance Transform Animation (TODO)**
   - Per-frame instance matrix evaluation
   - Test with transform-animated USD scenes
 
@@ -894,6 +901,6 @@ Key papers for Milestone 20 (Renderer Polish):
 ---
 
 **Last Updated:** February 1, 2026
-**Status:** Milestones 0-18.4 Complete, M19.1c Complete
-**Current:** Multi-prototype vertex animation in Ivar
-**Next:** M19.2 instance transform animation per frame
+**Status:** Milestones 0-18.4 Complete, M19.2 Complete
+**Current:** USD Light support (viewport + Ivar)
+**Next:** Instance transform animation per frame

@@ -15,6 +15,10 @@
 #include <pxr/usd/usdShade/material.h>
 #include <pxr/usd/usdShade/materialBindingAPI.h>
 #include <pxr/usd/usdShade/shader.h>
+#include <pxr/usd/usdLux/distantLight.h>
+#include <pxr/usd/usdLux/sphereLight.h>
+#include <pxr/usd/usdLux/rectLight.h>
+#include <pxr/usd/usdLux/domeLight.h>
 #include <pxr/base/gf/matrix4f.h>
 #include <pxr/base/gf/vec2f.h>
 #include <pxr/base/gf/vec3f.h>
@@ -123,12 +127,28 @@ struct CachedMaterial {
     bool is_materialx;  // True if material is from MaterialX, false for UsdPreviewSurface
 };
 
+/// Cached light data for FFI transfer (UsdLux)
+struct CachedLight {
+    std::string path;
+    UsdBridgeLightType type;
+    float color[3];
+    float intensity;
+    float exposure;
+    float transform[16];
+    float angle;   // DistantLight
+    float radius;  // SphereLight
+    float width;   // RectLight
+    float height;  // RectLight
+    std::string texture_path;  // DomeLight
+};
+
 /// Internal stage representation
 struct UsdBridgeStage {
     UsdStageRefPtr stage;
     std::vector<CachedMesh> meshes;
     std::vector<CachedInstancer> instancers;
     std::vector<CachedMaterial> materials;
+    std::vector<CachedLight> lights;
     std::vector<std::string> mesh_material_paths;  // Material path per mesh
     std::vector<CachedPrimInfo> all_prims;  // All prims in traversal order
     std::vector<std::string> root_paths;    // Direct children of pseudo-root
@@ -136,6 +156,7 @@ struct UsdBridgeStage {
     bool cached;
     bool prims_cached;
     bool materials_cached;
+    bool lights_cached;
     bool animation_cached;
 
     // Animation caches
@@ -145,13 +166,14 @@ struct UsdBridgeStage {
     std::vector<CachedVertexAnimation> vertex_animations;
     bool vertex_animation_cached;
 
-    UsdBridgeStage() : cached(false), prims_cached(false), materials_cached(false), animation_cached(false), vertex_animation_cached(false) {}
+    UsdBridgeStage() : cached(false), prims_cached(false), materials_cached(false), lights_cached(false), animation_cached(false), vertex_animation_cached(false) {}
 
     ~UsdBridgeStage() {
         // Clear cached data to ensure proper cleanup
         meshes.clear();
         instancers.clear();
         materials.clear();
+        lights.clear();
         mesh_material_paths.clear();
         all_prims.clear();
         root_paths.clear();
@@ -1039,6 +1061,116 @@ static void cache_material_data(UsdBridgeStage* bridge) {
     bridge->materials_cached = true;
 }
 
+/// Cache all light data from the stage (UsdLux)
+static void cache_light_data(UsdBridgeStage* bridge) {
+    if (bridge->lights_cached) return;
+
+    bridge->lights.clear();
+
+    UsdGeomXformCache xform_cache;
+
+    // Traverse all prims looking for lights
+    for (const UsdPrim& prim : bridge->stage->Traverse()) {
+        CachedLight light;
+        bool is_light = false;
+
+        if (prim.IsA<UsdLuxDistantLight>()) {
+            UsdLuxDistantLight distant(prim);
+            light.type = USD_LIGHT_DISTANT;
+            is_light = true;
+
+            // Get angle (angular diameter in degrees)
+            float angle = 0.53f;  // Default: ~0.53 degrees (sun's angular diameter)
+            distant.GetAngleAttr().Get(&angle);
+            light.angle = angle;
+            light.radius = 0.0f;
+            light.width = 0.0f;
+            light.height = 0.0f;
+        }
+        else if (prim.IsA<UsdLuxSphereLight>()) {
+            UsdLuxSphereLight sphere(prim);
+            light.type = USD_LIGHT_SPHERE;
+            is_light = true;
+
+            // Get radius
+            float radius = 0.5f;
+            sphere.GetRadiusAttr().Get(&radius);
+            light.radius = radius;
+            light.angle = 0.0f;
+            light.width = 0.0f;
+            light.height = 0.0f;
+        }
+        else if (prim.IsA<UsdLuxRectLight>()) {
+            UsdLuxRectLight rect(prim);
+            light.type = USD_LIGHT_RECT;
+            is_light = true;
+
+            // Get width and height
+            float width = 1.0f, height = 1.0f;
+            rect.GetWidthAttr().Get(&width);
+            rect.GetHeightAttr().Get(&height);
+            light.width = width;
+            light.height = height;
+            light.angle = 0.0f;
+            light.radius = 0.0f;
+        }
+        else if (prim.IsA<UsdLuxDomeLight>()) {
+            UsdLuxDomeLight dome(prim);
+            light.type = USD_LIGHT_DOME;
+            is_light = true;
+
+            // Get texture file path
+            SdfAssetPath texture_path;
+            if (dome.GetTextureFileAttr().Get(&texture_path)) {
+                light.texture_path = texture_path.GetResolvedPath().empty()
+                    ? texture_path.GetAssetPath()
+                    : texture_path.GetResolvedPath();
+            }
+            light.angle = 0.0f;
+            light.radius = 0.0f;
+            light.width = 0.0f;
+            light.height = 0.0f;
+        }
+
+        if (!is_light) continue;
+
+        light.path = prim.GetPath().GetString();
+
+        // Get common light attributes via UsdLuxLightAPI
+        // Note: In USD 24+, lights inherit from UsdLuxBoundableLightBase or similar
+        // We access attributes directly since all light types have these
+
+        // Color (default white)
+        GfVec3f color(1.0f, 1.0f, 1.0f);
+        UsdAttribute colorAttr = prim.GetAttribute(TfToken("inputs:color"));
+        if (colorAttr) colorAttr.Get(&color);
+        light.color[0] = color[0];
+        light.color[1] = color[1];
+        light.color[2] = color[2];
+
+        // Intensity (default 1.0)
+        float intensity = 1.0f;
+        UsdAttribute intensityAttr = prim.GetAttribute(TfToken("inputs:intensity"));
+        if (intensityAttr) intensityAttr.Get(&intensity);
+        light.intensity = intensity;
+
+        // Exposure (default 0.0, multiplier is 2^exposure)
+        float exposure = 0.0f;
+        UsdAttribute exposureAttr = prim.GetAttribute(TfToken("inputs:exposure"));
+        if (exposureAttr) exposureAttr.Get(&exposure);
+        light.exposure = exposure;
+
+        // Get world transform
+        GfMatrix4d world_xform = xform_cache.GetLocalToWorldTransform(prim);
+        matrix_to_float16(world_xform, light.transform);
+
+        bridge->lights.push_back(std::move(light));
+    }
+
+    std::cout << "[USD_BRIDGE]   Cached " << bridge->lights.size() << " lights" << std::endl;
+    bridge->lights_cached = true;
+}
+
 // ============================================================================
 // C API Implementation
 // ============================================================================
@@ -1060,6 +1192,7 @@ static void cache_stage_data(UsdBridgeStage* bridge);
 static void cache_prim_data(UsdBridgeStage* bridge);
 static void cache_animation_data(UsdBridgeStage* bridge);
 static void cache_vertex_animation_data(UsdBridgeStage* bridge);
+static void cache_light_data(UsdBridgeStage* bridge);
 
 UsdBridgeError usd_bridge_open_stage(const char* path, UsdBridgeStage** out_stage) {
     if (!path || !out_stage) {
@@ -1126,6 +1259,12 @@ UsdBridgeError usd_bridge_open_stage(const char* path, UsdBridgeStage** out_stag
         cache_vertex_animation_data(bridge);
         auto cache_vert_anim_time = duration_cast<milliseconds>(high_resolution_clock::now() - cache_start).count();
         std::cout << "[USD_BRIDGE]   cache_vertex_animation_data(): " << cache_vert_anim_time << "ms" << std::endl;
+
+        cache_start = high_resolution_clock::now();
+        cache_light_data(bridge);
+        auto cache_light_time = duration_cast<milliseconds>(high_resolution_clock::now() - cache_start).count();
+        std::cout << "[USD_BRIDGE]   cache_light_data(): " << cache_light_time << "ms"
+                  << " (" << bridge->lights.size() << " lights)" << std::endl;
 
         auto total_time = duration_cast<milliseconds>(high_resolution_clock::now() - total_start).count();
         std::cout << "[USD_BRIDGE]   TOTAL: " << total_time << "ms" << std::endl;
@@ -1996,6 +2135,60 @@ UsdBridgeError usd_bridge_get_mesh_vertices_at_time(
         *out_vertices = return_buffer.data();
         *out_vertex_count = points.size();
     }
+
+    return USD_BRIDGE_SUCCESS;
+}
+
+// ============================================================================
+// Light Data API Implementation
+// ============================================================================
+
+UsdBridgeError usd_bridge_get_light_count(
+    const UsdBridgeStage* stage,
+    size_t* out_count
+) {
+    if (!stage || !out_count) {
+        return USD_BRIDGE_ERROR_NULL_POINTER;
+    }
+
+    // Data pre-cached at load time - just read
+    *out_count = stage->lights.size();
+    return USD_BRIDGE_SUCCESS;
+}
+
+UsdBridgeError usd_bridge_get_light(
+    const UsdBridgeStage* stage,
+    size_t index,
+    UsdBridgeLightData* out_data
+) {
+    if (!stage || !out_data) {
+        return USD_BRIDGE_ERROR_NULL_POINTER;
+    }
+
+    // Data pre-cached at load time - just read
+    if (index >= stage->lights.size()) {
+        return USD_BRIDGE_ERROR_INVALID_PRIM;
+    }
+
+    const CachedLight& light = stage->lights[index];
+    out_data->path = light.path.c_str();
+    out_data->type = light.type;
+    out_data->color[0] = light.color[0];
+    out_data->color[1] = light.color[1];
+    out_data->color[2] = light.color[2];
+    out_data->intensity = light.intensity;
+    out_data->exposure = light.exposure;
+
+    // Copy transform
+    for (int i = 0; i < 16; ++i) {
+        out_data->transform[i] = light.transform[i];
+    }
+
+    out_data->angle = light.angle;
+    out_data->radius = light.radius;
+    out_data->width = light.width;
+    out_data->height = light.height;
+    out_data->texture_path = light.texture_path.empty() ? nullptr : light.texture_path.c_str();
 
     return USD_BRIDGE_SUCCESS;
 }

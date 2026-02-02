@@ -10,7 +10,7 @@ use bif_core::usd::cpp_bridge::UsdStage;
 use bif_math::{Mat4, Vec3};
 use bif_renderer::{
     format_frame_path, generate_buckets, render_bucket_with_aovs, write_exr, BvhNode, Camera,
-    Color, DisneyBSDF, EmbreeScene, ExrOutput, HdriEnvironment, Hittable, RenderConfig,
+    Color, DisneyBSDF, EmbreeScene, ExrOutput, HdriEnvironment, Hittable, LightList, RenderConfig,
     DEFAULT_BUCKET_SIZE,
 };
 use rayon::prelude::*;
@@ -287,6 +287,8 @@ pub struct BatchSceneData {
     pub has_animated_geometry: bool,
     /// Scene builder for animated geometry (called per frame if has_animated_geometry).
     pub scene_builder: Option<SceneBuilderFn>,
+    /// Explicit lights (USD lights) for NEE.
+    pub lights: Arc<LightList>,
 }
 
 /// Start a batch render in a background thread.
@@ -334,6 +336,7 @@ fn batch_render_loop(
         background: Color::new(0.1, 0.1, 0.1),
         use_sky_gradient: true, // Fallback lighting if no HDRI
         environment: scene.environment.clone(),
+        lights: scene.lights.clone(),
     };
 
     log::info!(

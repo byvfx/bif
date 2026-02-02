@@ -30,6 +30,7 @@ target_link_libraries(usd_bridge PUBLIC
     usd
     usdGeom
     usdShade
+    usdLux
     sdf
     tf
     gf

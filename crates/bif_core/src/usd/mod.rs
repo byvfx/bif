@@ -3,7 +3,7 @@
 //! This module provides loading of USD files (USDA, USD, USDC formats)
 //! via the C++ USD library, converting them to BIF's scene graph representation.
 //!
-//! ## Supported USD Features (Milestone 13)
+//! ## Supported USD Features
 //!
 //! - `UsdGeomMesh`: Triangle meshes with positions, normals, indices
 //! - `UsdGeomPointInstancer`: Instanced geometry with transforms
@@ -11,13 +11,13 @@
 //! - **File references**: `@path/to/file.usda@</Prim>` syntax
 //! - **Binary format**: `.usdc` files (via C++ bridge)
 //! - **Auto-detect format**: `.usd` files
+//! - **Materials** (`UsdShade`): PBR materials with textures
+//! - **Lights** (`UsdLux`): Distant, Sphere, Rect, Dome lights
+//! - **Animation**: Time samples for transforms and geometry
 //!
 //! ## Not Yet Supported
 //!
-//! - Materials and textures (`UsdShade`)
-//! - Lights (`UsdLux`)
 //! - Cameras (`UsdGeomCamera`)
-//! - Animation / time samples
 //! - Payloads and variants
 //!
 //! # Example
@@ -39,7 +39,7 @@ mod types;
 
 pub use cpp_bridge::{
     TransformSample, UsdAnimatedInstancerData, UsdAnimatedMeshData, UsdBridgeError,
-    UsdInstancerData, UsdMeshData, UsdStage, UsdTimelineData,
+    UsdInstancerData, UsdLightData, UsdLightType, UsdMeshData, UsdStage, UsdTimelineData,
 };
 pub use loader::*;
 pub use parser::*;

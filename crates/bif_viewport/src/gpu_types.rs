@@ -50,6 +50,159 @@ pub struct EnvironmentParamsUniform {
     pub max_mip: f32,
 }
 
+/// Maximum number of lights in the viewport.
+pub const MAX_VIEWPORT_LIGHTS: usize = 8;
+
+/// Light type constants (matching shader).
+pub const LIGHT_TYPE_DISTANT: u32 = 0;
+pub const LIGHT_TYPE_POINT: u32 = 1;
+pub const LIGHT_TYPE_RECT: u32 = 2;
+
+/// Light data for GPU (packed for uniform buffer).
+/// Layout: position_type.xyz = position, position_type.w = type
+///         direction_radius.xyz = direction, direction_radius.w = radius
+///         color_intensity.rgb = color, color_intensity.a = intensity
+///         params.x = angle, params.y = width, params.z = height, params.w = unused
+#[repr(C)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct LightGpu {
+    pub position_type: [f32; 4],     // xyz = position, w = type (as f32)
+    pub direction_radius: [f32; 4],  // xyz = direction, w = radius
+    pub color_intensity: [f32; 4],   // rgb = color, a = intensity
+    pub params: [f32; 4],            // angle, width, height, unused
+}
+
+impl LightGpu {
+    /// Create a distant (directional) light.
+    pub fn distant(direction: [f32; 3], color: [f32; 3], intensity: f32, angle: f32) -> Self {
+        Self {
+            position_type: [0.0, 0.0, 0.0, LIGHT_TYPE_DISTANT as f32],
+            direction_radius: [direction[0], direction[1], direction[2], 0.0],
+            color_intensity: [color[0], color[1], color[2], intensity],
+            params: [angle, 0.0, 0.0, 0.0],
+        }
+    }
+
+    /// Create a point (sphere) light.
+    pub fn point(position: [f32; 3], color: [f32; 3], intensity: f32, radius: f32) -> Self {
+        Self {
+            position_type: [position[0], position[1], position[2], LIGHT_TYPE_POINT as f32],
+            direction_radius: [0.0, 0.0, 0.0, radius],
+            color_intensity: [color[0], color[1], color[2], intensity],
+            params: [0.0, 0.0, 0.0, 0.0],
+        }
+    }
+
+    /// Create an area (rect) light.
+    pub fn rect(
+        position: [f32; 3],
+        direction: [f32; 3],
+        color: [f32; 3],
+        intensity: f32,
+        width: f32,
+        height: f32,
+    ) -> Self {
+        Self {
+            position_type: [position[0], position[1], position[2], LIGHT_TYPE_RECT as f32],
+            direction_radius: [direction[0], direction[1], direction[2], 0.0],
+            color_intensity: [color[0], color[1], color[2], intensity],
+            params: [0.0, width, height, 0.0],
+        }
+    }
+
+    /// Create a zeroed/empty light slot.
+    pub fn empty() -> Self {
+        Self {
+            position_type: [0.0; 4],
+            direction_radius: [0.0; 4],
+            color_intensity: [0.0; 4],
+            params: [0.0; 4],
+        }
+    }
+}
+
+/// Lights uniform buffer (array of lights + count).
+#[repr(C)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct LightsUniform {
+    pub lights: [LightGpu; MAX_VIEWPORT_LIGHTS],
+    pub light_count: [u32; 4], // Use vec4 for alignment; only [0] is count
+}
+
+impl LightsUniform {
+    pub fn new() -> Self {
+        Self {
+            lights: [LightGpu::empty(); MAX_VIEWPORT_LIGHTS],
+            light_count: [0, 0, 0, 0],
+        }
+    }
+
+    /// Create from scene lights (bif_core::Light).
+    pub fn from_scene_lights(scene_lights: &[bif_core::Light]) -> Self {
+        let mut uniform = Self::new();
+        let count = scene_lights.len().min(MAX_VIEWPORT_LIGHTS);
+        uniform.light_count[0] = count as u32;
+
+        for (i, light) in scene_lights.iter().take(MAX_VIEWPORT_LIGHTS).enumerate() {
+            uniform.lights[i] = match light {
+                bif_core::Light::Distant {
+                    direction,
+                    color,
+                    intensity,
+                    angle,
+                } => LightGpu::distant(
+                    [direction.x, direction.y, direction.z],
+                    [color.x, color.y, color.z],
+                    *intensity,
+                    *angle,
+                ),
+                bif_core::Light::Point {
+                    position,
+                    color,
+                    intensity,
+                    radius,
+                } => LightGpu::point(
+                    [position.x, position.y, position.z],
+                    [color.x, color.y, color.z],
+                    *intensity,
+                    *radius,
+                ),
+                bif_core::Light::Rect {
+                    transform,
+                    color,
+                    intensity,
+                    width,
+                    height,
+                } => {
+                    // Extract position and direction from transform
+                    let position = transform.w_axis.truncate();
+                    let direction = -transform.z_axis.truncate().normalize();
+                    LightGpu::rect(
+                        [position.x, position.y, position.z],
+                        [direction.x, direction.y, direction.z],
+                        [color.x, color.y, color.z],
+                        *intensity,
+                        *width,
+                        *height,
+                    )
+                }
+                bif_core::Light::Dome { .. } => {
+                    // DomeLights are handled via IBL, not as direct lights
+                    LightGpu::empty()
+                }
+            };
+        }
+
+        uniform
+    }
+}
+
+impl Default for LightsUniform {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl EnvironmentParamsUniform {
     pub fn new() -> Self {
         Self {

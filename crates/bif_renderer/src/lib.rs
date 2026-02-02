@@ -14,6 +14,7 @@ pub mod exr_writer;
 pub mod hdri;
 mod hittable;
 mod instanced_geometry;
+pub mod light;
 mod material;
 mod ray;
 mod renderer;
@@ -31,6 +32,7 @@ pub use embree::EmbreeScene;
 pub use exr_writer::{format_frame_path, write_exr, ExrCompression, ExrError, ExrOutput};
 pub use hdri::HdriEnvironment;
 pub use hittable::{HitRecord, Hittable, HittableList};
+pub use light::{DistantLight, Light, LightList, LightSample, RectLight, SphereLight};
 pub use instanced_geometry::InstancedGeometry;
 pub use material::{
     cosine_weighted_hemisphere, gen_f32, gen_f32_generic, power_heuristic, random_in_hemisphere,

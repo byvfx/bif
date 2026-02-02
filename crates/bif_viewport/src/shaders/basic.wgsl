@@ -1,4 +1,4 @@
-// PBR shader with split-sum IBL environment lighting.
+// PBR shader with split-sum IBL environment lighting + explicit lights.
 // Falls back to headlight when no environment is loaded.
 
 struct CameraUniform {
@@ -25,6 +25,23 @@ struct EnvironmentParams {
     rotation: f32,
     has_environment: u32,
     max_mip: f32,
+}
+
+// Light types (must match LIGHT_TYPE_* constants in Rust)
+const LIGHT_TYPE_DISTANT: u32 = 0u;
+const LIGHT_TYPE_POINT: u32 = 1u;
+const LIGHT_TYPE_RECT: u32 = 2u;
+
+struct LightGpu {
+    position_type: vec4<f32>,      // xyz = position, w = type
+    direction_radius: vec4<f32>,   // xyz = direction, w = radius
+    color_intensity: vec4<f32>,    // rgb = color, a = intensity
+    params: vec4<f32>,             // angle, width, height, unused
+}
+
+struct LightsUniform {
+    lights: array<LightGpu, 8>,
+    light_count: vec4<u32>,        // [0] = count
 }
 
 @group(0) @binding(0)
@@ -60,6 +77,10 @@ var env_sampler: sampler;
 
 @group(3) @binding(4)
 var<uniform> env_params: EnvironmentParams;
+
+// Lights (bind group 4)
+@group(4) @binding(0)
+var<uniform> lights_uniform: LightsUniform;
 
 struct VertexInput {
     @location(0) position: vec3<f32>,
@@ -134,6 +155,105 @@ fn fresnel_schlick_roughness(cos_theta: f32, f0: vec3<f32>, roughness: f32) -> v
     return f0 + (max_val - f0) * pow(1.0 - cos_theta, 5.0);
 }
 
+// Standard Fresnel-Schlick (no roughness)
+fn fresnel_schlick(cos_theta: f32, f0: vec3<f32>) -> vec3<f32> {
+    return f0 + (1.0 - f0) * pow(1.0 - cos_theta, 5.0);
+}
+
+// GGX/Trowbridge-Reitz normal distribution
+fn distribution_ggx(n_dot_h: f32, roughness: f32) -> f32 {
+    let a = roughness * roughness;
+    let a2 = a * a;
+    let denom = n_dot_h * n_dot_h * (a2 - 1.0) + 1.0;
+    return a2 / (3.14159265 * denom * denom + 0.0001);
+}
+
+// Smith's geometry function
+fn geometry_schlick_ggx(n_dot_v: f32, roughness: f32) -> f32 {
+    let r = roughness + 1.0;
+    let k = r * r / 8.0;
+    return n_dot_v / (n_dot_v * (1.0 - k) + k);
+}
+
+fn geometry_smith(n_dot_v: f32, n_dot_l: f32, roughness: f32) -> f32 {
+    return geometry_schlick_ggx(n_dot_v, roughness) * geometry_schlick_ggx(n_dot_l, roughness);
+}
+
+// Evaluate direct lighting from explicit lights
+fn evaluate_direct_lights(
+    world_pos: vec3<f32>,
+    normal: vec3<f32>,
+    view_dir: vec3<f32>,
+    base_color: vec3<f32>,
+    metallic: f32,
+    roughness: f32,
+    f0: vec3<f32>,
+) -> vec3<f32> {
+    var result = vec3<f32>(0.0);
+    let light_count = lights_uniform.light_count[0];
+
+    for (var i = 0u; i < light_count; i = i + 1u) {
+        let light = lights_uniform.lights[i];
+        let light_type = u32(light.position_type.w);
+        let light_color = light.color_intensity.rgb;
+        let light_intensity = light.color_intensity.a;
+
+        var light_dir: vec3<f32>;
+        var attenuation: f32 = 1.0;
+
+        if (light_type == LIGHT_TYPE_DISTANT) {
+            // Directional light
+            light_dir = normalize(-light.direction_radius.xyz);
+        } else if (light_type == LIGHT_TYPE_POINT) {
+            // Point light with distance attenuation
+            let light_pos = light.position_type.xyz;
+            let to_light = light_pos - world_pos;
+            let distance = length(to_light);
+            light_dir = to_light / distance;
+            // Inverse square falloff
+            attenuation = 1.0 / (distance * distance + 0.01);
+        } else if (light_type == LIGHT_TYPE_RECT) {
+            // Area light - simplified as point at center
+            let light_pos = light.position_type.xyz;
+            let to_light = light_pos - world_pos;
+            let distance = length(to_light);
+            light_dir = to_light / distance;
+            attenuation = 1.0 / (distance * distance + 0.01);
+        } else {
+            continue;
+        }
+
+        let n_dot_l = max(dot(normal, light_dir), 0.0);
+        if (n_dot_l <= 0.0) {
+            continue;
+        }
+
+        // Cook-Torrance BRDF
+        let half_vec = normalize(view_dir + light_dir);
+        let n_dot_h = max(dot(normal, half_vec), 0.0);
+        let n_dot_v = max(dot(normal, view_dir), 0.0);
+        let h_dot_v = max(dot(half_vec, view_dir), 0.0);
+
+        // Specular
+        let d = distribution_ggx(n_dot_h, roughness);
+        let g = geometry_smith(n_dot_v, n_dot_l, roughness);
+        let f = fresnel_schlick(h_dot_v, f0);
+
+        let specular = (d * g * f) / (4.0 * n_dot_v * n_dot_l + 0.0001);
+
+        // Diffuse (energy conserving)
+        let ks = f;
+        let kd = (1.0 - ks) * (1.0 - metallic);
+        let diffuse = kd * base_color / 3.14159265;
+
+        // Combine
+        let radiance = light_color * light_intensity * attenuation;
+        result += (diffuse + specular) * radiance * n_dot_l;
+    }
+
+    return result;
+}
+
 @fragment
 fn fs_main(
     in: VertexOutput,
@@ -164,6 +284,17 @@ fn fs_main(
     // F0: 0.04 for dielectrics, base_color for metals
     let f0 = mix(vec3<f32>(0.04), base_color, metallic);
 
+    // Evaluate direct lighting from explicit lights (USD lights)
+    let direct_light = evaluate_direct_lights(
+        in.world_pos,
+        normal,
+        view_dir,
+        base_color,
+        metallic,
+        roughness,
+        f0,
+    );
+
     // IBL path (when environment is loaded)
     if (env_params.has_environment != 0u) {
         let fresnel = fresnel_schlick_roughness(n_dot_v, f0, roughness);
@@ -182,11 +313,20 @@ fn fs_main(
         let brdf = textureSample(brdf_lut, env_sampler, vec2<f32>(n_dot_v, roughness)).rg;
         let specular_ibl = prefiltered * (fresnel * brdf.x + brdf.y);
 
-        let color = (diffuse_ibl + specular_ibl) * env_params.intensity;
+        // Combine IBL + direct lights
+        let color = (diffuse_ibl + specular_ibl) * env_params.intensity + direct_light;
         return vec4<f32>(linear_to_srgb(aces_tonemap(color)), 1.0);
     }
 
-    // Fallback: headlight shading (no environment loaded)
+    // Fallback: headlight shading (no environment loaded), or just use direct lights
+    if (lights_uniform.light_count[0] > 0u) {
+        // Use direct lights only (no IBL)
+        let ambient = base_color * 0.05; // Small ambient term
+        let color = ambient + direct_light;
+        return vec4<f32>(linear_to_srgb(aces_tonemap(color)), 1.0);
+    }
+
+    // No environment and no lights - use headlight fallback
     let normal_vs = normalize((camera.view * vec4<f32>(normal, 0.0)).xyz);
     let view_pos = camera.view * vec4<f32>(in.world_pos, 1.0);
     let view_dir_vs = normalize(-view_pos.xyz);
