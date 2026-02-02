@@ -21,13 +21,22 @@
 
 ### M18.5: USD Implementation Polish (Feb 1, 2026)
 
-Fixed overflow and added timing visibility for USD loading.
+Fixed overflow, removed verbose logging causing 23x slowdown, added timing instrumentation.
 
 | Component | Details |
 |-----------|---------|
 | Overflow fix | `num_triangles` u32→u64 to handle 100K tri × 100K instances |
-| Debug cleanup | Per-item logs demoted to `log::debug!` |
-| Load timing | Stage/meshes/materials/instancers/GPU/textures breakdown |
+| Console I/O fix | Removed per-mesh/per-keyframe logging (**23x speedup**) |
+| C++ profiling | Granular timing in `cache_stage_data()` |
+| Rust timing | Stage/meshes/materials/instancers/GPU/textures breakdown |
+
+**Performance gains:**
+| Scene | Before | After | Speedup |
+|-------|--------|-------|---------|
+| Spaceship (921 meshes) | 117s | 5s | 23x |
+| Palm tree (220K verts) | 2.5s | 0.37s | 7x |
+
+**Bottleneck identified:** Texture loading (22s for 13 large textures) - future milestone
 
 ### M19.1c: Multi-Prototype Vertex Animation Fix (Feb 1, 2026)
 

@@ -599,24 +599,20 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 - **Goal:** Fix bugs and add timing visibility for USD loading
 - **Key Changes:**
   - **Overflow fix:** Changed `num_triangles` from `u32` to `u64` to handle large scenes (100K triangles × 100K instances)
-  - **Debug cleanup:** Reduced verbose per-item logging (per-prototype, per-keyframe, per-frame) to `log::debug!`
+  - **Console I/O fix:** Removed per-mesh/per-keyframe C++ logging that was causing massive slowdown
   - **Load timing:** Added instrumentation to measure stage open, mesh extract, materials, instancers, GPU buffers, textures
+  - **Granular profiling:** Added breakdown timing inside `cache_stage_data()` (vertices, triangulate, subsets, normals, UVs, transforms)
+- **Performance Results:**
+  | Scene | Before | After | Speedup |
+  |-------|--------|-------|---------|
+  | Spaceship (921 meshes, 3.3M verts) | 117s | 5s | **23x** |
+  | Palm tree (1 mesh, 220K verts) | 2.5s | 0.37s | **7x** |
+- **Root Cause:** `std::cout`/`fprintf` per-mesh logging - Windows console I/O is extremely slow
 - **Key Files:**
-  - `crates/bif_viewport/src/lib.rs` - Overflow fix, debug cleanup, viewport timing
-  - `crates/bif_core/src/usd/loader.rs` - Debug cleanup, loader timing
-- **Example Output:**
-  ```
-  USD Load: scene.usd (5 meshes, 150,000 verts, 3 materials, 1,000 instances)
-    Stage open:    123.4ms
-    Meshes:         45.2ms
-    Materials:      12.1ms
-    Instancers:     34.5ms
-    Total:         215.2ms
-  Viewport Setup:
-    GPU buffers:    56.3ms
-    Textures:      890.1ms (4 textures)
-    Total:        1160.5ms
-  ```
+  - `cpp/usd_bridge/usd_bridge.cpp` - C++ timing with `<chrono>`, removed verbose logging
+  - `crates/bif_viewport/src/lib.rs` - Overflow fix, viewport timing
+  - `crates/bif_core/src/usd/loader.rs` - Rust timing
+- **Future Work Identified:** Texture loading bottleneck (22s for 13 large textures)
 
 ---
 

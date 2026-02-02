@@ -101,18 +101,20 @@ bif/
 
 ---
 
-## Statistics (Milestone 18.4)
+## Statistics (Milestone 18.5)
 
 | Metric | Value |
 |--------|-------|
 | Total LOC | ~12,000 |
-| Tests Passing | 135+ |
-| Milestones Complete | 18.1 |
+| Tests Passing | 137+ |
+| Milestones Complete | 18.5 |
 | Build Time (dev) | ~5s |
 | Runtime FPS | 60+ (VSync) |
 | Instances Rendered | 10K+ with LOD |
 | Total Triangles | 28M+ |
 | Embree BVH Build | 28ms |
+| USD Load (921 meshes) | 5s |
+| USD Load (220K verts) | 0.37s |
 
 ---
 
@@ -196,7 +198,7 @@ Use the egui side panel to switch between:
 
 See [MILESTONES.md](MILESTONES.md) for complete history and future plans.
 
-### Completed (Milestone 18.1)
+### Completed (Milestone 18.5)
 
 - Math library, wgpu viewport, camera controls
 - OBJ/USD loading, GPU instancing, Embree 4
@@ -209,6 +211,7 @@ See [MILESTONES.md](MILESTONES.md) for complete history and future plans.
 - OpenImageIO + .tx texture pipeline (subprocess)
 - HDRI IBL: GPU compute prefiltering, async loading
 - **Animation:** Timeline UI, transform + vertex animation, multi-mesh rendering
+- **Performance:** USD load profiling, 23x speedup via I/O optimization
 
 ### Next Up
 
@@ -251,4 +254,4 @@ MIT License - See [LICENSE](LICENSE) for details
 ---
 
 **Last Updated:** February 1, 2026
-**Status:** M19 In Progress | Multi-prototype vertex animation fixed
+**Status:** M18.5 Complete | USD load 23x faster, profiling instrumentation added
