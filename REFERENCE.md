@@ -1,8 +1,8 @@
 # BIF Code Reference
 
-> Patterns and techniques from Milestones 0-18.4
+> Patterns and techniques from Milestones 0-18.5
 
-**Last Updated:** January 31, 2026
+**Last Updated:** February 1, 2026
 
 ---
 
@@ -16,7 +16,8 @@
 6. [Batch Rendering](#6-batch-rendering)
 7. [Material Pipeline](#7-material-pipeline)
 8. [Texture Loading](#8-texture-loading)
-9. [Common Pitfalls](#9-common-pitfalls)
+9. [Performance Profiling](#9-performance-profiling)
+10. [Common Pitfalls](#10-common-pitfalls)
 
 ---
 
@@ -359,7 +360,45 @@ fn srgb_to_linear(srgb: u8) -> f32 {
 
 ---
 
-## 9. Common Pitfalls
+## 9. Performance Profiling
+
+**Problem:** Identify USD loading bottlenecks
+
+**Solution:** Timing instrumentation in C++ bridge + Rust loader
+
+```cpp
+// cpp/usd_bridge/usd_bridge.cpp
+using namespace std::chrono;
+auto start = high_resolution_clock::now();
+// ... operation ...
+auto time_ms = duration_cast<milliseconds>(high_resolution_clock::now() - start).count();
+std::cout << "[USD_BRIDGE] Operation: " << time_ms << "ms" << std::endl;
+```
+
+**Output breakdown:**
+```
+[USD_BRIDGE] Opening stage: scene.usd
+[USD_BRIDGE]   Resolver context: 0ms
+[USD_BRIDGE]   UsdStage::Open(): 127ms
+[USD_BRIDGE]   cache_stage_data(): 333ms (N meshes, M instancers)
+[USD_BRIDGE]     Materials:    8ms
+[USD_BRIDGE]     Vertices:     170ms (219764 verts)
+[USD_BRIDGE]     Triangulate:  6ms (345262 tris)
+[USD_BRIDGE]     GeomSubsets:  2ms
+[USD_BRIDGE]     Normals:      13ms
+[USD_BRIDGE]     UVs:          128ms
+[USD_BRIDGE]     Transforms:   0ms
+```
+
+**Key lesson:** Console I/O is extremely slow on Windows. Per-item logging caused 23x slowdown (117s → 5s after removal).
+
+**Key Files:**
+- `cpp/usd_bridge/usd_bridge.cpp` - C++ timing with `<chrono>`
+- `crates/bif_core/src/usd/loader.rs` - Rust timing with `std::time::Instant`
+
+---
+
+## 10. Common Pitfalls
 
 ### Mat4 Row vs Column Major
 
