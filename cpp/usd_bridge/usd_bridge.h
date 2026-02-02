@@ -536,6 +536,77 @@ UsdBridgeError usd_bridge_get_prim_info_by_path(
     UsdBridgePrimInfo* out_info
 );
 
+// ============================================================================
+// Light Data Extraction (UsdLux)
+// ============================================================================
+
+/// Light type enumeration
+typedef enum UsdBridgeLightType {
+    USD_LIGHT_DISTANT = 0,
+    USD_LIGHT_SPHERE = 1,
+    USD_LIGHT_RECT = 2,
+    USD_LIGHT_DOME = 3,
+} UsdBridgeLightType;
+
+/// Light data structure for FFI transfer
+typedef struct UsdBridgeLightData {
+    /// Prim path (e.g., "/World/Lights/Key")
+    const char* path;
+
+    /// Light type
+    UsdBridgeLightType type;
+
+    /// Light color (RGB, 0-1)
+    float color[3];
+
+    /// Light intensity
+    float intensity;
+
+    /// Exposure (power of 2 multiplier)
+    float exposure;
+
+    /// World transform (4x4 column-major matrix)
+    float transform[16];
+
+    /// Distant light: angular diameter in degrees
+    float angle;
+
+    /// Sphere light: radius
+    float radius;
+
+    /// Rect light: width
+    float width;
+
+    /// Rect light: height
+    float height;
+
+    /// Dome light: texture path (NULL if none)
+    const char* texture_path;
+} UsdBridgeLightData;
+
+/// Get the number of lights in the stage.
+///
+/// @param stage Stage handle
+/// @param out_count Pointer to receive light count
+/// @return USD_BRIDGE_SUCCESS on success
+UsdBridgeError usd_bridge_get_light_count(
+    const UsdBridgeStage* stage,
+    size_t* out_count
+);
+
+/// Get light data by index.
+/// The returned data is owned by the stage and valid until stage is closed.
+///
+/// @param stage Stage handle
+/// @param index Light index (0 to light_count-1)
+/// @param out_data Pointer to receive light data
+/// @return USD_BRIDGE_SUCCESS on success
+UsdBridgeError usd_bridge_get_light(
+    const UsdBridgeStage* stage,
+    size_t index,
+    UsdBridgeLightData* out_data
+);
+
 #ifdef __cplusplus
 }
 #endif

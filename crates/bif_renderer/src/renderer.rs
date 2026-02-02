@@ -8,13 +8,14 @@
 use std::sync::Arc;
 
 use crate::hdri::HdriEnvironment;
+use crate::light::LightList;
 use crate::material::power_heuristic;
 use crate::{Camera, Color, HitRecord, Hittable, Ray};
 use bif_math::Interval;
 use rand::RngCore;
 
 /// Render configuration.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct RenderConfig {
     /// Samples per pixel for anti-aliasing
     pub samples_per_pixel: u32,
@@ -26,18 +27,8 @@ pub struct RenderConfig {
     pub use_sky_gradient: bool,
     /// HDRI environment for lighting (overrides background/sky when set)
     pub environment: Option<Arc<HdriEnvironment>>,
-}
-
-impl Default for RenderConfig {
-    fn default() -> Self {
-        Self {
-            samples_per_pixel: 100,
-            max_depth: 50,
-            background: Color::ZERO,
-            use_sky_gradient: false,
-            environment: None,
-        }
-    }
+    /// Explicit lights (USD lights) for NEE sampling
+    pub lights: Arc<LightList>,
 }
 
 /// Compute the color seen by a ray.
@@ -95,8 +86,9 @@ pub fn ray_color(
         let emission = rec.material.emitted(rec.u, rec.v, rec.p);
         accumulated += throughput * emission;
 
-        // NEE: sample environment light directly (non-delta materials only)
+        // NEE: sample lights directly (non-delta materials only)
         if !rec.material.is_delta() {
+            // Sample HDRI environment
             if let Some(ref env) = config.environment {
                 let (light_dir, light_emission, light_pdf) = env.sample_direction(rng);
                 // Shadow ray
@@ -114,6 +106,32 @@ pub fn ray_color(
                     let cos_theta = rec.normal.dot(light_dir).max(0.0);
                     accumulated += throughput * bsdf_val * light_emission * cos_theta * mis_w
                         / light_pdf.max(1e-10);
+                }
+            }
+
+            // Sample explicit lights (USD lights)
+            if let Some((light_sample, _idx)) = config.lights.sample_one(rec.p, rng) {
+                if light_sample.pdf > 0.0 {
+                    let shadow_ray = Ray::new(rec.p, light_sample.direction, current_ray.time());
+                    let mut shadow_rec = HitRecord::default();
+                    let max_t = if light_sample.distance < f32::INFINITY {
+                        light_sample.distance - 0.001
+                    } else {
+                        f32::INFINITY
+                    };
+                    if !world.hit(&shadow_ray, Interval::new(0.001, max_t), &mut shadow_rec) {
+                        // Unoccluded - evaluate BSDF and MIS weight
+                        let bsdf_val = rec.material.bsdf(&current_ray, &rec, &shadow_ray);
+                        let bsdf_pdf = rec.material.pdf(&current_ray, &rec, &shadow_ray);
+                        let mis_w = power_heuristic(light_sample.pdf, bsdf_pdf);
+                        let cos_theta = rec.normal.dot(light_sample.direction).max(0.0);
+                        accumulated += throughput
+                            * bsdf_val
+                            * light_sample.emission
+                            * cos_theta
+                            * mis_w
+                            / light_sample.pdf.max(1e-10);
+                    }
                 }
             }
         }
@@ -222,8 +240,9 @@ pub fn ray_color_with_aovs(
         let emission = rec.material.emitted(rec.u, rec.v, rec.p);
         accumulated += throughput * emission;
 
-        // NEE: sample environment light directly (non-delta materials only)
+        // NEE: sample lights directly (non-delta materials only)
         if !rec.material.is_delta() {
+            // Sample HDRI environment
             if let Some(ref env) = config.environment {
                 let (light_dir, light_emission, light_pdf) = env.sample_direction(rng);
                 let shadow_ray = Ray::new(rec.p, light_dir, current_ray.time());
@@ -239,6 +258,31 @@ pub fn ray_color_with_aovs(
                     let cos_theta = rec.normal.dot(light_dir).max(0.0);
                     accumulated += throughput * bsdf_val * light_emission * cos_theta * mis_w
                         / light_pdf.max(1e-10);
+                }
+            }
+
+            // Sample explicit lights (USD lights)
+            if let Some((light_sample, _idx)) = config.lights.sample_one(rec.p, rng) {
+                if light_sample.pdf > 0.0 {
+                    let shadow_ray = Ray::new(rec.p, light_sample.direction, current_ray.time());
+                    let mut shadow_rec = HitRecord::default();
+                    let max_t = if light_sample.distance < f32::INFINITY {
+                        light_sample.distance - 0.001
+                    } else {
+                        f32::INFINITY
+                    };
+                    if !world.hit(&shadow_ray, Interval::new(0.001, max_t), &mut shadow_rec) {
+                        let bsdf_val = rec.material.bsdf(&current_ray, &rec, &shadow_ray);
+                        let bsdf_pdf = rec.material.pdf(&current_ray, &rec, &shadow_ray);
+                        let mis_w = power_heuristic(light_sample.pdf, bsdf_pdf);
+                        let cos_theta = rec.normal.dot(light_sample.direction).max(0.0);
+                        accumulated += throughput
+                            * bsdf_val
+                            * light_sample.emission
+                            * cos_theta
+                            * mis_w
+                            / light_sample.pdf.max(1e-10);
+                    }
                 }
             }
         }
@@ -479,6 +523,7 @@ mod tests {
             background: Color::new(0.5, 0.7, 1.0),
             use_sky_gradient: false,
             environment: None,
+            lights: Arc::new(LightList::new()),
         };
 
         let mut rng = StdRng::seed_from_u64(42);

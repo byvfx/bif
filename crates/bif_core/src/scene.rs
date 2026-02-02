@@ -354,6 +354,55 @@ impl Instance {
     }
 }
 
+/// A light in the scene (from UsdLux).
+#[derive(Clone, Debug)]
+pub enum Light {
+    /// Directional/distant light (like sun).
+    Distant {
+        /// World-space direction the light points
+        direction: Vec3,
+        /// Light color (RGB, 0-1)
+        color: Vec3,
+        /// Light intensity
+        intensity: f32,
+        /// Angular diameter in degrees (for soft shadows)
+        angle: f32,
+    },
+    /// Point/sphere light.
+    Point {
+        /// World-space position
+        position: Vec3,
+        /// Light color (RGB, 0-1)
+        color: Vec3,
+        /// Light intensity
+        intensity: f32,
+        /// Light radius (for soft shadows / area)
+        radius: f32,
+    },
+    /// Area/rect light.
+    Rect {
+        /// World transform (position + orientation)
+        transform: Mat4,
+        /// Light color (RGB, 0-1)
+        color: Vec3,
+        /// Light intensity
+        intensity: f32,
+        /// Width of the light
+        width: f32,
+        /// Height of the light
+        height: f32,
+    },
+    /// Environment/dome light.
+    Dome {
+        /// Rotation around Y axis in radians
+        rotation: f32,
+        /// Light intensity multiplier
+        intensity: f32,
+        /// Path to HDRI texture (if any)
+        texture_path: Option<String>,
+    },
+}
+
 /// A complete scene containing prototypes, instances, and materials.
 ///
 /// This corresponds to a `UsdStage` in USD terminology.
@@ -372,6 +421,9 @@ pub struct Scene {
 
     /// Materials used in the scene
     pub materials: Vec<Arc<Material>>,
+
+    /// Lights in the scene (from UsdLux)
+    pub lights: Vec<Light>,
 
     /// Scene name (usually from filename)
     pub name: String,

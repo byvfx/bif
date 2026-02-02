@@ -17,8 +17,8 @@ use bif_math::Mat4;
 use thiserror::Error;
 
 use crate::mesh::Mesh;
-use crate::scene::{AnimatedTransform, Scene, TimelineInfo, Transform, TransformKeyframe};
-use crate::usd::cpp_bridge::{UsdBridgeError, UsdStage};
+use crate::scene::{AnimatedTransform, Light, Scene, TimelineInfo, Transform, TransformKeyframe};
+use crate::usd::cpp_bridge::{UsdBridgeError, UsdLightType, UsdStage};
 use crate::usd::parser::{parse_usda, ParseError};
 use crate::usd::types::{UsdMesh, UsdPointInstancer, UsdPrim, UsdReference, UsdXform};
 
@@ -303,6 +303,77 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
 
     let material_time = material_start.elapsed();
 
+    // Load lights (UsdLux)
+    let light_start = Instant::now();
+    let usd_lights = stage.lights().unwrap_or_default();
+    for light_data in &usd_lights {
+        // Extract direction/position from transform
+        // For directional lights, -Z axis is the light direction
+        // For point lights, the translation is the position
+        let transform = light_data.transform;
+
+        let light = match light_data.light_type {
+            UsdLightType::Distant => {
+                // Direction is -Z axis of the transform (forward direction)
+                let direction = -bif_math::Vec3::new(
+                    transform.col(2).x,
+                    transform.col(2).y,
+                    transform.col(2).z,
+                )
+                .normalize();
+                Light::Distant {
+                    direction,
+                    color: light_data.color,
+                    intensity: light_data.intensity,
+                    angle: light_data.angle,
+                }
+            }
+            UsdLightType::Sphere => {
+                // Position is the translation component
+                let position = bif_math::Vec3::new(
+                    transform.col(3).x,
+                    transform.col(3).y,
+                    transform.col(3).z,
+                );
+                Light::Point {
+                    position,
+                    color: light_data.color,
+                    intensity: light_data.intensity,
+                    radius: light_data.radius,
+                }
+            }
+            UsdLightType::Rect => Light::Rect {
+                transform,
+                color: light_data.color,
+                intensity: light_data.intensity,
+                width: light_data.width,
+                height: light_data.height,
+            },
+            UsdLightType::Dome => {
+                // Extract Y rotation from transform (if any)
+                // For now, just use 0 rotation - could decompose transform later
+                Light::Dome {
+                    rotation: 0.0,
+                    intensity: light_data.intensity,
+                    texture_path: light_data.texture_path.clone(),
+                }
+            }
+        };
+
+        scene.lights.push(light);
+        log::debug!(
+            "Loaded light: {} ({:?}, intensity={})",
+            light_data.path,
+            light_data.light_type,
+            light_data.intensity
+        );
+    }
+    let light_time = light_start.elapsed();
+
+    if !usd_lights.is_empty() {
+        log::info!("Loaded {} lights", usd_lights.len());
+    }
+
     log::info!(
         "Loaded {} unique prototypes from {} meshes, {} materials",
         scene.prototype_count(),
@@ -413,6 +484,11 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
     log::info!(
         "  Materials:  {:>7.1}ms",
         material_time.as_secs_f64() * 1000.0
+    );
+    log::info!(
+        "  Lights:     {:>7.1}ms ({} lights)",
+        light_time.as_secs_f64() * 1000.0,
+        scene.lights.len()
     );
     log::info!(
         "  Instancers: {:>7.1}ms",
