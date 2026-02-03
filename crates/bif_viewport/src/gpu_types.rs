@@ -51,7 +51,8 @@ pub struct EnvironmentParamsUniform {
 }
 
 /// Maximum number of lights in the viewport.
-pub const MAX_VIEWPORT_LIGHTS: usize = 8;
+/// 32 matches common DCC limits and allows for more complex scenes.
+pub const MAX_VIEWPORT_LIGHTS: usize = 32;
 
 /// Light type constants (matching shader).
 pub const LIGHT_TYPE_DISTANT: u32 = 0;
@@ -150,6 +151,15 @@ impl LightsUniform {
     /// Create from scene lights (bif_core::Light).
     pub fn from_scene_lights(scene_lights: &[bif_core::Light]) -> Self {
         let mut uniform = Self::new();
+
+        if scene_lights.len() > MAX_VIEWPORT_LIGHTS {
+            log::warn!(
+                "Scene has {} lights, viewport limited to {}",
+                scene_lights.len(),
+                MAX_VIEWPORT_LIGHTS
+            );
+        }
+
         let count = scene_lights.len().min(MAX_VIEWPORT_LIGHTS);
         uniform.light_count[0] = count as u32;
 

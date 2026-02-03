@@ -40,7 +40,7 @@ struct LightGpu {
 }
 
 struct LightsUniform {
-    lights: array<LightGpu, 8>,
+    lights: array<LightGpu, 32>,
     light_count: vec4<u32>,        // [0] = count
 }
 
