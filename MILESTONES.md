@@ -663,6 +663,13 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
   - Ivar: NEE sampling for explicit lights alongside HDRI
   - Key files: `cpp/usd_bridge.cpp`, `bif_core/scene.rs`, `bif_viewport/basic.wgsl`, `bif_renderer/light.rs`
 
+  **Phase 5b: Viewport Camera Selection (WIP) (M19.3)**
+  - Camera dropdown in timeline panel (Viewport + USD cameras)
+  - Lock/Free toggle for camera controls
+  - Camera sync on selection and during playback
+  - Timeline UI improvements (numbered frames, start/end labels)
+  - Note: Play button animation still being debugged
+
   **Phase 6: Instance Transform Animation (TODO)**
   - Per-frame instance matrix evaluation
   - Test with transform-animated USD scenes
@@ -900,7 +907,7 @@ Key papers for Milestone 20 (Renderer Polish):
 
 ---
 
-**Last Updated:** February 1, 2026
-**Status:** Milestones 0-18.4 Complete, M19.2 Complete
-**Current:** USD Light support (viewport + Ivar)
-**Next:** Instance transform animation per frame
+**Last Updated:** February 2, 2026
+**Status:** Milestones 0-18.5, M19.2 Complete, M19.3 WIP
+**Current:** Viewport camera selection & locking (playback debugging)
+**Next:** Fix timeline playback, instance transform animation

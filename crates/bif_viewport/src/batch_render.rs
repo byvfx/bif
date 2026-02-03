@@ -117,11 +117,7 @@ impl SceneBuilderData {
                 // Update only this mesh's vertex range
                 let start = range.vertex_offset as usize;
                 for (i, v) in updated[start..start + vertex_count].iter_mut().enumerate() {
-                    v.position = [
-                        positions[i * 3],
-                        positions[i * 3 + 1],
-                        positions[i * 3 + 2],
-                    ];
+                    v.position = [positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2]];
                 }
             }
             updated
@@ -146,11 +142,8 @@ impl SceneBuilderData {
                         // Update positions while preserving UVs/normals
                         let mut updated = self.vertices.clone();
                         for (i, v) in updated.iter_mut().enumerate() {
-                            v.position = [
-                                positions[i * 3],
-                                positions[i * 3 + 1],
-                                positions[i * 3 + 2],
-                            ];
+                            v.position =
+                                [positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2]];
                         }
                         updated
                     }
@@ -175,7 +168,11 @@ impl SceneBuilderData {
 
             triangle_uvs.push([vertices[i0].uv, vertices[i1].uv, vertices[i2].uv]);
 
-            triangle_normals.push([vertices[i0].normal, vertices[i1].normal, vertices[i2].normal]);
+            triangle_normals.push([
+                vertices[i0].normal,
+                vertices[i1].normal,
+                vertices[i2].normal,
+            ]);
         }
 
         (triangle_vertices, triangle_uvs, triangle_normals)
@@ -514,7 +511,10 @@ fn camera_from_usd_transform(xform: Mat4, width: u32, height: u32) -> Camera {
 
     log::debug!(
         "USD camera: pos={:?}, target={:?}, up={:?}, fov={}",
-        position, target, up, fov_y
+        position,
+        target,
+        up,
+        fov_y
     );
 
     let mut camera = Camera::new()

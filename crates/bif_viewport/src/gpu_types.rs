@@ -66,10 +66,10 @@ pub const LIGHT_TYPE_RECT: u32 = 2;
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct LightGpu {
-    pub position_type: [f32; 4],     // xyz = position, w = type (as f32)
-    pub direction_radius: [f32; 4],  // xyz = direction, w = radius
-    pub color_intensity: [f32; 4],   // rgb = color, a = intensity
-    pub params: [f32; 4],            // angle, width, height, unused
+    pub position_type: [f32; 4],    // xyz = position, w = type (as f32)
+    pub direction_radius: [f32; 4], // xyz = direction, w = radius
+    pub color_intensity: [f32; 4],  // rgb = color, a = intensity
+    pub params: [f32; 4],           // angle, width, height, unused
 }
 
 impl LightGpu {
@@ -86,7 +86,12 @@ impl LightGpu {
     /// Create a point (sphere) light.
     pub fn point(position: [f32; 3], color: [f32; 3], intensity: f32, radius: f32) -> Self {
         Self {
-            position_type: [position[0], position[1], position[2], LIGHT_TYPE_POINT as f32],
+            position_type: [
+                position[0],
+                position[1],
+                position[2],
+                LIGHT_TYPE_POINT as f32,
+            ],
             direction_radius: [0.0, 0.0, 0.0, radius],
             color_intensity: [color[0], color[1], color[2], intensity],
             params: [0.0, 0.0, 0.0, 0.0],
@@ -103,7 +108,12 @@ impl LightGpu {
         height: f32,
     ) -> Self {
         Self {
-            position_type: [position[0], position[1], position[2], LIGHT_TYPE_RECT as f32],
+            position_type: [
+                position[0],
+                position[1],
+                position[2],
+                LIGHT_TYPE_RECT as f32,
+            ],
             direction_radius: [direction[0], direction[1], direction[2], 0.0],
             color_intensity: [color[0], color[1], color[2], intensity],
             params: [0.0, width, height, 0.0],
