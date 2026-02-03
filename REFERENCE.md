@@ -270,6 +270,65 @@ let camera = IvarCamera::from_usd_transform(transform, fov, aspect);
 
 ---
 
+## 6b. Viewport Camera Selection
+
+**Problem:** Switch viewport to USD camera view with locking
+
+**Solution:** Camera state in Renderer + timeline dropdown
+
+```rust
+// crates/bif_viewport/src/lib.rs
+pub struct Renderer {
+    // Viewport camera selection state
+    viewport_camera_source: CameraSource,
+    camera_locked: bool,
+    selected_usd_camera: Option<String>,
+}
+
+// Public getter for main.rs to check lock state
+pub fn is_camera_locked(&self) -> bool {
+    self.camera_locked
+}
+```
+
+**Timeline UI with camera dropdown:**
+```rust
+egui::ComboBox::from_id_salt("viewport_camera")
+    .selected_text(self.viewport_camera_source.display_name())
+    .show_ui(ui, |ui| {
+        // Viewport option
+        if ui.selectable_label(..., "Viewport").clicked() {
+            self.viewport_camera_source = CameraSource::Viewport;
+            self.camera_locked = false;
+            self.selected_usd_camera = None;
+        }
+        // USD cameras from stage
+        if let Some(ref stage) = self.usd_stage {
+            for path in stage.camera_paths()? {
+                if ui.selectable_label(..., &path).clicked() {
+                    self.viewport_camera_source = CameraSource::UsdCamera(path.clone());
+                    self.selected_usd_camera = Some(path);
+                    self.camera_locked = true;
+                }
+            }
+        }
+    });
+```
+
+**Camera control locking in main.rs:**
+```rust
+// Wrap all camera controls
+if !renderer.is_camera_locked() {
+    // orbit, pan, dolly, WASD movement
+}
+```
+
+**Key Files:**
+- `crates/bif_viewport/src/lib.rs` - Camera state, dropdown UI, sync
+- `crates/bif_viewer/src/main.rs` - Lock check for controls
+
+---
+
 ## 7. Material Pipeline
 
 **Problem:** Load UsdPreviewSurface + MaterialX materials

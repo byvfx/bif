@@ -265,31 +265,34 @@ impl ApplicationHandler for App {
                         let delta_y = position.y - last_pos.1;
 
                         if let Some(renderer) = &mut self.renderer {
-                            if self.left_mouse_pressed {
-                                // Orbit camera with left mouse
-                                let sensitivity = 0.005;
-                                renderer.camera.orbit(
-                                    -delta_x as f32 * sensitivity,
-                                    -delta_y as f32 * sensitivity,
-                                );
-                            } else if self.middle_mouse_pressed {
-                                // Pan camera with middle mouse (scaled with distance)
-                                let sensitivity = 0.1;
-                                let distance_scale = renderer.camera.distance * 0.0001;
-                                renderer.camera.pan(
-                                    -delta_x as f32 * sensitivity * distance_scale,
-                                    delta_y as f32 * sensitivity * distance_scale,
-                                    0.0,
-                                    1.0, // delta_time = 1.0 for mouse pan (direct control)
-                                );
-                            } else if self.right_mouse_pressed {
-                                // Dolly (zoom) with right mouse drag - scale with distance
-                                let sensitivity = 0.005;
-                                let dolly_amount =
-                                    delta_y as f32 * sensitivity * renderer.camera.distance;
-                                renderer.camera.dolly(dolly_amount);
+                            // Skip camera controls if locked (USD camera active)
+                            if !renderer.is_camera_locked() {
+                                if self.left_mouse_pressed {
+                                    // Orbit camera with left mouse
+                                    let sensitivity = 0.005;
+                                    renderer.camera.orbit(
+                                        -delta_x as f32 * sensitivity,
+                                        -delta_y as f32 * sensitivity,
+                                    );
+                                } else if self.middle_mouse_pressed {
+                                    // Pan camera with middle mouse (scaled with distance)
+                                    let sensitivity = 0.1;
+                                    let distance_scale = renderer.camera.distance * 0.0001;
+                                    renderer.camera.pan(
+                                        -delta_x as f32 * sensitivity * distance_scale,
+                                        delta_y as f32 * sensitivity * distance_scale,
+                                        0.0,
+                                        1.0, // delta_time = 1.0 for mouse pan (direct control)
+                                    );
+                                } else if self.right_mouse_pressed {
+                                    // Dolly (zoom) with right mouse drag - scale with distance
+                                    let sensitivity = 0.005;
+                                    let dolly_amount =
+                                        delta_y as f32 * sensitivity * renderer.camera.distance;
+                                    renderer.camera.dolly(dolly_amount);
+                                }
+                                renderer.update_camera();
                             }
-                            renderer.update_camera();
                         }
                     }
                     self.last_mouse_pos = Some((position.x, position.y));
@@ -297,15 +300,18 @@ impl ApplicationHandler for App {
             }
             WindowEvent::MouseWheel { delta, .. } => {
                 if let Some(renderer) = &mut self.renderer {
-                    // Handle mouse wheel for dolly (zoom in/out) - scaled with distance
-                    let scroll_lines = match delta {
-                        winit::event::MouseScrollDelta::LineDelta(_, y) => y,
-                        winit::event::MouseScrollDelta::PixelDelta(pos) => pos.y as f32 / 50.0,
-                    };
-                    // Scale dolly with distance for consistent feel
-                    let dolly_amount = -scroll_lines * renderer.camera.distance * 0.1;
-                    renderer.camera.dolly(dolly_amount);
-                    renderer.update_camera();
+                    // Skip camera controls if locked (USD camera active)
+                    if !renderer.is_camera_locked() {
+                        // Handle mouse wheel for dolly (zoom in/out) - scaled with distance
+                        let scroll_lines = match delta {
+                            winit::event::MouseScrollDelta::LineDelta(_, y) => y,
+                            winit::event::MouseScrollDelta::PixelDelta(pos) => pos.y as f32 / 50.0,
+                        };
+                        // Scale dolly with distance for consistent feel
+                        let dolly_amount = -scroll_lines * renderer.camera.distance * 0.1;
+                        renderer.camera.dolly(dolly_amount);
+                        renderer.update_camera();
+                    }
                 }
             }
             WindowEvent::KeyboardInput {
@@ -346,34 +352,36 @@ impl ApplicationHandler for App {
                     renderer.update_animation(delta_time);
                 }
 
-                // Handle keyboard movement
+                // Handle keyboard movement (skip if camera locked)
                 if let Some(renderer) = &mut self.renderer {
-                    let mut right = 0.0;
-                    let mut up = 0.0;
-                    let mut forward = 0.0;
+                    if !renderer.is_camera_locked() {
+                        let mut right = 0.0;
+                        let mut up = 0.0;
+                        let mut forward = 0.0;
 
-                    if self.keys_pressed.contains(&KeyCode::KeyW) {
-                        forward += 1.0;
-                    }
-                    if self.keys_pressed.contains(&KeyCode::KeyS) {
-                        forward -= 1.0;
-                    }
-                    if self.keys_pressed.contains(&KeyCode::KeyA) {
-                        right -= 1.0;
-                    }
-                    if self.keys_pressed.contains(&KeyCode::KeyD) {
-                        right += 1.0;
-                    }
-                    if self.keys_pressed.contains(&KeyCode::KeyE) {
-                        up += 1.0;
-                    }
-                    if self.keys_pressed.contains(&KeyCode::KeyQ) {
-                        up -= 1.0;
-                    }
+                        if self.keys_pressed.contains(&KeyCode::KeyW) {
+                            forward += 1.0;
+                        }
+                        if self.keys_pressed.contains(&KeyCode::KeyS) {
+                            forward -= 1.0;
+                        }
+                        if self.keys_pressed.contains(&KeyCode::KeyA) {
+                            right -= 1.0;
+                        }
+                        if self.keys_pressed.contains(&KeyCode::KeyD) {
+                            right += 1.0;
+                        }
+                        if self.keys_pressed.contains(&KeyCode::KeyE) {
+                            up += 1.0;
+                        }
+                        if self.keys_pressed.contains(&KeyCode::KeyQ) {
+                            up -= 1.0;
+                        }
 
-                    if right != 0.0 || up != 0.0 || forward != 0.0 {
-                        renderer.camera.pan(right, up, forward, delta_time);
-                        renderer.update_camera();
+                        if right != 0.0 || up != 0.0 || forward != 0.0 {
+                            renderer.camera.pan(right, up, forward, delta_time);
+                            renderer.update_camera();
+                        }
                     }
                 }
 

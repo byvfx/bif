@@ -1,7 +1,7 @@
-# Session Handoff - February 1, 2026
+# Session Handoff - February 2, 2026
 
-**Last Updated:** M18.5 USD Implementation Polish
-**Next Milestone:** M19.2 (instance transform animation per frame)
+**Last Updated:** M19.3 Viewport Camera Selection
+**Next Milestone:** Fix timeline playback, then M19.4 instance transform animation
 **Project:** BIF - VFX Scene Assembler & Renderer
 
 ---
@@ -10,8 +10,8 @@
 
 | Status | Details |
 |--------|---------|
-| Complete | Milestones 0-18.5, M19.1 vertex animation in batch render |
-| Current | Per-frame BVH rebuild for vertex-animated geometry |
+| Complete | Milestones 0-18.5, M19.2 USD lights |
+| Current | M19.3 viewport camera selection (WIP - playback debugging) |
 | Tests | 137+ passing |
 | Performance | 60 FPS viewport, 10K instances with LOD |
 
@@ -19,83 +19,29 @@
 
 ## Recent Work
 
-### M18.5: USD Implementation Polish (Feb 1, 2026)
+### M19.3: Viewport Camera Selection (Feb 2, 2026)
 
-Fixed overflow, removed verbose logging causing 23x slowdown, added timing instrumentation.
-
-| Component | Details |
-|-----------|---------|
-| Overflow fix | `num_triangles` u32→u64 to handle 100K tri × 100K instances |
-| Console I/O fix | Removed per-mesh/per-keyframe logging (**23x speedup**) |
-| C++ profiling | Granular timing in `cache_stage_data()` |
-| Rust timing | Stage/meshes/materials/instancers/GPU/textures breakdown |
-
-**Performance gains:**
-| Scene | Before | After | Speedup |
-|-------|--------|-------|---------|
-| Spaceship (921 meshes) | 117s | 5s | 23x |
-| Palm tree (220K verts) | 2.5s | 0.37s | 7x |
-
-**Bottleneck identified:** Texture loading (22s for 13 large textures) - future milestone
-
-### M19.1c: Multi-Prototype Vertex Animation Fix (Feb 1, 2026)
-
-Fixed vertex animation not working in Ivar GUI render for multi-prototype scenes.
+Added camera dropdown to timeline panel for viewport camera selection.
 
 | Component | Details |
 |-----------|---------|
-| Root cause | `use_multi_draw` gate incorrectly blocked animation path |
-| lib.rs fix | Removed `\|\| self.use_multi_draw` from `build_triangles_at_time()` |
-| batch_render.rs fix | Same gate removal for batch export path |
-| GUI Ivar fix | Build triangles on main thread before spawning background thread |
-| Auto-invalidate | Ivar scene cache invalidates when vertex animation frame changes |
+| Camera dropdown | Timeline panel shows "Viewport" + USD cameras from stage |
+| Lock toggle | Lock/Free button to enable/disable manual camera control |
+| Camera sync | Immediate sync on selection, per-frame sync during playback |
+| Control locking | Mouse orbit/pan/dolly and WASD blocked when locked |
+| Timeline UI | Numbered frames with start/end labels, integer display |
 
-### M19.1: Vertex Animation in Batch Render (Jan 31, 2026)
+**Known Issue:** Play button animation not advancing properly. Scrubbing works. Investigating rapid redraw causing tiny delta_time values. Frame tolerance increased to 0.5 as partial fix.
 
-Batch render now rebuilds Embree BVH each frame for vertex-animated geometry.
+### M19.2: USD Light Support (Feb 1, 2026)
 
-| Component | Details |
-|-----------|---------|
-| `build_triangles_at_time()` | Extract triangles with USD time query for animated verts |
-| `SceneBuilderData` | Holds mesh/material data for per-frame scene rebuilds |
-| `batch_render_loop` | Conditionally rebuilds Embree scene when animation detected |
-| `EmbreeScene::drop()` | Logs instance/triangle counts for memory tracking |
-| Static optimization | Scenes without vertex animation skip per-frame rebuild |
-
-### M18.4: Multi-Prototype Ivar Fix (Jan 31, 2026)
-
-Fixed double mesh instances in Ivar rendering for multi-prototype USD scenes.
+Added UsdLux light extraction and rendering.
 
 | Component | Details |
 |-----------|---------|
-| Problem | Meshes appeared duplicated in ray tracer (viewport correct) |
-| Root cause | Combined mesh has baked transforms + Embree applied transforms again |
-| C++ fix | Mesh path deduplication via `std::set` in `cache_stage_data()` |
-| Rust fix | Use identity transform for Embree when `use_multi_draw` is true |
-
-### M19: Batch Render to Disk (Jan 31, 2026)
-
-Implemented batch rendering with USD camera animation support.
-
-| Component | Details |
-|-----------|---------|
-| `batch_render.rs` | Frame sequence rendering with EXR output |
-| FOV fix | Convert viewport FOV from radians to degrees |
-| Fallback lighting | Sky gradient when no HDRI loaded |
-| UNC paths | Fixed network path handling (`\\server\share\...`) |
-| Sync build | Scene builds synchronously when Render clicked |
-| USD camera | Matrix row/column fix - translation in row 3 |
-| Viewport sync | "Sync Viewport to Camera" button for debugging |
-| UI | Render button stays visible during render |
-
-**Key fixes:**
-- Black renders: FOV was in radians, renderer expected degrees
-- Camera pos (0,0,0): USD matrix uses row-major, was reading col(3) instead of row(3)
-- UNC paths: `canonicalize()` returns `\\?\UNC\...`, needed conversion back to `\\server\...`
-
-### M18.3: USD Import Refinement (Jan 27, 2026)
-
-Fixed USD files with relative references (`@./file.usda@`) failing to load.
+| C++ bridge | UsdLux extraction (Distant, Sphere, Rect, Dome) |
+| Viewport | Direct lighting with Cook-Torrance BRDF in shader |
+| Ivar | NEE sampling for explicit lights alongside HDRI |
 
 ---
 
@@ -110,40 +56,36 @@ Fixed USD files with relative references (`@./file.usda@`) failing to load.
 
 ### What Works
 
+**Viewport Camera:**
+- Camera dropdown in timeline (Viewport + USD cameras)
+- Lock/unlock toggle for camera controls
+- Camera syncs when USD camera selected
+- Scrubbing timeline updates camera position
+
 **Batch Render:**
 - EXR output with AOVs (depth, normals)
 - USD camera animation (position changes per frame)
 - Frame range with step
 - Progress bar with cancellation
-- ZIP compression
 
 **USD Import:**
 - USDA (pure Rust) + USDC (C++ bridge)
-- Relative references (`@./file.usda@`)
-- UNC network paths (`\\server\share\file.usd`)
-- PointInstancer with external prototypes
-- UsdPreviewSurface + MaterialX standard_surface
-- Camera animation (xformOp time samples)
+- Relative references, UNC paths
+- UsdPreviewSurface + MaterialX
+- Camera and transform animation
 
 **Animation:**
 - Timeline UI with playback controls
 - Transform animation (xformOp time samples)
-- Vertex animation for multi-mesh combined scenes
+- Vertex animation for multi-mesh scenes
 - USD camera sync to viewport
-
-**Viewport (GPU):**
-- Textured PBR materials from USD
-- Per-face materials via GeomSubsets
-- HDRI environment: GPU compute IBL
-- Skybox pass with rotation/intensity controls
-
-**Ivar (CPU Path Tracer):**
-- Disney Principled BSDF
-- NEE/MIS for HDRI direct lighting
-- Full texture sampling
 
 ### Known Issues
 
+- **Play button animation:** Timeline advances slowly/inconsistently during playback
+  - Scrubbing works correctly
+  - Frame tolerance changed 0.001→0.5 as workaround
+  - Root cause: rapid redraws with tiny delta_time (~1.4ms)
 - Instance transform animation not yet evaluated per frame in batch render
 - OIIO `load_texture_with_mips` crashes on .tx files on Windows
 
@@ -151,11 +93,12 @@ Fixed USD files with relative references (`@./file.usda@`) failing to load.
 
 ## Next Session
 
-**Goal:** Per-frame instance transform animation in batch render
+**Goal:** Fix timeline playback animation
 
-1. Evaluate instance transforms at each frame time
-2. Update Embree instance matrices per frame (cheaper than full rebuild)
-3. Test with transform-animated USD scenes
+1. Investigate why delta_time is so small during playback
+2. Consider accumulating delta or rate-limiting animation updates
+3. Test with different VSync/frame rate settings
+4. Once fixed, continue to instance transform animation per frame
 
 ---
 
@@ -177,10 +120,10 @@ cargo run -p bif_viewer --features oiio          # With OIIO
 . .\setup_usd_env.ps1
 
 # Test camera animation
-cargo run -p bif_viewer -- --usd assets/moving_cam_usd.usd_rop1.usda
+cargo run -p bif_viewer -- --usd assets/animated_cube.usda
 ```
 
 ---
 
 **Branch:** main
-**Ready for:** M19.2 (instance transform animation per frame)
+**Ready for:** Fix timeline playback, then M19.4 instance transform animation

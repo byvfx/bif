@@ -359,6 +359,14 @@ pub struct Renderer {
     // Batch render state
     batch_receiver: Option<mpsc::Receiver<BatchMessage>>,
     batch_cancel_flag: Option<Arc<AtomicBool>>,
+
+    // Viewport camera selection state
+    /// Active camera source for viewport (separate from batch render settings)
+    viewport_camera_source: CameraSource,
+    /// Lock camera controls when USD camera active
+    camera_locked: bool,
+    /// Selected USD camera path (for animation during playback)
+    selected_usd_camera: Option<String>,
 }
 
 impl Renderer {
@@ -1153,6 +1161,9 @@ impl Renderer {
             compute_ibl,
             batch_receiver: None,
             batch_cancel_flag: None,
+            viewport_camera_source: CameraSource::Viewport,
+            camera_locked: false,
+            selected_usd_camera: None,
         })
     }
 
@@ -1973,6 +1984,9 @@ impl Renderer {
             compute_ibl,
             batch_receiver: None,
             batch_cancel_flag: None,
+            viewport_camera_source: CameraSource::Viewport,
+            camera_locked: false,
+            selected_usd_camera: None,
         })
     }
 
@@ -1985,6 +1999,11 @@ impl Renderer {
         let mut renderer = Self::new_with_scene(window, scene).await?;
         renderer.usd_stage = Some(Arc::new(stage));
         Ok(renderer)
+    }
+
+    /// Check if camera controls are locked (USD camera active).
+    pub fn is_camera_locked(&self) -> bool {
+        self.camera_locked
     }
 
     /// Handle window resize
@@ -2231,7 +2250,8 @@ impl Renderer {
 
                 // Extract forward direction (negative Z in camera space)
                 // USD row-major: row 2 is the Z axis
-                let forward = -Vec3::new(xform.row(0).z, xform.row(1).z, xform.row(2).z).normalize();
+                let forward =
+                    -Vec3::new(xform.row(0).z, xform.row(1).z, xform.row(2).z).normalize();
 
                 // Target is position + forward * reasonable distance
                 let target = position + forward * 10.0;
@@ -2241,7 +2261,11 @@ impl Renderer {
 
                 log::info!(
                     "USD camera '{}' at frame {}: pos={:?}, target={:?}, up={:?}",
-                    camera_path, time, position, target, up
+                    camera_path,
+                    time,
+                    position,
+                    target,
+                    up
                 );
 
                 // Update viewport camera
@@ -2556,7 +2580,6 @@ impl Renderer {
             })
             .collect();
 
-
         // Warn if instance count exceeds buffer capacity
         if instances.len() > self.max_instances as usize {
             log::warn!(
@@ -2812,10 +2835,7 @@ impl Renderer {
         // Log viewport timing breakdown
         let total_viewport_time = viewport_load_start.elapsed();
         log::info!("Viewport Setup:");
-        log::info!(
-            "  GPU buffers: {:>7.1}ms",
-            gpu_time.as_secs_f64() * 1000.0
-        );
+        log::info!("  GPU buffers: {:>7.1}ms", gpu_time.as_secs_f64() * 1000.0);
         log::info!(
             "  Textures:    {:>7.1}ms ({} textures)",
             texture_time.as_secs_f64() * 1000.0,
@@ -2857,30 +2877,27 @@ impl Renderer {
     /// Advances the timeline if playing and updates instance transforms.
     pub fn update_animation(&mut self, delta_time: f32) {
         // Advance timeline if playing
-        let was_playing = self.timeline_state.is_playing;
         self.timeline_state.advance(delta_time);
 
-        // Check if frame changed
+        // Check if frame changed enough to warrant re-evaluation
+        // Use larger tolerance (0.5 frame) to avoid excessive updates from rapid redraws
         let current_frame = self.timeline_state.current_frame;
-        let frame_tolerance = 0.001;
-        if (current_frame - self.last_evaluated_frame).abs() < frame_tolerance {
-            return; // No change
+        let frame_tolerance = 0.5;
+        let frame_diff = (current_frame - self.last_evaluated_frame).abs();
+        if frame_diff < frame_tolerance {
+            return; // Not enough change yet
         }
 
-        // Debug: log frame changes when playing
-        if was_playing {
-            log::debug!(
-                "Animation frame: {:.1} (instances: {}, animations: {})",
-                current_frame,
-                self.instance_animations.len(),
-                self.instance_animations
-                    .iter()
-                    .filter(|a| a.is_some())
-                    .count()
-            );
+        // Get effective frame (snapped to integer if enabled)
+        let eval_frame = self.timeline_state.effective_frame();
+
+        // Sync USD camera if selected (animates camera during playback)
+        // Do this BEFORE checking for mesh animations - camera can animate alone
+        if let Some(camera_path) = self.selected_usd_camera.clone() {
+            self.sync_viewport_to_usd_camera(&camera_path);
         }
 
-        // Check if we have any animations (transform or vertex)
+        // Check if we have any mesh animations (transform or vertex)
         let animated_count = self
             .instance_animations
             .iter()
@@ -2888,23 +2905,12 @@ impl Renderer {
             .count();
         let has_transform_animations = animated_count > 0;
         let has_vertex_animations = !self.vertex_animated_meshes.is_empty();
-        let has_animations = has_transform_animations || has_vertex_animations;
+        let has_mesh_animations = has_transform_animations || has_vertex_animations;
 
-        if !has_animations {
-            if was_playing {
-                log::warn!(
-                    "No animations found! instance_animations.len()={}, animated_count={}, vertex_animated={}",
-                    self.instance_animations.len(),
-                    animated_count,
-                    self.vertex_animated_meshes.len()
-                );
-            }
+        if !has_mesh_animations {
             self.last_evaluated_frame = current_frame;
             return;
         }
-
-        // Get effective frame (snapped to integer if enabled)
-        let eval_frame = self.timeline_state.effective_frame();
 
         // Evaluate transforms and update GPU buffer
         log::debug!("Evaluating animation at frame {:.1}", eval_frame);
@@ -2915,8 +2921,10 @@ impl Renderer {
         // Update vertex buffer for meshes with vertex animation
         if has_vertex_animations {
             self.update_vertex_animation(eval_frame);
-            // Invalidate Ivar scene cache so it rebuilds with new vertex positions
-            self.invalidate_ivar_scene();
+            // Only invalidate Ivar cache when in Ivar mode (avoid overhead during viewport playback)
+            if self.ivar_state.mode == RenderMode::Ivar {
+                self.invalidate_ivar_scene();
+            }
         }
 
         self.last_evaluated_frame = current_frame;
@@ -3350,11 +3358,7 @@ impl Renderer {
                     // Update only this mesh's vertex range
                     let start = range.vertex_offset as usize;
                     for (i, v) in updated[start..start + vertex_count].iter_mut().enumerate() {
-                        v.position = [
-                            positions[i * 3],
-                            positions[i * 3 + 1],
-                            positions[i * 3 + 2],
-                        ];
+                        v.position = [positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2]];
                     }
                 }
                 return Some(updated);
@@ -3381,11 +3385,7 @@ impl Renderer {
             // Clone and update positions
             let mut updated = self.mesh_data.vertices.clone();
             for (i, v) in updated.iter_mut().enumerate() {
-                v.position = [
-                    positions[i * 3],
-                    positions[i * 3 + 1],
-                    positions[i * 3 + 2],
-                ];
+                v.position = [positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2]];
             }
             Some(updated)
         });
@@ -3650,8 +3650,7 @@ impl Renderer {
                 }
 
                 // Render bucket with AOVs
-                let result =
-                    render_bucket_with_aovs(bucket, &ivar_camera, world.as_ref(), &config);
+                let result = render_bucket_with_aovs(bucket, &ivar_camera, world.as_ref(), &config);
 
                 let _ = tx.send(IvarMessage::BucketComplete(result));
             });
@@ -3678,7 +3677,11 @@ impl Renderer {
         while let Ok(msg) = receiver.try_recv() {
             match msg {
                 IvarMessage::BucketComplete(result) => {
-                    let image_width = self.ivar_state.image_buffer.as_ref().map_or(0, |img| img.width);
+                    let image_width = self
+                        .ivar_state
+                        .image_buffer
+                        .as_ref()
+                        .map_or(0, |img| img.width);
 
                     // Copy pixels to image buffer and AOV buffers
                     for local_y in 0..result.bucket.height {
@@ -3746,8 +3749,7 @@ impl Renderer {
 
         let Some(world) = self.ivar_state.world.clone() else {
             log::error!("Cannot start batch render: no scene");
-            self.ivar_state.batch_status =
-                BatchRenderStatus::Failed("No scene loaded".to_string());
+            self.ivar_state.batch_status = BatchRenderStatus::Failed("No scene loaded".to_string());
             return;
         };
 
@@ -3769,7 +3771,9 @@ impl Renderer {
                 stage: self.usd_stage.clone(),
                 mesh_ranges: self.mesh_data.mesh_ranges.clone(),
             };
-            Some(Box::new(move |time: f64| builder_data.build_scene_at_time(time)))
+            Some(Box::new(move |time: f64| {
+                builder_data.build_scene_at_time(time)
+            }))
         } else {
             None
         };
@@ -3908,7 +3912,10 @@ impl Renderer {
                             frame_progress,
                         };
                     }
-                    BatchMessage::FrameComplete { frame, elapsed_secs } => {
+                    BatchMessage::FrameComplete {
+                        frame,
+                        elapsed_secs,
+                    } => {
                         log::info!("Batch frame {} complete in {:.1}s", frame, elapsed_secs);
                     }
                     BatchMessage::Complete { total_elapsed_secs } => {
@@ -4456,6 +4463,60 @@ impl Renderer {
                     let has_animation = self.timeline_state.has_range();
 
                     ui.horizontal_centered(|ui| {
+                        // Camera dropdown
+                        let cam_display = self.viewport_camera_source.display_name();
+                        egui::ComboBox::from_id_salt("viewport_camera")
+                            .selected_text(cam_display)
+                            .width(100.0)
+                            .show_ui(ui, |ui| {
+                                // Viewport option
+                                if ui
+                                    .selectable_label(
+                                        matches!(self.viewport_camera_source, CameraSource::Viewport),
+                                        "Viewport",
+                                    )
+                                    .clicked()
+                                {
+                                    self.viewport_camera_source = CameraSource::Viewport;
+                                    self.camera_locked = false;
+                                    self.selected_usd_camera = None;
+                                }
+                                // USD cameras from stage
+                                if let Some(ref stage) = self.usd_stage {
+                                    if let Ok(paths) = stage.camera_paths() {
+                                        for path in paths {
+                                            let is_selected = matches!(
+                                                &self.viewport_camera_source,
+                                                CameraSource::UsdCamera(p) if p == &path
+                                            );
+                                            if ui.selectable_label(is_selected, &path).clicked() {
+                                                self.viewport_camera_source =
+                                                    CameraSource::UsdCamera(path.clone());
+                                                self.selected_usd_camera = Some(path.clone());
+                                                self.camera_locked = true;
+                                                // Sync to camera immediately (via egui temp data)
+                                                ctx.data_mut(|d| {
+                                                    d.insert_temp(
+                                                        egui::Id::new("sync_viewport_camera"),
+                                                        path,
+                                                    )
+                                                });
+                                            }
+                                        }
+                                    }
+                                }
+                            });
+
+                        // Lock/Unlock toggle (only show when USD camera selected)
+                        if matches!(self.viewport_camera_source, CameraSource::UsdCamera(_)) {
+                            let icon = if self.camera_locked { "Lock" } else { "Free" };
+                            if ui.button(icon).clicked() {
+                                self.camera_locked = !self.camera_locked;
+                            }
+                        }
+
+                        ui.separator();
+
                         // Play/Pause button (disabled if no animation)
                         ui.add_enabled_ui(has_animation, |ui| {
                             let play_text = if self.timeline_state.is_playing {
@@ -4473,7 +4534,7 @@ impl Renderer {
                             }
                         });
 
-                        // Frame slider (use 0-100 default range if no animation)
+                        // Frame range display (start)
                         let (start, end) = if has_animation {
                             (
                                 self.timeline_state.start_frame as f32,
@@ -4482,11 +4543,19 @@ impl Renderer {
                         } else {
                             (1.0, 100.0)
                         };
+                        ui.label(format!("{:.0}", start));
+
+                        // Frame slider with frame numbers shown
                         let mut frame = self.timeline_state.current_frame as f32;
-                        let slider = egui::Slider::new(&mut frame, start..=end).show_value(false);
+                        let slider = egui::Slider::new(&mut frame, start..=end)
+                            .show_value(true)
+                            .integer();
                         if ui.add_sized([200.0, 18.0], slider).changed() {
                             self.timeline_state.current_frame = frame as f64;
                         }
+
+                        // Frame range display (end)
+                        ui.label(format!("{:.0}", end));
 
                         // Go to end (disabled if no animation)
                         ui.add_enabled_ui(has_animation, |ui| {
@@ -4501,13 +4570,8 @@ impl Renderer {
                         // Integer frame snap toggle
                         ui.checkbox(&mut self.timeline_state.snap_to_frames, "Int");
 
-                        // Frame display
-                        let display_frame = self.timeline_state.effective_frame();
-                        ui.label(format!("Frame: {:.0}", display_frame));
-                        ui.label(format!("FPS: {:.0}", self.timeline_state.fps));
-
-                        // USD camera toggle
-                        ui.checkbox(&mut self.timeline_state.use_usd_camera, "USD Cam");
+                        // FPS display
+                        ui.label(format!("@{:.0}fps", self.timeline_state.fps));
                     });
                 });
             let timeline_height = timeline_panel.response.rect.height();
@@ -4588,13 +4652,23 @@ impl Renderer {
             }
         }
 
-        // Handle sync viewport to USD camera request
+        // Handle sync viewport to USD camera request (from batch render panel)
         let sync_camera: Option<String> = self
             .egui_ctx
             .data(|d| d.get_temp(egui::Id::new("sync_viewport_to_usd_camera")));
         if let Some(camera_path) = sync_camera {
             self.egui_ctx
                 .data_mut(|d| d.remove::<String>(egui::Id::new("sync_viewport_to_usd_camera")));
+            self.sync_viewport_to_usd_camera(&camera_path);
+        }
+
+        // Handle viewport camera selection from timeline dropdown
+        let sync_viewport_cam: Option<String> = self
+            .egui_ctx
+            .data(|d| d.get_temp(egui::Id::new("sync_viewport_camera")));
+        if let Some(camera_path) = sync_viewport_cam {
+            self.egui_ctx
+                .data_mut(|d| d.remove::<String>(egui::Id::new("sync_viewport_camera")));
             self.sync_viewport_to_usd_camera(&camera_path);
         }
 
@@ -4606,8 +4680,10 @@ impl Renderer {
             self.egui_ctx
                 .data_mut(|d| d.remove::<String>(egui::Id::new("prim_selection_changed")));
             self.selected_prim_path = Some(prim_path.clone());
-            let provider: Option<&dyn PrimDataProvider> =
-                self.usd_stage.as_ref().map(|s| s.as_ref() as &dyn PrimDataProvider);
+            let provider: Option<&dyn PrimDataProvider> = self
+                .usd_stage
+                .as_ref()
+                .map(|s| s.as_ref() as &dyn PrimDataProvider);
             if let Some(info) = provider.and_then(|p| p.get_prim_info(&prim_path)) {
                 self.selected_prim_properties = Some(PrimProperties::from_display_info(&info));
             } else {
