@@ -32,6 +32,7 @@ pub mod ivar_renderer;
 pub mod ivar_state;
 pub mod lights;
 pub mod mesh_data;
+pub mod multi_draw;
 pub mod texture_loader;
 
 // Scene browser and property inspector modules
@@ -51,6 +52,7 @@ pub use gpu_types::{
 pub use gnomon::GnomonRenderer;
 pub use ivar_renderer::{create_depth_texture, create_ivar_pipeline, create_ivar_texture};
 pub use lights::LightsManager;
+pub use multi_draw::MultiDrawState;
 pub use ivar_state::{
     BatchRenderSettings, BatchRenderStatus, BuildStatus, CameraSnapshot, CameraSource, IvarMessage,
     IvarState, RenderMode,
@@ -271,12 +273,7 @@ pub struct Renderer {
     texture_base_dir: Option<std::path::PathBuf>,
 
     // Multi-draw state for per-prototype rendering
-    /// Per-prototype GPU buffers (vertex/index) for multi-draw rendering
-    prototype_gpu_data: Vec<PrototypeGpuData>,
-    /// Instances grouped by prototype ID for multi-draw
-    instance_groups: HashMap<usize, Vec<InstanceData>>,
-    /// Whether using multi-draw mode (multiple prototypes) vs single buffer
-    use_multi_draw: bool,
+    multi_draw: MultiDrawState,
 
     // Frustum culling for GPU instancing optimization
     /// Maximum instances the buffer can hold (preallocated)
@@ -992,9 +989,7 @@ impl Renderer {
             scene_material: bif_core::Material::default(),
             scene_materials: vec![],
             texture_base_dir: None,
-            prototype_gpu_data: vec![],
-            instance_groups: HashMap::new(),
-            use_multi_draw: false,
+            multi_draw: MultiDrawState::new(),
             max_instances: MAX_INSTANCES,
             instance_aabbs: vec![],
             prototype_aabb: Aabb::empty(),
@@ -1688,9 +1683,7 @@ impl Renderer {
             scene_material,
             scene_materials: scene.materials.clone(),
             texture_base_dir: None,
-            prototype_gpu_data: vec![],
-            instance_groups: HashMap::new(),
-            use_multi_draw: false,
+            multi_draw: MultiDrawState::new(),
             max_instances: MAX_INSTANCES,
             instance_aabbs,
             prototype_aabb,
@@ -2398,11 +2391,11 @@ impl Renderer {
         self.texture_base_dir = path.parent().map(|p| p.to_path_buf());
 
         // Store multi-draw state
-        self.prototype_gpu_data = prototype_gpu_data;
-        self.use_multi_draw = use_multi_draw;
+        self.multi_draw.prototype_gpu_data = prototype_gpu_data;
+        self.multi_draw.enabled = use_multi_draw;
 
         // Group instances by prototype for multi-draw rendering
-        let mut instance_groups: HashMap<usize, Vec<InstanceData>> = HashMap::new();
+        self.multi_draw.instance_groups.clear();
         for inst in scene.instances() {
             let material_id = scene
                 .prototypes
@@ -2411,7 +2404,8 @@ impl Renderer {
                 .and_then(|mat| material_index_by_name.get(&mat.name).copied())
                 .unwrap_or(0);
 
-            instance_groups
+            self.multi_draw
+                .instance_groups
                 .entry(inst.prototype_id)
                 .or_default()
                 .push(InstanceData {
@@ -2419,13 +2413,13 @@ impl Renderer {
                     material_id,
                 });
         }
-        self.instance_groups = instance_groups;
 
         if use_multi_draw {
             log::info!(
                 "Multi-draw: {} prototypes, {} total instances across groups",
-                self.prototype_gpu_data.len(),
-                self.instance_groups
+                self.multi_draw.prototype_gpu_data.len(),
+                self.multi_draw
+                    .instance_groups
                     .values()
                     .map(|v| v.len())
                     .sum::<usize>()
@@ -2716,114 +2710,33 @@ impl Renderer {
         self.frustum_camera_snapshot = CameraSnapshot::default();
 
         // Rebuild instance_groups with animated transforms for multi-draw rendering
-        if self.use_multi_draw {
-            self.instance_groups.clear();
-            for (i, model_matrix) in self.current_transforms.iter().enumerate() {
-                let prototype_id = self.instance_prototype_ids.get(i).copied().unwrap_or(0);
-                let material_id = self.instance_material_ids.get(i).copied().unwrap_or(0);
-
-                self.instance_groups
-                    .entry(prototype_id)
-                    .or_default()
-                    .push(InstanceData {
-                        model_matrix: model_matrix.to_cols_array_2d(),
-                        material_id,
-                    });
-            }
+        if self.multi_draw.enabled {
+            self.multi_draw.rebuild_instance_groups(
+                &self.current_transforms,
+                &self.instance_prototype_ids,
+                &self.instance_material_ids,
+            );
         }
     }
 
     /// Update vertex buffer for meshes with vertex animation (deformation).
     fn update_vertex_animation(&mut self, frame: f64) {
         let stage = match &self.usd_stage {
-            Some(s) => s,
+            Some(s) => s.clone(),
             None => return,
         };
 
         // Multi-draw mode: update per-prototype vertex buffers directly
         // This must come BEFORE mesh_ranges check because multi-draw renders from
         // prototype_gpu_data buffers, not the combined self.vertex_buffer
-        if self.use_multi_draw {
-            log::debug!(
-                "update_vertex_animation: use_multi_draw=true, vertex_animated_meshes={:?}",
-                self.vertex_animated_meshes
+        if self.multi_draw.enabled {
+            let vertex_animated = self.vertex_animated_meshes.clone();
+            self.multi_draw.update_vertex_animation(
+                &self.queue,
+                &vertex_animated,
+                |mesh_idx, f| stage.get_mesh_vertices_at_time(mesh_idx, f).ok(),
+                frame,
             );
-            for &mesh_idx in &self.vertex_animated_meshes {
-                log::debug!(
-                    "Looking for prototype with mesh_idx={}, available: {:?}",
-                    mesh_idx,
-                    self.prototype_gpu_data
-                        .iter()
-                        .map(|p| p.mesh_idx)
-                        .collect::<Vec<_>>()
-                );
-                // Find the prototype GPU data for this mesh
-                let proto_idx = match self
-                    .prototype_gpu_data
-                    .iter()
-                    .position(|p| p.mesh_idx == mesh_idx)
-                {
-                    Some(idx) => idx,
-                    None => {
-                        log::warn!(
-                            "No prototype found for vertex-animated mesh_idx={}",
-                            mesh_idx
-                        );
-                        continue;
-                    }
-                };
-
-                let positions = match stage.get_mesh_vertices_at_time(mesh_idx, frame) {
-                    Ok(p) => p,
-                    Err(e) => {
-                        log::warn!(
-                            "Failed to get vertices at time {} for mesh {}: {:?}",
-                            frame,
-                            mesh_idx,
-                            e
-                        );
-                        continue;
-                    }
-                };
-
-                let vertex_count = positions.len() / 3;
-                let proto_data = &mut self.prototype_gpu_data[proto_idx];
-
-                log::debug!(
-                    "Got {} vertices for mesh {} at frame {}, proto has {} vertices",
-                    vertex_count,
-                    mesh_idx,
-                    frame,
-                    proto_data.num_vertices
-                );
-
-                if vertex_count != proto_data.num_vertices as usize {
-                    log::warn!(
-                        "Vertex count mismatch for mesh {}: USD {} vs proto {}",
-                        mesh_idx,
-                        vertex_count,
-                        proto_data.num_vertices
-                    );
-                    continue;
-                }
-
-                // Update positions while preserving original normals/UVs
-                for (i, vertex) in proto_data.vertices.iter_mut().enumerate() {
-                    vertex.position =
-                        [positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2]];
-                }
-
-                log::debug!(
-                    "Writing {} vertices to prototype {} buffer",
-                    vertex_count,
-                    proto_idx
-                );
-                self.queue.write_buffer(
-                    &proto_data.vertex_buffer,
-                    0,
-                    bytemuck::cast_slice(&proto_data.vertices),
-                );
-            }
             return;
         }
 
@@ -2941,7 +2854,7 @@ impl Renderer {
 
         // When using multi-draw (combined mesh), transforms are already baked into vertices
         // Use single identity transform to avoid double-transforming
-        let transforms = if self.use_multi_draw {
+        let transforms = if self.multi_draw.enabled {
             log::info!(
                 "Multi-prototype: using identity transform for Ivar (transforms baked into combined mesh)"
             );
@@ -3195,7 +3108,7 @@ impl Renderer {
 
         // When using multi-draw (combined mesh), transforms are already baked into vertices
         // Use single identity transform to avoid double-transforming
-        let ivar_transforms = if self.use_multi_draw {
+        let ivar_transforms = if self.multi_draw.enabled {
             vec![Mat4::IDENTITY]
         } else {
             self.instance_transforms.clone()
@@ -3494,7 +3407,7 @@ impl Renderer {
                 scene_material: self.scene_material.clone(),
                 texture_base_dir: self.texture_base_dir.clone(),
                 instance_transforms: self.instance_transforms.clone(),
-                use_multi_draw: self.use_multi_draw,
+                use_multi_draw: self.multi_draw.enabled,
                 vertex_animated_meshes: self.vertex_animated_meshes.clone(),
                 stage: self.usd_stage.clone(),
                 mesh_ranges: self.mesh_data.mesh_ranges.clone(),
@@ -4659,14 +4572,14 @@ impl Renderer {
                     render_pass.set_bind_group(3, &self.gpu_environment.bind_group, &[]);
                     render_pass.set_bind_group(4, &self.lights.bind_group, &[]);
 
-                    if self.use_multi_draw && !self.prototype_gpu_data.is_empty() {
+                    if self.multi_draw.enabled && !self.multi_draw.prototype_gpu_data.is_empty() {
                         // Multi-draw: iterate over each prototype's GPU data
                         let mut total_instances_drawn = 0u32;
                         let mut buffer_offset = 0u64;
 
-                        for proto_data in &self.prototype_gpu_data {
+                        for proto_data in &self.multi_draw.prototype_gpu_data {
                             if let Some(instances) =
-                                self.instance_groups.get(&proto_data.prototype_id)
+                                self.multi_draw.instance_groups.get(&proto_data.prototype_id)
                             {
                                 if instances.is_empty() {
                                     continue;
@@ -4704,7 +4617,7 @@ impl Renderer {
 
                         log::trace!(
                             "Multi-draw: {} prototypes, {} total instances",
-                            self.prototype_gpu_data.len(),
+                            self.multi_draw.prototype_gpu_data.len(),
                             total_instances_drawn
                         );
                     } else {
