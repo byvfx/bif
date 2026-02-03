@@ -16,3 +16,4 @@ image = "0.24"
 log.workspace = true
 exr = "1.72"
 half = "2.4"
+thiserror.workspace = true

@@ -12,6 +12,28 @@ use bif_math::{Aabb, Interval, Mat4, Vec3};
 #[cfg(debug_assertions)]
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
+use thiserror::Error;
+
+// ============================================================================
+// Error Types
+// ============================================================================
+
+/// Errors that can occur during Embree scene creation.
+#[derive(Debug, Error)]
+pub enum EmbreeError {
+    #[error("Embree device creation failed - ensure embree4.dll is in PATH")]
+    DeviceCreation,
+    #[error("Embree device error: code {0}")]
+    DeviceError(i32),
+    #[error("Scene creation failed")]
+    SceneCreation,
+    #[error("Geometry creation failed")]
+    GeometryCreation,
+    #[error("Buffer setup failed: {0}")]
+    BufferSetup(String),
+    #[error("No materials provided - at least one material required")]
+    NoMaterials,
+}
 
 // ============================================================================
 // Embree FFI Bindings
@@ -284,7 +306,7 @@ pub struct EmbreeScene {
 }
 
 impl EmbreeScene {
-    /// Try to create Embree scene, returns None if Embree unavailable.
+    /// Try to create Embree scene, returns None if Embree unavailable or error occurs.
     pub fn try_new(
         vertices: &[[Vec3; 3]],
         uvs: &[[[f32; 2]; 3]],
@@ -293,23 +315,13 @@ impl EmbreeScene {
         materials: Vec<Arc<DisneyBSDF>>,
         triangle_material_ids: &[u32],
     ) -> Option<Self> {
-        // Check if Embree is available
-        unsafe {
-            let test_device = rtcNewDevice(std::ptr::null());
-            if test_device.is_null() {
-                log::warn!("Embree not available - DLL not found or failed to load");
-                return None;
+        match Self::new(vertices, uvs, normals, transforms, materials, triangle_material_ids) {
+            Ok(scene) => Some(scene),
+            Err(e) => {
+                log::warn!("Embree scene creation failed: {}", e);
+                None
             }
-            rtcReleaseDevice(test_device);
         }
-        Some(Self::new(
-            vertices,
-            uvs,
-            normals,
-            transforms,
-            materials,
-            triangle_material_ids,
-        ))
     }
 
     /// Create Embree scene with instanced geometry.
@@ -322,8 +334,8 @@ impl EmbreeScene {
     /// * `materials` - Materials for the scene (indexed by triangle_material_ids)
     /// * `triangle_material_ids` - Per-triangle material index into materials vec
     ///
-    /// # Safety
-    /// Requires Embree 4 library to be installed and linkable.
+    /// # Errors
+    /// Returns `EmbreeError` if device/scene creation fails or materials is empty.
     pub fn new(
         vertices: &[[Vec3; 3]],
         uvs: &[[[f32; 2]; 3]],
@@ -331,25 +343,26 @@ impl EmbreeScene {
         transforms: Vec<Mat4>,
         materials: Vec<Arc<DisneyBSDF>>,
         triangle_material_ids: &[u32],
-    ) -> Self {
+    ) -> Result<Self, EmbreeError> {
         unsafe {
             // 1. Create Embree device
             let device = rtcNewDevice(std::ptr::null());
             if device.is_null() {
-                panic!("Failed to create Embree device - ensure embree4.dll is in PATH or run with appropriate environment");
+                return Err(EmbreeError::DeviceCreation);
             }
 
             // Check for errors
             let err = rtcGetDeviceError(device);
             if err != 0 {
-                panic!("Embree device error: {} - check Embree installation", err);
+                rtcReleaseDevice(device);
+                return Err(EmbreeError::DeviceError(err));
             }
 
             // 2. Create scene for prototype mesh
             let prototype_scene = rtcNewScene(device);
             if prototype_scene.is_null() {
                 rtcReleaseDevice(device);
-                panic!("Failed to create Embree prototype scene");
+                return Err(EmbreeError::SceneCreation);
             }
 
             // 3. Flatten triangles into separate vertex and index arrays
@@ -391,7 +404,7 @@ impl EmbreeScene {
             if geom.is_null() {
                 rtcReleaseScene(prototype_scene);
                 rtcReleaseDevice(device);
-                panic!("Failed to create Embree geometry");
+                return Err(EmbreeError::GeometryCreation);
             }
 
             log::info!(
@@ -415,7 +428,10 @@ impl EmbreeScene {
 
             let err = rtcGetDeviceError(device);
             if err != 0 {
-                panic!("Embree error after setting vertex buffer: {}", err);
+                rtcReleaseGeometry(geom);
+                rtcReleaseScene(prototype_scene);
+                rtcReleaseDevice(device);
+                return Err(EmbreeError::BufferSetup(format!("vertex buffer: error {}", err)));
             }
 
             // 6. Set index buffer
@@ -432,7 +448,10 @@ impl EmbreeScene {
 
             let err = rtcGetDeviceError(device);
             if err != 0 {
-                panic!("Embree error after setting index buffer: {}", err);
+                rtcReleaseGeometry(geom);
+                rtcReleaseScene(prototype_scene);
+                rtcReleaseDevice(device);
+                return Err(EmbreeError::BufferSetup(format!("index buffer: error {}", err)));
             }
 
             rtcCommitGeometry(geom);
@@ -451,8 +470,12 @@ impl EmbreeScene {
                     6 => "RTC_ERROR_CANCELLED",
                     _ => "UNKNOWN_ERROR",
                 };
-                panic!("Embree error after attaching geometry: {} ({})\nVertex count: {}, Triangle count: {}",
-                    err, err_msg, vertices.len() * 3, vertices.len());
+                rtcReleaseScene(prototype_scene);
+                rtcReleaseDevice(device);
+                return Err(EmbreeError::BufferSetup(format!(
+                    "attach geometry: {} ({}), verts={}, tris={}",
+                    err, err_msg, vertices.len() * 3, vertices.len()
+                )));
             }
 
             log::info!("Geometry attached successfully, checking commit...");
@@ -480,7 +503,7 @@ impl EmbreeScene {
             if scene.is_null() {
                 rtcReleaseScene(prototype_scene);
                 rtcReleaseDevice(device);
-                panic!("Failed to create Embree top-level scene");
+                return Err(EmbreeError::SceneCreation);
             }
 
             // 8. Store transforms (Embree holds pointers, must keep alive)
@@ -620,7 +643,7 @@ impl EmbreeScene {
                 triangle_material_ids.to_vec()
             };
 
-            Self {
+            Ok(Self {
                 device,
                 scene,
                 prototype_scene, // Keep alive for instances
@@ -634,7 +657,7 @@ impl EmbreeScene {
                 tangent_data,
                 instance_count: transforms.len(),
                 triangle_count: vertices.len(),
-            }
+            })
         }
     }
 
