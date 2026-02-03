@@ -26,6 +26,7 @@ pub mod batch_render;
 pub mod compute_ibl;
 pub mod environment;
 pub mod frustum_culling;
+pub mod gnomon;
 pub mod gpu_types;
 pub mod ivar_renderer;
 pub mod ivar_state;
@@ -47,6 +48,7 @@ pub use gpu_types::{
     GpuTextureSet, InstanceData, LightGpu, LightsUniform, MaterialGpu, MaterialUniform,
     PrototypeGpuData, Vertex, MAX_VIEWPORT_LIGHTS, MAX_VIEWPORT_TEXTURES,
 };
+pub use gnomon::GnomonRenderer;
 pub use ivar_renderer::{create_depth_texture, create_ivar_pipeline, create_ivar_texture};
 pub use lights::LightsManager;
 pub use ivar_state::{
@@ -212,11 +214,7 @@ pub struct Renderer {
     depth_view: wgpu::TextureView,
 
     // Gnomon resources
-    gnomon_pipeline: wgpu::RenderPipeline,
-    gnomon_vertex_buffer: wgpu::Buffer,
-    gnomon_uniform: GnomonUniform,
-    gnomon_buffer: wgpu::Buffer,
-    gnomon_bind_group: wgpu::BindGroup,
+    gnomon: GnomonRenderer,
 
     // egui state
     egui_ctx: egui::Context,
@@ -231,7 +229,6 @@ pub struct Renderer {
 
     // Stats - TODO: Track polygon count from source data for accuracy
     num_triangles: u64,
-    pub gnomon_size: u32,
 
     // UI layout metrics (for viewport-safe overlays)
     ui_left_panel_width: f32,
@@ -885,97 +882,8 @@ impl Renderer {
 
         log::info!("egui initialized");
 
-        // Create gnomon resources
-        let gnomon_vertices = GnomonVertex::create_axes();
-        let gnomon_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Gnomon Vertex Buffer"),
-            contents: bytemuck::cast_slice(&gnomon_vertices),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
-
-        let mut gnomon_uniform = GnomonUniform::new();
-        gnomon_uniform.update_from_camera(&camera);
-
-        let gnomon_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Gnomon Buffer"),
-            contents: bytemuck::cast_slice(&[gnomon_uniform]),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
-
-        let gnomon_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("Gnomon Bind Group Layout"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                }],
-            });
-
-        let gnomon_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Gnomon Bind Group"),
-            layout: &gnomon_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: gnomon_buffer.as_entire_binding(),
-            }],
-        });
-
-        let gnomon_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("Gnomon Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/gnomon.wgsl").into()),
-        });
-
-        let gnomon_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("Gnomon Pipeline Layout"),
-                bind_group_layouts: &[&gnomon_bind_group_layout],
-                push_constant_ranges: &[],
-            });
-
-        let gnomon_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Gnomon Pipeline"),
-            layout: Some(&gnomon_pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &gnomon_shader,
-                entry_point: "vs_main",
-                buffers: &[GnomonVertex::desc()],
-                compilation_options: Default::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &gnomon_shader,
-                entry_point: "fs_main",
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: config.format,
-                    blend: Some(wgpu::BlendState::REPLACE),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::LineList,
-                strip_index_format: None,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: None, // No culling for lines
-                polygon_mode: wgpu::PolygonMode::Fill,
-                unclipped_depth: false,
-                conservative: false,
-            },
-            depth_stencil: None, // No depth for gnomon overlay
-            multisample: wgpu::MultisampleState {
-                count: 1,
-                mask: !0,
-                alpha_to_coverage_enabled: false,
-            },
-            multiview: None,
-            cache: None,
-        });
-
+        // Create gnomon renderer
+        let gnomon = GnomonRenderer::new(&device, config.format);
         log::info!("Gnomon initialized");
 
         // Calculate stats - empty scene has 0 triangles
@@ -1055,11 +963,7 @@ impl Renderer {
             mesh_bounds_max: mesh_data.bounds_max,
             depth_texture,
             depth_view,
-            gnomon_pipeline,
-            gnomon_vertex_buffer,
-            gnomon_uniform,
-            gnomon_buffer,
-            gnomon_bind_group,
+            gnomon,
             egui_ctx,
             egui_state,
             egui_renderer,
@@ -1068,7 +972,6 @@ impl Renderer {
             frame_count: 0,
             fps_update_timer: 0.0,
             num_triangles,
-            gnomon_size: 80,
             ui_left_panel_width: 0.0,
             ui_right_panel_width: 0.0,
             ui_bottom_panel_height: 0.0,
@@ -1675,97 +1578,8 @@ impl Renderer {
 
         log::info!("Renderer initialized with USD scene");
 
-        // Create gnomon resources
-        let gnomon_vertices = GnomonVertex::create_axes();
-        let gnomon_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Gnomon Vertex Buffer"),
-            contents: bytemuck::cast_slice(&gnomon_vertices),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
-
-        let mut gnomon_uniform = GnomonUniform::new();
-        gnomon_uniform.update_from_camera(&camera);
-
-        let gnomon_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Gnomon Buffer"),
-            contents: bytemuck::cast_slice(&[gnomon_uniform]),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
-
-        let gnomon_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("Gnomon Bind Group Layout"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                }],
-            });
-
-        let gnomon_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Gnomon Bind Group"),
-            layout: &gnomon_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: gnomon_buffer.as_entire_binding(),
-            }],
-        });
-
-        let gnomon_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("Gnomon Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/gnomon.wgsl").into()),
-        });
-
-        let gnomon_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("Gnomon Pipeline Layout"),
-                bind_group_layouts: &[&gnomon_bind_group_layout],
-                push_constant_ranges: &[],
-            });
-
-        let gnomon_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Gnomon Pipeline"),
-            layout: Some(&gnomon_pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &gnomon_shader,
-                entry_point: "vs_main",
-                buffers: &[GnomonVertex::desc()],
-                compilation_options: Default::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &gnomon_shader,
-                entry_point: "fs_main",
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: config.format,
-                    blend: Some(wgpu::BlendState::REPLACE),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::LineList,
-                strip_index_format: None,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: None,
-                polygon_mode: wgpu::PolygonMode::Fill,
-                unclipped_depth: false,
-                conservative: false,
-            },
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState {
-                count: 1,
-                mask: !0,
-                alpha_to_coverage_enabled: false,
-            },
-            multiview: None,
-            cache: None,
-        });
-
+        // Create gnomon renderer
+        let gnomon = GnomonRenderer::new(&device, config.format);
         log::info!("Gnomon initialized");
 
         // Calculate stats - TODO: Track polygon count from source mesh for accuracy
@@ -1845,11 +1659,7 @@ impl Renderer {
             mesh_bounds_max: mesh_data.bounds_max,
             depth_texture,
             depth_view,
-            gnomon_pipeline,
-            gnomon_vertex_buffer,
-            gnomon_uniform,
-            gnomon_buffer,
-            gnomon_bind_group,
+            gnomon,
             egui_ctx,
             egui_state,
             egui_renderer,
@@ -1858,7 +1668,6 @@ impl Renderer {
             frame_count: 0,
             fps_update_timer: 0.0,
             num_triangles,
-            gnomon_size: 80,
             ui_left_panel_width: 0.0,
             ui_right_panel_width: 0.0,
             ui_bottom_panel_height: 0.0,
@@ -1987,12 +1796,7 @@ impl Renderer {
         );
 
         // Update gnomon uniform with camera rotation
-        self.gnomon_uniform.update_from_camera(&self.camera);
-        self.queue.write_buffer(
-            &self.gnomon_buffer,
-            0,
-            bytemuck::cast_slice(&[self.gnomon_uniform]),
-        );
+        self.gnomon.update_from_camera(&self.queue, &self.camera);
     }
 
     /// Update environment parameters without regenerating maps.
@@ -3890,7 +3694,7 @@ impl Renderer {
         let mesh_bounds_min = self.mesh_bounds_min;
         let mesh_bounds_max = self.mesh_bounds_max;
         let size = self.size;
-        let mut gnomon_size = self.gnomon_size;
+        let mut gnomon_size = self.gnomon.size;
         let mut lod_max_polys = self.lod_max_polys;
         let mut left_panel_width = self.ui_left_panel_width;
         let mut right_panel_width = self.ui_right_panel_width;
@@ -4521,7 +4325,7 @@ impl Renderer {
         });
 
         // Update gnomon size from UI
-        self.gnomon_size = gnomon_size;
+        self.gnomon.size = gnomon_size;
         self.ui_left_panel_width = left_panel_width;
         self.ui_right_panel_width = right_panel_width;
         self.ui_bottom_panel_height = bottom_panel_height;
@@ -4963,7 +4767,7 @@ impl Renderer {
                     });
 
                     // Set viewport to bottom-right corner of the active viewport
-                    let gnomon_size = self.gnomon_size as f32;
+                    let gnomon_size = self.gnomon.size as f32;
                     let padding = 16.0;
                     let viewport_left = self.ui_left_panel_width;
                     let viewport_right = (self.size.0 as f32) - self.ui_right_panel_width;
@@ -4987,10 +4791,7 @@ impl Renderer {
                             1.0,         // max_depth
                         );
 
-                        gnomon_pass.set_pipeline(&self.gnomon_pipeline);
-                        gnomon_pass.set_bind_group(0, &self.gnomon_bind_group, &[]);
-                        gnomon_pass.set_vertex_buffer(0, self.gnomon_vertex_buffer.slice(..));
-                        gnomon_pass.draw(0..6, 0..1); // 6 vertices (3 lines)
+                        self.gnomon.render(&mut gnomon_pass);
                     }
                 }
             }
