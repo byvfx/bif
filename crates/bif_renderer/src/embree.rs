@@ -344,6 +344,11 @@ impl EmbreeScene {
         materials: Vec<Arc<DisneyBSDF>>,
         triangle_material_ids: &[u32],
     ) -> Result<Self, EmbreeError> {
+        // Validate materials - empty vec would cause underflow in hit()
+        if materials.is_empty() {
+            return Err(EmbreeError::NoMaterials);
+        }
+
         unsafe {
             // 1. Create Embree device
             let device = rtcNewDevice(std::ptr::null());
@@ -775,6 +780,8 @@ impl Hittable for EmbreeScene {
             rec.bitangent = bitangent;
 
             // Per-triangle material lookup
+            // Belt-and-suspenders: validated in new(), but check in debug builds
+            debug_assert!(!self.materials.is_empty(), "materials should never be empty");
             let mat_id = self.triangle_material_ids[prim_id] as usize;
             let mat_id = mat_id.min(self.materials.len() - 1);
             rec.material = &*self.materials[mat_id];
