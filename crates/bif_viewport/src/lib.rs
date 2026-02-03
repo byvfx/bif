@@ -29,6 +29,7 @@ pub mod frustum_culling;
 pub mod gpu_types;
 pub mod ivar_renderer;
 pub mod ivar_state;
+pub mod lights;
 pub mod mesh_data;
 pub mod texture_loader;
 
@@ -47,6 +48,7 @@ pub use gpu_types::{
     PrototypeGpuData, Vertex, MAX_VIEWPORT_LIGHTS, MAX_VIEWPORT_TEXTURES,
 };
 pub use ivar_renderer::{create_depth_texture, create_ivar_pipeline, create_ivar_texture};
+pub use lights::LightsManager;
 pub use ivar_state::{
     BatchRenderSettings, BatchRenderStatus, BuildStatus, CameraSnapshot, CameraSource, IvarMessage,
     IvarState, RenderMode,
@@ -341,13 +343,7 @@ pub struct Renderer {
     skybox_bind_group: wgpu::BindGroup,
 
     // Lights state (UsdLux)
-    lights_uniform: LightsUniform,
-    lights_buffer: wgpu::Buffer,
-    #[allow(dead_code)] // Used in pipeline layout creation
-    lights_bind_group_layout: wgpu::BindGroupLayout,
-    lights_bind_group: wgpu::BindGroup,
-    /// Scene lights (from USD)
-    scene_lights: Vec<bif_core::Light>,
+    lights: LightsManager,
 
     // Async IBL generation
     ibl_receiver: Option<mpsc::Receiver<IblResult>>,
@@ -734,37 +730,8 @@ impl Renderer {
         // Create environment IBL resources (fallback black cubemaps)
         let gpu_environment = GpuEnvironment::new_default(&device, &queue);
 
-        // Create lights uniform buffer and bind group (bind group 4)
-        let lights_uniform = LightsUniform::new();
-        let lights_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Lights Uniform Buffer"),
-            contents: bytemuck::cast_slice(&[lights_uniform]),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
-
-        let lights_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("Lights Bind Group Layout"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                }],
-            });
-
-        let lights_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Lights Bind Group"),
-            layout: &lights_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: lights_buffer.as_entire_binding(),
-            }],
-        });
+        // Create lights manager (bind group 4)
+        let lights = LightsManager::new(&device);
 
         // Create shader module
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -780,7 +747,7 @@ impl Renderer {
                 &material_bind_group_layout,
                 &texture_bind_group_layout,
                 &gpu_environment.bind_group_layout,
-                &lights_bind_group_layout,
+                lights.bind_group_layout(),
             ],
             push_constant_ranges: &[],
         });
@@ -1151,11 +1118,7 @@ impl Renderer {
             show_background: true,
             skybox_pipeline,
             skybox_bind_group,
-            lights_uniform,
-            lights_buffer,
-            lights_bind_group_layout,
-            lights_bind_group,
-            scene_lights: Vec::new(),
+            lights,
             ibl_receiver: None,
             tx_conversion_receiver: None,
             compute_ibl,
@@ -1521,37 +1484,8 @@ impl Renderer {
         // Create environment IBL resources (fallback black cubemaps)
         let gpu_environment = GpuEnvironment::new_default(&device, &queue);
 
-        // Create lights uniform buffer and bind group (bind group 4)
-        let lights_uniform = LightsUniform::new();
-        let lights_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Lights Uniform Buffer"),
-            contents: bytemuck::cast_slice(&[lights_uniform]),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
-
-        let lights_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("Lights Bind Group Layout"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                }],
-            });
-
-        let lights_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Lights Bind Group"),
-            layout: &lights_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: lights_buffer.as_entire_binding(),
-            }],
-        });
+        // Create lights manager (bind group 4)
+        let lights = LightsManager::new(&device);
 
         // Create shader module
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -1567,7 +1501,7 @@ impl Renderer {
                 &material_bind_group_layout,
                 &texture_bind_group_layout,
                 &gpu_environment.bind_group_layout,
-                &lights_bind_group_layout,
+                lights.bind_group_layout(),
             ],
             push_constant_ranges: &[],
         });
@@ -1974,11 +1908,7 @@ impl Renderer {
             show_background: true,
             skybox_pipeline,
             skybox_bind_group,
-            lights_uniform,
-            lights_buffer,
-            lights_bind_group_layout,
-            lights_bind_group,
-            scene_lights: Vec::new(),
+            lights,
             ibl_receiver: None,
             tx_conversion_receiver: None,
             compute_ibl,
@@ -2080,13 +2010,7 @@ impl Renderer {
 
     /// Update lights uniform buffer from scene lights.
     pub fn update_lights(&mut self, lights: &[bif_core::Light]) {
-        self.scene_lights = lights.to_vec();
-        self.lights_uniform = LightsUniform::from_scene_lights(lights);
-        self.queue.write_buffer(
-            &self.lights_buffer,
-            0,
-            bytemuck::cast_slice(&[self.lights_uniform]),
-        );
+        self.lights.update(&self.queue, lights);
         if !lights.is_empty() {
             log::info!("Updated {} lights in viewport", lights.len());
         }
@@ -3625,7 +3549,7 @@ impl Renderer {
             background: Color::new(0.1, 0.1, 0.1),
             use_sky_gradient: true,
             environment: self.ivar_state.environment.clone(),
-            lights: Arc::new(LightList::from(self.scene_lights.as_slice())),
+            lights: Arc::new(LightList::from(self.lights.scene_lights.as_slice())),
         };
 
         let start_time = Instant::now();
@@ -3786,7 +3710,7 @@ impl Renderer {
             viewport_camera: self.camera,
             has_animated_geometry,
             scene_builder,
-            lights: Arc::new(LightList::from(self.scene_lights.as_slice())),
+            lights: Arc::new(LightList::from(self.lights.scene_lights.as_slice())),
         };
 
         // Clone settings and compute auto depth bounds if enabled
@@ -4929,7 +4853,7 @@ impl Renderer {
                     render_pass.set_bind_group(1, &self.material_bind_group, &[]);
                     render_pass.set_bind_group(2, &self.texture_bind_group, &[]);
                     render_pass.set_bind_group(3, &self.gpu_environment.bind_group, &[]);
-                    render_pass.set_bind_group(4, &self.lights_bind_group, &[]);
+                    render_pass.set_bind_group(4, &self.lights.bind_group, &[]);
 
                     if self.use_multi_draw && !self.prototype_gpu_data.is_empty() {
                         // Multi-draw: iterate over each prototype's GPU data
