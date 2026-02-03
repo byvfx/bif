@@ -670,6 +670,14 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
   - Timeline UI improvements (numbered frames, start/end labels)
   - Note: Play button animation still being debugged
 
+  **Phase 5c: Code Quality & Robustness ✅ (M19.4)**
+  - Convert Embree panics to Result-based error handling (`EmbreeError` enum)
+  - Add materials vector validation (prevent underflow in `hit()`)
+  - Increase viewport light limit (8 → 32, matches common DCC limits)
+  - Extract `LightsManager` from monolithic `Renderer` struct
+  - Extract `GnomonRenderer` from monolithic `Renderer` struct
+  - Improve UsdStage thread safety documentation
+
   **Phase 6: Instance Transform Animation (TODO)**
   - Per-frame instance matrix evaluation
   - Test with transform-animated USD scenes
@@ -908,6 +916,6 @@ Key papers for Milestone 20 (Renderer Polish):
 ---
 
 **Last Updated:** February 2, 2026
-**Status:** Milestones 0-18.5, M19.2 Complete, M19.3 WIP
-**Current:** Viewport camera selection & locking (playback debugging)
+**Status:** Milestones 0-18.5, M19.2-M19.4 Complete, M19.3 WIP
+**Current:** M19.4 code quality complete, M19.3 playback debugging continues
 **Next:** Fix timeline playback, instance transform animation

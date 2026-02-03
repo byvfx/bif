@@ -1,7 +1,7 @@
 # Session Handoff - February 2, 2026
 
-**Last Updated:** M19.3 Viewport Camera Selection
-**Next Milestone:** Fix timeline playback, then M19.4 instance transform animation
+**Last Updated:** M19.4 Code Quality & Robustness
+**Next Milestone:** Fix timeline playback (M19.3), then instance transform animation
 **Project:** BIF - VFX Scene Assembler & Renderer
 
 ---
@@ -10,7 +10,7 @@
 
 | Status | Details |
 |--------|---------|
-| Complete | Milestones 0-18.5, M19.2 USD lights |
+| Complete | Milestones 0-18.5, M19.2 USD lights, M19.4 code quality |
 | Current | M19.3 viewport camera selection (WIP - playback debugging) |
 | Tests | 137+ passing |
 | Performance | 60 FPS viewport, 10K instances with LOD |
@@ -18,6 +18,19 @@
 ---
 
 ## Recent Work
+
+### M19.4: Code Quality & Robustness (Feb 2, 2026)
+
+VFX code review findings addressed. Seven commits total.
+
+| Change | Details |
+|--------|---------|
+| Embree error handling | `EmbreeError` enum with `thiserror`, `new()` returns `Result` |
+| Materials validation | Check empty vec before use, debug_assert in `hit()` |
+| Light limit increase | 8 → 32 lights, matches common DCC limits |
+| LightsManager | Extracted from Renderer (~91 lines removed) |
+| GnomonRenderer | Extracted from Renderer (~213 lines removed) |
+| Thread safety docs | Expanded UsdStage Send+Sync safety comments |
 
 ### M19.3: Viewport Camera Selection (Feb 2, 2026)
 
@@ -91,6 +104,19 @@ Added UsdLux light extraction and rendering.
 
 ---
 
+## Architecture Improvements (M19.4)
+
+Renderer struct decomposition started:
+- `LightsManager` - lights uniform, buffer, bind_group, scene_lights
+- `GnomonRenderer` - pipeline, vertex_buffer, uniform, buffer, bind_group, size
+
+Future extraction candidates:
+- EnvironmentManager (IBL state)
+- CullingManager (frustum culling scratch buffers)
+- MultiDrawState (prototype GPU data, instance groups)
+
+---
+
 ## Next Session
 
 **Goal:** Fix timeline playback animation
@@ -126,4 +152,4 @@ cargo run -p bif_viewer -- --usd assets/animated_cube.usda
 ---
 
 **Branch:** main
-**Ready for:** Fix timeline playback, then M19.4 instance transform animation
+**Ready for:** Fix timeline playback (M19.3), then instance transform animation
