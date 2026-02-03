@@ -633,11 +633,17 @@ pub struct UsdStage {
     raw: *mut UsdBridgeStageRaw,
 }
 
-// SAFETY: UsdStage is Send + Sync because the underlying C++ code is thread-safe:
-// - All USD data is pre-cached at load time in usd_bridge_open_stage()
-// - All getter functions read from immutable caches without mutation
-// - usd_bridge_get_mesh_vertices_at_time() uses thread_local storage for its return buffer
-// - The USD stage itself (UsdStageRefPtr) is read-only after caching
+// SAFETY: UsdStage is Send + Sync because:
+// 1. All USD data is pre-cached at load time in usd_bridge_open_stage()
+// 2. All getter functions read from immutable caches without mutation
+// 3. usd_bridge_get_mesh_vertices_at_time() uses thread_local storage for
+//    its return buffer - each thread gets its own buffer, avoiding races
+// 4. Rust immediately copies the data via to_vec() before the buffer can
+//    be reused by a subsequent call on the same thread
+// 5. The USD stage itself (UsdStageRefPtr) is read-only after caching
+//
+// Pattern: Arc<UsdStage> is used in batch_render.rs for parallel bucket
+// rendering, where each thread reads mesh data at potentially different times.
 unsafe impl Send for UsdStage {}
 unsafe impl Sync for UsdStage {}
 
