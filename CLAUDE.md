@@ -8,7 +8,7 @@ You Create a new DCC that is inspired by Clarisse / Houdini, focused on VFX scen
 
 ## Plans
 
-- at the end of each plan, give me a list of unresoved questions to answer, if any.be extremely consise and sacrifice grammar for brevity.
+- at the end of each plan, give me a list of unresoved questions to answer, if any and be extremely consise and sacrifice grammar for brevity.
 
 ## Project Context
 
@@ -108,6 +108,7 @@ Before diving into code:
 - Follow Arrange-Act-Assert pattern
 - Use `#[cfg(test)]` modules for test code
 - Never commit commented-out tests
+- Use the setup_usd_env.ps1 script for USD environment setup in tests
 
 ### Before Committing
 
@@ -115,8 +116,17 @@ Before diving into code:
 - No compiler warnings (`cargo build`)
 - Clippy passes (`cargo clippy -- -D warnings`)
 - Code formatted (`cargo fmt --check`)
+- Make new devolog entry
+- Update SESSION_HANDOFF.md if needed
+- Update MILESTONES.md if needed
+- update README.md if needed
+- update CLAUDE.md if needed
 - Public items have doc comments
 - No commented-out code or debug statements
+
+## After Committing
+
+- clear context and run the vfx-code-reviewer tool on the commit
 
 ## Don'ts
 
