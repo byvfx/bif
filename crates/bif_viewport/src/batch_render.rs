@@ -276,6 +276,11 @@ impl SceneBuilderData {
     ///
     /// Uses animated transforms where available, falling back to static transforms.
     fn evaluate_transforms_at_time(&self, time: f64) -> Vec<Mat4> {
+        debug_assert_eq!(
+            self.instance_transforms.len(),
+            self.instance_animations.len(),
+            "instance_transforms and instance_animations must have same length"
+        );
         self.instance_transforms
             .iter()
             .zip(self.instance_animations.iter())
@@ -384,16 +389,17 @@ fn batch_render_loop(
 
         let frame_start = std::time::Instant::now();
 
-        // Rebuild scene for animated geometry (skip first frame, already built)
-        if scene.has_animated_geometry && frame_idx > 0 {
+        // Rebuild scene for animated geometry
+        // Always rebuild for all frames to ensure correct transforms at each time
+        if scene.has_animated_geometry {
             if let Some(ref builder) = scene.scene_builder {
-                log::info!("Rebuilding BVH for frame {}", frame);
+                log::info!("Building BVH for frame {}", frame);
                 let rebuild_start = std::time::Instant::now();
                 // Drop old scene before building new one to free Embree resources
                 drop(current_world);
                 current_world = builder(frame as f64);
                 log::debug!(
-                    "BVH rebuilt in {:.2}ms",
+                    "BVH built in {:.2}ms",
                     rebuild_start.elapsed().as_secs_f64() * 1000.0
                 );
             }
