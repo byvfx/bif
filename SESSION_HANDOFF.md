@@ -1,7 +1,7 @@
-# Session Handoff - February 2, 2026
+# Session Handoff - February 4, 2026
 
-**Last Updated:** M19.5 Renderer Decomposition Phase 2
-**Next Milestone:** Fix timeline playback (M19.3), then instance transform animation
+**Last Updated:** M19.3 Timeline Playback Fix
+**Next Milestone:** Instance transform animation per frame
 **Project:** BIF - VFX Scene Assembler & Renderer
 
 ---
@@ -10,14 +10,29 @@
 
 | Status | Details |
 |--------|---------|
-| Complete | Milestones 0-18.5, M19.2 USD lights, M19.4-M19.5 code quality |
-| Current | M19.3 viewport camera selection (WIP - playback debugging) |
-| Tests | 137+ passing |
+| Complete | Milestones 0-19.3, viewport camera, timeline playback |
+| Current | Instance transform animation per frame |
+| Tests | 142+ passing |
 | Performance | 60 FPS viewport, 10K instances with LOD |
 
 ---
 
 ## Recent Work
+
+### M19.3: Timeline Playback Fix (Feb 4, 2026)
+
+Fixed animation playback using wall-clock time instead of delta-time accumulation.
+
+| Component | Details |
+|-----------|---------|
+| Wall-clock playback | Uses `Instant::now()` instead of delta_time accumulation |
+| Realtime toggle | "RT" checkbox: ON = wall-clock accurate, OFF = every frame |
+| PresentMode | Changed Mailbox → Fifo for proper VSync |
+| New methods | `play()`, `pause()`, `toggle_playback()`, `update()` |
+| Scrub anchor | Reset playback anchor when user scrubs during playback |
+| Tests | 5 new tests for playback, looping, pause, scrub |
+
+**Root cause:** `PresentMode::Mailbox` allowed ~700fps, causing tiny delta_time (~1.4ms). Wall-clock time eliminates this issue.
 
 ### M19.5: Renderer Decomposition Phase 2 (Feb 2, 2026)
 
@@ -44,30 +59,6 @@ VFX code review findings addressed. Seven commits total.
 | GnomonRenderer | Extracted from Renderer (~213 lines removed) |
 | Thread safety docs | Expanded UsdStage Send+Sync safety comments |
 
-### M19.3: Viewport Camera Selection (Feb 2, 2026)
-
-Added camera dropdown to timeline panel for viewport camera selection.
-
-| Component | Details |
-|-----------|---------|
-| Camera dropdown | Timeline panel shows "Viewport" + USD cameras from stage |
-| Lock toggle | Lock/Free button to enable/disable manual camera control |
-| Camera sync | Immediate sync on selection, per-frame sync during playback |
-| Control locking | Mouse orbit/pan/dolly and WASD blocked when locked |
-| Timeline UI | Numbered frames with start/end labels, integer display |
-
-**Known Issue:** Play button animation not advancing properly. Scrubbing works. Investigating rapid redraw causing tiny delta_time values. Frame tolerance increased to 0.5 as partial fix.
-
-### M19.2: USD Light Support (Feb 1, 2026)
-
-Added UsdLux light extraction and rendering.
-
-| Component | Details |
-|-----------|---------|
-| C++ bridge | UsdLux extraction (Distant, Sphere, Rect, Dome) |
-| Viewport | Direct lighting with Cook-Torrance BRDF in shader |
-| Ivar | NEE sampling for explicit lights alongside HDRI |
-
 ---
 
 ## Current State
@@ -75,17 +66,24 @@ Added UsdLux light extraction and rendering.
 | Metric | Value |
 |--------|-------|
 | Build (dev) | ~5s |
-| Tests | 137+ passing |
-| Vulkan FPS | 60+ (VSync) |
+| Tests | 142+ passing |
+| Vulkan FPS | 60 (VSync with Fifo) |
 | Crates | 6 (math, core, renderer, viewport, viewer, maketx) |
 
 ### What Works
+
+**Timeline Playback:**
+- Play/pause with wall-clock accurate timing
+- "RT" toggle for realtime vs every-frame mode
+- Loop with seamless wrap to start frame
+- Scrub during playback continues from new position
+- Integer frame snap option
 
 **Viewport Camera:**
 - Camera dropdown in timeline (Viewport + USD cameras)
 - Lock/unlock toggle for camera controls
 - Camera syncs when USD camera selected
-- Scrubbing timeline updates camera position
+- Camera animates during playback
 
 **Batch Render:**
 - EXR output with AOVs (depth, normals)
@@ -99,18 +97,8 @@ Added UsdLux light extraction and rendering.
 - UsdPreviewSurface + MaterialX
 - Camera and transform animation
 
-**Animation:**
-- Timeline UI with playback controls
-- Transform animation (xformOp time samples)
-- Vertex animation for multi-mesh scenes
-- USD camera sync to viewport
-
 ### Known Issues
 
-- **Play button animation:** Timeline advances slowly/inconsistently during playback
-  - Scrubbing works correctly
-  - Frame tolerance changed 0.001→0.5 as workaround
-  - Root cause: rapid redraws with tiny delta_time (~1.4ms)
 - Instance transform animation not yet evaluated per frame in batch render
 - OIIO `load_texture_with_mips` crashes on .tx files on Windows
 
@@ -134,12 +122,11 @@ Renderer struct decomposition complete (Phase 1 + 2):
 
 ## Next Session
 
-**Goal:** Fix timeline playback animation
+**Goal:** Instance transform animation per frame
 
-1. Investigate why delta_time is so small during playback
-2. Consider accumulating delta or rate-limiting animation updates
-3. Test with different VSync/frame rate settings
-4. Once fixed, continue to instance transform animation per frame
+1. Evaluate animated transforms during batch render
+2. Update instance buffer each frame with animated transforms
+3. Test with animated instances
 
 ---
 
@@ -167,4 +154,4 @@ cargo run -p bif_viewer -- --usd assets/animated_cube.usda
 ---
 
 **Branch:** main
-**Ready for:** Fix timeline playback (M19.3), then instance transform animation
+**Ready for:** Instance transform animation per frame
