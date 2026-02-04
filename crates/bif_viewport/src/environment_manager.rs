@@ -105,31 +105,28 @@ impl EnvironmentManager {
         let rotation_rad = rotation.to_radians();
         let path_str = path.to_string_lossy().to_string();
 
-        std::thread::spawn(move || {
-            match bif_core::hdr::HdrImage::load(&path_str) {
-                Ok(hdr) => {
-                    let hdr_pixels = hdr.pixels.clone();
-                    let hdr_width = hdr.width;
-                    let hdr_height = hdr.height;
-                    let ivar_env =
-                        bif_renderer::HdriEnvironment::new(hdr, rotation_rad, intensity);
-                    let _ = tx.send(IblResult::Success {
-                        hdr_pixels,
-                        hdr_width,
-                        hdr_height,
-                        ivar_env: Arc::new(ivar_env),
-                        path: path_str,
-                        rotation_rad,
-                        intensity,
-                        show_background: show_bg,
-                    });
-                }
-                Err(e) => {
-                    let _ = tx.send(IblResult::Error {
-                        path: path_str,
-                        message: e.to_string(),
-                    });
-                }
+        std::thread::spawn(move || match bif_core::hdr::HdrImage::load(&path_str) {
+            Ok(hdr) => {
+                let hdr_pixels = hdr.pixels.clone();
+                let hdr_width = hdr.width;
+                let hdr_height = hdr.height;
+                let ivar_env = bif_renderer::HdriEnvironment::new(hdr, rotation_rad, intensity);
+                let _ = tx.send(IblResult::Success {
+                    hdr_pixels,
+                    hdr_width,
+                    hdr_height,
+                    ivar_env: Arc::new(ivar_env),
+                    path: path_str,
+                    rotation_rad,
+                    intensity,
+                    show_background: show_bg,
+                });
+            }
+            Err(e) => {
+                let _ = tx.send(IblResult::Error {
+                    path: path_str,
+                    message: e.to_string(),
+                });
             }
         });
     }
@@ -163,7 +160,8 @@ impl EnvironmentManager {
 
         let mip_count = compute_ibl::PREFILTER_MIP_COUNT;
         self.gpu_env.params.max_mip = (mip_count - 1).max(1) as f32;
-        self.gpu_env.load_from_compute(device, queue, output, mip_count);
+        self.gpu_env
+            .load_from_compute(device, queue, output, mip_count);
         self.update_params(queue, intensity, rotation_rad, show_background);
 
         // Rebuild skybox bind group

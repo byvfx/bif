@@ -165,7 +165,6 @@ impl MultiDrawState {
 
         updated_any
     }
-
 }
 
 #[cfg(test)]

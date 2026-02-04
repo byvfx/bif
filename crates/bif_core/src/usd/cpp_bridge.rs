@@ -1117,8 +1117,16 @@ impl UsdStage {
         let texture_path = if raw_data.texture_path.is_null() {
             None
         } else {
-            let s = unsafe { CStr::from_ptr(raw_data.texture_path).to_string_lossy().into_owned() };
-            if s.is_empty() { None } else { Some(s) }
+            let s = unsafe {
+                CStr::from_ptr(raw_data.texture_path)
+                    .to_string_lossy()
+                    .into_owned()
+            };
+            if s.is_empty() {
+                None
+            } else {
+                Some(s)
+            }
         };
 
         // Combine intensity * 2^exposure
