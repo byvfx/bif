@@ -10,7 +10,7 @@ use std::time::Instant;
 
 use wgpu::{util::DeviceExt, Device, Instance, Queue, Surface, SurfaceConfiguration};
 
-use bif_math::{Aabb, Camera, Frustum, Mat4, Mat4Ext, Vec3};
+use bif_math::{Aabb, Camera, Mat4, Mat4Ext, Vec3};
 
 // USD stage for scene browser
 use bif_core::usd::UsdStage;
@@ -24,6 +24,7 @@ use bif_renderer::{
 // New modular architecture
 pub mod batch_render;
 pub mod compute_ibl;
+pub mod culling_manager;
 pub mod environment;
 pub mod environment_manager;
 pub mod frustum_culling;
@@ -55,6 +56,7 @@ pub use ivar_renderer::{create_depth_texture, create_ivar_pipeline, create_ivar_
 pub use lights::LightsManager;
 pub use multi_draw::MultiDrawState;
 pub use environment_manager::EnvironmentManager;
+pub use culling_manager::CullingManager;
 pub use ivar_state::{
     BatchRenderSettings, BatchRenderStatus, BuildStatus, CameraSnapshot, CameraSource, IvarMessage,
     IvarState, RenderMode,
@@ -163,6 +165,9 @@ impl TimelineState {
 
 use environment_manager::IblResult;
 
+/// Maximum instance count for dynamic instance buffer.
+const MAX_INSTANCES: u32 = 10_000;
+
 /// Core renderer managing wgpu state
 pub struct Renderer {
     pub surface: Surface<'static>,
@@ -259,39 +264,8 @@ pub struct Renderer {
     // Multi-draw state for per-prototype rendering
     multi_draw: MultiDrawState,
 
-    // Frustum culling for GPU instancing optimization
-    /// Maximum instances the buffer can hold (preallocated)
-    #[allow(dead_code)]
-    max_instances: u32,
-    /// Precomputed world-space AABBs for each instance (for frustum culling)
-    instance_aabbs: Vec<Aabb>,
-    /// Local-space AABB of the prototype mesh
-    prototype_aabb: Aabb,
-    /// Number of visible instances after frustum culling (updated per frame)
-    visible_instance_count: u32,
-    /// LOD distance threshold - instances beyond this use box proxy (legacy, kept for fallback)
-    #[allow(dead_code)]
-    lod_distance_threshold: f32,
-    /// Maximum polygon budget before LOD kicks in (user-adjustable)
-    pub lod_max_polys: u32,
-    /// Triangles per instance (for polygon budget calculation)
-    triangles_per_instance: u32,
-
-    // Box LOD proxy for distant instances
-    /// Box proxy vertex buffer (generated from prototype AABB)
-    lod_box_vertex_buffer: wgpu::Buffer,
-    /// Box proxy index buffer
-    lod_box_index_buffer: wgpu::Buffer,
-    /// Number of indices in box proxy mesh (36 = 12 triangles)
-    lod_box_num_indices: u32,
-    /// Number of instances rendered as box proxies (stored after near instances in instance_buffer)
-    lod_box_instance_count: u32,
-    /// Pre-allocated scratch buffers for frustum culling (avoids per-frame allocations)
-    culling_scratch: CullingScratch,
-    /// Cached frustum (recomputed only when camera changes)
-    cached_frustum: Frustum,
-    /// Camera snapshot for frustum cache invalidation
-    frustum_camera_snapshot: CameraSnapshot,
+    // Culling and LOD state
+    culling: CullingManager,
 
     // Scene browser state
     pub scene_browser_state: SceneBrowserState,
@@ -816,24 +790,10 @@ impl Renderer {
             MAX_INSTANCES
         );
 
-        // Create LOD box proxy buffers (for distant instances)
-        // Start with a unit cube, will be regenerated when mesh loads
-        let unit_aabb = Aabb::from_points(Vec3::ZERO, Vec3::ONE);
-        let lod_box_mesh = MeshData::from_aabb(&unit_aabb);
+        // Create culling manager
+        let culling = CullingManager::new(&device, &camera, MAX_INSTANCES as usize);
 
-        let lod_box_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("LOD Box Vertex Buffer"),
-            contents: bytemuck::cast_slice(&lod_box_mesh.vertices),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
-
-        let lod_box_index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("LOD Box Index Buffer"),
-            contents: bytemuck::cast_slice(&lod_box_mesh.indices),
-            usage: wgpu::BufferUsages::INDEX,
-        });
-
-        log::info!("Created LOD box proxy buffers");
+        log::info!("Created culling manager");
 
         // Initialize egui
         let egui_ctx = egui::Context::default();
@@ -949,22 +909,7 @@ impl Renderer {
             scene_materials: vec![],
             texture_base_dir: None,
             multi_draw: MultiDrawState::new(),
-            max_instances: MAX_INSTANCES,
-            instance_aabbs: vec![],
-            prototype_aabb: Aabb::empty(),
-            visible_instance_count: 0,
-            lod_distance_threshold: 100.0, // Default LOD threshold
-            lod_max_polys: 5_000_000,      // 5M poly budget default
-            triangles_per_instance: 0,     // Empty scene
-            lod_box_vertex_buffer,
-            lod_box_index_buffer,
-            lod_box_num_indices: lod_box_mesh.indices.len() as u32,
-            lod_box_instance_count: 0,
-            culling_scratch: CullingScratch::new(MAX_INSTANCES as usize),
-            cached_frustum: Frustum::from_view_projection(
-                camera.projection_matrix() * camera.view_matrix(),
-            ),
-            frustum_camera_snapshot: CameraSnapshot::from_camera(&camera),
+            culling,
             scene_browser_state: SceneBrowserState::new(),
             selected_prim_path: None,
             selected_prim_properties: None,
@@ -1495,23 +1440,15 @@ impl Renderer {
             MAX_INSTANCES
         );
 
-        // Create LOD box proxy buffers (for distant instances)
-        let lod_box_mesh = MeshData::from_aabb(&prototype_aabb);
-
-        let lod_box_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("LOD Box Vertex Buffer"),
-            contents: bytemuck::cast_slice(&lod_box_mesh.vertices),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
-
-        let lod_box_index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("LOD Box Index Buffer"),
-            contents: bytemuck::cast_slice(&lod_box_mesh.indices),
-            usage: wgpu::BufferUsages::INDEX,
-        });
+        // Create culling manager and initialize with prototype AABB
+        let num_triangles = mesh_data.indices.len() as u64 / 3;
+        let mut culling = CullingManager::new(&device, &camera, MAX_INSTANCES as usize);
+        culling.set_prototype_aabb(&device, prototype_aabb, num_triangles as u32);
+        culling.instance_aabbs = instance_aabbs;
+        culling.visible_count = instances.len() as u32;
 
         log::info!(
-            "Created LOD box proxy buffers (prototype AABB: {:?} to {:?})",
+            "Created culling manager (prototype AABB: {:?} to {:?})",
             prototype_aabb.min_point(),
             prototype_aabb.max_point()
         );
@@ -1624,22 +1561,7 @@ impl Renderer {
             scene_materials: scene.materials.clone(),
             texture_base_dir: None,
             multi_draw: MultiDrawState::new(),
-            max_instances: MAX_INSTANCES,
-            instance_aabbs,
-            prototype_aabb,
-            visible_instance_count: instances.len() as u32,
-            lod_distance_threshold: 100.0,
-            lod_max_polys: 5_000_000, // 5M poly budget default
-            triangles_per_instance: num_triangles as u32,
-            lod_box_vertex_buffer,
-            lod_box_index_buffer,
-            lod_box_num_indices: lod_box_mesh.indices.len() as u32,
-            lod_box_instance_count: 0,
-            culling_scratch: CullingScratch::new(MAX_INSTANCES as usize),
-            cached_frustum: Frustum::from_view_projection(
-                camera.projection_matrix() * camera.view_matrix(),
-            ),
-            frustum_camera_snapshot: CameraSnapshot::from_camera(&camera),
+            culling,
             scene_browser_state: SceneBrowserState::new(),
             selected_prim_path: None,
             selected_prim_properties: None,
@@ -1755,115 +1677,12 @@ impl Renderer {
     /// Uses `lod_max_polys` as the polygon budget - nearest instances get full
     /// mesh until budget is exhausted, then remaining use box proxy.
     pub fn update_visible_instances(&mut self) {
-        if self.instance_aabbs.is_empty() {
-            self.visible_instance_count = self.num_instances;
-            self.lod_box_instance_count = 0;
-            return;
-        }
-
-        // Clear scratch buffers (reuse pre-allocated capacity)
-        self.culling_scratch.clear();
-
-        // Update cached frustum only when camera changes
-        let current_snapshot = CameraSnapshot::from_camera(&self.camera);
-        if current_snapshot.has_changed(&self.frustum_camera_snapshot) {
-            let vp = self.camera.projection_matrix() * self.camera.view_matrix();
-            self.cached_frustum = Frustum::from_view_projection(vp);
-            self.frustum_camera_snapshot = current_snapshot;
-        }
-
-        let camera_pos = self.camera.position;
-
-        // Collect visible instances with their distances
-        for (idx, aabb) in self.instance_aabbs.iter().enumerate() {
-            // Frustum culling first
-            if !self.cached_frustum.intersects_aabb(aabb) {
-                continue;
-            }
-
-            // Calculate distance for sorting
-            let instance_center = aabb.center();
-            let distance_sq = (instance_center - camera_pos).length_squared();
-            self.culling_scratch
-                .visible_with_distance
-                .push((distance_sq, idx));
-        }
-
-        // Calculate how many instances fit in polygon budget
-        let tris_per_instance = self.triangles_per_instance as u64;
-        let max_polys = self.lod_max_polys as u64;
-        let budget_count = if tris_per_instance > 0 {
-            (max_polys / tris_per_instance) as usize
-        } else {
-            self.culling_scratch.visible_with_distance.len()
-        };
-
-        let visible_count = self.culling_scratch.visible_with_distance.len();
-
-        // Partition: O(n) instead of O(n log n) full sort
-        // After this, indices 0..budget_count are the nearest (unordered among themselves)
-        if budget_count > 0 && budget_count < visible_count {
-            self.culling_scratch
-                .visible_with_distance
-                .select_nth_unstable_by(budget_count, |a, b| {
-                    a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal)
-                });
-        }
-
-        // Split into near (full mesh) and far (box proxy)
-        let split_point = budget_count.min(visible_count);
-
-        for &(_distance_sq, idx) in &self.culling_scratch.visible_with_distance[..split_point] {
-            let transform = &self.current_transforms[idx];
-            let material_id = self.instance_material_ids.get(idx).copied().unwrap_or(0);
-            self.culling_scratch.near_instances.push(InstanceData {
-                model_matrix: transform.to_cols_array_2d(),
-                material_id,
-            });
-        }
-
-        for &(_distance_sq, idx) in &self.culling_scratch.visible_with_distance[split_point..] {
-            let transform = &self.current_transforms[idx];
-            let material_id = self.instance_material_ids.get(idx).copied().unwrap_or(0);
-            self.culling_scratch.far_instances.push(InstanceData {
-                model_matrix: transform.to_cols_array_2d(),
-                material_id,
-            });
-        }
-
-        // Update GPU buffer: [near_instances... | far_instances...] in single contiguous write
-        let near_count = self.culling_scratch.near_instances.len();
-        let far_count = self.culling_scratch.far_instances.len();
-
-        if near_count > 0 || far_count > 0 {
-            // Write near instances at offset 0
-            if near_count > 0 {
-                self.queue.write_buffer(
-                    &self.instance_buffer,
-                    0,
-                    bytemuck::cast_slice(&self.culling_scratch.near_instances),
-                );
-            }
-            // Write far instances immediately after near instances
-            if far_count > 0 {
-                let far_offset = (near_count * std::mem::size_of::<InstanceData>()) as u64;
-                self.queue.write_buffer(
-                    &self.instance_buffer,
-                    far_offset,
-                    bytemuck::cast_slice(&self.culling_scratch.far_instances),
-                );
-            }
-        }
-
-        self.visible_instance_count = self.culling_scratch.near_instances.len() as u32;
-        self.lod_box_instance_count = self.culling_scratch.far_instances.len() as u32;
-
-        log::trace!(
-            "LOD split: {} near (full mesh), {} far (box LOD), {}/{} total visible",
-            self.visible_instance_count,
-            self.lod_box_instance_count,
-            self.visible_instance_count + self.lod_box_instance_count,
-            self.num_instances
+        self.culling.update_visible_instances(
+            &self.queue,
+            &self.instance_buffer,
+            &self.camera,
+            &self.current_transforms,
+            &self.instance_material_ids,
         );
     }
 
@@ -2233,11 +2052,11 @@ impl Renderer {
             .collect();
 
         // Warn if instance count exceeds buffer capacity
-        if instances.len() > self.max_instances as usize {
+        if instances.len() > MAX_INSTANCES as usize {
             log::warn!(
                 "Instance count {} exceeds buffer capacity {}. Some instances will be truncated.",
                 instances.len(),
-                self.max_instances
+                MAX_INSTANCES
             );
         }
 
@@ -2311,7 +2130,7 @@ impl Renderer {
         self.num_indices = mesh_data.indices.len() as u32;
         // Note: instance_buffer is reused (dynamic), don't reassign
         self.num_instances = instances.len() as u32;
-        self.visible_instance_count = instances.len() as u32;
+        self.culling.visible_count = instances.len() as u32;
         self.mesh_bounds_min = mesh_data.bounds_min;
         self.mesh_bounds_max = mesh_data.bounds_max;
         self.mesh_data = mesh_data;
@@ -2365,31 +2184,14 @@ impl Renderer {
             bytemuck::cast_slice(&[self.material_uniform]),
         );
 
-        self.instance_aabbs = instance_aabbs;
-        self.prototype_aabb = prototype_aabb;
-        self.triangles_per_instance = self.num_indices / 3;
-        self.num_triangles = self.triangles_per_instance as u64 * self.num_instances as u64;
-        self.lod_box_instance_count = 0;
-
-        // Regenerate LOD box mesh for new prototype AABB
-        let lod_box_mesh = MeshData::from_aabb(&prototype_aabb);
-        self.lod_box_vertex_buffer =
-            self.device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("LOD Box Vertex Buffer"),
-                    contents: bytemuck::cast_slice(&lod_box_mesh.vertices),
-                    usage: wgpu::BufferUsages::VERTEX,
-                });
-        self.lod_box_index_buffer =
-            self.device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("LOD Box Index Buffer"),
-                    contents: bytemuck::cast_slice(&lod_box_mesh.indices),
-                    usage: wgpu::BufferUsages::INDEX,
-                });
-        self.lod_box_num_indices = lod_box_mesh.indices.len() as u32;
+        // Update culling manager with new prototype and instance AABBs
+        let triangles_per_instance = self.num_indices / 3;
+        self.culling.set_prototype_aabb(&self.device, prototype_aabb, triangles_per_instance);
+        self.culling.instance_aabbs = instance_aabbs;
+        self.culling.lod_box_count = 0;
+        self.num_triangles = triangles_per_instance as u64 * self.num_instances as u64;
         log::info!(
-            "Regenerated LOD box mesh for prototype AABB: {:?} to {:?}",
+            "Updated culling manager for prototype AABB: {:?} to {:?}",
             prototype_aabb.min_point(),
             prototype_aabb.max_point()
         );
@@ -2630,15 +2432,10 @@ impl Renderer {
         self.current_transforms = updated_transforms;
 
         // Recompute instance AABBs for frustum culling
-        let prototype_aabb = self.prototype_aabb;
-        self.instance_aabbs = self
-            .current_transforms
-            .iter()
-            .map(|t| t.transform_aabb(&prototype_aabb))
-            .collect();
+        self.culling.update_instance_aabbs(&self.current_transforms);
 
         // Invalidate frustum cache
-        self.frustum_camera_snapshot = CameraSnapshot::default();
+        self.culling.invalidate_frustum();
 
         // Rebuild instance_groups with animated transforms for multi-draw rendering
         if self.multi_draw.enabled {
@@ -3509,14 +3306,14 @@ impl Renderer {
         let fps = self.fps;
         let camera = &self.camera;
         let num_instances = self.num_instances;
-        let visible_instances = self.visible_instance_count;
-        let lod_box_instances = self.lod_box_instance_count;
-        let triangles_per_instance = self.triangles_per_instance;
+        let visible_instances = self.culling.visible_count;
+        let lod_box_instances = self.culling.lod_box_count;
+        let triangles_per_instance = self.culling.triangles_per_instance;
         let mesh_bounds_min = self.mesh_bounds_min;
         let mesh_bounds_max = self.mesh_bounds_max;
         let size = self.size;
         let mut gnomon_size = self.gnomon.size;
-        let mut lod_max_polys = self.lod_max_polys;
+        let mut lod_max_polys = self.culling.lod_max_polys;
         let mut left_panel_width = self.ui_left_panel_width;
         let mut right_panel_width = self.ui_right_panel_width;
         let mut bottom_panel_height = self.ui_bottom_panel_height;
@@ -4152,7 +3949,7 @@ impl Renderer {
         self.ui_bottom_panel_height = bottom_panel_height;
 
         // Update LOD max polys from UI
-        self.lod_max_polys = lod_max_polys;
+        self.culling.lod_max_polys = lod_max_polys;
 
         // Update render mode from UI - detect mode change
         let mode_changed = self.ivar_state.mode != render_mode;
@@ -4484,8 +4281,8 @@ impl Renderer {
                         log::trace!(
                             "Drawing {} indices x {} near instances + {} LOD box instances (of {} total)",
                             self.num_indices,
-                            self.visible_instance_count,
-                            self.lod_box_instance_count,
+                            self.culling.visible_count,
+                            self.culling.lod_box_count,
                             self.num_instances
                         );
                         render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
@@ -4497,26 +4294,26 @@ impl Renderer {
                         render_pass.draw_indexed(
                             0..self.num_indices,
                             0,
-                            0..self.visible_instance_count,
+                            0..self.culling.visible_count,
                         );
                     }
 
                     // Draw far instances as LOD box proxies (from same buffer, offset by near count)
-                    if self.lod_box_instance_count > 0 {
-                        let far_byte_offset = (self.visible_instance_count as usize
+                    if self.culling.lod_box_count > 0 {
+                        let far_byte_offset = (self.culling.visible_count as usize
                             * std::mem::size_of::<InstanceData>())
                             as u64;
-                        render_pass.set_vertex_buffer(0, self.lod_box_vertex_buffer.slice(..));
+                        render_pass.set_vertex_buffer(0, self.culling.lod_box_vertex_buffer().slice(..));
                         render_pass
                             .set_vertex_buffer(1, self.instance_buffer.slice(far_byte_offset..));
                         render_pass.set_index_buffer(
-                            self.lod_box_index_buffer.slice(..),
+                            self.culling.lod_box_index_buffer().slice(..),
                             wgpu::IndexFormat::Uint32,
                         );
                         render_pass.draw_indexed(
-                            0..self.lod_box_num_indices,
+                            0..self.culling.lod_box_num_indices(),
                             0,
-                            0..self.lod_box_instance_count,
+                            0..self.culling.lod_box_count,
                         );
                     }
                 }
