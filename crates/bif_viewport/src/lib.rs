@@ -25,6 +25,7 @@ use bif_renderer::{
 pub mod batch_render;
 pub mod compute_ibl;
 pub mod environment;
+pub mod environment_manager;
 pub mod frustum_culling;
 pub mod gnomon;
 pub mod gpu_types;
@@ -53,6 +54,7 @@ pub use gnomon::GnomonRenderer;
 pub use ivar_renderer::{create_depth_texture, create_ivar_pipeline, create_ivar_texture};
 pub use lights::LightsManager;
 pub use multi_draw::MultiDrawState;
+pub use environment_manager::EnvironmentManager;
 pub use ivar_state::{
     BatchRenderSettings, BatchRenderStatus, BuildStatus, CameraSnapshot, CameraSource, IvarMessage,
     IvarState, RenderMode,
@@ -159,25 +161,7 @@ impl TimelineState {
     }
 }
 
-/// Result from background IBL generation thread.
-enum IblResult {
-    Success {
-        /// HDR pixels for GPU compute IBL (viewport)
-        hdr_pixels: Vec<[f32; 3]>,
-        hdr_width: u32,
-        hdr_height: u32,
-        /// Ivar CPU path tracer environment
-        ivar_env: Arc<bif_renderer::HdriEnvironment>,
-        path: String,
-        rotation_rad: f32,
-        intensity: f32,
-        show_background: bool,
-    },
-    Error {
-        path: String,
-        message: String,
-    },
-}
+use environment_manager::IblResult;
 
 /// Core renderer managing wgpu state
 pub struct Renderer {
@@ -328,23 +312,11 @@ pub struct Renderer {
     // Timeline state for animation playback
     pub timeline_state: TimelineState,
 
-    // Environment IBL state
-    pub gpu_environment: GpuEnvironment,
-    /// Whether to render the skybox background
-    pub show_background: bool,
-    // Skybox rendering
-    skybox_pipeline: wgpu::RenderPipeline,
-    skybox_bind_group: wgpu::BindGroup,
+    // Environment IBL and skybox state
+    environment: EnvironmentManager,
 
     // Lights state (UsdLux)
     lights: LightsManager,
-
-    // Async IBL generation
-    ibl_receiver: Option<mpsc::Receiver<IblResult>>,
-    // Async .tx conversion result
-    tx_conversion_receiver: Option<mpsc::Receiver<String>>,
-    // GPU compute IBL pipelines
-    compute_ibl: compute_ibl::ComputeIbl,
 
     // Batch render state
     batch_receiver: Option<mpsc::Receiver<BatchMessage>>,
@@ -721,8 +693,13 @@ impl Renderer {
             ],
         });
 
-        // Create environment IBL resources (fallback black cubemaps)
-        let gpu_environment = GpuEnvironment::new_default(&device, &queue);
+        // Create environment manager (IBL + skybox)
+        let environment = EnvironmentManager::new(
+            &device,
+            &queue,
+            &camera_bind_group_layout,
+            config.format,
+        );
 
         // Create lights manager (bind group 4)
         let lights = LightsManager::new(&device);
@@ -740,7 +717,7 @@ impl Renderer {
                 &camera_bind_group_layout,
                 &material_bind_group_layout,
                 &texture_bind_group_layout,
-                &gpu_environment.bind_group_layout,
+                environment.bind_group_layout(),
                 lights.bind_group_layout(),
             ],
             push_constant_ranges: &[],
@@ -910,24 +887,6 @@ impl Renderer {
 
         log::info!("Ivar resources initialized");
 
-        // Skybox pipeline
-        let skybox_bind_group_layout = skybox::create_skybox_bind_group_layout(&device);
-        let skybox_pipeline = skybox::create_skybox_pipeline(
-            &device,
-            &camera_bind_group_layout,
-            &skybox_bind_group_layout,
-            config.format,
-        );
-        let skybox_bind_group = skybox::create_skybox_bind_group(
-            &device,
-            &skybox_bind_group_layout,
-            &gpu_environment.prefiltered_view,
-            &gpu_environment.sampler,
-            &gpu_environment.params_buffer,
-        );
-
-        let compute_ibl = compute_ibl::ComputeIbl::new(&device);
-
         Ok(Self {
             surface,
             device,
@@ -1012,14 +971,8 @@ impl Renderer {
             usd_stage: None,
             node_graph_state: NodeGraphState::new(),
             timeline_state: TimelineState::default(),
-            gpu_environment,
-            show_background: true,
-            skybox_pipeline,
-            skybox_bind_group,
+            environment,
             lights,
-            ibl_receiver: None,
-            tx_conversion_receiver: None,
-            compute_ibl,
             batch_receiver: None,
             batch_cancel_flag: None,
             viewport_camera_source: CameraSource::Viewport,
@@ -1379,8 +1332,13 @@ impl Renderer {
             ],
         });
 
-        // Create environment IBL resources (fallback black cubemaps)
-        let gpu_environment = GpuEnvironment::new_default(&device, &queue);
+        // Create environment manager (IBL + skybox)
+        let environment = EnvironmentManager::new(
+            &device,
+            &queue,
+            &camera_bind_group_layout,
+            config.format,
+        );
 
         // Create lights manager (bind group 4)
         let lights = LightsManager::new(&device);
@@ -1398,7 +1356,7 @@ impl Renderer {
                 &camera_bind_group_layout,
                 &material_bind_group_layout,
                 &texture_bind_group_layout,
-                &gpu_environment.bind_group_layout,
+                environment.bind_group_layout(),
                 lights.bind_group_layout(),
             ],
             push_constant_ranges: &[],
@@ -1604,24 +1562,6 @@ impl Renderer {
 
         log::info!("Ivar resources initialized");
 
-        // Skybox pipeline
-        let skybox_bind_group_layout = skybox::create_skybox_bind_group_layout(&device);
-        let skybox_pipeline = skybox::create_skybox_pipeline(
-            &device,
-            &camera_bind_group_layout,
-            &skybox_bind_group_layout,
-            config.format,
-        );
-        let skybox_bind_group = skybox::create_skybox_bind_group(
-            &device,
-            &skybox_bind_group_layout,
-            &gpu_environment.prefiltered_view,
-            &gpu_environment.sampler,
-            &gpu_environment.params_buffer,
-        );
-
-        let compute_ibl = compute_ibl::ComputeIbl::new(&device);
-
         Ok(Self {
             surface,
             device,
@@ -1706,14 +1646,8 @@ impl Renderer {
             usd_stage: None,
             node_graph_state: NodeGraphState::new(),
             timeline_state: TimelineState::default(),
-            gpu_environment,
-            show_background: true,
-            skybox_pipeline,
-            skybox_bind_group,
+            environment,
             lights,
-            ibl_receiver: None,
-            tx_conversion_receiver: None,
-            compute_ibl,
             batch_receiver: None,
             batch_cancel_flag: None,
             viewport_camera_source: CameraSource::Viewport,
@@ -1799,10 +1733,7 @@ impl Renderer {
         rotation: f32,
         show_background: bool,
     ) {
-        self.gpu_environment.params.intensity = intensity;
-        self.gpu_environment.params.rotation = rotation;
-        self.show_background = show_background;
-        self.gpu_environment.update_params(&self.queue);
+        self.environment.update_params(&self.queue, intensity, rotation, show_background);
     }
 
     /// Update lights uniform buffer from scene lights.
@@ -3475,8 +3406,7 @@ impl Renderer {
         window: &winit::window::Window,
     ) -> Result<()> {
         // Poll for completed async IBL generation
-        let ibl_result = self.ibl_receiver.as_ref().and_then(|rx| rx.try_recv().ok());
-        if let Some(result) = ibl_result {
+        if let Some(result) = self.environment.poll_ibl_result() {
             match result {
                 IblResult::Success {
                     hdr_pixels,
@@ -3488,31 +3418,15 @@ impl Renderer {
                     intensity,
                     show_background,
                 } => {
-                    // GPU compute IBL for viewport
-                    let output = self.compute_ibl.generate(
+                    self.environment.apply_ibl_result(
                         &self.device,
                         &self.queue,
+                        &hdr_pixels,
                         hdr_width,
                         hdr_height,
-                        &hdr_pixels,
-                    );
-                    let mip_count = compute_ibl::PREFILTER_MIP_COUNT;
-                    self.gpu_environment.params.max_mip = (mip_count - 1).max(1) as f32;
-                    self.gpu_environment.load_from_compute(
-                        &self.device,
-                        &self.queue,
-                        output,
-                        mip_count,
-                    );
-                    self.update_environment_params(intensity, rotation_rad, show_background);
-                    // Rebuild skybox bind group
-                    let skybox_bgl = skybox::create_skybox_bind_group_layout(&self.device);
-                    self.skybox_bind_group = skybox::create_skybox_bind_group(
-                        &self.device,
-                        &skybox_bgl,
-                        &self.gpu_environment.prefiltered_view,
-                        &self.gpu_environment.sampler,
-                        &self.gpu_environment.params_buffer,
+                        rotation_rad,
+                        intensity,
+                        show_background,
                     );
                     // Set Ivar CPU environment
                     self.ivar_state.environment = Some(ivar_env);
@@ -3524,17 +3438,11 @@ impl Renderer {
                     self.node_graph_state.mark_hdri_error(&path, message);
                 }
             }
-            self.ibl_receiver = None;
         }
 
         // Poll for completed .tx conversion
-        let tx_result = self
-            .tx_conversion_receiver
-            .as_ref()
-            .and_then(|rx| rx.try_recv().ok());
-        if let Some(status) = tx_result {
+        if let Some(status) = self.environment.poll_tx_result() {
             self.node_graph_state.mark_tx_conversion_complete(status);
-            self.tx_conversion_receiver = None;
         }
 
         // Poll for batch render messages
@@ -4376,24 +4284,10 @@ impl Renderer {
                                     .mark_tx_conversion_complete("No textures".into());
                             } else {
                                 log::info!("Converting {} textures to .tx", paths.len());
-                                let (tx, rx) = mpsc::channel();
-                                self.tx_conversion_receiver = Some(rx);
-                                let base_dir = self.texture_base_dir.clone();
-                                std::thread::spawn(move || {
-                                    let cache = match base_dir {
-                                        Some(dir) => {
-                                            bif_core::texture::TextureCache::with_base_dir(dir)
-                                        }
-                                        None => bif_core::texture::TextureCache::new(),
-                                    };
-                                    let count = cache.convert_textures_to_tx(&paths);
-                                    let status = if count > 0 {
-                                        format!("{}/{} converted", count, paths.len())
-                                    } else {
-                                        "All up to date".into()
-                                    };
-                                    let _ = tx.send(status);
-                                });
+                                self.environment.start_tx_conversion(
+                                    paths,
+                                    self.texture_base_dir.clone(),
+                                );
                             }
                         }
                         #[cfg(not(feature = "oiio"))]
@@ -4410,41 +4304,12 @@ impl Renderer {
                     } => {
                         log::info!("Node graph: Loading HDRI (async): {}", path);
                         self.node_graph_state.mark_hdri_loading(&path);
-                        let (tx, rx) = mpsc::channel();
-                        self.ibl_receiver = Some(rx);
-                        let rotation_rad = rotation.to_radians();
-                        let path_clone = path.clone();
-                        std::thread::spawn(move || {
-                            match bif_core::hdr::HdrImage::load(&path_clone) {
-                                Ok(hdr) => {
-                                    // Clone pixels for GPU compute (Ivar takes ownership of HdrImage)
-                                    let hdr_pixels = hdr.pixels.clone();
-                                    let hdr_width = hdr.width;
-                                    let hdr_height = hdr.height;
-                                    let ivar_env = bif_renderer::HdriEnvironment::new(
-                                        hdr,
-                                        rotation_rad,
-                                        intensity,
-                                    );
-                                    let _ = tx.send(IblResult::Success {
-                                        hdr_pixels,
-                                        hdr_width,
-                                        hdr_height,
-                                        ivar_env: Arc::new(ivar_env),
-                                        path: path_clone,
-                                        rotation_rad,
-                                        intensity,
-                                        show_background,
-                                    });
-                                }
-                                Err(e) => {
-                                    let _ = tx.send(IblResult::Error {
-                                        path: path_clone,
-                                        message: e.to_string(),
-                                    });
-                                }
-                            }
-                        });
+                        self.environment.start_hdri_load(
+                            std::path::Path::new(&path),
+                            rotation,
+                            intensity,
+                            show_background,
+                        );
                     }
                     NodeGraphEvent::UpdateHdriParams {
                         rotation,
@@ -4497,7 +4362,7 @@ impl Renderer {
                 // Standard GPU viewport rendering
 
                 // Skybox pass (renders environment background before geometry)
-                if self.show_background && self.gpu_environment.params.has_environment != 0 {
+                if self.environment.should_render_skybox() {
                     let mut skybox_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                         label: Some("Skybox Pass"),
                         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -4519,24 +4384,18 @@ impl Renderer {
                         timestamp_writes: None,
                         occlusion_query_set: None,
                     });
-                    skybox_pass.set_pipeline(&self.skybox_pipeline);
-                    skybox_pass.set_bind_group(0, &self.camera_bind_group, &[]);
-                    skybox_pass.set_bind_group(1, &self.skybox_bind_group, &[]);
-                    skybox_pass.draw(0..3, 0..1);
+                    self.environment
+                        .render_skybox(&mut skybox_pass, &self.camera_bind_group);
                 }
 
                 // Geometry pass
                 {
-                    let color_load = if self.show_background
-                        && self.gpu_environment.params.has_environment != 0
-                    {
+                    let color_load = if self.environment.should_render_skybox() {
                         wgpu::LoadOp::Load
                     } else {
                         wgpu::LoadOp::Clear(clear_color)
                     };
-                    let depth_load = if self.show_background
-                        && self.gpu_environment.params.has_environment != 0
-                    {
+                    let depth_load = if self.environment.should_render_skybox() {
                         wgpu::LoadOp::Load
                     } else {
                         wgpu::LoadOp::Clear(1.0)
@@ -4569,7 +4428,7 @@ impl Renderer {
                     render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
                     render_pass.set_bind_group(1, &self.material_bind_group, &[]);
                     render_pass.set_bind_group(2, &self.texture_bind_group, &[]);
-                    render_pass.set_bind_group(3, &self.gpu_environment.bind_group, &[]);
+                    render_pass.set_bind_group(3, self.environment.bind_group(), &[]);
                     render_pass.set_bind_group(4, &self.lights.bind_group, &[]);
 
                     if self.multi_draw.enabled && !self.multi_draw.prototype_gpu_data.is_empty() {
