@@ -1,6 +1,6 @@
 # Session Handoff - February 2, 2026
 
-**Last Updated:** M19.4 Code Quality & Robustness
+**Last Updated:** M19.5 Renderer Decomposition Phase 2
 **Next Milestone:** Fix timeline playback (M19.3), then instance transform animation
 **Project:** BIF - VFX Scene Assembler & Renderer
 
@@ -10,7 +10,7 @@
 
 | Status | Details |
 |--------|---------|
-| Complete | Milestones 0-18.5, M19.2 USD lights, M19.4 code quality |
+| Complete | Milestones 0-18.5, M19.2 USD lights, M19.4-M19.5 code quality |
 | Current | M19.3 viewport camera selection (WIP - playback debugging) |
 | Tests | 137+ passing |
 | Performance | 60 FPS viewport, 10K instances with LOD |
@@ -18,6 +18,18 @@
 ---
 
 ## Recent Work
+
+### M19.5: Renderer Decomposition Phase 2 (Feb 2, 2026)
+
+Extracted three more managers from the monolithic Renderer struct:
+
+| Component | Fields | Description |
+|-----------|--------|-------------|
+| MultiDrawState | 3 | prototype_gpu_data, instance_groups, enabled |
+| EnvironmentManager | 7 | IBL, skybox pipeline, async HDRI/tx loading |
+| CullingManager | 12 | frustum culling, LOD box proxy, polygon budget |
+
+**Total:** ~450 lines removed from lib.rs across 3 new modules.
 
 ### M19.4: Code Quality & Robustness (Feb 2, 2026)
 
@@ -104,16 +116,19 @@ Added UsdLux light extraction and rendering.
 
 ---
 
-## Architecture Improvements (M19.4)
+## Architecture Improvements (M19.4 + M19.5)
 
-Renderer struct decomposition started:
-- `LightsManager` - lights uniform, buffer, bind_group, scene_lights
-- `GnomonRenderer` - pipeline, vertex_buffer, uniform, buffer, bind_group, size
+Renderer struct decomposition complete (Phase 1 + 2):
 
-Future extraction candidates:
-- EnvironmentManager (IBL state)
-- CullingManager (frustum culling scratch buffers)
-- MultiDrawState (prototype GPU data, instance groups)
+| Module | Fields | Purpose |
+|--------|--------|---------|
+| LightsManager | 4 | lights uniform, buffer, bind_group, scene_lights |
+| GnomonRenderer | 5 | pipeline, vertex_buffer, uniform, buffer, bind_group, size |
+| MultiDrawState | 3 | prototype_gpu_data, instance_groups, enabled |
+| EnvironmentManager | 7 | IBL, skybox, async HDRI/tx loading |
+| CullingManager | 12 | frustum culling, LOD box proxy, polygon budget |
+
+**Total removed from Renderer:** ~600 lines across M19.4 and M19.5
 
 ---
 

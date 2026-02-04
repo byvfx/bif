@@ -678,6 +678,13 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
   - Extract `GnomonRenderer` from monolithic `Renderer` struct
   - Improve UsdStage thread safety documentation
 
+  **Phase 5d: Renderer Decomposition Phase 2 ✅ (M19.5)**
+  - Extract `MultiDrawState` from Renderer (prototype_gpu_data, instance_groups, enabled)
+  - Extract `EnvironmentManager` from Renderer (IBL, skybox, async HDRI loading)
+  - Extract `CullingManager` from Renderer (frustum culling, LOD box proxy, polygon budget)
+  - Added `MAX_INSTANCES` module-level constant
+  - ~450 lines removed from lib.rs total
+
   **Phase 6: Instance Transform Animation (TODO)**
   - Per-frame instance matrix evaluation
   - Test with transform-animated USD scenes
@@ -916,6 +923,6 @@ Key papers for Milestone 20 (Renderer Polish):
 ---
 
 **Last Updated:** February 2, 2026
-**Status:** Milestones 0-18.5, M19.2-M19.4 Complete, M19.3 WIP
-**Current:** M19.4 code quality complete, M19.3 playback debugging continues
+**Status:** Milestones 0-18.5, M19.2-M19.5 Complete, M19.3 WIP
+**Current:** M19.5 Renderer decomposition complete, M19.3 playback debugging continues
 **Next:** Fix timeline playback, instance transform animation
