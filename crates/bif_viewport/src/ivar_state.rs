@@ -455,6 +455,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::field_reassign_with_default)]
     fn test_ivar_state_progress() {
         let mut state = IvarState::default();
         state.buckets = generate_buckets(100, 100, 32);
@@ -476,6 +477,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::field_reassign_with_default)]
     fn test_batch_render_settings_frame_count() {
         let mut settings = BatchRenderSettings::default();
         settings.start_frame = 1;
