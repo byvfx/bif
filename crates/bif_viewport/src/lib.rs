@@ -3209,8 +3209,21 @@ impl Renderer {
             return;
         };
 
-        // Check for animated geometry
-        let has_animated_geometry = !self.vertex_animated_meshes.is_empty();
+        // Check for animated geometry (vertex deformation OR transform animation)
+        let has_vertex_animation = !self.vertex_animated_meshes.is_empty();
+        let has_transform_animation = self
+            .instance_animations
+            .iter()
+            .any(|a| a.as_ref().is_some_and(|anim| anim.is_animated()));
+        let has_animated_geometry = has_vertex_animation || has_transform_animation;
+
+        if has_animated_geometry {
+            log::info!(
+                "Animated geometry: vertex={}, transform={}",
+                has_vertex_animation,
+                has_transform_animation
+            );
+        }
 
         // Create scene builder for animated geometry
         let scene_builder: Option<batch_render::SceneBuilderFn> = if has_animated_geometry {
@@ -3222,6 +3235,7 @@ impl Renderer {
                 scene_material: self.scene_material.clone(),
                 texture_base_dir: self.texture_base_dir.clone(),
                 instance_transforms: self.instance_transforms.clone(),
+                instance_animations: self.instance_animations.clone(),
                 use_multi_draw: self.multi_draw.enabled,
                 vertex_animated_meshes: self.vertex_animated_meshes.clone(),
                 stage: self.usd_stage.clone(),

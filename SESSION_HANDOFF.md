@@ -88,6 +88,7 @@ VFX code review findings addressed. Seven commits total.
 **Batch Render:**
 - EXR output with AOVs (depth, normals)
 - USD camera animation (position changes per frame)
+- Instance transform animation (per-frame evaluation)
 - Frame range with step
 - Progress bar with cancellation
 
@@ -99,7 +100,6 @@ VFX code review findings addressed. Seven commits total.
 
 ### Known Issues
 
-- Instance transform animation not yet evaluated per frame in batch render
 - OIIO `load_texture_with_mips` crashes on .tx files on Windows
 
 ---
@@ -122,11 +122,11 @@ Renderer struct decomposition complete (Phase 1 + 2):
 
 ## Next Session
 
-**Goal:** Instance transform animation per frame
+**Goal:** Continue rendering improvements
 
-1. Evaluate animated transforms during batch render
-2. Update instance buffer each frame with animated transforms
-3. Test with animated instances
+1. Test batch render with animated instances (need animated USD test file)
+2. Consider adding render progress to UI
+3. Multi-draw support for animated scenes
 
 ---
 

@@ -59,8 +59,10 @@ pub struct SceneBuilderData {
     pub scene_material: bif_core::Material,
     /// Texture base directory.
     pub texture_base_dir: Option<PathBuf>,
-    /// Instance transforms.
+    /// Instance transforms (static, base transforms).
     pub instance_transforms: Vec<Mat4>,
+    /// Instance animations (parallel to instance_transforms, None = static).
+    pub instance_animations: Vec<Option<bif_core::AnimatedTransform>>,
     /// Whether using multi-draw mode (transforms baked into vertices).
     pub use_multi_draw: bool,
     /// Mesh indices with vertex animation.
@@ -247,10 +249,11 @@ impl SceneBuilderData {
             .unwrap_or_default();
 
         // Use identity if multi-draw (transforms already baked)
+        // Otherwise, evaluate animated transforms at the given time
         let ivar_transforms = if self.use_multi_draw {
             vec![Mat4::IDENTITY]
         } else {
-            self.instance_transforms.clone()
+            self.evaluate_transforms_at_time(time)
         };
 
         if let Some(embree_scene) = EmbreeScene::try_new(
@@ -267,6 +270,32 @@ impl SceneBuilderData {
             log::warn!("Embree not available for animated scene rebuild");
             Arc::new(BvhNode::new(vec![]))
         }
+    }
+
+    /// Evaluate instance transforms at a specific time.
+    ///
+    /// Uses animated transforms where available, falling back to static transforms.
+    fn evaluate_transforms_at_time(&self, time: f64) -> Vec<Mat4> {
+        self.instance_transforms
+            .iter()
+            .zip(self.instance_animations.iter())
+            .map(|(base_transform, anim)| {
+                if let Some(anim) = anim {
+                    // Evaluate animated transform at this time
+                    anim.evaluate(time).to_matrix()
+                } else {
+                    // Use static transform
+                    *base_transform
+                }
+            })
+            .collect()
+    }
+
+    /// Check if this scene has any transform animations.
+    pub fn has_transform_animations(&self) -> bool {
+        self.instance_animations
+            .iter()
+            .any(|a| a.as_ref().is_some_and(|anim| anim.is_animated()))
     }
 }
 
@@ -621,6 +650,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bif_core::{AnimatedTransform, Transform, TransformKeyframe};
 
     #[test]
     fn test_camera_from_usd_transform() {
@@ -631,5 +661,104 @@ mod tests {
         // Verify camera was created with correct resolution
         assert_eq!(camera.image_width, 100);
         assert_eq!(camera.image_height, 100);
+    }
+
+    fn make_test_builder_data() -> SceneBuilderData {
+        SceneBuilderData {
+            vertices: vec![],
+            indices: vec![],
+            triangle_material_ids: None,
+            scene_materials: vec![],
+            scene_material: bif_core::Material::default(),
+            texture_base_dir: None,
+            instance_transforms: vec![Mat4::IDENTITY, Mat4::IDENTITY],
+            instance_animations: vec![None, None],
+            use_multi_draw: false,
+            vertex_animated_meshes: vec![],
+            stage: None,
+            mesh_ranges: None,
+        }
+    }
+
+    #[test]
+    fn test_evaluate_static_transforms() {
+        let mut data = make_test_builder_data();
+        data.instance_transforms = vec![
+            Mat4::from_translation(Vec3::new(1.0, 0.0, 0.0)),
+            Mat4::from_translation(Vec3::new(2.0, 0.0, 0.0)),
+        ];
+        data.instance_animations = vec![None, None];
+
+        let result = data.evaluate_transforms_at_time(10.0);
+
+        assert_eq!(result.len(), 2);
+        // Static transforms should be returned unchanged
+        assert_eq!(result[0], data.instance_transforms[0]);
+        assert_eq!(result[1], data.instance_transforms[1]);
+    }
+
+    #[test]
+    fn test_evaluate_animated_transforms() {
+        let mut data = make_test_builder_data();
+        data.instance_transforms = vec![Mat4::IDENTITY, Mat4::IDENTITY];
+
+        // Create animated transform with keyframes at frame 1 and 24
+        let keyframes = vec![
+            TransformKeyframe {
+                time: 1.0,
+                transform: Transform {
+                    translation: Vec3::new(0.0, 0.0, 0.0),
+                    ..Default::default()
+                },
+            },
+            TransformKeyframe {
+                time: 24.0,
+                transform: Transform {
+                    translation: Vec3::new(10.0, 0.0, 0.0),
+                    ..Default::default()
+                },
+            },
+        ];
+        let animated = AnimatedTransform::with_keyframes(Transform::default(), keyframes);
+
+        data.instance_animations = vec![Some(animated), None];
+
+        // At frame 1, translation should be (0, 0, 0)
+        let result_f1 = data.evaluate_transforms_at_time(1.0);
+        let pos_f1 = result_f1[0].col(3);
+        assert!((pos_f1.x - 0.0).abs() < 0.01);
+
+        // At frame 24, translation should be (10, 0, 0)
+        let result_f24 = data.evaluate_transforms_at_time(24.0);
+        let pos_f24 = result_f24[0].col(3);
+        assert!((pos_f24.x - 10.0).abs() < 0.01);
+
+        // At frame 12.5 (midpoint), translation should be ~(5, 0, 0)
+        let result_mid = data.evaluate_transforms_at_time(12.5);
+        let pos_mid = result_mid[0].col(3);
+        assert!((pos_mid.x - 5.0).abs() < 0.5, "pos_mid.x = {}", pos_mid.x);
+    }
+
+    #[test]
+    fn test_has_transform_animations() {
+        let mut data = make_test_builder_data();
+
+        // No animations
+        assert!(!data.has_transform_animations());
+
+        // Static-only AnimatedTransform (no keyframes)
+        data.instance_animations = vec![Some(AnimatedTransform::static_only(Transform::default()))];
+        assert!(!data.has_transform_animations());
+
+        // With actual keyframes
+        let keyframes = vec![TransformKeyframe {
+            time: 1.0,
+            transform: Transform::default(),
+        }];
+        data.instance_animations = vec![Some(AnimatedTransform::with_keyframes(
+            Transform::default(),
+            keyframes,
+        ))];
+        assert!(data.has_transform_animations());
     }
 }
