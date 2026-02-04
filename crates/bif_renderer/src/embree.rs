@@ -315,7 +315,14 @@ impl EmbreeScene {
         materials: Vec<Arc<DisneyBSDF>>,
         triangle_material_ids: &[u32],
     ) -> Option<Self> {
-        match Self::new(vertices, uvs, normals, transforms, materials, triangle_material_ids) {
+        match Self::new(
+            vertices,
+            uvs,
+            normals,
+            transforms,
+            materials,
+            triangle_material_ids,
+        ) {
             Ok(scene) => Some(scene),
             Err(e) => {
                 log::warn!("Embree scene creation failed: {}", e);
@@ -436,7 +443,10 @@ impl EmbreeScene {
                 rtcReleaseGeometry(geom);
                 rtcReleaseScene(prototype_scene);
                 rtcReleaseDevice(device);
-                return Err(EmbreeError::BufferSetup(format!("vertex buffer: error {}", err)));
+                return Err(EmbreeError::BufferSetup(format!(
+                    "vertex buffer: error {}",
+                    err
+                )));
             }
 
             // 6. Set index buffer
@@ -456,7 +466,10 @@ impl EmbreeScene {
                 rtcReleaseGeometry(geom);
                 rtcReleaseScene(prototype_scene);
                 rtcReleaseDevice(device);
-                return Err(EmbreeError::BufferSetup(format!("index buffer: error {}", err)));
+                return Err(EmbreeError::BufferSetup(format!(
+                    "index buffer: error {}",
+                    err
+                )));
             }
 
             rtcCommitGeometry(geom);
@@ -479,7 +492,10 @@ impl EmbreeScene {
                 rtcReleaseDevice(device);
                 return Err(EmbreeError::BufferSetup(format!(
                     "attach geometry: {} ({}), verts={}, tris={}",
-                    err, err_msg, vertices.len() * 3, vertices.len()
+                    err,
+                    err_msg,
+                    vertices.len() * 3,
+                    vertices.len()
                 )));
             }
 
@@ -781,7 +797,10 @@ impl Hittable for EmbreeScene {
 
             // Per-triangle material lookup
             // Belt-and-suspenders: validated in new(), but check in debug builds
-            debug_assert!(!self.materials.is_empty(), "materials should never be empty");
+            debug_assert!(
+                !self.materials.is_empty(),
+                "materials should never be empty"
+            );
             let mat_id = self.triangle_material_ids[prim_id] as usize;
             let mat_id = mat_id.min(self.materials.len() - 1);
             rec.material = &*self.materials[mat_id];

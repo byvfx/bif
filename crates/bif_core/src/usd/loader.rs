@@ -330,11 +330,8 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
             }
             UsdLightType::Sphere => {
                 // Position is the translation component
-                let position = bif_math::Vec3::new(
-                    transform.col(3).x,
-                    transform.col(3).y,
-                    transform.col(3).z,
-                );
+                let position =
+                    bif_math::Vec3::new(transform.col(3).x, transform.col(3).y, transform.col(3).z);
                 Light::Point {
                     position,
                     color: light_data.color,
@@ -473,14 +470,8 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
         scene.material_count(),
         format_number(instance_count)
     );
-    log::info!(
-        "  Stage open: {:>7.1}ms",
-        stage_time.as_secs_f64() * 1000.0
-    );
-    log::info!(
-        "  Meshes:     {:>7.1}ms",
-        mesh_time.as_secs_f64() * 1000.0
-    );
+    log::info!("  Stage open: {:>7.1}ms", stage_time.as_secs_f64() * 1000.0);
+    log::info!("  Meshes:     {:>7.1}ms", mesh_time.as_secs_f64() * 1000.0);
     log::info!(
         "  Materials:  {:>7.1}ms",
         material_time.as_secs_f64() * 1000.0
@@ -494,10 +485,7 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
         "  Instancers: {:>7.1}ms",
         instancer_time.as_secs_f64() * 1000.0
     );
-    log::info!(
-        "  Total:      {:>7.1}ms",
-        total_time.as_secs_f64() * 1000.0
-    );
+    log::info!("  Total:      {:>7.1}ms", total_time.as_secs_f64() * 1000.0);
 
     Ok((scene, stage))
 }

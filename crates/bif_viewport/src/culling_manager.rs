@@ -84,18 +84,22 @@ impl CullingManager {
     }
 
     /// Set the prototype AABB and regenerate LOD box geometry.
-    pub fn set_prototype_aabb(&mut self, device: &wgpu::Device, aabb: Aabb, tris_per_instance: u32) {
+    pub fn set_prototype_aabb(
+        &mut self,
+        device: &wgpu::Device,
+        aabb: Aabb,
+        tris_per_instance: u32,
+    ) {
         self.prototype_aabb = aabb;
         self.triangles_per_instance = tris_per_instance;
 
         // Regenerate LOD box mesh for new prototype AABB
         let lod_box_mesh = MeshData::from_aabb(&aabb);
-        self.lod_box_vertex_buffer =
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("LOD Box Vertex Buffer"),
-                contents: bytemuck::cast_slice(&lod_box_mesh.vertices),
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            });
+        self.lod_box_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("LOD Box Vertex Buffer"),
+            contents: bytemuck::cast_slice(&lod_box_mesh.vertices),
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        });
         self.lod_box_index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("LOD Box Index Buffer"),
             contents: bytemuck::cast_slice(&lod_box_mesh.indices),

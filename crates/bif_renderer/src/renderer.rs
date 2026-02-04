@@ -125,12 +125,9 @@ pub fn ray_color(
                         let bsdf_pdf = rec.material.pdf(&current_ray, &rec, &shadow_ray);
                         let mis_w = power_heuristic(light_sample.pdf, bsdf_pdf);
                         let cos_theta = rec.normal.dot(light_sample.direction).max(0.0);
-                        accumulated += throughput
-                            * bsdf_val
-                            * light_sample.emission
-                            * cos_theta
-                            * mis_w
-                            / light_sample.pdf.max(1e-10);
+                        accumulated +=
+                            throughput * bsdf_val * light_sample.emission * cos_theta * mis_w
+                                / light_sample.pdf.max(1e-10);
                     }
                 }
             }
@@ -276,12 +273,9 @@ pub fn ray_color_with_aovs(
                         let bsdf_pdf = rec.material.pdf(&current_ray, &rec, &shadow_ray);
                         let mis_w = power_heuristic(light_sample.pdf, bsdf_pdf);
                         let cos_theta = rec.normal.dot(light_sample.direction).max(0.0);
-                        accumulated += throughput
-                            * bsdf_val
-                            * light_sample.emission
-                            * cos_theta
-                            * mis_w
-                            / light_sample.pdf.max(1e-10);
+                        accumulated +=
+                            throughput * bsdf_val * light_sample.emission * cos_theta * mis_w
+                                / light_sample.pdf.max(1e-10);
                     }
                 }
             }

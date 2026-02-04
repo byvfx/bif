@@ -188,7 +188,9 @@ pub fn write_exr(
 
     // Write based on AOV configuration (alpha, depth, normal)
     match (&output.alpha, &output.depth, &output.normal) {
-        (Some(a), Some(d), Some(n)) => write_exr_rgba_depth_normal(output, a, d, n, path, compression),
+        (Some(a), Some(d), Some(n)) => {
+            write_exr_rgba_depth_normal(output, a, d, n, path, compression)
+        }
         (Some(a), Some(d), None) => write_exr_rgba_depth(output, a, d, path, compression),
         (Some(a), None, Some(n)) => write_exr_rgba_normal(output, a, n, path, compression),
         (Some(a), None, None) => write_exr_rgba(output, a, path, compression),
