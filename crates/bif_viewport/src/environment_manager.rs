@@ -127,11 +127,9 @@ impl EnvironmentManager {
                         } else {
                             let tx_start = std::time::Instant::now();
                             log::info!("Converting HDRI to .tx: {}", source.display());
-                            let converted =
-                                bif_core::texture::TextureCache::make_tx_subprocess(
-                                    source,
-                                    &tx_path,
-                                );
+                            let converted = bif_core::texture::TextureCache::make_tx_subprocess(
+                                source, &tx_path,
+                            );
                             log::info!(
                                 "HDRI .tx conversion {} in {:.2}s",
                                 if converted { "completed" } else { "failed" },
@@ -154,47 +152,47 @@ impl EnvironmentManager {
             };
 
             match bif_core::hdr::HdrImage::load(&load_path) {
-            Ok(hdr) => {
-                let load_secs = load_start.elapsed().as_secs_f64();
-                log::info!(
-                    "HDRI load finished in {:.2}s ({}x{}, path={})",
-                    load_secs,
-                    hdr.width,
-                    hdr.height,
-                    load_path
-                );
-                let hdr_pixels = hdr.pixels.clone();
-                let hdr_width = hdr.width;
-                let hdr_height = hdr.height;
-                let ivar_env = bif_renderer::HdriEnvironment::new(hdr, rotation_rad, intensity);
-                let _ = tx.send(IblResult::Success {
-                    hdr_pixels,
-                    hdr_width,
-                    hdr_height,
-                    ivar_env: Arc::new(ivar_env),
-                    source_path,
-                    load_path,
-                    rotation_rad,
-                    intensity,
-                    show_background: show_bg,
-                    load_secs,
-                });
+                Ok(hdr) => {
+                    let load_secs = load_start.elapsed().as_secs_f64();
+                    log::info!(
+                        "HDRI load finished in {:.2}s ({}x{}, path={})",
+                        load_secs,
+                        hdr.width,
+                        hdr.height,
+                        load_path
+                    );
+                    let hdr_pixels = hdr.pixels.clone();
+                    let hdr_width = hdr.width;
+                    let hdr_height = hdr.height;
+                    let ivar_env = bif_renderer::HdriEnvironment::new(hdr, rotation_rad, intensity);
+                    let _ = tx.send(IblResult::Success {
+                        hdr_pixels,
+                        hdr_width,
+                        hdr_height,
+                        ivar_env: Arc::new(ivar_env),
+                        source_path,
+                        load_path,
+                        rotation_rad,
+                        intensity,
+                        show_background: show_bg,
+                        load_secs,
+                    });
+                }
+                Err(e) => {
+                    let load_secs = load_start.elapsed().as_secs_f64();
+                    log::error!(
+                        "HDRI load failed in {:.2}s (path={}): {}",
+                        load_secs,
+                        load_path,
+                        e
+                    );
+                    let _ = tx.send(IblResult::Error {
+                        source_path,
+                        load_path,
+                        message: e.to_string(),
+                    });
+                }
             }
-            Err(e) => {
-                let load_secs = load_start.elapsed().as_secs_f64();
-                log::error!(
-                    "HDRI load failed in {:.2}s (path={}): {}",
-                    load_secs,
-                    load_path,
-                    e
-                );
-                let _ = tx.send(IblResult::Error {
-                    source_path,
-                    load_path,
-                    message: e.to_string(),
-                });
-            }
-        }
         });
     }
 
@@ -247,7 +245,7 @@ impl EnvironmentManager {
             &self.gpu_env.sampler,
             &self.gpu_env.params_buffer,
         );
-        return compute_secs;
+        compute_secs
     }
 
     /// Update environment parameters without regenerating maps.

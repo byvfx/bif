@@ -442,20 +442,18 @@ OiioBridgeError oiio_load_hdr(const char* path, OiioHdrImage** out_data) {
     const ImageSpec& spec = inp->spec();
     int width = spec.width;
     int height = spec.height;
-    int nchannels = spec.nchannels;
 
-    // Read as float
-    std::vector<float> pixels(width * height * nchannels);
-    if (!inp->read_image(0, 0, 0, nchannels, TypeDesc::FLOAT, pixels.data())) {
-        g_last_error = inp->geterror();
+    // Validate dimensions
+    if (width <= 0 || height <= 0 || width > 65536 || height > 65536) {
+        g_last_error = "Invalid image dimensions";
         inp->close();
         return OIIO_BRIDGE_ERROR_READ_FAILED;
     }
-    inp->close();
 
     // Allocate output structure
     OiioHdrImage* data = new (std::nothrow) OiioHdrImage;
     if (!data) {
+        inp->close();
         return OIIO_BRIDGE_ERROR_OUT_OF_MEMORY;
     }
 
@@ -463,28 +461,30 @@ OiioBridgeError oiio_load_hdr(const char* path, OiioHdrImage** out_data) {
     data->height = height;
     data->channels = 3;
 
+    // Check for allocation overflow
     size_t float_count = static_cast<size_t>(width) * static_cast<size_t>(height) * 3;
-    float* rgb_data = new (std::nothrow) float[float_count];
-    if (!rgb_data) {
+    if (float_count > SIZE_MAX / sizeof(float)) {
         delete data;
+        inp->close();
         return OIIO_BRIDGE_ERROR_OUT_OF_MEMORY;
     }
 
-    // Convert to RGB float (no clamping)
-    for (int y = 0; y < height; ++y) {
-        for (int x = 0; x < width; ++x) {
-            int src_idx = (y * width + x) * nchannels;
-            int dst_idx = (y * width + x) * 3;
-
-            float r = pixels[src_idx];
-            float g = nchannels > 1 ? pixels[src_idx + 1] : r;
-            float b = nchannels > 2 ? pixels[src_idx + 2] : r;
-
-            rgb_data[dst_idx + 0] = r;
-            rgb_data[dst_idx + 1] = g;
-            rgb_data[dst_idx + 2] = b;
-        }
+    float* rgb_data = new (std::nothrow) float[float_count];
+    if (!rgb_data) {
+        delete data;
+        inp->close();
+        return OIIO_BRIDGE_ERROR_OUT_OF_MEMORY;
     }
+
+    // Read directly as RGB - OIIO handles channel conversion
+    if (!inp->read_image(0, 0, 0, 3, TypeDesc::FLOAT, rgb_data)) {
+        g_last_error = inp->geterror();
+        delete[] rgb_data;
+        delete data;
+        inp->close();
+        return OIIO_BRIDGE_ERROR_READ_FAILED;
+    }
+    inp->close();
 
     data->data = rgb_data;
     *out_data = data;

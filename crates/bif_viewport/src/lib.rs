@@ -2398,13 +2398,11 @@ impl Renderer {
             let mut min_time = f64::MAX;
             let mut max_time = f64::MIN;
 
-            for anim_opt in &self.instance_animations {
-                if let Some(anim) = anim_opt {
-                    if let Some(keyframes) = &anim.keyframes {
-                        for kf in keyframes {
-                            min_time = min_time.min(kf.time);
-                            max_time = max_time.max(kf.time);
-                        }
+            for anim in self.instance_animations.iter().flatten() {
+                if let Some(keyframes) = &anim.keyframes {
+                    for kf in keyframes {
+                        min_time = min_time.min(kf.time);
+                        max_time = max_time.max(kf.time);
                     }
                 }
             }
@@ -3388,8 +3386,11 @@ impl Renderer {
                     );
                     // Set Ivar CPU environment
                     self.ivar_state.environment = Some(ivar_env);
-                    self.node_graph_state
-                        .mark_hdri_loaded(&source_path, Some(load_secs), Some(compute_secs));
+                    self.node_graph_state.mark_hdri_loaded(
+                        &source_path,
+                        Some(load_secs),
+                        Some(compute_secs),
+                    );
                     log::info!("HDRI loaded (GPU compute): {}", load_path);
                 }
                 IblResult::Error {
