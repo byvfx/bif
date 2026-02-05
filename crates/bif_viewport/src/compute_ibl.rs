@@ -83,6 +83,7 @@ impl ComputeIbl {
     /// Run full IBL generation pipeline from equirectangular HDR pixels.
     ///
     /// `pixels` should be `width * height` RGB f32 values.
+    /// All GPU work is batched into a single command submission for performance.
     pub fn generate(
         &self,
         device: &Device,
@@ -104,8 +105,13 @@ impl ComputeIbl {
             "Compute Prefiltered",
         );
 
-        // 3. Dispatch equirect → cubemap
-        self.dispatch_equirect(device, queue, &equirect_texture, &cubemap);
+        // Single encoder for all IBL passes - batched submission avoids GPU sync stalls
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("IBL Generation"),
+        });
+
+        // 3. Encode equirect → cubemap
+        self.encode_equirect(device, &mut encoder, &equirect_texture, &cubemap);
 
         // Create cubemap view for sampling in subsequent passes
         let cubemap_view = cubemap.create_view(&wgpu::TextureViewDescriptor {
@@ -113,11 +119,14 @@ impl ComputeIbl {
             ..Default::default()
         });
 
-        // 4. Dispatch irradiance convolution
-        self.dispatch_irradiance(device, queue, &cubemap_view, &irradiance);
+        // 4. Encode irradiance convolution
+        self.encode_irradiance(device, &mut encoder, &cubemap_view, &irradiance);
 
-        // 5. Dispatch prefilter per mip
-        self.dispatch_prefilter(device, queue, &cubemap_view, &prefiltered);
+        // 5. Encode prefilter for all mip levels
+        self.encode_prefilter(device, &mut encoder, &cubemap_view, &prefiltered);
+
+        // Single GPU submission for all IBL work
+        queue.submit(std::iter::once(encoder.finish()));
 
         ComputeIblOutput {
             cubemap,
@@ -134,11 +143,11 @@ impl ComputeIbl {
         height: u32,
         pixels: &[[f32; 3]],
     ) -> wgpu::Texture {
-        // Convert RGB to RGBA f32
-        let rgba: Vec<f32> = pixels
-            .iter()
-            .flat_map(|p| [p[0], p[1], p[2], 1.0])
-            .collect();
+        // Convert RGB to RGBA f32 with pre-allocated capacity to avoid reallocations
+        let mut rgba = Vec::with_capacity(pixels.len() * 4);
+        for p in pixels {
+            rgba.extend_from_slice(&[p[0], p[1], p[2], 1.0]);
+        }
 
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Equirect HDR"),
@@ -178,10 +187,10 @@ impl ComputeIbl {
         texture
     }
 
-    fn dispatch_equirect(
+    fn encode_equirect(
         &self,
         device: &Device,
-        queue: &Queue,
+        encoder: &mut wgpu::CommandEncoder,
         equirect: &wgpu::Texture,
         cubemap: &wgpu::Texture,
     ) {
@@ -206,26 +215,20 @@ impl ComputeIbl {
             ],
         });
 
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("Equirect to Cube"),
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some("Equirect to Cube Pass"),
+            timestamp_writes: None,
         });
-        {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("Equirect to Cube Pass"),
-                timestamp_writes: None,
-            });
-            pass.set_pipeline(&self.equirect_pipeline);
-            pass.set_bind_group(0, &bind_group, &[]);
-            let wg = CUBEMAP_SIZE.div_ceil(8);
-            pass.dispatch_workgroups(wg, wg, 6);
-        }
-        queue.submit(std::iter::once(encoder.finish()));
+        pass.set_pipeline(&self.equirect_pipeline);
+        pass.set_bind_group(0, &bind_group, &[]);
+        let wg = CUBEMAP_SIZE.div_ceil(8);
+        pass.dispatch_workgroups(wg, wg, 6);
     }
 
-    fn dispatch_irradiance(
+    fn encode_irradiance(
         &self,
         device: &Device,
-        queue: &Queue,
+        encoder: &mut wgpu::CommandEncoder,
         cubemap_view: &wgpu::TextureView,
         irradiance: &wgpu::Texture,
     ) {
@@ -253,26 +256,20 @@ impl ComputeIbl {
             ],
         });
 
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("Irradiance Convolution"),
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some("Irradiance Pass"),
+            timestamp_writes: None,
         });
-        {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("Irradiance Pass"),
-                timestamp_writes: None,
-            });
-            pass.set_pipeline(&self.irradiance_pipeline);
-            pass.set_bind_group(0, &bind_group, &[]);
-            let wg = IRRADIANCE_SIZE.div_ceil(8);
-            pass.dispatch_workgroups(wg, wg, 6);
-        }
-        queue.submit(std::iter::once(encoder.finish()));
+        pass.set_pipeline(&self.irradiance_pipeline);
+        pass.set_bind_group(0, &bind_group, &[]);
+        let wg = IRRADIANCE_SIZE.div_ceil(8);
+        pass.dispatch_workgroups(wg, wg, 6);
     }
 
-    fn dispatch_prefilter(
+    fn encode_prefilter(
         &self,
         device: &Device,
-        queue: &Queue,
+        encoder: &mut wgpu::CommandEncoder,
         cubemap_view: &wgpu::TextureView,
         prefiltered: &wgpu::Texture,
     ) {
@@ -323,20 +320,14 @@ impl ComputeIbl {
                 ],
             });
 
-            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some(&format!("Prefilter Mip {}", mip)),
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("Prefilter Pass"),
+                timestamp_writes: None,
             });
-            {
-                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                    label: Some("Prefilter Pass"),
-                    timestamp_writes: None,
-                });
-                pass.set_pipeline(&self.prefilter_pipeline);
-                pass.set_bind_group(0, &bind_group, &[]);
-                let wg = mip_size.div_ceil(8);
-                pass.dispatch_workgroups(wg, wg, 6);
-            }
-            queue.submit(std::iter::once(encoder.finish()));
+            pass.set_pipeline(&self.prefilter_pipeline);
+            pass.set_bind_group(0, &bind_group, &[]);
+            let wg = mip_size.div_ceil(8);
+            pass.dispatch_workgroups(wg, wg, 6);
         }
     }
 
