@@ -317,6 +317,7 @@ pub struct Renderer {
     // UI layout metrics (for viewport-safe overlays)
     ui_left_panel_width: f32,
     ui_right_panel_width: f32,
+    ui_top_panel_height: f32,
     ui_bottom_panel_height: f32,
 
     // Ivar CPU path tracer state
@@ -979,6 +980,7 @@ impl Renderer {
             num_triangles,
             ui_left_panel_width: 0.0,
             ui_right_panel_width: 0.0,
+            ui_top_panel_height: 0.0,
             ui_bottom_panel_height: 0.0,
             ivar_state: IvarState::default(),
             ivar_texture,
@@ -1650,6 +1652,7 @@ impl Renderer {
             num_triangles,
             ui_left_panel_width: 0.0,
             ui_right_panel_width: 0.0,
+            ui_top_panel_height: 0.0,
             ui_bottom_panel_height: 0.0,
             ivar_state: IvarState::default(),
             ivar_texture,
@@ -1736,11 +1739,33 @@ impl Renderer {
             self.ivar_state.image_buffer = None;
             self.ivar_state.render_complete = false;
 
-            // Update camera aspect ratio
-            let aspect = new_size.0 as f32 / new_size.1 as f32;
+            // Update camera aspect ratio from viewport (excludes UI panels)
+            let (_, _, vp_w, vp_h) = self.viewport_rect();
+            let aspect = vp_w / vp_h;
             self.camera.set_aspect(aspect);
             self.update_camera();
         }
+    }
+
+    /// Returns the viewport rect (x, y, w, h) in pixels after subtracting all UI panels.
+    fn viewport_rect(&self) -> (f32, f32, f32, f32) {
+        let x = self.ui_left_panel_width;
+        let y = self.ui_top_panel_height;
+        let w =
+            (self.size.0 as f32 - self.ui_left_panel_width - self.ui_right_panel_width).max(1.0);
+        let h =
+            (self.size.1 as f32 - self.ui_top_panel_height - self.ui_bottom_panel_height).max(1.0);
+        (x, y, w, h)
+    }
+
+    /// Returns bounds-safe u32 scissor rect (x, y, w, h) for `set_scissor_rect`.
+    fn viewport_scissor(&self) -> (u32, u32, u32, u32) {
+        let (vp_x, vp_y, vp_w, vp_h) = self.viewport_rect();
+        let sx = (vp_x.round() as u32).min(self.size.0.saturating_sub(1));
+        let sy = (vp_y.round() as u32).min(self.size.1.saturating_sub(1));
+        let sw = (vp_w.round() as u32).min(self.size.0 - sx);
+        let sh = (vp_h.round() as u32).min(self.size.1 - sy);
+        (sx, sy, sw, sh)
     }
 
     /// Update camera uniform buffer (call after modifying camera)
@@ -3484,6 +3509,7 @@ impl Renderer {
         let mut lod_max_polys = self.culling.lod_max_polys;
         let mut left_panel_width = self.ui_left_panel_width;
         let mut right_panel_width = self.ui_right_panel_width;
+        let mut top_panel_height = self.ui_top_panel_height;
         let mut bottom_panel_height = self.ui_bottom_panel_height;
 
         // Ivar state for UI
@@ -3499,9 +3525,19 @@ impl Renderer {
             if !show_ui {
                 left_panel_width = 0.0;
                 right_panel_width = 0.0;
+                top_panel_height = 0.0;
                 bottom_panel_height = 0.0;
                 return;
             }
+
+            let top_panel = egui::TopBottomPanel::top("top_panel")
+                .exact_height(28.0)
+                .show(ctx, |ui| {
+                    ui.horizontal_centered(|ui| {
+                        ui.label("BIF");
+                    });
+                });
+            top_panel_height = top_panel.response.rect.height();
 
             let stats_panel = egui::SidePanel::left("stats_panel")
                 .default_width(300.0)
@@ -4127,7 +4163,16 @@ impl Renderer {
         self.gnomon.size = gnomon_size;
         self.ui_left_panel_width = left_panel_width;
         self.ui_right_panel_width = right_panel_width;
+        self.ui_top_panel_height = top_panel_height;
         self.ui_bottom_panel_height = bottom_panel_height;
+
+        // Update camera aspect to match viewport (not full window)
+        let (_, _, vp_w, vp_h) = self.viewport_rect();
+        let new_aspect = vp_w / vp_h;
+        if (self.camera.aspect - new_aspect).abs() > 0.001 {
+            self.camera.set_aspect(new_aspect);
+            self.update_camera();
+        }
 
         // Update LOD max polys from UI
         self.culling.lod_max_polys = lod_max_polys;
@@ -4360,6 +4405,10 @@ impl Renderer {
                         timestamp_writes: None,
                         occlusion_query_set: None,
                     });
+                    let (vp_x, vp_y, vp_w, vp_h) = self.viewport_rect();
+                    let (sx, sy, sw, sh) = self.viewport_scissor();
+                    skybox_pass.set_viewport(vp_x, vp_y, vp_w, vp_h, 0.0, 1.0);
+                    skybox_pass.set_scissor_rect(sx, sy, sw, sh);
                     self.environment
                         .render_skybox(&mut skybox_pass, &self.camera_bind_group);
                 }
@@ -4398,6 +4447,12 @@ impl Renderer {
                         timestamp_writes: None,
                         occlusion_query_set: None,
                     });
+
+                    // Constrain geometry to viewport area (excludes UI panels)
+                    let (vp_x, vp_y, vp_w, vp_h) = self.viewport_rect();
+                    let (sx, sy, sw, sh) = self.viewport_scissor();
+                    render_pass.set_viewport(vp_x, vp_y, vp_w, vp_h, 0.0, 1.0);
+                    render_pass.set_scissor_rect(sx, sy, sw, sh);
 
                     // Set common pipeline state
                     render_pass.set_pipeline(&self.pipeline);
@@ -4520,18 +4575,11 @@ impl Renderer {
                     // Set viewport to bottom-right corner of the active viewport
                     let gnomon_size = self.gnomon.size as f32;
                     let padding = 16.0;
-                    let viewport_left = self.ui_left_panel_width;
-                    let viewport_right = (self.size.0 as f32) - self.ui_right_panel_width;
-                    let viewport_bottom = (self.size.1 as f32) - self.ui_bottom_panel_height;
-                    let viewport_width = (viewport_right - viewport_left).max(0.0);
-                    let viewport_height = viewport_bottom.max(0.0);
+                    let (vp_x, vp_y, vp_w, vp_h) = self.viewport_rect();
 
-                    if viewport_width >= gnomon_size + padding
-                        && viewport_height >= gnomon_size + padding
-                    {
-                        let x =
-                            (viewport_right - gnomon_size - padding).max(viewport_left + padding);
-                        let y = (viewport_bottom - gnomon_size - padding).max(padding);
+                    if vp_w >= gnomon_size + padding && vp_h >= gnomon_size + padding {
+                        let x = (vp_x + vp_w - gnomon_size - padding).max(vp_x + padding);
+                        let y = (vp_y + vp_h - gnomon_size - padding).max(vp_y + padding);
 
                         gnomon_pass.set_viewport(
                             x,           // x (right side)
@@ -4581,6 +4629,10 @@ impl Renderer {
                         occlusion_query_set: None,
                     });
 
+                    let (vp_x, vp_y, vp_w, vp_h) = self.viewport_rect();
+                    let (sx, sy, sw, sh) = self.viewport_scissor();
+                    ivar_pass.set_viewport(vp_x, vp_y, vp_w, vp_h, 0.0, 1.0);
+                    ivar_pass.set_scissor_rect(sx, sy, sw, sh);
                     ivar_pass.set_pipeline(&self.ivar_pipeline);
                     ivar_pass.set_bind_group(0, &self.ivar_bind_group, &[]);
                     ivar_pass.draw(0..3, 0..1); // Single fullscreen triangle
