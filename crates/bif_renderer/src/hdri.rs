@@ -8,6 +8,7 @@ use std::f32::consts::PI;
 
 use bif_core::hdr::HdrImage;
 use rand::RngCore;
+use rayon::prelude::*;
 
 use crate::{gen_f32_generic, Color, Vec3};
 
@@ -135,51 +136,60 @@ impl HdriEnvironment {
     }
 
     /// Build the importance sampling distribution from pixel luminances.
+    /// Uses rayon for parallel row processing.
     fn build_distribution(&mut self) {
         let width = self.hdr.width as usize;
         let height = self.hdr.height as usize;
+        let pixels = &self.hdr.pixels;
 
-        self.marginal_cdf = vec![0.0; height + 1];
-        self.conditional_cdfs = vec![vec![0.0; width + 1]; height];
-        self.total_power = 0.0;
+        // Compute each row's conditional CDF and row sum in parallel
+        let row_data: Vec<(f32, Vec<f32>)> = (0..height)
+            .into_par_iter()
+            .map(|y| {
+                let v = (y as f32 + 0.5) / height as f32;
+                let theta = (0.5 - v) * PI;
+                let sin_polar = theta.cos(); // cos(elevation) = sin(polar angle)
 
-        let mut row_sums = vec![0.0f32; height];
+                let mut conditional_cdf = vec![0.0f32; width + 1];
+                let mut row_sum = 0.0f32;
 
-        // Compute luminance-weighted CDF with sin(polar) correction
-        for (y, row_sum) in row_sums.iter_mut().enumerate() {
-            let v = (y as f32 + 0.5) / height as f32;
-            let theta = (0.5 - v) * PI;
-            let sin_polar = theta.cos(); // cos(elevation) = sin(polar angle)
+                for x in 0..width {
+                    let idx = y * width + x;
+                    let pixel = pixels[idx];
+                    let luminance = HdrImage::luminance(pixel);
+                    let weight = (luminance * sin_polar).max(0.0);
 
-            for x in 0..width {
-                let idx = y * width + x;
-                let pixel = self.hdr.pixels[idx];
-                let luminance = HdrImage::luminance(pixel);
-                let weight = (luminance * sin_polar).max(0.0);
-
-                *row_sum += weight;
-                self.total_power += weight;
-
-                self.conditional_cdfs[y][x + 1] = self.conditional_cdfs[y][x] + weight;
-            }
-        }
-
-        // Normalize conditional CDFs
-        for (y, row_sum) in row_sums.iter().enumerate() {
-            if *row_sum > 0.0 {
-                for x in 0..=width {
-                    self.conditional_cdfs[y][x] /= *row_sum;
+                    row_sum += weight;
+                    conditional_cdf[x + 1] = conditional_cdf[x] + weight;
                 }
-            }
+
+                // Normalize this row's CDF
+                if row_sum > 0.0 {
+                    for val in &mut conditional_cdf {
+                        *val /= row_sum;
+                    }
+                }
+
+                (row_sum, conditional_cdf)
+            })
+            .collect();
+
+        // Unpack parallel results and build marginal CDF (sequential, small)
+        let mut row_sums = Vec::with_capacity(height);
+        self.conditional_cdfs = Vec::with_capacity(height);
+        for (row_sum, cdf) in row_data {
+            row_sums.push(row_sum);
+            self.conditional_cdfs.push(cdf);
         }
 
-        // Build and normalize marginal CDF
+        self.total_power = row_sums.iter().sum();
+        self.marginal_cdf = vec![0.0; height + 1];
         for (y, row_sum) in row_sums.iter().enumerate() {
             self.marginal_cdf[y + 1] = self.marginal_cdf[y] + *row_sum;
         }
         if self.total_power > 0.0 {
-            for y in 0..=height {
-                self.marginal_cdf[y] /= self.total_power;
+            for val in &mut self.marginal_cdf {
+                *val /= self.total_power;
             }
         }
 

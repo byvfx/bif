@@ -5,7 +5,7 @@
 //! 2. Irradiance convolution (diffuse IBL)
 //! 3. GGX prefiltered specular (per mip level)
 
-use wgpu::{util::DeviceExt, Device, Queue};
+use wgpu::{Device, Queue};
 
 /// Cubemap face size for the base environment map.
 pub const CUBEMAP_SIZE: u32 = 256;
@@ -37,6 +37,8 @@ pub struct ComputeIbl {
     prefilter_pipeline: wgpu::ComputePipeline,
     prefilter_bind_group_layout: wgpu::BindGroupLayout,
     linear_sampler: wgpu::Sampler,
+    /// Pre-allocated uniform buffers for prefilter params (one per mip level).
+    prefilter_params_buffers: [wgpu::Buffer; PREFILTER_MIP_COUNT as usize],
 }
 
 /// Output textures from GPU IBL generation.
@@ -69,6 +71,16 @@ impl ComputeIbl {
         let (prefilter_pipeline, prefilter_bind_group_layout) =
             Self::create_prefilter_pipeline(device);
 
+        // Pre-allocate uniform buffers for prefilter params (avoids allocation per mip)
+        let prefilter_params_buffers = std::array::from_fn(|_| {
+            device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Prefilter Params"),
+                size: std::mem::size_of::<PrefilterParams>() as u64,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            })
+        });
+
         Self {
             equirect_pipeline,
             equirect_bind_group_layout,
@@ -77,6 +89,7 @@ impl ComputeIbl {
             prefilter_pipeline,
             prefilter_bind_group_layout,
             linear_sampler,
+            prefilter_params_buffers,
         }
     }
 
@@ -123,10 +136,15 @@ impl ComputeIbl {
         self.encode_irradiance(device, &mut encoder, &cubemap_view, &irradiance);
 
         // 5. Encode prefilter for all mip levels
-        self.encode_prefilter(device, &mut encoder, &cubemap_view, &prefiltered);
+        self.encode_prefilter(device, queue, &mut encoder, &cubemap_view, &prefiltered);
 
         // Single GPU submission for all IBL work
+        // Note: wgpu inserts implicit barriers between compute passes that write/read
+        // the same resource, so no manual synchronization needed between passes.
         queue.submit(std::iter::once(encoder.finish()));
+
+        // Block until GPU completes for accurate timing measurement
+        device.poll(wgpu::Maintain::Wait);
 
         ComputeIblOutput {
             cubemap,
@@ -269,6 +287,7 @@ impl ComputeIbl {
     fn encode_prefilter(
         &self,
         device: &Device,
+        queue: &Queue,
         encoder: &mut wgpu::CommandEncoder,
         cubemap_view: &wgpu::TextureView,
         prefiltered: &wgpu::Texture,
@@ -283,11 +302,13 @@ impl ComputeIbl {
                 face_size: mip_size,
                 _pad: 0,
             };
-            let params_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Prefilter Params"),
-                contents: bytemuck::cast_slice(&[params]),
-                usage: wgpu::BufferUsages::UNIFORM,
-            });
+
+            // Update pre-allocated buffer instead of creating new one
+            queue.write_buffer(
+                &self.prefilter_params_buffers[mip as usize],
+                0,
+                bytemuck::cast_slice(&[params]),
+            );
 
             // Create view for this specific mip level
             let mip_view = prefiltered.create_view(&wgpu::TextureViewDescriptor {
@@ -315,7 +336,7 @@ impl ComputeIbl {
                     },
                     wgpu::BindGroupEntry {
                         binding: 3,
-                        resource: params_buffer.as_entire_binding(),
+                        resource: self.prefilter_params_buffers[mip as usize].as_entire_binding(),
                     },
                 ],
             });

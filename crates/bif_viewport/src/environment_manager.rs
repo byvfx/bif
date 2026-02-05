@@ -111,45 +111,10 @@ impl EnvironmentManager {
 
         std::thread::spawn(move || {
             let load_start = std::time::Instant::now();
-            let load_path = {
-                #[cfg(feature = "oiio")]
-                {
-                    let source = std::path::Path::new(&path_str);
-                    let ext = source
-                        .extension()
-                        .and_then(|ext| ext.to_str())
-                        .map(|ext| ext.to_ascii_lowercase());
-
-                    if ext.as_deref() != Some("tx") {
-                        let tx_path = bif_core::oiio::get_tx_path(source);
-                        if bif_core::oiio::tx_is_valid(source, &tx_path) {
-                            tx_path.to_string_lossy().to_string()
-                        } else {
-                            let tx_start = std::time::Instant::now();
-                            log::info!("Converting HDRI to .tx: {}", source.display());
-                            let converted = bif_core::texture::TextureCache::make_tx_subprocess(
-                                source, &tx_path,
-                            );
-                            log::info!(
-                                "HDRI .tx conversion {} in {:.2}s",
-                                if converted { "completed" } else { "failed" },
-                                tx_start.elapsed().as_secs_f64()
-                            );
-                            if converted {
-                                tx_path.to_string_lossy().to_string()
-                            } else {
-                                path_str.clone()
-                            }
-                        }
-                    } else {
-                        path_str.clone()
-                    }
-                }
-                #[cfg(not(feature = "oiio"))]
-                {
-                    path_str.clone()
-                }
-            };
+            // Skip .tx conversion for HDRIs - we load all pixels anyway so no benefit
+            // .tx is useful for material textures (tiled access, mipmaps) but not for
+            // environment maps where we need the full image for IBL prefiltering
+            let load_path = path_str.clone();
 
             match bif_core::hdr::HdrImage::load(&load_path) {
                 Ok(hdr) => {
