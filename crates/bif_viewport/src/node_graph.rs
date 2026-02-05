@@ -654,7 +654,12 @@ impl NodeGraphState {
     }
 
     /// Mark an HDRI Environment node as loaded.
-    pub fn mark_hdri_loaded(&mut self, path: &str, load_secs: Option<f64>, compute_secs: Option<f64>) {
+    pub fn mark_hdri_loaded(
+        &mut self,
+        path: &str,
+        load_secs: Option<f64>,
+        compute_secs: Option<f64>,
+    ) {
         let node_ids: Vec<_> = self.snarl.node_ids().map(|(id, _)| id).collect();
         for node_id in node_ids {
             if let SceneNode::HdriEnvironment {

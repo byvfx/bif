@@ -87,17 +87,9 @@ impl HdrImage {
         let img = image::open(path).map_err(HdrError::Decode)?;
         let rgb = img.to_rgb32f();
         let (width, height) = rgb.dimensions();
-        let pixels: Vec<[f32; 3]> = rgb
-            .pixels()
-            .map(|p| [p[0], p[1], p[2]])
-            .collect();
+        let pixels: Vec<[f32; 3]> = rgb.pixels().map(|p| [p[0], p[1], p[2]]).collect();
 
-        log::info!(
-            "Loaded EXR: {}x{} ({} pixels)",
-            width,
-            height,
-            pixels.len()
-        );
+        log::info!("Loaded EXR: {}x{} ({} pixels)", width, height, pixels.len());
 
         Ok(Self {
             width,

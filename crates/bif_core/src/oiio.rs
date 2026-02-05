@@ -265,7 +265,10 @@ pub fn load_hdr_image(path: impl AsRef<Path>) -> OiioResult<OiioHdrImage> {
         }
 
         let data = &*raw_data;
-        let pixel_count = (data.width as usize) * (data.height as usize);
+        // Copy dimensions before freeing to avoid use-after-free
+        let width = data.width;
+        let height = data.height;
+        let pixel_count = (width as usize) * (height as usize);
         let channel_count = data.channels.max(1) as usize;
         let total_floats = pixel_count * channel_count;
         let raw_pixels = if !data.data.is_null() && total_floats > 0 {
@@ -286,8 +289,8 @@ pub fn load_hdr_image(path: impl AsRef<Path>) -> OiioResult<OiioHdrImage> {
         oiio_free_hdr(raw_data);
 
         Ok(OiioHdrImage {
-            width: data.width,
-            height: data.height,
+            width,
+            height,
             pixels,
         })
     }
