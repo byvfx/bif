@@ -13,7 +13,7 @@ oiio = []  # Enable OIIO/.tx texture support
 [dependencies]
 bif_math = { path = "../bif_math" }
 glam = { workspace = true }
-image = "0.24"
+image = { version = "0.24", features = ["openexr"] }
 log = { workspace = true }
 rayon = { workspace = true }
 serde = { workspace = true }

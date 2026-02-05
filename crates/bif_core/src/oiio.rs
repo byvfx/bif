@@ -76,6 +76,14 @@ struct OiioTextureDataRaw {
 }
 
 #[repr(C)]
+struct OiioHdrImageRaw {
+    data: *mut f32,
+    width: u32,
+    height: u32,
+    channels: u32,
+}
+
+#[repr(C)]
 struct OiioTxOptionsRaw {
     tile_size: u32,
     compression: *const c_char,
@@ -94,6 +102,8 @@ extern "C" {
         out_data: *mut *mut OiioTextureDataRaw,
     ) -> i32;
     fn oiio_free_texture(data: *mut OiioTextureDataRaw);
+    fn oiio_load_hdr(path: *const c_char, out_data: *mut *mut OiioHdrImageRaw) -> i32;
+    fn oiio_free_hdr(data: *mut OiioHdrImageRaw);
     fn oiio_tx_default_options() -> OiioTxOptionsRaw;
     fn oiio_make_tx(
         input_path: *const c_char,
@@ -161,6 +171,14 @@ pub struct OiioTexture {
     pub path: String,
 }
 
+/// HDR image loaded via OIIO with linear float pixels.
+#[derive(Clone, Debug)]
+pub struct OiioHdrImage {
+    pub width: u32,
+    pub height: u32,
+    pub pixels: Vec<[f32; 3]>,
+}
+
 impl OiioTexture {
     /// Get the number of mip levels.
     pub fn mip_count(&self) -> u32 {
@@ -225,6 +243,53 @@ pub fn load_texture_with_mips(path: impl AsRef<Path>) -> OiioResult<OiioTexture>
         let texture = texture_from_raw(raw_data, path_str);
         oiio_free_texture(raw_data);
         Ok(texture)
+    }
+}
+
+/// Load an HDRI image as linear float pixels (EXR/HDR/TX).
+pub fn load_hdr_image(path: impl AsRef<Path>) -> OiioResult<OiioHdrImage> {
+    let path = path.as_ref();
+    let path_str = path.to_str().ok_or(OiioError::InvalidPath)?;
+    let c_path = CString::new(path_str).map_err(|_| OiioError::InvalidPath)?;
+
+    unsafe {
+        let mut raw_data: *mut OiioHdrImageRaw = std::ptr::null_mut();
+        let result = oiio_load_hdr(c_path.as_ptr(), &mut raw_data);
+
+        if result != 0 {
+            return Err(convert_error(result));
+        }
+
+        if raw_data.is_null() {
+            return Err(OiioError::NullPointer);
+        }
+
+        let data = &*raw_data;
+        let pixel_count = (data.width as usize) * (data.height as usize);
+        let channel_count = data.channels.max(1) as usize;
+        let total_floats = pixel_count * channel_count;
+        let raw_pixels = if !data.data.is_null() && total_floats > 0 {
+            std::slice::from_raw_parts(data.data, total_floats)
+        } else {
+            &[]
+        };
+
+        let mut pixels = Vec::with_capacity(pixel_count);
+        for i in 0..pixel_count {
+            let base = i * channel_count;
+            let r = raw_pixels.get(base).copied().unwrap_or(0.0);
+            let g = raw_pixels.get(base + 1).copied().unwrap_or(r);
+            let b = raw_pixels.get(base + 2).copied().unwrap_or(r);
+            pixels.push([r, g, b]);
+        }
+
+        oiio_free_hdr(raw_data);
+
+        Ok(OiioHdrImage {
+            width: data.width,
+            height: data.height,
+            pixels,
+        })
     }
 }
 
