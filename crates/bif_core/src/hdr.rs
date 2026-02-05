@@ -17,6 +17,9 @@ pub enum HdrError {
     Io(#[from] std::io::Error),
     #[error("HDR decode error: {0}")]
     Decode(#[from] image::ImageError),
+    #[cfg(feature = "oiio")]
+    #[error("OIIO error: {0}")]
+    Oiio(#[from] crate::oiio::OiioError),
 }
 
 pub type HdrResult<T> = Result<T, HdrError>;
@@ -32,7 +35,29 @@ pub struct HdrImage {
 impl HdrImage {
     /// Load an HDR (Radiance RGBE) file from disk.
     pub fn load(path: impl AsRef<Path>) -> HdrResult<Self> {
-        let file = std::fs::File::open(path.as_ref())?;
+        let path = path.as_ref();
+        let ext = path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .map(|ext| ext.to_ascii_lowercase());
+
+        #[cfg(feature = "oiio")]
+        {
+            if let Some(ext) = ext.as_deref() {
+                if matches!(ext, "hdr" | "exr" | "tx") {
+                    return Self::load_with_oiio(path);
+                }
+            }
+        }
+
+        match ext.as_deref() {
+            Some("exr") => Self::load_exr(path),
+            _ => Self::load_hdr(path),
+        }
+    }
+
+    fn load_hdr(path: &Path) -> HdrResult<Self> {
+        let file = std::fs::File::open(path)?;
         let reader = BufReader::new(file);
         let decoder = HdrDecoder::new(reader).map_err(HdrError::Decode)?;
 
@@ -44,12 +69,56 @@ impl HdrImage {
 
         let pixels: Vec<[f32; 3]> = rgb_data.into_iter().map(|p| [p[0], p[1], p[2]]).collect();
 
-        log::info!("Loaded HDR: {}x{} ({} pixels)", width, height, pixels.len());
+        log::info!(
+            "Loaded HDR (Radiance): {}x{} ({} pixels)",
+            width,
+            height,
+            pixels.len()
+        );
 
         Ok(Self {
             width,
             height,
             pixels,
+        })
+    }
+
+    fn load_exr(path: &Path) -> HdrResult<Self> {
+        let img = image::open(path).map_err(HdrError::Decode)?;
+        let rgb = img.to_rgb32f();
+        let (width, height) = rgb.dimensions();
+        let pixels: Vec<[f32; 3]> = rgb
+            .pixels()
+            .map(|p| [p[0], p[1], p[2]])
+            .collect();
+
+        log::info!(
+            "Loaded EXR: {}x{} ({} pixels)",
+            width,
+            height,
+            pixels.len()
+        );
+
+        Ok(Self {
+            width,
+            height,
+            pixels,
+        })
+    }
+
+    #[cfg(feature = "oiio")]
+    fn load_with_oiio(path: &Path) -> HdrResult<Self> {
+        let hdr = crate::oiio::load_hdr_image(path)?;
+        log::info!(
+            "Loaded HDRI via OIIO: {}x{} ({} pixels)",
+            hdr.width,
+            hdr.height,
+            hdr.pixels.len()
+        );
+        Ok(Self {
+            width: hdr.width,
+            height: hdr.height,
+            pixels: hdr.pixels,
         })
     }
 

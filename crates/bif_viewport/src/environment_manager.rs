@@ -21,13 +21,16 @@ pub enum IblResult {
         hdr_height: u32,
         /// Ivar CPU path tracer environment
         ivar_env: Arc<bif_renderer::HdriEnvironment>,
-        path: String,
+        source_path: String,
+        load_path: String,
         rotation_rad: f32,
         intensity: f32,
         show_background: bool,
+        load_secs: f64,
     },
     Error {
-        path: String,
+        source_path: String,
+        load_path: String,
         message: String,
     },
 }
@@ -104,9 +107,62 @@ impl EnvironmentManager {
         self.ibl_receiver = Some(rx);
         let rotation_rad = rotation.to_radians();
         let path_str = path.to_string_lossy().to_string();
+        let source_path = path_str.clone();
 
-        std::thread::spawn(move || match bif_core::hdr::HdrImage::load(&path_str) {
+        std::thread::spawn(move || {
+            let load_start = std::time::Instant::now();
+            let load_path = {
+                #[cfg(feature = "oiio")]
+                {
+                    let source = std::path::Path::new(&path_str);
+                    let ext = source
+                        .extension()
+                        .and_then(|ext| ext.to_str())
+                        .map(|ext| ext.to_ascii_lowercase());
+
+                    if ext.as_deref() != Some("tx") {
+                        let tx_path = bif_core::oiio::get_tx_path(source);
+                        if bif_core::oiio::tx_is_valid(source, &tx_path) {
+                            tx_path.to_string_lossy().to_string()
+                        } else {
+                            let tx_start = std::time::Instant::now();
+                            log::info!("Converting HDRI to .tx: {}", source.display());
+                            let converted =
+                                bif_core::texture::TextureCache::make_tx_subprocess(
+                                    source,
+                                    &tx_path,
+                                );
+                            log::info!(
+                                "HDRI .tx conversion {} in {:.2}s",
+                                if converted { "completed" } else { "failed" },
+                                tx_start.elapsed().as_secs_f64()
+                            );
+                            if converted {
+                                tx_path.to_string_lossy().to_string()
+                            } else {
+                                path_str.clone()
+                            }
+                        }
+                    } else {
+                        path_str.clone()
+                    }
+                }
+                #[cfg(not(feature = "oiio"))]
+                {
+                    path_str.clone()
+                }
+            };
+
+            match bif_core::hdr::HdrImage::load(&load_path) {
             Ok(hdr) => {
+                let load_secs = load_start.elapsed().as_secs_f64();
+                log::info!(
+                    "HDRI load finished in {:.2}s ({}x{}, path={})",
+                    load_secs,
+                    hdr.width,
+                    hdr.height,
+                    load_path
+                );
                 let hdr_pixels = hdr.pixels.clone();
                 let hdr_width = hdr.width;
                 let hdr_height = hdr.height;
@@ -116,18 +172,29 @@ impl EnvironmentManager {
                     hdr_width,
                     hdr_height,
                     ivar_env: Arc::new(ivar_env),
-                    path: path_str,
+                    source_path,
+                    load_path,
                     rotation_rad,
                     intensity,
                     show_background: show_bg,
+                    load_secs,
                 });
             }
             Err(e) => {
+                let load_secs = load_start.elapsed().as_secs_f64();
+                log::error!(
+                    "HDRI load failed in {:.2}s (path={}): {}",
+                    load_secs,
+                    load_path,
+                    e
+                );
                 let _ = tx.send(IblResult::Error {
-                    path: path_str,
+                    source_path,
+                    load_path,
                     message: e.to_string(),
                 });
             }
+        }
         });
     }
 
@@ -152,7 +219,8 @@ impl EnvironmentManager {
         rotation_rad: f32,
         intensity: f32,
         show_background: bool,
-    ) {
+    ) -> f64 {
+        let compute_start = std::time::Instant::now();
         // GPU compute IBL for viewport
         let output = self
             .compute_ibl
@@ -163,7 +231,13 @@ impl EnvironmentManager {
         self.gpu_env
             .load_from_compute(device, queue, output, mip_count);
         self.update_params(queue, intensity, rotation_rad, show_background);
-
+        let compute_secs = compute_start.elapsed().as_secs_f64();
+        log::info!(
+            "HDRI compute IBL finished in {:.2}s ({}x{})",
+            compute_secs,
+            hdr_width,
+            hdr_height
+        );
         // Rebuild skybox bind group
         let skybox_bgl = skybox::create_skybox_bind_group_layout(device);
         self.skybox_bind_group = skybox::create_skybox_bind_group(
@@ -173,6 +247,7 @@ impl EnvironmentManager {
             &self.gpu_env.sampler,
             &self.gpu_env.params_buffer,
         );
+        return compute_secs;
     }
 
     /// Update environment parameters without regenerating maps.
@@ -266,7 +341,8 @@ mod tests {
         // Just a compile check for the enum
         use super::IblResult;
         let _result = IblResult::Error {
-            path: "test.hdr".to_string(),
+            source_path: "test.hdr".to_string(),
+            load_path: "test.hdr".to_string(),
             message: "test error".to_string(),
         };
     }

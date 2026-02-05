@@ -414,6 +414,97 @@ OiioBridgeError oiio_load_texture_with_mips(const char* path, OiioTextureData** 
     }
 }
 
+// ============================================================================
+// HDR Float Loading (EXR/HDR/TX)
+// ============================================================================
+
+OiioBridgeError oiio_load_hdr(const char* path, OiioHdrImage** out_data) {
+    if (!path || !out_data) {
+        return OIIO_BRIDGE_ERROR_NULL_POINTER;
+    }
+
+    *out_data = nullptr;
+
+    try {
+
+    if (!file_exists(path)) {
+        g_last_error = std::string("File not found: ") + path;
+        return OIIO_BRIDGE_ERROR_FILE_NOT_FOUND;
+    }
+
+    // Open the image
+    auto inp = ImageInput::open(path);
+    if (!inp) {
+        g_last_error = OIIO::geterror();
+        return OIIO_BRIDGE_ERROR_READ_FAILED;
+    }
+
+    const ImageSpec& spec = inp->spec();
+    int width = spec.width;
+    int height = spec.height;
+    int nchannels = spec.nchannels;
+
+    // Read as float
+    std::vector<float> pixels(width * height * nchannels);
+    if (!inp->read_image(0, 0, 0, nchannels, TypeDesc::FLOAT, pixels.data())) {
+        g_last_error = inp->geterror();
+        inp->close();
+        return OIIO_BRIDGE_ERROR_READ_FAILED;
+    }
+    inp->close();
+
+    // Allocate output structure
+    OiioHdrImage* data = new (std::nothrow) OiioHdrImage;
+    if (!data) {
+        return OIIO_BRIDGE_ERROR_OUT_OF_MEMORY;
+    }
+
+    data->width = width;
+    data->height = height;
+    data->channels = 3;
+
+    size_t float_count = static_cast<size_t>(width) * static_cast<size_t>(height) * 3;
+    float* rgb_data = new (std::nothrow) float[float_count];
+    if (!rgb_data) {
+        delete data;
+        return OIIO_BRIDGE_ERROR_OUT_OF_MEMORY;
+    }
+
+    // Convert to RGB float (no clamping)
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            int src_idx = (y * width + x) * nchannels;
+            int dst_idx = (y * width + x) * 3;
+
+            float r = pixels[src_idx];
+            float g = nchannels > 1 ? pixels[src_idx + 1] : r;
+            float b = nchannels > 2 ? pixels[src_idx + 2] : r;
+
+            rgb_data[dst_idx + 0] = r;
+            rgb_data[dst_idx + 1] = g;
+            rgb_data[dst_idx + 2] = b;
+        }
+    }
+
+    data->data = rgb_data;
+    *out_data = data;
+    return OIIO_BRIDGE_SUCCESS;
+
+    } catch (const std::exception& e) {
+        g_last_error = std::string("Exception in load_hdr: ") + e.what();
+        return OIIO_BRIDGE_ERROR_READ_FAILED;
+    } catch (...) {
+        g_last_error = "Unknown exception in load_hdr";
+        return OIIO_BRIDGE_ERROR_READ_FAILED;
+    }
+}
+
+void oiio_free_hdr(OiioHdrImage* data) {
+    if (!data) return;
+    delete[] data->data;
+    delete data;
+}
+
 void oiio_free_texture(OiioTextureData* data) {
     if (!data) return;
 

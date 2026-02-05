@@ -67,6 +67,18 @@ typedef struct OiioTextureData {
     int is_linear;
 } OiioTextureData;
 
+/// HDR image data (linear float RGB)
+typedef struct OiioHdrImage {
+    /// RGB float pixel data (width * height * 3 floats)
+    float* data;
+    /// Width in pixels
+    uint32_t width;
+    /// Height in pixels
+    uint32_t height;
+    /// Number of channels (always 3 for HDR output)
+    uint32_t channels;
+} OiioHdrImage;
+
 // ============================================================================
 // Texture Loading
 // ============================================================================
@@ -93,6 +105,19 @@ OiioBridgeError oiio_load_texture_with_mips(const char* path, OiioTextureData** 
 ///
 /// @param data Texture data to free (safe to pass NULL)
 void oiio_free_texture(OiioTextureData* data);
+
+/// Load an HDR image as linear float RGB.
+/// Supports EXR, HDR, TX (and any OIIO-readable float format).
+///
+/// @param path     Path to the HDR image file (UTF-8)
+/// @param out_data Pointer to receive HDR image data
+/// @return OIIO_BRIDGE_SUCCESS on success
+OiioBridgeError oiio_load_hdr(const char* path, OiioHdrImage** out_data);
+
+/// Free HDR image data allocated by oiio_load_hdr
+///
+/// @param data HDR image data to free (safe to pass NULL)
+void oiio_free_hdr(OiioHdrImage* data);
 
 // ============================================================================
 // .tx Conversion (maketx equivalent)

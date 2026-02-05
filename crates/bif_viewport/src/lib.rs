@@ -1464,32 +1464,55 @@ impl Renderer {
         let mut instance_transforms: Vec<Mat4> = Vec::with_capacity(scene.instance_count());
         let mut instance_material_ids: Vec<u32> = Vec::with_capacity(scene.instance_count());
         let mut instance_prototype_ids: Vec<usize> = Vec::with_capacity(scene.instance_count());
-        let instances: Vec<InstanceData> = scene
-            .instances()
-            .iter()
-            .enumerate()
-            .map(|(i, inst)| {
-                let model_matrix = inst.model_matrix();
-                instance_transforms.push(model_matrix);
-                instance_prototype_ids.push(inst.prototype_id);
-                let material_id = scene
-                    .prototypes
-                    .get(inst.prototype_id)
-                    .and_then(|proto| proto.material.as_ref())
-                    .and_then(|mat| material_index_by_name.get(&mat.name).copied())
-                    .unwrap_or(0);
-                instance_material_ids.push(material_id);
-                // Debug: log first few instance transforms
-                if i < 5 || i == scene.instance_count() - 1 {
-                    let translation = model_matrix.w_axis.truncate();
-                    log::info!("Instance {}: translation = {:?}", i, translation);
-                }
-                InstanceData {
-                    model_matrix: model_matrix.to_cols_array_2d(),
-                    material_id,
-                }
-            })
-            .collect();
+        let instances: Vec<InstanceData> = if scene.instances().is_empty() {
+            scene
+                .prototypes
+                .iter()
+                .enumerate()
+                .map(|(proto_id, proto)| {
+                    let model_matrix = Mat4::IDENTITY;
+                    instance_transforms.push(model_matrix);
+                    instance_prototype_ids.push(proto_id);
+                    let material_id = proto
+                        .material
+                        .as_ref()
+                        .and_then(|mat| material_index_by_name.get(&mat.name).copied())
+                        .unwrap_or(0);
+                    instance_material_ids.push(material_id);
+                    InstanceData {
+                        model_matrix: model_matrix.to_cols_array_2d(),
+                        material_id,
+                    }
+                })
+                .collect()
+        } else {
+            scene
+                .instances()
+                .iter()
+                .enumerate()
+                .map(|(i, inst)| {
+                    let model_matrix = inst.model_matrix();
+                    instance_transforms.push(model_matrix);
+                    instance_prototype_ids.push(inst.prototype_id);
+                    let material_id = scene
+                        .prototypes
+                        .get(inst.prototype_id)
+                        .and_then(|proto| proto.material.as_ref())
+                        .and_then(|mat| material_index_by_name.get(&mat.name).copied())
+                        .unwrap_or(0);
+                    instance_material_ids.push(material_id);
+                    // Debug: log first few instance transforms
+                    if i < 5 || i == scene.instance_count() - 1 {
+                        let translation = model_matrix.w_axis.truncate();
+                        log::info!("Instance {}: translation = {:?}", i, translation);
+                    }
+                    InstanceData {
+                        model_matrix: model_matrix.to_cols_array_2d(),
+                        material_id,
+                    }
+                })
+                .collect()
+        };
 
         // Preallocate dynamic instance buffer for frustum culling
         const MAX_INSTANCES: u32 = 10_000;
@@ -2116,26 +2139,49 @@ impl Renderer {
         let mut instance_transforms = Vec::with_capacity(scene.instance_count());
         let mut instance_material_ids = Vec::with_capacity(scene.instance_count());
         let mut instance_prototype_ids = Vec::with_capacity(scene.instance_count());
-        let instances: Vec<InstanceData> = scene
-            .instances()
-            .iter()
-            .map(|inst| {
-                let model_matrix = inst.model_matrix();
-                instance_transforms.push(model_matrix);
-                instance_prototype_ids.push(inst.prototype_id);
-                let material_id = scene
-                    .prototypes
-                    .get(inst.prototype_id)
-                    .and_then(|proto| proto.material.as_ref())
-                    .and_then(|mat| material_index_by_name.get(&mat.name).copied())
-                    .unwrap_or(0);
-                instance_material_ids.push(material_id);
-                InstanceData {
-                    model_matrix: model_matrix.to_cols_array_2d(),
-                    material_id,
-                }
-            })
-            .collect();
+        let instances: Vec<InstanceData> = if scene.instances().is_empty() {
+            scene
+                .prototypes
+                .iter()
+                .enumerate()
+                .map(|(proto_id, proto)| {
+                    let model_matrix = Mat4::IDENTITY;
+                    instance_transforms.push(model_matrix);
+                    instance_prototype_ids.push(proto_id);
+                    let material_id = proto
+                        .material
+                        .as_ref()
+                        .and_then(|mat| material_index_by_name.get(&mat.name).copied())
+                        .unwrap_or(0);
+                    instance_material_ids.push(material_id);
+                    InstanceData {
+                        model_matrix: model_matrix.to_cols_array_2d(),
+                        material_id,
+                    }
+                })
+                .collect()
+        } else {
+            scene
+                .instances()
+                .iter()
+                .map(|inst| {
+                    let model_matrix = inst.model_matrix();
+                    instance_transforms.push(model_matrix);
+                    instance_prototype_ids.push(inst.prototype_id);
+                    let material_id = scene
+                        .prototypes
+                        .get(inst.prototype_id)
+                        .and_then(|proto| proto.material.as_ref())
+                        .and_then(|mat| material_index_by_name.get(&mat.name).copied())
+                        .unwrap_or(0);
+                    instance_material_ids.push(material_id);
+                    InstanceData {
+                        model_matrix: model_matrix.to_cols_array_2d(),
+                        material_id,
+                    }
+                })
+                .collect()
+        };
 
         // Warn if instance count exceeds buffer capacity
         if instances.len() > MAX_INSTANCES as usize {
@@ -2231,24 +2277,11 @@ impl Renderer {
         self.multi_draw.enabled = use_multi_draw;
 
         // Group instances by prototype for multi-draw rendering
-        self.multi_draw.instance_groups.clear();
-        for inst in scene.instances() {
-            let material_id = scene
-                .prototypes
-                .get(inst.prototype_id)
-                .and_then(|proto| proto.material.as_ref())
-                .and_then(|mat| material_index_by_name.get(&mat.name).copied())
-                .unwrap_or(0);
-
-            self.multi_draw
-                .instance_groups
-                .entry(inst.prototype_id)
-                .or_default()
-                .push(InstanceData {
-                    model_matrix: inst.model_matrix().to_cols_array_2d(),
-                    material_id,
-                });
-        }
+        self.multi_draw.rebuild_instance_groups(
+            &self.instance_transforms,
+            &self.instance_prototype_ids,
+            &self.instance_material_ids,
+        );
 
         if use_multi_draw {
             log::info!(
@@ -2362,7 +2395,32 @@ impl Renderer {
                 self.timeline_state = TimelineState::default();
             }
         } else {
-            self.timeline_state = TimelineState::default();
+            let mut min_time = f64::MAX;
+            let mut max_time = f64::MIN;
+
+            for anim_opt in &self.instance_animations {
+                if let Some(anim) = anim_opt {
+                    if let Some(keyframes) = &anim.keyframes {
+                        for kf in keyframes {
+                            min_time = min_time.min(kf.time);
+                            max_time = max_time.max(kf.time);
+                        }
+                    }
+                }
+            }
+
+            if min_time < max_time {
+                let fps = 24.0;
+                self.timeline_state.set_from_scene(min_time, max_time, fps);
+                log::info!(
+                    "Timeline initialized from transform animation: frames {:.0}-{:.0} @ {:.0} fps",
+                    min_time,
+                    max_time,
+                    fps
+                );
+            } else {
+                self.timeline_state = TimelineState::default();
+            }
         }
 
         log::info!(
@@ -3311,12 +3369,14 @@ impl Renderer {
                     hdr_width,
                     hdr_height,
                     ivar_env,
-                    path,
+                    source_path,
+                    load_path,
                     rotation_rad,
                     intensity,
                     show_background,
+                    load_secs,
                 } => {
-                    self.environment.apply_ibl_result(
+                    let compute_secs = self.environment.apply_ibl_result(
                         &self.device,
                         &self.queue,
                         &hdr_pixels,
@@ -3328,12 +3388,18 @@ impl Renderer {
                     );
                     // Set Ivar CPU environment
                     self.ivar_state.environment = Some(ivar_env);
-                    self.node_graph_state.mark_hdri_loaded(&path);
-                    log::info!("HDRI loaded (GPU compute): {}", path);
+                    self.node_graph_state
+                        .mark_hdri_loaded(&source_path, Some(load_secs), Some(compute_secs));
+                    log::info!("HDRI loaded (GPU compute): {}", load_path);
                 }
-                IblResult::Error { path, message } => {
+                IblResult::Error {
+                    source_path,
+                    load_path,
+                    message,
+                } => {
                     log::error!("Failed to load HDRI: {}", message);
-                    self.node_graph_state.mark_hdri_error(&path, message);
+                    self.node_graph_state.mark_hdri_error(&source_path, message);
+                    log::error!("HDRI load failed: {}", load_path);
                 }
             }
         }
@@ -4017,8 +4083,15 @@ impl Renderer {
                         ui.checkbox(&mut self.timeline_state.loop_playback, "Loop");
 
                         // Realtime toggle (wall-clock vs every-frame)
-                        ui.checkbox(&mut self.timeline_state.realtime, "RT")
-                            .on_hover_text("Realtime: ON = wall-clock accurate, OFF = every frame");
+                        if ui
+                            .checkbox(&mut self.timeline_state.realtime, "RT")
+                            .on_hover_text(
+                                "Realtime: ON = wall-clock accurate, OFF = every frame",
+                            )
+                            .changed()
+                        {
+                            self.timeline_state.reset_playback_anchor();
+                        }
 
                         // Integer frame snap toggle
                         ui.checkbox(&mut self.timeline_state.snap_to_frames, "Int");

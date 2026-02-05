@@ -103,6 +103,10 @@ pub enum SceneNode {
         show_background: bool,
         /// Error message if loading failed
         error: Option<String>,
+        /// Last HDRI load time (seconds)
+        last_load_secs: Option<f64>,
+        /// Last IBL compute time (seconds)
+        last_compute_secs: Option<f64>,
     },
 }
 
@@ -145,6 +149,8 @@ impl SceneNode {
             intensity: 1.0,
             show_background: true,
             error: None,
+            last_load_secs: None,
+            last_compute_secs: None,
         }
     }
 
@@ -364,6 +370,8 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer {
                 intensity,
                 show_background,
                 error,
+                last_load_secs,
+                last_compute_secs,
             } => {
                 ui.horizontal(|ui| {
                     ui.label("File:");
@@ -431,6 +439,13 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer {
                         params_changed = true;
                     }
                 });
+
+                if let Some(load_secs) = last_load_secs {
+                    ui.label(format!("Load: {:.2}s", load_secs));
+                }
+                if let Some(compute_secs) = last_compute_secs {
+                    ui.label(format!("IBL: {:.2}s", compute_secs));
+                }
 
                 if ui.checkbox(show_background, "Show Background").changed() {
                     params_changed = true;
@@ -639,7 +654,7 @@ impl NodeGraphState {
     }
 
     /// Mark an HDRI Environment node as loaded.
-    pub fn mark_hdri_loaded(&mut self, path: &str) {
+    pub fn mark_hdri_loaded(&mut self, path: &str, load_secs: Option<f64>, compute_secs: Option<f64>) {
         let node_ids: Vec<_> = self.snarl.node_ids().map(|(id, _)| id).collect();
         for node_id in node_ids {
             if let SceneNode::HdriEnvironment {
@@ -647,6 +662,8 @@ impl NodeGraphState {
                 is_loaded,
                 is_loading,
                 error,
+                last_load_secs,
+                last_compute_secs,
                 ..
             } = &mut self.snarl[node_id]
             {
@@ -654,6 +671,12 @@ impl NodeGraphState {
                     *is_loaded = true;
                     *is_loading = false;
                     *error = None;
+                    if let Some(secs) = load_secs {
+                        *last_load_secs = Some(secs);
+                    }
+                    if let Some(secs) = compute_secs {
+                        *last_compute_secs = Some(secs);
+                    }
                 }
             }
         }
@@ -668,6 +691,8 @@ impl NodeGraphState {
                 is_loaded,
                 is_loading,
                 error,
+                last_load_secs,
+                last_compute_secs,
                 ..
             } = &mut self.snarl[node_id]
             {
@@ -675,6 +700,8 @@ impl NodeGraphState {
                     *is_loaded = false;
                     *is_loading = false;
                     *error = Some(err_msg.clone());
+                    *last_load_secs = None;
+                    *last_compute_secs = None;
                 }
             }
         }
