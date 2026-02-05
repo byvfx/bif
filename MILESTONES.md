@@ -668,7 +668,7 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
   - Lock/Free toggle for camera controls
   - Camera sync on selection and during playback
   - Timeline UI improvements (numbered frames, start/end labels)
-  - Note: Play button animation still being debugged
+  - Fixed RT playback stall (slider `.integer()` rounding reset anchor each frame)
 
   **Phase 5c: Code Quality & Robustness ✅ (M19.4)**
   - Convert Embree panics to Result-based error handling (`EmbreeError` enum)
@@ -678,19 +678,13 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
   - Extract `GnomonRenderer` from monolithic `Renderer` struct
   - Improve UsdStage thread safety documentation
 
-  **Phase 5d: Renderer Decomposition Phase 2 ✅ (M19.5)**
-  - Extract `MultiDrawState` from Renderer (prototype_gpu_data, instance_groups, enabled)
-  - Extract `EnvironmentManager` from Renderer (IBL, skybox, async HDRI loading)
-  - Extract `CullingManager` from Renderer (frustum culling, LOD box proxy, polygon budget)
-  - Added `MAX_INSTANCES` module-level constant
-  - ~450 lines removed from lib.rs total
-
   **Phase 6: Instance Transform Animation (TODO)**
   - Per-frame instance matrix evaluation
   - Test with transform-animated USD scenes
 
 - **Key Files:**
-  - `crates/bif_viewport/src/batch_render.rs` - Batch render loop, SceneBuilderData
+  - `crates/bif_viewport/src/batch_render.rs` - Batch render loop,
+  -  SceneBuilderData
   - `crates/bif_viewport/src/lib.rs` - UI, viewport camera sync, build_triangles_at_time
   - `crates/bif_renderer/src/embree.rs` - Embree scene with Drop logging
   - `crates/bif_core/src/usd/cpp_bridge.rs` - UNC path fix, get_mesh_vertices_at_time
@@ -700,9 +694,10 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 
 ### Milestone 20: Scene Interactivity + Keyframing 🎮
 
-- **Goal:** Clarisse-style object manipulation and animation authoring
+- **Goal:** Clarisse/Houdini-style object manipulation and animation authoring
 - **Estimated Time:** 15-20 hours
 - **Key Tasks:**
+  - Add a primitive node in the node graph like a cube/sphere for testing
   - Selection system (click raycast through Embree)
   - Transform gizmos (translate/rotate/scale)
   - Undo/redo stack for transforms
@@ -923,6 +918,6 @@ Key papers for Milestone 20 (Renderer Polish):
 ---
 
 **Last Updated:** February 2, 2026
-**Status:** Milestones 0-18.5, M19.2-M19.5 Complete, M19.3 WIP
-**Current:** M19.5 Renderer decomposition complete, M19.3 playback debugging continues
-**Next:** Fix timeline playback, instance transform animation
+**Status:** Milestones 0-18.5, M19.2-M19.4 Complete, M19.3 playback fixed
+**Current:** M19.3 timeline playback working, M19.4 code quality complete
+**Next:** Instance transform animation (M19 Phase 6)

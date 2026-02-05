@@ -4100,9 +4100,9 @@ impl Renderer {
                         let slider = egui::Slider::new(&mut frame, start..=end)
                             .show_value(true)
                             .integer();
-                        if ui.add_sized([200.0, 18.0], slider).changed() {
+                        let slider_resp = ui.add_sized([200.0, 18.0], slider);
+                        if slider_resp.changed() && slider_resp.is_pointer_button_down_on() {
                             self.timeline_state.current_frame = frame as f64;
-                            // Reset playback anchor when user scrubs during playback
                             self.timeline_state.reset_playback_anchor();
                         }
 
