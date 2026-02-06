@@ -122,80 +122,50 @@ impl ApplicationHandler for App {
             let renderer = if let Some(usd_path) = &self.usd_path {
                 // Use C++ bridge for --usd flag (supports USDC and references)
                 log::info!("Loading USD scene via C++ bridge: {}", usd_path);
-                match bif_core::usd::load_usd_with_stage(usd_path) {
-                    Ok((scene, stage)) => {
-                        log::info!(
-                            "Scene loaded: {} prototypes, {} instances, {} prims",
-                            scene.prototype_count(),
-                            scene.instance_count(),
-                            stage.prim_count().unwrap_or(0)
-                        );
-                        pollster::block_on(Renderer::new_with_scene_and_stage(
-                            window.clone(),
-                            &scene,
-                            stage,
-                        ))
-                        .expect("Failed to initialize renderer with scene")
-                    }
-                    Err(e) => {
-                        log::error!("Failed to load USD file '{}': {:?}", usd_path, e);
-                        log::error!("Hint: Make sure PXR_PLUGINPATH_NAME is set. Run: . .\\setup_usd_env.ps1");
-                        log::info!("Falling back to default renderer");
-                        pollster::block_on(Renderer::new(window.clone()))
-                            .expect("Failed to initialize renderer")
-                    }
+                let mut r = pollster::block_on(Renderer::new(window.clone()))
+                    .expect("Failed to initialize renderer");
+                if let Err(e) = r.load_usd_scene(usd_path) {
+                    log::error!("Failed to load USD file '{}': {:?}", usd_path, e);
+                    log::error!(
+                        "Hint: Make sure PXR_PLUGINPATH_NAME is set. Run: . .\\setup_usd_env.ps1"
+                    );
+                    log::info!("Continuing with empty viewport");
                 }
-            } else {
-                // Use pure Rust parser for --usda flag or default
-                // Note: Pure Rust parser doesn't have stage hierarchy, so scene browser won't work
-                if let Some(usda_path) = self.usda_path.clone() {
-                    log::info!("Loading USDA scene: {}", usda_path);
-                    // Try C++ bridge first to get scene browser support
-                    match bif_core::usd::load_usd_with_stage(&usda_path) {
-                        Ok((scene, stage)) => {
-                            log::info!("Scene loaded via C++ bridge: {} prototypes, {} instances, {} prims", 
-                                       scene.prototype_count(), scene.instance_count(), stage.prim_count().unwrap_or(0));
-                            pollster::block_on(Renderer::new_with_scene_and_stage(
-                                window.clone(),
-                                &scene,
-                                stage,
-                            ))
-                            .expect("Failed to initialize renderer with scene")
-                        }
-                        Err(e) => {
-                            // Fall back to pure Rust parser (no scene browser)
-                            log::warn!(
-                                "C++ bridge failed ({}), using pure Rust parser (no scene browser)",
-                                e
+                r
+            } else if let Some(usda_path) = self.usda_path.clone() {
+                log::info!("Loading USDA scene: {}", usda_path);
+                let mut r = pollster::block_on(Renderer::new(window.clone()))
+                    .expect("Failed to initialize renderer");
+                // Try C++ bridge first to get scene browser support
+                if let Err(e) = r.load_usd_scene(&usda_path) {
+                    // Fall back to pure Rust parser (no scene browser)
+                    log::warn!(
+                        "C++ bridge failed ({}), using pure Rust parser (no scene browser)",
+                        e
+                    );
+                    match bif_core::load_usda(&usda_path) {
+                        Ok(scene) => {
+                            log::info!(
+                                "Scene loaded: {} prototypes, {} instances",
+                                scene.prototype_count(),
+                                scene.instance_count()
                             );
-                            match bif_core::load_usda(&usda_path) {
-                                Ok(scene) => {
-                                    log::info!(
-                                        "Scene loaded: {} prototypes, {} instances",
-                                        scene.prototype_count(),
-                                        scene.instance_count()
-                                    );
-                                    pollster::block_on(Renderer::new_with_scene(
-                                        window.clone(),
-                                        &scene,
-                                    ))
-                                    .expect("Failed to initialize renderer with scene")
-                                }
-                                Err(e) => {
-                                    log::error!("Failed to load USDA file '{}': {}", usda_path, e);
-                                    log::info!("Falling back to empty viewport");
-                                    pollster::block_on(Renderer::new(window.clone()))
-                                        .expect("Failed to initialize renderer")
-                                }
+                            if let Err(e) = r.load_scene_data(&scene) {
+                                log::error!("Failed to load scene data: {}", e);
                             }
                         }
+                        Err(e) => {
+                            log::error!("Failed to load USDA file '{}': {}", usda_path, e);
+                            log::info!("Continuing with empty viewport");
+                        }
                     }
-                } else {
-                    // No file specified - start with blank scene
-                    log::info!("Starting with blank scene (load USD via node graph)");
-                    pollster::block_on(Renderer::new(window.clone()))
-                        .expect("Failed to initialize renderer")
                 }
+                r
+            } else {
+                // No file specified - start with blank scene
+                log::info!("Starting with blank scene (load USD via node graph)");
+                pollster::block_on(Renderer::new(window.clone()))
+                    .expect("Failed to initialize renderer")
             };
 
             self.window = Some(window);
