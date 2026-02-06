@@ -262,25 +262,17 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 
 ---
 
-## Summary Statistics (Milestones 0-13b)
+## Summary Statistics (as of M19.4)
 
 | Metric | Value |
 |--------|-------|
-| **Total LOC** | ~7,500 |
-| **Tests Passing** | 60+ ✅ |
-| **Milestones Complete** | 13b + Freeze Fix |
-| **Time Invested** | ~55 hours |
-| **Commits** | 60+ |
-| **Build Time (dev)** | ~5s |
-| **Build Time (release)** | ~2m |
-| **Runtime FPS** | 60+ (VSync-limited) |
-| **Lucy Vertices** | 140,278 |
-| **Lucy Indices** | 840,768 |
-| **Instances Rendered** | 100 (GPU), 100 (Ivar/Embree) |
-| **Total Triangles** | 28,055,600 |
-| **Draw Calls** | 1 (instanced) |
-| **Embree BVH Build** | 28ms |
-| **UI Freeze** | **0ms** ✅ |
+| **Total LOC** | ~28K Rust + C++ bridges |
+| **Tests Passing** | 142+ ✅ |
+| **Milestones Complete** | 0-19.4 (~25 sub-milestones) |
+| **Time Invested** | ~55+ hours documented |
+| **Crates** | 6 (math, core, renderer, viewport, viewer, maketx) |
+| **lib.rs** | ~4,800 lines (cleanup planned M19.6) |
+| **bif_viewport total** | ~10K lines (19 files) |
 
 ---
 
@@ -692,6 +684,20 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 
 ---
 
+### Milestone 19.6: lib.rs Cleanup 🧹
+
+- **Goal:** Split monolithic lib.rs into maintainable modules
+- **Estimated Time:** 8-10 hours
+- **Key Tasks:**
+  - Split `Renderer` UI drawing → `ui.rs` module
+  - Split scene loading logic → `scene_loader.rs`
+  - Split wgpu pipeline setup → `pipeline.rs` or similar
+  - Goal: lib.rs under 2,000 lines, clear module boundaries
+  - No feature changes, just structural
+- **Why Now:** lib.rs at ~4,800 lines after 5 extraction passes. egui immediate-mode pushes everything into one render loop. Every future milestone adds more code here. Clean up before M20+ adds selection, gizmos, undo.
+
+---
+
 ### Milestone 20: Scene Interactivity + Keyframing 🎮
 
 - **Goal:** Clarisse/Houdini-style object manipulation and animation authoring
@@ -700,11 +706,15 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
   - Add a primitive node in the node graph like a cube/sphere for testing
   - Selection system (click raycast through Embree)
   - Transform gizmos (translate/rotate/scale)
-  - Undo/redo stack for transforms
   - Keyframe transforms at current frame
   - Animate TRS (translation, rotation, scale) over time
   - Timeline integration (scrub to see animated transforms)
   - Export modified transforms back to USD layer
+  - **Minimal Undo Stack:**
+    - Simple command pattern (`trait UndoCommand` with execute/undo)
+    - `Vec<Box<dyn UndoCommand>>` stack
+    - Works for transform edits, enough to be useful
+    - Logic separate from UI (portable to Qt later)
 
 ---
 
@@ -724,55 +734,36 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 
 ---
 
-### Milestone 22: Viewport Performance ⚡
+### Milestone 29: USD Export + Non-Destructive Layers 💾
 
-- **Goal:** Clarisse-like lazy loading and GPU optimization
-- **Estimated Time:** 20-30 hours
+- **Goal:** Close the pipeline loop: import → modify → render → **export**
+- **Estimated Time:** 20-25 hours
+- **Why Now:** BIF's stated goal is "Load Houdini USD → instance massively → render → export USD." Export completes the core workflow at only 20-25h.
 - **Key Tasks:**
-  - Upgrade to Vulkan 1.3 features:
-    - Dynamic rendering (simplify render passes)
-    - Buffer device address (bindless buffers)
-    - Descriptor indexing (bindless textures)
-    - Synchronization2 (cleaner barriers)
-  - LOD/proxy system for distant objects
-  - Lazy geometry loading (load on demand)
-  - Frustum culling on CPU before GPU submit
-  - Async texture streaming
-  - GPU-driven rendering (indirect draws)
-- **Reference:** [howtovulkan.com](https://howtovulkan.com) - Modern Vulkan patterns
+  - USD stage authoring via C++ bridge
+  - Opinion layer over reference (Houdini-style non-destructive editing)
+  - Export modified transforms as USD sublayer
+  - Export scattered points as PointInstancer
+  - Layer composition: base layer + edits layer
+  - Round-trip validation (export → reimport → verify)
+- **Architecture:**
+  - Separate "edit layer" authored on top of reference layer
+  - User modifications stored as opinions, not destructive edits
+  - Export produces `.usd` sublayer that composes with original
 
 ---
 
-### Milestone 23: Renderer Polish (Arnold-Inspired) 🔬
+### Milestone 26: Denoising (Intel OIDN) 🧹
 
-- **Goal:** Production-quality rendering techniques from research
-- **Estimated Time:** 20-30 hours
-- **Key Tasks (from Arnold research papers):**
-  - Blue-noise dithered sampling (perceptually cleaner noise)
-  - Variance-aware MIS (smarter sampler combining)
-  - Robust BVH ray traversal (numerical stability)
-  - BSSRDF importance sampling (subsurface scattering)
-  - Specular manifold sampling (caustics, glints)
-  - Area light importance sampling (soft shadows)
-- **Texture Pipeline:**
-  - .tx texture support (OpenEXR tiled/mipmapped format)
-  - Automatic .tx generation from source textures
-  - Mipmapping for proper texture filtering
-- **Reference:** [Arnold Research Papers](https://blogs.autodesk.com/media-and-entertainment/2024/01/04/autodesk-arnold-research-papers/)
-
----
-
-### Milestone 24: Spectral Rendering 🌈
-
-- **Goal:** Full wavelength simulation for accurate light behavior
-- **Estimated Time:** 15-20 hours
+- **Goal:** Production-quality denoising for faster convergence
+- **Estimated Time:** 10-15 hours
+- **Why Now:** Quick win (~10-15h) that makes every render 10x more usable. Clean renders without needing 1000+ spp.
 - **Key Tasks:**
-  - Spectral path tracing (wavelength arrays vs RGB)
-  - Hero wavelength sampling for efficiency
-  - Accurate dispersion (prisms, diamonds)
-  - Fluorescence support (optional)
-  - `--spectral` flag for reference renders
-- **Why:** Ground truth for USD/MaterialX validation, scientific accuracy
+  - Intel Open Image Denoise integration
+  - AOV outputs (albedo, normal) for denoiser input
+  - Interactive denoising during progressive render
+  - Final frame denoising
+  - Preserve detail in denoised output
 
 ---
 
@@ -791,16 +782,37 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 
 ---
 
-### Milestone 26: Denoising (Intel OIDN) 🧹
+### Milestone 22: Viewport Performance ⚡
 
-- **Goal:** Production-quality denoising for faster convergence
-- **Estimated Time:** 10-15 hours
-- **Key Tasks:**
-  - Intel Open Image Denoise integration
-  - AOV outputs (albedo, normal) for denoiser input
-  - Interactive denoising during progressive render
-  - Final frame denoising
-  - Preserve detail in denoised output
+- **Goal:** Clarisse-like lazy loading and GPU optimization
+- **Estimated Time:** 20-30 hours
+- **Already Done:** Frustum culling ✅, LOD system ✅, polygon budget ✅
+- **Why Deferred:** Not hitting viewport limits yet. This is optimization, not features.
+- **Remaining Tasks:**
+  - Upgrade to Vulkan 1.3 features:
+    - Dynamic rendering (simplify render passes)
+    - Buffer device address (bindless buffers)
+    - Descriptor indexing (bindless textures)
+    - Synchronization2 (cleaner barriers)
+  - Lazy geometry loading (load on demand)
+  - Async texture streaming
+  - GPU-driven rendering (indirect draws)
+- **Reference:** [howtovulkan.com](https://howtovulkan.com) - Modern Vulkan patterns
+
+---
+
+### ~~Milestone 23: Renderer Polish~~ (Dissolved)
+
+> **Status:** Dissolved — techniques cherry-picked into relevant milestones as needed.
+>
+> - Blue noise dithered sampling → add with denoising (M26)
+> - Area light importance sampling → partially done in M19.2
+> - BSSRDF → add when subsurface materials needed
+> - MIS improvements → add when fireflies become a problem
+> - Specular manifold sampling → add when caustics needed
+> - .tx texture pipeline → done in M17.1 (OIIO)
+>
+> **Reference:** [Arnold Research Papers](https://blogs.autodesk.com/media-and-entertainment/2024/01/04/autodesk-arnold-research-papers/)
 
 ---
 
@@ -819,33 +831,34 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 
 ---
 
-### Milestone 28+: Qt 6 UI Integration (Deferred)
+### Milestone 28: Qt 6 UI Integration 🖥️
 
 - **Goal:** Replace egui with Qt 6 for production-grade UI
-- **Status:** Deferred until core features complete
 - **Estimated Time:** 50+ hours
+- **Why Last:** egui is functional for development. Qt matters when other people use BIF.
 - **Key Tasks:**
   - Qt 6 via cxx-qt (C++ ↔ Rust bridge)
   - Embed wgpu viewport in Qt widget
-  - Docking windows, menus, shortcuts
-  - Professional node editor
-  - Outliner, property editor, timeline
+  - QDockWidget - true floating/docking panels
+  - QTreeView with model/view separation
+  - Professional node editor (QGraphicsScene)
+  - QMenuBar, QToolBar, QShortcut - standard DCC conventions
+  - QUndoStack integration (replace simple undo stack from M20)
 
 ---
 
-### Milestone 29+: USD Export (Deferred)
+### ~~Milestone 24: Spectral Rendering~~ (Cut)
 
-- **Goal:** Write scene changes back to USD
-- **Estimated Time:** 15-20 hours
-- **Key Tasks:**
-  - USD stage authoring via C++ bridge
-  - Export modified transforms as USD layer
-  - Export scattered points as PointInstancer
-  - Non-destructive layer workflow
+> **Status:** Cut from roadmap — zero production value for BIF's goals.
+> Re-add as a learning exercise if desired, but not on the critical path.
+>
+> Original scope: Spectral path tracing, hero wavelength sampling, dispersion, fluorescence.
 
 ---
 
 ## Milestone Roadmap Summary
+
+### Completed
 
 | # | Milestone | Focus | Status |
 |---|-----------|-------|--------|
@@ -856,21 +869,31 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 | 17 | Viewport PBR | Textured PBR in Vulkan viewport | ✅ Complete |
 | 17.1 | OIIO/.tx | OpenImageIO texture pipeline (feature-gated) | ✅ Complete |
 | 18 | Animation | Time-sampled USD + timeline UI | ✅ Complete |
-| 18.1 | Vertex Animation | Multi-mesh vertex animation fix | ✅ Complete |
-| 18.2 | Thread Safety | UsdStage thread-safe + instance encapsulation | ✅ Complete |
-| 18.3 | USD Refinement | Relative reference resolution fix | ✅ Complete |
-| 18.4 | Multi-Prototype Fix | Ivar double mesh fix for combined scenes | ✅ Complete |
-| 19 | Frame Rendering | Batch render + USD camera animation | 🔄 In Progress |
-| 20 | Interactivity | Move objects + keyframing | Planned |
-| 21 | Point Instancing | Scatter + paint tools | Planned |
-| 22 | Viewport Perf | Vulkan 1.3, lazy loading | Planned |
-| 23 | Renderer Polish | Arnold-inspired techniques | Planned |
-| 24 | Spectral | Wavelength simulation | Planned |
-| 25 | Volumes | OpenVDB + fog/smoke | Planned |
-| 26 | Denoising | Intel OIDN | Planned |
-| 27 | GPU Path Tracing | wgpu compute + ReSTIR | Planned |
-| 28+ | Qt 6 UI | Production interface | Deferred |
-| 29+ | USD Export | Write back to USD | Deferred |
+| 18.1-18.5 | Animation Polish | Thread safety, USD fixes, multi-prototype | ✅ Complete |
+
+### Active & Planned (new order)
+
+| Order | # | Milestone | Est Hours | Cumulative | What it unlocks |
+|-------|---|-----------|-----------|------------|-----------------|
+| 1 | 19 P6 | Instance anim | ~5h | 5h | Complete animation pipeline |
+| 2 | 19.6 | lib.rs cleanup | ~8-10h | 15h | Maintainable codebase for M20+ |
+| 3 | 20 | Interactivity + undo | 15-20h | 35h | Selection, gizmos, minimal undo stack |
+| 4 | 21 | Point instancing | 15-20h | 55h | Core scatter workflow |
+| 5 | 29 | USD export + layers | 20-25h | 80h | **Full pipeline: import→modify→render→export** |
+| 6 | 26 | Denoising (OIDN) | 10-15h | 95h | Clean renders without 1000spp |
+| 7 | 25 | Volumes/OpenVDB | 20-30h | 125h | Smoke, fog, clouds |
+| 8 | 22 | Viewport perf | 20-30h | 155h | Handle production scenes |
+| 9 | 27 | GPU path tracing | 30-40h | 195h | Near-realtime quality |
+| 10 | 28 | Qt 6 UI | 50+h | 245h | Professional interface |
+
+**At 15h/week: core pipeline complete in ~5.5 weeks (through M29).**
+
+### Dissolved / Cut
+
+| # | Milestone | Status | Reason |
+|---|-----------|--------|--------|
+| 23 | Renderer Polish | Dissolved | Grab bag — techniques cherry-picked into relevant milestones |
+| 24 | Spectral Rendering | Cut | Zero production value for BIF's goals |
 
 ---
 
@@ -878,7 +901,7 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 
 ### Arnold Research Papers
 
-Key papers for Milestone 20 (Renderer Polish):
+Key papers (cherry-pick into relevant milestones as needed):
 
 | Paper | Year | Application |
 |-------|------|-------------|
@@ -917,7 +940,8 @@ Key papers for Milestone 20 (Renderer Polish):
 
 ---
 
-**Last Updated:** February 2, 2026
-**Status:** Milestones 0-18.5, M19.2-M19.4 Complete, M19.3 playback fixed
-**Current:** M19.3 timeline playback working, M19.4 code quality complete
-**Next:** Instance transform animation (M19 Phase 6)
+**Last Updated:** February 5, 2026
+**Status:** Milestones 0-18.5, M19.1-M19.4 complete
+**Current:** M19 Phase 6 (instance transform animation)
+**Next:** M19.6 (lib.rs cleanup) → M20 (interactivity) → M21 (scattering) → M29 (USD export)
+**Roadmap revision:** M23 dissolved, M24 cut, M29 moved up to 5th priority
