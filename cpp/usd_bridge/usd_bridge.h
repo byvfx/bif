@@ -607,6 +607,45 @@ UsdBridgeError usd_bridge_get_light(
     UsdBridgeLightData* out_data
 );
 
+// ============================================================================
+// Edit Layer Export
+// ============================================================================
+
+/// Opaque handle to an edit layer (a writable USD stage).
+typedef struct UsdBridgeEditLayer UsdBridgeEditLayer;
+
+/// Create a new empty USD stage for writing edit opinions.
+///
+/// @param output_path Output file path (.usda or .usdc)
+/// @param out_layer Pointer to receive the edit layer handle
+/// @return USD_BRIDGE_SUCCESS on success
+UsdBridgeError usd_bridge_create_edit_layer(
+    const char* output_path,
+    UsdBridgeEditLayer** out_layer
+);
+
+/// Write a transform opinion (xformOp:transform) at the given prim path and time.
+///
+/// @param layer Edit layer handle
+/// @param prim_path USD prim path (e.g., "/World/mesh_0")
+/// @param time Time code (-1 for default/static)
+/// @param matrix_16 Column-major 4x4 transform matrix (16 floats)
+/// @return USD_BRIDGE_SUCCESS on success
+UsdBridgeError usd_bridge_write_xform_opinion(
+    UsdBridgeEditLayer* layer,
+    const char* prim_path,
+    double time,
+    const float* matrix_16
+);
+
+/// Save and close the edit layer.
+///
+/// @param layer Edit layer handle (freed after this call)
+/// @return USD_BRIDGE_SUCCESS on success
+UsdBridgeError usd_bridge_save_edit_layer(
+    UsdBridgeEditLayer* layer
+);
+
 #ifdef __cplusplus
 }
 #endif

@@ -6,6 +6,10 @@ struct CameraUniform {
     view: mat4x4<f32>,
     camera_position: vec4<f32>,
     inv_view_proj: mat4x4<f32>,
+    selected_instance_id: u32,
+    _pad0: u32,
+    _pad1: u32,
+    _pad2: u32,
 }
 
 struct MaterialUniform {
@@ -101,10 +105,11 @@ struct VertexOutput {
     @location(1) uv: vec2<f32>,
     @location(2) world_pos: vec3<f32>,     // World-space position
     @location(3) @interpolate(flat) instance_material_id: u32,
+    @location(4) @interpolate(flat) instance_idx: u32,
 }
 
 @vertex
-fn vs_main(in: VertexInput) -> VertexOutput {
+fn vs_main(in: VertexInput, @builtin(instance_index) instance_index: u32) -> VertexOutput {
     let model_matrix = mat4x4<f32>(
         in.model_matrix_0,
         in.model_matrix_1,
@@ -123,6 +128,7 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     out.world_pos = world_position.xyz;
     out.uv = in.uv;
     out.instance_material_id = in.instance_material_id;
+    out.instance_idx = instance_index;
 
     return out;
 }
@@ -295,6 +301,9 @@ fn fs_main(
         f0,
     );
 
+    // Compute lit color from one of three paths
+    var lit_color: vec3<f32>;
+
     // IBL path (when environment is loaded)
     if (env_params.has_environment != 0u) {
         let fresnel = fresnel_schlick_roughness(n_dot_v, f0, roughness);
@@ -314,38 +323,38 @@ fn fs_main(
         let specular_ibl = prefiltered * (fresnel * brdf.x + brdf.y);
 
         // Combine IBL + direct lights
-        let color = (diffuse_ibl + specular_ibl) * env_params.intensity + direct_light;
-        return vec4<f32>(linear_to_srgb(aces_tonemap(color)), 1.0);
+        lit_color = (diffuse_ibl + specular_ibl) * env_params.intensity + direct_light;
+    } else if (lights_uniform.light_count[0] > 0u) {
+        // Fallback: direct lights only (no IBL)
+        let ambient = base_color * 0.05;
+        lit_color = ambient + direct_light;
+    } else {
+        // No environment and no lights - use headlight fallback
+        let normal_vs = normalize((camera.view * vec4<f32>(normal, 0.0)).xyz);
+        let view_pos = camera.view * vec4<f32>(in.world_pos, 1.0);
+        let view_dir_vs = normalize(-view_pos.xyz);
+
+        let light_dir = view_dir_vs;
+        let half_vec = normalize(light_dir + view_dir_vs);
+        let n_dot_l = max(dot(normal_vs, light_dir), 0.0);
+        let diffuse = base_color * n_dot_l;
+
+        let n_dot_h = max(dot(normal_vs, half_vec), 0.0);
+        let shininess = mix(8.0, 256.0, 1.0 - roughness);
+        let spec_intensity = pow(n_dot_h, shininess) * mat.metallic_roughness.z;
+        let fresnel_hl = f0 + (1.0 - f0) * pow(1.0 - max(dot(view_dir_vs, half_vec), 0.0), 5.0);
+        let specular_color = fresnel_hl * spec_intensity;
+
+        let dielectric_contrib = diffuse * (1.0 - metallic);
+        let metal_contrib = specular_color * metallic;
+        let ambient = base_color * 0.15;
+        lit_color = ambient + dielectric_contrib * 0.7 + metal_contrib * 0.5;
     }
 
-    // Fallback: headlight shading (no environment loaded), or just use direct lights
-    if (lights_uniform.light_count[0] > 0u) {
-        // Use direct lights only (no IBL)
-        let ambient = base_color * 0.05; // Small ambient term
-        let color = ambient + direct_light;
-        return vec4<f32>(linear_to_srgb(aces_tonemap(color)), 1.0);
+    // Selection highlight: orange additive tint on selected instance
+    if (in.instance_idx == camera.selected_instance_id) {
+        lit_color += vec3<f32>(0.15, 0.08, 0.0);
     }
-
-    // No environment and no lights - use headlight fallback
-    let normal_vs = normalize((camera.view * vec4<f32>(normal, 0.0)).xyz);
-    let view_pos = camera.view * vec4<f32>(in.world_pos, 1.0);
-    let view_dir_vs = normalize(-view_pos.xyz);
-
-    let light_dir = view_dir_vs;
-    let half_vec = normalize(light_dir + view_dir_vs);
-    let n_dot_l = max(dot(normal_vs, light_dir), 0.0);
-    let diffuse = base_color * n_dot_l;
-
-    let n_dot_h = max(dot(normal_vs, half_vec), 0.0);
-    let shininess = mix(8.0, 256.0, 1.0 - roughness);
-    let spec_intensity = pow(n_dot_h, shininess) * mat.metallic_roughness.z;
-    let fresnel_hl = f0 + (1.0 - f0) * pow(1.0 - max(dot(view_dir_vs, half_vec), 0.0), 5.0);
-    let specular_color = fresnel_hl * spec_intensity;
-
-    let dielectric_contrib = diffuse * (1.0 - metallic);
-    let metal_contrib = specular_color * metallic;
-    let ambient = base_color * 0.15;
-    let lit_color = ambient + dielectric_contrib * 0.7 + metal_contrib * 0.5;
 
     return vec4<f32>(linear_to_srgb(aces_tonemap(lit_color)), 1.0);
 }

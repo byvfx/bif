@@ -24,6 +24,8 @@ pub struct TimelineState {
     playback_start_frame: f64,
     /// Realtime mode: ON = wall-clock accurate, OFF = every frame as fast as possible
     pub realtime: bool,
+    /// Keyframe times for the currently selected instance (for timeline markers).
+    pub keyframe_times: Vec<f64>,
 }
 
 impl Default for TimelineState {
@@ -40,6 +42,7 @@ impl Default for TimelineState {
             playback_start_instant: None,
             playback_start_frame: 0.0,
             realtime: true, // Default to wall-clock accurate playback
+            keyframe_times: vec![],
         }
     }
 }

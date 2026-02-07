@@ -11,6 +11,9 @@ use crate::Camera;
 /// Maximum number of textures in the viewport texture array.
 pub const MAX_VIEWPORT_TEXTURES: usize = 128;
 
+/// No selection sentinel (0xFFFFFFFF means nothing is selected).
+pub const NO_SELECTION: u32 = 0xFFFFFFFF;
+
 /// Camera uniform data for GPU.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
@@ -19,6 +22,9 @@ pub struct CameraUniform {
     pub view: [[f32; 4]; 4],
     pub camera_position: [f32; 4],
     pub inv_view_proj: [[f32; 4]; 4],
+    /// Selected instance ID for highlight tint (0xFFFFFFFF = no selection).
+    pub selected_instance_id: u32,
+    pub _pad_selection: [u32; 3],
 }
 
 impl CameraUniform {
@@ -28,6 +34,8 @@ impl CameraUniform {
             view: Mat4::IDENTITY.to_cols_array_2d(),
             camera_position: [0.0, 0.0, 5.0, 1.0],
             inv_view_proj: Mat4::IDENTITY.to_cols_array_2d(),
+            selected_instance_id: NO_SELECTION,
+            _pad_selection: [0; 3],
         }
     }
 
@@ -560,5 +568,7 @@ mod tests {
         assert_eq!(cam.view_proj[3][3], 1.0);
         // Camera position default
         assert_eq!(cam.camera_position[2], 5.0);
+        // Selection default
+        assert_eq!(cam.selected_instance_id, NO_SELECTION);
     }
 }

@@ -241,6 +241,20 @@ impl Renderer {
         self.instance_transforms = instance_transforms;
         self.instance_material_ids = instance_material_ids;
         self.instance_prototype_ids = instance_prototype_ids;
+        // Build prim path mapping for USD export
+        self.instance_prim_paths = scene
+            .instances()
+            .iter()
+            .enumerate()
+            .map(|(idx, inst)| {
+                let proto_name = scene
+                    .prototypes
+                    .get(inst.prototype_id)
+                    .map(|p| p.name.as_str())
+                    .unwrap_or("unknown");
+                format!("/{}/instance_{}", proto_name, idx)
+            })
+            .collect();
         self.instance_animations = scene.instance_animations().to_vec();
         self.last_evaluated_frame = 0.0;
         self.scene_material = scene_material.clone();
@@ -277,6 +291,28 @@ impl Renderer {
             self.num_instances
         );
 
+        // Build pick scene for viewport selection
+        self.rebuild_pick_scene();
+
+        Ok(())
+    }
+
+    /// Create and load a procedural primitive into the viewport.
+    pub fn load_primitive(&mut self, kind: bif_core::PrimitiveKind, size: f32) -> Result<()> {
+        use bif_core::primitives::{create_camera_wireframe, create_cube, create_sphere};
+
+        let (mesh, name) = match kind {
+            bif_core::PrimitiveKind::Cube => (create_cube(size), "Cube"),
+            bif_core::PrimitiveKind::Sphere => (create_sphere(size, 32), "Sphere"),
+            bif_core::PrimitiveKind::Camera => (create_camera_wireframe(), "Camera"),
+        };
+
+        let mut scene = bif_core::Scene::new(name);
+        let proto_id = scene.add_prototype(Arc::new(mesh), name.to_string());
+        scene.add_instance(proto_id, bif_core::Transform::default());
+
+        self.load_scene_data(&scene)?;
+        log::info!("Primitive loaded: {} (size={})", name, size);
         Ok(())
     }
 
@@ -618,6 +654,20 @@ impl Renderer {
 
         self.instance_material_ids = instance_material_ids;
         self.instance_prototype_ids = instance_prototype_ids;
+        // Build prim path mapping for USD export
+        self.instance_prim_paths = scene
+            .instances()
+            .iter()
+            .enumerate()
+            .map(|(idx, inst)| {
+                let proto_name = scene
+                    .prototypes
+                    .get(inst.prototype_id)
+                    .map(|p| p.name.as_str())
+                    .unwrap_or("unknown");
+                format!("/{}/instance_{}", proto_name, idx)
+            })
+            .collect();
 
         // Store animation data for viewport playback
         self.instance_animations = scene.instance_animations().to_vec();
@@ -840,6 +890,9 @@ impl Renderer {
 
         // Update lights from scene
         self.update_lights(&scene.lights);
+
+        // Build pick scene for viewport selection
+        self.rebuild_pick_scene();
 
         // Log viewport timing breakdown
         let total_viewport_time = viewport_load_start.elapsed();

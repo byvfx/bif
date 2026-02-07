@@ -1,17 +1,8 @@
-//! Property Inspector - USD prim property viewer.
+//! Property Inspector - USD prim property viewer with editable transforms.
 //!
 //! Shows properties and metadata for the currently selected USD prim.
-//!
-//! # Features
-//! - Path and type display
-//! - Transform matrix visualization
-//! - Bounding box info (when available)
-//! - Key USD attributes
-//!
-//! # TODOs
-//! - [ ] Fetch actual USD attributes from C++ bridge
-//! - [ ] Time-sampled attribute visualization
-//! - [ ] Editable attributes (write-back to USD)
+//! When a viewport instance is selected, provides editable DragValue fields
+//! for translation, rotation (Euler degrees), and scale.
 
 use crate::scene_browser::PrimDisplayInfo;
 use bif_math::Mat4;
@@ -39,6 +30,19 @@ pub struct PrimProperties {
 
     /// Additional key-value properties
     pub attributes: Vec<(String, String)>,
+}
+
+/// Event emitted when user edits a transform in the property inspector.
+#[derive(Clone, Debug)]
+pub struct TransformEdit {
+    /// Instance index being edited.
+    pub instance_index: usize,
+    /// Previous transform (before the drag started).
+    pub old_transform: bif_core::Transform,
+    /// New transform (current drag value).
+    pub new_transform: bif_core::Transform,
+    /// True when the drag is released (finalize undo command).
+    pub committed: bool,
 }
 
 impl PrimProperties {
@@ -76,7 +80,14 @@ impl PrimProperties {
 }
 
 /// Render the property inspector panel.
-pub fn render_property_inspector(ui: &mut egui::Ui, properties: Option<&PrimProperties>) {
+///
+/// `editable_transform` is `Some((instance_index, Transform))` when a viewport
+/// instance is selected and its transform can be edited.
+pub fn render_property_inspector(
+    ui: &mut egui::Ui,
+    properties: Option<&PrimProperties>,
+    editable_transform: Option<(usize, &bif_core::Transform)>,
+) {
     ui.heading("Properties");
     ui.separator();
 
@@ -102,9 +113,9 @@ pub fn render_property_inspector(ui: &mut egui::Ui, properties: Option<&PrimProp
             ui.horizontal(|ui| {
                 ui.label("Active:");
                 if props.is_active {
-                    ui.colored_label(egui::Color32::GREEN, "✓ Yes");
+                    ui.colored_label(egui::Color32::GREEN, "Yes");
                 } else {
-                    ui.colored_label(egui::Color32::RED, "✗ No");
+                    ui.colored_label(egui::Color32::RED, "No");
                 }
             });
 
@@ -156,6 +167,185 @@ pub fn render_property_inspector(ui: &mut egui::Ui, properties: Option<&PrimProp
             }
         }
     }
+
+    // Editable transform section (when viewport instance is selected)
+    if let Some((instance_index, transform)) = editable_transform {
+        ui.separator();
+        render_editable_transform(ui, instance_index, transform);
+
+        ui.add_space(8.0);
+        if ui.button("Set Key (K)").clicked() {
+            ui.data_mut(|d| {
+                d.insert_temp(egui::Id::new("set_keyframe_request"), instance_index as u64);
+            });
+        }
+    }
+}
+
+/// Render editable DragValue fields for an instance transform.
+///
+/// Uses egui temporary data to pass `TransformEdit` events back to the renderer.
+fn render_editable_transform(
+    ui: &mut egui::Ui,
+    instance_index: usize,
+    transform: &bif_core::Transform,
+) {
+    ui.heading("Instance Transform");
+
+    // Read current editing values from egui temp data, or init from transform
+    let edit_id = egui::Id::new("transform_edit_values");
+    let drag_start_id = egui::Id::new("transform_drag_start");
+
+    // Current editable values [tx,ty,tz, rx,ry,rz, sx,sy,sz]
+    let mut values: [f32; 9] = ui.data(|d| {
+        d.get_temp(edit_id).unwrap_or_else(|| {
+            let euler = quat_to_euler_degrees(transform.rotation);
+            [
+                transform.translation.x,
+                transform.translation.y,
+                transform.translation.z,
+                euler.0,
+                euler.1,
+                euler.2,
+                transform.scale.x,
+                transform.scale.y,
+                transform.scale.z,
+            ]
+        })
+    });
+
+    let mut any_changed = false;
+    let mut any_released = false;
+
+    ui.label("Translation");
+    egui::Grid::new("translate_grid")
+        .num_columns(4)
+        .spacing([4.0, 2.0])
+        .show(ui, |ui| {
+            let (c, r) = drag_value_row(ui, &["X", "Y", "Z"], &mut values[0..3], 0.1);
+            any_changed |= c;
+            any_released |= r;
+        });
+
+    ui.add_space(4.0);
+    ui.label("Rotation");
+    egui::Grid::new("rotation_grid")
+        .num_columns(4)
+        .spacing([4.0, 2.0])
+        .show(ui, |ui| {
+            let (c, r) = drag_value_row(ui, &["X", "Y", "Z"], &mut values[3..6], 1.0);
+            any_changed |= c;
+            any_released |= r;
+        });
+
+    ui.add_space(4.0);
+    ui.label("Scale");
+    egui::Grid::new("scale_grid")
+        .num_columns(4)
+        .spacing([4.0, 2.0])
+        .show(ui, |ui| {
+            let (c, r) = drag_value_row(ui, &["X", "Y", "Z"], &mut values[6..9], 0.01);
+            any_changed |= c;
+            any_released |= r;
+        });
+
+    // Store current values for next frame
+    ui.data_mut(|d| d.insert_temp(edit_id, values));
+
+    if any_changed {
+        // Store drag start transform if not already stored
+        let drag_start: Option<bif_core::Transform> = ui.data(|d| d.get_temp(drag_start_id));
+        if drag_start.is_none() {
+            ui.data_mut(|d| d.insert_temp(drag_start_id, transform.clone()));
+        }
+
+        let new_transform = values_to_transform(&values);
+
+        // Emit live preview edit (not committed yet)
+        let edit = TransformEdit {
+            instance_index,
+            old_transform: transform.clone(),
+            new_transform,
+            committed: false,
+        };
+        ui.data_mut(|d| d.insert_temp(egui::Id::new("transform_edit_event"), edit));
+    }
+
+    if any_released {
+        // Finalize: emit committed edit with drag start as old_transform
+        let drag_start: Option<bif_core::Transform> = ui.data(|d| d.get_temp(drag_start_id));
+        if let Some(old_transform) = drag_start {
+            let new_transform = values_to_transform(&values);
+            let edit = TransformEdit {
+                instance_index,
+                old_transform,
+                new_transform,
+                committed: true,
+            };
+            ui.data_mut(|d| d.insert_temp(egui::Id::new("transform_edit_event"), edit));
+            // Clear drag start
+            ui.data_mut(|d| d.remove::<bif_core::Transform>(drag_start_id));
+        }
+    }
+}
+
+/// Render a row of 3 labeled DragValue fields. Returns (any_changed, any_released).
+fn drag_value_row(
+    ui: &mut egui::Ui,
+    labels: &[&str; 3],
+    values: &mut [f32],
+    speed: f32,
+) -> (bool, bool) {
+    let mut changed = false;
+    let mut released = false;
+
+    let colors = [
+        egui::Color32::from_rgb(200, 60, 60),  // R for X
+        egui::Color32::from_rgb(60, 180, 60),  // G for Y
+        egui::Color32::from_rgb(60, 100, 220), // B for Z
+    ];
+
+    for i in 0..3 {
+        ui.colored_label(colors[i], labels[i]);
+        let resp = ui.add(
+            egui::DragValue::new(&mut values[i])
+                .speed(speed)
+                .fixed_decimals(3),
+        );
+        if resp.changed() {
+            changed = true;
+        }
+        if resp.drag_stopped() || resp.lost_focus() {
+            released = true;
+        }
+    }
+    ui.end_row();
+
+    (changed, released)
+}
+
+/// Convert quaternion to Euler angles in degrees (XYZ order).
+fn quat_to_euler_degrees(q: bif_math::Quat) -> (f32, f32, f32) {
+    let (yaw, pitch, roll) = q.to_euler(bif_math::EulerRot::XYZ);
+    (yaw.to_degrees(), pitch.to_degrees(), roll.to_degrees())
+}
+
+/// Convert editing values [tx,ty,tz, rx,ry,rz, sx,sy,sz] to a Transform.
+fn values_to_transform(values: &[f32; 9]) -> bif_core::Transform {
+    let translation = bif_math::Vec3::new(values[0], values[1], values[2]);
+    let rotation = bif_math::Quat::from_euler(
+        bif_math::EulerRot::XYZ,
+        values[3].to_radians(),
+        values[4].to_radians(),
+        values[5].to_radians(),
+    );
+    let scale = bif_math::Vec3::new(values[6], values[7], values[8]);
+
+    bif_core::Transform {
+        translation,
+        rotation,
+        scale,
+    }
 }
 
 /// Render a 4x4 matrix in a collapsible grid.
@@ -193,6 +383,15 @@ fn render_matrix(ui: &mut egui::Ui, matrix: &Mat4) {
         ))
         .monospace(),
     );
+}
+
+/// Reset cached transform edit values (call when selection changes).
+pub fn reset_transform_edit_cache(ctx: &egui::Context) {
+    ctx.data_mut(|d| {
+        d.remove::<[f32; 9]>(egui::Id::new("transform_edit_values"));
+        d.remove::<bif_core::Transform>(egui::Id::new("transform_drag_start"));
+        d.remove::<TransformEdit>(egui::Id::new("transform_edit_event"));
+    });
 }
 
 #[cfg(test)]
@@ -235,5 +434,32 @@ mod tests {
         assert!(props.bounds_min.is_some());
         assert!(props.bounds_max.is_some());
         assert!(props.attributes.iter().any(|(k, _)| k == "vertices"));
+    }
+
+    #[test]
+    fn test_quat_to_euler_roundtrip() {
+        let original = bif_math::Quat::from_euler(
+            bif_math::EulerRot::XYZ,
+            30.0_f32.to_radians(),
+            45.0_f32.to_radians(),
+            0.0_f32.to_radians(),
+        );
+
+        let (rx, ry, rz) = quat_to_euler_degrees(original);
+
+        assert!((rx - 30.0).abs() < 0.1);
+        assert!((ry - 45.0).abs() < 0.1);
+        assert!((rz - 0.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn test_values_to_transform() {
+        let values = [1.0, 2.0, 3.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0];
+        let t = values_to_transform(&values);
+
+        assert!((t.translation.x - 1.0).abs() < 0.001);
+        assert!((t.translation.y - 2.0).abs() < 0.001);
+        assert!((t.translation.z - 3.0).abs() < 0.001);
+        assert!((t.scale.x - 1.0).abs() < 0.001);
     }
 }

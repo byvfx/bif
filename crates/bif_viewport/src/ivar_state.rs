@@ -86,19 +86,22 @@ pub enum BuildStatus {
 /// Camera source for batch rendering.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum CameraSource {
-    /// Use current viewport camera.
+    /// Use current viewport camera (free perspective orbit).
     #[default]
     Viewport,
     /// Use a specific USD camera by path (e.g., "/cameras/Camera").
     UsdCamera(String),
+    /// Standard orthographic view preset.
+    OrthoView(bif_math::OrthoPreset),
 }
 
 impl CameraSource {
     /// Display name for UI.
     pub fn display_name(&self) -> &str {
         match self {
-            CameraSource::Viewport => "Viewport",
+            CameraSource::Viewport => "Perspective",
             CameraSource::UsdCamera(path) => path,
+            CameraSource::OrthoView(preset) => preset.display_name(),
         }
     }
 }

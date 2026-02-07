@@ -12,7 +12,7 @@ mod aabb;
 pub use aabb::Aabb;
 
 mod camera;
-pub use camera::Camera;
+pub use camera::{Camera, OrthoPreset, ProjectionMode};
 
 mod transform;
 pub use transform::Mat4Ext;

@@ -21,8 +21,10 @@
 pub mod hdr;
 pub mod ibl;
 pub mod mesh;
+pub mod primitives;
 pub mod scene;
 pub mod texture;
+pub mod undo;
 pub mod usd;
 
 #[cfg(feature = "oiio")]
@@ -30,11 +32,13 @@ pub mod oiio;
 
 // Re-export commonly used types
 pub use mesh::Mesh;
+pub use primitives::PrimitiveKind;
 pub use scene::{
     AnimatedTransform, Instance, Light, Material, Prototype, Scene, TimelineInfo, Transform,
     TransformKeyframe,
 };
 pub use texture::{Texture, TextureCache, TextureError, TextureResult};
+pub use undo::{EditState, KeyframeCommand, TransformCommand, UndoCommand, UndoStack};
 pub use usd::{load_usd, load_usda, load_usda_from_string};
 
 #[cfg(feature = "oiio")]

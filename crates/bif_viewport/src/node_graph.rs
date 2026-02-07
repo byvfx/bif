@@ -40,6 +40,11 @@ pub enum NodeGraphEvent {
         intensity: f32,
         show_background: bool,
     },
+    /// Create a procedural primitive
+    CreatePrimitive {
+        kind: bif_core::PrimitiveKind,
+        size: f32,
+    },
 }
 
 /// Pin types for node connections
@@ -86,6 +91,15 @@ pub enum SceneNode {
         is_converting_tx: bool,
         /// Status message from last .tx conversion
         tx_status: Option<String>,
+    },
+    /// Procedural primitive (cube, sphere, camera wireframe)
+    Primitive {
+        /// Kind of primitive
+        kind: bif_core::PrimitiveKind,
+        /// Size parameter
+        size: f32,
+        /// Whether geometry has been created
+        is_created: bool,
     },
     /// HDRI environment map for IBL lighting
     HdriEnvironment {
@@ -139,6 +153,20 @@ impl SceneNode {
         }
     }
 
+    /// Create a new Primitive node
+    pub fn primitive(kind: bif_core::PrimitiveKind) -> Self {
+        let size = match kind {
+            bif_core::PrimitiveKind::Cube => 1.0,
+            bif_core::PrimitiveKind::Sphere => 0.5,
+            bif_core::PrimitiveKind::Camera => 1.0,
+        };
+        Self::Primitive {
+            kind,
+            size,
+            is_created: false,
+        }
+    }
+
     /// Create a new HDRI Environment node
     pub fn hdri_environment() -> Self {
         Self::HdriEnvironment {
@@ -159,6 +187,11 @@ impl SceneNode {
         match self {
             SceneNode::UsdRead { .. } => "USD Read",
             SceneNode::IvarRender { .. } => "Ivar Render",
+            SceneNode::Primitive { kind, .. } => match kind {
+                bif_core::PrimitiveKind::Cube => "Cube",
+                bif_core::PrimitiveKind::Sphere => "Sphere",
+                bif_core::PrimitiveKind::Camera => "Camera",
+            },
             SceneNode::HdriEnvironment { .. } => "HDRI Environment",
         }
     }
@@ -168,6 +201,7 @@ impl SceneNode {
         match self {
             SceneNode::UsdRead { .. } => 0,
             SceneNode::IvarRender { .. } => 2, // scene + environment
+            SceneNode::Primitive { .. } => 0,
             SceneNode::HdriEnvironment { .. } => 0,
         }
     }
@@ -177,6 +211,7 @@ impl SceneNode {
         match self {
             SceneNode::UsdRead { .. } => 1,
             SceneNode::IvarRender { .. } => 1,
+            SceneNode::Primitive { .. } => 1,
             SceneNode::HdriEnvironment { .. } => 1,
         }
     }
@@ -190,6 +225,7 @@ impl SceneNode {
                 1 => Some(("env", PinType::Environment)),
                 _ => None,
             },
+            SceneNode::Primitive { .. } => None,
             SceneNode::HdriEnvironment { .. } => None,
         }
     }
@@ -203,6 +239,10 @@ impl SceneNode {
             },
             SceneNode::IvarRender { .. } => match index {
                 0 => Some(("image", PinType::Image)),
+                _ => None,
+            },
+            SceneNode::Primitive { .. } => match index {
+                0 => Some(("scene", PinType::Scene)),
                 _ => None,
             },
             SceneNode::HdriEnvironment { .. } => match index {
@@ -360,6 +400,33 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer {
                 }
                 if let Some(status) = tx_status {
                     ui.colored_label(egui::Color32::GREEN, status.as_str());
+                }
+            }
+            SceneNode::Primitive {
+                kind,
+                size,
+                is_created,
+            } => {
+                ui.horizontal(|ui| {
+                    ui.label("Size:");
+                    if ui
+                        .add(egui::DragValue::new(size).speed(0.01).range(0.01..=100.0))
+                        .changed()
+                    {
+                        *is_created = false; // Need to recreate
+                    }
+                });
+
+                if !*is_created {
+                    if ui.button("Create").clicked() {
+                        self.events.push(NodeGraphEvent::CreatePrimitive {
+                            kind: *kind,
+                            size: *size,
+                        });
+                        *is_created = true;
+                    }
+                } else {
+                    ui.colored_label(egui::Color32::GREEN, "Created");
                 }
             }
             SceneNode::HdriEnvironment {
@@ -566,6 +633,11 @@ impl NodeGraphState {
         self.snarl.insert_node(pos, SceneNode::hdri_environment())
     }
 
+    /// Add a Primitive node at the given position
+    pub fn add_primitive(&mut self, kind: bif_core::PrimitiveKind, pos: egui::Pos2) -> NodeId {
+        self.snarl.insert_node(pos, SceneNode::primitive(kind))
+    }
+
     /// Delete the selected node
     pub fn delete_selected(&mut self) {
         if let Some(node_id) = self.selected_node.take() {
@@ -734,6 +806,16 @@ pub fn render_node_graph(ui: &mut egui::Ui, state: &mut NodeGraphState) -> Vec<N
         }
         if ui.button("+ Ivar Render").clicked() {
             state.add_ivar_render(egui::pos2(350.0, 100.0));
+        }
+        ui.separator();
+        if ui.button("+ Cube").clicked() {
+            state.add_primitive(bif_core::PrimitiveKind::Cube, egui::pos2(50.0, 300.0));
+        }
+        if ui.button("+ Sphere").clicked() {
+            state.add_primitive(bif_core::PrimitiveKind::Sphere, egui::pos2(50.0, 400.0));
+        }
+        if ui.button("+ Camera").clicked() {
+            state.add_primitive(bif_core::PrimitiveKind::Camera, egui::pos2(50.0, 500.0));
         }
         ui.separator();
         if ui.button("Del Selected").clicked() {

@@ -6,7 +6,9 @@ use crate::environment_manager::IblResult;
 use crate::gpu_types::InstanceData;
 use crate::ivar_state::{self, BatchRenderStatus, BuildStatus, CameraSource, RenderMode};
 use crate::node_graph::{render_node_graph, NodeGraphEvent};
-use crate::property_inspector::{render_property_inspector, PrimProperties};
+use crate::property_inspector::{
+    render_property_inspector, reset_transform_edit_cache, PrimProperties, TransformEdit,
+};
 use crate::scene_browser::{self, EmptyPrimProvider, PrimDataProvider};
 use crate::Renderer;
 
@@ -112,6 +114,22 @@ impl Renderer {
         if clear_batch_state {
             self.batch_receiver = None;
             self.batch_cancel_flag = None;
+        }
+
+        // Sync selection highlight to GPU camera uniform
+        let sel_id = self
+            .selected_instance_index
+            .map(|i| i as u32)
+            .unwrap_or(crate::gpu_types::NO_SELECTION);
+        if self.camera_uniform.selected_instance_id != sel_id {
+            self.camera_uniform.selected_instance_id = sel_id;
+            self.queue.write_buffer(
+                &self.camera_buffer,
+                0,
+                bytemuck::cast_slice(&[self.camera_uniform]),
+            );
+            // Reset transform edit cache when selection changes
+            reset_transform_edit_cache(&self.egui_ctx);
         }
 
         // Update frustum culling before rendering (in Vulkan mode)
@@ -603,6 +621,35 @@ impl Renderer {
                         }
                     });
 
+                    // Export Edits
+                    let has_edits = !self.edit_state.transform_overrides.is_empty()
+                        || !self.edit_state.keyframe_overrides.is_empty();
+                    if has_edits {
+                        ui.separator();
+                        ui.collapsing("Export Edits", |ui| {
+                            let override_count = self.edit_state.transform_overrides.len();
+                            let keyframe_count = self.edit_state.keyframe_overrides.len();
+                            ui.label(format!(
+                                "{} overrides, {} keyframed",
+                                override_count, keyframe_count
+                            ));
+                            if ui.button("Export as USD...").clicked() {
+                                if let Some(path) = rfd::FileDialog::new()
+                                    .add_filter("USD Files", &["usda", "usdc"])
+                                    .set_file_name("edits.usda")
+                                    .save_file()
+                                {
+                                    ctx.data_mut(|d| {
+                                        d.insert_temp(
+                                            egui::Id::new("export_edit_layer"),
+                                            path.display().to_string(),
+                                        );
+                                    });
+                                }
+                            }
+                        });
+                    }
+
                     ui.separator();
 
                     // Scene Browser (collapsible)
@@ -632,10 +679,30 @@ impl Renderer {
             left_panel_width = stats_panel.response.rect.width();
 
             // Property Inspector (right panel)
+            // Build editable transform for selected viewport instance
+            let editable_transform: Option<(usize, bif_core::Transform)> =
+                self.selected_instance_index.and_then(|idx| {
+                    // Use edit override if present, otherwise decompose from current_transforms
+                    let transform = if let Some(t) = self.edit_state.transform_overrides.get(&idx) {
+                        t.clone()
+                    } else if idx < self.current_transforms.len() {
+                        bif_core::Transform::from_matrix(self.current_transforms[idx])
+                    } else {
+                        return None;
+                    };
+                    Some((idx, transform))
+                });
+
             let property_panel = egui::SidePanel::right("property_panel")
                 .default_width(280.0)
                 .show(ctx, |ui| {
-                    render_property_inspector(ui, self.selected_prim_properties.as_ref());
+                    let et_ref =
+                        editable_transform.as_ref().map(|(idx, t)| (*idx, t));
+                    render_property_inspector(
+                        ui,
+                        self.selected_prim_properties.as_ref(),
+                        et_ref,
+                    );
                 });
             right_panel_width = property_panel.response.rect.width();
 
@@ -652,17 +719,23 @@ impl Renderer {
                             .selected_text(cam_display)
                             .width(100.0)
                             .show_ui(ui, |ui| {
-                                // Viewport option
+                                // Perspective viewport option
                                 if ui
                                     .selectable_label(
                                         matches!(self.viewport_camera_source, CameraSource::Viewport),
-                                        "Viewport",
+                                        "Perspective",
                                     )
                                     .clicked()
                                 {
                                     self.viewport_camera_source = CameraSource::Viewport;
                                     self.camera_locked = false;
                                     self.selected_usd_camera = None;
+                                    ctx.data_mut(|d| {
+                                        d.insert_temp(
+                                            egui::Id::new("camera_projection_change"),
+                                            "perspective".to_string(),
+                                        );
+                                    });
                                 }
                                 // USD cameras from stage
                                 if let Some(ref stage) = self.usd_stage {
@@ -686,6 +759,29 @@ impl Renderer {
                                                 });
                                             }
                                         }
+                                    }
+                                }
+                                // Orthographic presets
+                                ui.separator();
+                                for preset in bif_math::OrthoPreset::all() {
+                                    let is_selected = matches!(
+                                        &self.viewport_camera_source,
+                                        CameraSource::OrthoView(p) if p == preset
+                                    );
+                                    if ui
+                                        .selectable_label(is_selected, preset.display_name())
+                                        .clicked()
+                                    {
+                                        self.viewport_camera_source =
+                                            CameraSource::OrthoView(*preset);
+                                        self.camera_locked = false;
+                                        self.selected_usd_camera = None;
+                                        ctx.data_mut(|d| {
+                                            d.insert_temp(
+                                                egui::Id::new("camera_projection_change"),
+                                                format!("ortho:{}", preset.display_name()),
+                                            );
+                                        });
                                     }
                                 }
                             });
@@ -739,6 +835,33 @@ impl Renderer {
                             self.timeline_state.reset_playback_anchor();
                         }
 
+                        // Draw keyframe diamond markers on the slider
+                        if !self.timeline_state.keyframe_times.is_empty() {
+                            let slider_rect = slider_resp.rect;
+                            let range = end - start;
+                            if range > 0.0 {
+                                let painter = ui.painter_at(slider_rect);
+                                for &time in &self.timeline_state.keyframe_times {
+                                    let t = ((time as f32) - start) / range;
+                                    let x = slider_rect.left() + t * slider_rect.width();
+                                    let y = slider_rect.center().y;
+                                    let size = 4.0;
+                                    // Diamond shape
+                                    let points = vec![
+                                        egui::pos2(x, y - size),
+                                        egui::pos2(x + size, y),
+                                        egui::pos2(x, y + size),
+                                        egui::pos2(x - size, y),
+                                    ];
+                                    painter.add(egui::Shape::convex_polygon(
+                                        points,
+                                        egui::Color32::from_rgb(255, 200, 50),
+                                        egui::Stroke::new(1.0, egui::Color32::from_rgb(180, 140, 30)),
+                                    ));
+                                }
+                            }
+                        }
+
                         // Frame range display (end)
                         ui.label(format!("{:.0}", end));
 
@@ -790,7 +913,59 @@ impl Renderer {
                     }
                 });
             bottom_panel_height = node_graph_panel.response.rect.height() + timeline_height;
+
+            // Draw translate gizmo overlay (after all panels, on foreground layer)
+            if let Some(sel_idx) = self.selected_instance_index {
+                if sel_idx < self.current_transforms.len() {
+                    let transform = if let Some(t) = self.edit_state.transform_overrides.get(&sel_idx) {
+                        t.clone()
+                    } else {
+                        bif_core::Transform::from_matrix(self.current_transforms[sel_idx])
+                    };
+                    let world_pos = transform.translation;
+                    let vp_rect = (
+                        left_panel_width,
+                        top_panel_height,
+                        (self.size.0 as f32 - left_panel_width - right_panel_width).max(1.0),
+                        (self.size.1 as f32 - top_panel_height - bottom_panel_height).max(1.0),
+                    );
+
+                    let painter = ctx.layer_painter(egui::LayerId::new(
+                        egui::Order::Foreground,
+                        egui::Id::new("gizmo_layer"),
+                    ));
+
+                    let mouse_screen = ctx.input(|i| i.pointer.hover_pos().map(|p| (p.x, p.y)));
+
+                    let hovered = crate::gizmo::draw_gizmo(
+                        &painter,
+                        &self.camera,
+                        world_pos,
+                        vp_rect,
+                        &self.gizmo_state,
+                        mouse_screen,
+                    );
+
+                    // Store hovered axis for next frame (can't mutate gizmo_state here)
+                    ctx.data_mut(|d| {
+                        d.insert_temp(egui::Id::new("gizmo_hovered_axis"), hovered as u8);
+                    });
+                }
+            }
         });
+
+        // Update gizmo hovered axis from egui frame
+        let hovered_axis_raw: u8 = self
+            .egui_ctx
+            .data(|d| d.get_temp(egui::Id::new("gizmo_hovered_axis")).unwrap_or(0));
+        if !self.gizmo_state.is_dragging {
+            self.gizmo_state.hovered_axis = match hovered_axis_raw {
+                1 => crate::gizmo::GizmoAxis::X,
+                2 => crate::gizmo::GizmoAxis::Y,
+                3 => crate::gizmo::GizmoAxis::Z,
+                _ => crate::gizmo::GizmoAxis::None,
+            };
+        }
 
         // Update gnomon size from UI
         self.gnomon.size = gnomon_size;
@@ -885,6 +1060,7 @@ impl Renderer {
             self.egui_ctx
                 .data_mut(|d| d.remove::<String>(egui::Id::new("prim_selection_changed")));
             self.selected_prim_path = Some(prim_path.clone());
+            reset_transform_edit_cache(&self.egui_ctx);
             let provider: Option<&dyn PrimDataProvider> = self
                 .usd_stage
                 .as_ref()
@@ -896,6 +1072,78 @@ impl Renderer {
                     path: prim_path,
                     ..Default::default()
                 });
+            }
+        }
+
+        // Handle transform edit events from property inspector
+        let transform_edit: Option<TransformEdit> = self
+            .egui_ctx
+            .data(|d| d.get_temp(egui::Id::new("transform_edit_event")));
+        if let Some(edit) = transform_edit {
+            self.egui_ctx
+                .data_mut(|d| d.remove::<TransformEdit>(egui::Id::new("transform_edit_event")));
+
+            if edit.committed {
+                // Finalize: push undo command
+                self.push_transform_command(
+                    edit.instance_index,
+                    edit.old_transform,
+                    edit.new_transform,
+                );
+            } else {
+                // Live preview: update GPU directly without undo
+                let idx = edit.instance_index;
+                let mat = edit.new_transform.to_matrix();
+                if idx < self.current_transforms.len() {
+                    self.current_transforms[idx] = mat;
+                    self.update_visible_instances();
+                }
+            }
+        }
+
+        // Handle set keyframe request from property inspector
+        let keyframe_request: Option<u64> = self
+            .egui_ctx
+            .data(|d| d.get_temp(egui::Id::new("set_keyframe_request")));
+        if let Some(instance_index) = keyframe_request {
+            self.egui_ctx
+                .data_mut(|d| d.remove::<u64>(egui::Id::new("set_keyframe_request")));
+            self.set_keyframe(instance_index as usize);
+        }
+
+        // Update keyframe times for timeline markers
+        self.update_keyframe_times();
+
+        // Handle deferred camera projection change
+        let projection_change: Option<String> = self
+            .egui_ctx
+            .data(|d| d.get_temp(egui::Id::new("camera_projection_change")));
+        if let Some(change) = projection_change {
+            self.egui_ctx
+                .data_mut(|d| d.remove::<String>(egui::Id::new("camera_projection_change")));
+            if change == "perspective" {
+                self.camera.set_perspective();
+            } else if let Some(preset_name) = change.strip_prefix("ortho:") {
+                for preset in bif_math::OrthoPreset::all() {
+                    if preset.display_name() == preset_name {
+                        self.camera.set_ortho_preset(*preset);
+                        break;
+                    }
+                }
+            }
+            self.update_camera();
+        }
+
+        // Handle edit layer export request
+        let export_path: Option<String> = self
+            .egui_ctx
+            .data(|d| d.get_temp(egui::Id::new("export_edit_layer")));
+        if let Some(path) = export_path {
+            self.egui_ctx
+                .data_mut(|d| d.remove::<String>(egui::Id::new("export_edit_layer")));
+            match self.export_edit_layer(&path) {
+                Ok(()) => log::info!("Edit layer exported to {}", path),
+                Err(e) => log::error!("Failed to export edit layer: {}", e),
             }
         }
 
@@ -972,6 +1220,12 @@ impl Renderer {
                     } => {
                         let rotation_rad = rotation.to_radians();
                         self.update_environment_params(intensity, rotation_rad, show_background);
+                    }
+                    NodeGraphEvent::CreatePrimitive { kind, size } => {
+                        log::info!("Node graph: Creating {:?} primitive (size={})", kind, size);
+                        if let Err(e) = self.load_primitive(kind, size) {
+                            log::error!("Failed to create primitive: {}", e);
+                        }
                     }
                 }
             }
