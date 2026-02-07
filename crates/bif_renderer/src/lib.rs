@@ -10,6 +10,7 @@ mod bvh;
 mod camera;
 pub mod disney;
 mod embree;
+pub mod embree_ffi;
 pub mod exr_writer;
 pub mod hdri;
 mod hittable;

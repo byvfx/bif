@@ -454,10 +454,12 @@ impl ApplicationHandler for App {
                         let mut up = 0.0;
                         let mut forward = 0.0;
 
-                        if self.keys_pressed.contains(&KeyCode::KeyW) {
+                        // In ortho mode, only allow pan (A/D/E/Q), no forward/back
+                        let allow_forward = !renderer.camera.is_ortho();
+                        if allow_forward && self.keys_pressed.contains(&KeyCode::KeyW) {
                             forward += 1.0;
                         }
-                        if self.keys_pressed.contains(&KeyCode::KeyS) {
+                        if allow_forward && self.keys_pressed.contains(&KeyCode::KeyS) {
                             forward -= 1.0;
                         }
                         if self.keys_pressed.contains(&KeyCode::KeyA) {

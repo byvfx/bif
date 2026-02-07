@@ -358,6 +358,8 @@ extern "C" {
     ) -> UsdBridgeErrorCode;
 
     fn usd_bridge_save_edit_layer(layer: *mut UsdBridgeEditLayerRaw) -> UsdBridgeErrorCode;
+
+    fn usd_bridge_free_edit_layer(layer: *mut UsdBridgeEditLayerRaw);
 }
 
 // ============================================================================
@@ -1731,11 +1733,10 @@ impl UsdEditLayer {
         Ok(())
     }
 
-    /// Save and close the edit layer.
+    /// Save the edit layer to disk, then free the handle.
     pub fn save(self) -> UsdBridgeResult<()> {
         let code = unsafe { usd_bridge_save_edit_layer(self.raw) };
-        // raw is freed by C++ side, prevent double-free in Drop
-        std::mem::forget(self);
+        // Drop handles freeing regardless of save success/failure
         if code != UsdBridgeErrorCode::Success {
             return Err(code.into());
         }
@@ -1746,9 +1747,9 @@ impl UsdEditLayer {
 impl Drop for UsdEditLayer {
     fn drop(&mut self) {
         if !self.raw.is_null() {
-            // If save() wasn't called, clean up anyway
+            // Discard unsaved changes, just free the handle
             unsafe {
-                usd_bridge_save_edit_layer(self.raw);
+                usd_bridge_free_edit_layer(self.raw);
             }
         }
     }

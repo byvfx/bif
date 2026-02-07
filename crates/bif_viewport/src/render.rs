@@ -959,12 +959,7 @@ impl Renderer {
             .egui_ctx
             .data(|d| d.get_temp(egui::Id::new("gizmo_hovered_axis")).unwrap_or(0));
         if !self.gizmo_state.is_dragging {
-            self.gizmo_state.hovered_axis = match hovered_axis_raw {
-                1 => crate::gizmo::GizmoAxis::X,
-                2 => crate::gizmo::GizmoAxis::Y,
-                3 => crate::gizmo::GizmoAxis::Z,
-                _ => crate::gizmo::GizmoAxis::None,
-            };
+            self.gizmo_state.hovered_axis = crate::gizmo::GizmoAxis::from_u8(hovered_axis_raw);
         }
 
         // Update gnomon size from UI
