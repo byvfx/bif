@@ -7,111 +7,7 @@
 use bif_math::{Mat4, Vec3};
 use thiserror::Error;
 
-// ============================================================================
-// FFI (duplicated from embree.rs to keep pick_scene self-contained)
-// ============================================================================
-
-#[allow(non_camel_case_types)]
-type RTCDevice = *mut std::ffi::c_void;
-#[allow(non_camel_case_types)]
-type RTCScene = *mut std::ffi::c_void;
-#[allow(non_camel_case_types)]
-type RTCGeometry = *mut std::ffi::c_void;
-
-#[repr(C)]
-#[derive(Copy, Clone)]
-#[allow(dead_code)]
-enum RTCGeometryType {
-    Triangle = 0,
-    Instance = 121,
-}
-
-#[repr(C)]
-#[derive(Copy, Clone)]
-#[allow(dead_code)]
-enum RTCBufferType {
-    Index = 0,
-    Vertex = 1,
-}
-
-#[repr(C)]
-#[derive(Copy, Clone)]
-#[allow(dead_code)]
-enum RTCFormat {
-    UInt3 = 0x5003,
-    Float3 = 0x9003,
-    Float4x4ColumnMajor = 0x9244,
-}
-
-const RTC_INVALID_GEOMETRY_ID: u32 = 0xFFFFFFFF;
-
-#[link(name = "embree4")]
-extern "C" {
-    fn rtcNewDevice(config: *const std::ffi::c_char) -> RTCDevice;
-    fn rtcReleaseDevice(device: RTCDevice);
-    fn rtcGetDeviceError(device: RTCDevice) -> i32;
-    fn rtcNewScene(device: RTCDevice) -> RTCScene;
-    fn rtcReleaseScene(scene: RTCScene);
-    fn rtcCommitScene(scene: RTCScene);
-    fn rtcNewGeometry(device: RTCDevice, geom_type: RTCGeometryType) -> RTCGeometry;
-    fn rtcReleaseGeometry(geom: RTCGeometry);
-    fn rtcCommitGeometry(geom: RTCGeometry);
-    fn rtcAttachGeometryByID(scene: RTCScene, geom: RTCGeometry, id: u32);
-    fn rtcSetSharedGeometryBuffer(
-        geom: RTCGeometry,
-        buffer_type: u32,
-        slot: u32,
-        format: u32,
-        ptr: *const std::ffi::c_void,
-        byte_offset: usize,
-        byte_stride: usize,
-        item_count: usize,
-    );
-    fn rtcSetGeometryInstancedScene(geom: RTCGeometry, scene: RTCScene);
-    fn rtcSetGeometryTransform(geom: RTCGeometry, time_step: u32, format: u32, xfm: *const f32);
-    fn rtcIntersect1(scene: RTCScene, rayhit: *mut RTCRayHit, args: *const std::ffi::c_void);
-}
-
-// ============================================================================
-// Ray/Hit structs
-// ============================================================================
-
-#[repr(C, align(16))]
-#[derive(Copy, Clone)]
-struct RTCRay {
-    org_x: f32,
-    org_y: f32,
-    org_z: f32,
-    tnear: f32,
-    dir_x: f32,
-    dir_y: f32,
-    dir_z: f32,
-    time: f32,
-    tfar: f32,
-    mask: u32,
-    id: u32,
-    flags: u32,
-}
-
-#[repr(C, align(16))]
-#[derive(Copy, Clone)]
-struct RTCHit {
-    ng_x: f32,
-    ng_y: f32,
-    ng_z: f32,
-    u: f32,
-    v: f32,
-    prim_id: u32,
-    geom_id: u32,
-    inst_id: [u32; 1],
-}
-
-#[repr(C, align(16))]
-#[derive(Copy, Clone)]
-struct RTCRayHit {
-    ray: RTCRay,
-    hit: RTCHit,
-}
+use crate::embree_ffi::*;
 
 // ============================================================================
 // Public types
@@ -189,12 +85,13 @@ impl EmbreePickScene {
             }
 
             // Flatten triangles into vertex + index arrays
-            let mut vertex_data = Vec::with_capacity(vertices.len() * 9);
+            // 16-byte stride (4 floats per vertex) for Embree SIMD alignment safety
+            let mut vertex_data = Vec::with_capacity(vertices.len() * 12);
             let mut index_data = Vec::with_capacity(vertices.len() * 3);
             for (tri_idx, tri) in vertices.iter().enumerate() {
-                vertex_data.extend_from_slice(&[tri[0].x, tri[0].y, tri[0].z]);
-                vertex_data.extend_from_slice(&[tri[1].x, tri[1].y, tri[1].z]);
-                vertex_data.extend_from_slice(&[tri[2].x, tri[2].y, tri[2].z]);
+                vertex_data.extend_from_slice(&[tri[0].x, tri[0].y, tri[0].z, 0.0]);
+                vertex_data.extend_from_slice(&[tri[1].x, tri[1].y, tri[1].z, 0.0]);
+                vertex_data.extend_from_slice(&[tri[2].x, tri[2].y, tri[2].z, 0.0]);
                 let base = (tri_idx * 3) as u32;
                 index_data.push(base);
                 index_data.push(base + 1);
@@ -216,8 +113,8 @@ impl EmbreePickScene {
                 RTCFormat::Float3 as u32,
                 vertex_data.as_ptr() as *const std::ffi::c_void,
                 0,
-                12,
-                vertex_data.len() / 3,
+                16, // 4 floats per vertex for SIMD alignment
+                vertex_data.len() / 4,
             );
             rtcSetSharedGeometryBuffer(
                 geom,
@@ -340,6 +237,29 @@ impl EmbreePickScene {
                 t,
                 hit_point,
             })
+        }
+    }
+
+    /// Update an instance transform without rebuilding the full BVH.
+    ///
+    /// O(1) per instance — much cheaper than a full rebuild.
+    pub fn update_instance_transform(&self, instance_index: usize, transform: &Mat4) {
+        if instance_index >= self.instance_count {
+            return;
+        }
+        let cols = transform.to_cols_array();
+        unsafe {
+            let geom = rtcGetGeometry(self.scene, instance_index as u32);
+            if !geom.is_null() {
+                rtcSetGeometryTransform(
+                    geom,
+                    0,
+                    RTCFormat::Float4x4ColumnMajor as u32,
+                    cols.as_ptr(),
+                );
+                rtcCommitGeometry(geom);
+            }
+            rtcCommitScene(self.scene);
         }
     }
 

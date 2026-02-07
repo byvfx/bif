@@ -2290,10 +2290,14 @@ UsdBridgeError usd_bridge_save_edit_layer(
 
     try {
         layer->stage->GetRootLayer()->Save();
-        delete layer;
         return USD_BRIDGE_SUCCESS;
     } catch (...) {
-        delete layer;
         return USD_BRIDGE_ERROR_UNKNOWN;
     }
+}
+
+void usd_bridge_free_edit_layer(
+    UsdBridgeEditLayer* layer
+) {
+    delete layer;
 }

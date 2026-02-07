@@ -351,9 +351,9 @@ fn fs_main(
         lit_color = ambient + dielectric_contrib * 0.7 + metal_contrib * 0.5;
     }
 
-    // Selection highlight: orange additive tint on selected instance
+    // Selection highlight: warm tint that scales with brightness
     if (in.instance_idx == camera.selected_instance_id) {
-        lit_color += vec3<f32>(0.15, 0.08, 0.0);
+        lit_color = mix(lit_color, lit_color * vec3<f32>(1.3, 1.1, 0.8), 0.35);
     }
 
     return vec4<f32>(linear_to_srgb(aces_tonemap(lit_color)), 1.0);

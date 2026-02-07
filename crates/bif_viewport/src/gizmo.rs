@@ -7,11 +7,24 @@ use bif_math::{Camera, Mat4, Vec3, Vec4};
 
 /// Which axis the gizmo is interacting with.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
 pub enum GizmoAxis {
-    None,
-    X,
-    Y,
-    Z,
+    None = 0,
+    X = 1,
+    Y = 2,
+    Z = 3,
+}
+
+impl GizmoAxis {
+    /// Convert from u8 discriminant.
+    pub fn from_u8(v: u8) -> Self {
+        match v {
+            1 => Self::X,
+            2 => Self::Y,
+            3 => Self::Z,
+            _ => Self::None,
+        }
+    }
 }
 
 /// Gizmo interaction state.

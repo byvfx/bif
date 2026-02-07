@@ -91,6 +91,9 @@ impl UndoCommand for KeyframeCommand {
     }
 }
 
+/// Maximum number of undo commands before oldest are dropped.
+const MAX_UNDO_COMMANDS: usize = 1000;
+
 /// Stack of undo/redo commands with cursor-based navigation.
 #[derive(Debug, Default)]
 pub struct UndoStack {
@@ -108,12 +111,20 @@ impl UndoStack {
     /// Execute a command and push it onto the stack.
     ///
     /// Truncates any redo history beyond the current cursor.
+    /// Drops oldest commands when exceeding `MAX_UNDO_COMMANDS`.
     pub fn push(&mut self, cmd: Box<dyn UndoCommand>, state: &mut EditState) {
         // Truncate redo history
         self.commands.truncate(self.cursor);
         cmd.execute(state);
         self.commands.push(cmd);
         self.cursor += 1;
+
+        // Drop oldest commands if over the cap
+        if self.commands.len() > MAX_UNDO_COMMANDS {
+            let excess = self.commands.len() - MAX_UNDO_COMMANDS;
+            self.commands.drain(..excess);
+            self.cursor = self.cursor.saturating_sub(excess);
+        }
     }
 
     /// Undo the last command. Returns its description, or None if nothing to undo.

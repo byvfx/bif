@@ -638,11 +638,18 @@ UsdBridgeError usd_bridge_write_xform_opinion(
     const float* matrix_16
 );
 
-/// Save and close the edit layer.
+/// Save the edit layer to disk (does NOT free the handle).
 ///
-/// @param layer Edit layer handle (freed after this call)
+/// @param layer Edit layer handle
 /// @return USD_BRIDGE_SUCCESS on success
 UsdBridgeError usd_bridge_save_edit_layer(
+    UsdBridgeEditLayer* layer
+);
+
+/// Free the edit layer handle without saving.
+///
+/// @param layer Edit layer handle (safe to pass NULL)
+void usd_bridge_free_edit_layer(
     UsdBridgeEditLayer* layer
 );
 

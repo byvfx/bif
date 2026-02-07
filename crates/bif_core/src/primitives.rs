@@ -100,7 +100,7 @@ pub fn create_sphere(radius: f32, segments: u32) -> Mesh {
         }
     }
 
-    // Generate indices (CW winding)
+    // Generate indices (CW winding) with triangle fans at poles
     let mut indices = Vec::new();
     let stride = sectors + 1;
     for ring in 0..rings {
@@ -110,8 +110,16 @@ pub fn create_sphere(radius: f32, segments: u32) -> Mesh {
             let c = b + 1;
             let d = a + 1;
 
-            // Two triangles per quad
-            indices.extend_from_slice(&[a, b, c, a, c, d]);
+            if ring == 0 {
+                // North pole: single triangle fan (a==d at pole)
+                indices.extend_from_slice(&[a, b, c]);
+            } else if ring == rings - 1 {
+                // South pole: single triangle fan (b==c at pole)
+                indices.extend_from_slice(&[a, b, d]);
+            } else {
+                // Normal quad: two triangles
+                indices.extend_from_slice(&[a, b, c, a, c, d]);
+            }
         }
     }
 
@@ -170,8 +178,9 @@ mod tests {
         let mesh = create_sphere(1.0, 16);
         // (rings+1) * (sectors+1) = 17*17 = 289 verts
         assert_eq!(mesh.vertex_count(), 289);
-        // rings * sectors * 2 triangles = 16*16*2 = 512
-        assert_eq!(mesh.triangle_count(), 512);
+        // Poles use fan (1 tri/sector), middle rings use quads (2 tri/sector)
+        // = 2 * 16 + (16-2) * 16 * 2 = 32 + 448 = 480
+        assert_eq!(mesh.triangle_count(), 480);
         assert!(mesh.has_normals());
         assert!(mesh.has_uvs());
     }

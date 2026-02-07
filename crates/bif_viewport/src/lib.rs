@@ -1091,8 +1091,11 @@ impl Renderer {
             let mat = transform.to_matrix();
             if idx < self.current_transforms.len() {
                 self.current_transforms[idx] = mat;
-                // Re-upload visible instances (culling will handle GPU write)
                 self.update_visible_instances();
+                // Keep Embree pick scene in sync
+                if let Some(pick_scene) = &self.pick_scene {
+                    pick_scene.update_instance_transform(idx, &mat);
+                }
             }
         }
     }
@@ -1107,12 +1110,18 @@ impl Renderer {
             .map(|(idx, t)| (*idx, t.to_matrix()))
             .collect();
 
-        for (idx, mat) in overrides {
-            self.current_transforms[idx] = mat;
+        for (idx, mat) in &overrides {
+            self.current_transforms[*idx] = *mat;
         }
 
-        if !self.edit_state.transform_overrides.is_empty() {
+        if !overrides.is_empty() {
             self.update_visible_instances();
+            // Keep Embree pick scene in sync
+            if let Some(pick_scene) = &self.pick_scene {
+                for (idx, mat) in &overrides {
+                    pick_scene.update_instance_transform(*idx, mat);
+                }
+            }
         }
     }
 
@@ -1166,6 +1175,10 @@ impl Renderer {
             self.current_transforms[idx] = mat;
             self.edit_state.transform_overrides.insert(idx, transform);
             self.update_visible_instances();
+            // Keep Embree pick scene in sync
+            if let Some(pick_scene) = &self.pick_scene {
+                pick_scene.update_instance_transform(idx, &mat);
+            }
         }
     }
 
