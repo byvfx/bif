@@ -1,5 +1,74 @@
 use glam::{Mat4, Vec3};
 
+/// Projection mode: perspective or orthographic.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub enum ProjectionMode {
+    #[default]
+    Perspective,
+    Orthographic {
+        /// Half-height of the orthographic view volume.
+        ortho_size: f32,
+    },
+}
+
+/// Standard orthographic view presets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OrthoPreset {
+    Top,
+    Bottom,
+    Front,
+    Back,
+    Right,
+    Left,
+}
+
+impl OrthoPreset {
+    /// Display name for UI.
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            OrthoPreset::Top => "Top",
+            OrthoPreset::Bottom => "Bottom",
+            OrthoPreset::Front => "Front",
+            OrthoPreset::Back => "Back",
+            OrthoPreset::Right => "Right",
+            OrthoPreset::Left => "Left",
+        }
+    }
+
+    /// All presets for iteration.
+    pub fn all() -> &'static [OrthoPreset] {
+        &[
+            OrthoPreset::Top,
+            OrthoPreset::Bottom,
+            OrthoPreset::Front,
+            OrthoPreset::Back,
+            OrthoPreset::Right,
+            OrthoPreset::Left,
+        ]
+    }
+
+    /// Camera direction vector (where the camera looks from, relative to target).
+    pub fn direction(&self) -> Vec3 {
+        match self {
+            OrthoPreset::Top => Vec3::Y,
+            OrthoPreset::Bottom => Vec3::NEG_Y,
+            OrthoPreset::Front => Vec3::Z,
+            OrthoPreset::Back => Vec3::NEG_Z,
+            OrthoPreset::Right => Vec3::X,
+            OrthoPreset::Left => Vec3::NEG_X,
+        }
+    }
+
+    /// Up vector for this view.
+    pub fn up(&self) -> Vec3 {
+        match self {
+            OrthoPreset::Top => Vec3::NEG_Z,
+            OrthoPreset::Bottom => Vec3::Z,
+            _ => Vec3::Y,
+        }
+    }
+}
+
 /// Camera for 3D rendering with orbit controls
 #[derive(Debug, Clone, Copy)]
 pub struct Camera {
@@ -16,6 +85,9 @@ pub struct Camera {
     pub pitch: f32,      // Rotation around X axis (radians)
     pub distance: f32,   // Distance from target
     pub move_speed: f32, // Movement speed for keyboard
+
+    /// Projection mode (perspective or orthographic).
+    pub projection: ProjectionMode,
 }
 
 impl Camera {
@@ -40,6 +112,7 @@ impl Camera {
             pitch,
             distance,
             move_speed: 2.0,
+            projection: ProjectionMode::Perspective,
         }
     }
 
@@ -50,7 +123,16 @@ impl Camera {
 
     /// Get the projection matrix (camera → clip space)
     pub fn projection_matrix(&self) -> Mat4 {
-        Mat4::perspective_rh(self.fov_y, self.aspect, self.near, self.far)
+        match self.projection {
+            ProjectionMode::Perspective => {
+                Mat4::perspective_rh(self.fov_y, self.aspect, self.near, self.far)
+            }
+            ProjectionMode::Orthographic { ortho_size } => {
+                let half_h = ortho_size;
+                let half_w = half_h * self.aspect;
+                Mat4::orthographic_rh(-half_w, half_w, -half_h, half_h, self.near, self.far)
+            }
+        }
     }
 
     /// Get the combined view-projection matrix
@@ -93,9 +175,50 @@ impl Camera {
         self.target += movement;
     }
 
-    /// Dolly camera (move toward/away from target)
+    /// Dolly camera (move toward/away from target).
+    ///
+    /// In orthographic mode, adjusts `ortho_size` instead of distance.
     pub fn dolly(&mut self, delta: f32) {
-        self.distance = (self.distance + delta).max(0.1);
+        if let ProjectionMode::Orthographic { ref mut ortho_size } = self.projection {
+            *ortho_size = (*ortho_size + delta * 0.5).max(0.01);
+        } else {
+            self.distance = (self.distance + delta).max(0.1);
+            self.update_position_from_angles();
+        }
+    }
+
+    /// Check if camera is in orthographic mode.
+    pub fn is_ortho(&self) -> bool {
+        matches!(self.projection, ProjectionMode::Orthographic { .. })
+    }
+
+    /// Set camera from an orthographic preset, preserving the current target.
+    pub fn set_ortho_preset(&mut self, preset: OrthoPreset) {
+        let ortho_size = match self.projection {
+            ProjectionMode::Orthographic { ortho_size } => ortho_size,
+            ProjectionMode::Perspective => self.distance * (self.fov_y * 0.5).tan(),
+        };
+        self.projection = ProjectionMode::Orthographic { ortho_size };
+        self.up = preset.up();
+        self.position = self.target + preset.direction() * self.distance;
+
+        // Recalculate yaw/pitch from new direction
+        let direction = (self.position - self.target).normalize();
+        self.yaw = direction.z.atan2(direction.x);
+        self.pitch = direction.y.asin();
+    }
+
+    /// Switch back to perspective projection.
+    pub fn set_perspective(&mut self) {
+        if let ProjectionMode::Orthographic { ortho_size } = self.projection {
+            // Recover distance from ortho_size
+            let tan_half = (self.fov_y * 0.5).tan();
+            if tan_half > 0.0 {
+                self.distance = ortho_size / tan_half;
+            }
+        }
+        self.projection = ProjectionMode::Perspective;
+        self.up = Vec3::Y;
         self.update_position_from_angles();
     }
 

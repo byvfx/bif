@@ -523,6 +523,17 @@ fn build_camera_for_frame(
             camera.initialize();
             camera
         }
+        CameraSource::OrthoView(_) => {
+            // Ortho views use viewport camera (already set to ortho projection)
+            let vc = &scene.viewport_camera;
+            let focus_distance = (vc.target - vc.position).length();
+            let mut camera = Camera::new()
+                .with_resolution(width, height)
+                .with_lens(vc.fov_y.to_degrees(), 0.0, focus_distance)
+                .with_position(vc.position, vc.target, vc.up);
+            camera.initialize();
+            camera
+        }
     }
 }
 

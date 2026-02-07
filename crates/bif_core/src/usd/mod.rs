@@ -38,7 +38,7 @@ mod parser;
 mod types;
 
 pub use cpp_bridge::{
-    TransformSample, UsdAnimatedInstancerData, UsdAnimatedMeshData, UsdBridgeError,
+    TransformSample, UsdAnimatedInstancerData, UsdAnimatedMeshData, UsdBridgeError, UsdEditLayer,
     UsdInstancerData, UsdLightData, UsdLightType, UsdMeshData, UsdStage, UsdTimelineData,
 };
 pub use loader::*;

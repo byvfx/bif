@@ -2192,3 +2192,108 @@ UsdBridgeError usd_bridge_get_light(
 
     return USD_BRIDGE_SUCCESS;
 }
+
+// ============================================================================
+// Edit Layer Export
+// ============================================================================
+
+struct UsdBridgeEditLayer {
+    UsdStageRefPtr stage;
+    std::string output_path;
+};
+
+UsdBridgeError usd_bridge_create_edit_layer(
+    const char* output_path,
+    UsdBridgeEditLayer** out_layer
+) {
+    if (!output_path || !out_layer) {
+        return USD_BRIDGE_ERROR_NULL_POINTER;
+    }
+
+    try {
+        auto stage = UsdStage::CreateNew(output_path);
+        if (!stage) {
+            return USD_BRIDGE_ERROR_UNKNOWN;
+        }
+
+        auto* layer = new UsdBridgeEditLayer();
+        layer->stage = stage;
+        layer->output_path = output_path;
+        *out_layer = layer;
+        return USD_BRIDGE_SUCCESS;
+    } catch (...) {
+        return USD_BRIDGE_ERROR_UNKNOWN;
+    }
+}
+
+UsdBridgeError usd_bridge_write_xform_opinion(
+    UsdBridgeEditLayer* layer,
+    const char* prim_path,
+    double time,
+    const float* matrix_16
+) {
+    if (!layer || !prim_path || !matrix_16) {
+        return USD_BRIDGE_ERROR_NULL_POINTER;
+    }
+
+    try {
+        SdfPath path(prim_path);
+        auto prim = layer->stage->OverridePrim(path);
+        if (!prim) {
+            return USD_BRIDGE_ERROR_UNKNOWN;
+        }
+
+        UsdGeomXformable xformable(prim);
+        if (!xformable) {
+            return USD_BRIDGE_ERROR_UNKNOWN;
+        }
+
+        // Build GfMatrix4d from column-major float[16]
+        GfMatrix4d mat;
+        for (int col = 0; col < 4; ++col) {
+            for (int row = 0; row < 4; ++row) {
+                mat[row][col] = static_cast<double>(matrix_16[col * 4 + row]);
+            }
+        }
+
+        // Clear existing xform ops and set single transform op
+        bool reset_stack = false;
+        auto ops = xformable.GetOrderedXformOps(&reset_stack);
+        if (ops.empty()) {
+            auto op = xformable.AddTransformOp();
+            if (time < 0.0) {
+                op.Set(mat, UsdTimeCode::Default());
+            } else {
+                op.Set(mat, UsdTimeCode(time));
+            }
+        } else {
+            // Reuse existing transform op
+            if (time < 0.0) {
+                ops[0].Set(mat, UsdTimeCode::Default());
+            } else {
+                ops[0].Set(mat, UsdTimeCode(time));
+            }
+        }
+
+        return USD_BRIDGE_SUCCESS;
+    } catch (...) {
+        return USD_BRIDGE_ERROR_UNKNOWN;
+    }
+}
+
+UsdBridgeError usd_bridge_save_edit_layer(
+    UsdBridgeEditLayer* layer
+) {
+    if (!layer) {
+        return USD_BRIDGE_ERROR_NULL_POINTER;
+    }
+
+    try {
+        layer->stage->GetRootLayer()->Save();
+        delete layer;
+        return USD_BRIDGE_SUCCESS;
+    } catch (...) {
+        delete layer;
+        return USD_BRIDGE_ERROR_UNKNOWN;
+    }
+}

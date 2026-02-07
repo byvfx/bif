@@ -86,6 +86,11 @@ struct App {
     last_mouse_pos: Option<(f64, f64)>,
     keys_pressed: std::collections::HashSet<KeyCode>,
     last_frame_time: Instant,
+
+    // Click detection (distinguish click from drag)
+    current_mouse_pos: (f64, f64),
+    mouse_press_pos: Option<(f64, f64)>,
+    mouse_drag_distance: f64,
 }
 
 impl App {
@@ -101,6 +106,9 @@ impl App {
             last_mouse_pos: None,
             keys_pressed: std::collections::HashSet::new(),
             last_frame_time: Instant::now(),
+            current_mouse_pos: (0.0, 0.0),
+            mouse_press_pos: None,
+            mouse_drag_distance: 0.0,
         }
     }
 }
@@ -208,9 +216,68 @@ impl ApplicationHandler for App {
             }
             WindowEvent::MouseInput { button, state, .. } => match button {
                 MouseButton::Left => {
-                    self.left_mouse_pressed = state == ElementState::Pressed;
-                    if !self.left_mouse_pressed {
+                    if state == ElementState::Pressed {
+                        self.left_mouse_pressed = true;
+                        self.mouse_press_pos = Some(self.current_mouse_pos);
+                        self.mouse_drag_distance = 0.0;
+
+                        // Check if gizmo should start dragging
+                        if let Some(renderer) = &mut self.renderer {
+                            let hovered = renderer.gizmo_state.hovered_axis;
+                            if hovered != bif_viewport::gizmo::GizmoAxis::None {
+                                if let Some(sel_idx) = renderer.selected_instance_index {
+                                    if let Some(transform) =
+                                        renderer.get_instance_transform(sel_idx)
+                                    {
+                                        renderer.gizmo_state.active_axis = hovered;
+                                        renderer.gizmo_state.is_dragging = true;
+                                        renderer.gizmo_state.drag_start_screen = (
+                                            self.current_mouse_pos.0 as f32,
+                                            self.current_mouse_pos.1 as f32,
+                                        );
+                                        renderer.gizmo_state.drag_start_world =
+                                            transform.translation;
+                                        renderer.gizmo_state.drag_world_delta = 0.0;
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        self.left_mouse_pressed = false;
+
+                        // Finalize gizmo drag
+                        if let Some(renderer) = &mut self.renderer {
+                            if renderer.gizmo_state.is_dragging {
+                                if let Some(sel_idx) = renderer.selected_instance_index {
+                                    if let Some(current) = renderer.get_instance_transform(sel_idx)
+                                    {
+                                        // Build old_transform from drag_start_world
+                                        let mut old_transform = current.clone();
+                                        old_transform.translation =
+                                            renderer.gizmo_state.drag_start_world;
+
+                                        renderer.push_transform_command(
+                                            sel_idx,
+                                            old_transform,
+                                            current,
+                                        );
+                                    }
+                                }
+                                renderer.gizmo_state.is_dragging = false;
+                                renderer.gizmo_state.active_axis =
+                                    bif_viewport::gizmo::GizmoAxis::None;
+                            } else if self.mouse_drag_distance < 3.0 {
+                                // Click detection: pick instance
+                                if let Some(pos) = self.mouse_press_pos {
+                                    let picked =
+                                        renderer.pick_instance_at(pos.0 as f32, pos.1 as f32);
+                                    renderer.selected_instance_index = picked;
+                                    renderer.gizmo_state.reset();
+                                }
+                            }
+                        }
                         self.last_mouse_pos = None;
+                        self.mouse_press_pos = None;
                     }
                 }
                 MouseButton::Middle => {
@@ -228,34 +295,67 @@ impl ApplicationHandler for App {
                 _ => {}
             },
             WindowEvent::CursorMoved { position, .. } => {
+                self.current_mouse_pos = (position.x, position.y);
                 if self.left_mouse_pressed || self.middle_mouse_pressed || self.right_mouse_pressed
                 {
                     if let Some(last_pos) = self.last_mouse_pos {
                         let delta_x = position.x - last_pos.0;
                         let delta_y = position.y - last_pos.1;
 
+                        // Accumulate drag distance for click detection
+                        self.mouse_drag_distance += (delta_x * delta_x + delta_y * delta_y).sqrt();
+
                         if let Some(renderer) = &mut self.renderer {
-                            // Skip camera controls if locked (USD camera active)
-                            if !renderer.is_camera_locked() {
-                                if self.left_mouse_pressed {
-                                    // Orbit camera with left mouse
+                            // Gizmo drag takes priority over camera orbit
+                            if renderer.gizmo_state.is_dragging && self.left_mouse_pressed {
+                                if let Some(sel_idx) = renderer.selected_instance_index {
+                                    let vp_rect = renderer.viewport_rect();
+                                    let delta = bif_viewport::gizmo::compute_drag_delta(
+                                        (position.x as f32, position.y as f32),
+                                        renderer.gizmo_state.drag_start_screen,
+                                        &renderer.camera,
+                                        renderer.gizmo_state.active_axis,
+                                        renderer.gizmo_state.drag_start_world,
+                                        vp_rect,
+                                    );
+
+                                    let axis_dir = match renderer.gizmo_state.active_axis {
+                                        bif_viewport::gizmo::GizmoAxis::X => bif_math::Vec3::X,
+                                        bif_viewport::gizmo::GizmoAxis::Y => bif_math::Vec3::Y,
+                                        bif_viewport::gizmo::GizmoAxis::Z => bif_math::Vec3::Z,
+                                        _ => bif_math::Vec3::ZERO,
+                                    };
+
+                                    let new_pos =
+                                        renderer.gizmo_state.drag_start_world + axis_dir * delta;
+
+                                    // Build live transform and update GPU
+                                    if let Some(mut live_transform) =
+                                        renderer.get_instance_transform(sel_idx)
+                                    {
+                                        live_transform.translation = new_pos;
+                                        renderer.set_live_transform(sel_idx, live_transform);
+                                        renderer.reset_transform_edit_cache();
+                                    }
+                                }
+                            } else if !renderer.is_camera_locked() {
+                                // Normal camera controls
+                                if self.left_mouse_pressed && !renderer.camera.is_ortho() {
                                     let sensitivity = 0.005;
                                     renderer.camera.orbit(
                                         -delta_x as f32 * sensitivity,
                                         -delta_y as f32 * sensitivity,
                                     );
                                 } else if self.middle_mouse_pressed {
-                                    // Pan camera with middle mouse (scaled with distance)
                                     let sensitivity = 0.1;
                                     let distance_scale = renderer.camera.distance * 0.0001;
                                     renderer.camera.pan(
                                         -delta_x as f32 * sensitivity * distance_scale,
                                         delta_y as f32 * sensitivity * distance_scale,
                                         0.0,
-                                        1.0, // delta_time = 1.0 for mouse pan (direct control)
+                                        1.0,
                                     );
                                 } else if self.right_mouse_pressed {
-                                    // Dolly (zoom) with right mouse drag - scale with distance
                                     let sensitivity = 0.005;
                                     let dolly_amount =
                                         delta_y as f32 * sensitivity * renderer.camera.distance;
@@ -298,10 +398,35 @@ impl ApplicationHandler for App {
                         self.keys_pressed.insert(keycode);
 
                         // Handle single-press keys
+                        let ctrl = self.keys_pressed.contains(&KeyCode::ControlLeft)
+                            || self.keys_pressed.contains(&KeyCode::ControlRight);
+                        let shift = self.keys_pressed.contains(&KeyCode::ShiftLeft)
+                            || self.keys_pressed.contains(&KeyCode::ShiftRight);
+
                         if keycode == KeyCode::KeyF {
-                            // Frame mesh
                             if let Some(renderer) = &mut self.renderer {
                                 renderer.frame_mesh();
+                            }
+                        } else if ctrl && shift && keycode == KeyCode::KeyZ {
+                            // Redo
+                            if let Some(renderer) = &mut self.renderer {
+                                if let Some(desc) = renderer.redo() {
+                                    log::info!("Redo: {}", desc);
+                                }
+                            }
+                        } else if ctrl && keycode == KeyCode::KeyZ {
+                            // Undo
+                            if let Some(renderer) = &mut self.renderer {
+                                if let Some(desc) = renderer.undo() {
+                                    log::info!("Undo: {}", desc);
+                                }
+                            }
+                        } else if keycode == KeyCode::KeyK {
+                            // Set keyframe on selected instance
+                            if let Some(renderer) = &mut self.renderer {
+                                if let Some(idx) = renderer.selected_instance_index {
+                                    renderer.set_keyframe(idx);
+                                }
                             }
                         }
                     }

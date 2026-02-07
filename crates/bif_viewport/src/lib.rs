@@ -19,6 +19,7 @@ pub mod culling_manager;
 pub mod environment;
 pub mod environment_manager;
 pub mod frustum_culling;
+pub mod gizmo;
 pub mod gnomon;
 pub mod gpu_types;
 pub mod ivar_renderer;
@@ -65,7 +66,9 @@ pub use texture_loader::{
 pub use timeline::TimelineState;
 
 pub use node_graph::{render_node_graph, NodeGraphEvent, NodeGraphState, SceneNode};
-pub use property_inspector::{render_property_inspector, PrimProperties};
+pub use property_inspector::{
+    render_property_inspector, reset_transform_edit_cache, PrimProperties, TransformEdit,
+};
 pub use scene_browser::{EmptyPrimProvider, PrimDataProvider, PrimDisplayInfo, SceneBrowserState};
 
 use batch_render::BatchMessage;
@@ -151,6 +154,8 @@ pub struct Renderer {
     pub(crate) instance_material_ids: Vec<u32>,
     /// Prototype ID for each instance (parallel to instance_transforms, for multi-draw rebuild)
     pub(crate) instance_prototype_ids: Vec<usize>,
+    /// Prim path for each instance (parallel to instance_transforms, for USD export)
+    pub(crate) instance_prim_paths: Vec<String>,
 
     // Animation data for viewport playback
     /// Animated transforms for instances (parallel to instances)
@@ -209,6 +214,21 @@ pub struct Renderer {
     pub(crate) camera_locked: bool,
     /// Selected USD camera path (for animation during playback)
     pub(crate) selected_usd_camera: Option<String>,
+
+    // Viewport picking state
+    /// Embree pick scene for click-to-select (rebuilt on scene load)
+    pub(crate) pick_scene: Option<bif_renderer::EmbreePickScene>,
+    /// Currently selected instance index (from viewport pick or scene browser)
+    pub selected_instance_index: Option<usize>,
+
+    // Undo/redo state
+    /// Undo stack for reversible editing commands
+    pub undo_stack: bif_core::UndoStack,
+    /// Edit state with transform overrides
+    pub edit_state: bif_core::EditState,
+
+    // Translate gizmo state
+    pub gizmo_state: gizmo::GizmoState,
 }
 
 impl Renderer {
@@ -718,6 +738,7 @@ impl Renderer {
             current_transforms: vec![],
             instance_material_ids: vec![],
             instance_prototype_ids: vec![],
+            instance_prim_paths: vec![],
             instance_animations: vec![],
             last_evaluated_frame: 0.0,
             vertex_animated_meshes: vec![],
@@ -739,6 +760,11 @@ impl Renderer {
             viewport_camera_source: CameraSource::Viewport,
             camera_locked: false,
             selected_usd_camera: None,
+            pick_scene: None,
+            selected_instance_index: None,
+            undo_stack: bif_core::UndoStack::new(),
+            edit_state: bif_core::EditState::default(),
+            gizmo_state: gizmo::GizmoState::new(),
         })
     }
 
@@ -790,7 +816,7 @@ impl Renderer {
     }
 
     /// Returns the viewport rect (x, y, w, h) in pixels after subtracting all UI panels.
-    fn viewport_rect(&self) -> (f32, f32, f32, f32) {
+    pub fn viewport_rect(&self) -> (f32, f32, f32, f32) {
         let x = self.ui_left_panel_width;
         let y = self.ui_top_panel_height;
         let w =
@@ -813,6 +839,11 @@ impl Renderer {
     /// Update camera uniform buffer (call after modifying camera)
     pub fn update_camera(&mut self) {
         self.camera_uniform.update_view_proj(&self.camera);
+        // Sync selection state into uniform
+        self.camera_uniform.selected_instance_id = self
+            .selected_instance_index
+            .map(|i| i as u32)
+            .unwrap_or(gpu_types::NO_SELECTION);
         self.queue.write_buffer(
             &self.camera_buffer,
             0,
@@ -942,6 +973,359 @@ impl Renderer {
     ) -> bool {
         let response = self.egui_state.on_window_event(window, event);
         response.consumed
+    }
+
+    /// Rebuild the Embree pick scene from current mesh + instance data.
+    ///
+    /// Call after scene load or when geometry changes. Uses the first prototype's
+    /// triangles (single-draw) or combined mesh triangles.
+    pub fn rebuild_pick_scene(&mut self) {
+        if self.mesh_data.indices.is_empty() || self.current_transforms.is_empty() {
+            self.pick_scene = None;
+            return;
+        }
+
+        // Extract triangle vertices from mesh data
+        let indices = &self.mesh_data.indices;
+        let verts = &self.mesh_data.vertices;
+        let tri_count = indices.len() / 3;
+        let mut triangles = Vec::with_capacity(tri_count);
+
+        for tri in 0..tri_count {
+            let i0 = indices[tri * 3] as usize;
+            let i1 = indices[tri * 3 + 1] as usize;
+            let i2 = indices[tri * 3 + 2] as usize;
+            if i0 < verts.len() && i1 < verts.len() && i2 < verts.len() {
+                triangles.push([
+                    Vec3::from_array(verts[i0].position),
+                    Vec3::from_array(verts[i1].position),
+                    Vec3::from_array(verts[i2].position),
+                ]);
+            }
+        }
+
+        match bif_renderer::EmbreePickScene::new(&triangles, &self.current_transforms) {
+            Ok(scene) => {
+                log::info!(
+                    "Pick scene rebuilt: {} tris, {} instances",
+                    triangles.len(),
+                    self.current_transforms.len()
+                );
+                self.pick_scene = Some(scene);
+            }
+            Err(e) => {
+                log::warn!("Failed to build pick scene: {}", e);
+                self.pick_scene = None;
+            }
+        }
+    }
+
+    /// Pick an instance at the given screen coordinates.
+    ///
+    /// Converts screen coords to a world-space ray via inverse view-projection,
+    /// then casts into the Embree pick scene.
+    ///
+    /// Returns the instance index if hit, or None if click hit empty space.
+    pub fn pick_instance_at(&self, screen_x: f32, screen_y: f32) -> Option<usize> {
+        let pick_scene = self.pick_scene.as_ref()?;
+
+        // Convert screen coords to viewport-relative
+        let (vp_x, vp_y, vp_w, vp_h) = self.viewport_rect();
+        let vp_rel_x = screen_x - vp_x;
+        let vp_rel_y = screen_y - vp_y;
+
+        // Check if click is within viewport
+        if vp_rel_x < 0.0 || vp_rel_x > vp_w || vp_rel_y < 0.0 || vp_rel_y > vp_h {
+            return None;
+        }
+
+        // Convert to NDC (wgpu: Y-down screen → Y-up NDC, depth [0,1])
+        let ndc_x = (vp_rel_x / vp_w) * 2.0 - 1.0;
+        let ndc_y = 1.0 - (vp_rel_y / vp_h) * 2.0;
+
+        // Unproject near and far points via inverse view-projection
+        let inv_vp = self.camera.view_projection_matrix().inverse();
+
+        let near_clip = bif_math::Vec4::new(ndc_x, ndc_y, 0.0, 1.0);
+        let far_clip = bif_math::Vec4::new(ndc_x, ndc_y, 1.0, 1.0);
+
+        let near_world = inv_vp * near_clip;
+        let far_world = inv_vp * far_clip;
+
+        // Perspective divide
+        if near_world.w.abs() < 1e-8 || far_world.w.abs() < 1e-8 {
+            return None;
+        }
+        let near_pos = Vec3::new(
+            near_world.x / near_world.w,
+            near_world.y / near_world.w,
+            near_world.z / near_world.w,
+        );
+        let far_pos = Vec3::new(
+            far_world.x / far_world.w,
+            far_world.y / far_world.w,
+            far_world.z / far_world.w,
+        );
+
+        let direction = (far_pos - near_pos).normalize();
+
+        pick_scene.pick(near_pos, direction).map(|result| {
+            log::info!(
+                "Picked instance {} (tri={}, t={:.2}, pos=({:.2},{:.2},{:.2}))",
+                result.instance_index,
+                result.triangle_index,
+                result.t,
+                result.hit_point.x,
+                result.hit_point.y,
+                result.hit_point.z
+            );
+            result.instance_index
+        })
+    }
+
+    /// Apply a transform override from edit_state to the GPU instance buffer.
+    ///
+    /// Reads the override for `idx` and updates `current_transforms` + GPU.
+    pub fn apply_transform_override(&mut self, idx: usize) {
+        if let Some(transform) = self.edit_state.transform_overrides.get(&idx) {
+            let mat = transform.to_matrix();
+            if idx < self.current_transforms.len() {
+                self.current_transforms[idx] = mat;
+                // Re-upload visible instances (culling will handle GPU write)
+                self.update_visible_instances();
+            }
+        }
+    }
+
+    /// Apply all transform overrides from edit_state to GPU.
+    pub fn apply_all_transform_overrides(&mut self) {
+        let overrides: Vec<(usize, Mat4)> = self
+            .edit_state
+            .transform_overrides
+            .iter()
+            .filter(|(idx, _)| **idx < self.current_transforms.len())
+            .map(|(idx, t)| (*idx, t.to_matrix()))
+            .collect();
+
+        for (idx, mat) in overrides {
+            self.current_transforms[idx] = mat;
+        }
+
+        if !self.edit_state.transform_overrides.is_empty() {
+            self.update_visible_instances();
+        }
+    }
+
+    /// Push a transform command onto the undo stack and apply it.
+    pub fn push_transform_command(
+        &mut self,
+        instance_index: usize,
+        old_transform: bif_core::Transform,
+        new_transform: bif_core::Transform,
+    ) {
+        let cmd = bif_core::TransformCommand {
+            instance_index,
+            old_transform,
+            new_transform,
+        };
+        self.undo_stack.push(Box::new(cmd), &mut self.edit_state);
+        self.apply_transform_override(instance_index);
+    }
+
+    /// Undo the last command. Returns description if successful.
+    pub fn undo(&mut self) -> Option<String> {
+        let desc = self.undo_stack.undo(&mut self.edit_state)?.to_string();
+        self.apply_all_transform_overrides();
+        Some(desc)
+    }
+
+    /// Redo the next command. Returns description if successful.
+    pub fn redo(&mut self) -> Option<String> {
+        let desc = self.undo_stack.redo(&mut self.edit_state)?.to_string();
+        self.apply_all_transform_overrides();
+        Some(desc)
+    }
+
+    /// Get the current transform for an instance, preferring edit overrides.
+    pub fn get_instance_transform(&self, idx: usize) -> Option<bif_core::Transform> {
+        if let Some(t) = self.edit_state.transform_overrides.get(&idx) {
+            return Some(t.clone());
+        }
+        if idx < self.current_transforms.len() {
+            return Some(bif_core::Transform::from_matrix(
+                self.current_transforms[idx],
+            ));
+        }
+        None
+    }
+
+    /// Set a live transform override and update GPU (without undo).
+    pub fn set_live_transform(&mut self, idx: usize, transform: bif_core::Transform) {
+        let mat = transform.to_matrix();
+        if idx < self.current_transforms.len() {
+            self.current_transforms[idx] = mat;
+            self.edit_state.transform_overrides.insert(idx, transform);
+            self.update_visible_instances();
+        }
+    }
+
+    /// Set a keyframe for the given instance at the current timeline frame.
+    ///
+    /// Inserts (or updates) a keyframe in the instance's animation data
+    /// using the current transform from edit_state.
+    pub fn set_keyframe(&mut self, instance_index: usize) {
+        let frame = self.timeline_state.current_frame;
+        let transform = match self.get_instance_transform(instance_index) {
+            Some(t) => t,
+            None => return,
+        };
+
+        // Get existing keyframes (from edit overrides or scene animations)
+        let old_keyframes = self
+            .edit_state
+            .keyframe_overrides
+            .get(&instance_index)
+            .and_then(|a| a.keyframes.clone())
+            .or_else(|| {
+                self.instance_animations
+                    .get(instance_index)
+                    .and_then(|opt| opt.as_ref())
+                    .and_then(|a| a.keyframes.clone())
+            });
+
+        // Build new keyframes list with the new keyframe inserted/replaced
+        let mut new_keyframes = old_keyframes.clone().unwrap_or_default();
+        let keyframe = bif_core::TransformKeyframe {
+            time: frame,
+            transform,
+        };
+
+        // Replace existing keyframe at same time, or insert sorted
+        if let Some(pos) = new_keyframes
+            .iter()
+            .position(|k| (k.time - frame).abs() < 0.001)
+        {
+            new_keyframes[pos] = keyframe;
+        } else {
+            let insert_pos = new_keyframes.partition_point(|k| k.time < frame);
+            new_keyframes.insert(insert_pos, keyframe);
+        }
+
+        // Push undo command
+        let cmd = bif_core::KeyframeCommand {
+            instance_index,
+            old_keyframes,
+            new_keyframes: Some(new_keyframes.clone()),
+        };
+        self.undo_stack.push(Box::new(cmd), &mut self.edit_state);
+
+        // Also update the live animation data for playback
+        let anim = self
+            .edit_state
+            .keyframe_overrides
+            .entry(instance_index)
+            .or_insert_with(|| {
+                self.instance_animations
+                    .get(instance_index)
+                    .and_then(|opt| opt.clone())
+                    .unwrap_or_else(|| {
+                        bif_core::AnimatedTransform::static_only(bif_core::Transform::default())
+                    })
+            });
+        anim.keyframes = Some(new_keyframes);
+
+        // Sync to instance_animations for playback
+        if instance_index < self.instance_animations.len() {
+            self.instance_animations[instance_index] = Some(anim.clone());
+        }
+
+        // Ensure timeline has a range if it didn't before
+        if !self.timeline_state.has_range() {
+            self.timeline_state.start_frame = 0.0;
+            self.timeline_state.end_frame = 100.0;
+            self.timeline_state.fps = 24.0;
+        }
+
+        // Update keyframe markers
+        self.update_keyframe_times();
+
+        log::info!(
+            "Set keyframe at frame {:.0} for instance {}",
+            frame,
+            instance_index
+        );
+    }
+
+    /// Update timeline keyframe_times from the selected instance's animation.
+    pub fn update_keyframe_times(&mut self) {
+        let times = self
+            .selected_instance_index
+            .and_then(|idx| {
+                self.edit_state.keyframe_overrides.get(&idx).or_else(|| {
+                    self.instance_animations
+                        .get(idx)
+                        .and_then(|opt| opt.as_ref())
+                })
+            })
+            .and_then(|anim| anim.keyframes.as_ref())
+            .map(|kfs| kfs.iter().map(|k| k.time).collect::<Vec<_>>())
+            .unwrap_or_default();
+
+        self.timeline_state.keyframe_times = times;
+    }
+
+    /// Reset cached transform edit values in the egui data store.
+    pub fn reset_transform_edit_cache(&self) {
+        reset_transform_edit_cache(&self.egui_ctx);
+    }
+
+    /// Export transform overrides and keyframes as a USD edit layer.
+    pub fn export_edit_layer(&self, output_path: &str) -> anyhow::Result<()> {
+        use bif_core::usd::UsdEditLayer;
+
+        let mut layer = UsdEditLayer::create(output_path)
+            .map_err(|e| anyhow::anyhow!("Failed to create edit layer: {}", e))?;
+
+        let mut written = 0;
+
+        // Write static transform overrides
+        for (&idx, transform) in &self.edit_state.transform_overrides {
+            let prim_path = self
+                .instance_prim_paths
+                .get(idx)
+                .cloned()
+                .unwrap_or_else(|| format!("/instance_{}", idx));
+            let mat = transform.to_matrix();
+            layer
+                .write_xform(&prim_path, -1.0, &mat)
+                .map_err(|e| anyhow::anyhow!("Failed to write xform for {}: {}", prim_path, e))?;
+            written += 1;
+        }
+
+        // Write keyframed transforms
+        for (&idx, anim) in &self.edit_state.keyframe_overrides {
+            let prim_path = self
+                .instance_prim_paths
+                .get(idx)
+                .cloned()
+                .unwrap_or_else(|| format!("/instance_{}", idx));
+            if let Some(keyframes) = &anim.keyframes {
+                for kf in keyframes {
+                    let mat = kf.transform.to_matrix();
+                    layer.write_xform(&prim_path, kf.time, &mat).map_err(|e| {
+                        anyhow::anyhow!("Failed to write keyframe for {}: {}", prim_path, e)
+                    })?;
+                    written += 1;
+                }
+            }
+        }
+
+        layer
+            .save()
+            .map_err(|e| anyhow::anyhow!("Failed to save edit layer: {}", e))?;
+
+        log::info!("Exported {} xform opinions to {}", written, output_path);
+        Ok(())
     }
 
     /// Update FPS counter (call each frame with delta_time)

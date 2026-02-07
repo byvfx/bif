@@ -31,6 +31,12 @@ struct UsdBridgeStageRaw {
     _private: [u8; 0],
 }
 
+/// Opaque edit layer handle (matches C struct)
+#[repr(C)]
+struct UsdBridgeEditLayerRaw {
+    _private: [u8; 0],
+}
+
 /// Error codes from C API
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -337,6 +343,21 @@ extern "C" {
         index: usize,
         out_data: *mut UsdBridgeLightDataRaw,
     ) -> UsdBridgeErrorCode;
+
+    // Edit layer export
+    fn usd_bridge_create_edit_layer(
+        output_path: *const std::ffi::c_char,
+        out_layer: *mut *mut UsdBridgeEditLayerRaw,
+    ) -> UsdBridgeErrorCode;
+
+    fn usd_bridge_write_xform_opinion(
+        layer: *mut UsdBridgeEditLayerRaw,
+        prim_path: *const std::ffi::c_char,
+        time: f64,
+        matrix_16: *const f32,
+    ) -> UsdBridgeErrorCode;
+
+    fn usd_bridge_save_edit_layer(layer: *mut UsdBridgeEditLayerRaw) -> UsdBridgeErrorCode;
 }
 
 // ============================================================================
@@ -1661,6 +1682,73 @@ impl Drop for UsdStage {
         if !self.raw.is_null() {
             unsafe {
                 usd_bridge_close_stage(self.raw);
+            }
+        }
+    }
+}
+
+// ============================================================================
+// Edit Layer (for exporting transform overrides)
+// ============================================================================
+
+/// A writable USD stage for exporting edit opinions.
+pub struct UsdEditLayer {
+    raw: *mut UsdBridgeEditLayerRaw,
+}
+
+// SAFETY: The C++ edit layer is self-contained with no shared mutable state.
+unsafe impl Send for UsdEditLayer {}
+
+impl UsdEditLayer {
+    /// Create a new edit layer at the given output path.
+    pub fn create(output_path: &str) -> UsdBridgeResult<Self> {
+        let c_path = CString::new(output_path).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let mut raw: *mut UsdBridgeEditLayerRaw = std::ptr::null_mut();
+        let code = unsafe { usd_bridge_create_edit_layer(c_path.as_ptr(), &mut raw) };
+        if code != UsdBridgeErrorCode::Success {
+            return Err(code.into());
+        }
+        Ok(Self { raw })
+    }
+
+    /// Write a transform opinion at the given prim path and time.
+    ///
+    /// Use `time = -1.0` for default (static) time.
+    pub fn write_xform(
+        &mut self,
+        prim_path: &str,
+        time: f64,
+        matrix: &bif_math::Mat4,
+    ) -> UsdBridgeResult<()> {
+        let c_path = CString::new(prim_path).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let cols = matrix.to_cols_array();
+        let code = unsafe {
+            usd_bridge_write_xform_opinion(self.raw, c_path.as_ptr(), time, cols.as_ptr())
+        };
+        if code != UsdBridgeErrorCode::Success {
+            return Err(code.into());
+        }
+        Ok(())
+    }
+
+    /// Save and close the edit layer.
+    pub fn save(self) -> UsdBridgeResult<()> {
+        let code = unsafe { usd_bridge_save_edit_layer(self.raw) };
+        // raw is freed by C++ side, prevent double-free in Drop
+        std::mem::forget(self);
+        if code != UsdBridgeErrorCode::Success {
+            return Err(code.into());
+        }
+        Ok(())
+    }
+}
+
+impl Drop for UsdEditLayer {
+    fn drop(&mut self) {
+        if !self.raw.is_null() {
+            // If save() wasn't called, clean up anyway
+            unsafe {
+                usd_bridge_save_edit_layer(self.raw);
             }
         }
     }
