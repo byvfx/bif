@@ -698,23 +698,27 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 
 ---
 
-### Milestone 20: Scene Interactivity + Keyframing 🎮
+### Milestone 20: Scene Interactivity + Keyframing ✅
 
-- **Goal:** Clarisse/Houdini-style object manipulation and animation authoring
-- **Estimated Time:** 15-20 hours
-- **Key Tasks:**
-  - Add a primitive node in the node graph like a cube/sphere for testing
-  - Selection system (click raycast through Embree)
-  - Transform gizmos (translate/rotate/scale)
-  - Keyframe transforms at current frame
-  - Animate TRS (translation, rotation, scale) over time
-  - Timeline integration (scrub to see animated transforms)
-  - Export modified transforms back to USD layer
-  - **Minimal Undo Stack:**
-    - Simple command pattern (`trait UndoCommand` with execute/undo)
-    - `Vec<Box<dyn UndoCommand>>` stack
-    - Works for transform edits, enough to be useful
-    - Logic separate from UI (portable to Qt later)
+- **Completed:** 2026-02-06
+- **Time Invested:** ~12 hours (2 sessions)
+- **Key Achievements:**
+  - Embree viewport picking (click to select instance via CPU raycast)
+  - Selection highlight (orange tint via `instance_index` in WGSL shader)
+  - Command-pattern undo system (`UndoStack` with `TransformCommand`, `KeyframeCommand`)
+  - Translate gizmo (egui `Painter` overlay, 3-axis colored arrows)
+  - Keyframing (insert/update at current frame, diamond markers on timeline)
+  - Procedural primitives (cube/sphere/camera wireframe) in node graph
+  - Orthographic view presets (Top/Front/Right/etc.) in camera dropdown
+  - USD edit layer export (transform overrides + keyframes via C++ bridge)
+  - Editable TRS fields in property inspector with live preview
+  - Ctrl+Z / Ctrl+Shift+Z for undo/redo
+- **New Files:**
+  - `bif_core/src/undo.rs` - Undo system (EditState, UndoStack, commands)
+  - `bif_core/src/primitives.rs` - Procedural geometry (cube, sphere, camera)
+  - `bif_renderer/src/pick_scene.rs` - Embree pick scene for viewport selection
+  - `bif_viewport/src/gizmo.rs` - Translate gizmo overlay
+- **Stats:** +2,777 lines, 23 files changed, 4 new files
 
 ---
 
