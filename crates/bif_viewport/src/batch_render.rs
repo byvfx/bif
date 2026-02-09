@@ -523,8 +523,8 @@ fn build_camera_for_frame(
             camera.initialize();
             camera
         }
-        CameraSource::OrthoView(_) => {
-            // Ortho views use viewport camera (already set to ortho projection)
+        CameraSource::OrthoView(_) | CameraSource::SceneCamera(_) => {
+            // Ortho/scene cameras use viewport camera (already synced to the correct view)
             let vc = &scene.viewport_camera;
             let focus_distance = (vc.target - vc.position).length();
             let mut camera = Camera::new()

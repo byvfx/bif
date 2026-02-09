@@ -93,6 +93,8 @@ pub enum CameraSource {
     UsdCamera(String),
     /// Standard orthographic view preset.
     OrthoView(bif_math::OrthoPreset),
+    /// Scene graph camera (from Camera primitive), by index into scene.cameras.
+    SceneCamera(usize),
 }
 
 impl CameraSource {
@@ -102,6 +104,7 @@ impl CameraSource {
             CameraSource::Viewport => "Perspective",
             CameraSource::UsdCamera(path) => path,
             CameraSource::OrthoView(preset) => preset.display_name(),
+            CameraSource::SceneCamera(_) => "Scene Camera",
         }
     }
 }

@@ -403,6 +403,21 @@ pub enum Light {
     },
 }
 
+/// A camera defined in the scene graph (from a Camera primitive).
+#[derive(Clone, Debug)]
+pub struct SceneCamera {
+    /// Display name (e.g. "Camera")
+    pub name: String,
+    /// Instance index in the scene's instance list
+    pub instance_index: usize,
+    /// Vertical field of view in radians
+    pub fov_y: f32,
+    /// Near clip plane
+    pub near: f32,
+    /// Far clip plane
+    pub far: f32,
+}
+
 /// A complete scene containing prototypes, instances, and materials.
 ///
 /// This corresponds to a `UsdStage` in USD terminology.
@@ -430,6 +445,9 @@ pub struct Scene {
 
     /// Timeline info (optional, only if stage has authored time range)
     pub timeline: Option<TimelineInfo>,
+
+    /// Scene cameras (from Camera primitives)
+    pub cameras: Vec<SceneCamera>,
 }
 
 impl Scene {

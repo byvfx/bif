@@ -714,7 +714,14 @@ impl Renderer {
 
                     ui.horizontal_centered(|ui| {
                         // Camera dropdown
-                        let cam_display = self.viewport_camera_source.display_name();
+                        let cam_display = match &self.viewport_camera_source {
+                            CameraSource::SceneCamera(idx) => {
+                                self.scene_cameras.get(*idx)
+                                    .map(|c| c.name.as_str())
+                                    .unwrap_or("Scene Camera")
+                            }
+                            other => other.display_name(),
+                        };
                         egui::ComboBox::from_id_salt("viewport_camera")
                             .selected_text(cam_display)
                             .width(100.0)
@@ -784,10 +791,35 @@ impl Renderer {
                                         });
                                     }
                                 }
+                                // Scene cameras (from Camera primitives)
+                                if !self.scene_cameras.is_empty() {
+                                    ui.separator();
+                                    for (idx, cam) in self.scene_cameras.iter().enumerate() {
+                                        let is_selected = matches!(
+                                            &self.viewport_camera_source,
+                                            CameraSource::SceneCamera(i) if *i == idx
+                                        );
+                                        if ui
+                                            .selectable_label(is_selected, &cam.name)
+                                            .clicked()
+                                        {
+                                            self.viewport_camera_source =
+                                                CameraSource::SceneCamera(idx);
+                                            self.camera_locked = true;
+                                            self.selected_usd_camera = None;
+                                            ctx.data_mut(|d| {
+                                                d.insert_temp(
+                                                    egui::Id::new("sync_scene_camera"),
+                                                    idx as u64,
+                                                );
+                                            });
+                                        }
+                                    }
+                                }
                             });
 
-                        // Lock/Unlock toggle (only show when USD camera selected)
-                        if matches!(self.viewport_camera_source, CameraSource::UsdCamera(_)) {
+                        // Lock/Unlock toggle (show when USD or scene camera selected)
+                        if matches!(self.viewport_camera_source, CameraSource::UsdCamera(_) | CameraSource::SceneCamera(_)) {
                             let icon = if self.camera_locked { "Lock" } else { "Free" };
                             if ui.button(icon).clicked() {
                                 self.camera_locked = !self.camera_locked;
@@ -1045,6 +1077,16 @@ impl Renderer {
             self.egui_ctx
                 .data_mut(|d| d.remove::<String>(egui::Id::new("sync_viewport_camera")));
             self.sync_viewport_to_usd_camera(&camera_path);
+        }
+
+        // Handle scene camera selection from timeline dropdown
+        let sync_scene_cam: Option<u64> = self
+            .egui_ctx
+            .data(|d| d.get_temp(egui::Id::new("sync_scene_camera")));
+        if let Some(cam_idx) = sync_scene_cam {
+            self.egui_ctx
+                .data_mut(|d| d.remove::<u64>(egui::Id::new("sync_scene_camera")));
+            self.sync_viewport_to_scene_camera(cam_idx as usize);
         }
 
         // Handle prim selection from scene browser
@@ -1335,6 +1377,9 @@ impl Renderer {
                     let (sx, sy, sw, sh) = self.viewport_scissor();
                     render_pass.set_viewport(vp_x, vp_y, vp_w, vp_h, 0.0, 1.0);
                     render_pass.set_scissor_rect(sx, sy, sw, sh);
+
+                    // Render ground grid (before geometry so depth is written for occlusion)
+                    self.grid.render(&mut render_pass, &self.camera_bind_group);
 
                     // Set common pipeline state
                     render_pass.set_pipeline(&self.pipeline);

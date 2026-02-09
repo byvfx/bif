@@ -259,6 +259,7 @@ impl Renderer {
         self.last_evaluated_frame = 0.0;
         self.scene_material = scene_material.clone();
         self.scene_materials = scene.materials.clone();
+        self.scene_cameras = scene.cameras.clone();
 
         // Update material uniform
         self.material_uniform = MaterialUniform::from_material(&scene_material);
@@ -310,6 +311,18 @@ impl Renderer {
         let mut scene = bif_core::Scene::new(name);
         let proto_id = scene.add_prototype(Arc::new(mesh), name.to_string());
         scene.add_instance(proto_id, bif_core::Transform::default());
+
+        // Register camera primitive as a scene camera
+        if kind == bif_core::PrimitiveKind::Camera {
+            let instance_index = scene.instance_count() - 1;
+            scene.cameras.push(bif_core::SceneCamera {
+                name: name.to_string(),
+                instance_index,
+                fov_y: 45.0_f32.to_radians(),
+                near: 0.1,
+                far: 1000.0,
+            });
+        }
 
         self.load_scene_data(&scene)?;
         log::info!("Primitive loaded: {} (size={})", name, size);
@@ -731,6 +744,7 @@ impl Renderer {
         self.instance_transforms = instance_transforms;
         self.scene_material = scene_material.clone();
         self.scene_materials = scene.materials.clone();
+        self.scene_cameras = scene.cameras.clone();
         self.texture_base_dir = path.parent().map(|p| p.to_path_buf());
 
         // Store multi-draw state

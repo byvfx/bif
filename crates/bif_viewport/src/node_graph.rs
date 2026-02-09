@@ -825,13 +825,16 @@ pub fn render_node_graph(ui: &mut egui::Ui, state: &mut NodeGraphState) -> Vec<N
 
     ui.separator();
 
-    // Render the snarl node graph
-    state.snarl.show(
-        &mut viewer,
-        &state.style,
-        egui::Id::new("scene_node_graph"),
-        ui,
-    );
+    // Render the snarl node graph (guard against degenerate panel size)
+    let avail = ui.available_size();
+    if avail.x > 1.0 && avail.y > 1.0 {
+        state.snarl.show(
+            &mut viewer,
+            &state.style,
+            egui::Id::new("scene_node_graph"),
+            ui,
+        );
+    }
 
     viewer.events
 }
