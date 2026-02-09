@@ -550,13 +550,12 @@ impl Renderer {
             crate::ivar_renderer::create_ivar_texture(&self.device, (vp_w, vp_h));
         self.ivar_texture = ivar_texture;
         self.ivar_texture_view = ivar_texture_view;
-        let (_, ivar_bind_group, _) = crate::ivar_renderer::create_ivar_pipeline(
+        self.ivar_bind_group = crate::ivar_renderer::create_ivar_bind_group(
             &self.device,
-            self.config.format,
+            &self.ivar_bind_group_layout,
             &self.ivar_texture_view,
             &self.ivar_sampler,
         );
-        self.ivar_bind_group = ivar_bind_group;
 
         // Create Ivar camera
         let ivar_camera = self.create_ivar_camera();

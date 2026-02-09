@@ -260,6 +260,13 @@ impl Renderer {
         self.scene_material = scene_material.clone();
         self.scene_materials = scene.materials.clone();
         self.scene_cameras = scene.cameras.clone();
+        // Reset stale scene camera selection
+        if let crate::ivar_state::CameraSource::SceneCamera(idx) = self.viewport_camera_source {
+            if idx >= self.scene_cameras.len() {
+                self.viewport_camera_source = crate::ivar_state::CameraSource::Viewport;
+                self.camera_locked = false;
+            }
+        }
 
         // Update material uniform
         self.material_uniform = MaterialUniform::from_material(&scene_material);
@@ -312,11 +319,16 @@ impl Renderer {
         let proto_id = scene.add_prototype(Arc::new(mesh), name.to_string());
         scene.add_instance(proto_id, bif_core::Transform::default());
 
-        // Register camera primitive as a scene camera
+        // Register camera primitive as a scene camera (unique name)
         if kind == bif_core::PrimitiveKind::Camera {
             let instance_index = scene.instance_count() - 1;
+            let cam_name = if scene.cameras.is_empty() {
+                name.to_string()
+            } else {
+                format!("{}_{}", name, scene.cameras.len() + 1)
+            };
             scene.cameras.push(bif_core::SceneCamera {
-                name: name.to_string(),
+                name: cam_name,
                 instance_index,
                 fov_y: 45.0_f32.to_radians(),
                 near: 0.1,
@@ -745,6 +757,13 @@ impl Renderer {
         self.scene_material = scene_material.clone();
         self.scene_materials = scene.materials.clone();
         self.scene_cameras = scene.cameras.clone();
+        // Reset stale scene camera selection
+        if let crate::ivar_state::CameraSource::SceneCamera(idx) = self.viewport_camera_source {
+            if idx >= self.scene_cameras.len() {
+                self.viewport_camera_source = crate::ivar_state::CameraSource::Viewport;
+                self.camera_locked = false;
+            }
+        }
         self.texture_base_dir = path.parent().map(|p| p.to_path_buf());
 
         // Store multi-draw state

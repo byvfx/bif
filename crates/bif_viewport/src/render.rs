@@ -1378,9 +1378,6 @@ impl Renderer {
                     render_pass.set_viewport(vp_x, vp_y, vp_w, vp_h, 0.0, 1.0);
                     render_pass.set_scissor_rect(sx, sy, sw, sh);
 
-                    // Render ground grid (before geometry so depth is written for occlusion)
-                    self.grid.render(&mut render_pass, &self.camera_bind_group);
-
                     // Set common pipeline state
                     render_pass.set_pipeline(&self.pipeline);
                     render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
@@ -1480,6 +1477,9 @@ impl Renderer {
                             0..self.culling.lod_box_count,
                         );
                     }
+
+                    // Render ground grid after opaque geometry (transparent, reads depth)
+                    self.grid.render(&mut render_pass, &self.camera_bind_group);
                 }
 
                 // Render gnomon in bottom-right corner

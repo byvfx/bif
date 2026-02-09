@@ -53,7 +53,9 @@ pub use gpu_types::{
     PrototypeGpuData, Vertex, MAX_VIEWPORT_LIGHTS, MAX_VIEWPORT_TEXTURES,
 };
 pub use grid::GridRenderer;
-pub use ivar_renderer::{create_depth_texture, create_ivar_pipeline, create_ivar_texture};
+pub use ivar_renderer::{
+    create_depth_texture, create_ivar_bind_group, create_ivar_pipeline, create_ivar_texture,
+};
 pub use ivar_state::{
     BatchRenderSettings, BatchRenderStatus, BuildStatus, CameraSnapshot, CameraSource, IvarMessage,
     IvarState, RenderMode,
@@ -146,6 +148,7 @@ pub struct Renderer {
     pub(crate) ivar_texture_view: wgpu::TextureView,
     pub(crate) ivar_sampler: wgpu::Sampler,
     pub(crate) ivar_bind_group: wgpu::BindGroup,
+    pub(crate) ivar_bind_group_layout: wgpu::BindGroupLayout,
     pub(crate) ivar_pipeline: wgpu::RenderPipeline,
 
     // Cached mesh data for Ivar scene building
@@ -685,12 +688,13 @@ impl Renderer {
             ..Default::default()
         });
 
-        let (ivar_pipeline, ivar_bind_group, _) = ivar_renderer::create_ivar_pipeline(
-            &device,
-            config.format,
-            &ivar_texture_view,
-            &ivar_sampler,
-        );
+        let (ivar_pipeline, ivar_bind_group, ivar_bind_group_layout) =
+            ivar_renderer::create_ivar_pipeline(
+                &device,
+                config.format,
+                &ivar_texture_view,
+                &ivar_sampler,
+            );
 
         log::info!("Ivar resources initialized");
 
@@ -745,6 +749,7 @@ impl Renderer {
             ivar_texture_view,
             ivar_sampler,
             ivar_bind_group,
+            ivar_bind_group_layout,
             ivar_pipeline,
             mesh_data,
             instance_transforms: vec![], // Empty scene - no instances
@@ -807,14 +812,13 @@ impl Renderer {
             self.ivar_texture = ivar_texture;
             self.ivar_texture_view = ivar_texture_view;
 
-            // Recreate Ivar bind group with new texture view
-            let (_, ivar_bind_group, _) = ivar_renderer::create_ivar_pipeline(
+            // Recreate Ivar bind group with new texture view (reuse existing layout)
+            self.ivar_bind_group = ivar_renderer::create_ivar_bind_group(
                 &self.device,
-                self.config.format,
+                &self.ivar_bind_group_layout,
                 &self.ivar_texture_view,
                 &self.ivar_sampler,
             );
-            self.ivar_bind_group = ivar_bind_group;
 
             // Reset Ivar render state on resize
             self.ivar_state.cancel_flag.store(true, Ordering::Relaxed);
