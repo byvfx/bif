@@ -1,6 +1,6 @@
 # Session Handoff - February 7, 2026
 
-**Last Updated:** Post-M20: Ground Grid, Scene Cameras, Ivar Fix
+**Last Updated:** Post-M20: Ground Grid, Scene Cameras, Ivar Fix + Code Review Fixes
 **Next Milestone:** M21 Point Instancing + Scattering
 **Project:** BIF - VFX Scene Assembler & Renderer
 
@@ -26,6 +26,7 @@
 | Ivar fix | Render uses viewport rect not full window | `ivar_build.rs` |
 | Ground grid | Infinite XZ grid, anti-aliased, distance fade | `grid.wgsl`, `grid.rs` |
 | Scene cameras | Camera prims usable as render cameras | `scene.rs`, `ivar_state.rs`, `render.rs` |
+| Code review | 5 fixes: grid depth/order, ivar bind group, shader sync, stale cam, names | 7 files |
 
 ### M20: Scene Interactivity + Keyframing (Feb 6, 2026)
 
