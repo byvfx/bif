@@ -1,6 +1,6 @@
-# Session Handoff - February 6, 2026
+# Session Handoff - February 7, 2026
 
-**Last Updated:** M20 Code Review Fixes
+**Last Updated:** Post-M20: Ground Grid, Scene Cameras, Ivar Fix
 **Next Milestone:** M21 Point Instancing + Scattering
 **Project:** BIF - VFX Scene Assembler & Renderer
 
@@ -10,7 +10,7 @@
 
 | Status | Details |
 |--------|---------|
-| Complete | Milestones 0-20, full interactivity pipeline |
+| Complete | Milestones 0-20 + post-M20 polish |
 | Current | M21 Point Instancing + Scattering |
 | Tests | 41 bif_math passing (bif_core needs USD DLLs) |
 | Performance | 60 FPS viewport, 10K instances with LOD |
@@ -19,28 +19,17 @@
 
 ## Recent Work
 
+### Post-M20: Ground Grid, Scene Cameras, Ivar Fix (Feb 7, 2026)
+
+| Item | Description | Key Files |
+|------|-------------|-----------|
+| Ivar fix | Render uses viewport rect not full window | `ivar_build.rs` |
+| Ground grid | Infinite XZ grid, anti-aliased, distance fade | `grid.wgsl`, `grid.rs` |
+| Scene cameras | Camera prims usable as render cameras | `scene.rs`, `ivar_state.rs`, `render.rs` |
+
 ### M20: Scene Interactivity + Keyframing (Feb 6, 2026)
 
-9-phase milestone implementing full scene interaction pipeline:
-
-| Phase | Feature | Key Files |
-|-------|---------|-----------|
-| 1 | Embree viewport picking | `pick_scene.rs`, `lib.rs` |
-| 2 | Selection highlight | `basic.wgsl`, `gpu_types.rs` |
-| 3 | Undo system + editable transforms | `undo.rs`, `property_inspector.rs` |
-| 4 | Translate gizmo | `gizmo.rs`, `main.rs` |
-| 5 | Keyframing | `undo.rs`, `timeline.rs`, `render.rs` |
-| 6 | Primitive nodes | `primitives.rs`, `node_graph.rs` |
-| 7 | Orthographic views | `camera.rs`, `ivar_state.rs` |
-| 8 | USD edit layer export | `usd_bridge.cpp/.h`, `cpp_bridge.rs` |
-| 9 | Polish + integration | All |
-
-**Architecture decisions:**
-- CPU ray via Embree (reuses existing BVH)
-- `selected_instance_id` in CameraUniform for shader highlight
-- egui `Painter` overlay for gizmo (no new wgpu pipeline)
-- `Vec<Box<dyn UndoCommand>>` portable to Qt later
-- Deferred event handling via egui temp data (can't mutate Renderer inside egui closure)
+9-phase milestone: picking, selection highlight, undo, gizmo, keyframing, primitives, ortho views, USD export.
 
 ---
 
@@ -55,35 +44,29 @@
 
 ### What Works
 
+**Post-M20 Features:**
+- Infinite ground grid (1m minor, 10m major, axis colors, depth-correct)
+- Ivar render matches viewport aspect ratio (no squeeze)
+- Camera primitives appear in camera dropdown, sync viewport when selected
+- Scene cameras follow animation during playback
+
 **Scene Interactivity (M20):**
 - Click viewport to select instance (Embree raycast)
 - Orange highlight on selected instance
 - Translate gizmo with colored X/Y/Z axes
-- Editable TRS in property inspector (DragValue fields)
+- Editable TRS in property inspector
 - Undo/Redo (Ctrl+Z / Ctrl+Shift+Z)
-- Set keyframes at current frame (K key)
-- Diamond markers on timeline for keyframes
+- Set keyframes (K key), diamond markers on timeline
 - Procedural cube/sphere/camera in node graph
 - Orthographic views (Top/Front/Right/etc.)
 - Export transform edits as USD sublayer
-
-**Timeline Playback:**
-- Wall-clock accurate timing
-- Loop, scrub, integer frame snap
-- Keyframe interpolation during playback
-
-**USD Import/Export:**
-- USDA + USDC via C++ bridge
-- UsdPreviewSurface + MaterialX
-- Camera and transform animation
-- Edit layer export (xformOp overrides)
 
 ### Known Issues
 
 - OIIO `load_texture_with_mips` crashes on .tx files on Windows
 - bif_core tests need USD DLLs (run via `setup_usd_env.ps1`)
 - Gizmo only supports translate (rotate/scale future work)
-- Ortho picking untested with real scenes
+- Grid not yet tested visually (may need color/fade tuning)
 - Renderer struct ~60 fields (God object) - extract sub-structs in future session
 
 ---

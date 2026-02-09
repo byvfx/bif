@@ -492,8 +492,9 @@ impl Renderer {
 
     /// Create Ivar camera from viewport camera
     fn create_ivar_camera(&self) -> bif_renderer::Camera {
+        let (_, _, vp_w, vp_h) = self.viewport_rect();
         let mut camera = bif_renderer::Camera::new()
-            .with_resolution(self.size.0, self.size.1)
+            .with_resolution(vp_w as u32, vp_h as u32)
             .with_position(self.camera.position, self.camera.target, Vec3::Y)
             .with_lens(
                 self.camera.fov_y.to_degrees(),
@@ -538,8 +539,24 @@ impl Renderer {
             return;
         };
 
-        // Reset render state
-        self.ivar_state.reset_render(self.size.0, self.size.1);
+        // Reset render state (use viewport rect, not full window, for correct aspect ratio)
+        let (_, _, vp_w, vp_h) = self.viewport_rect();
+        let vp_w = vp_w as u32;
+        let vp_h = vp_h as u32;
+        self.ivar_state.reset_render(vp_w, vp_h);
+
+        // Recreate ivar texture at viewport size so rendered pixels fill the entire texture
+        let (ivar_texture, ivar_texture_view) =
+            crate::ivar_renderer::create_ivar_texture(&self.device, (vp_w, vp_h));
+        self.ivar_texture = ivar_texture;
+        self.ivar_texture_view = ivar_texture_view;
+        let (_, ivar_bind_group, _) = crate::ivar_renderer::create_ivar_pipeline(
+            &self.device,
+            self.config.format,
+            &self.ivar_texture_view,
+            &self.ivar_sampler,
+        );
+        self.ivar_bind_group = ivar_bind_group;
 
         // Create Ivar camera
         let ivar_camera = self.create_ivar_camera();

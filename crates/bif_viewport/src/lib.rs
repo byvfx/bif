@@ -22,6 +22,7 @@ pub mod frustum_culling;
 pub mod gizmo;
 pub mod gnomon;
 pub mod gpu_types;
+pub mod grid;
 pub mod ivar_renderer;
 pub mod ivar_state;
 pub mod lights;
@@ -51,6 +52,7 @@ pub use gpu_types::{
     GpuTextureSet, InstanceData, LightGpu, LightsUniform, MaterialGpu, MaterialUniform,
     PrototypeGpuData, Vertex, MAX_VIEWPORT_LIGHTS, MAX_VIEWPORT_TEXTURES,
 };
+pub use grid::GridRenderer;
 pub use ivar_renderer::{create_depth_texture, create_ivar_pipeline, create_ivar_texture};
 pub use ivar_state::{
     BatchRenderSettings, BatchRenderStatus, BuildStatus, CameraSnapshot, CameraSource, IvarMessage,
@@ -114,6 +116,9 @@ pub struct Renderer {
 
     // Gnomon resources
     pub(crate) gnomon: GnomonRenderer,
+
+    // Ground grid
+    pub(crate) grid: GridRenderer,
 
     // egui state
     pub(crate) egui_ctx: egui::Context,
@@ -226,6 +231,9 @@ pub struct Renderer {
     pub undo_stack: bif_core::UndoStack,
     /// Edit state with transform overrides
     pub edit_state: bif_core::EditState,
+
+    // Scene cameras (from Camera primitives)
+    pub(crate) scene_cameras: Vec<bif_core::SceneCamera>,
 
     // Translate gizmo state
     pub gizmo_state: gizmo::GizmoState,
@@ -655,6 +663,10 @@ impl Renderer {
         let gnomon = GnomonRenderer::new(&device, config.format);
         log::info!("Gnomon initialized");
 
+        // Create ground grid renderer
+        let grid = GridRenderer::new(&device, config.format, &camera_bind_group_layout);
+        log::info!("Grid initialized");
+
         // Calculate stats - empty scene has 0 triangles
         let num_triangles = 0;
 
@@ -715,6 +727,7 @@ impl Renderer {
             depth_texture,
             depth_view,
             gnomon,
+            grid,
             egui_ctx,
             egui_state,
             egui_renderer,
@@ -764,6 +777,7 @@ impl Renderer {
             selected_instance_index: None,
             undo_stack: bif_core::UndoStack::new(),
             edit_state: bif_core::EditState::default(),
+            scene_cameras: vec![],
             gizmo_state: gizmo::GizmoState::new(),
         })
     }
@@ -963,6 +977,51 @@ impl Renderer {
                 log::error!("Failed to get USD camera transform: {:?}", e);
             }
         }
+    }
+
+    /// Sync viewport camera to a scene camera (from Camera primitive).
+    ///
+    /// Reads the instance transform and applies the camera's FOV.
+    pub fn sync_viewport_to_scene_camera(&mut self, cam_idx: usize) {
+        let cam = match self.scene_cameras.get(cam_idx) {
+            Some(c) => c.clone(),
+            None => {
+                log::warn!("Scene camera index {} out of range", cam_idx);
+                return;
+            }
+        };
+
+        let inst_idx = cam.instance_index;
+        if inst_idx >= self.current_transforms.len() {
+            log::warn!("Scene camera instance {} out of range", inst_idx);
+            return;
+        }
+
+        let mat = self.current_transforms[inst_idx];
+        let transform = bif_core::Transform::from_matrix(mat);
+
+        // Camera looks down -Z in its local space
+        let forward = transform.rotation * -Vec3::Z;
+        let up = transform.rotation * Vec3::Y;
+
+        self.camera.position = transform.translation;
+        self.camera.target = transform.translation + forward * 10.0;
+        self.camera.up = up;
+        self.camera.distance = 10.0;
+        self.camera.fov_y = cam.fov_y;
+
+        // Recalculate yaw/pitch
+        let dir = (self.camera.position - self.camera.target).normalize();
+        self.camera.yaw = dir.x.atan2(dir.z);
+        self.camera.pitch = (-dir.y).asin();
+
+        self.update_camera();
+
+        log::info!(
+            "Synced to scene camera '{}' (instance {})",
+            cam.name,
+            inst_idx
+        );
     }
 
     /// Handle egui window event - returns true if event was consumed by egui

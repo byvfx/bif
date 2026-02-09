@@ -30,6 +30,11 @@ impl Renderer {
             self.sync_viewport_to_usd_camera(&camera_path);
         }
 
+        // Sync scene camera if selected (follows instance transform during playback)
+        if let crate::ivar_state::CameraSource::SceneCamera(idx) = self.viewport_camera_source {
+            self.sync_viewport_to_scene_camera(idx);
+        }
+
         // Check if we have any mesh animations (transform or vertex)
         let animated_count = self
             .instance_animations
