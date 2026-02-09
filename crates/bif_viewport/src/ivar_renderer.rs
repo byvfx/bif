@@ -130,6 +130,29 @@ pub fn create_ivar_pipeline(
     (pipeline, bind_group, bind_group_layout)
 }
 
+/// Create only an Ivar bind group (reuses existing layout, avoids pipeline recreation).
+pub fn create_ivar_bind_group(
+    device: &Device,
+    layout: &wgpu::BindGroupLayout,
+    texture_view: &wgpu::TextureView,
+    sampler: &wgpu::Sampler,
+) -> wgpu::BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("Ivar Bind Group"),
+        layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(texture_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::Sampler(sampler),
+            },
+        ],
+    })
+}
+
 /// Create a depth texture for the given size.
 pub fn create_depth_texture(
     device: &Device,
