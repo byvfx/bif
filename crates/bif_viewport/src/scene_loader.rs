@@ -700,14 +700,14 @@ impl Renderer {
         self.culling
             .set_prototype_aabb(&self.device, prototype_aabb, triangles_per_instance);
         self.culling.instance_aabbs = instance_aabbs;
-        self.culling.visible_count = instances.len() as u32;
+        self.culling.visible_count = write_count as u32;
 
         // Update renderer state
         self.num_indices = mesh_data.indices.len() as u32;
-        self.num_instances = instances.len() as u32;
+        self.num_instances = write_count as u32;
         self.mesh_bounds_min = mesh_data.bounds_min;
         self.mesh_bounds_max = mesh_data.bounds_max;
-        self.num_triangles = triangles_per_instance as u64 * instances.len() as u64;
+        self.num_triangles = triangles_per_instance as u64 * write_count as u64;
         self.mesh_data = mesh_data;
         self.current_transforms = instance_transforms.clone();
         self.instance_transforms = instance_transforms;
@@ -1112,10 +1112,14 @@ impl Renderer {
             .collect();
 
         // Write instances to dynamic buffer (reuse existing preallocated buffer)
-        self.queue
-            .write_buffer(&self.instance_buffer, 0, bytemuck::cast_slice(&instances));
+        let write_count = instances.len().min(MAX_INSTANCES as usize);
+        self.queue.write_buffer(
+            &self.instance_buffer,
+            0,
+            bytemuck::cast_slice(&instances[..write_count]),
+        );
 
-        log::info!("Created {} instances from USD scene", instances.len());
+        log::info!("Created {} instances from USD scene (wrote {})", instances.len(), write_count);
 
         self.instance_material_ids = instance_material_ids;
         self.instance_prototype_ids = instance_prototype_ids;
@@ -1187,8 +1191,8 @@ impl Renderer {
         self.index_buffer = index_buffer;
         self.num_indices = mesh_data.indices.len() as u32;
         // Note: instance_buffer is reused (dynamic), don't reassign
-        self.num_instances = instances.len() as u32;
-        self.culling.visible_count = instances.len() as u32;
+        self.num_instances = write_count as u32;
+        self.culling.visible_count = write_count as u32;
         self.mesh_bounds_min = mesh_data.bounds_min;
         self.mesh_bounds_max = mesh_data.bounds_max;
         self.mesh_data = mesh_data;

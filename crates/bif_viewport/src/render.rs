@@ -1315,6 +1315,12 @@ impl Renderer {
                             if let Err(e) = self.remove_primitive(proto_id) {
                                 log::error!("Failed to remove primitive: {}", e);
                             }
+                            // Re-index remaining entries: IDs above the removed one shift down
+                            for v in self.node_proto_map.values_mut() {
+                                if *v > proto_id {
+                                    *v -= 1;
+                                }
+                            }
                         } else {
                             log::info!("Node graph: Deleted node {:?} (no scene data)", node_id);
                         }
