@@ -581,14 +581,15 @@ impl Scene {
 
         self.prototypes.remove(proto_id);
 
-        // Remove instances referencing this prototype (iterate in reverse to
-        // maintain correct indices while removing)
+        // Collect indices of instances to remove (those referencing this proto)
+        let mut removed_indices: Vec<usize> = Vec::new();
         let mut i = self.instances.len();
         while i > 0 {
             i -= 1;
             if self.instances[i].prototype_id == proto_id {
                 self.instances.remove(i);
                 self.instance_animations.remove(i);
+                removed_indices.push(i);
             } else if self.instances[i].prototype_id > proto_id {
                 self.instances[i].prototype_id -= 1;
             }
@@ -596,7 +597,6 @@ impl Scene {
 
         // Re-index prototype IDs in remaining prototypes
         for (new_id, proto) in self.prototypes.iter_mut().enumerate() {
-            // Need mutable access - Arc::make_mut is too heavy, just set via new Arc
             if proto.id != new_id {
                 let mut p = (**proto).clone();
                 p.id = new_id;
@@ -604,9 +604,17 @@ impl Scene {
             }
         }
 
-        // Remove cameras that referenced instances we just deleted
+        // Remove cameras that pointed at deleted instances
         self.cameras
-            .retain(|cam| cam.instance_index < self.instances.len());
+            .retain(|cam| !removed_indices.contains(&cam.instance_index));
+        // Re-index camera instance indices to account for removed instances
+        for cam in &mut self.cameras {
+            let shift = removed_indices
+                .iter()
+                .filter(|&&idx| idx < cam.instance_index)
+                .count();
+            cam.instance_index -= shift;
+        }
 
         true
     }
@@ -619,15 +627,14 @@ impl Scene {
         self.instances.remove(instance_index);
         self.instance_animations.remove(instance_index);
 
-        // Fix camera instance indices
+        // Remove cameras that pointed at the deleted instance, then fix indices
+        self.cameras
+            .retain(|cam| cam.instance_index != instance_index);
         for cam in &mut self.cameras {
             if cam.instance_index > instance_index {
                 cam.instance_index -= 1;
             }
         }
-        self.cameras.retain(|cam| {
-            cam.instance_index != instance_index || instance_index < self.instances.len()
-        });
 
         true
     }

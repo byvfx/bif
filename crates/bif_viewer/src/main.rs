@@ -496,8 +496,7 @@ impl ApplicationHandler for App {
                         if let Err(e) = renderer.render(clear_color, window) {
                             if let Some(surface_err) = e.downcast_ref::<wgpu::SurfaceError>() {
                                 match surface_err {
-                                    wgpu::SurfaceError::Lost
-                                    | wgpu::SurfaceError::Outdated => {
+                                    wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated => {
                                         renderer.resize(renderer.size);
                                     }
                                     wgpu::SurfaceError::OutOfMemory => {

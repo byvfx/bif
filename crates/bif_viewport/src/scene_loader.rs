@@ -671,9 +671,20 @@ impl Renderer {
                 .collect()
         };
 
-        // Write instances to GPU
-        self.queue
-            .write_buffer(&self.instance_buffer, 0, bytemuck::cast_slice(&instances));
+        // Write instances to GPU (warn + truncate if exceeding buffer capacity)
+        if instances.len() > crate::MAX_INSTANCES as usize {
+            log::warn!(
+                "Instance count {} exceeds buffer capacity {}. Truncating.",
+                instances.len(),
+                crate::MAX_INSTANCES
+            );
+        }
+        let write_count = instances.len().min(crate::MAX_INSTANCES as usize);
+        self.queue.write_buffer(
+            &self.instance_buffer,
+            0,
+            bytemuck::cast_slice(&instances[..write_count]),
+        );
 
         // Culling
         let prototype_aabb = Aabb::from_points(mesh_data.bounds_min, mesh_data.bounds_max);
@@ -1351,29 +1362,35 @@ impl Renderer {
         );
 
         // Merge USD scene into working_scene so primitives added later coexist.
-        // Append prototypes and instances from the loaded scene.
+        // Track offsets for remapping IDs from the loaded scene to the working scene.
+        let proto_offset = self.working_scene.prototype_count();
+        let instance_offset = self.working_scene.instance_count();
         for proto in &scene.prototypes {
             self.working_scene
                 .add_prototype(proto.mesh.clone(), proto.name.clone());
         }
         for (inst, anim) in scene.instances_with_animations() {
+            let remapped_proto_id = inst.prototype_id + proto_offset;
             if let Some(anim) = anim {
                 self.working_scene.add_animated_instance(
-                    inst.prototype_id,
+                    remapped_proto_id,
                     inst.transform.clone(),
                     anim.clone(),
                 );
             } else {
                 self.working_scene
-                    .add_instance(inst.prototype_id, inst.transform.clone());
+                    .add_instance(remapped_proto_id, inst.transform.clone());
             }
         }
         for mat in &scene.materials {
             self.working_scene.add_material((**mat).clone());
         }
-        self.working_scene
-            .cameras
-            .extend(scene.cameras.iter().cloned());
+        // Remap camera instance indices by the instance offset
+        for cam in &scene.cameras {
+            let mut remapped = cam.clone();
+            remapped.instance_index += instance_offset;
+            self.working_scene.cameras.push(remapped);
+        }
 
         // Update lights from scene
         self.update_lights(&scene.lights);
