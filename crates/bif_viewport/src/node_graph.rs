@@ -668,11 +668,12 @@ impl NodeGraphState {
         self.snarl.insert_node(pos, SceneNode::primitive(kind))
     }
 
-    /// Delete the selected node
-    pub fn delete_selected(&mut self) {
-        if let Some(node_id) = self.selected_node.take() {
-            self.snarl.remove_node(node_id);
-        }
+    /// Delete the selected node.
+    ///
+    /// Returns the NodeId so the caller can emit a `DeleteNode` event
+    /// for scene cleanup. Does NOT remove from snarl — the event loop does that.
+    pub fn delete_selected(&mut self) -> Option<NodeId> {
+        self.selected_node.take()
     }
 
     /// Mark a USD Read node as loaded
@@ -822,7 +823,9 @@ pub fn render_node_graph(ui: &mut egui::Ui, state: &mut NodeGraphState) -> Vec<N
 
     // Handle keyboard input for delete
     if ui.input(|i| i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace)) {
-        state.delete_selected();
+        if let Some(node_id) = state.delete_selected() {
+            viewer.events.push(NodeGraphEvent::DeleteNode(node_id));
+        }
     }
 
     // Context menu for adding nodes
@@ -849,7 +852,9 @@ pub fn render_node_graph(ui: &mut egui::Ui, state: &mut NodeGraphState) -> Vec<N
         }
         ui.separator();
         if ui.button("Del Selected").clicked() {
-            state.delete_selected();
+            if let Some(node_id) = state.delete_selected() {
+                viewer.events.push(NodeGraphEvent::DeleteNode(node_id));
+            }
         }
     });
 

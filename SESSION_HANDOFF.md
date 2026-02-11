@@ -1,6 +1,6 @@
 # Session Handoff - February 10, 2026
 
-**Last Updated:** Bug fix session — 5 bugs from BUGLIST.md
+**Last Updated:** Bug fix session — 5 bugs + code review critical fixes
 **Next Milestone:** M21 Point Instancing + Scattering
 **Project:** BIF - VFX Scene Assembler & Renderer
 
@@ -32,6 +32,12 @@
 | 5 | Camera dropdown fix (solved by Phase 4 persistence) | verified in `render.rs` |
 
 **Key architecture change:** `Renderer` now has a `working_scene: Scene` that accumulates all primitives and USD objects. `reload_working_scene()` rebuilds all GPU state from it. This replaces the old pattern where each `load_primitive()` call created an isolated scene.
+
+**Code review critical fixes:**
+- `delete_selected()` → returns `Option<NodeId>`, callers emit `DeleteNode` (was leaking scene data)
+- `remove_instance`/`remove_prototype` camera retain/re-index logic fixed
+- USD merge remaps proto IDs + camera instance indices via offsets
+- Instance buffer truncated at MAX_INSTANCES with warning
 
 ### Post-M20: Ground Grid, Scene Cameras, Ivar Fix (Feb 7, 2026)
 
