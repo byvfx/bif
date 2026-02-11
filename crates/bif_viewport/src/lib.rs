@@ -240,6 +240,9 @@ pub struct Renderer {
 
     // Translate gizmo state
     pub gizmo_state: gizmo::GizmoState,
+
+    // Viewport display toggles
+    pub show_grid: bool,
 }
 
 impl Renderer {
@@ -784,6 +787,7 @@ impl Renderer {
             edit_state: bif_core::EditState::default(),
             scene_cameras: vec![],
             gizmo_state: gizmo::GizmoState::new(),
+            show_grid: true,
         })
     }
 

@@ -186,6 +186,8 @@ impl Renderer {
                 .show(ctx, |ui| {
                     ui.horizontal_centered(|ui| {
                         ui.label("BIF");
+                        ui.separator();
+                        ui.checkbox(&mut self.show_grid, "Grid");
                     });
                 });
             top_panel_height = top_panel.response.rect.height();
@@ -1479,7 +1481,9 @@ impl Renderer {
                     }
 
                     // Render ground grid after opaque geometry (transparent, reads depth)
-                    self.grid.render(&mut render_pass, &self.camera_bind_group);
+                    if self.show_grid {
+                        self.grid.render(&mut render_pass, &self.camera_bind_group);
+                    }
                 }
 
                 // Render gnomon in bottom-right corner
