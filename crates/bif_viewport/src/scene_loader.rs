@@ -305,30 +305,44 @@ impl Renderer {
         Ok(())
     }
 
-    /// Create and load a procedural primitive into the viewport.
-    pub fn load_primitive(&mut self, kind: bif_core::PrimitiveKind, size: f32) -> Result<()> {
+    /// Generate a unique name for a primitive (e.g. "Cube", "Cube_2", "Cube_3").
+    fn unique_primitive_name(&mut self, base: &str) -> String {
+        let counter = self
+            .primitive_name_counters
+            .entry(base.to_string())
+            .or_insert(0);
+        *counter += 1;
+        if *counter == 1 {
+            base.to_string()
+        } else {
+            format!("{}_{}", base, counter)
+        }
+    }
+
+    /// Add a primitive to the working scene and rebuild GPU state.
+    ///
+    /// Returns the prototype ID in the working scene.
+    pub fn load_primitive(&mut self, kind: bif_core::PrimitiveKind, size: f32) -> Result<usize> {
         use bif_core::primitives::{create_camera_wireframe, create_cube, create_sphere};
 
-        let (mesh, name) = match kind {
+        let (mesh, base_name) = match kind {
             bif_core::PrimitiveKind::Cube => (create_cube(size), "Cube"),
             bif_core::PrimitiveKind::Sphere => (create_sphere(size, 32), "Sphere"),
             bif_core::PrimitiveKind::Camera => (create_camera_wireframe(), "Camera"),
         };
 
-        let mut scene = bif_core::Scene::new(name);
-        let proto_id = scene.add_prototype(Arc::new(mesh), name.to_string());
-        scene.add_instance(proto_id, bif_core::Transform::default());
+        let unique_name = self.unique_primitive_name(base_name);
+        let proto_id = self
+            .working_scene
+            .add_prototype(Arc::new(mesh), unique_name.clone());
+        self.working_scene
+            .add_instance(proto_id, bif_core::Transform::default());
 
-        // Register camera primitive as a scene camera (unique name)
+        // Register camera primitive as a scene camera
         if kind == bif_core::PrimitiveKind::Camera {
-            let instance_index = scene.instance_count() - 1;
-            let cam_name = if scene.cameras.is_empty() {
-                name.to_string()
-            } else {
-                format!("{}_{}", name, scene.cameras.len() + 1)
-            };
-            scene.cameras.push(bif_core::SceneCamera {
-                name: cam_name,
+            let instance_index = self.working_scene.instance_count() - 1;
+            self.working_scene.cameras.push(bif_core::SceneCamera {
+                name: unique_name.clone(),
                 instance_index,
                 fov_y: 45.0_f32.to_radians(),
                 near: 0.1,
@@ -336,8 +350,423 @@ impl Renderer {
             });
         }
 
-        self.load_scene_data(&scene)?;
-        log::info!("Primitive loaded: {} (size={})", name, size);
+        self.reload_working_scene()?;
+        log::info!(
+            "Primitive added to working scene: {} (size={}, proto_id={})",
+            unique_name,
+            size,
+            proto_id
+        );
+        Ok(proto_id)
+    }
+
+    /// Add a primitive to the working scene by name (used by undo/redo).
+    pub fn add_primitive_by_name(
+        &mut self,
+        kind: bif_core::PrimitiveKind,
+        size: f32,
+        name: &str,
+    ) -> Result<usize> {
+        use bif_core::primitives::{create_camera_wireframe, create_cube, create_sphere};
+
+        let mesh = match kind {
+            bif_core::PrimitiveKind::Cube => create_cube(size),
+            bif_core::PrimitiveKind::Sphere => create_sphere(size, 32),
+            bif_core::PrimitiveKind::Camera => create_camera_wireframe(),
+        };
+
+        let proto_id = self
+            .working_scene
+            .add_prototype(Arc::new(mesh), name.to_string());
+        self.working_scene
+            .add_instance(proto_id, bif_core::Transform::default());
+
+        if kind == bif_core::PrimitiveKind::Camera {
+            let instance_index = self.working_scene.instance_count() - 1;
+            self.working_scene.cameras.push(bif_core::SceneCamera {
+                name: name.to_string(),
+                instance_index,
+                fov_y: 45.0_f32.to_radians(),
+                near: 0.1,
+                far: 1000.0,
+            });
+        }
+
+        self.reload_working_scene()?;
+        Ok(proto_id)
+    }
+
+    /// Remove a prototype from the working scene and rebuild GPU state.
+    pub fn remove_primitive(&mut self, proto_id: usize) -> Result<()> {
+        if !self.working_scene.remove_prototype(proto_id) {
+            anyhow::bail!("Prototype {} not found in working scene", proto_id);
+        }
+        self.reload_working_scene()?;
+        log::info!("Removed prototype {} from working scene", proto_id);
+        Ok(())
+    }
+
+    /// Rebuild all GPU state from the current working scene.
+    ///
+    /// Called after adding/removing primitives or merging USD data.
+    pub fn reload_working_scene(&mut self) -> Result<()> {
+        let scene = &self.working_scene;
+
+        if scene.prototypes.is_empty() {
+            // Empty scene — reset to blank
+            self.num_indices = 0;
+            self.num_instances = 0;
+            self.num_triangles = 0;
+            self.multi_draw.enabled = false;
+            self.multi_draw.prototype_gpu_data.clear();
+            self.multi_draw.instance_groups.clear();
+            self.instance_transforms.clear();
+            self.current_transforms.clear();
+            self.instance_material_ids.clear();
+            self.instance_prototype_ids.clear();
+            self.instance_prim_paths.clear();
+            self.instance_animations = scene.instance_animations().to_vec();
+            self.scene_cameras = scene.cameras.clone();
+            self.pick_scene = None;
+            self.mesh_data = MeshData {
+                vertices: vec![],
+                indices: vec![],
+                bounds_min: Vec3::ZERO,
+                bounds_max: Vec3::ZERO,
+                triangle_material_ids: None,
+                mesh_ranges: None,
+            };
+            // Invalidate Ivar
+            self.ivar_state.world = None;
+            self.ivar_state.build_status = BuildStatus::NotStarted;
+            self.ivar_state.cancel_flag.store(true, Ordering::Relaxed);
+            self.ivar_state.render_complete = false;
+            return Ok(());
+        }
+
+        let use_multi_draw = scene.prototypes.len() > 1;
+
+        // Create per-prototype GPU data
+        let prototype_gpu_data: Vec<PrototypeGpuData> = scene
+            .prototypes
+            .iter()
+            .enumerate()
+            .map(|(proto_id, proto)| {
+                let md = MeshData::from_core_mesh(&proto.mesh);
+
+                let vertex_buffer =
+                    self.device
+                        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                            label: Some(&format!("WS Proto {} VB", proto_id)),
+                            contents: bytemuck::cast_slice(&md.vertices),
+                            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                        });
+
+                let index_buffer =
+                    self.device
+                        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                            label: Some(&format!("WS Proto {} IB", proto_id)),
+                            contents: bytemuck::cast_slice(&md.indices),
+                            usage: wgpu::BufferUsages::INDEX,
+                        });
+
+                let triangle_material_buffer = md.triangle_material_ids.as_ref().map(|tri_mats| {
+                    self.device
+                        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                            label: Some(&format!("WS Proto {} TMB", proto_id)),
+                            contents: bytemuck::cast_slice(tri_mats),
+                            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                        })
+                });
+
+                PrototypeGpuData {
+                    vertex_buffer,
+                    index_buffer,
+                    num_indices: md.indices.len() as u32,
+                    num_vertices: md.vertices.len() as u32,
+                    prototype_id: proto_id,
+                    mesh_idx: proto_id,
+                    triangle_material_buffer,
+                    vertices: md.vertices,
+                }
+            })
+            .collect();
+
+        // Combined mesh_data for single-draw fallback and Ivar
+        let mesh_data = if scene.prototypes.len() == 1 {
+            MeshData::from_core_mesh(&scene.prototypes[0].mesh)
+        } else if !scene.instances().is_empty() {
+            let meshes_with_transforms: Vec<(&bif_core::Mesh, Mat4, usize)> = scene
+                .instances()
+                .iter()
+                .enumerate()
+                .filter_map(|(mesh_idx, inst)| {
+                    scene
+                        .prototypes
+                        .get(inst.prototype_id)
+                        .map(|proto| (proto.mesh.as_ref(), inst.model_matrix(), mesh_idx))
+                })
+                .collect();
+            MeshData::combine_with_transforms(&meshes_with_transforms)
+        } else {
+            let meshes_with_transforms: Vec<(&bif_core::Mesh, Mat4, usize)> = scene
+                .prototypes
+                .iter()
+                .enumerate()
+                .map(|(idx, proto)| (proto.mesh.as_ref(), Mat4::IDENTITY, idx))
+                .collect();
+            MeshData::combine_with_transforms(&meshes_with_transforms)
+        };
+
+        // Material table (use default for primitives)
+        let material_table = if scene.materials.is_empty() {
+            vec![crate::gpu_types::MaterialGpu::from_material(
+                &bif_core::Material::default(),
+                &self.gpu_textures,
+            )]
+        } else {
+            scene
+                .materials
+                .iter()
+                .map(|mat| {
+                    crate::gpu_types::MaterialGpu::from_material(mat.as_ref(), &self.gpu_textures)
+                })
+                .collect()
+        };
+        self.material_table_len = material_table.len() as u32;
+        self.material_table_buffer =
+            self.device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("WS Material Table Buffer"),
+                    contents: bytemuck::cast_slice(&material_table),
+                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                });
+
+        // Triangle material buffer
+        if let Some(ref tri_mats) = mesh_data.triangle_material_ids {
+            self.triangle_material_buffer =
+                self.device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("WS Triangle Material Buffer"),
+                        contents: bytemuck::cast_slice(tri_mats),
+                        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                    });
+            self.has_triangle_materials = true;
+        } else {
+            self.triangle_material_buffer =
+                self.device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("WS Triangle Material Buffer"),
+                        contents: bytemuck::cast_slice(&[0xFFFFFFFFu32]),
+                        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                    });
+            self.has_triangle_materials = false;
+        }
+
+        // Rebuild material + texture bind groups
+        self.material_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("WS Material Bind Group"),
+            layout: &self.material_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.material_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: self.material_table_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: self.triangle_material_buffer.as_entire_binding(),
+                },
+            ],
+        });
+
+        let texture_view_refs: Vec<&wgpu::TextureView> = self.gpu_textures.views.iter().collect();
+        self.texture_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("WS Texture Bind Group"),
+            layout: &self.texture_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureViewArray(&texture_view_refs),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&self.texture_sampler),
+                },
+            ],
+        });
+
+        // Vertex and index buffers (combined, for single-draw fallback)
+        self.vertex_buffer = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("WS Vertex Buffer"),
+                contents: bytemuck::cast_slice(&mesh_data.vertices),
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            });
+        self.index_buffer = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("WS Index Buffer"),
+                contents: bytemuck::cast_slice(&mesh_data.indices),
+                usage: wgpu::BufferUsages::INDEX,
+            });
+
+        // Build material index lookup
+        let material_index_by_name: HashMap<String, u32> = scene
+            .materials
+            .iter()
+            .enumerate()
+            .map(|(idx, mat)| (mat.name.clone(), idx as u32))
+            .collect();
+
+        // Generate instances
+        let mut instance_transforms = Vec::with_capacity(scene.instance_count());
+        let mut instance_material_ids = Vec::with_capacity(scene.instance_count());
+        let mut instance_prototype_ids = Vec::with_capacity(scene.instance_count());
+        let instances: Vec<InstanceData> = if scene.instances().is_empty() {
+            scene
+                .prototypes
+                .iter()
+                .enumerate()
+                .map(|(proto_id, proto)| {
+                    let model_matrix = Mat4::IDENTITY;
+                    instance_transforms.push(model_matrix);
+                    instance_prototype_ids.push(proto_id);
+                    let material_id = proto
+                        .material
+                        .as_ref()
+                        .and_then(|mat| material_index_by_name.get(&mat.name).copied())
+                        .unwrap_or(0);
+                    instance_material_ids.push(material_id);
+                    InstanceData {
+                        model_matrix: model_matrix.to_cols_array_2d(),
+                        material_id,
+                    }
+                })
+                .collect()
+        } else {
+            scene
+                .instances()
+                .iter()
+                .map(|inst| {
+                    let model_matrix = inst.model_matrix();
+                    instance_transforms.push(model_matrix);
+                    instance_prototype_ids.push(inst.prototype_id);
+                    let material_id = scene
+                        .prototypes
+                        .get(inst.prototype_id)
+                        .and_then(|proto| proto.material.as_ref())
+                        .and_then(|mat| material_index_by_name.get(&mat.name).copied())
+                        .unwrap_or(0);
+                    instance_material_ids.push(material_id);
+                    InstanceData {
+                        model_matrix: model_matrix.to_cols_array_2d(),
+                        material_id,
+                    }
+                })
+                .collect()
+        };
+
+        // Write instances to GPU
+        self.queue
+            .write_buffer(&self.instance_buffer, 0, bytemuck::cast_slice(&instances));
+
+        // Culling
+        let prototype_aabb = Aabb::from_points(mesh_data.bounds_min, mesh_data.bounds_max);
+        let instance_aabbs: Vec<Aabb> = instance_transforms
+            .iter()
+            .map(|transform| transform.transform_aabb(&prototype_aabb))
+            .collect();
+        let triangles_per_instance = if mesh_data.indices.is_empty() {
+            0
+        } else {
+            mesh_data.indices.len() as u32 / 3
+        };
+        self.culling
+            .set_prototype_aabb(&self.device, prototype_aabb, triangles_per_instance);
+        self.culling.instance_aabbs = instance_aabbs;
+        self.culling.visible_count = instances.len() as u32;
+
+        // Update renderer state
+        self.num_indices = mesh_data.indices.len() as u32;
+        self.num_instances = instances.len() as u32;
+        self.mesh_bounds_min = mesh_data.bounds_min;
+        self.mesh_bounds_max = mesh_data.bounds_max;
+        self.num_triangles = triangles_per_instance as u64 * instances.len() as u64;
+        self.mesh_data = mesh_data;
+        self.current_transforms = instance_transforms.clone();
+        self.instance_transforms = instance_transforms;
+        self.instance_material_ids = instance_material_ids;
+        self.instance_prototype_ids = instance_prototype_ids;
+        self.instance_prim_paths = scene
+            .instances()
+            .iter()
+            .enumerate()
+            .map(|(idx, inst)| {
+                let proto_name = scene
+                    .prototypes
+                    .get(inst.prototype_id)
+                    .map(|p| p.name.as_str())
+                    .unwrap_or("unknown");
+                format!("/{}/instance_{}", proto_name, idx)
+            })
+            .collect();
+        self.instance_animations = scene.instance_animations().to_vec();
+        self.last_evaluated_frame = 0.0;
+        self.scene_material = scene
+            .prototypes
+            .first()
+            .and_then(|p| p.material.as_ref())
+            .map(|m| (**m).clone())
+            .unwrap_or_default();
+        self.scene_materials = scene.materials.clone();
+        self.scene_cameras = scene.cameras.clone();
+
+        // Reset stale scene camera selection
+        if let crate::ivar_state::CameraSource::SceneCamera(idx) = self.viewport_camera_source {
+            if idx >= self.scene_cameras.len() {
+                self.viewport_camera_source = crate::ivar_state::CameraSource::Viewport;
+                self.camera_locked = false;
+            }
+        }
+
+        // Multi-draw state
+        self.multi_draw.prototype_gpu_data = prototype_gpu_data;
+        self.multi_draw.enabled = use_multi_draw;
+        self.multi_draw.rebuild_instance_groups(
+            &self.instance_transforms,
+            &self.instance_prototype_ids,
+            &self.instance_material_ids,
+        );
+
+        // Material uniform
+        self.material_uniform = MaterialUniform::from_material(&self.scene_material);
+        self.queue.write_buffer(
+            &self.material_buffer,
+            0,
+            bytemuck::cast_slice(&[self.material_uniform]),
+        );
+
+        // Invalidate Ivar
+        self.ivar_state.world = None;
+        self.ivar_state.build_status = BuildStatus::NotStarted;
+        self.ivar_state.cancel_flag.store(true, Ordering::Relaxed);
+        self.ivar_state.render_complete = false;
+
+        // Rebuild pick scene
+        self.rebuild_pick_scene();
+
+        log::info!(
+            "Working scene reloaded: {} protos, {} instances, {} tris",
+            self.working_scene.prototype_count(),
+            self.num_instances,
+            self.num_triangles
+        );
+
         Ok(())
     }
 
@@ -920,6 +1349,31 @@ impl Renderer {
             self.num_indices / 3,
             self.num_instances
         );
+
+        // Merge USD scene into working_scene so primitives added later coexist.
+        // Append prototypes and instances from the loaded scene.
+        for proto in &scene.prototypes {
+            self.working_scene
+                .add_prototype(proto.mesh.clone(), proto.name.clone());
+        }
+        for (inst, anim) in scene.instances_with_animations() {
+            if let Some(anim) = anim {
+                self.working_scene.add_animated_instance(
+                    inst.prototype_id,
+                    inst.transform.clone(),
+                    anim.clone(),
+                );
+            } else {
+                self.working_scene
+                    .add_instance(inst.prototype_id, inst.transform.clone());
+            }
+        }
+        for mat in &scene.materials {
+            self.working_scene.add_material((**mat).clone());
+        }
+        self.working_scene
+            .cameras
+            .extend(scene.cameras.iter().cloned());
 
         // Update lights from scene
         self.update_lights(&scene.lights);

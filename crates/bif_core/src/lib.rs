@@ -38,7 +38,10 @@ pub use scene::{
     Transform, TransformKeyframe,
 };
 pub use texture::{Texture, TextureCache, TextureError, TextureResult};
-pub use undo::{EditState, KeyframeCommand, TransformCommand, UndoCommand, UndoStack};
+pub use undo::{
+    CreatePrimitiveCommand, DeletePrimitiveCommand, EditState, KeyframeCommand, SceneOp,
+    TransformCommand, UndoCommand, UndoStack,
+};
 pub use usd::{load_usd, load_usda, load_usda_from_string};
 
 #[cfg(feature = "oiio")]

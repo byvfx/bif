@@ -6,7 +6,21 @@
 use std::collections::HashMap;
 use std::fmt;
 
+use crate::primitives::PrimitiveKind;
 use crate::scene::{AnimatedTransform, Transform, TransformKeyframe};
+
+/// A pending scene modification for undo/redo.
+#[derive(Debug, Clone)]
+pub enum SceneOp {
+    /// Add a primitive to the working scene.
+    AddPrimitive {
+        kind: PrimitiveKind,
+        size: f32,
+        name: String,
+    },
+    /// Remove a primitive from the working scene by prototype ID.
+    RemovePrimitive { proto_id: usize },
+}
 
 /// Mutable edit state that commands operate on.
 ///
@@ -17,6 +31,8 @@ pub struct EditState {
     pub transform_overrides: HashMap<usize, Transform>,
     /// Per-instance keyframe overrides (instance_index -> AnimatedTransform).
     pub keyframe_overrides: HashMap<usize, AnimatedTransform>,
+    /// Pending scene operations queued by undo/redo for the render loop to drain.
+    pub pending_scene_ops: Vec<SceneOp>,
 }
 
 /// A reversible editing command.
@@ -88,6 +104,72 @@ impl UndoCommand for KeyframeCommand {
 
     fn description(&self) -> &str {
         "Set Keyframe"
+    }
+}
+
+/// Command that creates a primitive in the working scene.
+#[derive(Debug)]
+pub struct CreatePrimitiveCommand {
+    /// Kind of primitive.
+    pub kind: PrimitiveKind,
+    /// Size parameter.
+    pub size: f32,
+    /// Unique name assigned to the prototype.
+    pub name: String,
+    /// Prototype ID assigned in the working scene.
+    pub proto_id: usize,
+}
+
+impl UndoCommand for CreatePrimitiveCommand {
+    fn execute(&self, state: &mut EditState) {
+        state.pending_scene_ops.push(SceneOp::AddPrimitive {
+            kind: self.kind,
+            size: self.size,
+            name: self.name.clone(),
+        });
+    }
+
+    fn undo(&self, state: &mut EditState) {
+        state.pending_scene_ops.push(SceneOp::RemovePrimitive {
+            proto_id: self.proto_id,
+        });
+    }
+
+    fn description(&self) -> &str {
+        "Create Primitive"
+    }
+}
+
+/// Command that deletes a primitive from the working scene.
+#[derive(Debug)]
+pub struct DeletePrimitiveCommand {
+    /// Kind of primitive (for redo = re-create).
+    pub kind: PrimitiveKind,
+    /// Size parameter.
+    pub size: f32,
+    /// Name that was assigned.
+    pub name: String,
+    /// Prototype ID that was removed.
+    pub proto_id: usize,
+}
+
+impl UndoCommand for DeletePrimitiveCommand {
+    fn execute(&self, state: &mut EditState) {
+        state.pending_scene_ops.push(SceneOp::RemovePrimitive {
+            proto_id: self.proto_id,
+        });
+    }
+
+    fn undo(&self, state: &mut EditState) {
+        state.pending_scene_ops.push(SceneOp::AddPrimitive {
+            kind: self.kind,
+            size: self.size,
+            name: self.name.clone(),
+        });
+    }
+
+    fn description(&self) -> &str {
+        "Delete Primitive"
     }
 }
 

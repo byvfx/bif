@@ -44,6 +44,7 @@ pub enum NodeGraphEvent {
     CreatePrimitive {
         kind: bif_core::PrimitiveKind,
         size: f32,
+        node_id: NodeId,
     },
     /// Select a node (for keyboard delete, property inspector, etc.)
     SelectNode(NodeId),
@@ -330,11 +331,8 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer {
         snarl: &mut Snarl<SceneNode>,
     ) {
         // Detect click on node body to select it
-        if ui.rect_contains_pointer(ui.max_rect())
-            && ui.input(|i| i.pointer.any_pressed())
-        {
-            self.events
-                .push(NodeGraphEvent::SelectNode(node_id));
+        if ui.rect_contains_pointer(ui.max_rect()) && ui.input(|i| i.pointer.any_pressed()) {
+            self.events.push(NodeGraphEvent::SelectNode(node_id));
         }
 
         let node = &mut snarl[node_id];
@@ -434,6 +432,7 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer {
                         self.events.push(NodeGraphEvent::CreatePrimitive {
                             kind: *kind,
                             size: *size,
+                            node_id,
                         });
                         *is_created = true;
                     }
