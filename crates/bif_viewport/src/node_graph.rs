@@ -45,6 +45,10 @@ pub enum NodeGraphEvent {
         kind: bif_core::PrimitiveKind,
         size: f32,
     },
+    /// Select a node (for keyboard delete, property inspector, etc.)
+    SelectNode(NodeId),
+    /// Delete a node by ID
+    DeleteNode(NodeId),
 }
 
 /// Pin types for node connections
@@ -325,6 +329,14 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer {
         _scale: f32,
         snarl: &mut Snarl<SceneNode>,
     ) {
+        // Detect click on node body to select it
+        if ui.rect_contains_pointer(ui.max_rect())
+            && ui.input(|i| i.pointer.any_pressed())
+        {
+            self.events
+                .push(NodeGraphEvent::SelectNode(node_id));
+        }
+
         let node = &mut snarl[node_id];
 
         match node {
@@ -559,6 +571,25 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer {
 
     fn disconnect(&mut self, from: &OutPin, to: &InPin, snarl: &mut Snarl<SceneNode>) {
         snarl.disconnect(from.id, to.id);
+    }
+
+    fn has_node_menu(&mut self, _node: &SceneNode) -> bool {
+        true
+    }
+
+    fn show_node_menu(
+        &mut self,
+        node: NodeId,
+        _inputs: &[InPin],
+        _outputs: &[OutPin],
+        ui: &mut egui::Ui,
+        _scale: f32,
+        _snarl: &mut Snarl<SceneNode>,
+    ) {
+        if ui.button("Delete").clicked() {
+            self.events.push(NodeGraphEvent::DeleteNode(node));
+            ui.close_menu();
+        }
     }
 }
 
@@ -836,7 +867,29 @@ pub fn render_node_graph(ui: &mut egui::Ui, state: &mut NodeGraphState) -> Vec<N
         );
     }
 
-    viewer.events
+    // Process selection and deletion events before returning
+    let mut events_out = Vec::new();
+    for event in viewer.events {
+        match &event {
+            NodeGraphEvent::SelectNode(id) => {
+                state.selected_node = Some(*id);
+            }
+            NodeGraphEvent::DeleteNode(id) => {
+                let id = *id;
+                if state.selected_node == Some(id) {
+                    state.selected_node = None;
+                }
+                state.snarl.remove_node(id);
+                // Pass through so renderer can clean up scene data
+                events_out.push(event);
+                continue;
+            }
+            _ => {}
+        }
+        events_out.push(event);
+    }
+
+    events_out
 }
 
 #[cfg(test)]
