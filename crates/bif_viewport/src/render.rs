@@ -1266,6 +1266,13 @@ impl Renderer {
                             log::error!("Failed to create primitive: {}", e);
                         }
                     }
+                    NodeGraphEvent::SelectNode(_) => {
+                        // Selection handled in render_node_graph
+                    }
+                    NodeGraphEvent::DeleteNode(node_id) => {
+                        log::info!("Node graph: Deleted node {:?}", node_id);
+                        // Scene cleanup will be handled in Phase 4
+                    }
                 }
             }
         }
