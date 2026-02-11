@@ -1312,13 +1312,18 @@ impl Renderer {
                                 node_id,
                                 proto_id
                             );
-                            if let Err(e) = self.remove_primitive(proto_id) {
-                                log::error!("Failed to remove primitive: {}", e);
-                            }
-                            // Re-index remaining entries: IDs above the removed one shift down
-                            for v in self.node_proto_map.values_mut() {
-                                if *v > proto_id {
-                                    *v -= 1;
+                            match self.remove_primitive(proto_id) {
+                                Ok(()) => {
+                                    // Re-index remaining entries: IDs above removed shift down
+                                    for v in self.node_proto_map.values_mut() {
+                                        if *v > proto_id {
+                                            *v -= 1;
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    log::error!("Failed to remove primitive: {}", e);
+                                    self.node_proto_map.insert(node_id, proto_id);
                                 }
                             }
                         } else {

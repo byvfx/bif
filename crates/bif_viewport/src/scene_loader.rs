@@ -199,9 +199,20 @@ impl Renderer {
                 .collect()
         };
 
-        // Write instances
-        self.queue
-            .write_buffer(&self.instance_buffer, 0, bytemuck::cast_slice(&instances));
+        // Write instances (truncate at buffer capacity)
+        if instances.len() > crate::MAX_INSTANCES as usize {
+            log::warn!(
+                "Instance count {} exceeds buffer capacity {}. Truncating.",
+                instances.len(),
+                crate::MAX_INSTANCES
+            );
+        }
+        let write_count = instances.len().min(crate::MAX_INSTANCES as usize);
+        self.queue.write_buffer(
+            &self.instance_buffer,
+            0,
+            bytemuck::cast_slice(&instances[..write_count]),
+        );
 
         // Compute prototype AABB for culling
         let prototype_aabb = Aabb::from_points(mesh_data.bounds_min, mesh_data.bounds_max);
@@ -214,7 +225,7 @@ impl Renderer {
         self.culling
             .set_prototype_aabb(&self.device, prototype_aabb, triangles_per_instance);
         self.culling.instance_aabbs = instance_aabbs;
-        self.culling.visible_count = instances.len() as u32;
+        self.culling.visible_count = write_count as u32;
 
         // Calculate world bounds for camera framing
         let world_bounds = scene.world_bounds();
@@ -232,10 +243,10 @@ impl Renderer {
 
         // Update renderer state
         self.num_indices = mesh_data.indices.len() as u32;
-        self.num_instances = instances.len() as u32;
+        self.num_instances = write_count as u32;
         self.mesh_bounds_min = mesh_data.bounds_min;
         self.mesh_bounds_max = mesh_data.bounds_max;
-        self.num_triangles = triangles_per_instance as u64 * instances.len() as u64;
+        self.num_triangles = triangles_per_instance as u64 * write_count as u64;
         self.mesh_data = mesh_data;
         self.current_transforms = instance_transforms.clone();
         self.instance_transforms = instance_transforms;
