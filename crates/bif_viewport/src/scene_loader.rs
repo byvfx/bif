@@ -438,6 +438,8 @@ impl Renderer {
             self.instance_prim_paths.clear();
             self.instance_animations = scene.instance_animations().to_vec();
             self.scene_cameras = scene.cameras.clone();
+            self.culling.instance_aabbs.clear();
+            self.culling.visible_count = 0;
             self.pick_scene = None;
             self.mesh_data = MeshData {
                 vertices: vec![],
