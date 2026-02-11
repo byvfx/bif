@@ -243,6 +243,13 @@ pub struct Renderer {
 
     // Viewport display toggles
     pub show_grid: bool,
+
+    /// Persistent working scene that accumulates all primitives and USD objects.
+    pub(crate) working_scene: bif_core::Scene,
+    /// Counters for generating unique primitive names (e.g. "Cube", "Cube_2").
+    pub(crate) primitive_name_counters: std::collections::HashMap<String, usize>,
+    /// Mapping from node graph NodeId to working_scene prototype ID.
+    pub(crate) node_proto_map: std::collections::HashMap<egui_snarl::NodeId, usize>,
 }
 
 impl Renderer {
@@ -788,6 +795,9 @@ impl Renderer {
             scene_cameras: vec![],
             gizmo_state: gizmo::GizmoState::new(),
             show_grid: true,
+            working_scene: bif_core::Scene::new("Working"),
+            primitive_name_counters: std::collections::HashMap::new(),
+            node_proto_map: std::collections::HashMap::new(),
         })
     }
 

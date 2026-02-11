@@ -19,6 +19,33 @@ impl Renderer {
         clear_color: wgpu::Color,
         window: &winit::window::Window,
     ) -> Result<()> {
+        // Process pending scene operations from undo/redo
+        if !self.edit_state.pending_scene_ops.is_empty() {
+            let ops: Vec<_> = self.edit_state.pending_scene_ops.drain(..).collect();
+            let mut needs_reload = false;
+            for op in ops {
+                match op {
+                    bif_core::SceneOp::AddPrimitive { kind, size, name } => {
+                        if let Err(e) = self.add_primitive_by_name(kind, size, &name) {
+                            log::error!("Undo/redo add primitive failed: {}", e);
+                        } else {
+                            needs_reload = false; // add_primitive_by_name already reloads
+                        }
+                    }
+                    bif_core::SceneOp::RemovePrimitive { proto_id } => {
+                        if self.working_scene.remove_prototype(proto_id) {
+                            needs_reload = true;
+                        }
+                    }
+                }
+            }
+            if needs_reload {
+                if let Err(e) = self.reload_working_scene() {
+                    log::error!("Failed to reload working scene after undo/redo: {}", e);
+                }
+            }
+        }
+
         // Poll for completed async IBL generation
         if let Some(result) = self.environment.poll_ibl_result() {
             match result {
@@ -1260,18 +1287,37 @@ impl Renderer {
                         let rotation_rad = rotation.to_radians();
                         self.update_environment_params(intensity, rotation_rad, show_background);
                     }
-                    NodeGraphEvent::CreatePrimitive { kind, size } => {
+                    NodeGraphEvent::CreatePrimitive {
+                        kind,
+                        size,
+                        node_id,
+                    } => {
                         log::info!("Node graph: Creating {:?} primitive (size={})", kind, size);
-                        if let Err(e) = self.load_primitive(kind, size) {
-                            log::error!("Failed to create primitive: {}", e);
+                        match self.load_primitive(kind, size) {
+                            Ok(proto_id) => {
+                                self.node_proto_map.insert(node_id, proto_id);
+                            }
+                            Err(e) => {
+                                log::error!("Failed to create primitive: {}", e);
+                            }
                         }
                     }
                     NodeGraphEvent::SelectNode(_) => {
                         // Selection handled in render_node_graph
                     }
                     NodeGraphEvent::DeleteNode(node_id) => {
-                        log::info!("Node graph: Deleted node {:?}", node_id);
-                        // Scene cleanup will be handled in Phase 4
+                        if let Some(proto_id) = self.node_proto_map.remove(&node_id) {
+                            log::info!(
+                                "Node graph: Deleting node {:?} → proto {}",
+                                node_id,
+                                proto_id
+                            );
+                            if let Err(e) = self.remove_primitive(proto_id) {
+                                log::error!("Failed to remove primitive: {}", e);
+                            }
+                        } else {
+                            log::info!("Node graph: Deleted node {:?} (no scene data)", node_id);
+                        }
                     }
                 }
             }

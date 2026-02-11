@@ -570,6 +570,68 @@ impl Scene {
         self.prototypes.len()
     }
 
+    /// Remove a prototype and all instances that reference it.
+    ///
+    /// Re-indexes remaining instances' prototype_ids to account for
+    /// the shift. Returns `true` if the prototype existed.
+    pub fn remove_prototype(&mut self, proto_id: usize) -> bool {
+        if proto_id >= self.prototypes.len() {
+            return false;
+        }
+
+        self.prototypes.remove(proto_id);
+
+        // Remove instances referencing this prototype (iterate in reverse to
+        // maintain correct indices while removing)
+        let mut i = self.instances.len();
+        while i > 0 {
+            i -= 1;
+            if self.instances[i].prototype_id == proto_id {
+                self.instances.remove(i);
+                self.instance_animations.remove(i);
+            } else if self.instances[i].prototype_id > proto_id {
+                self.instances[i].prototype_id -= 1;
+            }
+        }
+
+        // Re-index prototype IDs in remaining prototypes
+        for (new_id, proto) in self.prototypes.iter_mut().enumerate() {
+            // Need mutable access - Arc::make_mut is too heavy, just set via new Arc
+            if proto.id != new_id {
+                let mut p = (**proto).clone();
+                p.id = new_id;
+                *proto = Arc::new(p);
+            }
+        }
+
+        // Remove cameras that referenced instances we just deleted
+        self.cameras
+            .retain(|cam| cam.instance_index < self.instances.len());
+
+        true
+    }
+
+    /// Remove a single instance by index.
+    pub fn remove_instance(&mut self, instance_index: usize) -> bool {
+        if instance_index >= self.instances.len() {
+            return false;
+        }
+        self.instances.remove(instance_index);
+        self.instance_animations.remove(instance_index);
+
+        // Fix camera instance indices
+        for cam in &mut self.cameras {
+            if cam.instance_index > instance_index {
+                cam.instance_index -= 1;
+            }
+        }
+        self.cameras.retain(|cam| {
+            cam.instance_index != instance_index || instance_index < self.instances.len()
+        });
+
+        true
+    }
+
     /// Compute the world-space bounding box of all instances.
     pub fn world_bounds(&self) -> Aabb {
         let mut min = Vec3::splat(f32::INFINITY);
