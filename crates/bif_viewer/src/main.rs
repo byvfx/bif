@@ -483,34 +483,34 @@ impl ApplicationHandler for App {
                 }
 
                 if let (Some(renderer), Some(window)) = (&mut self.renderer, &self.window) {
-                    // Clear to dark blue
-                    let clear_color = wgpu::Color {
-                        r: 0.1,
-                        g: 0.2,
-                        b: 0.3,
-                        a: 1.0,
-                    };
+                    // Skip frame if minimized (0x0 surface on Windows)
+                    let size = window.inner_size();
+                    if size.width > 0 && size.height > 0 {
+                        let clear_color = wgpu::Color {
+                            r: 0.1,
+                            g: 0.2,
+                            b: 0.3,
+                            a: 1.0,
+                        };
 
-                    if let Err(e) = renderer.render(clear_color, window) {
-                        // Check if it's a surface error we can handle
-                        if let Some(surface_err) = e.downcast_ref::<wgpu::SurfaceError>() {
-                            match surface_err {
-                                wgpu::SurfaceError::Lost => {
-                                    // Surface lost, reconfigure
-                                    if let Some(renderer) = &mut self.renderer {
+                        if let Err(e) = renderer.render(clear_color, window) {
+                            if let Some(surface_err) = e.downcast_ref::<wgpu::SurfaceError>() {
+                                match surface_err {
+                                    wgpu::SurfaceError::Lost
+                                    | wgpu::SurfaceError::Outdated => {
                                         renderer.resize(renderer.size);
                                     }
+                                    wgpu::SurfaceError::OutOfMemory => {
+                                        log::error!("Out of memory!");
+                                        event_loop.exit();
+                                    }
+                                    _ => {
+                                        log::error!("Surface error: {:?}", surface_err);
+                                    }
                                 }
-                                wgpu::SurfaceError::OutOfMemory => {
-                                    log::error!("Out of memory!");
-                                    event_loop.exit();
-                                }
-                                _ => {
-                                    log::error!("Surface error: {:?}", surface_err);
-                                }
+                            } else {
+                                log::error!("Render error: {:?}", e);
                             }
-                        } else {
-                            log::error!("Render error: {:?}", e);
                         }
                     }
                 }
