@@ -372,14 +372,15 @@ mod tests {
 
     #[test]
     fn downscale_preserves_aspect_ratio() {
+        // Use small image to avoid allocating GBs in tests
         let img = HdrImage {
-            width: 16384,
-            height: 8192,
-            pixels: vec![[1.0, 1.0, 1.0]; 16384 * 8192],
+            width: 2048,
+            height: 1024,
+            pixels: vec![[1.0, 1.0, 1.0]; 2048 * 1024],
         };
-        let result = img.downscale_to_max_dim(8192);
-        assert_eq!(result.width, 8192);
-        assert_eq!(result.height, 4096);
-        assert_eq!(result.pixels.len(), (8192 * 4096) as usize);
+        let result = img.downscale_to_max_dim(1024);
+        assert_eq!(result.width, 1024);
+        assert_eq!(result.height, 512);
+        assert_eq!(result.pixels.len(), (1024 * 512) as usize);
     }
 }

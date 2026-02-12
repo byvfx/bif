@@ -1193,9 +1193,10 @@ impl Renderer {
                 if idx < self.current_transforms.len() {
                     self.current_transforms[idx] = mat;
                     self.update_visible_instances();
-                    // Reset Ivar accumulation during drag for instant feedback
+                    // Reset Ivar accumulation during drag (keep BVH, just clear buffer)
                     if self.ivar_state.mode == RenderMode::Ivar {
-                        self.invalidate_ivar_scene();
+                        let (_, _, vp_w, vp_h) = self.viewport_rect();
+                        self.ivar_state.reset_accumulation(vp_w as u32, vp_h as u32);
                     }
                 }
             }

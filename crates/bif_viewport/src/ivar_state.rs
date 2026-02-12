@@ -306,8 +306,8 @@ pub struct IvarState {
     pub mode: RenderMode,
     /// Accumulated image buffer.
     pub image_buffer: Option<ImageBuffer>,
-    /// List of buckets for current render.
-    pub buckets: Vec<Bucket>,
+    /// List of buckets for current render (Arc-shared with render threads).
+    pub buckets: Arc<Vec<Bucket>>,
     /// Number of buckets completed.
     pub buckets_completed: usize,
     /// Whether render is complete.
@@ -359,7 +359,7 @@ impl Default for IvarState {
         Self {
             mode: RenderMode::Vulkan,
             image_buffer: None,
-            buckets: Vec::new(),
+            buckets: Arc::new(Vec::new()),
             buckets_completed: 0,
             render_complete: false,
             cancel_flag: Arc::new(AtomicBool::new(false)),
@@ -380,7 +380,7 @@ impl Default for IvarState {
             normal_buffer: None,
             accumulation_buffer: None,
             accumulated_samples: 0,
-            target_spp: 64,
+            target_spp: 16,
         }
     }
 }
@@ -397,7 +397,7 @@ impl IvarState {
         // Clear state
         let pixel_count = (width * height) as usize;
         self.image_buffer = Some(ImageBuffer::new(width, height));
-        self.buckets = generate_buckets(width, height, DEFAULT_BUCKET_SIZE);
+        self.buckets = Arc::new(generate_buckets(width, height, DEFAULT_BUCKET_SIZE));
         self.buckets_completed = 0;
         self.render_complete = false;
         self.receiver = None;
@@ -510,7 +510,7 @@ mod tests {
     #[allow(clippy::field_reassign_with_default)]
     fn test_ivar_state_progress() {
         let mut state = IvarState::default();
-        state.buckets = generate_buckets(100, 100, 32);
+        state.buckets = Arc::new(generate_buckets(100, 100, 32));
         let total = state.buckets.len();
         state.buckets_completed = total / 2;
         assert!((state.progress() - 50.0).abs() < 1.0);
