@@ -838,6 +838,8 @@ impl Renderer {
             self.ivar_state.cancel_flag.store(true, Ordering::Relaxed);
             self.ivar_state.image_buffer = None;
             self.ivar_state.render_complete = false;
+            self.ivar_state.current_scale = 1;
+            self.ivar_state.last_interaction_time = None;
 
             // Update camera aspect ratio from viewport (excludes UI panels)
             let (_, _, vp_w, vp_h) = self.viewport_rect();

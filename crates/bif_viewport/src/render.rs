@@ -199,7 +199,7 @@ impl Renderer {
         let ivar_accumulated_spp = self.ivar_state.accumulated_samples;
         let mut ivar_target_spp = self.ivar_state.target_spp;
         let ivar_current_scale = self.ivar_state.current_scale;
-        let mut ivar_nav_quality = self.ivar_state.interaction_scale.trailing_zeros();
+        let mut ivar_nav_quality = self.ivar_state.interaction_quality;
 
         let full_output = self.egui_ctx.run(raw_input, |ctx| {
             if !show_ui {
@@ -1081,9 +1081,8 @@ impl Renderer {
                 self.ivar_state.render_complete = false;
             }
         }
-        // Update interaction scale from UI slider (exponent → power of 2)
-        let new_interaction_scale = 2u32.pow(ivar_nav_quality);
-        self.ivar_state.interaction_scale = new_interaction_scale;
+        // Update interaction quality from UI slider
+        self.ivar_state.interaction_quality = ivar_nav_quality;
         self.ui_left_panel_width = left_panel_width;
         self.ui_right_panel_width = right_panel_width;
         self.ui_top_panel_height = top_panel_height;
@@ -1227,7 +1226,7 @@ impl Renderer {
                     // Restart Ivar at interaction scale during drag
                     if self.ivar_state.mode == RenderMode::Ivar {
                         if self.ivar_state.world.is_some() {
-                            self.restart_ivar_at_scale(self.ivar_state.interaction_scale);
+                            self.restart_ivar_at_scale(self.ivar_state.interaction_scale());
                         }
                         self.ivar_state.last_interaction_time = Some(std::time::Instant::now());
                     }
@@ -1662,7 +1661,7 @@ impl Renderer {
             RenderMode::Ivar => {
                 // 1. Camera dirty → interaction mode at lowest scale
                 if self.ivar_state.check_camera_dirty(&self.camera) {
-                    let scale = self.ivar_state.interaction_scale;
+                    let scale = self.ivar_state.interaction_scale();
                     if self.ivar_state.world.is_some() {
                         self.restart_ivar_at_scale(scale);
                     } else {
@@ -1673,10 +1672,22 @@ impl Renderer {
                     self.ivar_state.last_interaction_time = Some(std::time::Instant::now());
                 }
 
-                // 2. Settle timer → refine to next resolution level
+                // 2. Poll for scene build completion
+                self.poll_scene_build();
+
+                // 3. Poll for completed buckets / pass completion (before settle timer
+                //    so is_pass_in_flight() reflects actual state)
+                self.poll_ivar_messages();
+
+                // 4. Settle timer → refine to next resolution level
                 if let Some(last_time) = self.ivar_state.last_interaction_time {
                     let elapsed_ms = last_time.elapsed().as_millis() as u32;
-                    let threshold = self.ivar_state.settle_timeout_ms;
+                    // Use shorter timeout for coarse→medium refinement
+                    let threshold = if self.ivar_state.current_scale >= 4 {
+                        self.ivar_state.settle_timeout_ms / 2
+                    } else {
+                        self.ivar_state.settle_timeout_ms
+                    };
                     if elapsed_ms >= threshold
                         && self.ivar_state.current_scale > 1
                         && !self.ivar_state.is_pass_in_flight()
@@ -1686,12 +1697,6 @@ impl Renderer {
                         self.ivar_state.last_interaction_time = Some(std::time::Instant::now());
                     }
                 }
-
-                // 3. Poll for scene build completion
-                self.poll_scene_build();
-
-                // 4. Poll for completed buckets / pass completion
-                self.poll_ivar_messages();
 
                 // 5. Full-res progressive: start next pass only at scale==1
                 if self.ivar_state.current_scale == 1
