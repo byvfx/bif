@@ -62,11 +62,11 @@ pub fn create_cube(size: f32) -> Mesh {
         [0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0],
     ];
 
-    // Two triangles per face (CW winding for USD convention)
+    // Two triangles per face (CW winding when viewed from outside)
     let mut indices = Vec::with_capacity(36);
     for face in 0..6u32 {
         let base = face * 4;
-        indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+        indices.extend_from_slice(&[base, base + 2, base + 1, base, base + 3, base + 2]);
     }
 
     Mesh::new_with_uvs(positions, indices, Some(normals), Some(uvs))

@@ -1132,7 +1132,11 @@ impl Renderer {
             bytemuck::cast_slice(&instances[..write_count]),
         );
 
-        log::info!("Created {} instances from USD scene (wrote {})", instances.len(), write_count);
+        log::info!(
+            "Created {} instances from USD scene (wrote {})",
+            instances.len(),
+            write_count
+        );
 
         self.instance_material_ids = instance_material_ids;
         self.instance_prototype_ids = instance_prototype_ids;

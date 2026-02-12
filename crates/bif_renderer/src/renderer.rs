@@ -29,6 +29,8 @@ pub struct RenderConfig {
     pub environment: Option<Arc<HdriEnvironment>>,
     /// Explicit lights (USD lights) for NEE sampling
     pub lights: Arc<LightList>,
+    /// Progressive pass number (XORed into RNG seed for unique noise per pass).
+    pub pass_number: u32,
 }
 
 /// Compute the color seen by a ray.
@@ -518,6 +520,7 @@ mod tests {
             use_sky_gradient: false,
             environment: None,
             lights: Arc::new(LightList::new()),
+            pass_number: 0,
         };
 
         let mut rng = StdRng::seed_from_u64(42);

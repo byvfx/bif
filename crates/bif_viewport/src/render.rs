@@ -192,12 +192,12 @@ impl Renderer {
 
         // Ivar state for UI
         let mut render_mode = self.ivar_state.mode;
-        let ivar_progress = self.ivar_state.progress();
         let ivar_buckets_completed = self.ivar_state.buckets_completed;
         let ivar_total_buckets = self.ivar_state.buckets.len();
         let ivar_elapsed = self.ivar_state.elapsed_secs();
         let ivar_render_complete = self.ivar_state.render_complete;
-        let ivar_spp = self.ivar_state.samples_per_pixel;
+        let ivar_accumulated_spp = self.ivar_state.accumulated_samples;
+        let mut ivar_target_spp = self.ivar_state.target_spp;
 
         let full_output = self.egui_ctx.run(raw_input, |ctx| {
             if !show_ui {
@@ -262,25 +262,50 @@ impl Renderer {
                                 ui.colored_label(egui::Color32::RED, "⚠ Scene build failed");
                             }
                             BuildStatus::Complete => {
-                                // Scene is built, show render progress
-
-                                // Progress bar
-                                let progress_bar = egui::ProgressBar::new(ivar_progress / 100.0)
-                                    .text(format!("{:.1}%", ivar_progress));
+                                // Progressive SPP progress
+                                let spp_progress = if ivar_target_spp > 0 {
+                                    ivar_accumulated_spp as f32 / ivar_target_spp as f32
+                                } else {
+                                    0.0
+                                };
+                                let progress_bar = egui::ProgressBar::new(spp_progress)
+                                    .text(format!(
+                                        "{}/{} SPP",
+                                        ivar_accumulated_spp, ivar_target_spp
+                                    ));
                                 ui.add(progress_bar);
 
-                                // Stats
-                                ui.label(format!(
-                                    "Buckets: {} / {}",
-                                    ivar_buckets_completed, ivar_total_buckets
-                                ));
-                                ui.label(format!("SPP: {}", ivar_spp));
+                                // Current pass bucket progress
+                                if !ivar_render_complete && ivar_total_buckets > 0 {
+                                    let bucket_frac =
+                                        ivar_buckets_completed as f32 / ivar_total_buckets as f32;
+                                    ui.add(
+                                        egui::ProgressBar::new(bucket_frac)
+                                            .text(format!(
+                                                "Pass {}: {}/{}",
+                                                ivar_accumulated_spp,
+                                                ivar_buckets_completed,
+                                                ivar_total_buckets
+                                            ))
+                                            .desired_width(ui.available_width()),
+                                    );
+                                }
+
+                                // Target SPP slider
+                                ui.horizontal(|ui| {
+                                    ui.label("Target:");
+                                    ui.add(
+                                        egui::Slider::new(&mut ivar_target_spp, 1..=256)
+                                            .text("SPP"),
+                                    );
+                                });
+
                                 ui.label(format!("Time: {:.1}s", ivar_elapsed));
 
                                 if ivar_render_complete {
-                                    ui.colored_label(egui::Color32::GREEN, "✓ Render Complete");
-                                } else if ivar_buckets_completed > 0 {
-                                    ui.colored_label(egui::Color32::YELLOW, "⟳ Rendering...");
+                                    ui.colored_label(egui::Color32::GREEN, "Render Complete");
+                                } else if ivar_accumulated_spp > 0 {
+                                    ui.colored_label(egui::Color32::YELLOW, "Refining...");
                                 }
                             }
                         }
@@ -311,8 +336,6 @@ impl Renderer {
                             });
                         }
                         ui.label("↻ Rebuild if geometry changes");
-
-                        // TODO: Add progressive multi-pass rendering (1 SPP preview → full SPP)
                     }
 
                     ui.separator();
@@ -1025,6 +1048,13 @@ impl Renderer {
 
         // Update gnomon size from UI
         self.gnomon.size = gnomon_size;
+        // Update target SPP from UI (may resume rendering if increased)
+        if ivar_target_spp != self.ivar_state.target_spp {
+            self.ivar_state.target_spp = ivar_target_spp;
+            if ivar_target_spp > self.ivar_state.accumulated_samples {
+                self.ivar_state.render_complete = false;
+            }
+        }
         self.ui_left_panel_width = left_panel_width;
         self.ui_right_panel_width = right_panel_width;
         self.ui_top_panel_height = top_panel_height;
@@ -1163,6 +1193,10 @@ impl Renderer {
                 if idx < self.current_transforms.len() {
                     self.current_transforms[idx] = mat;
                     self.update_visible_instances();
+                    // Reset Ivar accumulation during drag for instant feedback
+                    if self.ivar_state.mode == RenderMode::Ivar {
+                        self.invalidate_ivar_scene();
+                    }
                 }
             }
         }
@@ -1590,21 +1624,34 @@ impl Renderer {
                 }
             }
             RenderMode::Ivar => {
-                // Check camera dirty and restart render if needed
-                if self.ivar_state.check_camera_dirty(&self.camera)
-                    && !self.ivar_state.render_complete
-                {
+                // 1. Camera dirty → reset accumulation and restart
+                if self.ivar_state.check_camera_dirty(&self.camera) {
                     log::info!("Camera moved - restarting Ivar render");
                     self.start_ivar_render();
                 }
 
-                // Poll for scene build completion
+                // 2. Poll for scene build completion
                 self.poll_scene_build();
 
-                // Poll for completed buckets
+                // 3. Poll for completed buckets / pass completion
                 self.poll_ivar_messages();
 
-                // Upload current image buffer to texture (uses selected AOV channel)
+                // 4. If world built + no pass in flight + needs more → next pass
+                if self.ivar_state.world.is_some()
+                    && !self.ivar_state.is_pass_in_flight()
+                    && self.ivar_state.needs_more_passes()
+                {
+                    self.start_progressive_pass();
+                }
+
+                // 5. If no world + not started → build scene
+                if self.ivar_state.world.is_none()
+                    && self.ivar_state.build_status == BuildStatus::NotStarted
+                {
+                    self.start_ivar_render();
+                }
+
+                // 6. Upload current image buffer to texture (uses selected AOV channel)
                 self.upload_ivar_pixels();
 
                 // Render fullscreen quad with Ivar texture

@@ -24,6 +24,9 @@ pub enum HdrError {
 
 pub type HdrResult<T> = Result<T, HdrError>;
 
+/// Maximum IBL dimension (width or height) before automatic downscale.
+pub const MAX_IBL_DIMENSION: u32 = 8192;
+
 /// An HDR image stored as linear RGB f32 pixels.
 #[derive(Clone)]
 pub struct HdrImage {
@@ -210,6 +213,36 @@ impl HdrImage {
     pub fn luminance(rgb: [f32; 3]) -> f32 {
         0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]
     }
+
+    /// Downscale image if either dimension exceeds `max_dim`.
+    ///
+    /// Preserves aspect ratio using bilinear resampling.
+    /// Returns clone unchanged if already within limits.
+    pub fn downscale_to_max_dim(&self, max_dim: u32) -> Self {
+        let max_side = self.width.max(self.height);
+        if max_side <= max_dim {
+            return self.clone();
+        }
+
+        let scale = max_dim as f32 / max_side as f32;
+        let new_w = ((self.width as f32 * scale).round() as u32).max(1);
+        let new_h = ((self.height as f32 * scale).round() as u32).max(1);
+
+        let mut pixels = Vec::with_capacity((new_w * new_h) as usize);
+        for y in 0..new_h {
+            for x in 0..new_w {
+                let u = (x as f32 + 0.5) / new_w as f32;
+                let v = (y as f32 + 0.5) / new_h as f32;
+                pixels.push(self.sample_uv(u, v));
+            }
+        }
+
+        Self {
+            width: new_w,
+            height: new_h,
+            pixels,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -322,5 +355,31 @@ mod tests {
             "Up direction should map to top (v~0), got v={}",
             v
         );
+    }
+
+    #[test]
+    fn downscale_noop_when_small() {
+        let img = HdrImage {
+            width: 512,
+            height: 256,
+            pixels: vec![[1.0, 0.5, 0.0]; 512 * 256],
+        };
+        let result = img.downscale_to_max_dim(8192);
+        assert_eq!(result.width, 512);
+        assert_eq!(result.height, 256);
+        assert_eq!(result.pixels.len(), 512 * 256);
+    }
+
+    #[test]
+    fn downscale_preserves_aspect_ratio() {
+        let img = HdrImage {
+            width: 16384,
+            height: 8192,
+            pixels: vec![[1.0, 1.0, 1.0]; 16384 * 8192],
+        };
+        let result = img.downscale_to_max_dim(8192);
+        assert_eq!(result.width, 8192);
+        assert_eq!(result.height, 4096);
+        assert_eq!(result.pixels.len(), (8192 * 4096) as usize);
     }
 }

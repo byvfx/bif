@@ -1216,6 +1216,11 @@ impl Renderer {
         };
         self.undo_stack.push(Box::new(cmd), &mut self.edit_state);
         self.apply_transform_override(instance_index);
+
+        // Invalidate Ivar scene so transform change is reflected
+        if self.ivar_state.mode == ivar_state::RenderMode::Ivar {
+            self.invalidate_ivar_scene();
+        }
     }
 
     /// Undo the last command. Returns description if successful.

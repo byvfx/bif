@@ -229,12 +229,9 @@ See [MILESTONES.md](MILESTONES.md) for complete history and future plans.
 
 ## Contributing
 
-BIF is in active development. Contributions welcome in:
+BIF is in active development.
 
-- Rust performance optimization
-- Embree integration
-- USD/MaterialX workflows
-- Testing and documentation
+- no contributions at this time, but feel free to open issues or reach out if you're interested in collaborating!
 
 See [MILESTONES.md](MILESTONES.md) for upcoming work.
 
