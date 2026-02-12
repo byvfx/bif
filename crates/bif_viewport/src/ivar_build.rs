@@ -484,17 +484,16 @@ impl Renderer {
             // Clear receiver
             self.ivar_state.build_receiver = None;
 
-            // Now start the actual render
+            // Start render at current scale (respects interaction state during build)
             log::info!("Starting Ivar render with built scene");
-            self.start_ivar_render();
+            self.restart_ivar_at_scale(self.ivar_state.current_scale);
         }
     }
 
-    /// Create Ivar camera from viewport camera
-    fn create_ivar_camera(&self) -> bif_renderer::Camera {
-        let (_, _, vp_w, vp_h) = self.viewport_rect();
+    /// Create Ivar camera at explicit resolution.
+    fn create_ivar_camera_at_resolution(&self, width: u32, height: u32) -> bif_renderer::Camera {
         let mut camera = bif_renderer::Camera::new()
-            .with_resolution(vp_w as u32, vp_h as u32)
+            .with_resolution(width, height)
             .with_position(self.camera.position, self.camera.target, Vec3::Y)
             .with_lens(
                 self.camera.fov_y.to_degrees(),
@@ -505,6 +504,12 @@ impl Renderer {
 
         camera.initialize();
         camera
+    }
+
+    /// Create Ivar camera from viewport camera at full resolution.
+    fn create_ivar_camera(&self) -> bif_renderer::Camera {
+        let (_, _, vp_w, vp_h) = self.viewport_rect();
+        self.create_ivar_camera_at_resolution(vp_w as u32, vp_h as u32)
     }
 
     /// Collect unique texture paths from current scene materials.
@@ -577,6 +582,53 @@ impl Renderer {
         self.start_progressive_pass();
     }
 
+    /// Restart Ivar rendering at a specific resolution scale without rebuilding BVH.
+    ///
+    /// Scale is a divisor: 1 = full res, 2 = half, 4 = quarter, 8 = eighth.
+    /// Cancels any in-flight pass, recreates texture at scaled size, starts new pass.
+    pub(crate) fn restart_ivar_at_scale(&mut self, scale: u32) {
+        let Some(_) = self.ivar_state.world.as_ref() else {
+            return;
+        };
+
+        let (_, _, vp_w, vp_h) = self.viewport_rect();
+        let scaled_w = (vp_w as u32 / scale).max(1);
+        let scaled_h = (vp_h as u32 / scale).max(1);
+
+        // Reset accumulation at scaled resolution
+        self.ivar_state.reset_accumulation(scaled_w, scaled_h);
+        self.ivar_state.buckets = Arc::new(bif_renderer::generate_buckets(
+            scaled_w,
+            scaled_h,
+            bif_renderer::DEFAULT_BUCKET_SIZE,
+        ));
+        self.ivar_state.current_scale = scale;
+
+        // Recreate texture at scaled size
+        let (tex, view) =
+            crate::ivar_renderer::create_ivar_texture(&self.device, (scaled_w, scaled_h));
+        self.ivar_texture = tex;
+        self.ivar_texture_view = view;
+        self.ivar_bind_group = crate::ivar_renderer::create_ivar_bind_group(
+            &self.device,
+            &self.ivar_bind_group_layout,
+            &self.ivar_texture_view,
+            &self.ivar_sampler,
+        );
+
+        // Save camera snapshot
+        self.ivar_state.last_camera_snapshot =
+            Some(crate::ivar_state::CameraSnapshot::from_camera(&self.camera));
+
+        log::info!(
+            "Restarting Ivar at 1/{} scale ({}x{})",
+            scale,
+            scaled_w,
+            scaled_h
+        );
+        self.start_progressive_pass();
+    }
+
     /// Start a single progressive pass (1 SPP) in background thread.
     ///
     /// Requires `ivar_state.world` already built.
@@ -595,7 +647,12 @@ impl Renderer {
         self.ivar_state.receiver = Some(rx);
         self.ivar_state.buckets_completed = 0;
 
-        let ivar_camera = self.create_ivar_camera();
+        // Use image buffer dimensions (may be scaled) for camera ray generation
+        let ivar_camera = if let Some(ref img) = self.ivar_state.image_buffer {
+            self.create_ivar_camera_at_resolution(img.width, img.height)
+        } else {
+            self.create_ivar_camera()
+        };
         let config = RenderConfig {
             samples_per_pixel: 1, // 1 SPP per progressive pass
             max_depth: self.ivar_state.max_depth,
