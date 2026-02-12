@@ -1,6 +1,6 @@
-# Session Handoff - February 10, 2026
+# Session Handoff - February 11, 2026
 
-**Last Updated:** Bug fix session — 5 bugs + code review critical fixes
+**Last Updated:** 3 bug fixes + progressive Ivar viewport
 **Next Milestone:** M21 Point Instancing + Scattering
 **Project:** BIF - VFX Scene Assembler & Renderer
 
@@ -12,12 +12,30 @@
 |--------|---------|
 | Complete | Milestones 0-20 + post-M20 polish + bug fixes |
 | Current | M21 Point Instancing + Scattering |
-| Tests | 41 bif_math passing (bif_core needs USD DLLs) |
+| Tests | 200+ passing (all crates) |
 | Performance | 60 FPS viewport, 10K instances with LOD |
 
 ---
 
 ## Recent Work
+
+### Bug Fixes + Progressive Ivar (Feb 11, 2026)
+
+3 bugs + 1 feature:
+
+| Item | Fix | Key Files |
+|------|-----|-----------|
+| Cube normals | CW winding fix (was CCW, pipeline expects CW) | `primitives.rs` |
+| HDR resolution | Auto-downscale >8192px with bilinear resampling | `hdr.rs`, `environment_manager.rs` |
+| Transform→Ivar | Use `current_transforms` not `instance_transforms`, invalidate on edit | `ivar_build.rs`, `lib.rs`, `render.rs` |
+| Progressive Ivar | 1 SPP/pass accumulation, camera/transform reset, UI progress | `ivar_state.rs`, `ivar_build.rs`, `render.rs` |
+
+**Progressive Ivar architecture:**
+- `start_progressive_pass()` renders 1 SPP, sends `PassComplete` on finish
+- `poll_ivar_messages()` accumulates into running sum, divides by pass count for display
+- Main loop auto-starts next pass when idle, until `target_spp` reached
+- Camera/transform changes call `reset_accumulation()` → instant restart
+- UI shows `accumulated_samples/target_spp` progress bar + target slider
 
 ### Bug Fix Session (Feb 10, 2026)
 
@@ -31,23 +49,6 @@
 | 4 | Multi-object persistence: working_scene, reload_working_scene, undo | 7 files |
 | 5 | Camera dropdown fix (solved by Phase 4 persistence) | verified in `render.rs` |
 
-**Key architecture change:** `Renderer` now has a `working_scene: Scene` that accumulates all primitives and USD objects. `reload_working_scene()` rebuilds all GPU state from it. This replaces the old pattern where each `load_primitive()` call created an isolated scene.
-
-**Code review critical fixes:**
-- `delete_selected()` → returns `Option<NodeId>`, callers emit `DeleteNode` (was leaking scene data)
-- `remove_instance`/`remove_prototype` camera retain/re-index logic fixed
-- USD merge remaps proto IDs + camera instance indices via offsets
-- Instance buffer truncated at MAX_INSTANCES with warning
-
-### Post-M20: Ground Grid, Scene Cameras, Ivar Fix (Feb 7, 2026)
-
-| Item | Description | Key Files |
-|------|-------------|-----------|
-| Ivar fix | Render uses viewport rect not full window | `ivar_build.rs` |
-| Ground grid | Infinite XZ grid, anti-aliased, distance fade | `grid.wgsl`, `grid.rs` |
-| Scene cameras | Camera prims usable as render cameras | `scene.rs`, `ivar_state.rs`, `render.rs` |
-| Code review | 5 fixes: grid depth/order, ivar bind group, shader sync, stale cam, names | 7 files |
-
 ---
 
 ## Current State
@@ -55,35 +56,22 @@
 | Metric | Value |
 |--------|-------|
 | Build (dev) | ~10s |
-| Tests | 41+ passing (bif_math) |
+| Tests | 200+ passing |
 | Vulkan FPS | 60 (VSync with Fifo) |
 | Crates | 6 (math, core, renderer, viewport, viewer, maketx) |
 
 ### What Works
 
+**Progressive Ivar (this session):**
+- Switch to Ivar → 1 SPP fast preview → progressively refines
+- Camera move after render completes → resets and re-renders
+- Transform edits in property inspector → Ivar re-renders with new position
+- SPP progress bar + target slider (1-256)
+
 **Bug Fixes (this session):**
-- Multiple primitives coexist (working_scene persistence)
-- Node deletion removes from scene + undo support
-- Grid toggle in toolbar
-- Surface error on minimize handled
-- Camera dropdown works with dynamically added cameras
-
-**Post-M20 Features:**
-- Infinite ground grid (1m minor, 10m major, axis colors, depth-correct)
-- Ivar render matches viewport aspect ratio (no squeeze)
-- Camera primitives appear in camera dropdown, sync viewport when selected
-- Scene cameras follow animation during playback
-
-**Scene Interactivity (M20):**
-- Click viewport to select instance (Embree raycast)
-- Orange highlight on selected instance
-- Translate gizmo with colored X/Y/Z axes
-- Editable TRS in property inspector
-- Undo/Redo (Ctrl+Z / Ctrl+Shift+Z)
-- Set keyframes (K key), diamond markers on timeline
-- Procedural cube/sphere/camera in node graph
-- Orthographic views (Top/Front/Right/etc.)
-- Export transform edits as USD sublayer
+- Cube normals face outward correctly
+- HDR >8192px auto-downscaled with warning
+- Transform edits update Ivar render
 
 ### Known Issues
 
