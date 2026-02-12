@@ -1,6 +1,6 @@
-# Session Handoff - February 11, 2026
+# Session Handoff - February 12, 2026
 
-**Last Updated:** 3 bug fixes + progressive Ivar viewport
+**Last Updated:** Code review fixes for Ivar navigation preview
 **Next Milestone:** M21 Point Instancing + Scattering
 **Project:** BIF - VFX Scene Assembler & Renderer
 
@@ -12,12 +12,27 @@
 |--------|---------|
 | Complete | Milestones 0-20 + post-M20 polish + bug fixes |
 | Current | M21 Point Instancing + Scattering |
-| Tests | 200+ passing (all crates) |
+| Tests | 200+ passing (all crates, +7 new ivar_state tests) |
 | Performance | 60 FPS viewport, 10K instances with LOD |
 
 ---
 
 ## Recent Work
+
+### Code Review Fixes (Feb 12, 2026)
+
+Fixed 9 issues from VFX code review of Ivar navigation preview:
+
+| Fix | Impact |
+|-----|--------|
+| Skip GPU texture recreation when dims unchanged | Eliminates 60+/sec allocations during drag |
+| Poll messages before settle timer | Accurate is_pass_in_flight state |
+| `start_ivar_render` delegates to `restart_ivar_at_scale(1)` | -30 lines duplication |
+| Rounded f32 division for scaled dims | No aspect ratio drift |
+| `interaction_quality` exponent replaces `interaction_scale` | No fragile trailing_zeros |
+| Reset scale state on resize | Prevents stale scale after viewport resize |
+| Skip AOV alloc at reduced scale | Less memory churn during navigation |
+| Shorter settle timeout for coarse refinement | 150ms for >=1/4, 300ms for rest |
 
 ### Interactive Ivar Navigation Preview (Feb 11, 2026 — Session 2)
 
@@ -25,12 +40,12 @@ Progressive resolution refinement during camera orbit/pan:
 
 | Component | Details |
 |-----------|---------|
-| Interaction | Renders at `interaction_scale` (1/4 default) with Nearest sampler |
-| Settle timer | Every 300ms doubles resolution (1/8→1/4→1/2→full) |
+| Interaction | Renders at `interaction_quality` (exponent 2 = 1/4 default) with Nearest sampler |
+| Settle timer | Doubles resolution on settle (1/8→1/4→1/2→full), 150ms coarse / 300ms fine |
 | Full-res | Progressive accumulation starts only at scale==1 |
 | UI | Nav Quality slider (1/2, 1/4, 1/8) + "Preview: 1/N" label |
 
-Key method: `restart_ivar_at_scale(scale)` — cancels in-flight pass, creates scaled texture, starts 1 SPP.
+Key method: `restart_ivar_at_scale(scale)` — cancels in-flight pass, creates scaled texture (if dims changed), starts 1 SPP.
 
 ### Bug Fixes + Progressive Ivar (Feb 11, 2026 — Session 1)
 
