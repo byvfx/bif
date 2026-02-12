@@ -19,22 +19,24 @@
 
 ## Recent Work
 
-### Bug Fixes + Progressive Ivar (Feb 11, 2026)
+### Interactive Ivar Navigation Preview (Feb 11, 2026 — Session 2)
 
-3 bugs + 1 feature:
+Progressive resolution refinement during camera orbit/pan:
 
-| Item | Fix | Key Files |
-|------|-----|-----------|
-| Cube normals | CW winding fix (was CCW, pipeline expects CW) | `primitives.rs` |
-| HDR resolution | Auto-downscale >8192px with bilinear resampling | `hdr.rs`, `environment_manager.rs` |
-| Transform→Ivar | Use `current_transforms` not `instance_transforms`, invalidate on edit | `ivar_build.rs`, `lib.rs`, `render.rs` |
-| Progressive Ivar | 1 SPP/pass accumulation, camera/transform reset, UI progress | `ivar_state.rs`, `ivar_build.rs`, `render.rs` |
+| Component | Details |
+|-----------|---------|
+| Interaction | Renders at `interaction_scale` (1/4 default) with Nearest sampler |
+| Settle timer | Every 300ms doubles resolution (1/8→1/4→1/2→full) |
+| Full-res | Progressive accumulation starts only at scale==1 |
+| UI | Nav Quality slider (1/2, 1/4, 1/8) + "Preview: 1/N" label |
 
-**Progressive Ivar architecture:**
-- `start_progressive_pass()` renders 1 SPP, sends `PassComplete` on finish
-- `poll_ivar_messages()` accumulates into running sum, divides by pass count for display
-- Main loop auto-starts next pass when idle, until `target_spp` reached
-- Camera/transform changes call `reset_accumulation()` → instant restart
+Key method: `restart_ivar_at_scale(scale)` — cancels in-flight pass, creates scaled texture, starts 1 SPP.
+
+### Bug Fixes + Progressive Ivar (Feb 11, 2026 — Session 1)
+
+3 bugs + progressive accumulation:
+
+- Camera/transform changes call `restart_ivar_at_scale()` → low-res preview, then refine
 - UI shows `accumulated_samples/target_spp` progress bar + target slider
 
 ### Bug Fix Session (Feb 10, 2026)
