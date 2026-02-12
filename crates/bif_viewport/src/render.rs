@@ -198,6 +198,8 @@ impl Renderer {
         let ivar_render_complete = self.ivar_state.render_complete;
         let ivar_accumulated_spp = self.ivar_state.accumulated_samples;
         let mut ivar_target_spp = self.ivar_state.target_spp;
+        let ivar_current_scale = self.ivar_state.current_scale;
+        let mut ivar_nav_quality = self.ivar_state.interaction_scale.trailing_zeros();
 
         let full_output = self.egui_ctx.run(raw_input, |ctx| {
             if !show_ui {
@@ -299,6 +301,30 @@ impl Renderer {
                                             .text("SPP"),
                                     );
                                 });
+
+                                // Navigation preview quality slider
+                                ui.horizontal(|ui| {
+                                    ui.label("Nav Quality:");
+                                    ui.add(
+                                        egui::Slider::new(&mut ivar_nav_quality, 1..=3)
+                                            .custom_formatter(|v, _| {
+                                                match v as u32 {
+                                                    1 => "1/2".to_string(),
+                                                    2 => "1/4".to_string(),
+                                                    3 => "1/8".to_string(),
+                                                    _ => format!("1/{}", 2u32.pow(v as u32)),
+                                                }
+                                            }),
+                                    );
+                                });
+
+                                // Show current preview scale when not at full res
+                                if ivar_current_scale > 1 {
+                                    ui.colored_label(
+                                        egui::Color32::YELLOW,
+                                        format!("Preview: 1/{}", ivar_current_scale),
+                                    );
+                                }
 
                                 ui.label(format!("Time: {:.1}s", ivar_elapsed));
 
@@ -1055,6 +1081,9 @@ impl Renderer {
                 self.ivar_state.render_complete = false;
             }
         }
+        // Update interaction scale from UI slider (exponent → power of 2)
+        let new_interaction_scale = 2u32.pow(ivar_nav_quality);
+        self.ivar_state.interaction_scale = new_interaction_scale;
         self.ui_left_panel_width = left_panel_width;
         self.ui_right_panel_width = right_panel_width;
         self.ui_top_panel_height = top_panel_height;
@@ -1078,6 +1107,8 @@ impl Renderer {
         // Handle mode switch to Ivar - start render if needed
         if mode_changed && render_mode == RenderMode::Ivar {
             log::info!("Switched to Ivar mode - starting render");
+            self.ivar_state.current_scale = 1;
+            self.ivar_state.last_interaction_time = None;
             self.start_ivar_render();
         }
 
@@ -1193,10 +1224,12 @@ impl Renderer {
                 if idx < self.current_transforms.len() {
                     self.current_transforms[idx] = mat;
                     self.update_visible_instances();
-                    // Reset Ivar accumulation during drag (keep BVH, just clear buffer)
+                    // Restart Ivar at interaction scale during drag
                     if self.ivar_state.mode == RenderMode::Ivar {
-                        let (_, _, vp_w, vp_h) = self.viewport_rect();
-                        self.ivar_state.reset_accumulation(vp_w as u32, vp_h as u32);
+                        if self.ivar_state.world.is_some() {
+                            self.restart_ivar_at_scale(self.ivar_state.interaction_scale);
+                        }
+                        self.ivar_state.last_interaction_time = Some(std::time::Instant::now());
                     }
                 }
             }
@@ -1278,6 +1311,8 @@ impl Renderer {
                         log::info!("Node graph: Starting render with {} SPP", spp);
                         self.ivar_state.samples_per_pixel = spp;
                         self.ivar_state.mode = RenderMode::Ivar;
+                        self.ivar_state.current_scale = 1;
+                        self.ivar_state.last_interaction_time = None;
                         self.start_ivar_render();
                     }
                     NodeGraphEvent::ConvertTexturesToTx => {
@@ -1625,34 +1660,58 @@ impl Renderer {
                 }
             }
             RenderMode::Ivar => {
-                // 1. Camera dirty → reset accumulation and restart
+                // 1. Camera dirty → interaction mode at lowest scale
                 if self.ivar_state.check_camera_dirty(&self.camera) {
-                    log::info!("Camera moved - restarting Ivar render");
-                    self.start_ivar_render();
+                    let scale = self.ivar_state.interaction_scale;
+                    if self.ivar_state.world.is_some() {
+                        self.restart_ivar_at_scale(scale);
+                    } else {
+                        // No BVH yet, record desired scale for when build completes
+                        self.ivar_state.current_scale = scale;
+                        self.start_ivar_render();
+                    }
+                    self.ivar_state.last_interaction_time = Some(std::time::Instant::now());
                 }
 
-                // 2. Poll for scene build completion
+                // 2. Settle timer → refine to next resolution level
+                if let Some(last_time) = self.ivar_state.last_interaction_time {
+                    let elapsed_ms = last_time.elapsed().as_millis() as u32;
+                    let threshold = self.ivar_state.settle_timeout_ms;
+                    if elapsed_ms >= threshold
+                        && self.ivar_state.current_scale > 1
+                        && !self.ivar_state.is_pass_in_flight()
+                    {
+                        let next_scale = (self.ivar_state.current_scale / 2).max(1);
+                        self.restart_ivar_at_scale(next_scale);
+                        self.ivar_state.last_interaction_time = Some(std::time::Instant::now());
+                    }
+                }
+
+                // 3. Poll for scene build completion
                 self.poll_scene_build();
 
-                // 3. Poll for completed buckets / pass completion
+                // 4. Poll for completed buckets / pass completion
                 self.poll_ivar_messages();
 
-                // 4. If world built + no pass in flight + needs more → next pass
-                if self.ivar_state.world.is_some()
+                // 5. Full-res progressive: start next pass only at scale==1
+                if self.ivar_state.current_scale == 1
+                    && self.ivar_state.world.is_some()
                     && !self.ivar_state.is_pass_in_flight()
                     && self.ivar_state.needs_more_passes()
                 {
                     self.start_progressive_pass();
                 }
 
-                // 5. If no world + not started → build scene
+                // 6. First-time scene build
                 if self.ivar_state.world.is_none()
                     && self.ivar_state.build_status == BuildStatus::NotStarted
                 {
+                    self.ivar_state.current_scale = 1;
+                    self.ivar_state.last_interaction_time = None;
                     self.start_ivar_render();
                 }
 
-                // 6. Upload current image buffer to texture (uses selected AOV channel)
+                // 7. Upload current image buffer to texture (uses selected AOV channel)
                 self.upload_ivar_pixels();
 
                 // Render fullscreen quad with Ivar texture

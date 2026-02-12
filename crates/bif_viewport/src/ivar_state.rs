@@ -352,6 +352,14 @@ pub struct IvarState {
     pub accumulated_samples: u32,
     /// Target SPP for progressive rendering (render until this).
     pub target_spp: u32,
+    /// Current render resolution divisor (1 = full, 2 = half, 4 = quarter, etc.).
+    pub current_scale: u32,
+    /// Resolution divisor during active camera interaction (UI slider, power of 2).
+    pub interaction_scale: u32,
+    /// Last time camera or scene changed (for progressive refinement settle timer).
+    pub last_interaction_time: Option<Instant>,
+    /// Milliseconds to wait before refining to next resolution level.
+    pub settle_timeout_ms: u32,
 }
 
 impl Default for IvarState {
@@ -381,6 +389,10 @@ impl Default for IvarState {
             accumulation_buffer: None,
             accumulated_samples: 0,
             target_spp: 16,
+            current_scale: 1,
+            interaction_scale: 4,
+            last_interaction_time: None,
+            settle_timeout_ms: 300,
         }
     }
 }
