@@ -112,8 +112,9 @@ pub fn render_bucket(
     world: &dyn Hittable,
     config: &RenderConfig,
 ) -> Vec<Color> {
-    // Create seeded RNG based on bucket position to avoid correlation between adjacent buckets
-    let seed = ((bucket.x as u64) << 32) | (bucket.y as u64) ^ 0xDEAD_BEEF;
+    // Create seeded RNG based on bucket position and pass number
+    let seed = ((bucket.x as u64) << 32)
+        | (bucket.y as u64) ^ 0xDEAD_BEEF ^ (config.pass_number as u64) << 48;
     let mut rng = StdRng::seed_from_u64(seed);
 
     let mut pixels = Vec::with_capacity((bucket.width * bucket.height) as usize);
@@ -189,7 +190,8 @@ pub fn render_bucket_with_aovs(
     world: &dyn Hittable,
     config: &RenderConfig,
 ) -> BucketResultWithAovs {
-    let seed = ((bucket.x as u64) << 32) | (bucket.y as u64) ^ 0xDEAD_BEEF;
+    let seed = ((bucket.x as u64) << 32)
+        | (bucket.y as u64) ^ 0xDEAD_BEEF ^ (config.pass_number as u64) << 48;
     let mut rng = StdRng::seed_from_u64(seed);
 
     let capacity = (bucket.width * bucket.height) as usize;

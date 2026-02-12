@@ -126,6 +126,17 @@ impl EnvironmentManager {
                         hdr.height,
                         load_path
                     );
+                    let hdr = if hdr.width.max(hdr.height) > bif_core::hdr::MAX_IBL_DIMENSION {
+                        log::warn!(
+                            "HDRI {}x{} exceeds max dimension {}, downscaling",
+                            hdr.width,
+                            hdr.height,
+                            bif_core::hdr::MAX_IBL_DIMENSION
+                        );
+                        hdr.downscale_to_max_dim(bif_core::hdr::MAX_IBL_DIMENSION)
+                    } else {
+                        hdr
+                    };
                     let hdr_pixels = hdr.pixels.clone();
                     let hdr_width = hdr.width;
                     let hdr_height = hdr.height;

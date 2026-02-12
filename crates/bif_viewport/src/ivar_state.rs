@@ -294,6 +294,8 @@ pub enum IvarMessage {
     BucketComplete(BucketResultWithAovs),
     /// Entire render is complete.
     RenderComplete { elapsed_secs: f32 },
+    /// A single progressive pass is complete.
+    PassComplete { pass_number: u32 },
     /// Render was cancelled.
     Cancelled,
 }
@@ -326,8 +328,7 @@ pub struct IvarState {
     pub build_status: BuildStatus,
     /// Receiver for scene build completion.
     pub build_receiver: Option<mpsc::Receiver<Arc<BvhNode>>>,
-    /// Samples per pixel for rendering.
-    /// TODO: Expose SPP in UI
+    /// Samples per pixel for batch rendering.
     pub samples_per_pixel: u32,
     /// Max bounce depth.
     pub max_depth: u32,
@@ -345,6 +346,12 @@ pub struct IvarState {
     pub depth_buffer: Option<Vec<f32>>,
     /// Normal buffer for AOV preview (stored per pixel as [x, y, z]).
     pub normal_buffer: Option<Vec<[f32; 3]>>,
+    /// Running sum per pixel for progressive accumulation.
+    pub accumulation_buffer: Option<Vec<Vec3>>,
+    /// Number of completed progressive passes.
+    pub accumulated_samples: u32,
+    /// Target SPP for progressive rendering (render until this).
+    pub target_spp: u32,
 }
 
 impl Default for IvarState {
@@ -371,6 +378,9 @@ impl Default for IvarState {
             alpha_buffer: None,
             depth_buffer: None,
             normal_buffer: None,
+            accumulation_buffer: None,
+            accumulated_samples: 0,
+            target_spp: 64,
         }
     }
 }
@@ -425,6 +435,42 @@ impl IvarState {
         self.render_start_time
             .map(|t| t.elapsed().as_secs_f32())
             .unwrap_or(0.0)
+    }
+
+    /// Reset accumulation state for progressive rendering.
+    ///
+    /// Clears accumulation buffer and cancels any in-flight pass.
+    /// Keeps BVH cached.
+    pub fn reset_accumulation(&mut self, width: u32, height: u32) {
+        // Cancel any in-flight render
+        self.cancel_flag.store(true, Ordering::Relaxed);
+        self.cancel_flag = Arc::new(AtomicBool::new(false));
+        self.receiver = None;
+
+        let pixel_count = (width * height) as usize;
+        self.accumulation_buffer = Some(vec![Vec3::ZERO; pixel_count]);
+        self.accumulated_samples = 0;
+        self.render_complete = false;
+        self.buckets_completed = 0;
+        self.render_start_time = Some(Instant::now());
+
+        // Reset display buffer
+        self.image_buffer = Some(ImageBuffer::new(width, height));
+
+        // Reset AOV buffers
+        self.alpha_buffer = Some(vec![0.0; pixel_count]);
+        self.depth_buffer = Some(vec![f32::INFINITY; pixel_count]);
+        self.normal_buffer = Some(vec![[0.0; 3]; pixel_count]);
+    }
+
+    /// Check if more progressive passes are needed.
+    pub fn needs_more_passes(&self) -> bool {
+        self.accumulated_samples < self.target_spp
+    }
+
+    /// Check if a progressive pass is currently in flight.
+    pub fn is_pass_in_flight(&self) -> bool {
+        self.receiver.is_some() && !self.render_complete
     }
 }
 
@@ -521,7 +567,7 @@ mod tests {
 
     #[test]
     fn test_camera_source_display() {
-        assert_eq!(CameraSource::Viewport.display_name(), "Viewport");
+        assert_eq!(CameraSource::Viewport.display_name(), "Perspective");
         assert_eq!(
             CameraSource::UsdCamera("/cameras/main".to_string()).display_name(),
             "/cameras/main"

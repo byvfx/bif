@@ -368,6 +368,7 @@ fn batch_render_loop(
         use_sky_gradient: true, // Fallback lighting if no HDRI
         environment: scene.environment.clone(),
         lights: scene.lights.clone(),
+        pass_number: 0,
     };
 
     log::info!(

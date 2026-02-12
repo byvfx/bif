@@ -151,7 +151,7 @@ impl Renderer {
             );
             vec![Mat4::IDENTITY]
         } else {
-            self.instance_transforms.clone()
+            self.current_transforms.clone()
         };
         let scene_materials = self.scene_materials.clone();
         let fallback_material = self.scene_material.clone();
@@ -402,7 +402,7 @@ impl Renderer {
         let ivar_transforms = if self.multi_draw.enabled {
             vec![Mat4::IDENTITY]
         } else {
-            self.instance_transforms.clone()
+            self.current_transforms.clone()
         };
 
         // Create Embree scene or fallback
@@ -529,23 +529,25 @@ impl Renderer {
         paths
     }
 
-    /// Start Ivar background render
+    /// Start Ivar progressive render (build scene + first pass).
     pub(crate) fn start_ivar_render(&mut self) {
         // Build scene if needed
         self.build_ivar_scene();
 
-        let Some(world) = self.ivar_state.world.clone() else {
+        let Some(_) = self.ivar_state.world.as_ref() else {
             log::error!("Cannot start Ivar render: no scene");
             return;
         };
 
-        // Reset render state (use viewport rect, not full window, for correct aspect ratio)
+        // Reset accumulation (use viewport rect for correct aspect ratio)
         let (_, _, vp_w, vp_h) = self.viewport_rect();
         let vp_w = vp_w as u32;
         let vp_h = vp_h as u32;
-        self.ivar_state.reset_render(vp_w, vp_h);
+        self.ivar_state.reset_accumulation(vp_w, vp_h);
+        self.ivar_state.buckets =
+            bif_renderer::generate_buckets(vp_w, vp_h, bif_renderer::DEFAULT_BUCKET_SIZE);
 
-        // Recreate ivar texture at viewport size so rendered pixels fill the entire texture
+        // Recreate ivar texture at viewport size
         let (ivar_texture, ivar_texture_view) =
             crate::ivar_renderer::create_ivar_texture(&self.device, (vp_w, vp_h));
         self.ivar_texture = ivar_texture;
@@ -557,72 +559,84 @@ impl Renderer {
             &self.ivar_sampler,
         );
 
-        // Create Ivar camera
-        let ivar_camera = self.create_ivar_camera();
+        // Save camera snapshot
+        self.ivar_state.last_camera_snapshot =
+            Some(crate::ivar_state::CameraSnapshot::from_camera(&self.camera));
 
-        // Create channel for bucket results
+        log::info!(
+            "Starting progressive Ivar render: {}x{}, target {} SPP",
+            vp_w,
+            vp_h,
+            self.ivar_state.target_spp
+        );
+
+        // Start first progressive pass
+        self.start_progressive_pass();
+    }
+
+    /// Start a single progressive pass (1 SPP) in background thread.
+    ///
+    /// Requires `ivar_state.world` already built.
+    pub(crate) fn start_progressive_pass(&mut self) {
+        let Some(world) = self.ivar_state.world.clone() else {
+            return;
+        };
+
+        let pass_number = self.ivar_state.accumulated_samples;
+        let buckets = self.ivar_state.buckets.clone();
+
+        // Create fresh cancel flag + channel for this pass
+        self.ivar_state.cancel_flag = Arc::new(AtomicBool::new(false));
+        let cancel_flag = self.ivar_state.cancel_flag.clone();
         let (tx, rx) = mpsc::channel();
         self.ivar_state.receiver = Some(rx);
+        self.ivar_state.buckets_completed = 0;
 
-        // Clone values needed for background thread
-        let buckets = self.ivar_state.buckets.clone();
-        let cancel_flag = self.ivar_state.cancel_flag.clone();
+        let ivar_camera = self.create_ivar_camera();
         let config = RenderConfig {
-            samples_per_pixel: self.ivar_state.samples_per_pixel,
+            samples_per_pixel: 1, // 1 SPP per progressive pass
             max_depth: self.ivar_state.max_depth,
             background: Color::new(0.1, 0.1, 0.1),
             use_sky_gradient: true,
             environment: self.ivar_state.environment.clone(),
             lights: Arc::new(LightList::from(self.lights.scene_lights.as_slice())),
+            pass_number,
         };
 
-        let start_time = Instant::now();
+        log::trace!("Starting progressive pass {}", pass_number);
 
-        log::info!(
-            "Starting Ivar render: {}x{} @ {} SPP, {} buckets",
-            self.size.0,
-            self.size.1,
-            self.ivar_state.samples_per_pixel,
-            buckets.len()
-        );
-
-        // Spawn background render thread
         std::thread::spawn(move || {
             use rayon::prelude::*;
 
-            // Process buckets in parallel
             buckets.par_iter().for_each(|bucket| {
-                // Check for cancellation
                 if cancel_flag.load(Ordering::Relaxed) {
                     return;
                 }
-
-                // Render bucket with AOVs
                 let result = render_bucket_with_aovs(bucket, &ivar_camera, world.as_ref(), &config);
-
                 let _ = tx.send(IvarMessage::BucketComplete(result));
             });
 
-            // Check if cancelled
-            if cancel_flag.load(Ordering::Relaxed) {
-                let _ = tx.send(IvarMessage::Cancelled);
+            if !cancel_flag.load(Ordering::Relaxed) {
+                let _ = tx.send(IvarMessage::PassComplete { pass_number });
             } else {
-                let elapsed = start_time.elapsed().as_secs_f32();
-                let _ = tx.send(IvarMessage::RenderComplete {
-                    elapsed_secs: elapsed,
-                });
+                let _ = tx.send(IvarMessage::Cancelled);
             }
         });
     }
 
-    /// Poll for Ivar bucket completion messages
+    /// Poll for Ivar bucket completion messages (progressive accumulation).
     pub(crate) fn poll_ivar_messages(&mut self) {
         let Some(ref receiver) = self.ivar_state.receiver else {
             return;
         };
 
-        // Process all available messages (non-blocking)
-        while let Ok(msg) = receiver.try_recv() {
+        // Collect all available messages (non-blocking), then drop borrow
+        let messages: Vec<IvarMessage> = std::iter::from_fn(|| receiver.try_recv().ok()).collect();
+        if messages.is_empty() {
+            return;
+        }
+
+        for msg in messages {
             match msg {
                 IvarMessage::BucketComplete(result) => {
                     let image_width = self
@@ -630,8 +644,8 @@ impl Renderer {
                         .image_buffer
                         .as_ref()
                         .map_or(0, |img| img.width);
+                    let current_pass = self.ivar_state.accumulated_samples;
 
-                    // Copy pixels to image buffer and AOV buffers
                     for local_y in 0..result.bucket.height {
                         for local_x in 0..result.bucket.width {
                             let global_x = result.bucket.x + local_x;
@@ -639,32 +653,64 @@ impl Renderer {
                             let pixel_idx = (local_y * result.bucket.width + local_x) as usize;
                             let global_idx = (global_y * image_width + global_x) as usize;
 
-                            // Copy beauty
-                            if let Some(ref mut image) = self.ivar_state.image_buffer {
-                                if pixel_idx < result.pixels.len() {
-                                    image.set(global_x, global_y, result.pixels[pixel_idx]);
+                            // Accumulate beauty into running sum
+                            if pixel_idx < result.pixels.len() {
+                                if let Some(ref mut accum) = self.ivar_state.accumulation_buffer {
+                                    if global_idx < accum.len() {
+                                        accum[global_idx] += result.pixels[pixel_idx];
+                                        // Update display: divide by (completed passes + 1)
+                                        let divisor = (current_pass + 1) as f32;
+                                        let avg = accum[global_idx] / divisor;
+                                        if let Some(ref mut image) = self.ivar_state.image_buffer {
+                                            image.set(global_x, global_y, avg);
+                                        }
+                                    }
                                 }
                             }
 
-                            // Copy AOVs
-                            if let Some(ref mut alpha) = self.ivar_state.alpha_buffer {
-                                if pixel_idx < result.alphas.len() && global_idx < alpha.len() {
-                                    alpha[global_idx] = result.alphas[pixel_idx];
+                            // AOVs: only write from pass 0 (depth/normal don't benefit)
+                            if current_pass == 0 {
+                                if let Some(ref mut alpha) = self.ivar_state.alpha_buffer {
+                                    if pixel_idx < result.alphas.len() && global_idx < alpha.len() {
+                                        alpha[global_idx] = result.alphas[pixel_idx];
+                                    }
                                 }
-                            }
-                            if let Some(ref mut depth) = self.ivar_state.depth_buffer {
-                                if pixel_idx < result.depths.len() && global_idx < depth.len() {
-                                    depth[global_idx] = result.depths[pixel_idx];
+                                if let Some(ref mut depth) = self.ivar_state.depth_buffer {
+                                    if pixel_idx < result.depths.len() && global_idx < depth.len() {
+                                        depth[global_idx] = result.depths[pixel_idx];
+                                    }
                                 }
-                            }
-                            if let Some(ref mut normal) = self.ivar_state.normal_buffer {
-                                if pixel_idx < result.normals.len() && global_idx < normal.len() {
-                                    normal[global_idx] = result.normals[pixel_idx];
+                                if let Some(ref mut normal) = self.ivar_state.normal_buffer {
+                                    if pixel_idx < result.normals.len() && global_idx < normal.len()
+                                    {
+                                        normal[global_idx] = result.normals[pixel_idx];
+                                    }
                                 }
                             }
                         }
                     }
                     self.ivar_state.buckets_completed += 1;
+                }
+                IvarMessage::PassComplete { pass_number } => {
+                    self.ivar_state.accumulated_samples = pass_number + 1;
+                    log::info!(
+                        "Pass {} complete ({}/{} SPP)",
+                        pass_number,
+                        self.ivar_state.accumulated_samples,
+                        self.ivar_state.target_spp
+                    );
+                    if self.ivar_state.accumulated_samples >= self.ivar_state.target_spp {
+                        self.ivar_state.render_complete = true;
+                        self.node_graph_state.mark_ivar_render_complete();
+                        let elapsed = self.ivar_state.elapsed_secs();
+                        log::info!(
+                            "Progressive render complete: {} SPP in {:.2}s",
+                            self.ivar_state.accumulated_samples,
+                            elapsed
+                        );
+                    }
+                    // Clear receiver so main loop can detect "no pass in flight"
+                    self.ivar_state.receiver = None;
                 }
                 IvarMessage::RenderComplete { elapsed_secs } => {
                     self.ivar_state.render_complete = true;
@@ -673,6 +719,7 @@ impl Renderer {
                 }
                 IvarMessage::Cancelled => {
                     log::info!("Ivar render cancelled");
+                    self.ivar_state.receiver = None;
                 }
             }
         }
