@@ -544,8 +544,11 @@ impl Renderer {
         let vp_w = vp_w as u32;
         let vp_h = vp_h as u32;
         self.ivar_state.reset_accumulation(vp_w, vp_h);
-        self.ivar_state.buckets =
-            bif_renderer::generate_buckets(vp_w, vp_h, bif_renderer::DEFAULT_BUCKET_SIZE);
+        self.ivar_state.buckets = std::sync::Arc::new(bif_renderer::generate_buckets(
+            vp_w,
+            vp_h,
+            bif_renderer::DEFAULT_BUCKET_SIZE,
+        ));
 
         // Recreate ivar texture at viewport size
         let (ivar_texture, ivar_texture_view) =
@@ -583,7 +586,7 @@ impl Renderer {
         };
 
         let pass_number = self.ivar_state.accumulated_samples;
-        let buckets = self.ivar_state.buckets.clone();
+        let buckets = Arc::clone(&self.ivar_state.buckets);
 
         // Create fresh cancel flag + channel for this pass
         self.ivar_state.cancel_flag = Arc::new(AtomicBool::new(false));
@@ -605,7 +608,7 @@ impl Renderer {
 
         log::trace!("Starting progressive pass {}", pass_number);
 
-        std::thread::spawn(move || {
+        rayon::spawn(move || {
             use rayon::prelude::*;
 
             buckets.par_iter().for_each(|bucket| {

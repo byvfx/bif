@@ -1227,6 +1227,9 @@ impl Renderer {
     pub fn undo(&mut self) -> Option<String> {
         let desc = self.undo_stack.undo(&mut self.edit_state)?.to_string();
         self.apply_all_transform_overrides();
+        if self.ivar_state.mode == ivar_state::RenderMode::Ivar {
+            self.invalidate_ivar_scene();
+        }
         Some(desc)
     }
 
@@ -1234,6 +1237,9 @@ impl Renderer {
     pub fn redo(&mut self) -> Option<String> {
         let desc = self.undo_stack.redo(&mut self.edit_state)?.to_string();
         self.apply_all_transform_overrides();
+        if self.ivar_state.mode == ivar_state::RenderMode::Ivar {
+            self.invalidate_ivar_scene();
+        }
         Some(desc)
     }
 
