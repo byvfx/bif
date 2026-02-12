@@ -354,8 +354,9 @@ pub struct IvarState {
     pub target_spp: u32,
     /// Current render resolution divisor (1 = full, 2 = half, 4 = quarter, etc.).
     pub current_scale: u32,
-    /// Resolution divisor during active camera interaction (UI slider, power of 2).
-    pub interaction_scale: u32,
+    /// Navigation quality exponent: 1 = 1/2, 2 = 1/4, 3 = 1/8.
+    /// Derive scale with `2u32.pow(interaction_quality)`.
+    pub interaction_quality: u32,
     /// Last time camera or scene changed (for progressive refinement settle timer).
     pub last_interaction_time: Option<Instant>,
     /// Milliseconds to wait before refining to next resolution level.
@@ -390,7 +391,7 @@ impl Default for IvarState {
             accumulated_samples: 0,
             target_spp: 16,
             current_scale: 1,
-            interaction_scale: 4,
+            interaction_quality: 2,
             last_interaction_time: None,
             settle_timeout_ms: 300,
         }
@@ -452,7 +453,7 @@ impl IvarState {
     /// Reset accumulation state for progressive rendering.
     ///
     /// Clears accumulation buffer and cancels any in-flight pass.
-    /// Keeps BVH cached.
+    /// Keeps BVH cached. Skips AOV buffers at reduced scale (not useful at low res).
     pub fn reset_accumulation(&mut self, width: u32, height: u32) {
         // Cancel any in-flight render
         self.cancel_flag.store(true, Ordering::Relaxed);
@@ -469,10 +470,16 @@ impl IvarState {
         // Reset display buffer
         self.image_buffer = Some(ImageBuffer::new(width, height));
 
-        // Reset AOV buffers
-        self.alpha_buffer = Some(vec![0.0; pixel_count]);
-        self.depth_buffer = Some(vec![f32::INFINITY; pixel_count]);
-        self.normal_buffer = Some(vec![[0.0; 3]; pixel_count]);
+        // Only allocate AOV buffers at full resolution (not useful at low res)
+        if self.current_scale <= 1 {
+            self.alpha_buffer = Some(vec![0.0; pixel_count]);
+            self.depth_buffer = Some(vec![f32::INFINITY; pixel_count]);
+            self.normal_buffer = Some(vec![[0.0; 3]; pixel_count]);
+        } else {
+            self.alpha_buffer = None;
+            self.depth_buffer = None;
+            self.normal_buffer = None;
+        }
     }
 
     /// Check if more progressive passes are needed.
@@ -483,6 +490,13 @@ impl IvarState {
     /// Check if a progressive pass is currently in flight.
     pub fn is_pass_in_flight(&self) -> bool {
         self.receiver.is_some() && !self.render_complete
+    }
+
+    /// Derive interaction scale divisor from quality exponent.
+    ///
+    /// Quality 1 → scale 2, quality 2 → scale 4, quality 3 → scale 8.
+    pub fn interaction_scale(&self) -> u32 {
+        2u32.pow(self.interaction_quality)
     }
 }
 
@@ -584,5 +598,85 @@ mod tests {
             CameraSource::UsdCamera("/cameras/main".to_string()).display_name(),
             "/cameras/main"
         );
+    }
+
+    #[test]
+    fn test_interaction_quality_to_scale() {
+        let mut state = IvarState::default();
+        state.interaction_quality = 1;
+        assert_eq!(state.interaction_scale(), 2);
+        state.interaction_quality = 2;
+        assert_eq!(state.interaction_scale(), 4);
+        state.interaction_quality = 3;
+        assert_eq!(state.interaction_scale(), 8);
+    }
+
+    #[test]
+    fn test_default_interaction_quality() {
+        let state = IvarState::default();
+        assert_eq!(state.interaction_quality, 2); // Default: 1/4 scale
+        assert_eq!(state.interaction_scale(), 4);
+        assert_eq!(state.current_scale, 1); // Start at full res
+    }
+
+    #[test]
+    fn test_reset_accumulation_skips_aov_at_reduced_scale() {
+        let mut state = IvarState::default();
+
+        // Full res: AOVs allocated
+        state.current_scale = 1;
+        state.reset_accumulation(100, 100);
+        assert!(state.alpha_buffer.is_some());
+        assert!(state.depth_buffer.is_some());
+        assert!(state.normal_buffer.is_some());
+
+        // Reduced scale: AOVs skipped
+        state.current_scale = 4;
+        state.reset_accumulation(25, 25);
+        assert!(state.alpha_buffer.is_none());
+        assert!(state.depth_buffer.is_none());
+        assert!(state.normal_buffer.is_none());
+    }
+
+    #[test]
+    fn test_reset_accumulation_clears_state() {
+        let mut state = IvarState::default();
+        state.accumulated_samples = 10;
+        state.render_complete = true;
+        state.buckets_completed = 42;
+        state.current_scale = 1;
+
+        state.reset_accumulation(100, 100);
+
+        assert_eq!(state.accumulated_samples, 0);
+        assert!(!state.render_complete);
+        assert_eq!(state.buckets_completed, 0);
+        assert!(state.image_buffer.is_some());
+        assert!(state.accumulation_buffer.is_some());
+        assert!(state.render_start_time.is_some());
+    }
+
+    #[test]
+    fn test_settle_timeout_default() {
+        let state = IvarState::default();
+        assert_eq!(state.settle_timeout_ms, 300);
+    }
+
+    #[test]
+    fn test_needs_more_passes() {
+        let mut state = IvarState::default();
+        state.target_spp = 16;
+
+        state.accumulated_samples = 0;
+        assert!(state.needs_more_passes());
+
+        state.accumulated_samples = 15;
+        assert!(state.needs_more_passes());
+
+        state.accumulated_samples = 16;
+        assert!(!state.needs_more_passes());
+
+        state.accumulated_samples = 17;
+        assert!(!state.needs_more_passes());
     }
 }

@@ -534,9 +534,8 @@ impl Renderer {
         paths
     }
 
-    /// Start Ivar progressive render (build scene + first pass).
+    /// Start Ivar progressive render (build scene + first pass at full res).
     pub(crate) fn start_ivar_render(&mut self) {
-        // Build scene if needed
         self.build_ivar_scene();
 
         let Some(_) = self.ivar_state.world.as_ref() else {
@@ -544,42 +543,7 @@ impl Renderer {
             return;
         };
 
-        // Reset accumulation (use viewport rect for correct aspect ratio)
-        let (_, _, vp_w, vp_h) = self.viewport_rect();
-        let vp_w = vp_w as u32;
-        let vp_h = vp_h as u32;
-        self.ivar_state.reset_accumulation(vp_w, vp_h);
-        self.ivar_state.buckets = std::sync::Arc::new(bif_renderer::generate_buckets(
-            vp_w,
-            vp_h,
-            bif_renderer::DEFAULT_BUCKET_SIZE,
-        ));
-
-        // Recreate ivar texture at viewport size
-        let (ivar_texture, ivar_texture_view) =
-            crate::ivar_renderer::create_ivar_texture(&self.device, (vp_w, vp_h));
-        self.ivar_texture = ivar_texture;
-        self.ivar_texture_view = ivar_texture_view;
-        self.ivar_bind_group = crate::ivar_renderer::create_ivar_bind_group(
-            &self.device,
-            &self.ivar_bind_group_layout,
-            &self.ivar_texture_view,
-            &self.ivar_sampler,
-        );
-
-        // Save camera snapshot
-        self.ivar_state.last_camera_snapshot =
-            Some(crate::ivar_state::CameraSnapshot::from_camera(&self.camera));
-
-        log::info!(
-            "Starting progressive Ivar render: {}x{}, target {} SPP",
-            vp_w,
-            vp_h,
-            self.ivar_state.target_spp
-        );
-
-        // Start first progressive pass
-        self.start_progressive_pass();
+        self.restart_ivar_at_scale(1);
     }
 
     /// Restart Ivar rendering at a specific resolution scale without rebuilding BVH.
@@ -592,29 +556,38 @@ impl Renderer {
         };
 
         let (_, _, vp_w, vp_h) = self.viewport_rect();
-        let scaled_w = (vp_w as u32 / scale).max(1);
-        let scaled_h = (vp_h as u32 / scale).max(1);
+        // Round instead of truncate to minimize aspect ratio drift across scale steps
+        let scaled_w = ((vp_w / scale as f32).round() as u32).max(1);
+        let scaled_h = ((vp_h / scale as f32).round() as u32).max(1);
 
-        // Reset accumulation at scaled resolution
+        // Check if GPU texture needs recreation before reset_accumulation replaces image_buffer
+        let needs_texture = self
+            .ivar_state
+            .image_buffer
+            .as_ref()
+            .is_none_or(|img| img.width != scaled_w || img.height != scaled_h);
+
+        // Set scale before reset_accumulation so it can skip AOVs at reduced scale
+        self.ivar_state.current_scale = scale;
         self.ivar_state.reset_accumulation(scaled_w, scaled_h);
         self.ivar_state.buckets = Arc::new(bif_renderer::generate_buckets(
             scaled_w,
             scaled_h,
             bif_renderer::DEFAULT_BUCKET_SIZE,
         ));
-        self.ivar_state.current_scale = scale;
 
-        // Recreate texture at scaled size
-        let (tex, view) =
-            crate::ivar_renderer::create_ivar_texture(&self.device, (scaled_w, scaled_h));
-        self.ivar_texture = tex;
-        self.ivar_texture_view = view;
-        self.ivar_bind_group = crate::ivar_renderer::create_ivar_bind_group(
-            &self.device,
-            &self.ivar_bind_group_layout,
-            &self.ivar_texture_view,
-            &self.ivar_sampler,
-        );
+        if needs_texture {
+            let (tex, view) =
+                crate::ivar_renderer::create_ivar_texture(&self.device, (scaled_w, scaled_h));
+            self.ivar_texture = tex;
+            self.ivar_texture_view = view;
+            self.ivar_bind_group = crate::ivar_renderer::create_ivar_bind_group(
+                &self.device,
+                &self.ivar_bind_group_layout,
+                &self.ivar_texture_view,
+                &self.ivar_sampler,
+            );
+        }
 
         // Save camera snapshot
         self.ivar_state.last_camera_snapshot =
