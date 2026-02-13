@@ -300,6 +300,9 @@ pub enum IvarMessage {
     Cancelled,
 }
 
+/// Minimum interval (ms) between Ivar render restarts during interaction.
+const RESTART_THROTTLE_MS: u64 = 50;
+
 /// State for Ivar progressive rendering.
 pub struct IvarState {
     /// Current render mode.
@@ -454,6 +457,8 @@ impl IvarState {
     ///
     /// Clears accumulation buffer and cancels any in-flight pass.
     /// Keeps BVH cached. Skips AOV buffers at reduced scale (not useful at low res).
+    /// When dimensions change, resamples old image buffer (nearest-neighbor) instead
+    /// of creating a black buffer to avoid flash.
     pub fn reset_accumulation(&mut self, width: u32, height: u32) {
         // Cancel any in-flight render
         self.cancel_flag.store(true, Ordering::Relaxed);
@@ -461,20 +466,65 @@ impl IvarState {
         self.receiver = None;
 
         let pixel_count = (width * height) as usize;
-        self.accumulation_buffer = Some(vec![Vec3::ZERO; pixel_count]);
+
+        // Reuse accumulation buffer when size matches, otherwise allocate
+        let reuse_accum = self
+            .accumulation_buffer
+            .as_ref()
+            .is_some_and(|buf| buf.len() == pixel_count);
+        if reuse_accum {
+            self.accumulation_buffer.as_mut().unwrap().fill(Vec3::ZERO);
+        } else {
+            self.accumulation_buffer = Some(vec![Vec3::ZERO; pixel_count]);
+        }
+
         self.accumulated_samples = 0;
         self.render_complete = false;
         self.buckets_completed = 0;
         self.render_start_time = Some(Instant::now());
 
-        // Reset display buffer
-        self.image_buffer = Some(ImageBuffer::new(width, height));
+        // Keep existing display pixels when dimensions match (avoids black flash
+        // during camera orbit / transform drag). On dimension change, resample
+        // old buffer with nearest-neighbor (stale but visible, not black).
+        let reuse = self
+            .image_buffer
+            .as_ref()
+            .is_some_and(|img| img.width == width && img.height == height);
+        if !reuse {
+            self.image_buffer = if let Some(ref old) = self.image_buffer {
+                // Nearest-neighbor resample: stale but visible, not black
+                let mut buf = ImageBuffer::new(width, height);
+                for y in 0..height {
+                    for x in 0..width {
+                        let src_x = (x as f32 * old.width as f32 / width as f32) as u32;
+                        let src_y = (y as f32 * old.height as f32 / height as f32) as u32;
+                        let idx = (src_y.min(old.height - 1) * old.width + src_x.min(old.width - 1))
+                            as usize;
+                        buf.pixels[(y * width + x) as usize] = old.pixels[idx];
+                    }
+                }
+                Some(buf)
+            } else {
+                Some(ImageBuffer::new(width, height))
+            };
+        }
 
-        // Only allocate AOV buffers at full resolution (not useful at low res)
+        // Only allocate AOV buffers at full resolution (not useful at low res).
+        // Reuse with .fill() when size matches.
         if self.current_scale <= 1 {
-            self.alpha_buffer = Some(vec![0.0; pixel_count]);
-            self.depth_buffer = Some(vec![f32::INFINITY; pixel_count]);
-            self.normal_buffer = Some(vec![[0.0; 3]; pixel_count]);
+            let reuse_alpha = self
+                .alpha_buffer
+                .as_ref()
+                .is_some_and(|buf| buf.len() == pixel_count);
+            if reuse_alpha {
+                self.alpha_buffer.as_mut().unwrap().fill(0.0);
+                self.depth_buffer.as_mut().unwrap().fill(f32::INFINITY);
+                self.normal_buffer.as_mut().unwrap().fill([0.0; 3]);
+            } else {
+                self.alpha_buffer = Some(vec![0.0; pixel_count]);
+                self.depth_buffer = Some(vec![f32::INFINITY; pixel_count]);
+                self.normal_buffer = Some(vec![[0.0; 3]; pixel_count]);
+            }
         } else {
             self.alpha_buffer = None;
             self.depth_buffer = None;
@@ -490,6 +540,19 @@ impl IvarState {
     /// Check if a progressive pass is currently in flight.
     pub fn is_pass_in_flight(&self) -> bool {
         self.receiver.is_some() && !self.render_complete
+    }
+
+    /// Check if a restart is allowed (not throttled).
+    ///
+    /// Allows restart if min interval passed OR at least one bucket completed.
+    /// Bucket check self-tunes: complex scenes take longer per bucket, so
+    /// throttle naturally waits longer.
+    pub fn should_restart(&self) -> bool {
+        let elapsed_ms = self
+            .render_start_time
+            .map(|t| t.elapsed().as_millis() as u64)
+            .unwrap_or(u64::MAX); // no render yet → always allow
+        elapsed_ms >= RESTART_THROTTLE_MS || self.buckets_completed > 0
     }
 
     /// Derive interaction scale divisor from quality exponent.
@@ -663,6 +726,53 @@ mod tests {
     }
 
     #[test]
+    fn test_reset_accumulation_reuses_buffer_when_dims_match() {
+        let mut state = IvarState::default();
+        state.current_scale = 1;
+
+        // First reset creates a fresh buffer
+        state.reset_accumulation(100, 100);
+        // Write a non-zero pixel so we can verify it survives
+        let marker = Vec3::new(0.8, 0.4, 0.2);
+        if let Some(buf) = state.image_buffer.as_mut() {
+            buf.pixels[0] = marker;
+        }
+
+        // Second reset at same dims should keep existing pixels
+        state.reset_accumulation(100, 100);
+        let buf = state.image_buffer.as_ref().unwrap();
+        assert_eq!(buf.width, 100);
+        assert_eq!(buf.height, 100);
+        assert_eq!(
+            buf.pixels[0], marker,
+            "pixel should survive same-size reset"
+        );
+    }
+
+    #[test]
+    fn test_reset_accumulation_resamples_buffer_when_dims_differ() {
+        let mut state = IvarState::default();
+        state.current_scale = 1;
+
+        state.reset_accumulation(100, 100);
+        let marker = Vec3::new(0.8, 0.4, 0.2);
+        if let Some(buf) = state.image_buffer.as_mut() {
+            buf.pixels[0] = marker;
+        }
+
+        // Different dimensions → nearest-neighbor resample (not black)
+        state.reset_accumulation(200, 200);
+        let buf = state.image_buffer.as_ref().unwrap();
+        assert_eq!(buf.width, 200);
+        assert_eq!(buf.height, 200);
+        // Top-left pixel should be resampled from old top-left
+        assert_eq!(
+            buf.pixels[0], marker,
+            "pixel should be resampled, not black"
+        );
+    }
+
+    #[test]
     fn test_needs_more_passes() {
         let mut state = IvarState::default();
         state.target_spp = 16;
@@ -678,5 +788,35 @@ mod tests {
 
         state.accumulated_samples = 17;
         assert!(!state.needs_more_passes());
+    }
+
+    #[test]
+    fn test_reset_accumulation_creates_buffer_when_none() {
+        let mut state = IvarState::default();
+        state.current_scale = 1;
+        assert!(state.image_buffer.is_none());
+
+        state.reset_accumulation(100, 100);
+
+        let buf = state.image_buffer.as_ref().unwrap();
+        assert_eq!(buf.width, 100);
+        assert_eq!(buf.height, 100);
+        assert_eq!(buf.pixels[0], Vec3::ZERO, "new buffer should be zeroed");
+    }
+
+    #[test]
+    fn test_should_restart_no_render() {
+        let state = IvarState::default();
+        // No render_start_time → always allow
+        assert!(state.should_restart());
+    }
+
+    #[test]
+    fn test_should_restart_with_completed_bucket() {
+        let mut state = IvarState::default();
+        state.render_start_time = Some(Instant::now());
+        state.buckets_completed = 1;
+        // Bucket completed → allow restart regardless of time
+        assert!(state.should_restart());
     }
 }
