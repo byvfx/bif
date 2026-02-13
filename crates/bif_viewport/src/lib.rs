@@ -834,12 +834,21 @@ impl Renderer {
                 &self.ivar_sampler,
             );
 
-            // Reset Ivar render state on resize
+            // Full Ivar state reset on resize.
+            // image_buffer = None because target dims are unknown until next
+            // frame's viewport_rect(). One frame of black during resize is
+            // acceptable (fundamentally different from orbit).
             self.ivar_state.cancel_flag.store(true, Ordering::Relaxed);
+            self.ivar_state.cancel_flag = Arc::new(AtomicBool::new(false));
+            self.ivar_state.receiver = None;
             self.ivar_state.image_buffer = None;
             self.ivar_state.render_complete = false;
+            self.ivar_state.accumulated_samples = 0;
+            self.ivar_state.buckets_completed = 0;
             self.ivar_state.current_scale = 1;
             self.ivar_state.last_interaction_time = None;
+            self.ivar_state.last_camera_snapshot = None;
+            self.ivar_state.render_start_time = None;
 
             // Update camera aspect ratio from viewport (excludes UI panels)
             let (_, _, vp_w, vp_h) = self.viewport_rect();

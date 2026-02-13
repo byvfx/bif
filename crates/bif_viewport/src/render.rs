@@ -1223,9 +1223,9 @@ impl Renderer {
                 if idx < self.current_transforms.len() {
                     self.current_transforms[idx] = mat;
                     self.update_visible_instances();
-                    // Restart Ivar at interaction scale during drag
+                    // Restart Ivar at interaction scale during drag (throttled)
                     if self.ivar_state.mode == RenderMode::Ivar {
-                        if self.ivar_state.world.is_some() {
+                        if self.ivar_state.should_restart() && self.ivar_state.world.is_some() {
                             self.restart_ivar_at_scale(self.ivar_state.interaction_scale());
                         }
                         self.ivar_state.last_interaction_time = Some(std::time::Instant::now());
@@ -1660,14 +1660,17 @@ impl Renderer {
             }
             RenderMode::Ivar => {
                 // 1. Camera dirty → interaction mode at lowest scale
+                //    Throttle restarts to ~50ms so rayon can complete some buckets.
                 if self.ivar_state.check_camera_dirty(&self.camera) {
                     let scale = self.ivar_state.interaction_scale();
-                    if self.ivar_state.world.is_some() {
-                        self.restart_ivar_at_scale(scale);
-                    } else {
-                        // No BVH yet, record desired scale for when build completes
-                        self.ivar_state.current_scale = scale;
-                        self.start_ivar_render();
+                    if self.ivar_state.should_restart() {
+                        if self.ivar_state.world.is_some() {
+                            self.restart_ivar_at_scale(scale);
+                        } else {
+                            // No BVH yet, record desired scale for when build completes
+                            self.ivar_state.current_scale = scale;
+                            self.start_ivar_render();
+                        }
                     }
                     self.ivar_state.last_interaction_time = Some(std::time::Instant::now());
                 }
