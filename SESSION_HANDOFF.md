@@ -1,6 +1,6 @@
 # Session Handoff - February 12, 2026
 
-**Last Updated:** Code review fixes for Ivar navigation preview
+**Last Updated:** Fix Ivar black flashes + throttle helper + resize reset
 **Next Milestone:** M21 Point Instancing + Scattering
 **Project:** BIF - VFX Scene Assembler & Renderer
 
@@ -18,6 +18,17 @@
 ---
 
 ## Recent Work
+
+### Ivar Black Flash Fix (Feb 12, 2026 — Session 2)
+
+Fixed remaining black flashes during Ivar interaction:
+
+| Fix | Impact |
+|-----|--------|
+| Nearest-neighbor resample on dim change | No black flash on first-click or refinement steps |
+| Buffer reuse with `.fill()` | Avoids ~25MB realloc per restart at full res |
+| `should_restart()` throttle helper | Replaces duplicated 5-line inline throttle at 2 sites |
+| Full Ivar state reset in resize | Was missing cancel_flag, receiver, accumulated_samples, camera snapshot |
 
 ### Code Review Fixes (Feb 12, 2026)
 
