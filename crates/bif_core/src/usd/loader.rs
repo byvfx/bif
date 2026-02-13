@@ -17,6 +17,7 @@ use bif_math::Mat4;
 use thiserror::Error;
 
 use crate::mesh::Mesh;
+use crate::point_cloud::{DistributionMethod, PointAttributes, PointCloud};
 use crate::scene::{AnimatedTransform, Light, Scene, TimelineInfo, Transform, TransformKeyframe};
 use crate::usd::cpp_bridge::{UsdBridgeError, UsdLightType, UsdStage};
 use crate::usd::parser::{parse_usda, ParseError};
@@ -378,7 +379,7 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
         scene.material_count()
     );
 
-    // Load point instancers
+    // Load point instancers as PointClouds
     let instancer_start = Instant::now();
     let instancers = stage.instancers()?;
     for (instancer_idx, instancer_data) in instancers.iter().enumerate() {
@@ -397,6 +398,56 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
             continue;
         }
 
+        // Extract positions from instancer transforms
+        let positions: Vec<bif_math::Vec3> = instancer_data
+            .transforms
+            .iter()
+            .map(|mat| bif_math::Vec3::new(mat.col(3).x, mat.col(3).y, mat.col(3).z))
+            .collect();
+
+        // Extract per-point scale and orientation from transforms
+        let mut scales = Vec::with_capacity(positions.len());
+        let mut orientations = Vec::with_capacity(positions.len());
+        for mat in &instancer_data.transforms {
+            let (s, r, _) = mat.to_scale_rotation_translation();
+            scales.push(s);
+            orientations.push(r);
+        }
+
+        let proto_indices: Vec<u32> = instancer_data
+            .proto_indices
+            .iter()
+            .take(positions.len())
+            .map(|&idx| idx as u32)
+            .collect();
+
+        let cloud = PointCloud {
+            id: scene.point_clouds.len(),
+            name: instancer_data.path.clone(),
+            positions,
+            attributes: PointAttributes {
+                scales: Some(scales),
+                orientations: Some(orientations),
+                proto_indices,
+                ids: None,
+            },
+            prototype_ids: proto_ids,
+            transform: Transform::default(),
+            distribution: DistributionMethod::UsdPointInstancer {
+                path: instancer_data.path.clone(),
+            },
+        };
+
+        log::info!(
+            "PointInstancer '{}': {} points, {} protos -> PointCloud",
+            instancer_data.path,
+            cloud.point_count(),
+            cloud.prototype_ids.len()
+        );
+
+        // Expand immediately so instances appear (animation handled below)
+        let expanded = cloud.expand();
+
         // Get animation data for instancer if timeline exists
         let instancer_anim = if scene.timeline.is_some() {
             stage.get_instancer_animation(instancer_idx).ok()
@@ -404,18 +455,7 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
             None
         };
 
-        // Create instances
-        for (i, transform) in instancer_data.transforms.iter().enumerate() {
-            let proto_idx = instancer_data.proto_indices.get(i).copied().unwrap_or(0) as usize;
-
-            let proto_id = proto_ids
-                .get(proto_idx)
-                .or(proto_ids.first())
-                .copied()
-                .unwrap_or(0);
-
-            let base_transform = Transform::from_matrix(*transform);
-
+        for (i, inst) in expanded.into_iter().enumerate() {
             // Build animation for this instance if available
             let animation = instancer_anim.as_ref().and_then(|anim| {
                 if anim.time_samples.is_empty() || i >= anim.instance_count {
@@ -440,18 +480,20 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
                     None
                 } else {
                     Some(AnimatedTransform::with_keyframes(
-                        base_transform.clone(),
+                        inst.transform.clone(),
                         keyframes,
                     ))
                 }
             });
 
             if let Some(anim) = animation {
-                scene.add_animated_instance(proto_id, base_transform, anim);
+                scene.add_animated_instance(inst.prototype_id, inst.transform, anim);
             } else {
-                scene.add_instance(proto_id, base_transform);
+                scene.add_instance(inst.prototype_id, inst.transform);
             }
         }
+
+        scene.add_point_cloud(cloud);
     }
     let instancer_time = instancer_start.elapsed();
 

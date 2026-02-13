@@ -6,6 +6,7 @@
 use std::collections::HashMap;
 use std::fmt;
 
+use crate::point_cloud::PointCloud;
 use crate::primitives::PrimitiveKind;
 use crate::scene::{AnimatedTransform, Transform, TransformKeyframe};
 
@@ -20,6 +21,10 @@ pub enum SceneOp {
     },
     /// Remove a primitive from the working scene by prototype ID.
     RemovePrimitive { proto_id: usize },
+    /// Add a point cloud (scatter result) to the working scene.
+    AddPointCloud { cloud: Box<PointCloud> },
+    /// Remove a point cloud by ID.
+    RemovePointCloud { cloud_id: usize },
 }
 
 /// Mutable edit state that commands operate on.
@@ -170,6 +175,33 @@ impl UndoCommand for DeletePrimitiveCommand {
 
     fn description(&self) -> &str {
         "Delete Primitive"
+    }
+}
+
+/// Command that adds a scatter point cloud to the working scene.
+#[derive(Debug)]
+pub struct ScatterCommand {
+    /// The point cloud to add.
+    pub cloud: PointCloud,
+    /// ID assigned in the working scene (set after execute).
+    pub cloud_id: usize,
+}
+
+impl UndoCommand for ScatterCommand {
+    fn execute(&self, state: &mut EditState) {
+        state.pending_scene_ops.push(SceneOp::AddPointCloud {
+            cloud: Box::new(self.cloud.clone()),
+        });
+    }
+
+    fn undo(&self, state: &mut EditState) {
+        state.pending_scene_ops.push(SceneOp::RemovePointCloud {
+            cloud_id: self.cloud_id,
+        });
+    }
+
+    fn description(&self) -> &str {
+        "Scatter"
     }
 }
 

@@ -15,6 +15,7 @@ bif_math = { path = "../bif_math" }
 glam = { workspace = true }
 image = { version = "0.24", features = ["openexr"] }
 log = { workspace = true }
+rand = "0.8"
 rayon = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }
