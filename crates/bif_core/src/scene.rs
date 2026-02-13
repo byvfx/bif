@@ -8,6 +8,7 @@ use std::sync::Arc;
 use bif_math::{Aabb, Mat4, Quat, Vec3};
 
 use crate::mesh::Mesh;
+use crate::point_cloud::PointCloud;
 
 /// A PBR material definition based on UsdPreviewSurface.
 ///
@@ -448,6 +449,9 @@ pub struct Scene {
 
     /// Scene cameras (from Camera primitives)
     pub cameras: Vec<SceneCamera>,
+
+    /// Point clouds that expand to instances.
+    pub point_clouds: Vec<PointCloud>,
 }
 
 impl Scene {
@@ -547,6 +551,34 @@ impl Scene {
     /// Get material count.
     pub fn material_count(&self) -> usize {
         self.materials.len()
+    }
+
+    /// Add a point cloud and return its ID.
+    pub fn add_point_cloud(&mut self, cloud: PointCloud) -> usize {
+        let id = self.point_clouds.len();
+        self.point_clouds.push(cloud);
+        id
+    }
+
+    /// Expand all point clouds into instances, appending to existing instances.
+    pub fn expand_point_clouds(&mut self) {
+        let all_instances: Vec<Instance> = self
+            .point_clouds
+            .iter()
+            .flat_map(|cloud| cloud.expand())
+            .collect();
+        for inst in all_instances {
+            self.add_instance(inst.prototype_id, inst.transform);
+        }
+    }
+
+    /// Remove a point cloud by ID. Returns true if found.
+    pub fn remove_point_cloud(&mut self, cloud_id: usize) -> bool {
+        if cloud_id >= self.point_clouds.len() {
+            return false;
+        }
+        self.point_clouds.remove(cloud_id);
+        true
     }
 
     /// Get total triangle count across all instances.
@@ -703,6 +735,42 @@ mod tests {
         assert_eq!(scene.prototype_count(), 1);
         assert_eq!(scene.instance_count(), 2);
         assert_eq!(scene.total_triangle_count(), 2);
+    }
+
+    #[test]
+    fn test_scene_add_point_cloud() {
+        use crate::point_cloud::{DistributionMethod, PointAttributes, PointCloud};
+
+        let mut scene = Scene::new("test");
+
+        let mesh = Arc::new(Mesh::new(
+            vec![Vec3::ZERO, Vec3::X, Vec3::Y],
+            vec![0, 1, 2],
+            None,
+        ));
+        let proto_id = scene.add_prototype(mesh, "tri".to_string());
+
+        let cloud = PointCloud {
+            id: 0,
+            name: "cloud".into(),
+            positions: vec![Vec3::new(0.0, 0.0, 0.0), Vec3::new(5.0, 0.0, 0.0)],
+            attributes: PointAttributes {
+                proto_indices: vec![0, 0],
+                ..Default::default()
+            },
+            prototype_ids: vec![proto_id],
+            transform: Transform::default(),
+            distribution: DistributionMethod::Manual,
+        };
+
+        let cloud_id = scene.add_point_cloud(cloud);
+        assert_eq!(cloud_id, 0);
+        assert_eq!(scene.point_clouds.len(), 1);
+        assert_eq!(scene.point_clouds[0].point_count(), 2);
+
+        // Expand and check instances appear
+        scene.expand_point_clouds();
+        assert_eq!(scene.instance_count(), 2);
     }
 
     #[test]

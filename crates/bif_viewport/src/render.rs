@@ -37,6 +37,42 @@ impl Renderer {
                             needs_reload = true;
                         }
                     }
+                    bif_core::SceneOp::AddPointCloud { cloud } => {
+                        let expanded = cloud.expand();
+                        for inst in expanded {
+                            self.working_scene
+                                .add_instance(inst.prototype_id, inst.transform);
+                        }
+                        self.working_scene.add_point_cloud(*cloud);
+
+                        // Update point preview
+                        let all_positions: Vec<bif_math::Vec3> = self
+                            .working_scene
+                            .point_clouds
+                            .iter()
+                            .flat_map(|c| c.positions.iter().copied())
+                            .collect();
+                        self.point_preview
+                            .upload_points(&self.device, &self.queue, &all_positions);
+                        needs_reload = true;
+                    }
+                    bif_core::SceneOp::RemovePointCloud { cloud_id } => {
+                        if self.working_scene.remove_point_cloud(cloud_id) {
+                            // Update point preview
+                            let all_positions: Vec<bif_math::Vec3> = self
+                                .working_scene
+                                .point_clouds
+                                .iter()
+                                .flat_map(|c| c.positions.iter().copied())
+                                .collect();
+                            self.point_preview.upload_points(
+                                &self.device,
+                                &self.queue,
+                                &all_positions,
+                            );
+                            needs_reload = true;
+                        }
+                    }
                 }
             }
             if needs_reload {
@@ -217,6 +253,7 @@ impl Renderer {
                         ui.label("BIF");
                         ui.separator();
                         ui.checkbox(&mut self.show_grid, "Grid");
+                        ui.checkbox(&mut self.point_preview.visible, "Points");
                     });
                 });
             top_panel_height = top_panel.response.rect.height();
@@ -781,6 +818,30 @@ impl Renderer {
                         self.selected_prim_properties.as_ref(),
                         et_ref,
                     );
+
+                    // Point cloud summary
+                    if !self.working_scene.point_clouds.is_empty() {
+                        ui.separator();
+                        ui.heading("Point Clouds");
+                        let total_points: usize = self
+                            .working_scene
+                            .point_clouds
+                            .iter()
+                            .map(|c| c.point_count())
+                            .sum();
+                        ui.label(format!(
+                            "{} clouds, {} total points",
+                            self.working_scene.point_clouds.len(),
+                            total_points
+                        ));
+                        for cloud in &self.working_scene.point_clouds {
+                            ui.label(format!(
+                                "  {} - {} pts",
+                                cloud.name,
+                                cloud.point_count()
+                            ));
+                        }
+                    }
                 });
             right_panel_width = property_panel.response.rect.width();
 
@@ -1371,6 +1432,92 @@ impl Renderer {
                             }
                         }
                     }
+                    NodeGraphEvent::ScatterCompute {
+                        node_id: _,
+                        count,
+                        mode,
+                        min_distance,
+                        seed,
+                        align_to_normal,
+                        scale_min,
+                        scale_max,
+                        rotation_range,
+                        target_proto_id,
+                    } => {
+                        log::info!(
+                            "Node graph: Scatter {} points ({:?}, seed={})",
+                            count,
+                            mode,
+                            seed
+                        );
+
+                        // Find the first prototype mesh in working_scene to scatter on
+                        let scatter_mesh_idx = target_proto_id.unwrap_or(0);
+                        if let Some(proto) = self.working_scene.prototypes.get(scatter_mesh_idx) {
+                            let mesh = proto.mesh.clone();
+                            // Use identity transform for first instance of this prototype
+                            let mesh_transform = self
+                                .working_scene
+                                .instances()
+                                .iter()
+                                .find(|i| i.prototype_id == scatter_mesh_idx)
+                                .map(|i| i.model_matrix())
+                                .unwrap_or(bif_math::Mat4::IDENTITY);
+
+                            let config = bif_core::scatter::ScatterConfig {
+                                count: count as usize,
+                                min_distance,
+                                seed,
+                                align_to_normal,
+                                scale_range: (scale_min, scale_max),
+                                rotation_range: rotation_range.to_radians(),
+                            };
+
+                            let mut cloud = bif_core::scatter::scatter_on_surface(
+                                &mesh,
+                                &mesh_transform,
+                                mode,
+                                &config,
+                            );
+
+                            // Use the first prototype for scattered instances
+                            cloud.prototype_ids = vec![scatter_mesh_idx];
+                            cloud.id = self.working_scene.point_clouds.len();
+
+                            // Expand and add instances
+                            let expanded = cloud.expand();
+                            let inst_count = expanded.len();
+                            for inst in expanded {
+                                self.working_scene
+                                    .add_instance(inst.prototype_id, inst.transform);
+                            }
+                            self.working_scene.add_point_cloud(cloud);
+
+                            // Upload point positions for preview
+                            let all_positions: Vec<bif_math::Vec3> = self
+                                .working_scene
+                                .point_clouds
+                                .iter()
+                                .flat_map(|c| c.positions.iter().copied())
+                                .collect();
+                            self.point_preview.upload_points(
+                                &self.device,
+                                &self.queue,
+                                &all_positions,
+                            );
+
+                            if let Err(e) = self.reload_working_scene() {
+                                log::error!("Failed to reload after scatter: {}", e);
+                            } else {
+                                log::info!("Scatter complete: {} instances added", inst_count);
+                            }
+                        } else {
+                            log::warn!(
+                                "Scatter: no mesh at proto_id {} to scatter on",
+                                scatter_mesh_idx
+                            );
+                        }
+                    }
                     NodeGraphEvent::SelectNode(_) => {
                         // Selection handled in render_node_graph
                     }
@@ -1612,6 +1759,10 @@ impl Renderer {
                             0..self.culling.lod_box_count,
                         );
                     }
+
+                    // Render point preview after geometry (transparent, reads depth)
+                    self.point_preview
+                        .render(&mut render_pass, &self.camera_bind_group);
 
                     // Render ground grid after opaque geometry (transparent, reads depth)
                     if self.show_grid {

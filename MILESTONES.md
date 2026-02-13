@@ -722,19 +722,26 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 
 ---
 
-### Milestone 21: Point Instancing + Scattering 🌲
+### Milestone 21: Point Instancing + Scattering ✅
 
-- **Goal:** Massive instancing via point clouds and scattering tools
-- **Estimated Time:** 15-20 hours
-- **Key Tasks:**
-  - UsdGeomPointInstancer support (load from USD)
-  - Point Instancer node in node graph
-  - Scatter points on surface (random/Poisson disk)
-  - Paint points tool (brush-based placement)
-  - Per-point attributes (scale, rotation, ID)
-  - Viewport preview of point clouds
-  - Instance geometry onto points
-- **Why Important:** Core BIF use case - scatter millions of instances
+- **Completed:** 2026-02-13
+- **Time Invested:** ~8 hours (1 session)
+- **Key Achievements:**
+  - `PointCloud` first-class scene type with `expand()` → instances
+  - USD PointInstancer loading creates PointCloud (preserves authoring data)
+  - Scatter on surface: random (area-weighted CDF) + Poisson disk (spatial hash rejection)
+  - Deterministic scatter via `StdRng::seed_from_u64()`
+  - MAX_INSTANCES bumped 10K → 100K
+  - Point preview renderer (wgpu PointList pipeline, cyan dots, size slider)
+  - Scatter node in node graph with Compute/Regenerate buttons
+  - Undo/redo for scatter operations (ScatterCommand + SceneOp variants)
+  - Point cloud summary in property inspector
+- **New Files:**
+  - `bif_core/src/point_cloud.rs` - PointCloud type, expand(), DistributionMethod
+  - `bif_core/src/scatter.rs` - scatter_on_surface(), random + Poisson disk modes
+  - `bif_viewport/src/point_preview.rs` - wgpu PointList renderer
+  - `bif_viewport/src/shaders/point_preview.wgsl` - Point preview shader
+- **Stats:** ~2,500 lines, 13 files changed, 4 new files, 7 new tests (61 total bif_core)
 
 ---
 
@@ -944,8 +951,8 @@ Key papers (cherry-pick into relevant milestones as needed):
 
 ---
 
-**Last Updated:** February 5, 2026
-**Status:** Milestones 0-18.5, M19.1-M19.4 complete
-**Current:** M19 Phase 6 (instance transform animation)
-**Next:** M19.6 (lib.rs cleanup) → M20 (interactivity) → M21 (scattering) → M29 (USD export)
+**Last Updated:** February 13, 2026
+**Status:** Milestones 0-21 complete
+**Current:** Planning next milestone
+**Next:** M29 (USD export) → M26 (denoising) → M25 (volumes)
 **Roadmap revision:** M23 dissolved, M24 cut, M29 moved up to 5th priority

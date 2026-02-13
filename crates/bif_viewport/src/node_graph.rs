@@ -46,6 +46,19 @@ pub enum NodeGraphEvent {
         size: f32,
         node_id: NodeId,
     },
+    /// Compute scatter on a target mesh
+    ScatterCompute {
+        node_id: NodeId,
+        count: u32,
+        mode: bif_core::scatter::ScatterMode,
+        min_distance: f32,
+        seed: u64,
+        align_to_normal: bool,
+        scale_min: f32,
+        scale_max: f32,
+        rotation_range: f32,
+        target_proto_id: Option<usize>,
+    },
     /// Select a node (for keyboard delete, property inspector, etc.)
     SelectNode(NodeId),
     /// Delete a node by ID
@@ -105,6 +118,29 @@ pub enum SceneNode {
         size: f32,
         /// Whether geometry has been created
         is_created: bool,
+    },
+    /// Scatter instances on a mesh surface
+    Scatter {
+        /// Number of instances to scatter
+        count: u32,
+        /// Distribution mode
+        mode: bif_core::scatter::ScatterMode,
+        /// Minimum distance for Poisson disk
+        min_distance: f32,
+        /// Random seed
+        seed: u64,
+        /// Align to surface normal
+        align_to_normal: bool,
+        /// Minimum scale
+        scale_min: f32,
+        /// Maximum scale
+        scale_max: f32,
+        /// Rotation range in degrees
+        rotation_range: f32,
+        /// Prototype ID to instance (None = use connected scene's first)
+        target_proto_id: Option<usize>,
+        /// Whether scatter has been computed
+        is_computed: bool,
     },
     /// HDRI environment map for IBL lighting
     HdriEnvironment {
@@ -172,6 +208,22 @@ impl SceneNode {
         }
     }
 
+    /// Create a new Scatter node
+    pub fn scatter() -> Self {
+        Self::Scatter {
+            count: 1000,
+            mode: bif_core::scatter::ScatterMode::Random,
+            min_distance: 0.5,
+            seed: 42,
+            align_to_normal: false,
+            scale_min: 0.8,
+            scale_max: 1.2,
+            rotation_range: 360.0,
+            target_proto_id: None,
+            is_computed: false,
+        }
+    }
+
     /// Create a new HDRI Environment node
     pub fn hdri_environment() -> Self {
         Self::HdriEnvironment {
@@ -197,6 +249,7 @@ impl SceneNode {
                 bif_core::PrimitiveKind::Sphere => "Sphere",
                 bif_core::PrimitiveKind::Camera => "Camera",
             },
+            SceneNode::Scatter { .. } => "Scatter",
             SceneNode::HdriEnvironment { .. } => "HDRI Environment",
         }
     }
@@ -207,6 +260,7 @@ impl SceneNode {
             SceneNode::UsdRead { .. } => 0,
             SceneNode::IvarRender { .. } => 2, // scene + environment
             SceneNode::Primitive { .. } => 0,
+            SceneNode::Scatter { .. } => 1, // input scene (mesh to scatter on)
             SceneNode::HdriEnvironment { .. } => 0,
         }
     }
@@ -217,6 +271,7 @@ impl SceneNode {
             SceneNode::UsdRead { .. } => 1,
             SceneNode::IvarRender { .. } => 1,
             SceneNode::Primitive { .. } => 1,
+            SceneNode::Scatter { .. } => 1,
             SceneNode::HdriEnvironment { .. } => 1,
         }
     }
@@ -231,6 +286,10 @@ impl SceneNode {
                 _ => None,
             },
             SceneNode::Primitive { .. } => None,
+            SceneNode::Scatter { .. } => match index {
+                0 => Some(("scene", PinType::Scene)),
+                _ => None,
+            },
             SceneNode::HdriEnvironment { .. } => None,
         }
     }
@@ -247,6 +306,10 @@ impl SceneNode {
                 _ => None,
             },
             SceneNode::Primitive { .. } => match index {
+                0 => Some(("scene", PinType::Scene)),
+                _ => None,
+            },
+            SceneNode::Scatter { .. } => match index {
                 0 => Some(("scene", PinType::Scene)),
                 _ => None,
             },
@@ -438,6 +501,144 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer {
                     }
                 } else {
                     ui.colored_label(egui::Color32::GREEN, "Created");
+                }
+            }
+            SceneNode::Scatter {
+                count,
+                mode,
+                min_distance,
+                seed,
+                align_to_normal,
+                scale_min,
+                scale_max,
+                rotation_range,
+                target_proto_id: _,
+                is_computed,
+            } => {
+                ui.horizontal(|ui| {
+                    ui.label("Count:");
+                    if ui
+                        .add(egui::DragValue::new(count).range(1..=100_000))
+                        .changed()
+                    {
+                        *is_computed = false;
+                    }
+                });
+
+                ui.horizontal(|ui| {
+                    ui.label("Mode:");
+                    let mut is_poisson = *mode == bif_core::scatter::ScatterMode::PoissonDisk;
+                    if ui.checkbox(&mut is_poisson, "Poisson Disk").changed() {
+                        *mode = if is_poisson {
+                            bif_core::scatter::ScatterMode::PoissonDisk
+                        } else {
+                            bif_core::scatter::ScatterMode::Random
+                        };
+                        *is_computed = false;
+                    }
+                });
+
+                if *mode == bif_core::scatter::ScatterMode::PoissonDisk {
+                    ui.horizontal(|ui| {
+                        ui.label("Min Dist:");
+                        if ui
+                            .add(
+                                egui::DragValue::new(min_distance)
+                                    .speed(0.01)
+                                    .range(0.01..=100.0),
+                            )
+                            .changed()
+                        {
+                            *is_computed = false;
+                        }
+                    });
+                }
+
+                ui.horizontal(|ui| {
+                    ui.label("Seed:");
+                    let mut seed_val = *seed as i64;
+                    if ui
+                        .add(egui::DragValue::new(&mut seed_val).range(0..=999_999))
+                        .changed()
+                    {
+                        *seed = seed_val as u64;
+                        *is_computed = false;
+                    }
+                });
+
+                if ui.checkbox(align_to_normal, "Align to Normal").changed() {
+                    *is_computed = false;
+                }
+
+                ui.horizontal(|ui| {
+                    ui.label("Scale:");
+                    let changed_min = ui
+                        .add(
+                            egui::DragValue::new(scale_min)
+                                .speed(0.01)
+                                .range(0.01..=10.0),
+                        )
+                        .changed();
+                    ui.label("-");
+                    let changed_max = ui
+                        .add(
+                            egui::DragValue::new(scale_max)
+                                .speed(0.01)
+                                .range(0.01..=10.0),
+                        )
+                        .changed();
+                    if changed_min || changed_max {
+                        *is_computed = false;
+                    }
+                });
+
+                ui.horizontal(|ui| {
+                    ui.label("Rotation:");
+                    if ui
+                        .add(
+                            egui::DragValue::new(rotation_range)
+                                .speed(1.0)
+                                .suffix("deg")
+                                .range(0.0..=360.0),
+                        )
+                        .changed()
+                    {
+                        *is_computed = false;
+                    }
+                });
+
+                if !*is_computed {
+                    if ui.button("Compute").clicked() {
+                        self.events.push(NodeGraphEvent::ScatterCompute {
+                            node_id,
+                            count: *count,
+                            mode: *mode,
+                            min_distance: *min_distance,
+                            seed: *seed,
+                            align_to_normal: *align_to_normal,
+                            scale_min: *scale_min,
+                            scale_max: *scale_max,
+                            rotation_range: *rotation_range,
+                            target_proto_id: None,
+                        });
+                        *is_computed = true;
+                    }
+                } else {
+                    ui.colored_label(egui::Color32::GREEN, "Computed");
+                    if ui.button("Regenerate").clicked() {
+                        self.events.push(NodeGraphEvent::ScatterCompute {
+                            node_id,
+                            count: *count,
+                            mode: *mode,
+                            min_distance: *min_distance,
+                            seed: *seed,
+                            align_to_normal: *align_to_normal,
+                            scale_min: *scale_min,
+                            scale_max: *scale_max,
+                            rotation_range: *rotation_range,
+                            target_proto_id: None,
+                        });
+                    }
                 }
             }
             SceneNode::HdriEnvironment {
@@ -663,6 +864,11 @@ impl NodeGraphState {
         self.snarl.insert_node(pos, SceneNode::hdri_environment())
     }
 
+    /// Add a Scatter node at the given position
+    pub fn add_scatter(&mut self, pos: egui::Pos2) -> NodeId {
+        self.snarl.insert_node(pos, SceneNode::scatter())
+    }
+
     /// Add a Primitive node at the given position
     pub fn add_primitive(&mut self, kind: bif_core::PrimitiveKind, pos: egui::Pos2) -> NodeId {
         self.snarl.insert_node(pos, SceneNode::primitive(kind))
@@ -849,6 +1055,9 @@ pub fn render_node_graph(ui: &mut egui::Ui, state: &mut NodeGraphState) -> Vec<N
         }
         if ui.button("+ Camera").clicked() {
             state.add_primitive(bif_core::PrimitiveKind::Camera, egui::pos2(50.0, 500.0));
+        }
+        if ui.button("+ Scatter").clicked() {
+            state.add_scatter(egui::pos2(200.0, 300.0));
         }
         ui.separator();
         if ui.button("Del Selected").clicked() {

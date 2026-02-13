@@ -374,6 +374,7 @@ dependencies = [
  "glam",
  "image",
  "log",
+ "rand",
  "rayon",
  "serde",
  "thiserror 1.0.69",

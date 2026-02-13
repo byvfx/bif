@@ -28,6 +28,7 @@ pub mod ivar_state;
 pub mod lights;
 pub mod mesh_data;
 pub mod multi_draw;
+pub mod point_preview;
 pub mod texture_loader;
 
 // Scene browser and property inspector modules
@@ -78,7 +79,7 @@ pub use scene_browser::{EmptyPrimProvider, PrimDataProvider, PrimDisplayInfo, Sc
 use batch_render::BatchMessage;
 
 /// Maximum instance count for dynamic instance buffer.
-const MAX_INSTANCES: u32 = 10_000;
+const MAX_INSTANCES: u32 = 100_000;
 
 /// Core renderer managing wgpu state
 pub struct Renderer {
@@ -240,6 +241,9 @@ pub struct Renderer {
 
     // Translate gizmo state
     pub gizmo_state: gizmo::GizmoState,
+
+    // Point preview renderer for scatter visualization
+    pub(crate) point_preview: point_preview::PointPreviewRenderer,
 
     // Viewport display toggles
     pub show_grid: bool,
@@ -628,9 +632,9 @@ impl Renderer {
             material_id: 0,
         };
 
-        // Preallocate instance buffer for up to MAX_INSTANCES (10K)
+        // Preallocate instance buffer for up to MAX_INSTANCES (100K)
         // Uses COPY_DST for dynamic per-frame updates during frustum culling
-        const MAX_INSTANCES: u32 = 10_000;
+        const MAX_INSTANCES: u32 = 100_000;
         let instance_buffer_size = (MAX_INSTANCES as usize) * std::mem::size_of::<InstanceData>();
         let instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Instance Buffer (Dynamic)"),
@@ -679,6 +683,14 @@ impl Renderer {
         // Create ground grid renderer
         let grid = GridRenderer::new(&device, config.format, &camera_bind_group_layout);
         log::info!("Grid initialized");
+
+        // Create point preview renderer
+        let point_preview = point_preview::PointPreviewRenderer::new(
+            &device,
+            config.format,
+            &camera_bind_group_layout,
+        );
+        log::info!("Point preview initialized");
 
         // Calculate stats - empty scene has 0 triangles
         let num_triangles = 0;
@@ -794,6 +806,7 @@ impl Renderer {
             edit_state: bif_core::EditState::default(),
             scene_cameras: vec![],
             gizmo_state: gizmo::GizmoState::new(),
+            point_preview,
             show_grid: true,
             working_scene: bif_core::Scene::new("Working"),
             primitive_name_counters: std::collections::HashMap::new(),

@@ -21,7 +21,9 @@
 pub mod hdr;
 pub mod ibl;
 pub mod mesh;
+pub mod point_cloud;
 pub mod primitives;
+pub mod scatter;
 pub mod scene;
 pub mod texture;
 pub mod undo;
@@ -32,6 +34,7 @@ pub mod oiio;
 
 // Re-export commonly used types
 pub use mesh::Mesh;
+pub use point_cloud::{DistributionMethod, PointAttributes, PointCloud};
 pub use primitives::PrimitiveKind;
 pub use scene::{
     AnimatedTransform, Instance, Light, Material, Prototype, Scene, SceneCamera, TimelineInfo,
@@ -39,8 +42,8 @@ pub use scene::{
 };
 pub use texture::{Texture, TextureCache, TextureError, TextureResult};
 pub use undo::{
-    CreatePrimitiveCommand, DeletePrimitiveCommand, EditState, KeyframeCommand, SceneOp,
-    TransformCommand, UndoCommand, UndoStack,
+    CreatePrimitiveCommand, DeletePrimitiveCommand, EditState, KeyframeCommand, ScatterCommand,
+    SceneOp, TransformCommand, UndoCommand, UndoStack,
 };
 pub use usd::{load_usd, load_usda, load_usda_from_string};
 
