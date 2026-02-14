@@ -37,8 +37,9 @@ impl Renderer {
                             needs_reload = true;
                         }
                     }
-                    bif_core::SceneOp::AddPointCloud { cloud } => {
+                    bif_core::SceneOp::AddPointCloud { mut cloud } => {
                         let expanded = cloud.expand();
+                        cloud.expanded_instance_count = expanded.len();
                         for inst in expanded {
                             self.working_scene
                                 .add_instance(inst.prototype_id, inst.transform);
@@ -1464,6 +1465,18 @@ impl Renderer {
                                 .map(|i| i.model_matrix())
                                 .unwrap_or(bif_math::Mat4::IDENTITY);
 
+                            // Remove previous scatter cloud (if regenerating)
+                            // to avoid accumulating instances.
+                            if !self.working_scene.point_clouds.is_empty() {
+                                let last_id = self
+                                    .working_scene
+                                    .point_clouds
+                                    .last()
+                                    .map(|c| c.id)
+                                    .unwrap();
+                                self.working_scene.remove_point_cloud(last_id);
+                            }
+
                             let config = bif_core::scatter::ScatterConfig {
                                 count: count as usize,
                                 min_distance,
@@ -1478,15 +1491,15 @@ impl Renderer {
                                 &mesh_transform,
                                 mode,
                                 &config,
+                                vec![scatter_mesh_idx],
                             );
 
-                            // Use the first prototype for scattered instances
-                            cloud.prototype_ids = vec![scatter_mesh_idx];
                             cloud.id = self.working_scene.point_clouds.len();
 
                             // Expand and add instances
                             let expanded = cloud.expand();
                             let inst_count = expanded.len();
+                            cloud.expanded_instance_count = inst_count;
                             for inst in expanded {
                                 self.working_scene
                                     .add_instance(inst.prototype_id, inst.transform);
