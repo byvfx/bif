@@ -572,25 +572,12 @@ impl Scene {
         }
     }
 
-    /// Remove a point cloud by its `.id` field.
-    ///
-    /// Also removes the expanded instances (trimmed from the end of the
-    /// instance list using `expanded_instance_count`). Returns true if found.
+    /// Remove a point cloud by its `.id` field. Returns true if found.
     pub fn remove_point_cloud(&mut self, cloud_id: usize) -> bool {
         let Some(idx) = self.point_clouds.iter().position(|c| c.id == cloud_id) else {
             return false;
         };
-        let count = self.point_clouds[idx].expanded_instance_count;
         self.point_clouds.remove(idx);
-
-        // Remove expanded instances from the end of the instance list.
-        // Undo operates in LIFO order so the most recently added cloud's
-        // instances are always at the tail.
-        if count > 0 && self.instances.len() >= count {
-            let new_len = self.instances.len() - count;
-            self.instances.truncate(new_len);
-            self.instance_animations.truncate(new_len);
-        }
         true
     }
 

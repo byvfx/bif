@@ -46,14 +46,28 @@ pub enum NodeGraphEvent {
         size: f32,
         node_id: NodeId,
     },
-    /// Compute scatter on a target mesh
-    ScatterCompute {
+    /// Compute scatter points
+    ScatterPointsCompute {
         node_id: NodeId,
+        source: bif_core::PointSource,
         count: u32,
-        mode: bif_core::scatter::ScatterMode,
-        min_distance: f32,
+        max_point_limit: u32,
         seed: u64,
+        // Surface-specific
+        scatter_mode: bif_core::scatter::ScatterMode,
+        min_distance: f32,
         align_to_normal: bool,
+        // Grid-specific
+        grid_size: [f32; 3],
+        grid_spacing: f32,
+        // Sphere-specific
+        sphere_radius: f32,
+        sphere_on_surface: bool,
+        // Relax
+        relax_iterations: u32,
+        scale_radii: f32,
+        max_relax_radius: f32,
+        // Per-point attrs
         scale_min: f32,
         scale_max: f32,
         rotation_range: f32,
@@ -119,25 +133,43 @@ pub enum SceneNode {
         /// Whether geometry has been created
         is_created: bool,
     },
-    /// Scatter instances on a mesh surface
-    Scatter {
-        /// Number of instances to scatter
+    /// Scatter points on surface, grid, or sphere
+    ScatterPoints {
+        /// Point generation source
+        source: bif_core::PointSource,
+        /// Number of points to generate
         count: u32,
-        /// Distribution mode
-        mode: bif_core::scatter::ScatterMode,
-        /// Minimum distance for Poisson disk
-        min_distance: f32,
+        /// Safety cap on total points
+        max_point_limit: u32,
         /// Random seed
         seed: u64,
-        /// Align to surface normal
+        /// Distribution mode (Surface only)
+        scatter_mode: bif_core::scatter::ScatterMode,
+        /// Minimum distance for Poisson disk (Surface only)
+        min_distance: f32,
+        /// Align to surface normal (Surface only)
         align_to_normal: bool,
-        /// Minimum scale
+        /// Grid dimensions [X, Y, Z] (Grid only)
+        grid_size: [f32; 3],
+        /// Distance between grid points (Grid only)
+        grid_spacing: f32,
+        /// Sphere radius (Sphere only)
+        sphere_radius: f32,
+        /// Surface-only vs volume fill (Sphere only)
+        sphere_on_surface: bool,
+        /// Lloyd relaxation iterations (0 = none)
+        relax_iterations: u32,
+        /// Multiplier on relax radius
+        scale_radii: f32,
+        /// Cap on relax radius
+        max_relax_radius: f32,
+        /// Minimum scale for per-point attrs
         scale_min: f32,
-        /// Maximum scale
+        /// Maximum scale for per-point attrs
         scale_max: f32,
         /// Rotation range in degrees
         rotation_range: f32,
-        /// Prototype ID to instance (None = use connected scene's first)
+        /// Prototype ID to scatter on (Surface: None = first)
         target_proto_id: Option<usize>,
         /// Whether scatter has been computed
         is_computed: bool,
@@ -208,14 +240,23 @@ impl SceneNode {
         }
     }
 
-    /// Create a new Scatter node
-    pub fn scatter() -> Self {
-        Self::Scatter {
+    /// Create a new Scatter Points node.
+    pub fn scatter_points() -> Self {
+        Self::ScatterPoints {
+            source: bif_core::PointSource::Surface,
             count: 1000,
-            mode: bif_core::scatter::ScatterMode::Random,
-            min_distance: 0.5,
+            max_point_limit: 1_000_000,
             seed: 42,
+            scatter_mode: bif_core::scatter::ScatterMode::Random,
+            min_distance: 0.5,
             align_to_normal: false,
+            grid_size: [10.0, 0.0, 10.0],
+            grid_spacing: 1.0,
+            sphere_radius: 5.0,
+            sphere_on_surface: true,
+            relax_iterations: 0,
+            scale_radii: 1.0,
+            max_relax_radius: 2.0,
             scale_min: 0.8,
             scale_max: 1.2,
             rotation_range: 360.0,
@@ -249,7 +290,7 @@ impl SceneNode {
                 bif_core::PrimitiveKind::Sphere => "Sphere",
                 bif_core::PrimitiveKind::Camera => "Camera",
             },
-            SceneNode::Scatter { .. } => "Scatter",
+            SceneNode::ScatterPoints { .. } => "Scatter Points",
             SceneNode::HdriEnvironment { .. } => "HDRI Environment",
         }
     }
@@ -260,7 +301,10 @@ impl SceneNode {
             SceneNode::UsdRead { .. } => 0,
             SceneNode::IvarRender { .. } => 2, // scene + environment
             SceneNode::Primitive { .. } => 0,
-            SceneNode::Scatter { .. } => 1, // input scene (mesh to scatter on)
+            SceneNode::ScatterPoints { source, .. } => match source {
+                bif_core::PointSource::Surface => 1,
+                bif_core::PointSource::Grid | bif_core::PointSource::Sphere => 0,
+            },
             SceneNode::HdriEnvironment { .. } => 0,
         }
     }
@@ -271,7 +315,7 @@ impl SceneNode {
             SceneNode::UsdRead { .. } => 1,
             SceneNode::IvarRender { .. } => 1,
             SceneNode::Primitive { .. } => 1,
-            SceneNode::Scatter { .. } => 1,
+            SceneNode::ScatterPoints { .. } => 1,
             SceneNode::HdriEnvironment { .. } => 1,
         }
     }
@@ -286,9 +330,12 @@ impl SceneNode {
                 _ => None,
             },
             SceneNode::Primitive { .. } => None,
-            SceneNode::Scatter { .. } => match index {
-                0 => Some(("scene", PinType::Scene)),
-                _ => None,
+            SceneNode::ScatterPoints { source, .. } => match source {
+                bif_core::PointSource::Surface => match index {
+                    0 => Some(("scene", PinType::Scene)),
+                    _ => None,
+                },
+                bif_core::PointSource::Grid | bif_core::PointSource::Sphere => None,
             },
             SceneNode::HdriEnvironment { .. } => None,
         }
@@ -309,8 +356,8 @@ impl SceneNode {
                 0 => Some(("scene", PinType::Scene)),
                 _ => None,
             },
-            SceneNode::Scatter { .. } => match index {
-                0 => Some(("scene", PinType::Scene)),
+            SceneNode::ScatterPoints { .. } => match index {
+                0 => Some(("points", PinType::Scene)),
                 _ => None,
             },
             SceneNode::HdriEnvironment { .. } => match index {
@@ -503,47 +550,252 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer {
                     ui.colored_label(egui::Color32::GREEN, "Created");
                 }
             }
-            SceneNode::Scatter {
+            SceneNode::ScatterPoints {
+                source,
                 count,
-                mode,
-                min_distance,
+                max_point_limit,
                 seed,
+                scatter_mode,
+                min_distance,
                 align_to_normal,
+                grid_size,
+                grid_spacing,
+                sphere_radius,
+                sphere_on_surface,
+                relax_iterations,
+                scale_radii,
+                max_relax_radius,
                 scale_min,
                 scale_max,
                 rotation_range,
                 target_proto_id: _,
                 is_computed,
             } => {
+                // Source dropdown
                 ui.horizontal(|ui| {
-                    ui.label("Count:");
+                    ui.label("Source:");
+                    egui::ComboBox::from_id_salt("scatter_source")
+                        .selected_text(match source {
+                            bif_core::PointSource::Surface => "Surface",
+                            bif_core::PointSource::Grid => "Grid",
+                            bif_core::PointSource::Sphere => "Sphere",
+                        })
+                        .show_ui(ui, |ui| {
+                            if ui
+                                .selectable_value(source, bif_core::PointSource::Surface, "Surface")
+                                .changed()
+                            {
+                                *is_computed = false;
+                            }
+                            if ui
+                                .selectable_value(source, bif_core::PointSource::Grid, "Grid")
+                                .changed()
+                            {
+                                *is_computed = false;
+                            }
+                            if ui
+                                .selectable_value(source, bif_core::PointSource::Sphere, "Sphere")
+                                .changed()
+                            {
+                                *is_computed = false;
+                            }
+                        });
+                });
+
+                // Source-specific params
+                match source {
+                    bif_core::PointSource::Surface => {
+                        ui.horizontal(|ui| {
+                            ui.label("Count:");
+                            if ui
+                                .add(egui::DragValue::new(count).range(1..=100_000))
+                                .changed()
+                            {
+                                *is_computed = false;
+                            }
+                        });
+
+                        ui.horizontal(|ui| {
+                            ui.label("Mode:");
+                            let mut is_poisson =
+                                *scatter_mode == bif_core::scatter::ScatterMode::PoissonDisk;
+                            if ui.checkbox(&mut is_poisson, "Poisson Disk").changed() {
+                                *scatter_mode = if is_poisson {
+                                    bif_core::scatter::ScatterMode::PoissonDisk
+                                } else {
+                                    bif_core::scatter::ScatterMode::Random
+                                };
+                                *is_computed = false;
+                            }
+                        });
+
+                        if *scatter_mode == bif_core::scatter::ScatterMode::PoissonDisk {
+                            ui.horizontal(|ui| {
+                                ui.label("Min Dist:");
+                                if ui
+                                    .add(
+                                        egui::DragValue::new(min_distance)
+                                            .speed(0.01)
+                                            .range(0.01..=100.0),
+                                    )
+                                    .changed()
+                                {
+                                    *is_computed = false;
+                                }
+                            });
+                        }
+
+                        ui.horizontal(|ui| {
+                            ui.label("Seed:");
+                            let mut seed_val = *seed as i64;
+                            if ui
+                                .add(egui::DragValue::new(&mut seed_val).range(0..=999_999))
+                                .changed()
+                            {
+                                *seed = seed_val as u64;
+                                *is_computed = false;
+                            }
+                        });
+
+                        if ui.checkbox(align_to_normal, "Align to Normal").changed() {
+                            *is_computed = false;
+                        }
+                    }
+                    bif_core::PointSource::Grid => {
+                        ui.horizontal(|ui| {
+                            ui.label("Size X:");
+                            if ui
+                                .add(
+                                    egui::DragValue::new(&mut grid_size[0])
+                                        .speed(0.1)
+                                        .range(0.0..=1000.0),
+                                )
+                                .changed()
+                            {
+                                *is_computed = false;
+                            }
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label("Size Y:");
+                            if ui
+                                .add(
+                                    egui::DragValue::new(&mut grid_size[1])
+                                        .speed(0.1)
+                                        .range(0.0..=1000.0),
+                                )
+                                .changed()
+                            {
+                                *is_computed = false;
+                            }
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label("Size Z:");
+                            if ui
+                                .add(
+                                    egui::DragValue::new(&mut grid_size[2])
+                                        .speed(0.1)
+                                        .range(0.0..=1000.0),
+                                )
+                                .changed()
+                            {
+                                *is_computed = false;
+                            }
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label("Spacing:");
+                            if ui
+                                .add(
+                                    egui::DragValue::new(grid_spacing)
+                                        .speed(0.01)
+                                        .range(0.01..=100.0),
+                                )
+                                .changed()
+                            {
+                                *is_computed = false;
+                            }
+                        });
+                    }
+                    bif_core::PointSource::Sphere => {
+                        ui.horizontal(|ui| {
+                            ui.label("Count:");
+                            if ui
+                                .add(egui::DragValue::new(count).range(1..=100_000))
+                                .changed()
+                            {
+                                *is_computed = false;
+                            }
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label("Radius:");
+                            if ui
+                                .add(
+                                    egui::DragValue::new(sphere_radius)
+                                        .speed(0.1)
+                                        .range(0.01..=1000.0),
+                                )
+                                .changed()
+                            {
+                                *is_computed = false;
+                            }
+                        });
+                        if ui.checkbox(sphere_on_surface, "Surface Only").changed() {
+                            *is_computed = false;
+                        }
+                        ui.horizontal(|ui| {
+                            ui.label("Seed:");
+                            let mut seed_val = *seed as i64;
+                            if ui
+                                .add(egui::DragValue::new(&mut seed_val).range(0..=999_999))
+                                .changed()
+                            {
+                                *seed = seed_val as u64;
+                                *is_computed = false;
+                            }
+                        });
+                    }
+                }
+
+                // Common: max point limit
+                ui.horizontal(|ui| {
+                    ui.label("Max Pts:");
                     if ui
-                        .add(egui::DragValue::new(count).range(1..=100_000))
+                        .add(egui::DragValue::new(max_point_limit).range(1..=1_000_000))
                         .changed()
                     {
                         *is_computed = false;
                     }
                 });
 
+                // Relax section
+                ui.separator();
                 ui.horizontal(|ui| {
-                    ui.label("Mode:");
-                    let mut is_poisson = *mode == bif_core::scatter::ScatterMode::PoissonDisk;
-                    if ui.checkbox(&mut is_poisson, "Poisson Disk").changed() {
-                        *mode = if is_poisson {
-                            bif_core::scatter::ScatterMode::PoissonDisk
-                        } else {
-                            bif_core::scatter::ScatterMode::Random
-                        };
+                    ui.label("Relax Iters:");
+                    if ui
+                        .add(egui::DragValue::new(relax_iterations).range(0..=100))
+                        .changed()
+                    {
                         *is_computed = false;
                     }
                 });
-
-                if *mode == bif_core::scatter::ScatterMode::PoissonDisk {
+                if *relax_iterations > 0 {
                     ui.horizontal(|ui| {
-                        ui.label("Min Dist:");
+                        ui.label("Scale Radii:");
                         if ui
                             .add(
-                                egui::DragValue::new(min_distance)
+                                egui::DragValue::new(scale_radii)
+                                    .speed(0.01)
+                                    .range(0.01..=10.0),
+                            )
+                            .changed()
+                        {
+                            *is_computed = false;
+                        }
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Max Radius:");
+                        if ui
+                            .add(
+                                egui::DragValue::new(max_relax_radius)
                                     .speed(0.01)
                                     .range(0.01..=100.0),
                             )
@@ -554,22 +806,8 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer {
                     });
                 }
 
-                ui.horizontal(|ui| {
-                    ui.label("Seed:");
-                    let mut seed_val = *seed as i64;
-                    if ui
-                        .add(egui::DragValue::new(&mut seed_val).range(0..=999_999))
-                        .changed()
-                    {
-                        *seed = seed_val as u64;
-                        *is_computed = false;
-                    }
-                });
-
-                if ui.checkbox(align_to_normal, "Align to Normal").changed() {
-                    *is_computed = false;
-                }
-
+                // Per-point attributes
+                ui.separator();
                 ui.horizontal(|ui| {
                     ui.label("Scale:");
                     let changed_min = ui
@@ -607,37 +845,40 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer {
                     }
                 });
 
+                // Compute / Regenerate button
+                let emit_event = |events: &mut Vec<NodeGraphEvent>| {
+                    events.push(NodeGraphEvent::ScatterPointsCompute {
+                        node_id,
+                        source: *source,
+                        count: *count,
+                        max_point_limit: *max_point_limit,
+                        seed: *seed,
+                        scatter_mode: *scatter_mode,
+                        min_distance: *min_distance,
+                        align_to_normal: *align_to_normal,
+                        grid_size: *grid_size,
+                        grid_spacing: *grid_spacing,
+                        sphere_radius: *sphere_radius,
+                        sphere_on_surface: *sphere_on_surface,
+                        relax_iterations: *relax_iterations,
+                        scale_radii: *scale_radii,
+                        max_relax_radius: *max_relax_radius,
+                        scale_min: *scale_min,
+                        scale_max: *scale_max,
+                        rotation_range: *rotation_range,
+                        target_proto_id: None,
+                    });
+                };
+
                 if !*is_computed {
                     if ui.button("Compute").clicked() {
-                        self.events.push(NodeGraphEvent::ScatterCompute {
-                            node_id,
-                            count: *count,
-                            mode: *mode,
-                            min_distance: *min_distance,
-                            seed: *seed,
-                            align_to_normal: *align_to_normal,
-                            scale_min: *scale_min,
-                            scale_max: *scale_max,
-                            rotation_range: *rotation_range,
-                            target_proto_id: None,
-                        });
+                        emit_event(&mut self.events);
                         *is_computed = true;
                     }
                 } else {
                     ui.colored_label(egui::Color32::GREEN, "Computed");
                     if ui.button("Regenerate").clicked() {
-                        self.events.push(NodeGraphEvent::ScatterCompute {
-                            node_id,
-                            count: *count,
-                            mode: *mode,
-                            min_distance: *min_distance,
-                            seed: *seed,
-                            align_to_normal: *align_to_normal,
-                            scale_min: *scale_min,
-                            scale_max: *scale_max,
-                            rotation_range: *rotation_range,
-                            target_proto_id: None,
-                        });
+                        emit_event(&mut self.events);
                     }
                 }
             }
@@ -864,9 +1105,9 @@ impl NodeGraphState {
         self.snarl.insert_node(pos, SceneNode::hdri_environment())
     }
 
-    /// Add a Scatter node at the given position
-    pub fn add_scatter(&mut self, pos: egui::Pos2) -> NodeId {
-        self.snarl.insert_node(pos, SceneNode::scatter())
+    /// Add a Scatter Points node at the given position.
+    pub fn add_scatter_points(&mut self, pos: egui::Pos2) -> NodeId {
+        self.snarl.insert_node(pos, SceneNode::scatter_points())
     }
 
     /// Add a Primitive node at the given position
@@ -1056,8 +1297,8 @@ pub fn render_node_graph(ui: &mut egui::Ui, state: &mut NodeGraphState) -> Vec<N
         if ui.button("+ Camera").clicked() {
             state.add_primitive(bif_core::PrimitiveKind::Camera, egui::pos2(50.0, 500.0));
         }
-        if ui.button("+ Scatter").clicked() {
-            state.add_scatter(egui::pos2(200.0, 300.0));
+        if ui.button("+ Scatter Points").clicked() {
+            state.add_scatter_points(egui::pos2(200.0, 300.0));
         }
         ui.separator();
         if ui.button("Del Selected").clicked() {

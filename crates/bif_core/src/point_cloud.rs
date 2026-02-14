@@ -17,6 +17,10 @@ pub enum DistributionMethod {
     RandomScatter { seed: u64, count: usize },
     /// Poisson disk scatter on a mesh surface.
     PoissonDisk { seed: u64, min_distance: f32 },
+    /// Regular grid distribution.
+    Grid { spacing: f32 },
+    /// Spherical distribution (surface or volume).
+    Sphere { seed: u64, on_surface: bool },
     /// Hand-painted (future).
     Painted,
     /// Manually placed points.
