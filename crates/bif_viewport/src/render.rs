@@ -37,13 +37,7 @@ impl Renderer {
                             needs_reload = true;
                         }
                     }
-                    bif_core::SceneOp::AddPointCloud { mut cloud } => {
-                        let expanded = cloud.expand();
-                        cloud.expanded_instance_count = expanded.len();
-                        for inst in expanded {
-                            self.working_scene
-                                .add_instance(inst.prototype_id, inst.transform);
-                        }
+                    bif_core::SceneOp::AddPointCloud { cloud } => {
                         self.working_scene.add_point_cloud(*cloud);
 
                         // Update point preview
@@ -55,7 +49,7 @@ impl Renderer {
                             .collect();
                         self.point_preview
                             .upload_points(&self.device, &self.queue, &all_positions);
-                        needs_reload = true;
+                        self.point_preview.visible = true;
                     }
                     bif_core::SceneOp::RemovePointCloud { cloud_id } => {
                         if self.working_scene.remove_point_cloud(cloud_id) {
@@ -71,7 +65,6 @@ impl Renderer {
                                 &self.queue,
                                 &all_positions,
                             );
-                            needs_reload = true;
                         }
                     }
                 }
@@ -1433,77 +1426,138 @@ impl Renderer {
                             }
                         }
                     }
-                    NodeGraphEvent::ScatterCompute {
+                    NodeGraphEvent::ScatterPointsCompute {
                         node_id: _,
+                        source,
                         count,
-                        mode,
-                        min_distance,
+                        max_point_limit,
                         seed,
+                        scatter_mode,
+                        min_distance,
                         align_to_normal,
+                        grid_size,
+                        grid_spacing,
+                        sphere_radius,
+                        sphere_on_surface,
+                        relax_iterations,
+                        scale_radii,
+                        max_relax_radius,
                         scale_min,
                         scale_max,
                         rotation_range,
                         target_proto_id,
                     } => {
                         log::info!(
-                            "Node graph: Scatter {} points ({:?}, seed={})",
+                            "Node graph: Scatter Points {:?}, count={}, seed={}",
+                            source,
                             count,
-                            mode,
                             seed
                         );
 
-                        // Find the first prototype mesh in working_scene to scatter on
-                        let scatter_mesh_idx = target_proto_id.unwrap_or(0);
-                        if let Some(proto) = self.working_scene.prototypes.get(scatter_mesh_idx) {
-                            let mesh = proto.mesh.clone();
-                            // Use identity transform for first instance of this prototype
-                            let mesh_transform = self
+                        // Remove previous scatter cloud (if regenerating)
+                        if !self.working_scene.point_clouds.is_empty() {
+                            let last_id = self
                                 .working_scene
-                                .instances()
-                                .iter()
-                                .find(|i| i.prototype_id == scatter_mesh_idx)
-                                .map(|i| i.model_matrix())
-                                .unwrap_or(bif_math::Mat4::IDENTITY);
+                                .point_clouds
+                                .last()
+                                .map(|c| c.id)
+                                .unwrap();
+                            self.working_scene.remove_point_cloud(last_id);
+                        }
 
-                            // Remove previous scatter cloud (if regenerating)
-                            // to avoid accumulating instances.
-                            if !self.working_scene.point_clouds.is_empty() {
-                                let last_id = self
-                                    .working_scene
-                                    .point_clouds
-                                    .last()
-                                    .map(|c| c.id)
-                                    .unwrap();
-                                self.working_scene.remove_point_cloud(last_id);
+                        let cloud = match source {
+                            bif_core::PointSource::Surface => {
+                                let scatter_mesh_idx = target_proto_id.unwrap_or(0);
+                                if let Some(proto) =
+                                    self.working_scene.prototypes.get(scatter_mesh_idx)
+                                {
+                                    let mesh = proto.mesh.clone();
+                                    let mesh_transform = self
+                                        .working_scene
+                                        .instances()
+                                        .iter()
+                                        .find(|i| i.prototype_id == scatter_mesh_idx)
+                                        .map(|i| i.model_matrix())
+                                        .unwrap_or(bif_math::Mat4::IDENTITY);
+
+                                    let config = bif_core::scatter::ScatterConfig {
+                                        count: (count).min(max_point_limit) as usize,
+                                        min_distance,
+                                        seed,
+                                        align_to_normal,
+                                        scale_range: (scale_min, scale_max),
+                                        rotation_range: rotation_range.to_radians(),
+                                    };
+
+                                    let mut cloud = bif_core::scatter::scatter_on_surface(
+                                        &mesh,
+                                        &mesh_transform,
+                                        scatter_mode,
+                                        &config,
+                                        vec![scatter_mesh_idx],
+                                    );
+
+                                    // Apply relax if requested
+                                    if relax_iterations > 0 {
+                                        bif_core::scatter::relax_points(
+                                            &mut cloud.positions,
+                                            relax_iterations,
+                                            scale_radii,
+                                            max_relax_radius,
+                                            Some((&mesh, &mesh_transform)),
+                                        );
+                                    }
+
+                                    Some(cloud)
+                                } else {
+                                    log::warn!(
+                                        "Scatter: no mesh at proto_id {} to scatter on",
+                                        scatter_mesh_idx
+                                    );
+                                    None
+                                }
                             }
+                            bif_core::PointSource::Grid => {
+                                let mut cloud = bif_core::scatter::generate_grid_points(
+                                    grid_size,
+                                    grid_spacing,
+                                    max_point_limit,
+                                );
+                                if relax_iterations > 0 {
+                                    bif_core::scatter::relax_points(
+                                        &mut cloud.positions,
+                                        relax_iterations,
+                                        scale_radii,
+                                        max_relax_radius,
+                                        None,
+                                    );
+                                }
+                                Some(cloud)
+                            }
+                            bif_core::PointSource::Sphere => {
+                                let mut cloud = bif_core::scatter::generate_sphere_points(
+                                    sphere_radius,
+                                    count,
+                                    sphere_on_surface,
+                                    seed,
+                                    max_point_limit,
+                                );
+                                if relax_iterations > 0 {
+                                    bif_core::scatter::relax_points(
+                                        &mut cloud.positions,
+                                        relax_iterations,
+                                        scale_radii,
+                                        max_relax_radius,
+                                        None,
+                                    );
+                                }
+                                Some(cloud)
+                            }
+                        };
 
-                            let config = bif_core::scatter::ScatterConfig {
-                                count: count as usize,
-                                min_distance,
-                                seed,
-                                align_to_normal,
-                                scale_range: (scale_min, scale_max),
-                                rotation_range: rotation_range.to_radians(),
-                            };
-
-                            let mut cloud = bif_core::scatter::scatter_on_surface(
-                                &mesh,
-                                &mesh_transform,
-                                mode,
-                                &config,
-                                vec![scatter_mesh_idx],
-                            );
-
+                        if let Some(mut cloud) = cloud {
                             cloud.id = self.working_scene.point_clouds.len();
-
-                            // Expand and add instances
-                            let expanded = cloud.expand();
-                            let inst_count = expanded.len();
-                            cloud.expanded_instance_count = inst_count;
-                            for inst in expanded {
-                                self.working_scene
-                                    .add_instance(inst.prototype_id, inst.transform);
-                            }
+                            let pt_count = cloud.positions.len();
                             self.working_scene.add_point_cloud(cloud);
 
                             // Upload point positions for preview
@@ -1519,16 +1573,10 @@ impl Renderer {
                                 &all_positions,
                             );
 
-                            if let Err(e) = self.reload_working_scene() {
-                                log::error!("Failed to reload after scatter: {}", e);
-                            } else {
-                                log::info!("Scatter complete: {} instances added", inst_count);
-                            }
-                        } else {
-                            log::warn!(
-                                "Scatter: no mesh at proto_id {} to scatter on",
-                                scatter_mesh_idx
-                            );
+                            // Auto-enable point preview
+                            self.point_preview.visible = true;
+
+                            log::info!("Scatter Points complete: {} points", pt_count);
                         }
                     }
                     NodeGraphEvent::SelectNode(_) => {

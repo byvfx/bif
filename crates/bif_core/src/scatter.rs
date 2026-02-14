@@ -1,7 +1,9 @@
-//! Scatter points on mesh surfaces.
+//! Scatter points on surfaces, grids, and spheres.
 //!
-//! Provides random and Poisson disk distribution of points on triangle
-//! meshes, producing `PointCloud` objects for instancing.
+//! Provides random, Poisson disk, grid, and sphere distribution of points,
+//! producing `PointCloud` objects for point preview and future instancing.
+
+use std::collections::HashMap;
 
 use bif_math::{Mat4, Quat, Vec3};
 use rand::prelude::*;
@@ -10,7 +12,18 @@ use crate::mesh::Mesh;
 use crate::point_cloud::{DistributionMethod, PointAttributes, PointCloud};
 use crate::scene::Transform;
 
-/// Scatter distribution mode.
+/// Point generation source.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum PointSource {
+    /// Scatter on a mesh surface (requires input mesh).
+    Surface,
+    /// Regular 3D grid.
+    Grid,
+    /// Spherical distribution (surface or volume).
+    Sphere,
+}
+
+/// Scatter distribution mode (surface source only).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ScatterMode {
     /// Uniform random scatter weighted by triangle area.
@@ -226,6 +239,302 @@ pub fn scatter_on_surface(
         distribution,
         expanded_instance_count: 0,
     }
+}
+
+/// Generate points on a regular 3D grid centered at origin.
+///
+/// Points per axis = `floor(size[axis] / spacing) + 1` (or 1 if axis size is 0).
+/// Total point count is capped at `max_count`.
+pub fn generate_grid_points(size: [f32; 3], spacing: f32, max_count: u32) -> PointCloud {
+    let spacing = spacing.max(0.001);
+
+    let counts: [usize; 3] = [
+        if size[0] <= 0.0 {
+            1
+        } else {
+            (size[0] / spacing).floor() as usize + 1
+        },
+        if size[1] <= 0.0 {
+            1
+        } else {
+            (size[1] / spacing).floor() as usize + 1
+        },
+        if size[2] <= 0.0 {
+            1
+        } else {
+            (size[2] / spacing).floor() as usize + 1
+        },
+    ];
+
+    let total = (counts[0] * counts[1] * counts[2]).min(max_count as usize);
+    let mut positions = Vec::with_capacity(total);
+
+    let half = [size[0] * 0.5, size[1] * 0.5, size[2] * 0.5];
+
+    'outer: for iz in 0..counts[2] {
+        for iy in 0..counts[1] {
+            for ix in 0..counts[0] {
+                if positions.len() >= total {
+                    break 'outer;
+                }
+                let x = if counts[0] == 1 {
+                    0.0
+                } else {
+                    ix as f32 * spacing - half[0]
+                };
+                let y = if counts[1] == 1 {
+                    0.0
+                } else {
+                    iy as f32 * spacing - half[1]
+                };
+                let z = if counts[2] == 1 {
+                    0.0
+                } else {
+                    iz as f32 * spacing - half[2]
+                };
+                positions.push(Vec3::new(x, y, z));
+            }
+        }
+    }
+
+    let count = positions.len();
+    PointCloud {
+        id: 0,
+        name: "Grid Points".into(),
+        positions,
+        attributes: PointAttributes {
+            proto_indices: vec![0; count],
+            ..Default::default()
+        },
+        prototype_ids: vec![],
+        transform: Transform::default(),
+        distribution: DistributionMethod::Grid { spacing },
+        expanded_instance_count: 0,
+    }
+}
+
+/// Generate points on or inside a sphere.
+///
+/// `on_surface = true` uses Fibonacci sphere for even coverage.
+/// `on_surface = false` uses rejection sampling for uniform volume fill.
+/// Capped at `max_count`.
+pub fn generate_sphere_points(
+    radius: f32,
+    count: u32,
+    on_surface: bool,
+    seed: u64,
+    max_count: u32,
+) -> PointCloud {
+    let n = count.min(max_count) as usize;
+    let mut positions = Vec::with_capacity(n);
+
+    if on_surface {
+        // Fibonacci sphere — deterministic, even distribution
+        let golden_ratio = (1.0 + 5.0_f32.sqrt()) / 2.0;
+        for i in 0..n {
+            let theta = 2.0 * std::f32::consts::PI * i as f32 / golden_ratio;
+            let phi = (1.0 - 2.0 * (i as f32 + 0.5) / n as f32).acos();
+            let x = radius * phi.sin() * theta.cos();
+            let y = radius * phi.sin() * theta.sin();
+            let z = radius * phi.cos();
+            positions.push(Vec3::new(x, y, z));
+        }
+    } else {
+        // Rejection sampling for uniform volume
+        let mut rng = StdRng::seed_from_u64(seed);
+        let r_sq = radius * radius;
+        while positions.len() < n {
+            let x = rng.gen_range(-radius..=radius);
+            let y = rng.gen_range(-radius..=radius);
+            let z = rng.gen_range(-radius..=radius);
+            if x * x + y * y + z * z <= r_sq {
+                positions.push(Vec3::new(x, y, z));
+            }
+        }
+    }
+
+    let count = positions.len();
+    PointCloud {
+        id: 0,
+        name: "Sphere Points".into(),
+        positions,
+        attributes: PointAttributes {
+            proto_indices: vec![0; count],
+            ..Default::default()
+        },
+        prototype_ids: vec![],
+        transform: Transform::default(),
+        distribution: DistributionMethod::Sphere { seed, on_surface },
+        expanded_instance_count: 0,
+    }
+}
+
+/// Lloyd relaxation — push points apart for more even spacing.
+///
+/// For each iteration, builds a spatial hash grid and applies repulsion
+/// forces between nearby points. If `surface_mesh` is provided, points
+/// are projected back onto the nearest triangle after each step.
+pub fn relax_points(
+    positions: &mut [Vec3],
+    iterations: u32,
+    scale_radii: f32,
+    max_relax_radius: f32,
+    surface_mesh: Option<(&Mesh, &Mat4)>,
+) {
+    if iterations == 0 || positions.is_empty() {
+        return;
+    }
+
+    let radius = max_relax_radius * scale_radii;
+    let radius_sq = radius * radius;
+
+    for _ in 0..iterations {
+        // Build spatial hash
+        let cell_size = radius.max(0.01);
+        let mut grid: HashMap<(i32, i32, i32), Vec<usize>> = HashMap::new();
+        for (i, &p) in positions.iter().enumerate() {
+            let cell = (
+                (p.x / cell_size).floor() as i32,
+                (p.y / cell_size).floor() as i32,
+                (p.z / cell_size).floor() as i32,
+            );
+            grid.entry(cell).or_default().push(i);
+        }
+
+        // Compute displacement for each point
+        let mut displacements = vec![Vec3::ZERO; positions.len()];
+        for (i, &p) in positions.iter().enumerate() {
+            let cell = (
+                (p.x / cell_size).floor() as i32,
+                (p.y / cell_size).floor() as i32,
+                (p.z / cell_size).floor() as i32,
+            );
+
+            let mut repulsion = Vec3::ZERO;
+            let mut neighbor_count = 0u32;
+
+            for dx in -1..=1 {
+                for dy in -1..=1 {
+                    for dz in -1..=1 {
+                        let neighbor_cell = (cell.0 + dx, cell.1 + dy, cell.2 + dz);
+                        if let Some(indices) = grid.get(&neighbor_cell) {
+                            for &j in indices {
+                                if j == i {
+                                    continue;
+                                }
+                                let diff = p - positions[j];
+                                let dist_sq = diff.length_squared();
+                                if dist_sq < radius_sq && dist_sq > 1e-10 {
+                                    let dist = dist_sq.sqrt();
+                                    // Repulsion strength falls off linearly
+                                    let strength = 1.0 - dist / radius;
+                                    repulsion += diff.normalize_or_zero() * strength;
+                                    neighbor_count += 1;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if neighbor_count > 0 {
+                displacements[i] = repulsion / neighbor_count as f32 * radius * 0.5;
+            }
+        }
+
+        // Apply displacements
+        for (i, pos) in positions.iter_mut().enumerate() {
+            *pos += displacements[i];
+        }
+
+        // Project back onto surface if constrained
+        if let Some((mesh, transform)) = surface_mesh {
+            for pos in positions.iter_mut() {
+                if let Some(closest) = nearest_point_on_mesh(mesh, transform, *pos) {
+                    *pos = closest;
+                }
+            }
+        }
+    }
+}
+
+/// Find the nearest point on a mesh surface to the given query point.
+///
+/// Brute-force scan over all triangles (suitable for small meshes;
+/// BVH acceleration can be added later).
+fn nearest_point_on_mesh(mesh: &Mesh, transform: &Mat4, query: Vec3) -> Option<Vec3> {
+    if mesh.triangle_count() == 0 {
+        return None;
+    }
+
+    let mut best_dist_sq = f32::INFINITY;
+    let mut best_point = query;
+
+    for tri_idx in 0..mesh.triangle_count() {
+        if let Some((v0, v1, v2)) = get_triangle(mesh, tri_idx) {
+            let wv0 = transform.transform_point3(v0);
+            let wv1 = transform.transform_point3(v1);
+            let wv2 = transform.transform_point3(v2);
+            let closest = closest_point_on_triangle(query, wv0, wv1, wv2);
+            let dist_sq = (closest - query).length_squared();
+            if dist_sq < best_dist_sq {
+                best_dist_sq = dist_sq;
+                best_point = closest;
+            }
+        }
+    }
+
+    Some(best_point)
+}
+
+/// Closest point on triangle to a query point (3D projection + clamping).
+fn closest_point_on_triangle(p: Vec3, a: Vec3, b: Vec3, c: Vec3) -> Vec3 {
+    let ab = b - a;
+    let ac = c - a;
+    let ap = p - a;
+
+    let d1 = ab.dot(ap);
+    let d2 = ac.dot(ap);
+    if d1 <= 0.0 && d2 <= 0.0 {
+        return a;
+    }
+
+    let bp = p - b;
+    let d3 = ab.dot(bp);
+    let d4 = ac.dot(bp);
+    if d3 >= 0.0 && d4 <= d3 {
+        return b;
+    }
+
+    let vc = d1 * d4 - d3 * d2;
+    if vc <= 0.0 && d1 >= 0.0 && d3 <= 0.0 {
+        let v = d1 / (d1 - d3);
+        return a + ab * v;
+    }
+
+    let cp = p - c;
+    let d5 = ab.dot(cp);
+    let d6 = ac.dot(cp);
+    if d6 >= 0.0 && d5 <= d6 {
+        return c;
+    }
+
+    let vb = d5 * d2 - d1 * d6;
+    if vb <= 0.0 && d2 >= 0.0 && d6 <= 0.0 {
+        let w = d2 / (d2 - d6);
+        return a + ac * w;
+    }
+
+    let va = d3 * d6 - d5 * d4;
+    if va <= 0.0 && (d4 - d3) >= 0.0 && (d5 - d6) >= 0.0 {
+        let w = (d4 - d3) / ((d4 - d3) + (d5 - d6));
+        return b + (c - b) * w;
+    }
+
+    let denom = 1.0 / (va + vb + vc);
+    let v = vb * denom;
+    let w = vc * denom;
+    a + ab * v + ac * w
 }
 
 /// Random scatter: area-weighted triangle sampling.
@@ -566,5 +875,131 @@ mod tests {
             vec![0],
         );
         assert!(cloud.positions.is_empty());
+    }
+
+    #[test]
+    fn grid_points_count() {
+        let cloud = generate_grid_points([10.0, 0.0, 10.0], 1.0, 1_000_000);
+        // 11 points per axis (0..10 at spacing 1), Y collapsed = 11 * 1 * 11 = 121
+        assert_eq!(cloud.positions.len(), 121);
+    }
+
+    #[test]
+    fn grid_points_3d() {
+        let cloud = generate_grid_points([4.0, 4.0, 4.0], 1.0, 1_000_000);
+        // 5 per axis = 125
+        assert_eq!(cloud.positions.len(), 125);
+    }
+
+    #[test]
+    fn grid_points_flat() {
+        let cloud = generate_grid_points([10.0, 0.0, 10.0], 1.0, 1_000_000);
+        // All y should be 0
+        for pos in &cloud.positions {
+            assert!(
+                pos.y.abs() < 0.001,
+                "Flat grid should have y=0, got {}",
+                pos.y
+            );
+        }
+    }
+
+    #[test]
+    fn sphere_surface_points() {
+        let radius = 5.0;
+        let cloud = generate_sphere_points(radius, 200, true, 42, 1_000_000);
+        assert_eq!(cloud.positions.len(), 200);
+        for pos in &cloud.positions {
+            let dist = pos.length();
+            assert!(
+                (dist - radius).abs() < 0.01,
+                "Surface point should be at radius {}, got {}",
+                radius,
+                dist
+            );
+        }
+    }
+
+    #[test]
+    fn sphere_volume_points() {
+        let radius = 5.0;
+        let cloud = generate_sphere_points(radius, 500, false, 42, 1_000_000);
+        assert_eq!(cloud.positions.len(), 500);
+        for pos in &cloud.positions {
+            let dist = pos.length();
+            assert!(
+                dist <= radius + 0.01,
+                "Volume point should be within radius {}, got {}",
+                radius,
+                dist
+            );
+        }
+    }
+
+    #[test]
+    fn relax_increases_min_distance() {
+        // Create clustered points
+        let mut positions = vec![
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(0.1, 0.0, 0.0),
+            Vec3::new(0.0, 0.0, 0.1),
+            Vec3::new(0.1, 0.0, 0.1),
+        ];
+
+        let min_before = min_pairwise_distance(&positions);
+        relax_points(&mut positions, 5, 1.0, 2.0, None);
+        let min_after = min_pairwise_distance(&positions);
+
+        assert!(
+            min_after > min_before,
+            "Relax should increase min distance: before={:.3}, after={:.3}",
+            min_before,
+            min_after
+        );
+    }
+
+    #[test]
+    fn relax_deterministic() {
+        let base = vec![
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(0.1, 0.0, 0.0),
+            Vec3::new(0.0, 0.0, 0.1),
+        ];
+
+        let mut a = base.clone();
+        let mut b = base;
+        relax_points(&mut a, 3, 1.0, 2.0, None);
+        relax_points(&mut b, 3, 1.0, 2.0, None);
+
+        for (pa, pb) in a.iter().zip(b.iter()) {
+            assert!(
+                (*pa - *pb).length() < 1e-6,
+                "Same input should produce same output"
+            );
+        }
+    }
+
+    #[test]
+    fn max_point_limit_caps() {
+        let cloud = generate_grid_points([100.0, 100.0, 100.0], 1.0, 1000);
+        assert!(
+            cloud.positions.len() <= 1000,
+            "Should cap at max_count=1000, got {}",
+            cloud.positions.len()
+        );
+    }
+
+    /// Helper: compute minimum pairwise distance in a point set.
+    fn min_pairwise_distance(positions: &[Vec3]) -> f32 {
+        let mut min_dist = f32::INFINITY;
+        for i in 0..positions.len() {
+            for j in (i + 1)..positions.len() {
+                let dist = (positions[i] - positions[j]).length();
+                if dist < min_dist {
+                    min_dist = dist;
+                }
+            }
+        }
+        min_dist
     }
 }

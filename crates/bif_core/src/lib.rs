@@ -36,6 +36,7 @@ pub mod oiio;
 pub use mesh::Mesh;
 pub use point_cloud::{DistributionMethod, PointAttributes, PointCloud};
 pub use primitives::PrimitiveKind;
+pub use scatter::PointSource;
 pub use scene::{
     AnimatedTransform, Instance, Light, Material, Prototype, Scene, SceneCamera, TimelineInfo,
     Transform, TransformKeyframe,
