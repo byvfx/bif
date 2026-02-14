@@ -1,6 +1,6 @@
 # Session Handoff - February 13, 2026
 
-**Last Updated:** M21 Point Instancing + Scattering complete
+**Last Updated:** Scatter Points redesign complete
 **Next Milestone:** M29 USD Export + Non-Destructive Layers
 **Project:** BIF - VFX Scene Assembler & Renderer
 
@@ -10,16 +10,30 @@
 
 | Status | Details |
 |--------|---------|
-| Complete | Milestones 0-21 |
+| Complete | Milestones 0-21, Scatter Points redesign |
 | Current | Planning next milestone |
-| Tests | 200+ passing (61 bif_core, +7 new for point cloud/scatter) |
+| Tests | 200+ passing (69 bif_core, 66 viewport) |
 | Performance | 60 FPS viewport, 100K instances with LOD |
 
 ---
 
 ## Recent Work
 
-### M21: Point Instancing + Scattering (Feb 13, 2026)
+### Scatter Points Redesign (Feb 13, 2026 - Session 2)
+
+Scatter node produces points only (no auto-instancing). Added grid/sphere sources and relaxation:
+
+| Component | Details |
+|-----------|---------|
+| Points-only | Removed expand/add_instance/reload — output is point preview only |
+| PointSource enum | Surface / Grid / Sphere — controls generation mode |
+| Grid generator | Spacing-based, centered at origin, flat when Y=0 |
+| Sphere generator | Fibonacci (surface) or rejection sampling (volume) |
+| Lloyd relaxation | Spatial hash repulsion + surface projection snap-back |
+| Node UI | Source dropdown, conditional params, max_point_limit cap |
+| Auto-preview | Point preview auto-enabled on compute |
+
+### M21: Point Instancing + Scattering (Feb 13, 2026 - Session 1)
 
 Full implementation of point cloud system and scatter tools:
 
@@ -32,9 +46,6 @@ Full implementation of point cloud system and scatter tools:
 | Node graph | Scatter node with Compute/Regenerate, mode/count/seed/etc controls |
 | Undo/redo | ScatterCommand + AddPointCloud/RemovePointCloud SceneOp variants |
 | Instance cap | MAX_INSTANCES 10K → 100K |
-
-**New files:** `point_cloud.rs`, `scatter.rs`, `point_preview.rs`, `point_preview.wgsl`
-**Modified:** 9 existing files across bif_core and bif_viewport
 
 ### Ivar Black Flash Fix (Feb 12, 2026)
 
@@ -53,7 +64,13 @@ Full implementation of point cloud system and scatter tools:
 
 ### What Works
 
-**Point Instancing (this session):**
+**Scatter Points (latest):**
+- Points-only output (no auto-instancing) — future Point Instancer node will handle geometry
+- Surface / Grid / Sphere point sources
+- Lloyd relaxation with surface projection
+- Auto-enable point preview on compute
+
+**Point Instancing (M21):**
 - PointCloud as first-class type with expand() for rendering
 - USD PointInstancer → PointCloud round-trip
 - Scatter on any mesh surface (random + Poisson disk)
