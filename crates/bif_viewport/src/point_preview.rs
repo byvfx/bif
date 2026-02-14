@@ -182,6 +182,9 @@ impl PointPreviewRenderer {
     }
 
     /// Upload new point positions from scene point clouds.
+    ///
+    /// Reuses the existing GPU buffer when it fits; only recreates
+    /// the buffer and bind group when the data exceeds current capacity.
     pub fn upload_points(
         &mut self,
         device: &wgpu::Device,
@@ -203,26 +206,34 @@ impl PointPreviewRenderer {
             })
             .collect();
 
-        self.point_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Point Preview Points"),
-            contents: bytemuck::cast_slice(&gpu_points),
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-        });
+        let byte_size = (gpu_points.len() * std::mem::size_of::<GpuPoint>()) as u64;
 
-        self.bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Point Preview BG"),
-            layout: &self.bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: self.params_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: self.point_buffer.as_entire_binding(),
-                },
-            ],
-        });
+        if byte_size <= self.point_buffer.size() {
+            // Reuse existing buffer
+            queue.write_buffer(&self.point_buffer, 0, bytemuck::cast_slice(&gpu_points));
+        } else {
+            // Allocate larger buffer + new bind group
+            self.point_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Point Preview Points"),
+                contents: bytemuck::cast_slice(&gpu_points),
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            });
+
+            self.bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("Point Preview BG"),
+                layout: &self.bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: self.params_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: self.point_buffer.as_entire_binding(),
+                    },
+                ],
+            });
+        }
 
         self.point_count = positions.len() as u32;
 

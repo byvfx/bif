@@ -155,11 +155,13 @@ fn orientation_from_normal(normal: Vec3, angle: f32) -> Quat {
 /// Scatter points randomly on a mesh surface, weighted by triangle area.
 ///
 /// Points are transformed by `mesh_transform` to world space.
+/// `prototype_ids` maps proto_indices to scene prototype IDs.
 pub fn scatter_on_surface(
     mesh: &Mesh,
     mesh_transform: &Mat4,
     mode: ScatterMode,
     config: &ScatterConfig,
+    prototype_ids: Vec<usize>,
 ) -> PointCloud {
     let mut rng = StdRng::seed_from_u64(config.seed);
 
@@ -179,10 +181,18 @@ pub fn scatter_on_surface(
         scales.push(Vec3::splat(s));
 
         let orientation = if config.align_to_normal {
-            let angle = rng.gen_range(-config.rotation_range..=config.rotation_range);
+            let angle = if config.rotation_range > 0.0 {
+                rng.gen_range(0.0..config.rotation_range)
+            } else {
+                0.0
+            };
             orientation_from_normal(*normal, angle)
         } else {
-            let angle = rng.gen_range(-config.rotation_range..=config.rotation_range);
+            let angle = if config.rotation_range > 0.0 {
+                rng.gen_range(0.0..config.rotation_range)
+            } else {
+                0.0
+            };
             Quat::from_rotation_y(angle)
         };
         orientations.push(orientation);
@@ -211,9 +221,10 @@ pub fn scatter_on_surface(
             proto_indices: vec![0; count],
             ids: Some(ids),
         },
-        prototype_ids: vec![],
+        prototype_ids,
         transform: Transform::default(),
         distribution,
+        expanded_instance_count: 0,
     }
 }
 
@@ -360,7 +371,13 @@ mod tests {
             seed: 123,
             ..Default::default()
         };
-        let cloud = scatter_on_surface(&plane, &Mat4::IDENTITY, ScatterMode::Random, &config);
+        let cloud = scatter_on_surface(
+            &plane,
+            &Mat4::IDENTITY,
+            ScatterMode::Random,
+            &config,
+            vec![0],
+        );
         assert_eq!(cloud.positions.len(), 500);
     }
 
@@ -372,7 +389,13 @@ mod tests {
             seed: 42,
             ..Default::default()
         };
-        let cloud = scatter_on_surface(&plane, &Mat4::IDENTITY, ScatterMode::Random, &config);
+        let cloud = scatter_on_surface(
+            &plane,
+            &Mat4::IDENTITY,
+            ScatterMode::Random,
+            &config,
+            vec![0],
+        );
 
         // All points should have y ~= 0 (on the XZ plane)
         for pos in &cloud.positions {
@@ -392,8 +415,20 @@ mod tests {
             seed: 999,
             ..Default::default()
         };
-        let cloud1 = scatter_on_surface(&plane, &Mat4::IDENTITY, ScatterMode::Random, &config);
-        let cloud2 = scatter_on_surface(&plane, &Mat4::IDENTITY, ScatterMode::Random, &config);
+        let cloud1 = scatter_on_surface(
+            &plane,
+            &Mat4::IDENTITY,
+            ScatterMode::Random,
+            &config,
+            vec![0],
+        );
+        let cloud2 = scatter_on_surface(
+            &plane,
+            &Mat4::IDENTITY,
+            ScatterMode::Random,
+            &config,
+            vec![0],
+        );
 
         assert_eq!(cloud1.positions.len(), cloud2.positions.len());
         for (a, b) in cloud1.positions.iter().zip(cloud2.positions.iter()) {
@@ -414,7 +449,13 @@ mod tests {
             seed: 42,
             ..Default::default()
         };
-        let cloud = scatter_on_surface(&plane, &Mat4::IDENTITY, ScatterMode::PoissonDisk, &config);
+        let cloud = scatter_on_surface(
+            &plane,
+            &Mat4::IDENTITY,
+            ScatterMode::PoissonDisk,
+            &config,
+            vec![0],
+        );
 
         // Check all pairwise distances >= min_distance
         for i in 0..cloud.positions.len() {
@@ -453,7 +494,13 @@ mod tests {
             seed: 42,
             ..Default::default()
         };
-        let cloud = scatter_on_surface(&mesh, &Mat4::IDENTITY, ScatterMode::Random, &config);
+        let cloud = scatter_on_surface(
+            &mesh,
+            &Mat4::IDENTITY,
+            ScatterMode::Random,
+            &config,
+            vec![0],
+        );
 
         // Count points in tiny triangle region (x < 0.15, z < 0.15)
         let tiny_count = cloud
@@ -481,7 +528,13 @@ mod tests {
             rotation_range: 0.0, // No random twist so alignment is pure
             ..Default::default()
         };
-        let cloud = scatter_on_surface(&plane, &Mat4::IDENTITY, ScatterMode::Random, &config);
+        let cloud = scatter_on_surface(
+            &plane,
+            &Mat4::IDENTITY,
+            ScatterMode::Random,
+            &config,
+            vec![0],
+        );
 
         // Check that orientations are not all identity (they should align to the tilted normal)
         let all_identity = cloud
@@ -505,7 +558,13 @@ mod tests {
             seed: 42,
             ..Default::default()
         };
-        let cloud = scatter_on_surface(&mesh, &Mat4::IDENTITY, ScatterMode::Random, &config);
+        let cloud = scatter_on_surface(
+            &mesh,
+            &Mat4::IDENTITY,
+            ScatterMode::Random,
+            &config,
+            vec![0],
+        );
         assert!(cloud.positions.is_empty());
     }
 }

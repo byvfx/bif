@@ -53,6 +53,9 @@ pub struct PointCloud {
     pub transform: Transform,
     /// How the points were generated.
     pub distribution: DistributionMethod,
+    /// Number of instances produced by last expand() call.
+    /// Set by the caller after expansion; used to remove instances on undo.
+    pub expanded_instance_count: usize,
 }
 
 impl PointCloud {
@@ -125,6 +128,7 @@ mod tests {
             prototype_ids,
             transform: Transform::default(),
             distribution: DistributionMethod::Manual,
+            expanded_instance_count: 0,
         }
     }
 
