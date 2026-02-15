@@ -18,6 +18,52 @@ use egui_snarl::{
     InPin, InPinId, NodeId, OutPin, OutPinId, Snarl,
 };
 
+/// Parameters for scatter points computation.
+#[derive(Debug, Clone)]
+pub struct ScatterPointsParams {
+    /// Point generation source.
+    pub source: bif_core::PointSource,
+    /// Number of points to generate.
+    pub count: u32,
+    /// Safety cap on total points.
+    pub max_point_limit: u32,
+    /// Random seed for reproducibility.
+    pub seed: u64,
+    // Surface-specific
+    /// Scatter distribution mode (Random / PoissonDisk).
+    pub scatter_mode: bif_core::scatter::ScatterMode,
+    /// Minimum distance for Poisson disk.
+    pub min_distance: f32,
+    /// Align point orientation to surface normal.
+    pub align_to_normal: bool,
+    // Grid-specific
+    /// Grid bounding dimensions [X, Y, Z].
+    pub grid_size: [f32; 3],
+    /// Distance between grid points.
+    pub grid_spacing: f32,
+    // Sphere-specific
+    /// Sphere radius.
+    pub sphere_radius: f32,
+    /// If true, points on surface only; false = volume fill.
+    pub sphere_on_surface: bool,
+    // Relax
+    /// Number of repulsion relaxation iterations.
+    pub relax_iterations: u32,
+    /// Multiplier on relax radius.
+    pub scale_radii: f32,
+    /// Maximum relax radius cap.
+    pub max_relax_radius: f32,
+    // Per-point attrs
+    /// Minimum per-point scale.
+    pub scale_min: f32,
+    /// Maximum per-point scale.
+    pub scale_max: f32,
+    /// Per-point rotation range in degrees.
+    pub rotation_range: f32,
+    /// Prototype ID to scatter on (Surface mode).
+    pub target_proto_id: Option<usize>,
+}
+
 /// Events that the node graph can emit to the parent UI
 #[derive(Debug, Clone)]
 pub enum NodeGraphEvent {
@@ -49,29 +95,7 @@ pub enum NodeGraphEvent {
     /// Compute scatter points
     ScatterPointsCompute {
         node_id: NodeId,
-        source: bif_core::PointSource,
-        count: u32,
-        max_point_limit: u32,
-        seed: u64,
-        // Surface-specific
-        scatter_mode: bif_core::scatter::ScatterMode,
-        min_distance: f32,
-        align_to_normal: bool,
-        // Grid-specific
-        grid_size: [f32; 3],
-        grid_spacing: f32,
-        // Sphere-specific
-        sphere_radius: f32,
-        sphere_on_surface: bool,
-        // Relax
-        relax_iterations: u32,
-        scale_radii: f32,
-        max_relax_radius: f32,
-        // Per-point attrs
-        scale_min: f32,
-        scale_max: f32,
-        rotation_range: f32,
-        target_proto_id: Option<usize>,
+        params: ScatterPointsParams,
     },
     /// Select a node (for keyboard delete, property inspector, etc.)
     SelectNode(NodeId),
@@ -849,24 +873,26 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer {
                 let emit_event = |events: &mut Vec<NodeGraphEvent>| {
                     events.push(NodeGraphEvent::ScatterPointsCompute {
                         node_id,
-                        source: *source,
-                        count: *count,
-                        max_point_limit: *max_point_limit,
-                        seed: *seed,
-                        scatter_mode: *scatter_mode,
-                        min_distance: *min_distance,
-                        align_to_normal: *align_to_normal,
-                        grid_size: *grid_size,
-                        grid_spacing: *grid_spacing,
-                        sphere_radius: *sphere_radius,
-                        sphere_on_surface: *sphere_on_surface,
-                        relax_iterations: *relax_iterations,
-                        scale_radii: *scale_radii,
-                        max_relax_radius: *max_relax_radius,
-                        scale_min: *scale_min,
-                        scale_max: *scale_max,
-                        rotation_range: *rotation_range,
-                        target_proto_id: None,
+                        params: ScatterPointsParams {
+                            source: *source,
+                            count: *count,
+                            max_point_limit: *max_point_limit,
+                            seed: *seed,
+                            scatter_mode: *scatter_mode,
+                            min_distance: *min_distance,
+                            align_to_normal: *align_to_normal,
+                            grid_size: *grid_size,
+                            grid_spacing: *grid_spacing,
+                            sphere_radius: *sphere_radius,
+                            sphere_on_surface: *sphere_on_surface,
+                            relax_iterations: *relax_iterations,
+                            scale_radii: *scale_radii,
+                            max_relax_radius: *max_relax_radius,
+                            scale_min: *scale_min,
+                            scale_max: *scale_max,
+                            rotation_range: *rotation_range,
+                            target_proto_id: None,
+                        },
                     });
                 };
 

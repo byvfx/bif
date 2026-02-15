@@ -1426,48 +1426,22 @@ impl Renderer {
                             }
                         }
                     }
-                    NodeGraphEvent::ScatterPointsCompute {
-                        node_id: _,
-                        source,
-                        count,
-                        max_point_limit,
-                        seed,
-                        scatter_mode,
-                        min_distance,
-                        align_to_normal,
-                        grid_size,
-                        grid_spacing,
-                        sphere_radius,
-                        sphere_on_surface,
-                        relax_iterations,
-                        scale_radii,
-                        max_relax_radius,
-                        scale_min,
-                        scale_max,
-                        rotation_range,
-                        target_proto_id,
-                    } => {
+                    NodeGraphEvent::ScatterPointsCompute { node_id, params } => {
                         log::info!(
                             "Node graph: Scatter Points {:?}, count={}, seed={}",
-                            source,
-                            count,
-                            seed
+                            params.source,
+                            params.count,
+                            params.seed
                         );
 
-                        // Remove previous scatter cloud (if regenerating)
-                        if !self.working_scene.point_clouds.is_empty() {
-                            let last_id = self
-                                .working_scene
-                                .point_clouds
-                                .last()
-                                .map(|c| c.id)
-                                .unwrap();
-                            self.working_scene.remove_point_cloud(last_id);
+                        // Remove previous cloud for this node (if regenerating)
+                        if let Some(old_cloud_id) = self.node_cloud_map.remove(&node_id) {
+                            self.working_scene.remove_point_cloud(old_cloud_id);
                         }
 
-                        let cloud = match source {
+                        let cloud = match params.source {
                             bif_core::PointSource::Surface => {
-                                let scatter_mesh_idx = target_proto_id.unwrap_or(0);
+                                let scatter_mesh_idx = params.target_proto_id.unwrap_or(0);
                                 if let Some(proto) =
                                     self.working_scene.prototypes.get(scatter_mesh_idx)
                                 {
@@ -1481,29 +1455,28 @@ impl Renderer {
                                         .unwrap_or(bif_math::Mat4::IDENTITY);
 
                                     let config = bif_core::scatter::ScatterConfig {
-                                        count: (count).min(max_point_limit) as usize,
-                                        min_distance,
-                                        seed,
-                                        align_to_normal,
-                                        scale_range: (scale_min, scale_max),
-                                        rotation_range: rotation_range.to_radians(),
+                                        count: (params.count).min(params.max_point_limit) as usize,
+                                        min_distance: params.min_distance,
+                                        seed: params.seed,
+                                        align_to_normal: params.align_to_normal,
+                                        scale_range: (params.scale_min, params.scale_max),
+                                        rotation_range: params.rotation_range.to_radians(),
                                     };
 
                                     let mut cloud = bif_core::scatter::scatter_on_surface(
                                         &mesh,
                                         &mesh_transform,
-                                        scatter_mode,
+                                        params.scatter_mode,
                                         &config,
                                         vec![scatter_mesh_idx],
                                     );
 
-                                    // Apply relax if requested
-                                    if relax_iterations > 0 {
-                                        bif_core::scatter::relax_points(
+                                    if params.relax_iterations > 0 {
+                                        bif_core::scatter::repulsion_relax(
                                             &mut cloud.positions,
-                                            relax_iterations,
-                                            scale_radii,
-                                            max_relax_radius,
+                                            params.relax_iterations,
+                                            params.scale_radii,
+                                            params.max_relax_radius,
                                             Some((&mesh, &mesh_transform)),
                                         );
                                     }
@@ -1519,16 +1492,16 @@ impl Renderer {
                             }
                             bif_core::PointSource::Grid => {
                                 let mut cloud = bif_core::scatter::generate_grid_points(
-                                    grid_size,
-                                    grid_spacing,
-                                    max_point_limit,
+                                    params.grid_size,
+                                    params.grid_spacing,
+                                    params.max_point_limit,
                                 );
-                                if relax_iterations > 0 {
-                                    bif_core::scatter::relax_points(
+                                if params.relax_iterations > 0 {
+                                    bif_core::scatter::repulsion_relax(
                                         &mut cloud.positions,
-                                        relax_iterations,
-                                        scale_radii,
-                                        max_relax_radius,
+                                        params.relax_iterations,
+                                        params.scale_radii,
+                                        params.max_relax_radius,
                                         None,
                                     );
                                 }
@@ -1536,18 +1509,18 @@ impl Renderer {
                             }
                             bif_core::PointSource::Sphere => {
                                 let mut cloud = bif_core::scatter::generate_sphere_points(
-                                    sphere_radius,
-                                    count,
-                                    sphere_on_surface,
-                                    seed,
-                                    max_point_limit,
+                                    params.sphere_radius,
+                                    params.count,
+                                    params.sphere_on_surface,
+                                    params.seed,
+                                    params.max_point_limit,
                                 );
-                                if relax_iterations > 0 {
-                                    bif_core::scatter::relax_points(
+                                if params.relax_iterations > 0 {
+                                    bif_core::scatter::repulsion_relax(
                                         &mut cloud.positions,
-                                        relax_iterations,
-                                        scale_radii,
-                                        max_relax_radius,
+                                        params.relax_iterations,
+                                        params.scale_radii,
+                                        params.max_relax_radius,
                                         None,
                                     );
                                 }
@@ -1556,7 +1529,11 @@ impl Renderer {
                         };
 
                         if let Some(mut cloud) = cloud {
-                            cloud.id = self.working_scene.point_clouds.len();
+                            let cloud_id = self.next_cloud_id;
+                            self.next_cloud_id += 1;
+                            cloud.id = cloud_id;
+                            self.node_cloud_map.insert(node_id, cloud_id);
+
                             let pt_count = cloud.positions.len();
                             self.working_scene.add_point_cloud(cloud);
 

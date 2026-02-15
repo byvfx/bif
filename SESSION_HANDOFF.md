@@ -10,14 +10,29 @@
 
 | Status | Details |
 |--------|---------|
-| Complete | Milestones 0-21, Scatter Points redesign |
+| Complete | Milestones 0-21, Scatter Points redesign + code review fixes |
 | Current | Planning next milestone |
-| Tests | 200+ passing (69 bif_core, 66 viewport) |
+| Tests | 140 passing (74 bif_core, 66 viewport) |
 | Performance | 60 FPS viewport, 100K instances with LOD |
 
 ---
 
 ## Recent Work
+
+### Code Review Fixes (Feb 13, 2026 - Session 3)
+
+Fixed all 8 issues from VFX code review:
+
+| Fix | Details |
+|-----|---------|
+| Integer overflow | `saturating_mul` in grid point count |
+| Cloud removal | `node_cloud_map` HashMap for correct node→cloud mapping |
+| Duplicate IDs | Monotonic `next_cloud_id` counter |
+| Perf warning | Log warn for expensive surface relaxation |
+| Dead field | Removed unused `expanded_instance_count` |
+| Rename | `relax_points` → `repulsion_relax` |
+| Tests | 5 new `closest_point_on_triangle` tests |
+| Params struct | Extracted `ScatterPointsParams` from 17-field event |
 
 ### Scatter Points Redesign (Feb 13, 2026 - Session 2)
 
@@ -29,7 +44,7 @@ Scatter node produces points only (no auto-instancing). Added grid/sphere source
 | PointSource enum | Surface / Grid / Sphere — controls generation mode |
 | Grid generator | Spacing-based, centered at origin, flat when Y=0 |
 | Sphere generator | Fibonacci (surface) or rejection sampling (volume) |
-| Lloyd relaxation | Spatial hash repulsion + surface projection snap-back |
+| Repulsion relax | Spatial hash repulsion + surface projection snap-back |
 | Node UI | Source dropdown, conditional params, max_point_limit cap |
 | Auto-preview | Point preview auto-enabled on compute |
 

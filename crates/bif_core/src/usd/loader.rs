@@ -421,7 +421,7 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
             .map(|&idx| idx as u32)
             .collect();
 
-        let mut cloud = PointCloud {
+        let cloud = PointCloud {
             id: scene.point_clouds.len(),
             name: instancer_data.path.clone(),
             positions,
@@ -436,7 +436,6 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
             distribution: DistributionMethod::UsdPointInstancer {
                 path: instancer_data.path.clone(),
             },
-            expanded_instance_count: 0,
         };
 
         log::info!(
@@ -448,7 +447,6 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
 
         // Expand immediately so instances appear (animation handled below)
         let expanded = cloud.expand();
-        cloud.expanded_instance_count = expanded.len();
 
         // Get animation data for instancer if timeline exists
         let instancer_anim = if scene.timeline.is_some() {

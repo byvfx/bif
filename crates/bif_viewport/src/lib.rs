@@ -254,6 +254,10 @@ pub struct Renderer {
     pub(crate) primitive_name_counters: std::collections::HashMap<String, usize>,
     /// Mapping from node graph NodeId to working_scene prototype ID.
     pub(crate) node_proto_map: std::collections::HashMap<egui_snarl::NodeId, usize>,
+    /// Mapping from scatter node NodeId to point cloud ID.
+    pub(crate) node_cloud_map: std::collections::HashMap<egui_snarl::NodeId, usize>,
+    /// Monotonically increasing counter for unique cloud IDs.
+    pub(crate) next_cloud_id: usize,
 }
 
 impl Renderer {
@@ -811,6 +815,8 @@ impl Renderer {
             working_scene: bif_core::Scene::new("Working"),
             primitive_name_counters: std::collections::HashMap::new(),
             node_proto_map: std::collections::HashMap::new(),
+            node_cloud_map: std::collections::HashMap::new(),
+            next_cloud_id: 0,
         })
     }
 
