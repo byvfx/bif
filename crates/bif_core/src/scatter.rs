@@ -237,7 +237,6 @@ pub fn scatter_on_surface(
         prototype_ids,
         transform: Transform::default(),
         distribution,
-        expanded_instance_count: 0,
     }
 }
 
@@ -266,7 +265,10 @@ pub fn generate_grid_points(size: [f32; 3], spacing: f32, max_count: u32) -> Poi
         },
     ];
 
-    let total = (counts[0] * counts[1] * counts[2]).min(max_count as usize);
+    let total = counts[0]
+        .saturating_mul(counts[1])
+        .saturating_mul(counts[2])
+        .min(max_count as usize);
     let mut positions = Vec::with_capacity(total);
 
     let half = [size[0] * 0.5, size[1] * 0.5, size[2] * 0.5];
@@ -309,7 +311,6 @@ pub fn generate_grid_points(size: [f32; 3], spacing: f32, max_count: u32) -> Poi
         prototype_ids: vec![],
         transform: Transform::default(),
         distribution: DistributionMethod::Grid { spacing },
-        expanded_instance_count: 0,
     }
 }
 
@@ -365,16 +366,16 @@ pub fn generate_sphere_points(
         prototype_ids: vec![],
         transform: Transform::default(),
         distribution: DistributionMethod::Sphere { seed, on_surface },
-        expanded_instance_count: 0,
     }
 }
 
-/// Lloyd relaxation — push points apart for more even spacing.
+/// Repulsion-based point relaxation for more even spacing.
 ///
 /// For each iteration, builds a spatial hash grid and applies repulsion
-/// forces between nearby points. If `surface_mesh` is provided, points
-/// are projected back onto the nearest triangle after each step.
-pub fn relax_points(
+/// forces (linear falloff) between nearby points. If `surface_mesh` is
+/// provided, points are projected back onto the nearest triangle after
+/// each step.
+pub fn repulsion_relax(
     positions: &mut [Vec3],
     iterations: u32,
     scale_radii: f32,
@@ -383,6 +384,20 @@ pub fn relax_points(
 ) {
     if iterations == 0 || positions.is_empty() {
         return;
+    }
+
+    // Warn about expensive surface projection (brute-force O(N*T*I))
+    if let Some((mesh, _)) = surface_mesh {
+        let cost = positions.len() as u64 * mesh.triangle_count() as u64 * iterations as u64;
+        if cost > 10_000_000 {
+            log::warn!(
+                "repulsion_relax: surface projection will be slow ({} pts * {} tris * {} iters = {}M ops)",
+                positions.len(),
+                mesh.triangle_count(),
+                iterations,
+                cost / 1_000_000,
+            );
+        }
     }
 
     let radius = max_relax_radius * scale_radii;
@@ -947,7 +962,7 @@ mod tests {
         ];
 
         let min_before = min_pairwise_distance(&positions);
-        relax_points(&mut positions, 5, 1.0, 2.0, None);
+        repulsion_relax(&mut positions, 5, 1.0, 2.0, None);
         let min_after = min_pairwise_distance(&positions);
 
         assert!(
@@ -968,8 +983,8 @@ mod tests {
 
         let mut a = base.clone();
         let mut b = base;
-        relax_points(&mut a, 3, 1.0, 2.0, None);
-        relax_points(&mut b, 3, 1.0, 2.0, None);
+        repulsion_relax(&mut a, 3, 1.0, 2.0, None);
+        repulsion_relax(&mut b, 3, 1.0, 2.0, None);
 
         for (pa, pb) in a.iter().zip(b.iter()) {
             assert!(
@@ -987,6 +1002,54 @@ mod tests {
             "Should cap at max_count=1000, got {}",
             cloud.positions.len()
         );
+    }
+
+    #[test]
+    fn closest_point_vertex_a() {
+        let a = Vec3::new(0.0, 0.0, 0.0);
+        let b = Vec3::new(1.0, 0.0, 0.0);
+        let c = Vec3::new(0.0, 1.0, 0.0);
+        // Query nearest vertex A
+        let result = closest_point_on_triangle(Vec3::new(-1.0, -1.0, 0.0), a, b, c);
+        assert!((result - a).length() < 1e-5);
+    }
+
+    #[test]
+    fn closest_point_vertex_b() {
+        let a = Vec3::new(0.0, 0.0, 0.0);
+        let b = Vec3::new(1.0, 0.0, 0.0);
+        let c = Vec3::new(0.0, 1.0, 0.0);
+        let result = closest_point_on_triangle(Vec3::new(2.0, -1.0, 0.0), a, b, c);
+        assert!((result - b).length() < 1e-5);
+    }
+
+    #[test]
+    fn closest_point_vertex_c() {
+        let a = Vec3::new(0.0, 0.0, 0.0);
+        let b = Vec3::new(1.0, 0.0, 0.0);
+        let c = Vec3::new(0.0, 1.0, 0.0);
+        let result = closest_point_on_triangle(Vec3::new(-1.0, 2.0, 0.0), a, b, c);
+        assert!((result - c).length() < 1e-5);
+    }
+
+    #[test]
+    fn closest_point_edge_ab() {
+        let a = Vec3::new(0.0, 0.0, 0.0);
+        let b = Vec3::new(1.0, 0.0, 0.0);
+        let c = Vec3::new(0.0, 1.0, 0.0);
+        // Below edge AB midpoint
+        let result = closest_point_on_triangle(Vec3::new(0.5, -1.0, 0.0), a, b, c);
+        assert!((result - Vec3::new(0.5, 0.0, 0.0)).length() < 1e-5);
+    }
+
+    #[test]
+    fn closest_point_interior() {
+        let a = Vec3::new(0.0, 0.0, 0.0);
+        let b = Vec3::new(1.0, 0.0, 0.0);
+        let c = Vec3::new(0.0, 1.0, 0.0);
+        // Point directly above the triangle interior
+        let result = closest_point_on_triangle(Vec3::new(0.2, 0.2, 5.0), a, b, c);
+        assert!((result - Vec3::new(0.2, 0.2, 0.0)).length() < 1e-5);
     }
 
     /// Helper: compute minimum pairwise distance in a point set.

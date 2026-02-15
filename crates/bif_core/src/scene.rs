@@ -761,7 +761,6 @@ mod tests {
             prototype_ids: vec![proto_id],
             transform: Transform::default(),
             distribution: DistributionMethod::Manual,
-            expanded_instance_count: 0,
         };
 
         let cloud_id = scene.add_point_cloud(cloud);
