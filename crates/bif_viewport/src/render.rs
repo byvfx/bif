@@ -1560,6 +1560,30 @@ impl Renderer {
                         // Selection handled in render_node_graph
                     }
                     NodeGraphEvent::DeleteNode(node_id) => {
+                        let had_cloud = if let Some(cloud_id) = self.node_cloud_map.remove(&node_id)
+                        {
+                            self.working_scene.remove_point_cloud(cloud_id);
+                            let all_positions: Vec<bif_math::Vec3> = self
+                                .working_scene
+                                .point_clouds
+                                .iter()
+                                .flat_map(|c| c.positions.iter().copied())
+                                .collect();
+                            self.point_preview.upload_points(
+                                &self.device,
+                                &self.queue,
+                                &all_positions,
+                            );
+                            log::info!(
+                                "Node graph: Deleted scatter node {:?} → cloud {}",
+                                node_id,
+                                cloud_id
+                            );
+                            true
+                        } else {
+                            false
+                        };
+
                         if let Some(proto_id) = self.node_proto_map.remove(&node_id) {
                             log::info!(
                                 "Node graph: Deleting node {:?} → proto {}",
@@ -1580,7 +1604,7 @@ impl Renderer {
                                     self.node_proto_map.insert(node_id, proto_id);
                                 }
                             }
-                        } else {
+                        } else if !had_cloud {
                             log::info!("Node graph: Deleted node {:?} (no scene data)", node_id);
                         }
                     }

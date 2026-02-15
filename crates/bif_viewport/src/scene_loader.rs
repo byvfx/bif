@@ -1406,6 +1406,13 @@ impl Renderer {
         for mat in &scene.materials {
             self.working_scene.add_material((**mat).clone());
         }
+        // Merge point clouds and sync next_cloud_id to avoid ID collisions
+        for cloud in &scene.point_clouds {
+            let mut merged = cloud.clone();
+            merged.id = self.next_cloud_id;
+            self.next_cloud_id += 1;
+            self.working_scene.add_point_cloud(merged);
+        }
         // Remap camera instance indices by the instance offset
         for cam in &scene.cameras {
             let mut remapped = cam.clone();
