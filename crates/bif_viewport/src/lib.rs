@@ -258,6 +258,9 @@ pub struct Renderer {
     pub(crate) node_cloud_map: std::collections::HashMap<egui_snarl::NodeId, usize>,
     /// Monotonically increasing counter for unique cloud IDs.
     pub(crate) next_cloud_id: usize,
+    /// Cached instancer expansion results: NodeId -> expanded instances.
+    pub(crate) instancer_results:
+        std::collections::HashMap<egui_snarl::NodeId, Vec<bif_core::Instance>>,
 }
 
 impl Renderer {
@@ -817,6 +820,7 @@ impl Renderer {
             node_proto_map: std::collections::HashMap::new(),
             node_cloud_map: std::collections::HashMap::new(),
             next_cloud_id: 0,
+            instancer_results: std::collections::HashMap::new(),
         })
     }
 

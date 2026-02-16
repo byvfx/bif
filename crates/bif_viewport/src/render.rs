@@ -1556,6 +1556,76 @@ impl Renderer {
                             log::info!("Scatter Points complete: {} points", pt_count);
                         }
                     }
+                    NodeGraphEvent::PointInstancerCompute {
+                        node_id,
+                        points_source_node,
+                        proto_source_node,
+                    } => {
+                        // Resolve cloud ID from scatter node
+                        let cloud_id = self.node_cloud_map.get(&points_source_node).copied();
+                        // Resolve prototype ID from primitive/USD node
+                        let proto_id = self.node_proto_map.get(&proto_source_node).copied();
+
+                        match (cloud_id, proto_id) {
+                            (Some(cid), Some(pid)) => {
+                                // Find cloud in working scene by ID
+                                let cloud = self
+                                    .working_scene
+                                    .point_clouds
+                                    .iter()
+                                    .find(|c| c.id == cid)
+                                    .cloned();
+
+                                if let Some(mut cloud) = cloud {
+                                    // Set prototype to the connected mesh
+                                    cloud.prototype_ids = vec![pid];
+                                    let pt_count = cloud.positions.len();
+                                    // Set all proto_indices to 0 (single prototype)
+                                    cloud.attributes.proto_indices = vec![0; pt_count];
+
+                                    let expanded = cloud.expand();
+                                    let inst_count = expanded.len();
+                                    self.instancer_results.insert(node_id, expanded);
+
+                                    // Reload scene to rebuild GPU buffers with instancer instances
+                                    if let Err(e) = self.reload_working_scene() {
+                                        log::error!("Failed to reload after instancing: {}", e);
+                                    }
+
+                                    // Update node UI state
+                                    if let crate::node_graph::SceneNode::PointInstancer {
+                                        instance_count,
+                                        is_instanced,
+                                    } = &mut self.node_graph_state.snarl[node_id]
+                                    {
+                                        *instance_count = inst_count;
+                                        *is_instanced = true;
+                                    }
+
+                                    log::info!(
+                                        "Point Instancer: {} points x proto {} = {} instances",
+                                        pt_count,
+                                        pid,
+                                        inst_count
+                                    );
+                                } else {
+                                    log::warn!("Point Instancer: cloud {} not found in scene", cid);
+                                }
+                            }
+                            (None, _) => {
+                                log::warn!(
+                                    "Point Instancer: no cloud for source node {:?}",
+                                    points_source_node
+                                );
+                            }
+                            (_, None) => {
+                                log::warn!(
+                                    "Point Instancer: no prototype for source node {:?}",
+                                    proto_source_node
+                                );
+                            }
+                        }
+                    }
                     NodeGraphEvent::SelectNode(_) => {
                         // Selection handled in render_node_graph
                     }
@@ -1583,6 +1653,14 @@ impl Renderer {
                         } else {
                             false
                         };
+
+                        // Clean up instancer results
+                        if self.instancer_results.remove(&node_id).is_some() {
+                            if let Err(e) = self.reload_working_scene() {
+                                log::error!("Failed to reload after instancer deletion: {}", e);
+                            }
+                            log::info!("Deleted instancer node {:?}", node_id);
+                        }
 
                         if let Some(proto_id) = self.node_proto_map.remove(&node_id) {
                             log::info!(

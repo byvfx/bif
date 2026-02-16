@@ -46,6 +46,8 @@ pub struct CullingManager {
     lod_box_index_buffer: wgpu::Buffer,
     /// Number of indices in box proxy mesh (36 = 12 triangles)
     lod_box_num_indices: u32,
+    /// Maximum instance capacity of the GPU instance buffer.
+    max_instances: usize,
 }
 
 impl CullingManager {
@@ -80,6 +82,7 @@ impl CullingManager {
             lod_box_vertex_buffer,
             lod_box_index_buffer,
             lod_box_num_indices: lod_box_mesh.indices.len() as u32,
+            max_instances,
         }
     }
 
@@ -213,15 +216,17 @@ impl CullingManager {
         }
 
         // Update GPU buffer: [near_instances... | far_instances...] in single contiguous write
-        let near_count = self.scratch.near_instances.len();
-        let far_count = self.scratch.far_instances.len();
+        // Clamp to buffer capacity to avoid overflow
+        let near_count = self.scratch.near_instances.len().min(self.max_instances);
+        let remaining = self.max_instances.saturating_sub(near_count);
+        let far_count = self.scratch.far_instances.len().min(remaining);
 
         if near_count > 0 || far_count > 0 {
             if near_count > 0 {
                 queue.write_buffer(
                     instance_buffer,
                     0,
-                    bytemuck::cast_slice(&self.scratch.near_instances),
+                    bytemuck::cast_slice(&self.scratch.near_instances[..near_count]),
                 );
             }
             if far_count > 0 {
@@ -229,7 +234,7 @@ impl CullingManager {
                 queue.write_buffer(
                     instance_buffer,
                     far_offset,
-                    bytemuck::cast_slice(&self.scratch.far_instances),
+                    bytemuck::cast_slice(&self.scratch.far_instances[..far_count]),
                 );
             }
         }

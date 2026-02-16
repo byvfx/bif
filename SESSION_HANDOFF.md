@@ -1,6 +1,6 @@
-# Session Handoff - February 13, 2026
+# Session Handoff - February 15, 2026
 
-**Last Updated:** Scatter Points redesign complete
+**Last Updated:** M21.1 Point Instancer node complete
 **Next Milestone:** M29 USD Export + Non-Destructive Layers
 **Project:** BIF - VFX Scene Assembler & Renderer
 
@@ -10,61 +10,38 @@
 
 | Status | Details |
 |--------|---------|
-| Complete | Milestones 0-21, Scatter Points redesign + code review fixes |
+| Complete | Milestones 0-21, M21.1 Point Instancer node |
 | Current | Planning next milestone |
-| Tests | 140 passing (74 bif_core, 66 viewport) |
+| Tests | 68 viewport, 74 bif_core passing |
 | Performance | 60 FPS viewport, 100K instances with LOD |
 
 ---
 
 ## Recent Work
 
-### Code Review Fixes (Feb 13, 2026 - Session 3)
+### M21.1: Point Instancer Node (Feb 15, 2026)
 
-Fixed all 8 issues from VFX code review:
-
-| Fix | Details |
-|-----|---------|
-| Integer overflow | `saturating_mul` in grid point count |
-| Cloud removal | `node_cloud_map` HashMap for correct node→cloud mapping |
-| Duplicate IDs | Monotonic `next_cloud_id` counter |
-| Perf warning | Log warn for expensive surface relaxation |
-| Dead field | Removed unused `expanded_instance_count` |
-| Rename | `relax_points` → `repulsion_relax` |
-| Tests | 5 new `closest_point_on_triangle` tests |
-| Params struct | Extracted `ScatterPointsParams` from 17-field event |
-
-### Scatter Points Redesign (Feb 13, 2026 - Session 2)
-
-Scatter node produces points only (no auto-instancing). Added grid/sphere sources and relaxation:
+First node that resolves snarl connections for actual data flow:
 
 | Component | Details |
 |-----------|---------|
-| Points-only | Removed expand/add_instance/reload — output is point preview only |
-| PointSource enum | Surface / Grid / Sphere — controls generation mode |
-| Grid generator | Spacing-based, centered at origin, flat when Y=0 |
-| Sphere generator | Fibonacci (surface) or rejection sampling (volume) |
-| Repulsion relax | Spatial hash repulsion + surface projection snap-back |
-| Node UI | Source dropdown, conditional params, max_point_limit cap |
-| Auto-preview | Point preview auto-enabled on compute |
+| PointInstancer variant | 2 inputs (points + proto), 1 output (scene) |
+| Connection resolver | `resolve_input_connection()` reads snarl wiring |
+| Instance/Re-instance | Buttons appear when both inputs connected |
+| Instancer storage | `HashMap<NodeId, Vec<Instance>>` on Renderer, separate from scene |
+| GPU integration | `reload_working_scene()` appends instancer instances |
+| Cleanup | DeleteNode removes instancer results + reloads |
+| Buffer fix | Culling manager clamps writes to `max_instances` capacity |
 
-### M21: Point Instancing + Scattering (Feb 13, 2026 - Session 1)
+**Workflow:** Cube → Scatter Points (Grid 5x5) → Point Instancer → Instance → 25 cubes
 
-Full implementation of point cloud system and scatter tools:
+### Code Review Fixes (Feb 13, 2026)
 
-| Component | Details |
-|-----------|---------|
-| PointCloud type | First-class scene type with `expand()` → instances, per-point attributes |
-| USD integration | PointInstancer loading creates PointCloud (preserves authoring data) |
-| Scatter | Random (area-weighted CDF) + Poisson disk (spatial hash rejection) |
-| Point preview | wgpu PointList pipeline, cyan dots, configurable size |
-| Node graph | Scatter node with Compute/Regenerate, mode/count/seed/etc controls |
-| Undo/redo | ScatterCommand + AddPointCloud/RemovePointCloud SceneOp variants |
-| Instance cap | MAX_INSTANCES 10K → 100K |
+Fixed all 8 issues from VFX code review (overflow, cloud ID, params struct, dead field, rename).
 
-### Ivar Black Flash Fix (Feb 12, 2026)
+### Scatter Points Redesign (Feb 13, 2026)
 
-- Nearest-neighbor resample on dim change, buffer reuse, throttle helper, full resize reset
+Points-only output, grid/sphere sources, Lloyd relaxation.
 
 ---
 
@@ -79,28 +56,25 @@ Full implementation of point cloud system and scatter tools:
 
 ### What Works
 
-**Scatter Points (latest):**
-- Points-only output (no auto-instancing) — future Point Instancer node will handle geometry
+**Point Instancer (M21.1 — latest):**
+- Separate node takes points + prototype mesh → expands into renderable instances
+- First use of snarl connections for data flow (not just decorative)
+- Re-instance after scatter regenerate works
+- Delete instancer → instances disappear
+
+**Scatter Points:**
+- Points-only output — feeds into Point Instancer
 - Surface / Grid / Sphere point sources
 - Lloyd relaxation with surface projection
-- Auto-enable point preview on compute
-
-**Point Instancing (M21):**
-- PointCloud as first-class type with expand() for rendering
-- USD PointInstancer → PointCloud round-trip
-- Scatter on any mesh surface (random + Poisson disk)
-- Deterministic scatter (same seed = same result)
-- Point preview visualization (cyan dots, toggleable)
-- 100K instance capacity (up from 10K)
-- Scatter undo/redo
 
 ### Known Issues
 
-- Paint tool (Phase 5) deferred as stretch goal
+- Instancer does not auto-reinstance on upstream scatter change (manual Re-instance needed)
+- Multi-prototype instancing not yet supported (single proto per instancer)
+- Ivar rendering does not include instancer instances (viewport multi-draw only)
 - OIIO `load_texture_with_mips` crashes on .tx files on Windows
 - bif_core tests need USD DLLs (run via `setup_usd_env.ps1`)
-- Gizmo only supports translate (rotate/scale future work)
-- Renderer struct ~60 fields (God object) - extract sub-structs in future session
+- Renderer struct ~60 fields (God object)
 
 ---
 

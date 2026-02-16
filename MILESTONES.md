@@ -745,6 +745,23 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 
 ---
 
+### Milestone 21.1: Point Instancer Node ✅
+
+- **Completed:** 2026-02-15
+- **Time Invested:** ~2 hours
+- **Key Achievements:**
+  - Point Instancer node: 2 inputs (points + proto), resolves snarl connections for data flow
+  - `resolve_input_connection()` helper — first real use of node graph wiring
+  - Instance/Re-instance buttons, connection status UI
+  - Instancer results stored separately (`HashMap<NodeId, Vec<Instance>>`) to avoid index fragility
+  - `reload_working_scene()` appends instancer instances to GPU buffers
+  - DeleteNode cleanup removes instancer results + reloads scene
+  - Culling manager buffer overflow fix: clamp writes to `max_instances` capacity
+  - 2 new tests, 68 total viewport tests passing
+- **Files Changed:** `node_graph.rs`, `render.rs`, `scene_loader.rs`, `lib.rs`, `culling_manager.rs`
+
+---
+
 ### Milestone 29: USD Export + Non-Destructive Layers 💾
 
 - **Goal:** Close the pipeline loop: import → modify → render → **export**

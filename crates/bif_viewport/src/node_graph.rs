@@ -97,6 +97,15 @@ pub enum NodeGraphEvent {
         node_id: NodeId,
         params: ScatterPointsParams,
     },
+    /// Expand point cloud into geometry instances via Point Instancer
+    PointInstancerCompute {
+        /// The instancer node itself
+        node_id: NodeId,
+        /// Node that provides the point cloud (Scatter Points)
+        points_source_node: NodeId,
+        /// Node that provides the prototype mesh (Primitive or UsdRead)
+        proto_source_node: NodeId,
+    },
     /// Select a node (for keyboard delete, property inspector, etc.)
     SelectNode(NodeId),
     /// Delete a node by ID
@@ -198,6 +207,13 @@ pub enum SceneNode {
         /// Whether scatter has been computed
         is_computed: bool,
     },
+    /// Expand point clouds into geometry instances
+    PointInstancer {
+        /// Number of expanded instances (display only)
+        instance_count: usize,
+        /// Whether instancing has been computed
+        is_instanced: bool,
+    },
     /// HDRI environment map for IBL lighting
     HdriEnvironment {
         /// Path to the HDR file
@@ -289,6 +305,14 @@ impl SceneNode {
         }
     }
 
+    /// Create a new Point Instancer node
+    pub fn point_instancer() -> Self {
+        Self::PointInstancer {
+            instance_count: 0,
+            is_instanced: false,
+        }
+    }
+
     /// Create a new HDRI Environment node
     pub fn hdri_environment() -> Self {
         Self::HdriEnvironment {
@@ -315,6 +339,7 @@ impl SceneNode {
                 bif_core::PrimitiveKind::Camera => "Camera",
             },
             SceneNode::ScatterPoints { .. } => "Scatter Points",
+            SceneNode::PointInstancer { .. } => "Point Instancer",
             SceneNode::HdriEnvironment { .. } => "HDRI Environment",
         }
     }
@@ -329,6 +354,7 @@ impl SceneNode {
                 bif_core::PointSource::Surface => 1,
                 bif_core::PointSource::Grid | bif_core::PointSource::Sphere => 0,
             },
+            SceneNode::PointInstancer { .. } => 2, // points + prototype
             SceneNode::HdriEnvironment { .. } => 0,
         }
     }
@@ -340,6 +366,7 @@ impl SceneNode {
             SceneNode::IvarRender { .. } => 1,
             SceneNode::Primitive { .. } => 1,
             SceneNode::ScatterPoints { .. } => 1,
+            SceneNode::PointInstancer { .. } => 1,
             SceneNode::HdriEnvironment { .. } => 1,
         }
     }
@@ -360,6 +387,11 @@ impl SceneNode {
                     _ => None,
                 },
                 bif_core::PointSource::Grid | bif_core::PointSource::Sphere => None,
+            },
+            SceneNode::PointInstancer { .. } => match index {
+                0 => Some(("points", PinType::Scene)),
+                1 => Some(("proto", PinType::Scene)),
+                _ => None,
             },
             SceneNode::HdriEnvironment { .. } => None,
         }
@@ -384,12 +416,26 @@ impl SceneNode {
                 0 => Some(("points", PinType::Scene)),
                 _ => None,
             },
+            SceneNode::PointInstancer { .. } => match index {
+                0 => Some(("scene", PinType::Scene)),
+                _ => None,
+            },
             SceneNode::HdriEnvironment { .. } => match index {
                 0 => Some(("env", PinType::Environment)),
                 _ => None,
             },
         }
     }
+}
+
+/// Resolve which node is connected to a given input pin.
+///
+/// Returns `Some(NodeId)` of the upstream node if pin is connected, `None` otherwise.
+fn resolve_input_connection(inputs: &[InPin], input_index: usize) -> Option<NodeId> {
+    inputs
+        .get(input_index)
+        .and_then(|pin| pin.remotes.first())
+        .map(|out_pin_id| out_pin_id.node)
 }
 
 /// Viewer implementation for the scene node graph
@@ -458,7 +504,7 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer {
     fn show_body(
         &mut self,
         node_id: NodeId,
-        _inputs: &[InPin],
+        inputs: &[InPin],
         _outputs: &[OutPin],
         ui: &mut egui::Ui,
         _scale: f32,
@@ -908,6 +954,58 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer {
                     }
                 }
             }
+            SceneNode::PointInstancer {
+                instance_count,
+                is_instanced,
+            } => {
+                let points_node = resolve_input_connection(inputs, 0);
+                let proto_node = resolve_input_connection(inputs, 1);
+                let both_connected = points_node.is_some() && proto_node.is_some();
+
+                // Connection status
+                if both_connected {
+                    ui.colored_label(egui::Color32::GREEN, "Inputs connected");
+                } else {
+                    let mut hint = String::new();
+                    if points_node.is_none() {
+                        hint.push_str("points");
+                    }
+                    if proto_node.is_none() {
+                        if !hint.is_empty() {
+                            hint.push_str(", ");
+                        }
+                        hint.push_str("proto");
+                    }
+                    ui.colored_label(egui::Color32::YELLOW, format!("Missing: {}", hint));
+                }
+
+                if both_connected {
+                    let points_source = points_node.unwrap();
+                    let proto_source = proto_node.unwrap();
+
+                    if !*is_instanced {
+                        if ui.button("Instance").clicked() {
+                            self.events.push(NodeGraphEvent::PointInstancerCompute {
+                                node_id,
+                                points_source_node: points_source,
+                                proto_source_node: proto_source,
+                            });
+                        }
+                    } else {
+                        ui.colored_label(
+                            egui::Color32::GREEN,
+                            format!("Instanced ({})", instance_count),
+                        );
+                        if ui.button("Re-instance").clicked() {
+                            self.events.push(NodeGraphEvent::PointInstancerCompute {
+                                node_id,
+                                points_source_node: points_source,
+                                proto_source_node: proto_source,
+                            });
+                        }
+                    }
+                }
+            }
             SceneNode::HdriEnvironment {
                 file_path,
                 is_loaded,
@@ -1136,6 +1234,11 @@ impl NodeGraphState {
         self.snarl.insert_node(pos, SceneNode::scatter_points())
     }
 
+    /// Add a Point Instancer node at the given position.
+    pub fn add_point_instancer(&mut self, pos: egui::Pos2) -> NodeId {
+        self.snarl.insert_node(pos, SceneNode::point_instancer())
+    }
+
     /// Add a Primitive node at the given position
     pub fn add_primitive(&mut self, kind: bif_core::PrimitiveKind, pos: egui::Pos2) -> NodeId {
         self.snarl.insert_node(pos, SceneNode::primitive(kind))
@@ -1326,6 +1429,9 @@ pub fn render_node_graph(ui: &mut egui::Ui, state: &mut NodeGraphState) -> Vec<N
         if ui.button("+ Scatter Points").clicked() {
             state.add_scatter_points(egui::pos2(200.0, 300.0));
         }
+        if ui.button("+ Instancer").clicked() {
+            state.add_point_instancer(egui::pos2(400.0, 300.0));
+        }
         ui.separator();
         if ui.button("Del Selected").clicked() {
             if let Some(node_id) = state.delete_selected() {
@@ -1423,5 +1529,77 @@ mod tests {
         let state = NodeGraphState::new();
         // Should start empty
         assert_eq!(state.snarl.node_ids().count(), 0);
+    }
+
+    #[test]
+    fn test_point_instancer_node() {
+        let node = SceneNode::point_instancer();
+        assert_eq!(node.name(), "Point Instancer");
+        assert_eq!(node.input_count(), 2);
+        assert_eq!(node.output_count(), 1);
+        assert_eq!(node.input_pin(0), Some(("points", PinType::Scene)));
+        assert_eq!(node.input_pin(1), Some(("proto", PinType::Scene)));
+        assert_eq!(node.input_pin(2), None);
+        assert_eq!(node.output_pin(0), Some(("scene", PinType::Scene)));
+    }
+
+    #[test]
+    fn test_resolve_input_connection() {
+        let mut snarl = Snarl::<SceneNode>::new();
+        let scatter_id = snarl.insert_node(egui::pos2(0.0, 0.0), SceneNode::scatter_points());
+        let cube_id = snarl.insert_node(
+            egui::pos2(0.0, 100.0),
+            SceneNode::primitive(bif_core::PrimitiveKind::Cube),
+        );
+        let instancer_id = snarl.insert_node(egui::pos2(200.0, 0.0), SceneNode::point_instancer());
+
+        // Before connecting: both inputs should resolve to None
+        let pins_before: Vec<InPin> = (0..2)
+            .map(|i| {
+                snarl.in_pin(InPinId {
+                    node: instancer_id,
+                    input: i,
+                })
+            })
+            .collect();
+        assert!(resolve_input_connection(&pins_before, 0).is_none());
+        assert!(resolve_input_connection(&pins_before, 1).is_none());
+
+        // Connect scatter → instancer input 0 (points)
+        snarl.connect(
+            OutPinId {
+                node: scatter_id,
+                output: 0,
+            },
+            InPinId {
+                node: instancer_id,
+                input: 0,
+            },
+        );
+        // Connect cube → instancer input 1 (proto)
+        snarl.connect(
+            OutPinId {
+                node: cube_id,
+                output: 0,
+            },
+            InPinId {
+                node: instancer_id,
+                input: 1,
+            },
+        );
+
+        // Re-read pins after connecting
+        let pins_after: Vec<InPin> = (0..2)
+            .map(|i| {
+                snarl.in_pin(InPinId {
+                    node: instancer_id,
+                    input: i,
+                })
+            })
+            .collect();
+        assert_eq!(resolve_input_connection(&pins_after, 0), Some(scatter_id));
+        assert_eq!(resolve_input_connection(&pins_after, 1), Some(cube_id));
+        // Out of bounds returns None
+        assert!(resolve_input_connection(&pins_after, 5).is_none());
     }
 }
