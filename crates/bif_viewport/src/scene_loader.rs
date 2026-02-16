@@ -505,7 +505,10 @@ impl Renderer {
             })
             .collect();
 
-        // Combined mesh_data for single-draw fallback and Ivar
+        // Combined mesh_data for single-draw fallback and Ivar.
+        // NOTE: instancer-expanded instances are NOT baked here — they use
+        // multi-draw (per-prototype VB + instance transforms) to avoid blowing
+        // past GPU buffer size limits with thousands of mesh copies.
         let mesh_data = if scene.prototypes.len() == 1 {
             MeshData::from_core_mesh(&scene.prototypes[0].mesh)
         } else if !scene.instances().is_empty() {
@@ -640,7 +643,7 @@ impl Renderer {
         let mut instance_transforms = Vec::with_capacity(scene.instance_count());
         let mut instance_material_ids = Vec::with_capacity(scene.instance_count());
         let mut instance_prototype_ids = Vec::with_capacity(scene.instance_count());
-        let instances: Vec<InstanceData> = if scene.instances().is_empty() {
+        let mut instances: Vec<InstanceData> = if scene.instances().is_empty() {
             scene
                 .prototypes
                 .iter()
@@ -683,6 +686,24 @@ impl Renderer {
                 })
                 .collect()
         };
+
+        // Append instancer-expanded instances (from Point Instancer nodes)
+        for inst in self.instancer_results.values().flatten() {
+            let model_matrix = inst.model_matrix();
+            instance_transforms.push(model_matrix);
+            instance_prototype_ids.push(inst.prototype_id);
+            let material_id = scene
+                .prototypes
+                .get(inst.prototype_id)
+                .and_then(|p| p.material.as_ref())
+                .and_then(|mat| material_index_by_name.get(&mat.name).copied())
+                .unwrap_or(0);
+            instance_material_ids.push(material_id);
+            instances.push(InstanceData {
+                model_matrix: model_matrix.to_cols_array_2d(),
+                material_id,
+            });
+        }
 
         // Write instances to GPU (warn + truncate if exceeding buffer capacity)
         if instances.len() > crate::MAX_INSTANCES as usize {
