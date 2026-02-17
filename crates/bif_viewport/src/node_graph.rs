@@ -217,6 +217,8 @@ pub enum SceneNode {
         is_instanced: bool,
         /// Whether a compute event has been emitted this frame (guards duplicate emission)
         is_computing: bool,
+        /// Whether compute failed (prevents infinite retry loop)
+        compute_failed: bool,
     },
     /// HDRI environment map for IBL lighting
     HdriEnvironment {
@@ -315,6 +317,7 @@ impl SceneNode {
             instance_count: 0,
             is_instanced: false,
             is_computing: false,
+            compute_failed: false,
         }
     }
 
@@ -462,16 +465,19 @@ impl Default for SceneNodeViewer {
 }
 
 impl SceneNodeViewer {
+    // TODO: move mark_node_dirty to free fn or SceneNode impl — it doesn't use viewer state
     /// Reset a node's computed state so it re-triggers auto-compute next frame.
     fn mark_node_dirty(node_id: NodeId, snarl: &mut Snarl<SceneNode>) {
         match &mut snarl[node_id] {
             SceneNode::PointInstancer {
                 is_instanced,
                 is_computing,
+                compute_failed,
                 ..
             } => {
                 *is_instanced = false;
                 *is_computing = false;
+                *compute_failed = false;
             }
             SceneNode::ScatterPoints { is_computed, .. } => {
                 *is_computed = false;
@@ -526,6 +532,8 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer {
         }
     }
 
+    // TODO: decouple auto-compute from show_body — cook triggers should come from
+    // dependency graph evaluation, not UI rendering (nodes scrolled out of view won't cook)
     fn show_body(
         &mut self,
         node_id: NodeId,
@@ -989,6 +997,7 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer {
                 instance_count,
                 is_instanced,
                 is_computing,
+                compute_failed,
             } => {
                 let points_node = resolve_input_connection(inputs, 0);
                 let proto_node = resolve_input_connection(inputs, 1);
@@ -1000,11 +1009,12 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer {
                         .push(NodeGraphEvent::InstancerInvalidate { node_id });
                     *is_instanced = false;
                     *is_computing = false;
+                    *compute_failed = false;
                     *instance_count = 0;
                 }
 
-                // Auto-compute: both inputs connected, not yet instanced
-                if both_connected && !*is_instanced && !*is_computing {
+                // Auto-compute: both inputs connected, not yet instanced, not failed
+                if both_connected && !*is_instanced && !*is_computing && !*compute_failed {
                     let points_source = points_node.unwrap();
                     let proto_source = proto_node.unwrap();
                     self.events.push(NodeGraphEvent::PointInstancerCompute {
@@ -1023,6 +1033,8 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer {
                     );
                 } else if *is_computing {
                     ui.colored_label(egui::Color32::YELLOW, "Computing...");
+                } else if *compute_failed {
+                    ui.colored_label(egui::Color32::RED, "Compute failed");
                 } else {
                     let mut need = String::new();
                     if points_node.is_none() {
@@ -1167,6 +1179,18 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer {
     }
 
     fn disconnect(&mut self, from: &OutPin, to: &InPin, snarl: &mut Snarl<SceneNode>) {
+        // Emit invalidation before disconnecting so stale results get cleaned up
+        if matches!(
+            snarl[to.id.node],
+            SceneNode::PointInstancer {
+                is_instanced: true,
+                ..
+            }
+        ) {
+            self.events.push(NodeGraphEvent::InstancerInvalidate {
+                node_id: to.id.node,
+            });
+        }
         snarl.disconnect(from.id, to.id);
         // Dirty the target so auto-compute re-evaluates
         Self::mark_node_dirty(to.id.node, snarl);
@@ -1432,6 +1456,7 @@ pub fn render_node_graph(ui: &mut egui::Ui, state: &mut NodeGraphState) -> Vec<N
     let mut viewer = SceneNodeViewer::new();
 
     // Handle keyboard input for delete
+    // TODO: macOS has no Delete key — add Backspace conditionally via cfg!(target_os = "macos")
     if ui.input(|i| i.key_pressed(egui::Key::Delete)) {
         if let Some(node_id) = state.delete_selected() {
             viewer.events.push(NodeGraphEvent::DeleteNode(node_id));
@@ -1502,6 +1527,7 @@ pub fn render_node_graph(ui: &mut egui::Ui, state: &mut NodeGraphState) -> Vec<N
 
                 // Before removing, walk output connections and dirty downstream nodes.
                 // Emit InstancerInvalidate for any downstream PointInstancer.
+                // TODO: dirty propagation is one level deep — needs recursive walk for longer chains
                 let output_count = state.snarl[id].output_count();
                 for out_idx in 0..output_count {
                     let out_pin = state.snarl.out_pin(OutPinId {
