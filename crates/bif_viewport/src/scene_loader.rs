@@ -460,6 +460,7 @@ impl Renderer {
         let use_multi_draw = scene.prototypes.len() > 1;
 
         // Prototypes consumed by instancers — hide their source scene instances
+        // TODO: cache this set on Renderer, update only when instancer_results changes
         let instanced_proto_ids: std::collections::HashSet<usize> = self
             .instancer_results
             .values()

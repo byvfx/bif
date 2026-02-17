@@ -60,11 +60,8 @@ pub struct PointCloud {
 }
 
 impl PointCloud {
-    /// Expand this point cloud into concrete instances.
-    ///
-    /// For each point, builds a transform matrix from position +
-    /// optional scale/orientation, then maps proto_indices to prototype_ids.
-    pub fn expand(&self) -> Vec<Instance> {
+    /// Build instances from points, resolving prototype ID per point via `resolve_proto`.
+    fn expand_inner(&self, resolve_proto: impl Fn(usize) -> usize) -> Vec<Instance> {
         let parent_mat = self.transform.to_matrix();
         let mut instances = Vec::with_capacity(self.positions.len());
 
@@ -89,18 +86,24 @@ impl PointCloud {
             let world_mat = parent_mat * local_mat;
             let transform = Transform::from_matrix(world_mat);
 
-            let proto_idx = self.attributes.proto_indices.get(i).copied().unwrap_or(0) as usize;
-
-            let prototype_id = self
-                .prototype_ids
-                .get(proto_idx)
-                .copied()
-                .unwrap_or_else(|| self.prototype_ids.first().copied().unwrap_or(0));
-
-            instances.push(Instance::new(prototype_id, transform));
+            instances.push(Instance::new(resolve_proto(i), transform));
         }
 
         instances
+    }
+
+    /// Expand this point cloud into concrete instances.
+    ///
+    /// For each point, builds a transform matrix from position +
+    /// optional scale/orientation, then maps proto_indices to prototype_ids.
+    pub fn expand(&self) -> Vec<Instance> {
+        self.expand_inner(|i| {
+            let proto_idx = self.attributes.proto_indices.get(i).copied().unwrap_or(0) as usize;
+            self.prototype_ids
+                .get(proto_idx)
+                .copied()
+                .unwrap_or_else(|| self.prototype_ids.first().copied().unwrap_or(0))
+        })
     }
 
     /// Expand this point cloud into instances using a single override prototype.
@@ -109,34 +112,7 @@ impl PointCloud {
     /// the cloud's `prototype_ids`. Avoids cloning the entire cloud just to
     /// change the target prototype.
     pub fn expand_with_prototype(&self, prototype_id: usize) -> Vec<Instance> {
-        let parent_mat = self.transform.to_matrix();
-        let mut instances = Vec::with_capacity(self.positions.len());
-
-        for (i, &pos) in self.positions.iter().enumerate() {
-            let scale = self
-                .attributes
-                .scales
-                .as_ref()
-                .and_then(|s| s.get(i))
-                .copied()
-                .unwrap_or(Vec3::ONE);
-
-            let rotation = self
-                .attributes
-                .orientations
-                .as_ref()
-                .and_then(|o| o.get(i))
-                .copied()
-                .unwrap_or(Quat::IDENTITY);
-
-            let local_mat = Mat4::from_scale_rotation_translation(scale, rotation, pos);
-            let world_mat = parent_mat * local_mat;
-            let transform = Transform::from_matrix(world_mat);
-
-            instances.push(Instance::new(prototype_id, transform));
-        }
-
-        instances
+        self.expand_inner(|_| prototype_id)
     }
 
     /// Number of points in this cloud.
@@ -240,6 +216,8 @@ mod tests {
         // Point at (1,0,0) + parent offset (10,0,0) = (11,0,0)
         assert!((instances[0].transform.translation - Vec3::new(11.0, 0.0, 0.0)).length() < 0.01);
     }
+
+    // TODO: add test for expand_with_prototype with non-identity parent transform
 
     #[test]
     fn expand_with_prototype_overrides_ids() {

@@ -1556,6 +1556,7 @@ impl Renderer {
                             log::info!("Scatter Points complete: {} points", pt_count);
 
                             // Dirty downstream instancers so they auto-recompute
+                            // TODO: one level deep — needs recursive walk for longer chains
                             let out_pin =
                                 self.node_graph_state.snarl.out_pin(egui_snarl::OutPinId {
                                     node: node_id,
@@ -1584,16 +1585,18 @@ impl Renderer {
                         // Resolve prototype ID from primitive/USD node
                         let proto_id = self.node_proto_map.get(&proto_source_node).copied();
 
-                        // Helper: reset is_computing on the node (for failure paths)
-                        let reset_computing =
+                        // Helper: mark compute failed on the node (prevents infinite retry)
+                        let mark_compute_failed =
                             |snarl: &mut egui_snarl::Snarl<crate::node_graph::SceneNode>,
                              nid: egui_snarl::NodeId| {
                                 if let crate::node_graph::SceneNode::PointInstancer {
                                     is_computing,
+                                    compute_failed,
                                     ..
                                 } = &mut snarl[nid]
                                 {
                                     *is_computing = false;
+                                    *compute_failed = true;
                                 }
                             };
 
@@ -1619,11 +1622,13 @@ impl Renderer {
                                         instance_count,
                                         is_instanced,
                                         is_computing,
+                                        compute_failed,
                                     } = &mut self.node_graph_state.snarl[node_id]
                                     {
                                         *instance_count = inst_count;
                                         *is_instanced = true;
                                         *is_computing = false;
+                                        *compute_failed = false;
                                     }
 
                                     log::info!(
@@ -1634,7 +1639,7 @@ impl Renderer {
                                     );
                                 } else {
                                     log::warn!("Point Instancer: cloud {} not found in scene", cid);
-                                    reset_computing(&mut self.node_graph_state.snarl, node_id);
+                                    mark_compute_failed(&mut self.node_graph_state.snarl, node_id);
                                 }
                             }
                             (None, _) => {
@@ -1642,14 +1647,14 @@ impl Renderer {
                                     "Point Instancer: no cloud for source node {:?}",
                                     points_source_node
                                 );
-                                reset_computing(&mut self.node_graph_state.snarl, node_id);
+                                mark_compute_failed(&mut self.node_graph_state.snarl, node_id);
                             }
                             (_, None) => {
                                 log::warn!(
                                     "Point Instancer: no prototype for source node {:?}",
                                     proto_source_node
                                 );
-                                reset_computing(&mut self.node_graph_state.snarl, node_id);
+                                mark_compute_failed(&mut self.node_graph_state.snarl, node_id);
                             }
                         }
                     }
@@ -1701,7 +1706,11 @@ impl Renderer {
                                         *v -= 1;
                                     }
                                 }
-                                // Re-index instancer_results prototype IDs
+                                // Remove instancer results referencing deleted prototype
+                                self.instancer_results.retain(|_node_id, instances| {
+                                    !instances.iter().any(|inst| inst.prototype_id == proto_id)
+                                });
+                                // Re-index remaining instancer_results prototype IDs
                                 for instances in self.instancer_results.values_mut() {
                                     for inst in instances.iter_mut() {
                                         if inst.prototype_id > proto_id {

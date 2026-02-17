@@ -48,6 +48,8 @@ pub struct CullingManager {
     lod_box_num_indices: u32,
     /// Maximum instance capacity of the GPU instance buffer.
     max_instances: usize,
+    /// Whether we've already warned about truncation (debounce per reload).
+    truncation_warned: bool,
 }
 
 impl CullingManager {
@@ -83,6 +85,7 @@ impl CullingManager {
             lod_box_index_buffer,
             lod_box_num_indices: lod_box_mesh.indices.len() as u32,
             max_instances,
+            truncation_warned: false,
         }
     }
 
@@ -221,14 +224,18 @@ impl CullingManager {
         let remaining = self.max_instances.saturating_sub(near_count);
         let far_count = self.scratch.far_instances.len().min(remaining);
 
-        if near_count + far_count
-            < self.scratch.near_instances.len() + self.scratch.far_instances.len()
-        {
-            log::warn!(
-                "Culling truncated: {} visible instances exceed buffer capacity {}",
-                self.scratch.near_instances.len() + self.scratch.far_instances.len(),
-                self.max_instances
-            );
+        let total_visible = self.scratch.near_instances.len() + self.scratch.far_instances.len();
+        if near_count + far_count < total_visible {
+            if !self.truncation_warned {
+                log::warn!(
+                    "Culling truncated: {} visible instances exceed buffer capacity {}",
+                    total_visible,
+                    self.max_instances
+                );
+                self.truncation_warned = true;
+            }
+        } else {
+            self.truncation_warned = false;
         }
 
         if near_count > 0 || far_count > 0 {
