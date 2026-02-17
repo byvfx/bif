@@ -459,6 +459,14 @@ impl Renderer {
 
         let use_multi_draw = scene.prototypes.len() > 1;
 
+        // Prototypes consumed by instancers — hide their source scene instances
+        let instanced_proto_ids: std::collections::HashSet<usize> = self
+            .instancer_results
+            .values()
+            .flatten()
+            .map(|inst| inst.prototype_id)
+            .collect();
+
         // Create per-prototype GPU data
         let prototype_gpu_data: Vec<PrototypeGpuData> = scene
             .prototypes
@@ -506,16 +514,17 @@ impl Renderer {
             .collect();
 
         // Combined mesh_data for single-draw fallback and Ivar.
-        // NOTE: instancer-expanded instances are NOT baked here — they use
-        // multi-draw (per-prototype VB + instance transforms) to avoid blowing
-        // past GPU buffer size limits with thousands of mesh copies.
+        // Single prototype: raw mesh (Ivar applies per-instance transforms).
+        // Multi prototype: bake scene + instancer transforms into vertices
+        // so Ivar can use a single identity transform.
         let mesh_data = if scene.prototypes.len() == 1 {
             MeshData::from_core_mesh(&scene.prototypes[0].mesh)
         } else if !scene.instances().is_empty() {
-            let meshes_with_transforms: Vec<(&bif_core::Mesh, Mat4, usize)> = scene
+            let mut meshes_with_transforms: Vec<(&bif_core::Mesh, Mat4, usize)> = scene
                 .instances()
                 .iter()
                 .enumerate()
+                .filter(|(_idx, inst)| !instanced_proto_ids.contains(&inst.prototype_id))
                 .filter_map(|(mesh_idx, inst)| {
                     scene
                         .prototypes
@@ -523,6 +532,17 @@ impl Renderer {
                         .map(|proto| (proto.mesh.as_ref(), inst.model_matrix(), mesh_idx))
                 })
                 .collect();
+            // Bake instancer instances so Ivar (identity transform) can render them
+            let base_idx = meshes_with_transforms.len();
+            for (i, inst) in self.instancer_results.values().flatten().enumerate() {
+                if let Some(proto) = scene.prototypes.get(inst.prototype_id) {
+                    meshes_with_transforms.push((
+                        proto.mesh.as_ref(),
+                        inst.model_matrix(),
+                        base_idx + i,
+                    ));
+                }
+            }
             MeshData::combine_with_transforms(&meshes_with_transforms)
         } else {
             let meshes_with_transforms: Vec<(&bif_core::Mesh, Mat4, usize)> = scene
@@ -639,15 +659,18 @@ impl Renderer {
             .map(|(idx, mat)| (mat.name.clone(), idx as u32))
             .collect();
 
-        // Generate instances
-        let mut instance_transforms = Vec::with_capacity(scene.instance_count());
-        let mut instance_material_ids = Vec::with_capacity(scene.instance_count());
-        let mut instance_prototype_ids = Vec::with_capacity(scene.instance_count());
+        // Generate instances (pre-allocate for scene + instancer instances)
+        let instancer_count: usize = self.instancer_results.values().map(|v| v.len()).sum();
+        let total_capacity = scene.instance_count() + instancer_count;
+        let mut instance_transforms = Vec::with_capacity(total_capacity);
+        let mut instance_material_ids = Vec::with_capacity(total_capacity);
+        let mut instance_prototype_ids = Vec::with_capacity(total_capacity);
         let mut instances: Vec<InstanceData> = if scene.instances().is_empty() {
             scene
                 .prototypes
                 .iter()
                 .enumerate()
+                .filter(|(proto_id, _)| !instanced_proto_ids.contains(proto_id))
                 .map(|(proto_id, proto)| {
                     let model_matrix = Mat4::IDENTITY;
                     instance_transforms.push(model_matrix);
@@ -668,6 +691,7 @@ impl Renderer {
             scene
                 .instances()
                 .iter()
+                .filter(|inst| !instanced_proto_ids.contains(&inst.prototype_id))
                 .map(|inst| {
                     let model_matrix = inst.model_matrix();
                     instance_transforms.push(model_matrix);
@@ -747,10 +771,13 @@ impl Renderer {
         self.instance_transforms = instance_transforms;
         self.instance_material_ids = instance_material_ids;
         self.instance_prototype_ids = instance_prototype_ids;
-        self.instance_prim_paths = scene
+
+        // Build prim paths for scene instances (skip instanced prototypes)
+        let mut prim_paths: Vec<String> = scene
             .instances()
             .iter()
             .enumerate()
+            .filter(|(_idx, inst)| !instanced_proto_ids.contains(&inst.prototype_id))
             .map(|(idx, inst)| {
                 let proto_name = scene
                     .prototypes
@@ -760,7 +787,33 @@ impl Renderer {
                 format!("/{}/instance_{}", proto_name, idx)
             })
             .collect();
-        self.instance_animations = scene.instance_animations().to_vec();
+        // Extend for instancer-expanded instances (parallel to instance_transforms)
+        let scene_inst_count = prim_paths.len();
+        for (i, inst) in self.instancer_results.values().flatten().enumerate() {
+            let proto_name = scene
+                .prototypes
+                .get(inst.prototype_id)
+                .map(|p| p.name.as_str())
+                .unwrap_or("unknown");
+            prim_paths.push(format!(
+                "/{}/instancer_{}",
+                proto_name,
+                scene_inst_count + i
+            ));
+        }
+        self.instance_prim_paths = prim_paths;
+
+        // Animations: filtered scene instances + None entries for instancer instances
+        let mut animations: Vec<_> = scene
+            .instance_animations()
+            .iter()
+            .zip(scene.instances().iter())
+            .filter(|(_, inst)| !instanced_proto_ids.contains(&inst.prototype_id))
+            .map(|(anim, _)| anim.clone())
+            .collect();
+        animations.extend(std::iter::repeat_n(None, instancer_count));
+        self.instance_animations = animations;
+
         self.last_evaluated_frame = 0.0;
         self.scene_material = scene
             .prototypes

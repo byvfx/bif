@@ -221,6 +221,16 @@ impl CullingManager {
         let remaining = self.max_instances.saturating_sub(near_count);
         let far_count = self.scratch.far_instances.len().min(remaining);
 
+        if near_count + far_count
+            < self.scratch.near_instances.len() + self.scratch.far_instances.len()
+        {
+            log::warn!(
+                "Culling truncated: {} visible instances exceed buffer capacity {}",
+                self.scratch.near_instances.len() + self.scratch.far_instances.len(),
+                self.max_instances
+            );
+        }
+
         if near_count > 0 || far_count > 0 {
             if near_count > 0 {
                 queue.write_buffer(

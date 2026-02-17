@@ -106,6 +106,8 @@ pub enum NodeGraphEvent {
         /// Node that provides the prototype mesh (Primitive or UsdRead)
         proto_source_node: NodeId,
     },
+    /// Invalidate an instancer (clear cached results, reload scene)
+    InstancerInvalidate { node_id: NodeId },
     /// Select a node (for keyboard delete, property inspector, etc.)
     SelectNode(NodeId),
     /// Delete a node by ID
@@ -213,6 +215,8 @@ pub enum SceneNode {
         instance_count: usize,
         /// Whether instancing has been computed
         is_instanced: bool,
+        /// Whether a compute event has been emitted this frame (guards duplicate emission)
+        is_computing: bool,
     },
     /// HDRI environment map for IBL lighting
     HdriEnvironment {
@@ -310,6 +314,7 @@ impl SceneNode {
         Self::PointInstancer {
             instance_count: 0,
             is_instanced: false,
+            is_computing: false,
         }
     }
 
@@ -453,6 +458,26 @@ impl SceneNodeViewer {
 impl Default for SceneNodeViewer {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl SceneNodeViewer {
+    /// Reset a node's computed state so it re-triggers auto-compute next frame.
+    fn mark_node_dirty(node_id: NodeId, snarl: &mut Snarl<SceneNode>) {
+        match &mut snarl[node_id] {
+            SceneNode::PointInstancer {
+                is_instanced,
+                is_computing,
+                ..
+            } => {
+                *is_instanced = false;
+                *is_computing = false;
+            }
+            SceneNode::ScatterPoints { is_computed, .. } => {
+                *is_computed = false;
+            }
+            _ => {}
+        }
     }
 }
 
@@ -942,68 +967,74 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer {
                     });
                 };
 
-                if !*is_computed {
-                    if ui.button("Compute").clicked() {
-                        emit_event(&mut self.events);
-                        *is_computed = true;
-                    }
-                } else {
+                // Auto-compute: check if inputs are satisfied
+                let inputs_satisfied = match source {
+                    bif_core::PointSource::Surface => resolve_input_connection(inputs, 0).is_some(),
+                    bif_core::PointSource::Grid | bif_core::PointSource::Sphere => true,
+                };
+
+                if !*is_computed && inputs_satisfied {
+                    emit_event(&mut self.events);
+                    *is_computed = true;
+                }
+
+                // Status display
+                if *is_computed {
                     ui.colored_label(egui::Color32::GREEN, "Computed");
-                    if ui.button("Regenerate").clicked() {
-                        emit_event(&mut self.events);
-                    }
+                } else if !inputs_satisfied {
+                    ui.colored_label(egui::Color32::YELLOW, "Waiting for input");
                 }
             }
             SceneNode::PointInstancer {
                 instance_count,
                 is_instanced,
+                is_computing,
             } => {
                 let points_node = resolve_input_connection(inputs, 0);
                 let proto_node = resolve_input_connection(inputs, 1);
                 let both_connected = points_node.is_some() && proto_node.is_some();
 
-                // Connection status
-                if both_connected {
-                    ui.colored_label(egui::Color32::GREEN, "Inputs connected");
-                } else {
-                    let mut hint = String::new();
-                    if points_node.is_none() {
-                        hint.push_str("points");
-                    }
-                    if proto_node.is_none() {
-                        if !hint.is_empty() {
-                            hint.push_str(", ");
-                        }
-                        hint.push_str("proto");
-                    }
-                    ui.colored_label(egui::Color32::YELLOW, format!("Missing: {}", hint));
+                // Auto-invalidate: inputs disconnected but still marked instanced
+                if !both_connected && *is_instanced {
+                    self.events
+                        .push(NodeGraphEvent::InstancerInvalidate { node_id });
+                    *is_instanced = false;
+                    *is_computing = false;
+                    *instance_count = 0;
                 }
 
-                if both_connected {
+                // Auto-compute: both inputs connected, not yet instanced
+                if both_connected && !*is_instanced && !*is_computing {
                     let points_source = points_node.unwrap();
                     let proto_source = proto_node.unwrap();
+                    self.events.push(NodeGraphEvent::PointInstancerCompute {
+                        node_id,
+                        points_source_node: points_source,
+                        proto_source_node: proto_source,
+                    });
+                    *is_computing = true;
+                }
 
-                    if !*is_instanced {
-                        if ui.button("Instance").clicked() {
-                            self.events.push(NodeGraphEvent::PointInstancerCompute {
-                                node_id,
-                                points_source_node: points_source,
-                                proto_source_node: proto_source,
-                            });
-                        }
-                    } else {
-                        ui.colored_label(
-                            egui::Color32::GREEN,
-                            format!("Instanced ({})", instance_count),
-                        );
-                        if ui.button("Re-instance").clicked() {
-                            self.events.push(NodeGraphEvent::PointInstancerCompute {
-                                node_id,
-                                points_source_node: points_source,
-                                proto_source_node: proto_source,
-                            });
-                        }
+                // Status display
+                if *is_instanced {
+                    ui.colored_label(
+                        egui::Color32::GREEN,
+                        format!("{} instances", instance_count),
+                    );
+                } else if *is_computing {
+                    ui.colored_label(egui::Color32::YELLOW, "Computing...");
+                } else {
+                    let mut need = String::new();
+                    if points_node.is_none() {
+                        need.push_str("points");
                     }
+                    if proto_node.is_none() {
+                        if !need.is_empty() {
+                            need.push_str(", ");
+                        }
+                        need.push_str("proto");
+                    }
+                    ui.colored_label(egui::Color32::YELLOW, format!("Need: {}", need));
                 }
             }
             SceneNode::HdriEnvironment {
@@ -1128,14 +1159,17 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer {
             to_node.input_pin(to.id.input),
         ) {
             if from_type == to_type {
-                // Valid connection
                 snarl.connect(from.id, to.id);
+                // Dirty the target so auto-compute re-triggers
+                Self::mark_node_dirty(to.id.node, snarl);
             }
         }
     }
 
     fn disconnect(&mut self, from: &OutPin, to: &InPin, snarl: &mut Snarl<SceneNode>) {
         snarl.disconnect(from.id, to.id);
+        // Dirty the target so auto-compute re-evaluates
+        Self::mark_node_dirty(to.id.node, snarl);
     }
 
     fn has_node_menu(&mut self, _node: &SceneNode) -> bool {
@@ -1398,7 +1432,7 @@ pub fn render_node_graph(ui: &mut egui::Ui, state: &mut NodeGraphState) -> Vec<N
     let mut viewer = SceneNodeViewer::new();
 
     // Handle keyboard input for delete
-    if ui.input(|i| i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace)) {
+    if ui.input(|i| i.key_pressed(egui::Key::Delete)) {
         if let Some(node_id) = state.delete_selected() {
             viewer.events.push(NodeGraphEvent::DeleteNode(node_id));
         }
@@ -1465,6 +1499,38 @@ pub fn render_node_graph(ui: &mut egui::Ui, state: &mut NodeGraphState) -> Vec<N
                 if state.selected_node == Some(id) {
                     state.selected_node = None;
                 }
+
+                // Before removing, walk output connections and dirty downstream nodes.
+                // Emit InstancerInvalidate for any downstream PointInstancer.
+                let output_count = state.snarl[id].output_count();
+                for out_idx in 0..output_count {
+                    let out_pin = state.snarl.out_pin(OutPinId {
+                        node: id,
+                        output: out_idx,
+                    });
+                    for remote in &out_pin.remotes {
+                        let downstream = remote.node;
+                        if let SceneNode::PointInstancer {
+                            is_instanced,
+                            is_computing,
+                            instance_count,
+                            ..
+                        } = &mut state.snarl[downstream]
+                        {
+                            if *is_instanced {
+                                events_out.push(NodeGraphEvent::InstancerInvalidate {
+                                    node_id: downstream,
+                                });
+                            }
+                            *is_instanced = false;
+                            *is_computing = false;
+                            *instance_count = 0;
+                        } else {
+                            SceneNodeViewer::mark_node_dirty(downstream, &mut state.snarl);
+                        }
+                    }
+                }
+
                 state.snarl.remove_node(id);
                 // Pass through so renderer can clean up scene data
                 events_out.push(event);

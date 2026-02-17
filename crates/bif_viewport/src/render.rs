@@ -1554,6 +1554,24 @@ impl Renderer {
                             self.point_preview.visible = true;
 
                             log::info!("Scatter Points complete: {} points", pt_count);
+
+                            // Dirty downstream instancers so they auto-recompute
+                            let out_pin =
+                                self.node_graph_state.snarl.out_pin(egui_snarl::OutPinId {
+                                    node: node_id,
+                                    output: 0,
+                                });
+                            for remote in &out_pin.remotes {
+                                if let crate::node_graph::SceneNode::PointInstancer {
+                                    is_instanced,
+                                    is_computing,
+                                    ..
+                                } = &mut self.node_graph_state.snarl[remote.node]
+                                {
+                                    *is_instanced = false;
+                                    *is_computing = false;
+                                }
+                            }
                         }
                     }
                     NodeGraphEvent::PointInstancerCompute {
@@ -1566,24 +1584,28 @@ impl Renderer {
                         // Resolve prototype ID from primitive/USD node
                         let proto_id = self.node_proto_map.get(&proto_source_node).copied();
 
+                        // Helper: reset is_computing on the node (for failure paths)
+                        let reset_computing =
+                            |snarl: &mut egui_snarl::Snarl<crate::node_graph::SceneNode>,
+                             nid: egui_snarl::NodeId| {
+                                if let crate::node_graph::SceneNode::PointInstancer {
+                                    is_computing,
+                                    ..
+                                } = &mut snarl[nid]
+                                {
+                                    *is_computing = false;
+                                }
+                            };
+
                         match (cloud_id, proto_id) {
                             (Some(cid), Some(pid)) => {
                                 // Find cloud in working scene by ID
-                                let cloud = self
-                                    .working_scene
-                                    .point_clouds
-                                    .iter()
-                                    .find(|c| c.id == cid)
-                                    .cloned();
+                                let cloud =
+                                    self.working_scene.point_clouds.iter().find(|c| c.id == cid);
 
-                                if let Some(mut cloud) = cloud {
-                                    // Set prototype to the connected mesh
-                                    cloud.prototype_ids = vec![pid];
+                                if let Some(cloud) = cloud {
                                     let pt_count = cloud.positions.len();
-                                    // Set all proto_indices to 0 (single prototype)
-                                    cloud.attributes.proto_indices = vec![0; pt_count];
-
-                                    let expanded = cloud.expand();
+                                    let expanded = cloud.expand_with_prototype(pid);
                                     let inst_count = expanded.len();
                                     self.instancer_results.insert(node_id, expanded);
 
@@ -1596,10 +1618,12 @@ impl Renderer {
                                     if let crate::node_graph::SceneNode::PointInstancer {
                                         instance_count,
                                         is_instanced,
+                                        is_computing,
                                     } = &mut self.node_graph_state.snarl[node_id]
                                     {
                                         *instance_count = inst_count;
                                         *is_instanced = true;
+                                        *is_computing = false;
                                     }
 
                                     log::info!(
@@ -1610,6 +1634,7 @@ impl Renderer {
                                     );
                                 } else {
                                     log::warn!("Point Instancer: cloud {} not found in scene", cid);
+                                    reset_computing(&mut self.node_graph_state.snarl, node_id);
                                 }
                             }
                             (None, _) => {
@@ -1617,21 +1642,33 @@ impl Renderer {
                                     "Point Instancer: no cloud for source node {:?}",
                                     points_source_node
                                 );
+                                reset_computing(&mut self.node_graph_state.snarl, node_id);
                             }
                             (_, None) => {
                                 log::warn!(
                                     "Point Instancer: no prototype for source node {:?}",
                                     proto_source_node
                                 );
+                                reset_computing(&mut self.node_graph_state.snarl, node_id);
                             }
+                        }
+                    }
+                    NodeGraphEvent::InstancerInvalidate { node_id } => {
+                        if self.instancer_results.remove(&node_id).is_some() {
+                            if let Err(e) = self.reload_working_scene() {
+                                log::error!("Failed to reload after instancer invalidate: {}", e);
+                            }
+                            log::info!("Instancer {:?} invalidated", node_id);
                         }
                     }
                     NodeGraphEvent::SelectNode(_) => {
                         // Selection handled in render_node_graph
                     }
                     NodeGraphEvent::DeleteNode(node_id) => {
-                        let had_cloud = if let Some(cloud_id) = self.node_cloud_map.remove(&node_id)
-                        {
+                        let mut needs_reload = false;
+
+                        // Clean up scatter cloud
+                        if let Some(cloud_id) = self.node_cloud_map.remove(&node_id) {
                             self.working_scene.remove_point_cloud(cloud_id);
                             let all_positions: Vec<bif_math::Vec3> = self
                                 .working_scene
@@ -1644,46 +1681,46 @@ impl Renderer {
                                 &self.queue,
                                 &all_positions,
                             );
-                            log::info!(
-                                "Node graph: Deleted scatter node {:?} → cloud {}",
-                                node_id,
-                                cloud_id
-                            );
-                            true
-                        } else {
-                            false
-                        };
+                            log::info!("Deleted scatter node {:?} → cloud {}", node_id, cloud_id);
+                            needs_reload = true;
+                        }
 
                         // Clean up instancer results
                         if self.instancer_results.remove(&node_id).is_some() {
-                            if let Err(e) = self.reload_working_scene() {
-                                log::error!("Failed to reload after instancer deletion: {}", e);
-                            }
                             log::info!("Deleted instancer node {:?}", node_id);
+                            needs_reload = true;
                         }
 
+                        // Clean up prototype
                         if let Some(proto_id) = self.node_proto_map.remove(&node_id) {
-                            log::info!(
-                                "Node graph: Deleting node {:?} → proto {}",
-                                node_id,
-                                proto_id
-                            );
-                            match self.remove_primitive(proto_id) {
-                                Ok(()) => {
-                                    // Re-index remaining entries: IDs above removed shift down
-                                    for v in self.node_proto_map.values_mut() {
-                                        if *v > proto_id {
-                                            *v -= 1;
+                            log::info!("Deleting node {:?} → proto {}", node_id, proto_id);
+                            if self.working_scene.remove_prototype(proto_id) {
+                                // Re-index node_proto_map
+                                for v in self.node_proto_map.values_mut() {
+                                    if *v > proto_id {
+                                        *v -= 1;
+                                    }
+                                }
+                                // Re-index instancer_results prototype IDs
+                                for instances in self.instancer_results.values_mut() {
+                                    for inst in instances.iter_mut() {
+                                        if inst.prototype_id > proto_id {
+                                            inst.prototype_id -= 1;
                                         }
                                     }
                                 }
-                                Err(e) => {
-                                    log::error!("Failed to remove primitive: {}", e);
-                                    self.node_proto_map.insert(node_id, proto_id);
-                                }
+                                needs_reload = true;
+                            } else {
+                                log::error!("Prototype {} not found", proto_id);
+                                self.node_proto_map.insert(node_id, proto_id);
                             }
-                        } else if !had_cloud {
-                            log::info!("Node graph: Deleted node {:?} (no scene data)", node_id);
+                        }
+
+                        // Single consolidated reload
+                        if needs_reload {
+                            if let Err(e) = self.reload_working_scene() {
+                                log::error!("Failed to reload after deletion: {}", e);
+                            }
                         }
                     }
                 }

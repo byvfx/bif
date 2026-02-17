@@ -762,6 +762,25 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 
 ---
 
+### Milestone 21.2: Auto-Compute + Code Review Fixes ✅
+
+- **Completed:** 2026-02-15
+- **Time Invested:** ~3 hours
+- **Key Achievements:**
+  - Houdini-style auto-compute: nodes cook automatically when inputs connect/change
+  - Dirty propagation on connect/disconnect/delete (marks downstream nodes for recompute)
+  - Scatter→Instancer chain: scatter recompute triggers instancer recompute
+  - Prototype hiding: source geometry hidden when consumed by instancer
+  - `expand_with_prototype()` avoids clone+modify pattern
+  - BTreeMap for deterministic instancer iteration
+  - Parallel array desync fix (prim_paths + animations for instancer instances)
+  - Ivar rendering includes instancer instances
+  - Culling truncation warning
+  - 14 code review items resolved
+- **Files Changed:** `point_cloud.rs`, `node_graph.rs`, `render.rs`, `scene_loader.rs`, `lib.rs`, `culling_manager.rs`
+
+---
+
 ### Milestone 29: USD Export + Non-Destructive Layers 💾
 
 - **Goal:** Close the pipeline loop: import → modify → render → **export**
@@ -968,8 +987,8 @@ Key papers (cherry-pick into relevant milestones as needed):
 
 ---
 
-**Last Updated:** February 13, 2026
-**Status:** Milestones 0-21 complete
+**Last Updated:** February 15, 2026
+**Status:** Milestones 0-21.2 complete
 **Current:** Planning next milestone
 **Next:** M29 (USD export) → M26 (denoising) → M25 (volumes)
 **Roadmap revision:** M23 dissolved, M24 cut, M29 moved up to 5th priority
