@@ -103,6 +103,42 @@ impl PointCloud {
         instances
     }
 
+    /// Expand this point cloud into instances using a single override prototype.
+    ///
+    /// Like `expand()` but forces all points to use `prototype_id` instead of
+    /// the cloud's `prototype_ids`. Avoids cloning the entire cloud just to
+    /// change the target prototype.
+    pub fn expand_with_prototype(&self, prototype_id: usize) -> Vec<Instance> {
+        let parent_mat = self.transform.to_matrix();
+        let mut instances = Vec::with_capacity(self.positions.len());
+
+        for (i, &pos) in self.positions.iter().enumerate() {
+            let scale = self
+                .attributes
+                .scales
+                .as_ref()
+                .and_then(|s| s.get(i))
+                .copied()
+                .unwrap_or(Vec3::ONE);
+
+            let rotation = self
+                .attributes
+                .orientations
+                .as_ref()
+                .and_then(|o| o.get(i))
+                .copied()
+                .unwrap_or(Quat::IDENTITY);
+
+            let local_mat = Mat4::from_scale_rotation_translation(scale, rotation, pos);
+            let world_mat = parent_mat * local_mat;
+            let transform = Transform::from_matrix(world_mat);
+
+            instances.push(Instance::new(prototype_id, transform));
+        }
+
+        instances
+    }
+
     /// Number of points in this cloud.
     pub fn point_count(&self) -> usize {
         self.positions.len()
@@ -203,6 +239,30 @@ mod tests {
         assert_eq!(instances.len(), 1);
         // Point at (1,0,0) + parent offset (10,0,0) = (11,0,0)
         assert!((instances[0].transform.translation - Vec3::new(11.0, 0.0, 0.0)).length() < 0.01);
+    }
+
+    #[test]
+    fn expand_with_prototype_overrides_ids() {
+        let cloud = make_cloud(
+            vec![Vec3::ZERO, Vec3::X, Vec3::Y],
+            vec![0, 1, 0],
+            vec![10, 20],
+        );
+
+        // Normal expand uses prototype_ids mapping
+        let normal = cloud.expand();
+        assert_eq!(normal[0].prototype_id, 10);
+        assert_eq!(normal[1].prototype_id, 20);
+
+        // expand_with_prototype overrides all to prototype 99
+        let overridden = cloud.expand_with_prototype(99);
+        assert_eq!(overridden.len(), 3);
+        for inst in &overridden {
+            assert_eq!(inst.prototype_id, 99);
+        }
+
+        // Positions should match
+        assert!((overridden[1].transform.translation - Vec3::X).length() < 0.001);
     }
 
     #[test]

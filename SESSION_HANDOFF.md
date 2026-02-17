@@ -1,6 +1,6 @@
 # Session Handoff - February 15, 2026
 
-**Last Updated:** M21.1 Point Instancer node complete
+**Last Updated:** M21.2 Auto-Compute + Code Review Fixes complete
 **Next Milestone:** M29 USD Export + Non-Destructive Layers
 **Project:** BIF - VFX Scene Assembler & Renderer
 
@@ -10,38 +10,36 @@
 
 | Status | Details |
 |--------|---------|
-| Complete | Milestones 0-21, M21.1 Point Instancer node |
+| Complete | Milestones 0-21.2 (auto-compute, prototype hiding) |
 | Current | Planning next milestone |
-| Tests | 68 viewport, 74 bif_core passing |
+| Tests | 68 viewport, 75 bif_core passing |
 | Performance | 60 FPS viewport, 100K instances with LOD |
 
 ---
 
 ## Recent Work
 
-### M21.1: Point Instancer Node (Feb 15, 2026)
+### M21.2: Auto-Compute + Code Review Fixes (Feb 15, 2026)
 
-First node that resolves snarl connections for actual data flow:
+Houdini-style auto-cooking + 14 code review fixes:
 
 | Component | Details |
 |-----------|---------|
-| PointInstancer variant | 2 inputs (points + proto), 1 output (scene) |
-| Connection resolver | `resolve_input_connection()` reads snarl wiring |
-| Instance/Re-instance | Buttons appear when both inputs connected |
-| Instancer storage | `HashMap<NodeId, Vec<Instance>>` on Renderer, separate from scene |
-| GPU integration | `reload_working_scene()` appends instancer instances |
-| Cleanup | DeleteNode removes instancer results + reloads |
-| Buffer fix | Culling manager clamps writes to `max_instances` capacity |
+| Auto-compute | Nodes cook when inputs connect (no buttons) |
+| Dirty propagation | connect/disconnect/delete marks downstream dirty |
+| Scatter→Instancer | Scatter recompute triggers instancer recompute |
+| Proto hiding | Source geometry hidden when consumed by instancer |
+| BTreeMap | Deterministic instancer iteration |
+| expand_with_prototype() | Avoids clone+modify pattern |
+| Parallel arrays | prim_paths + animations fixed for instancer instances |
+| Ivar | Instancer instances baked into combined mesh_data |
+| Culling | Truncation warning when visible > buffer capacity |
 
-**Workflow:** Cube → Scatter Points (Grid 5x5) → Point Instancer → Instance → 25 cubes
+**Workflow:** Cube → Scatter Points (Grid) → Point Instancer → auto-computes → cube hidden, instances shown
 
-### Code Review Fixes (Feb 13, 2026)
+### M21.1: Point Instancer Node (Feb 15, 2026)
 
-Fixed all 8 issues from VFX code review (overflow, cloud ID, params struct, dead field, rename).
-
-### Scatter Points Redesign (Feb 13, 2026)
-
-Points-only output, grid/sphere sources, Lloyd relaxation.
+First node that resolves snarl connections for actual data flow.
 
 ---
 
@@ -56,11 +54,16 @@ Points-only output, grid/sphere sources, Lloyd relaxation.
 
 ### What Works
 
-**Point Instancer (M21.1 — latest):**
-- Separate node takes points + prototype mesh → expands into renderable instances
-- First use of snarl connections for data flow (not just decorative)
-- Re-instance after scatter regenerate works
-- Delete instancer → instances disappear
+**Auto-Compute (M21.2 — latest):**
+- Nodes auto-cook when inputs connect/change (Houdini-style)
+- Scatter recompute → instancer auto-recomputes
+- Prototype source geometry hidden when consumed by instancer
+- Delete node → downstream instancers invalidated
+- Ivar renders instancer instances
+
+**Point Instancer (M21.1):**
+- 2 inputs (points + proto) → expands into renderable instances
+- Snarl connection resolution for data flow
 
 **Scatter Points:**
 - Points-only output — feeds into Point Instancer
@@ -69,9 +72,7 @@ Points-only output, grid/sphere sources, Lloyd relaxation.
 
 ### Known Issues
 
-- Instancer does not auto-reinstance on upstream scatter change (manual Re-instance needed)
 - Multi-prototype instancing not yet supported (single proto per instancer)
-- Ivar rendering does not include instancer instances (viewport multi-draw only)
 - OIIO `load_texture_with_mips` crashes on .tx files on Windows
 - bif_core tests need USD DLLs (run via `setup_usd_env.ps1`)
 - Renderer struct ~60 fields (God object)

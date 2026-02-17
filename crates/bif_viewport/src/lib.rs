@@ -259,8 +259,9 @@ pub struct Renderer {
     /// Monotonically increasing counter for unique cloud IDs.
     pub(crate) next_cloud_id: usize,
     /// Cached instancer expansion results: NodeId -> expanded instances.
+    /// BTreeMap for deterministic iteration order (picking, culling, debug).
     pub(crate) instancer_results:
-        std::collections::HashMap<egui_snarl::NodeId, Vec<bif_core::Instance>>,
+        std::collections::BTreeMap<egui_snarl::NodeId, Vec<bif_core::Instance>>,
 }
 
 impl Renderer {
@@ -820,7 +821,7 @@ impl Renderer {
             node_proto_map: std::collections::HashMap::new(),
             node_cloud_map: std::collections::HashMap::new(),
             next_cloud_id: 0,
-            instancer_results: std::collections::HashMap::new(),
+            instancer_results: std::collections::BTreeMap::new(),
         })
     }
 
