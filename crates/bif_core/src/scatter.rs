@@ -244,7 +244,13 @@ pub fn scatter_on_surface(
 ///
 /// Points per axis = `floor(size[axis] / spacing) + 1` (or 1 if axis size is 0).
 /// Total point count is capped at `max_count`.
-pub fn generate_grid_points(size: [f32; 3], spacing: f32, max_count: u32) -> PointCloud {
+/// Per-point scales, orientations, and IDs are generated from `config`.
+pub fn generate_grid_points(
+    size: [f32; 3],
+    spacing: f32,
+    max_count: u32,
+    config: &ScatterConfig,
+) -> PointCloud {
     let spacing = spacing.max(0.001);
 
     let counts: [usize; 3] = [
@@ -299,14 +305,36 @@ pub fn generate_grid_points(size: [f32; 3], spacing: f32, max_count: u32) -> Poi
         }
     }
 
+    // Generate per-point attributes from config
     let count = positions.len();
+    let mut rng = StdRng::seed_from_u64(config.seed);
+    let mut scales = Vec::with_capacity(count);
+    let mut orientations = Vec::with_capacity(count);
+    let mut ids = Vec::with_capacity(count);
+
+    for _ in 0..count {
+        let s = rng.gen_range(config.scale_range.0..=config.scale_range.1);
+        scales.push(Vec3::splat(s));
+
+        let angle = if config.rotation_range > 0.0 {
+            rng.gen_range(0.0..config.rotation_range)
+        } else {
+            0.0
+        };
+        orientations.push(Quat::from_rotation_y(angle));
+
+        ids.push(rng.gen::<f32>());
+    }
+
     PointCloud {
         id: 0,
         name: "Grid Points".into(),
         positions,
         attributes: PointAttributes {
+            scales: Some(scales),
+            orientations: Some(orientations),
             proto_indices: vec![0; count],
-            ..Default::default()
+            ids: Some(ids),
         },
         prototype_ids: vec![],
         transform: Transform::default(),
@@ -318,13 +346,13 @@ pub fn generate_grid_points(size: [f32; 3], spacing: f32, max_count: u32) -> Poi
 ///
 /// `on_surface = true` uses Fibonacci sphere for even coverage.
 /// `on_surface = false` uses rejection sampling for uniform volume fill.
-/// Capped at `max_count`.
+/// Capped at `max_count`. Per-point attributes generated from `config`.
 pub fn generate_sphere_points(
     radius: f32,
     count: u32,
     on_surface: bool,
-    seed: u64,
     max_count: u32,
+    config: &ScatterConfig,
 ) -> PointCloud {
     let n = count.min(max_count) as usize;
     let mut positions = Vec::with_capacity(n);
@@ -342,7 +370,7 @@ pub fn generate_sphere_points(
         }
     } else {
         // Rejection sampling for uniform volume
-        let mut rng = StdRng::seed_from_u64(seed);
+        let mut rng = StdRng::seed_from_u64(config.seed);
         let r_sq = radius * radius;
         while positions.len() < n {
             let x = rng.gen_range(-radius..=radius);
@@ -354,18 +382,43 @@ pub fn generate_sphere_points(
         }
     }
 
-    let count = positions.len();
+    // Generate per-point attributes (separate seed to keep positions deterministic)
+    let pt_count = positions.len();
+    let mut attr_rng = StdRng::seed_from_u64(config.seed.wrapping_add(1));
+    let mut scales = Vec::with_capacity(pt_count);
+    let mut orientations = Vec::with_capacity(pt_count);
+    let mut ids = Vec::with_capacity(pt_count);
+
+    for _ in 0..pt_count {
+        let s = attr_rng.gen_range(config.scale_range.0..=config.scale_range.1);
+        scales.push(Vec3::splat(s));
+
+        let angle = if config.rotation_range > 0.0 {
+            attr_rng.gen_range(0.0..config.rotation_range)
+        } else {
+            0.0
+        };
+        orientations.push(Quat::from_rotation_y(angle));
+
+        ids.push(attr_rng.gen::<f32>());
+    }
+
     PointCloud {
         id: 0,
         name: "Sphere Points".into(),
         positions,
         attributes: PointAttributes {
-            proto_indices: vec![0; count],
-            ..Default::default()
+            scales: Some(scales),
+            orientations: Some(orientations),
+            proto_indices: vec![0; pt_count],
+            ids: Some(ids),
         },
         prototype_ids: vec![],
         transform: Transform::default(),
-        distribution: DistributionMethod::Sphere { seed, on_surface },
+        distribution: DistributionMethod::Sphere {
+            seed: config.seed,
+            on_surface,
+        },
     }
 }
 
@@ -894,21 +947,24 @@ mod tests {
 
     #[test]
     fn grid_points_count() {
-        let cloud = generate_grid_points([10.0, 0.0, 10.0], 1.0, 1_000_000);
+        let cloud =
+            generate_grid_points([10.0, 0.0, 10.0], 1.0, 1_000_000, &ScatterConfig::default());
         // 11 points per axis (0..10 at spacing 1), Y collapsed = 11 * 1 * 11 = 121
         assert_eq!(cloud.positions.len(), 121);
     }
 
     #[test]
     fn grid_points_3d() {
-        let cloud = generate_grid_points([4.0, 4.0, 4.0], 1.0, 1_000_000);
+        let cloud =
+            generate_grid_points([4.0, 4.0, 4.0], 1.0, 1_000_000, &ScatterConfig::default());
         // 5 per axis = 125
         assert_eq!(cloud.positions.len(), 125);
     }
 
     #[test]
     fn grid_points_flat() {
-        let cloud = generate_grid_points([10.0, 0.0, 10.0], 1.0, 1_000_000);
+        let cloud =
+            generate_grid_points([10.0, 0.0, 10.0], 1.0, 1_000_000, &ScatterConfig::default());
         // All y should be 0
         for pos in &cloud.positions {
             assert!(
@@ -920,9 +976,33 @@ mod tests {
     }
 
     #[test]
+    fn grid_points_have_scales() {
+        let config = ScatterConfig {
+            scale_range: (0.5, 1.5),
+            ..Default::default()
+        };
+        let cloud = generate_grid_points([4.0, 0.0, 4.0], 1.0, 1_000_000, &config);
+        let scales = cloud
+            .attributes
+            .scales
+            .as_ref()
+            .expect("grid should produce scales");
+        assert_eq!(scales.len(), cloud.positions.len());
+        for s in scales {
+            assert!(s.x >= 0.5 && s.x <= 1.5, "scale {} out of range", s.x);
+            assert_eq!(s.x, s.y, "scale should be uniform");
+            assert_eq!(s.x, s.z, "scale should be uniform");
+        }
+    }
+
+    #[test]
     fn sphere_surface_points() {
         let radius = 5.0;
-        let cloud = generate_sphere_points(radius, 200, true, 42, 1_000_000);
+        let config = ScatterConfig {
+            seed: 42,
+            ..Default::default()
+        };
+        let cloud = generate_sphere_points(radius, 200, true, 1_000_000, &config);
         assert_eq!(cloud.positions.len(), 200);
         for pos in &cloud.positions {
             let dist = pos.length();
@@ -938,7 +1018,11 @@ mod tests {
     #[test]
     fn sphere_volume_points() {
         let radius = 5.0;
-        let cloud = generate_sphere_points(radius, 500, false, 42, 1_000_000);
+        let config = ScatterConfig {
+            seed: 42,
+            ..Default::default()
+        };
+        let cloud = generate_sphere_points(radius, 500, false, 1_000_000, &config);
         assert_eq!(cloud.positions.len(), 500);
         for pos in &cloud.positions {
             let dist = pos.length();
@@ -948,6 +1032,25 @@ mod tests {
                 radius,
                 dist
             );
+        }
+    }
+
+    #[test]
+    fn sphere_points_have_scales() {
+        let config = ScatterConfig {
+            seed: 42,
+            scale_range: (0.3, 2.0),
+            ..Default::default()
+        };
+        let cloud = generate_sphere_points(3.0, 100, true, 1_000_000, &config);
+        let scales = cloud
+            .attributes
+            .scales
+            .as_ref()
+            .expect("sphere should produce scales");
+        assert_eq!(scales.len(), cloud.positions.len());
+        for s in scales {
+            assert!(s.x >= 0.3 && s.x <= 2.0, "scale {} out of range", s.x);
         }
     }
 
@@ -996,7 +1099,8 @@ mod tests {
 
     #[test]
     fn max_point_limit_caps() {
-        let cloud = generate_grid_points([100.0, 100.0, 100.0], 1.0, 1000);
+        let cloud =
+            generate_grid_points([100.0, 100.0, 100.0], 1.0, 1000, &ScatterConfig::default());
         assert!(
             cloud.positions.len() <= 1000,
             "Should cap at max_count=1000, got {}",

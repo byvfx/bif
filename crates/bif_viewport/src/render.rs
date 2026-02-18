@@ -1417,9 +1417,39 @@ impl Renderer {
                         node_id,
                     } => {
                         log::info!("Node graph: Creating {:?} primitive (size={})", kind, size);
+
+                        // Remove old prototype if re-creating (e.g. size change)
+                        if let Some(old_id) = self.node_proto_map.remove(&node_id) {
+                            self.remove_and_reindex_prototype(old_id);
+                        }
+
                         match self.load_primitive(kind, size) {
                             Ok(proto_id) => {
                                 self.node_proto_map.insert(node_id, proto_id);
+
+                                // Dirty downstream instancers so they auto-recompute
+                                let out_pin =
+                                    self.node_graph_state.snarl.out_pin(egui_snarl::OutPinId {
+                                        node: node_id,
+                                        output: 0,
+                                    });
+                                for remote in &out_pin.remotes {
+                                    if let crate::node_graph::SceneNode::PointInstancer {
+                                        is_instanced,
+                                        is_computing,
+                                        compute_failed,
+                                        ..
+                                    } = &mut self.node_graph_state.snarl[remote.node]
+                                    {
+                                        *is_instanced = false;
+                                        *is_computing = false;
+                                        *compute_failed = false;
+                                    }
+                                }
+
+                                if let Err(e) = self.reload_working_scene() {
+                                    log::error!("Failed to reload after primitive create: {}", e);
+                                }
                             }
                             Err(e) => {
                                 log::error!("Failed to create primitive: {}", e);
@@ -1491,10 +1521,17 @@ impl Renderer {
                                 }
                             }
                             bif_core::PointSource::Grid => {
+                                let config = bif_core::scatter::ScatterConfig {
+                                    seed: params.seed,
+                                    scale_range: (params.scale_min, params.scale_max),
+                                    rotation_range: params.rotation_range.to_radians(),
+                                    ..Default::default()
+                                };
                                 let mut cloud = bif_core::scatter::generate_grid_points(
                                     params.grid_size,
                                     params.grid_spacing,
                                     params.max_point_limit,
+                                    &config,
                                 );
                                 if params.relax_iterations > 0 {
                                     bif_core::scatter::repulsion_relax(
@@ -1508,12 +1545,18 @@ impl Renderer {
                                 Some(cloud)
                             }
                             bif_core::PointSource::Sphere => {
+                                let config = bif_core::scatter::ScatterConfig {
+                                    seed: params.seed,
+                                    scale_range: (params.scale_min, params.scale_max),
+                                    rotation_range: params.rotation_range.to_radians(),
+                                    ..Default::default()
+                                };
                                 let mut cloud = bif_core::scatter::generate_sphere_points(
                                     params.sphere_radius,
                                     params.count,
                                     params.sphere_on_surface,
-                                    params.seed,
                                     params.max_point_limit,
+                                    &config,
                                 );
                                 if params.relax_iterations > 0 {
                                     bif_core::scatter::repulsion_relax(
@@ -1699,28 +1742,9 @@ impl Renderer {
                         // Clean up prototype
                         if let Some(proto_id) = self.node_proto_map.remove(&node_id) {
                             log::info!("Deleting node {:?} → proto {}", node_id, proto_id);
-                            if self.working_scene.remove_prototype(proto_id) {
-                                // Re-index node_proto_map
-                                for v in self.node_proto_map.values_mut() {
-                                    if *v > proto_id {
-                                        *v -= 1;
-                                    }
-                                }
-                                // Remove instancer results referencing deleted prototype
-                                self.instancer_results.retain(|_node_id, instances| {
-                                    !instances.iter().any(|inst| inst.prototype_id == proto_id)
-                                });
-                                // Re-index remaining instancer_results prototype IDs
-                                for instances in self.instancer_results.values_mut() {
-                                    for inst in instances.iter_mut() {
-                                        if inst.prototype_id > proto_id {
-                                            inst.prototype_id -= 1;
-                                        }
-                                    }
-                                }
+                            if self.remove_and_reindex_prototype(proto_id) {
                                 needs_reload = true;
                             } else {
-                                log::error!("Prototype {} not found", proto_id);
                                 self.node_proto_map.insert(node_id, proto_id);
                             }
                         }
