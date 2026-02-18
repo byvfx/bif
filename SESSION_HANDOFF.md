@@ -1,6 +1,6 @@
-# Session Handoff - February 15, 2026
+# Session Handoff - February 17, 2026
 
-**Last Updated:** M21.2 Auto-Compute + Code Review Fixes complete
+**Last Updated:** Bugfix — auto-create, proto hiding, grid/sphere scale
 **Next Milestone:** M29 USD Export + Non-Destructive Layers
 **Project:** BIF - VFX Scene Assembler & Renderer
 
@@ -10,32 +10,30 @@
 
 | Status | Details |
 |--------|---------|
-| Complete | Milestones 0-21.2 (auto-compute, prototype hiding) |
+| Complete | Milestones 0-21.2 + bugfixes |
 | Current | Planning next milestone |
-| Tests | 68 viewport, 75 bif_core passing |
+| Tests | 68 viewport, 75+ bif_core passing |
 | Performance | 60 FPS viewport, 100K instances with LOD |
 
 ---
 
 ## Recent Work
 
+### Bugfix: Auto-Create, Proto Hiding, Scale (Feb 17, 2026)
+
+Three related fixes in primitive/instancing pipeline:
+
+| Fix | Details |
+|-----|---------|
+| Auto-create | Primitives create on node add, live size updates (no button) |
+| Proto cleanup | Old prototype removed on re-creation, prevents orphaned instances at origin |
+| Grid/Sphere scale | generate_grid/sphere_points now accept ScatterConfig, produce per-point scales/orientations/IDs |
+| DRY | Extracted remove_and_reindex_prototype helper, used by CreatePrimitive + DeleteNode |
+| Debug log | instanced_proto_ids logged for filtering verification |
+
 ### M21.2: Auto-Compute + Code Review Fixes (Feb 15, 2026)
 
-Houdini-style auto-cooking + 14 code review fixes:
-
-| Component | Details |
-|-----------|---------|
-| Auto-compute | Nodes cook when inputs connect (no buttons) |
-| Dirty propagation | connect/disconnect/delete marks downstream dirty |
-| Scatter→Instancer | Scatter recompute triggers instancer recompute |
-| Proto hiding | Source geometry hidden when consumed by instancer |
-| BTreeMap | Deterministic instancer iteration |
-| expand_with_prototype() | Avoids clone+modify pattern |
-| Parallel arrays | prim_paths + animations fixed for instancer instances |
-| Ivar | Instancer instances baked into combined mesh_data |
-| Culling | Truncation warning when visible > buffer capacity |
-
-**Workflow:** Cube → Scatter Points (Grid) → Point Instancer → auto-computes → cube hidden, instances shown
+Houdini-style auto-cooking + 14 code review fixes.
 
 ### M21.1: Point Instancer Node (Feb 15, 2026)
 
