@@ -330,6 +330,36 @@ impl Renderer {
         }
     }
 
+    /// Remove a prototype and re-index all maps that reference prototype IDs.
+    ///
+    /// Updates `node_proto_map` and `instancer_results` to account for
+    /// the index shift after removal. Returns `true` if the prototype existed.
+    pub fn remove_and_reindex_prototype(&mut self, proto_id: usize) -> bool {
+        if !self.working_scene.remove_prototype(proto_id) {
+            log::error!("Prototype {} not found for removal", proto_id);
+            return false;
+        }
+        // Re-index node_proto_map
+        for v in self.node_proto_map.values_mut() {
+            if *v > proto_id {
+                *v -= 1;
+            }
+        }
+        // Remove instancer results referencing deleted prototype
+        self.instancer_results.retain(|_node_id, instances| {
+            !instances.iter().any(|inst| inst.prototype_id == proto_id)
+        });
+        // Re-index remaining instancer_results prototype IDs
+        for instances in self.instancer_results.values_mut() {
+            for inst in instances.iter_mut() {
+                if inst.prototype_id > proto_id {
+                    inst.prototype_id -= 1;
+                }
+            }
+        }
+        true
+    }
+
     /// Add a primitive to the working scene and rebuild GPU state.
     ///
     /// Returns the prototype ID in the working scene.
@@ -467,6 +497,13 @@ impl Renderer {
             .flatten()
             .map(|inst| inst.prototype_id)
             .collect();
+        if !instanced_proto_ids.is_empty() {
+            log::debug!(
+                "Hiding instanced prototypes: {:?} (total protos: {})",
+                instanced_proto_ids,
+                scene.prototypes.len(),
+            );
+        }
 
         // Create per-prototype GPU data
         let prototype_gpu_data: Vec<PrototypeGpuData> = scene

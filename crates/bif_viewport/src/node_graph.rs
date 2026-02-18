@@ -641,17 +641,14 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer {
                 });
 
                 if !*is_created {
-                    if ui.button("Create").clicked() {
-                        self.events.push(NodeGraphEvent::CreatePrimitive {
-                            kind: *kind,
-                            size: *size,
-                            node_id,
-                        });
-                        *is_created = true;
-                    }
-                } else {
-                    ui.colored_label(egui::Color32::GREEN, "Created");
+                    self.events.push(NodeGraphEvent::CreatePrimitive {
+                        kind: *kind,
+                        size: *size,
+                        node_id,
+                    });
+                    *is_created = true;
                 }
+                ui.colored_label(egui::Color32::GREEN, "Created");
             }
             SceneNode::ScatterPoints {
                 source,
