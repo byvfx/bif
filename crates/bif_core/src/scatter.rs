@@ -148,6 +148,15 @@ fn get_triangle(mesh: &Mesh, tri_idx: usize) -> Option<(Vec3, Vec3, Vec3)> {
     Some((mesh.positions[i0], mesh.positions[i1], mesh.positions[i2]))
 }
 
+/// Normalize scale range so min <= max (swaps if inverted).
+fn normalized_scale_range(range: (f32, f32)) -> (f32, f32) {
+    if range.0 <= range.1 {
+        range
+    } else {
+        (range.1, range.0)
+    }
+}
+
 /// Build an orientation quaternion aligning Y-up to the given normal,
 /// with random rotation around the normal axis.
 fn orientation_from_normal(normal: Vec3, angle: f32) -> Quat {
@@ -190,7 +199,8 @@ pub fn scatter_on_surface(
     let mut ids = Vec::with_capacity(count);
 
     for normal in &normals {
-        let s = rng.gen_range(config.scale_range.0..=config.scale_range.1);
+        let (s_lo, s_hi) = normalized_scale_range(config.scale_range);
+        let s = rng.gen_range(s_lo..=s_hi);
         scales.push(Vec3::splat(s));
 
         let orientation = if config.align_to_normal {
@@ -313,7 +323,8 @@ pub fn generate_grid_points(
     let mut ids = Vec::with_capacity(count);
 
     for _ in 0..count {
-        let s = rng.gen_range(config.scale_range.0..=config.scale_range.1);
+        let (s_lo, s_hi) = normalized_scale_range(config.scale_range);
+        let s = rng.gen_range(s_lo..=s_hi);
         scales.push(Vec3::splat(s));
 
         let angle = if config.rotation_range > 0.0 {
@@ -390,7 +401,8 @@ pub fn generate_sphere_points(
     let mut ids = Vec::with_capacity(pt_count);
 
     for _ in 0..pt_count {
-        let s = attr_rng.gen_range(config.scale_range.0..=config.scale_range.1);
+        let (s_lo, s_hi) = normalized_scale_range(config.scale_range);
+        let s = attr_rng.gen_range(s_lo..=s_hi);
         scales.push(Vec3::splat(s));
 
         let angle = if config.rotation_range > 0.0 {
@@ -1154,6 +1166,76 @@ mod tests {
         // Point directly above the triangle interior
         let result = closest_point_on_triangle(Vec3::new(0.2, 0.2, 5.0), a, b, c);
         assert!((result - Vec3::new(0.2, 0.2, 0.0)).length() < 1e-5);
+    }
+
+    #[test]
+    fn scale_range_equal_no_panic() {
+        let config = ScatterConfig {
+            scale_range: (1.0, 1.0),
+            ..Default::default()
+        };
+        let cloud = generate_grid_points([4.0, 0.0, 4.0], 1.0, 1_000_000, &config);
+        for s in cloud.attributes.scales.as_ref().unwrap() {
+            assert!((s.x - 1.0).abs() < 1e-6, "equal range should produce 1.0");
+        }
+    }
+
+    #[test]
+    fn scale_range_inverted_no_panic() {
+        let config = ScatterConfig {
+            scale_range: (2.0, 0.5),
+            ..Default::default()
+        };
+        let cloud = generate_grid_points([4.0, 0.0, 4.0], 1.0, 1_000_000, &config);
+        for s in cloud.attributes.scales.as_ref().unwrap() {
+            assert!(
+                s.x >= 0.5 && s.x <= 2.0,
+                "scale {} out of swapped range",
+                s.x
+            );
+        }
+    }
+
+    #[test]
+    fn sphere_scale_range_inverted_no_panic() {
+        let config = ScatterConfig {
+            seed: 42,
+            scale_range: (3.0, 1.0),
+            ..Default::default()
+        };
+        let cloud = generate_sphere_points(5.0, 50, true, 1_000_000, &config);
+        for s in cloud.attributes.scales.as_ref().unwrap() {
+            assert!(
+                s.x >= 1.0 && s.x <= 3.0,
+                "scale {} out of swapped range",
+                s.x
+            );
+        }
+    }
+
+    #[test]
+    fn surface_scale_range_inverted_no_panic() {
+        let plane = make_plane();
+        let config = ScatterConfig {
+            count: 50,
+            seed: 42,
+            scale_range: (1.5, 0.5),
+            ..Default::default()
+        };
+        let cloud = scatter_on_surface(
+            &plane,
+            &Mat4::IDENTITY,
+            ScatterMode::Random,
+            &config,
+            vec![0],
+        );
+        for s in cloud.attributes.scales.as_ref().unwrap() {
+            assert!(
+                s.x >= 0.5 && s.x <= 1.5,
+                "scale {} out of swapped range",
+                s.x
+            );
+        }
     }
 
     /// Helper: compute minimum pairwise distance in a point set.
