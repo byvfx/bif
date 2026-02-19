@@ -49,6 +49,24 @@ pub struct ScatterConfig {
     pub rotation_range: f32,
 }
 
+impl ScatterConfig {
+    /// Return scale range with min <= max guaranteed.
+    ///
+    /// Swaps if inverted; panics in debug if either value is non-finite.
+    pub fn scale_range_normalized(&self) -> (f32, f32) {
+        debug_assert!(
+            self.scale_range.0.is_finite() && self.scale_range.1.is_finite(),
+            "scale_range contains non-finite value: {:?}",
+            self.scale_range
+        );
+        if self.scale_range.0 <= self.scale_range.1 {
+            self.scale_range
+        } else {
+            (self.scale_range.1, self.scale_range.0)
+        }
+    }
+}
+
 impl Default for ScatterConfig {
     fn default() -> Self {
         Self {
@@ -148,15 +166,6 @@ fn get_triangle(mesh: &Mesh, tri_idx: usize) -> Option<(Vec3, Vec3, Vec3)> {
     Some((mesh.positions[i0], mesh.positions[i1], mesh.positions[i2]))
 }
 
-/// Normalize scale range so min <= max (swaps if inverted).
-fn normalized_scale_range(range: (f32, f32)) -> (f32, f32) {
-    if range.0 <= range.1 {
-        range
-    } else {
-        (range.1, range.0)
-    }
-}
-
 /// Build an orientation quaternion aligning Y-up to the given normal,
 /// with random rotation around the normal axis.
 fn orientation_from_normal(normal: Vec3, angle: f32) -> Quat {
@@ -197,9 +206,9 @@ pub fn scatter_on_surface(
     let mut scales = Vec::with_capacity(count);
     let mut orientations = Vec::with_capacity(count);
     let mut ids = Vec::with_capacity(count);
+    let (s_lo, s_hi) = config.scale_range_normalized();
 
     for normal in &normals {
-        let (s_lo, s_hi) = normalized_scale_range(config.scale_range);
         let s = rng.gen_range(s_lo..=s_hi);
         scales.push(Vec3::splat(s));
 
@@ -321,9 +330,9 @@ pub fn generate_grid_points(
     let mut scales = Vec::with_capacity(count);
     let mut orientations = Vec::with_capacity(count);
     let mut ids = Vec::with_capacity(count);
+    let (s_lo, s_hi) = config.scale_range_normalized();
 
     for _ in 0..count {
-        let (s_lo, s_hi) = normalized_scale_range(config.scale_range);
         let s = rng.gen_range(s_lo..=s_hi);
         scales.push(Vec3::splat(s));
 
@@ -399,9 +408,9 @@ pub fn generate_sphere_points(
     let mut scales = Vec::with_capacity(pt_count);
     let mut orientations = Vec::with_capacity(pt_count);
     let mut ids = Vec::with_capacity(pt_count);
+    let (s_lo, s_hi) = config.scale_range_normalized();
 
     for _ in 0..pt_count {
-        let (s_lo, s_hi) = normalized_scale_range(config.scale_range);
         let s = attr_rng.gen_range(s_lo..=s_hi);
         scales.push(Vec3::splat(s));
 
@@ -1166,6 +1175,17 @@ mod tests {
         // Point directly above the triangle interior
         let result = closest_point_on_triangle(Vec3::new(0.2, 0.2, 5.0), a, b, c);
         assert!((result - Vec3::new(0.2, 0.2, 0.0)).length() < 1e-5);
+    }
+
+    #[test]
+    fn scale_range_normalized_swaps() {
+        let cfg = |lo, hi| ScatterConfig {
+            scale_range: (lo, hi),
+            ..Default::default()
+        };
+        assert_eq!(cfg(5.0, 1.0).scale_range_normalized(), (1.0, 5.0));
+        assert_eq!(cfg(1.0, 5.0).scale_range_normalized(), (1.0, 5.0));
+        assert_eq!(cfg(3.0, 3.0).scale_range_normalized(), (3.0, 3.0));
     }
 
     #[test]
