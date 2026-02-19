@@ -1,6 +1,6 @@
-# Session Handoff - February 18, 2026
+# Session Handoff - February 19, 2026
 
-**Last Updated:** Fix scatter scale_range panic when min > max
+**Last Updated:** Scatter fixes: dirty propagation, surface hiding, billboard points
 **Next Milestone:** M29 USD Export + Non-Destructive Layers
 **Project:** BIF - VFX Scene Assembler & Renderer
 
@@ -12,12 +12,22 @@
 |--------|---------|
 | Complete | Milestones 0-21.2 + bugfixes |
 | Current | Planning next milestone |
-| Tests | 68 viewport, 75+ bif_core passing |
+| Tests | 68 viewport, 85 bif_core, 233 total passing |
 | Performance | 60 FPS viewport, 100K instances with LOD |
 
 ---
 
 ## Recent Work
+
+### Scatter Fixes (Feb 19, 2026)
+
+Three fixes for scatter point workflow:
+
+| Fix | Details |
+|-----|---------|
+| Dirty propagation | `propagate_dirty()` BFS replaces single-level walks — Primitive→Scatter→Instancer chain now works |
+| Surface hiding | Scatter surface geometry auto-hides from viewport (merged into existing instanced hiding set) |
+| Billboard points | PointList→TriangleStrip billboard quads with circle mask, per-node size slider + color picker |
 
 ### Fix: Scatter scale_range panic (Feb 18, 2026)
 
@@ -33,15 +43,6 @@ Three related fixes in primitive/instancing pipeline:
 | Proto cleanup | Old prototype removed on re-creation, prevents orphaned instances at origin |
 | Grid/Sphere scale | generate_grid/sphere_points now accept ScatterConfig, produce per-point scales/orientations/IDs |
 | DRY | Extracted remove_and_reindex_prototype helper, used by CreatePrimitive + DeleteNode |
-| Debug log | instanced_proto_ids logged for filtering verification |
-
-### M21.2: Auto-Compute + Code Review Fixes (Feb 15, 2026)
-
-Houdini-style auto-cooking + 14 code review fixes.
-
-### M21.1: Point Instancer Node (Feb 15, 2026)
-
-First node that resolves snarl connections for actual data flow.
 
 ---
 
@@ -50,13 +51,19 @@ First node that resolves snarl connections for actual data flow.
 | Metric | Value |
 |--------|-------|
 | Build (dev) | ~10s |
-| Tests | 200+ passing |
+| Tests | 233 passing |
 | Vulkan FPS | 60 (VSync with Fifo) |
 | Crates | 6 (math, core, renderer, viewport, viewer, maketx) |
 
 ### What Works
 
-**Auto-Compute (M21.2 — latest):**
+**Scatter Fixes (latest):**
+- Recursive dirty propagation through full node chains
+- Scatter surface geometry hidden from viewport
+- Billboard quad point rendering with size/color controls
+- Per-frame viewport dimension sync for correct pixel sizing
+
+**Auto-Compute (M21.2):**
 - Nodes auto-cook when inputs connect/change (Houdini-style)
 - Scatter recompute → instancer auto-recomputes
 - Prototype source geometry hidden when consumed by instancer
