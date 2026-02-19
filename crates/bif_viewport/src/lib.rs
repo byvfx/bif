@@ -244,6 +244,10 @@ pub struct Renderer {
 
     // Point preview renderer for scatter visualization
     pub(crate) point_preview: point_preview::PointPreviewRenderer,
+    /// Last viewport size used for point preview params (for change detection).
+    pub(crate) point_preview_last_vp: (f32, f32),
+    /// Whether point preview params need a GPU write next frame.
+    pub(crate) point_preview_params_dirty: bool,
 
     // Viewport display toggles
     pub show_grid: bool,
@@ -258,9 +262,8 @@ pub struct Renderer {
     pub(crate) node_cloud_map: std::collections::HashMap<egui_snarl::NodeId, usize>,
     /// Monotonically increasing counter for unique cloud IDs.
     pub(crate) next_cloud_id: usize,
-    /// Prototype IDs consumed as scatter surfaces — hidden from viewport.
-    pub(crate) scatter_surface_proto_ids: std::collections::HashSet<usize>,
     /// Scatter node → surface prototype ID (for cleanup on reconnect/delete).
+    /// Rebuilt into a `HashSet` in `reload_working_scene()` to avoid ref-counting bugs.
     pub(crate) node_scatter_surface_map: std::collections::HashMap<egui_snarl::NodeId, usize>,
     /// Cached instancer expansion results: NodeId -> expanded instances.
     /// BTreeMap for deterministic iteration order (picking, culling, debug).
@@ -819,13 +822,14 @@ impl Renderer {
             scene_cameras: vec![],
             gizmo_state: gizmo::GizmoState::new(),
             point_preview,
+            point_preview_last_vp: (0.0, 0.0),
+            point_preview_params_dirty: true,
             show_grid: true,
             working_scene: bif_core::Scene::new("Working"),
             primitive_name_counters: std::collections::HashMap::new(),
             node_proto_map: std::collections::HashMap::new(),
             node_cloud_map: std::collections::HashMap::new(),
             next_cloud_id: 0,
-            scatter_surface_proto_ids: std::collections::HashSet::new(),
             node_scatter_surface_map: std::collections::HashMap::new(),
             instancer_results: std::collections::BTreeMap::new(),
         })

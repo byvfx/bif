@@ -496,8 +496,10 @@ impl Renderer {
             .flatten()
             .map(|inst| inst.prototype_id)
             .collect();
+        let scatter_surface_ids: std::collections::HashSet<usize> =
+            self.node_scatter_surface_map.values().copied().collect();
         let hidden_proto_ids: std::collections::HashSet<usize> = instanced_proto_ids
-            .union(&self.scatter_surface_proto_ids)
+            .union(&scatter_surface_ids)
             .copied()
             .collect();
         if !hidden_proto_ids.is_empty() {
@@ -505,7 +507,7 @@ impl Renderer {
                 "Hiding prototypes: {:?} (instanced: {:?}, scatter surface: {:?})",
                 hidden_proto_ids,
                 instanced_proto_ids,
-                self.scatter_surface_proto_ids,
+                scatter_surface_ids,
             );
         }
 

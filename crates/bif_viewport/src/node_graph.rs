@@ -106,8 +106,14 @@ pub enum NodeGraphEvent {
         /// Node that provides the prototype mesh (Primitive or UsdRead)
         proto_source_node: NodeId,
     },
-    /// Update point preview appearance (size, color) without recompute
+    /// Update point preview appearance (size, color) without recompute.
+    ///
+    /// NOTE: All scatter nodes share a single `PointPreviewRenderer`. The last
+    /// node to emit this event wins. Per-node rendering requires one renderer
+    /// per scatter node or per-point color attributes in the storage buffer.
     PointPreviewUpdate {
+        /// Source scatter node
+        node_id: NodeId,
         /// Point size in pixels
         point_size: f32,
         /// Point color RGBA
@@ -497,34 +503,24 @@ pub(crate) fn mark_node_dirty(node_id: NodeId, snarl: &mut Snarl<SceneNode>) {
     }
 }
 
-/// Recursively dirty all downstream nodes via BFS on output connections.
+/// BFS-walk all downstream nodes from `start` and mark them dirty.
+///
+/// `start` itself is NOT dirtied — only its transitive downstream dependents.
 pub(crate) fn propagate_dirty(start: NodeId, snarl: &mut Snarl<SceneNode>) {
     use std::collections::VecDeque;
 
-    let mut queue = VecDeque::new();
-    let mut visited = std::collections::HashSet::new();
+    let mut queue = VecDeque::from([start]);
+    let mut visited = std::collections::HashSet::from([start]);
 
-    // Seed with direct downstream nodes
-    let output_count = snarl[start].output_count();
-    for out_idx in 0..output_count {
-        let out_pin = snarl.out_pin(OutPinId {
-            node: start,
-            output: out_idx,
-        });
-        for remote in &out_pin.remotes {
-            if visited.insert(remote.node) {
-                queue.push_back(remote.node);
-            }
+    while let Some(current) = queue.pop_front() {
+        if current != start {
+            mark_node_dirty(current, snarl);
         }
-    }
 
-    while let Some(node_id) = queue.pop_front() {
-        mark_node_dirty(node_id, snarl);
-
-        let output_count = snarl[node_id].output_count();
+        let output_count = snarl[current].output_count();
         for out_idx in 0..output_count {
             let out_pin = snarl.out_pin(OutPinId {
-                node: node_id,
+                node: current,
                 output: out_idx,
             });
             for remote in &out_pin.remotes {
@@ -1068,6 +1064,7 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer {
                 });
                 if preview_changed {
                     self.events.push(NodeGraphEvent::PointPreviewUpdate {
+                        node_id,
                         point_size: *point_size,
                         point_color: *point_color,
                     });
