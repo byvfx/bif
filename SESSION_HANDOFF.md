@@ -1,6 +1,6 @@
-# Session Handoff - February 17, 2026
+# Session Handoff - February 18, 2026
 
-**Last Updated:** Bugfix — auto-create, proto hiding, grid/sphere scale
+**Last Updated:** Fix scatter scale_range panic when min > max
 **Next Milestone:** M29 USD Export + Non-Destructive Layers
 **Project:** BIF - VFX Scene Assembler & Renderer
 
@@ -18,6 +18,10 @@
 ---
 
 ## Recent Work
+
+### Fix: Scatter scale_range panic (Feb 18, 2026)
+
+`gen_range` panicked when UI allowed `scale_min > scale_max`. Added `normalized_scale_range()` helper that swaps before sampling. 4 regression tests added.
 
 ### Bugfix: Auto-Create, Proto Hiding, Scale (Feb 17, 2026)
 
