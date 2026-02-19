@@ -489,19 +489,23 @@ impl Renderer {
 
         let use_multi_draw = scene.prototypes.len() > 1;
 
-        // Prototypes consumed by instancers — hide their source scene instances
-        // TODO: cache this set on Renderer, update only when instancer_results changes
+        // Prototypes consumed by instancers or scatter surfaces — hide from viewport
         let instanced_proto_ids: std::collections::HashSet<usize> = self
             .instancer_results
             .values()
             .flatten()
             .map(|inst| inst.prototype_id)
             .collect();
-        if !instanced_proto_ids.is_empty() {
+        let hidden_proto_ids: std::collections::HashSet<usize> = instanced_proto_ids
+            .union(&self.scatter_surface_proto_ids)
+            .copied()
+            .collect();
+        if !hidden_proto_ids.is_empty() {
             log::debug!(
-                "Hiding instanced prototypes: {:?} (total protos: {})",
+                "Hiding prototypes: {:?} (instanced: {:?}, scatter surface: {:?})",
+                hidden_proto_ids,
                 instanced_proto_ids,
-                scene.prototypes.len(),
+                self.scatter_surface_proto_ids,
             );
         }
 
@@ -562,7 +566,7 @@ impl Renderer {
                 .instances()
                 .iter()
                 .enumerate()
-                .filter(|(_idx, inst)| !instanced_proto_ids.contains(&inst.prototype_id))
+                .filter(|(_idx, inst)| !hidden_proto_ids.contains(&inst.prototype_id))
                 .filter_map(|(mesh_idx, inst)| {
                     scene
                         .prototypes
@@ -708,7 +712,7 @@ impl Renderer {
                 .prototypes
                 .iter()
                 .enumerate()
-                .filter(|(proto_id, _)| !instanced_proto_ids.contains(proto_id))
+                .filter(|(proto_id, _)| !hidden_proto_ids.contains(proto_id))
                 .map(|(proto_id, proto)| {
                     let model_matrix = Mat4::IDENTITY;
                     instance_transforms.push(model_matrix);
@@ -729,7 +733,7 @@ impl Renderer {
             scene
                 .instances()
                 .iter()
-                .filter(|inst| !instanced_proto_ids.contains(&inst.prototype_id))
+                .filter(|inst| !hidden_proto_ids.contains(&inst.prototype_id))
                 .map(|inst| {
                     let model_matrix = inst.model_matrix();
                     instance_transforms.push(model_matrix);
@@ -815,7 +819,7 @@ impl Renderer {
             .instances()
             .iter()
             .enumerate()
-            .filter(|(_idx, inst)| !instanced_proto_ids.contains(&inst.prototype_id))
+            .filter(|(_idx, inst)| !hidden_proto_ids.contains(&inst.prototype_id))
             .map(|(idx, inst)| {
                 let proto_name = scene
                     .prototypes
@@ -846,7 +850,7 @@ impl Renderer {
             .instance_animations()
             .iter()
             .zip(scene.instances().iter())
-            .filter(|(_, inst)| !instanced_proto_ids.contains(&inst.prototype_id))
+            .filter(|(_, inst)| !hidden_proto_ids.contains(&inst.prototype_id))
             .map(|(anim, _)| anim.clone())
             .collect();
         animations.extend(std::iter::repeat_n(None, instancer_count));

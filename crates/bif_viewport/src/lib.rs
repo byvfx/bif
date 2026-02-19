@@ -258,6 +258,10 @@ pub struct Renderer {
     pub(crate) node_cloud_map: std::collections::HashMap<egui_snarl::NodeId, usize>,
     /// Monotonically increasing counter for unique cloud IDs.
     pub(crate) next_cloud_id: usize,
+    /// Prototype IDs consumed as scatter surfaces — hidden from viewport.
+    pub(crate) scatter_surface_proto_ids: std::collections::HashSet<usize>,
+    /// Scatter node → surface prototype ID (for cleanup on reconnect/delete).
+    pub(crate) node_scatter_surface_map: std::collections::HashMap<egui_snarl::NodeId, usize>,
     /// Cached instancer expansion results: NodeId -> expanded instances.
     /// BTreeMap for deterministic iteration order (picking, culling, debug).
     pub(crate) instancer_results:
@@ -821,6 +825,8 @@ impl Renderer {
             node_proto_map: std::collections::HashMap::new(),
             node_cloud_map: std::collections::HashMap::new(),
             next_cloud_id: 0,
+            scatter_surface_proto_ids: std::collections::HashSet::new(),
+            node_scatter_surface_map: std::collections::HashMap::new(),
             instancer_results: std::collections::BTreeMap::new(),
         })
     }
