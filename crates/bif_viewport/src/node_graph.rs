@@ -106,6 +106,13 @@ pub enum NodeGraphEvent {
         /// Node that provides the prototype mesh (Primitive or UsdRead)
         proto_source_node: NodeId,
     },
+    /// Update point preview appearance (size, color) without recompute
+    PointPreviewUpdate {
+        /// Point size in pixels
+        point_size: f32,
+        /// Point color RGBA
+        point_color: [f32; 4],
+    },
     /// Invalidate an instancer (clear cached results, reload scene)
     InstancerInvalidate { node_id: NodeId },
     /// Select a node (for keyboard delete, property inspector, etc.)
@@ -208,6 +215,10 @@ pub enum SceneNode {
         target_proto_id: Option<usize>,
         /// Whether scatter has been computed
         is_computed: bool,
+        /// Point preview size in pixels
+        point_size: f32,
+        /// Point preview color (RGBA)
+        point_color: [f32; 4],
     },
     /// Expand point clouds into geometry instances
     PointInstancer {
@@ -308,6 +319,8 @@ impl SceneNode {
             rotation_range: 360.0,
             target_proto_id: None,
             is_computed: false,
+            point_size: 5.0,
+            point_color: [0.0, 0.9, 0.9, 0.8],
         }
     }
 
@@ -464,25 +477,61 @@ impl Default for SceneNodeViewer {
     }
 }
 
-impl SceneNodeViewer {
-    // TODO: move mark_node_dirty to free fn or SceneNode impl — it doesn't use viewer state
-    /// Reset a node's computed state so it re-triggers auto-compute next frame.
-    fn mark_node_dirty(node_id: NodeId, snarl: &mut Snarl<SceneNode>) {
-        match &mut snarl[node_id] {
-            SceneNode::PointInstancer {
-                is_instanced,
-                is_computing,
-                compute_failed,
-                ..
-            } => {
-                *is_instanced = false;
-                *is_computing = false;
-                *compute_failed = false;
+/// Reset a node's computed state so it re-triggers auto-compute next frame.
+pub(crate) fn mark_node_dirty(node_id: NodeId, snarl: &mut Snarl<SceneNode>) {
+    match &mut snarl[node_id] {
+        SceneNode::PointInstancer {
+            is_instanced,
+            is_computing,
+            compute_failed,
+            ..
+        } => {
+            *is_instanced = false;
+            *is_computing = false;
+            *compute_failed = false;
+        }
+        SceneNode::ScatterPoints { is_computed, .. } => {
+            *is_computed = false;
+        }
+        _ => {}
+    }
+}
+
+/// Recursively dirty all downstream nodes via BFS on output connections.
+pub(crate) fn propagate_dirty(start: NodeId, snarl: &mut Snarl<SceneNode>) {
+    use std::collections::VecDeque;
+
+    let mut queue = VecDeque::new();
+    let mut visited = std::collections::HashSet::new();
+
+    // Seed with direct downstream nodes
+    let output_count = snarl[start].output_count();
+    for out_idx in 0..output_count {
+        let out_pin = snarl.out_pin(OutPinId {
+            node: start,
+            output: out_idx,
+        });
+        for remote in &out_pin.remotes {
+            if visited.insert(remote.node) {
+                queue.push_back(remote.node);
             }
-            SceneNode::ScatterPoints { is_computed, .. } => {
-                *is_computed = false;
+        }
+    }
+
+    while let Some(node_id) = queue.pop_front() {
+        mark_node_dirty(node_id, snarl);
+
+        let output_count = snarl[node_id].output_count();
+        for out_idx in 0..output_count {
+            let out_pin = snarl.out_pin(OutPinId {
+                node: node_id,
+                output: out_idx,
+            });
+            for remote in &out_pin.remotes {
+                if visited.insert(remote.node) {
+                    queue.push_back(remote.node);
+                }
             }
-            _ => {}
         }
     }
 }
@@ -670,6 +719,8 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer {
                 rotation_range,
                 target_proto_id: _,
                 is_computed,
+                point_size,
+                point_color,
             } => {
                 // Source dropdown
                 ui.horizontal(|ui| {
@@ -989,6 +1040,38 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer {
                 } else if !inputs_satisfied {
                     ui.colored_label(egui::Color32::YELLOW, "Waiting for input");
                 }
+
+                // Point preview controls (cosmetic only, no recompute)
+                ui.separator();
+                let mut preview_changed = false;
+                ui.horizontal(|ui| {
+                    ui.label("Pt Size:");
+                    if ui
+                        .add(
+                            egui::DragValue::new(point_size)
+                                .speed(0.5)
+                                .range(1.0..=20.0),
+                        )
+                        .changed()
+                    {
+                        preview_changed = true;
+                    }
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Color:");
+                    if ui
+                        .color_edit_button_rgba_unmultiplied(point_color)
+                        .changed()
+                    {
+                        preview_changed = true;
+                    }
+                });
+                if preview_changed {
+                    self.events.push(NodeGraphEvent::PointPreviewUpdate {
+                        point_size: *point_size,
+                        point_color: *point_color,
+                    });
+                }
             }
             SceneNode::PointInstancer {
                 instance_count,
@@ -1170,7 +1253,7 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer {
             if from_type == to_type {
                 snarl.connect(from.id, to.id);
                 // Dirty the target so auto-compute re-triggers
-                Self::mark_node_dirty(to.id.node, snarl);
+                mark_node_dirty(to.id.node, snarl);
             }
         }
     }
@@ -1190,7 +1273,7 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer {
         }
         snarl.disconnect(from.id, to.id);
         // Dirty the target so auto-compute re-evaluates
-        Self::mark_node_dirty(to.id.node, snarl);
+        mark_node_dirty(to.id.node, snarl);
     }
 
     fn has_node_menu(&mut self, _node: &SceneNode) -> bool {
@@ -1522,9 +1605,7 @@ pub fn render_node_graph(ui: &mut egui::Ui, state: &mut NodeGraphState) -> Vec<N
                     state.selected_node = None;
                 }
 
-                // Before removing, walk output connections and dirty downstream nodes.
-                // Emit InstancerInvalidate for any downstream PointInstancer.
-                // TODO: dirty propagation is one level deep — needs recursive walk for longer chains
+                // Emit InstancerInvalidate for any downstream PointInstancer before removing.
                 let output_count = state.snarl[id].output_count();
                 for out_idx in 0..output_count {
                     let out_pin = state.snarl.out_pin(OutPinId {
@@ -1533,26 +1614,21 @@ pub fn render_node_graph(ui: &mut egui::Ui, state: &mut NodeGraphState) -> Vec<N
                     });
                     for remote in &out_pin.remotes {
                         let downstream = remote.node;
-                        if let SceneNode::PointInstancer {
-                            is_instanced,
-                            is_computing,
-                            instance_count,
-                            ..
-                        } = &mut state.snarl[downstream]
-                        {
-                            if *is_instanced {
-                                events_out.push(NodeGraphEvent::InstancerInvalidate {
-                                    node_id: downstream,
-                                });
+                        if matches!(
+                            state.snarl[downstream],
+                            SceneNode::PointInstancer {
+                                is_instanced: true,
+                                ..
                             }
-                            *is_instanced = false;
-                            *is_computing = false;
-                            *instance_count = 0;
-                        } else {
-                            SceneNodeViewer::mark_node_dirty(downstream, &mut state.snarl);
+                        ) {
+                            events_out.push(NodeGraphEvent::InstancerInvalidate {
+                                node_id: downstream,
+                            });
                         }
                     }
                 }
+                // Recursively dirty all downstream nodes
+                propagate_dirty(id, &mut state.snarl);
 
                 state.snarl.remove_node(id);
                 // Pass through so renderer can clean up scene data

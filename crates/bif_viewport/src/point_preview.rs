@@ -1,7 +1,7 @@
 //! Point preview renderer for scatter point clouds.
 //!
-//! Draws point cloud positions as colored dots in the viewport.
-//! Uses a storage buffer for positions and a simple PointList pipeline.
+//! Draws point cloud positions as billboard quads with circle masking.
+//! Uses a storage buffer for positions and instanced TriangleStrip quads.
 
 use bif_math::Vec3;
 use wgpu::util::DeviceExt;
@@ -22,10 +22,12 @@ struct GpuPoint {
 struct PointParams {
     color: [f32; 4],
     point_size: f32,
-    _pad: [f32; 3],
+    viewport_width: f32,
+    viewport_height: f32,
+    _pad: f32,
 }
 
-/// Renders point cloud positions as colored dots.
+/// Renders point cloud positions as billboard quad circles.
 pub struct PointPreviewRenderer {
     pipeline: wgpu::RenderPipeline,
     bind_group_layout: wgpu::BindGroupLayout,
@@ -37,6 +39,8 @@ pub struct PointPreviewRenderer {
     pub visible: bool,
     /// Point color (RGBA).
     pub color: [f32; 4],
+    /// Point size in pixels.
+    pub point_size: f32,
 }
 
 impl PointPreviewRenderer {
@@ -114,7 +118,8 @@ impl PointPreviewRenderer {
                 compilation_options: Default::default(),
             }),
             primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::PointList,
+                topology: wgpu::PrimitiveTopology::TriangleStrip,
+                strip_index_format: None,
                 ..Default::default()
             },
             depth_stencil: Some(wgpu::DepthStencilState {
@@ -130,10 +135,13 @@ impl PointPreviewRenderer {
         });
 
         let default_color = [0.0, 0.9, 0.9, 0.8]; // Cyan
+        let default_point_size = 5.0;
         let params = PointParams {
             color: default_color,
-            point_size: 3.0,
-            _pad: [0.0; 3],
+            point_size: default_point_size,
+            viewport_width: 1920.0,
+            viewport_height: 1080.0,
+            _pad: 0.0,
         };
         let params_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Point Preview Params"),
@@ -178,6 +186,7 @@ impl PointPreviewRenderer {
             point_count: 0,
             visible: false,
             color: default_color,
+            point_size: default_point_size,
         }
     }
 
@@ -190,6 +199,8 @@ impl PointPreviewRenderer {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         positions: &[Vec3],
+        viewport_width: f32,
+        viewport_height: f32,
     ) {
         if positions.is_empty() {
             self.point_count = 0;
@@ -237,16 +248,30 @@ impl PointPreviewRenderer {
 
         self.point_count = positions.len() as u32;
 
-        // Update params (color may have changed)
+        // Update params (color, size, viewport dims)
         let params = PointParams {
             color: self.color,
-            point_size: 3.0,
-            _pad: [0.0; 3],
+            point_size: self.point_size,
+            viewport_width,
+            viewport_height,
+            _pad: 0.0,
         };
         queue.write_buffer(&self.params_buffer, 0, bytemuck::cast_slice(&[params]));
     }
 
-    /// Render points. Call after setting viewport/scissor.
+    /// Write current params (color, size, viewport) to GPU without re-uploading points.
+    pub fn update_params(&self, queue: &wgpu::Queue, viewport_width: f32, viewport_height: f32) {
+        let params = PointParams {
+            color: self.color,
+            point_size: self.point_size,
+            viewport_width,
+            viewport_height,
+            _pad: 0.0,
+        };
+        queue.write_buffer(&self.params_buffer, 0, bytemuck::cast_slice(&[params]));
+    }
+
+    /// Render points as billboard quads. Call after setting viewport/scissor.
     pub fn render<'a>(
         &'a self,
         render_pass: &mut wgpu::RenderPass<'a>,
@@ -258,6 +283,7 @@ impl PointPreviewRenderer {
         render_pass.set_pipeline(&self.pipeline);
         render_pass.set_bind_group(0, camera_bind_group, &[]);
         render_pass.set_bind_group(1, &self.bind_group, &[]);
-        render_pass.draw(0..self.point_count, 0..1);
+        // 4 vertices per quad (triangle strip), one instance per point
+        render_pass.draw(0..4, 0..self.point_count);
     }
 }

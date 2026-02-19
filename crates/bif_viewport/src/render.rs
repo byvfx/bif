@@ -47,8 +47,14 @@ impl Renderer {
                             .iter()
                             .flat_map(|c| c.positions.iter().copied())
                             .collect();
-                        self.point_preview
-                            .upload_points(&self.device, &self.queue, &all_positions);
+                        let (_, _, vp_w, vp_h) = self.viewport_rect();
+                        self.point_preview.upload_points(
+                            &self.device,
+                            &self.queue,
+                            &all_positions,
+                            vp_w,
+                            vp_h,
+                        );
                         self.point_preview.visible = true;
                     }
                     bif_core::SceneOp::RemovePointCloud { cloud_id } => {
@@ -60,10 +66,13 @@ impl Renderer {
                                 .iter()
                                 .flat_map(|c| c.positions.iter().copied())
                                 .collect();
+                            let (_, _, vp_w, vp_h) = self.viewport_rect();
                             self.point_preview.upload_points(
                                 &self.device,
                                 &self.queue,
                                 &all_positions,
+                                vp_w,
+                                vp_h,
                             );
                         }
                     }
@@ -1427,25 +1436,11 @@ impl Renderer {
                             Ok(proto_id) => {
                                 self.node_proto_map.insert(node_id, proto_id);
 
-                                // Dirty downstream instancers so they auto-recompute
-                                let out_pin =
-                                    self.node_graph_state.snarl.out_pin(egui_snarl::OutPinId {
-                                        node: node_id,
-                                        output: 0,
-                                    });
-                                for remote in &out_pin.remotes {
-                                    if let crate::node_graph::SceneNode::PointInstancer {
-                                        is_instanced,
-                                        is_computing,
-                                        compute_failed,
-                                        ..
-                                    } = &mut self.node_graph_state.snarl[remote.node]
-                                    {
-                                        *is_instanced = false;
-                                        *is_computing = false;
-                                        *compute_failed = false;
-                                    }
-                                }
+                                // Recursively dirty all downstream nodes
+                                crate::node_graph::propagate_dirty(
+                                    node_id,
+                                    &mut self.node_graph_state.snarl,
+                                );
 
                                 if let Err(e) = self.reload_working_scene() {
                                     log::error!("Failed to reload after primitive create: {}", e);
@@ -1467,6 +1462,10 @@ impl Renderer {
                         // Remove previous cloud for this node (if regenerating)
                         if let Some(old_cloud_id) = self.node_cloud_map.remove(&node_id) {
                             self.working_scene.remove_point_cloud(old_cloud_id);
+                        }
+                        // Clear old surface mapping
+                        if let Some(old_surface) = self.node_scatter_surface_map.remove(&node_id) {
+                            self.scatter_surface_proto_ids.remove(&old_surface);
                         }
 
                         let cloud = match params.source {
@@ -1510,6 +1509,11 @@ impl Renderer {
                                             Some((&mesh, &mesh_transform)),
                                         );
                                     }
+
+                                    // Track surface proto for hiding
+                                    self.node_scatter_surface_map
+                                        .insert(node_id, scatter_mesh_idx);
+                                    self.scatter_surface_proto_ids.insert(scatter_mesh_idx);
 
                                     Some(cloud)
                                 } else {
@@ -1587,35 +1591,39 @@ impl Renderer {
                                 .iter()
                                 .flat_map(|c| c.positions.iter().copied())
                                 .collect();
+                            let (_, _, vp_w, vp_h) = self.viewport_rect();
                             self.point_preview.upload_points(
                                 &self.device,
                                 &self.queue,
                                 &all_positions,
+                                vp_w,
+                                vp_h,
                             );
 
-                            // Auto-enable point preview
+                            // Auto-enable point preview and sync color/size from node
                             self.point_preview.visible = true;
+                            if let crate::node_graph::SceneNode::ScatterPoints {
+                                point_size,
+                                point_color,
+                                ..
+                            } = &self.node_graph_state.snarl[node_id]
+                            {
+                                self.point_preview.point_size = *point_size;
+                                self.point_preview.color = *point_color;
+                            }
 
                             log::info!("Scatter Points complete: {} points", pt_count);
 
-                            // Dirty downstream instancers so they auto-recompute
-                            // TODO: one level deep — needs recursive walk for longer chains
-                            let out_pin =
-                                self.node_graph_state.snarl.out_pin(egui_snarl::OutPinId {
-                                    node: node_id,
-                                    output: 0,
-                                });
-                            for remote in &out_pin.remotes {
-                                if let crate::node_graph::SceneNode::PointInstancer {
-                                    is_instanced,
-                                    is_computing,
-                                    ..
-                                } = &mut self.node_graph_state.snarl[remote.node]
-                                {
-                                    *is_instanced = false;
-                                    *is_computing = false;
-                                }
+                            // Reload scene to hide scatter surface geometry
+                            if let Err(e) = self.reload_working_scene() {
+                                log::error!("Failed to reload after scatter: {}", e);
                             }
+
+                            // Recursively dirty all downstream nodes
+                            crate::node_graph::propagate_dirty(
+                                node_id,
+                                &mut self.node_graph_state.snarl,
+                            );
                         }
                     }
                     NodeGraphEvent::PointInstancerCompute {
@@ -1709,6 +1717,15 @@ impl Renderer {
                             log::info!("Instancer {:?} invalidated", node_id);
                         }
                     }
+                    NodeGraphEvent::PointPreviewUpdate {
+                        point_size,
+                        point_color,
+                    } => {
+                        self.point_preview.point_size = point_size;
+                        self.point_preview.color = point_color;
+                        let (_, _, vp_w, vp_h) = self.viewport_rect();
+                        self.point_preview.update_params(&self.queue, vp_w, vp_h);
+                    }
                     NodeGraphEvent::SelectNode(_) => {
                         // Selection handled in render_node_graph
                     }
@@ -1724,13 +1741,21 @@ impl Renderer {
                                 .iter()
                                 .flat_map(|c| c.positions.iter().copied())
                                 .collect();
+                            let (_, _, vp_w, vp_h) = self.viewport_rect();
                             self.point_preview.upload_points(
                                 &self.device,
                                 &self.queue,
                                 &all_positions,
+                                vp_w,
+                                vp_h,
                             );
                             log::info!("Deleted scatter node {:?} → cloud {}", node_id, cloud_id);
                             needs_reload = true;
+                        }
+
+                        // Clean up scatter surface mapping
+                        if let Some(surface_id) = self.node_scatter_surface_map.remove(&node_id) {
+                            self.scatter_surface_proto_ids.remove(&surface_id);
                         }
 
                         // Clean up instancer results
@@ -1971,6 +1996,10 @@ impl Renderer {
                     }
 
                     // Render point preview after geometry (transparent, reads depth)
+                    {
+                        let (_, _, vp_w, vp_h) = self.viewport_rect();
+                        self.point_preview.update_params(&self.queue, vp_w, vp_h);
+                    }
                     self.point_preview
                         .render(&mut render_pass, &self.camera_bind_group);
 
