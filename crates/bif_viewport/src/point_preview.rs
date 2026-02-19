@@ -192,15 +192,19 @@ impl PointPreviewRenderer {
 
     /// Upload new point positions from scene point clouds.
     ///
+    /// Upload point positions to the GPU storage buffer.
+    ///
     /// Reuses the existing GPU buffer when it fits; only recreates
     /// the buffer and bind group when the data exceeds current capacity.
+    ///
+    /// Does NOT write params (color, size, viewport). Callers must set
+    /// `point_preview_params_dirty = true` so the centralized dirty-flag
+    /// block writes params exactly once before the render pass.
     pub fn upload_points(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         positions: &[Vec3],
-        viewport_width: f32,
-        viewport_height: f32,
     ) {
         if positions.is_empty() {
             self.point_count = 0;
@@ -247,16 +251,6 @@ impl PointPreviewRenderer {
         }
 
         self.point_count = positions.len() as u32;
-
-        // Update params (color, size, viewport dims)
-        let params = PointParams {
-            color: self.color,
-            point_size: self.point_size,
-            viewport_width,
-            viewport_height,
-            _pad: 0.0,
-        };
-        queue.write_buffer(&self.params_buffer, 0, bytemuck::cast_slice(&[params]));
     }
 
     /// Write current params (color, size, viewport) to GPU without re-uploading points.
