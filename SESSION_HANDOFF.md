@@ -1,6 +1,6 @@
 # Session Handoff - February 19, 2026
 
-**Last Updated:** Scatter fixes: dirty propagation, surface hiding, billboard points
+**Last Updated:** Code review fixes: dirty GPU writes, ref-counting bug, BFS cleanup
 **Next Milestone:** M29 USD Export + Non-Destructive Layers
 **Project:** BIF - VFX Scene Assembler & Renderer
 
@@ -19,7 +19,16 @@
 
 ## Recent Work
 
-### Scatter Fixes (Feb 19, 2026)
+### Code Review Fixes (Feb 19, 2026 - Session 2)
+
+| Fix | Details |
+|-----|---------|
+| GPU write gating | `update_params` only on dirty flag or viewport resize (was per-frame) |
+| Ref-counting bug | Removed `scatter_surface_proto_ids` HashSet — rebuild from `node_scatter_surface_map` values |
+| Event context | Added `node_id` to `PointPreviewUpdate` event |
+| BFS cleanup | `propagate_dirty` simplified to single loop body |
+
+### Scatter Fixes (Feb 19, 2026 - Session 1)
 
 Three fixes for scatter point workflow:
 
@@ -57,11 +66,12 @@ Three related fixes in primitive/instancing pipeline:
 
 ### What Works
 
-**Scatter Fixes (latest):**
+**Scatter Fixes + Code Review (latest):**
 - Recursive dirty propagation through full node chains
 - Scatter surface geometry hidden from viewport
 - Billboard quad point rendering with size/color controls
-- Per-frame viewport dimension sync for correct pixel sizing
+- GPU param writes gated with dirty flag (not per-frame)
+- Scatter surface hiding rebuilt from map (no ref-counting bugs)
 
 **Auto-Compute (M21.2):**
 - Nodes auto-cook when inputs connect/change (Houdini-style)
