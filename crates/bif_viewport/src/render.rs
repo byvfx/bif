@@ -47,14 +47,9 @@ impl Renderer {
                             .iter()
                             .flat_map(|c| c.positions.iter().copied())
                             .collect();
-                        let (_, _, vp_w, vp_h) = self.viewport_rect();
-                        self.point_preview.upload_points(
-                            &self.device,
-                            &self.queue,
-                            &all_positions,
-                            vp_w,
-                            vp_h,
-                        );
+                        self.point_preview
+                            .upload_points(&self.device, &self.queue, &all_positions);
+                        self.point_preview_params_dirty = true;
                         self.point_preview.visible = true;
                     }
                     bif_core::SceneOp::RemovePointCloud { cloud_id } => {
@@ -66,14 +61,12 @@ impl Renderer {
                                 .iter()
                                 .flat_map(|c| c.positions.iter().copied())
                                 .collect();
-                            let (_, _, vp_w, vp_h) = self.viewport_rect();
                             self.point_preview.upload_points(
                                 &self.device,
                                 &self.queue,
                                 &all_positions,
-                                vp_w,
-                                vp_h,
                             );
+                            self.point_preview_params_dirty = true;
                         }
                     }
                 }
@@ -1588,14 +1581,12 @@ impl Renderer {
                                 .iter()
                                 .flat_map(|c| c.positions.iter().copied())
                                 .collect();
-                            let (_, _, vp_w, vp_h) = self.viewport_rect();
                             self.point_preview.upload_points(
                                 &self.device,
                                 &self.queue,
                                 &all_positions,
-                                vp_w,
-                                vp_h,
                             );
+                            self.point_preview_params_dirty = true;
 
                             // Auto-enable point preview and sync color/size from node
                             self.point_preview.visible = true;
@@ -1716,10 +1707,18 @@ impl Renderer {
                         }
                     }
                     NodeGraphEvent::PointPreviewUpdate {
-                        node_id: _,
+                        node_id,
                         point_size,
                         point_color,
                     } => {
+                        // All scatter nodes share one PointPreviewRenderer — last emitter wins.
+                        // node_id kept for diagnostics; per-node rendering is a future task.
+                        log::trace!(
+                            "PointPreviewUpdate from {:?}: size={}, color={:?}",
+                            node_id,
+                            point_size,
+                            point_color,
+                        );
                         self.point_preview.point_size = point_size;
                         self.point_preview.color = point_color;
                         self.point_preview_params_dirty = true;
@@ -1739,14 +1738,12 @@ impl Renderer {
                                 .iter()
                                 .flat_map(|c| c.positions.iter().copied())
                                 .collect();
-                            let (_, _, vp_w, vp_h) = self.viewport_rect();
                             self.point_preview.upload_points(
                                 &self.device,
                                 &self.queue,
                                 &all_positions,
-                                vp_w,
-                                vp_h,
                             );
+                            self.point_preview_params_dirty = true;
                             log::info!("Deleted scatter node {:?} → cloud {}", node_id, cloud_id);
                             needs_reload = true;
                         }
@@ -1816,10 +1813,13 @@ impl Renderer {
             &screen_descriptor,
         );
 
-        // Update point preview params before render pass (only when dirty or viewport resized)
+        // Update point preview params before render pass (only when dirty or viewport resized).
+        // Single writer for params buffer — upload_points never writes params.
         {
             let (_, _, vp_w, vp_h) = self.viewport_rect();
             let vp_size = (vp_w, vp_h);
+            // f32 eq is safe: viewport dims derive from integer pixel sizes and
+            // deterministic egui panel widths, not iterative floating-point math.
             if self.point_preview_params_dirty || vp_size != self.point_preview_last_vp {
                 self.point_preview.update_params(&self.queue, vp_w, vp_h);
                 self.point_preview_last_vp = vp_size;
