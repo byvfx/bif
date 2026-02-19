@@ -1463,10 +1463,8 @@ impl Renderer {
                         if let Some(old_cloud_id) = self.node_cloud_map.remove(&node_id) {
                             self.working_scene.remove_point_cloud(old_cloud_id);
                         }
-                        // Clear old surface mapping
-                        if let Some(old_surface) = self.node_scatter_surface_map.remove(&node_id) {
-                            self.scatter_surface_proto_ids.remove(&old_surface);
-                        }
+                        // Clear old surface mapping (rebuilt in reload_working_scene)
+                        self.node_scatter_surface_map.remove(&node_id);
 
                         let cloud = match params.source {
                             bif_core::PointSource::Surface => {
@@ -1510,10 +1508,9 @@ impl Renderer {
                                         );
                                     }
 
-                                    // Track surface proto for hiding
+                                    // Track surface proto for hiding (rebuilt in reload_working_scene)
                                     self.node_scatter_surface_map
                                         .insert(node_id, scatter_mesh_idx);
-                                    self.scatter_surface_proto_ids.insert(scatter_mesh_idx);
 
                                     Some(cloud)
                                 } else {
@@ -1610,6 +1607,7 @@ impl Renderer {
                             {
                                 self.point_preview.point_size = *point_size;
                                 self.point_preview.color = *point_color;
+                                self.point_preview_params_dirty = true;
                             }
 
                             log::info!("Scatter Points complete: {} points", pt_count);
@@ -1718,13 +1716,13 @@ impl Renderer {
                         }
                     }
                     NodeGraphEvent::PointPreviewUpdate {
+                        node_id: _,
                         point_size,
                         point_color,
                     } => {
                         self.point_preview.point_size = point_size;
                         self.point_preview.color = point_color;
-                        let (_, _, vp_w, vp_h) = self.viewport_rect();
-                        self.point_preview.update_params(&self.queue, vp_w, vp_h);
+                        self.point_preview_params_dirty = true;
                     }
                     NodeGraphEvent::SelectNode(_) => {
                         // Selection handled in render_node_graph
@@ -1753,9 +1751,9 @@ impl Renderer {
                             needs_reload = true;
                         }
 
-                        // Clean up scatter surface mapping
-                        if let Some(surface_id) = self.node_scatter_surface_map.remove(&node_id) {
-                            self.scatter_surface_proto_ids.remove(&surface_id);
+                        // Clean up scatter surface mapping (rebuilt in reload_working_scene)
+                        if self.node_scatter_surface_map.remove(&node_id).is_some() {
+                            needs_reload = true;
                         }
 
                         // Clean up instancer results
@@ -1817,6 +1815,17 @@ impl Renderer {
             &paint_jobs,
             &screen_descriptor,
         );
+
+        // Update point preview params before render pass (only when dirty or viewport resized)
+        {
+            let (_, _, vp_w, vp_h) = self.viewport_rect();
+            let vp_size = (vp_w, vp_h);
+            if self.point_preview_params_dirty || vp_size != self.point_preview_last_vp {
+                self.point_preview.update_params(&self.queue, vp_w, vp_h);
+                self.point_preview_last_vp = vp_size;
+                self.point_preview_params_dirty = false;
+            }
+        }
 
         // Main render pass - dispatch based on render mode
         match self.ivar_state.mode {
@@ -1996,10 +2005,6 @@ impl Renderer {
                     }
 
                     // Render point preview after geometry (transparent, reads depth)
-                    {
-                        let (_, _, vp_w, vp_h) = self.viewport_rect();
-                        self.point_preview.update_params(&self.queue, vp_w, vp_h);
-                    }
                     self.point_preview
                         .render(&mut render_pass, &self.camera_bind_group);
 
