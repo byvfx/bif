@@ -1,6 +1,6 @@
 # Session Handoff - February 20, 2026
 
-**Last Updated:** HDRI param hoisting + Ivar restart throttling
+**Last Updated:** M23 SHARC Radiance Cache implementation
 **Next Milestone:** M29 USD Export + Non-Destructive Layers
 **Project:** BIF - VFX Scene Assembler & Renderer
 
@@ -10,14 +10,29 @@
 
 | Status | Details |
 |--------|---------|
-| Complete | Milestones 0-21.2 + bugfixes |
+| Complete | Milestones 0-23 |
 | Current | Planning next milestone |
-| Tests | 68 viewport, 85 bif_core, 233 total passing |
+| Tests | 68 viewport, 85 bif_core, 247+ total passing |
 | Performance | 60 FPS viewport, 100K instances with LOD |
 
 ---
 
 ## Recent Work
+
+### M23: SHARC Radiance Cache (Feb 20, 2026)
+
+| Feature | Details |
+|---------|---------|
+| RadianceCache | 64-shard `RwLock<Vec<CacheEntry>>`, GPU-compatible `#[repr(C)]` layout |
+| Spatial hash | Position quantized to cells + dominant-axis normal (6 dirs, prevents light leak) |
+| Cache READ | After `min_bounce_depth`, non-delta hits return cached radiance → skip remaining bounces |
+| Cache WRITE | Stores surface-local radiance (emission + NEE) via EMA blending |
+| Russian Roulette | bounce >= 3, throughput-proportional survival, unbiased via survivor boost |
+| IPR | Cache persists across progressive passes, clears on camera move |
+| Batch | Cache persists within frame, clears per-frame for animated scenes |
+| Heatmap AOV | `CacheHeatmap` channel: sample count → black/red/yellow/green |
+| UI | Enable/disable, cell size, buffer size, min samples, min bounce, hit rate/occupancy stats |
+| Tests | 14 new tests (hash, cache, concurrency, staleness) |
 
 ### HDRI Perf Cleanup (Feb 20, 2026)
 
@@ -25,50 +40,6 @@
 |-----|---------|
 | Param hoisting | HDRI rotation/intensity resolved once before bounce loop, not per-bounce |
 | Ivar throttle | `should_restart()` gate prevents excessive cancel+spawn during slider drag |
-| Tests | 2 new tests: `sample_with_params_rotates`, `sample_with_params_scales_intensity` |
-| Batch TODO | Clarified batch render doesn't reflect slider overrides yet |
-
-### Live HDRI Rotation + Sharper Skybox (Feb 19, 2026 - Session 3)
-
-| Fix | Details |
-|-----|---------|
-| Ivar HDRI rotation | `_with_params` methods on HdriEnvironment, RenderConfig overrides, Ivar restarts on slider change |
-| Skybox quality | Skybox samples base cubemap (512x512) instead of prefiltered specular (was 128x128) |
-| Resolution bump | CUBEMAP_SIZE 256→512, PREFILTER_SIZE 128→256 (~17MB VRAM) |
-
-### Code Review Fixes (Feb 19, 2026 - Session 2)
-
-| Fix | Details |
-|-----|---------|
-| GPU write gating | `update_params` only on dirty flag or viewport resize (was per-frame) |
-| Ref-counting bug | Removed `scatter_surface_proto_ids` HashSet — rebuild from `node_scatter_surface_map` values |
-| Event context | Added `node_id` to `PointPreviewUpdate` event |
-| BFS cleanup | `propagate_dirty` simplified to single loop body |
-
-### Scatter Fixes (Feb 19, 2026 - Session 1)
-
-Three fixes for scatter point workflow:
-
-| Fix | Details |
-|-----|---------|
-| Dirty propagation | `propagate_dirty()` BFS replaces single-level walks — Primitive→Scatter→Instancer chain now works |
-| Surface hiding | Scatter surface geometry auto-hides from viewport (merged into existing instanced hiding set) |
-| Billboard points | PointList→TriangleStrip billboard quads with circle mask, per-node size slider + color picker |
-
-### Fix: Scatter scale_range panic (Feb 18, 2026)
-
-`gen_range` panicked when UI allowed `scale_min > scale_max`. Added `normalized_scale_range()` helper that swaps before sampling. 4 regression tests added.
-
-### Bugfix: Auto-Create, Proto Hiding, Scale (Feb 17, 2026)
-
-Three related fixes in primitive/instancing pipeline:
-
-| Fix | Details |
-|-----|---------|
-| Auto-create | Primitives create on node add, live size updates (no button) |
-| Proto cleanup | Old prototype removed on re-creation, prevents orphaned instances at origin |
-| Grid/Sphere scale | generate_grid/sphere_points now accept ScatterConfig, produce per-point scales/orientations/IDs |
-| DRY | Extracted remove_and_reindex_prototype helper, used by CreatePrimitive + DeleteNode |
 
 ---
 
@@ -77,38 +48,28 @@ Three related fixes in primitive/instancing pipeline:
 | Metric | Value |
 |--------|-------|
 | Build (dev) | ~10s |
-| Tests | 233 passing |
+| Tests | 247+ passing |
 | Vulkan FPS | 60 (VSync with Fifo) |
 | Crates | 6 (math, core, renderer, viewport, viewer, maketx) |
 
 ### What Works
 
-**HDRI + Skybox (latest):**
+**SHARC Radiance Cache (M23):**
+- Spatially hashed radiance cache with normal disambiguation
+- Cache read/write integrated into `ray_color()` and `ray_color_with_aovs()`
+- Russian Roulette path termination (bounce >= 3)
+- IPR: cache warms across progressive passes, clears on invalidation
+- Batch: per-frame cache lifecycle for animated scenes
+- Cache heatmap AOV for diagnosis
+- egui controls for all cache parameters + live stats
+
+**HDRI + Skybox:**
 - HDRI rotation/intensity slider updates live in Ivar CPU path tracer
 - Viewport skybox samples full-res base cubemap (512x512)
-
-**Scatter Fixes + Code Review:**
-- Recursive dirty propagation through full node chains
-- Scatter surface geometry hidden from viewport
-- Billboard quad point rendering with size/color controls
-- GPU param writes gated with dirty flag (not per-frame)
-- Scatter surface hiding rebuilt from map (no ref-counting bugs)
 
 **Auto-Compute (M21.2):**
 - Nodes auto-cook when inputs connect/change (Houdini-style)
 - Scatter recompute → instancer auto-recomputes
-- Prototype source geometry hidden when consumed by instancer
-- Delete node → downstream instancers invalidated
-- Ivar renders instancer instances
-
-**Point Instancer (M21.1):**
-- 2 inputs (points + proto) → expands into renderable instances
-- Snarl connection resolution for data flow
-
-**Scatter Points:**
-- Points-only output — feeds into Point Instancer
-- Surface / Grid / Sphere point sources
-- Lloyd relaxation with surface projection
 
 ### Known Issues
 
@@ -116,6 +77,7 @@ Three related fixes in primitive/instancing pipeline:
 - OIIO `load_texture_with_mips` crashes on .tx files on Windows
 - bif_core tests need USD DLLs (run via `setup_usd_env.ps1`)
 - Renderer struct ~60 fields (God object)
+- ~~embree.rs debug counter overflow after ~4.3B rays~~ (fixed: `wrapping_add`)
 
 ---
 
@@ -139,7 +101,7 @@ cargo build --features oiio    # With OIIO support
 
 # Test
 cargo test -p bif_math         # 41 tests
-cargo test -p bif_renderer     # Embree tests
+cargo test -p bif_renderer     # Renderer + radiance cache tests
 
 # Run
 cargo run -p bif_viewer                          # Without OIIO
