@@ -550,15 +550,15 @@ impl IvarState {
 
     /// Check if a restart is allowed (not throttled).
     ///
-    /// Allows restart if min interval passed OR at least one bucket completed.
-    /// Bucket check self-tunes: complex scenes take longer per bucket, so
-    /// throttle naturally waits longer.
+    /// Allows restart if min interval passed AND at least one bucket completed.
+    /// AND ensures the user sees a visual update before we cancel, and the time
+    /// floor prevents thrashing in fast scenes where buckets complete every frame.
     pub fn should_restart(&self) -> bool {
         let elapsed_ms = self
             .render_start_time
             .map(|t| t.elapsed().as_millis() as u64)
             .unwrap_or(u64::MAX); // no render yet → always allow
-        elapsed_ms >= RESTART_THROTTLE_MS || self.buckets_completed > 0
+        elapsed_ms >= RESTART_THROTTLE_MS && self.buckets_completed > 0
     }
 
     /// Derive interaction scale divisor from quality exponent.
@@ -818,11 +818,11 @@ mod tests {
     }
 
     #[test]
-    fn test_should_restart_with_completed_bucket() {
+    fn test_should_restart_bucket_but_too_soon() {
         let mut state = IvarState::default();
         state.render_start_time = Some(Instant::now());
         state.buckets_completed = 1;
-        // Bucket completed → allow restart regardless of time
-        assert!(state.should_restart());
+        // Bucket completed but time floor not met → deny
+        assert!(!state.should_restart());
     }
 }
