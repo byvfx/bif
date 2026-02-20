@@ -369,7 +369,9 @@ fn batch_render_loop(
         environment: scene.environment.clone(),
         lights: scene.lights.clone(),
         pass_number: 0,
-        hdri_rotation: None, // Batch render uses baked-in values
+        // TODO: Batch render uses baked-in HDRI values — won't reflect slider adjustments.
+        // Pass viewport overrides here when batch render settings UI is added.
+        hdri_rotation: None,
         hdri_intensity: None,
     };
 

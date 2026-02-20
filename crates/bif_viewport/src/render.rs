@@ -1414,9 +1414,11 @@ impl Renderer {
                     } => {
                         let rotation_rad = rotation.to_radians();
                         self.update_environment_params(intensity, rotation_rad, show_background);
-                        // Restart Ivar so CPU path tracer reflects updated params
+                        // Restart Ivar so CPU path tracer reflects updated params.
+                        // Throttled: slider drag fires every frame, avoid excessive cancel+spawn.
                         if self.ivar_state.mode == RenderMode::Ivar
                             && self.ivar_state.world.is_some()
+                            && self.ivar_state.should_restart()
                         {
                             self.restart_ivar_at_scale(self.ivar_state.current_scale);
                         }
