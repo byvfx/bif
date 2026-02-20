@@ -1,6 +1,6 @@
-# Session Handoff - February 19, 2026
+# Session Handoff - February 20, 2026
 
-**Last Updated:** Live HDRI rotation in Ivar + sharper viewport skybox
+**Last Updated:** HDRI param hoisting + Ivar restart throttling
 **Next Milestone:** M29 USD Export + Non-Destructive Layers
 **Project:** BIF - VFX Scene Assembler & Renderer
 
@@ -18,6 +18,15 @@
 ---
 
 ## Recent Work
+
+### HDRI Perf Cleanup (Feb 20, 2026)
+
+| Fix | Details |
+|-----|---------|
+| Param hoisting | HDRI rotation/intensity resolved once before bounce loop, not per-bounce |
+| Ivar throttle | `should_restart()` gate prevents excessive cancel+spawn during slider drag |
+| Tests | 2 new tests: `sample_with_params_rotates`, `sample_with_params_scales_intensity` |
+| Batch TODO | Clarified batch render doesn't reflect slider overrides yet |
 
 ### Live HDRI Rotation + Sharper Skybox (Feb 19, 2026 - Session 3)
 
