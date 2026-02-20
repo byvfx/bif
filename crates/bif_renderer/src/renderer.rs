@@ -55,6 +55,13 @@ pub fn ray_color(
     let mut accumulated = Color::ZERO;
     let mut remaining_depth = depth;
 
+    // Resolve HDRI overrides once before the bounce loop
+    let env_params = config.environment.as_ref().map(|env| {
+        let rotation = config.hdri_rotation.unwrap_or_else(|| env.rotation());
+        let intensity = config.hdri_intensity.unwrap_or_else(|| env.intensity());
+        (env, rotation, intensity)
+    });
+
     // Track last scatter PDF for MIS weighting when hitting environment
     let mut last_scatter_pdf = 0.0_f32;
     let mut last_was_delta = true; // First ray from camera is treated as delta (no MIS weight)
@@ -68,16 +75,14 @@ pub fn ray_color(
 
         if !world.hit(&current_ray, Interval::new(0.001, f32::INFINITY), &mut rec) {
             // Ray escaped - sample environment/background
-            let bg = if let Some(ref env) = config.environment {
+            let bg = if let Some((env, rotation, intensity)) = env_params.as_ref() {
                 let dir = current_ray.direction().normalize();
-                let rotation = config.hdri_rotation.unwrap_or_else(|| env.rotation());
-                let intensity = config.hdri_intensity.unwrap_or_else(|| env.intensity());
-                let emission = env.sample_with_params(dir, rotation, intensity);
+                let emission = env.sample_with_params(dir, *rotation, *intensity);
                 // MIS weight for BSDF path hitting environment
                 if last_was_delta {
                     emission
                 } else {
-                    let env_pdf = env.pdf_for_direction_with_params(dir, rotation);
+                    let env_pdf = env.pdf_for_direction_with_params(dir, *rotation);
                     let mis_w = power_heuristic(last_scatter_pdf, env_pdf);
                     emission * mis_w
                 }
@@ -97,11 +102,9 @@ pub fn ray_color(
         // NEE: sample lights directly (non-delta materials only)
         if !rec.material.is_delta() {
             // Sample HDRI environment
-            if let Some(ref env) = config.environment {
-                let rotation = config.hdri_rotation.unwrap_or_else(|| env.rotation());
-                let intensity = config.hdri_intensity.unwrap_or_else(|| env.intensity());
+            if let Some((env, rotation, intensity)) = env_params.as_ref() {
                 let (light_dir, light_emission, light_pdf) =
-                    env.sample_direction_with_params(rng, rotation, intensity);
+                    env.sample_direction_with_params(rng, *rotation, *intensity);
                 // Shadow ray
                 let shadow_ray = Ray::new(rec.p, light_dir, current_ray.time());
                 let mut shadow_rec = HitRecord::default();
@@ -204,6 +207,13 @@ pub fn ray_color_with_aovs(
     let mut aov = AovData::default();
     let mut first_hit = true;
 
+    // Resolve HDRI overrides once before the bounce loop
+    let env_params = config.environment.as_ref().map(|env| {
+        let rotation = config.hdri_rotation.unwrap_or_else(|| env.rotation());
+        let intensity = config.hdri_intensity.unwrap_or_else(|| env.intensity());
+        (env, rotation, intensity)
+    });
+
     // Track last scatter PDF for MIS weighting when hitting environment
     let mut last_scatter_pdf = 0.0_f32;
     let mut last_was_delta = true;
@@ -217,15 +227,13 @@ pub fn ray_color_with_aovs(
 
         if !world.hit(&current_ray, Interval::new(0.001, f32::INFINITY), &mut rec) {
             // Ray escaped - sample environment/background
-            let bg = if let Some(ref env) = config.environment {
+            let bg = if let Some((env, rotation, intensity)) = env_params.as_ref() {
                 let dir = current_ray.direction().normalize();
-                let rotation = config.hdri_rotation.unwrap_or_else(|| env.rotation());
-                let intensity = config.hdri_intensity.unwrap_or_else(|| env.intensity());
-                let emission = env.sample_with_params(dir, rotation, intensity);
+                let emission = env.sample_with_params(dir, *rotation, *intensity);
                 if last_was_delta {
                     emission
                 } else {
-                    let env_pdf = env.pdf_for_direction_with_params(dir, rotation);
+                    let env_pdf = env.pdf_for_direction_with_params(dir, *rotation);
                     let mis_w = power_heuristic(last_scatter_pdf, env_pdf);
                     emission * mis_w
                 }
@@ -253,11 +261,9 @@ pub fn ray_color_with_aovs(
         // NEE: sample lights directly (non-delta materials only)
         if !rec.material.is_delta() {
             // Sample HDRI environment
-            if let Some(ref env) = config.environment {
-                let rotation = config.hdri_rotation.unwrap_or_else(|| env.rotation());
-                let intensity = config.hdri_intensity.unwrap_or_else(|| env.intensity());
+            if let Some((env, rotation, intensity)) = env_params.as_ref() {
                 let (light_dir, light_emission, light_pdf) =
-                    env.sample_direction_with_params(rng, rotation, intensity);
+                    env.sample_direction_with_params(rng, *rotation, *intensity);
                 let shadow_ray = Ray::new(rec.p, light_dir, current_ray.time());
                 let mut shadow_rec = HitRecord::default();
                 if !world.hit(

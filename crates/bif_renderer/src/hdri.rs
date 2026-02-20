@@ -15,7 +15,9 @@ use crate::{gen_f32_generic, Color, Vec3};
 /// HDRI environment map for path tracing with importance sampling.
 pub struct HdriEnvironment {
     hdr: HdrImage,
+    /// Rotation baked at construction time. Use `_with_params` methods for live overrides.
     rotation: f32,
+    /// Intensity baked at construction time. Use `_with_params` methods for live overrides.
     intensity: f32,
 
     // Importance sampling tables
@@ -303,5 +305,33 @@ mod tests {
         let dir = Vec3::new(1.0, 0.5, 0.3).normalize();
         let pdf = env.pdf_for_direction(dir);
         assert!(pdf > 0.0 && pdf.is_finite());
+    }
+
+    #[test]
+    fn sample_with_params_rotates() {
+        let hdr = HdrImage::load(test_hdr_path()).expect("Failed to load HDR");
+        let env = HdriEnvironment::new(hdr, 0.0, 1.0);
+        let dir = Vec3::new(1.0, 0.0, 0.0);
+        let c0 = env.sample_with_params(dir, 0.0, 1.0);
+        let c1 = env.sample_with_params(dir, PI, 1.0);
+        // 180 degree rotation should produce different color for non-uniform HDRI
+        let diff = (c0.x - c1.x).abs() + (c0.y - c1.y).abs() + (c0.z - c1.z).abs();
+        assert!(
+            diff > 0.001,
+            "Rotated sample should differ: c0={c0:?}, c1={c1:?}"
+        );
+    }
+
+    #[test]
+    fn sample_with_params_scales_intensity() {
+        let hdr = HdrImage::load(test_hdr_path()).expect("Failed to load HDR");
+        let env = HdriEnvironment::new(hdr, 0.0, 1.0);
+        let dir = Vec3::new(0.0, 1.0, 0.0);
+        let c1 = env.sample_with_params(dir, 0.0, 1.0);
+        let c2 = env.sample_with_params(dir, 0.0, 2.0);
+        // Double intensity should double the color
+        assert!((c2.x - c1.x * 2.0).abs() < 0.001);
+        assert!((c2.y - c1.y * 2.0).abs() < 0.001);
+        assert!((c2.z - c1.z * 2.0).abs() < 0.001);
     }
 }
