@@ -1,4 +1,4 @@
-// Skybox fullscreen pass: samples prefiltered cubemap mip 0 at camera ray direction.
+// Skybox fullscreen pass: samples base environment cubemap at camera ray direction.
 
 struct CameraUniform {
     view_proj: mat4x4<f32>,
@@ -18,7 +18,7 @@ struct EnvironmentParams {
 var<uniform> camera: CameraUniform;
 
 @group(1) @binding(0)
-var prefiltered_map: texture_cube<f32>;
+var env_cubemap: texture_cube<f32>;
 
 @group(1) @binding(1)
 var env_sampler: sampler;
@@ -72,7 +72,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let view_dir = normalize(world_far - world_near);
 
     let sample_dir = rotate_y(view_dir, env_params.rotation);
-    let color = textureSampleLevel(prefiltered_map, env_sampler, sample_dir, 0.0).rgb * env_params.intensity;
+    let color = textureSampleLevel(env_cubemap, env_sampler, sample_dir, 0.0).rgb * env_params.intensity;
 
     return vec4<f32>(linear_to_srgb(aces_tonemap(color)), 1.0);
 }

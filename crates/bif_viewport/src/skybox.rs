@@ -49,7 +49,7 @@ pub fn create_skybox_bind_group_layout(device: &Device) -> wgpu::BindGroupLayout
 pub fn create_skybox_bind_group(
     device: &Device,
     layout: &wgpu::BindGroupLayout,
-    prefiltered_view: &wgpu::TextureView,
+    cubemap_view: &wgpu::TextureView,
     sampler: &wgpu::Sampler,
     params_buffer: &wgpu::Buffer,
 ) -> wgpu::BindGroup {
@@ -59,7 +59,7 @@ pub fn create_skybox_bind_group(
         entries: &[
             wgpu::BindGroupEntry {
                 binding: 0,
-                resource: wgpu::BindingResource::TextureView(prefiltered_view),
+                resource: wgpu::BindingResource::TextureView(cubemap_view),
             },
             wgpu::BindGroupEntry {
                 binding: 1,

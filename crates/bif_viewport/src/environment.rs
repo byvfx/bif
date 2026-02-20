@@ -11,6 +11,9 @@ use crate::gpu_types::EnvironmentParamsUniform;
 
 /// GPU-side environment resources for IBL.
 pub struct GpuEnvironment {
+    /// Base cubemap (full resolution, for skybox sampling).
+    pub cubemap_texture: wgpu::Texture,
+    pub cubemap_view: wgpu::TextureView,
     /// Irradiance cubemap for diffuse IBL.
     pub irradiance_texture: wgpu::Texture,
     pub irradiance_view: wgpu::TextureView,
@@ -37,12 +40,14 @@ impl GpuEnvironment {
         let bind_group_layout = Self::create_bind_group_layout(device);
 
         // Create 1x1 black fallback cubemaps
+        let cubemap_texture = create_cubemap_texture(device, 1, 1, "Cubemap Fallback");
         let irradiance_texture = create_cubemap_texture(device, 1, 1, "Irradiance Fallback");
         let prefiltered_texture = create_cubemap_texture(device, 1, 1, "Prefiltered Fallback");
 
         // Upload black pixels for cubemaps
         let black_face = [[0.0f32, 0.0, 0.0, 1.0]; 1];
         for face in 0..6u32 {
+            upload_cubemap_face(queue, &cubemap_texture, 1, face, 0, &black_face);
             upload_cubemap_face(queue, &irradiance_texture, 1, face, 0, &black_face);
             upload_cubemap_face(queue, &prefiltered_texture, 1, face, 0, &black_face);
         }
@@ -52,6 +57,10 @@ impl GpuEnvironment {
         let brdf_lut_texture = create_lut_texture(device, brdf_lut.size, "BRDF LUT");
         upload_brdf_lut(queue, &brdf_lut_texture, &brdf_lut);
 
+        let cubemap_view = cubemap_texture.create_view(&wgpu::TextureViewDescriptor {
+            dimension: Some(wgpu::TextureViewDimension::Cube),
+            ..Default::default()
+        });
         let irradiance_view = irradiance_texture.create_view(&wgpu::TextureViewDescriptor {
             dimension: Some(wgpu::TextureViewDimension::Cube),
             ..Default::default()
@@ -91,6 +100,8 @@ impl GpuEnvironment {
         );
 
         Self {
+            cubemap_texture,
+            cubemap_view,
             irradiance_texture,
             irradiance_view,
             prefiltered_texture,
@@ -113,9 +124,16 @@ impl GpuEnvironment {
         output: crate::compute_ibl::ComputeIblOutput,
         mip_count: u32,
     ) {
+        self.cubemap_texture = output.cubemap;
         self.irradiance_texture = output.irradiance;
         self.prefiltered_texture = output.prefiltered;
 
+        self.cubemap_view = self
+            .cubemap_texture
+            .create_view(&wgpu::TextureViewDescriptor {
+                dimension: Some(wgpu::TextureViewDimension::Cube),
+                ..Default::default()
+            });
         self.irradiance_view = self
             .irradiance_texture
             .create_view(&wgpu::TextureViewDescriptor {

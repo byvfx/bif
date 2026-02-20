@@ -8,11 +8,11 @@
 use wgpu::{Device, Queue};
 
 /// Cubemap face size for the base environment map.
-pub const CUBEMAP_SIZE: u32 = 256;
+pub const CUBEMAP_SIZE: u32 = 512;
 /// Irradiance cubemap size.
 pub const IRRADIANCE_SIZE: u32 = 32;
 /// Prefiltered specular base size (halved per mip).
-pub const PREFILTER_SIZE: u32 = 128;
+pub const PREFILTER_SIZE: u32 = 256;
 /// Number of prefilter mip levels.
 pub const PREFILTER_MIP_COUNT: u32 = 5;
 /// Sample count for GGX prefilter.

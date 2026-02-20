@@ -50,21 +50,41 @@ impl HdriEnvironment {
         env
     }
 
-    /// Sample the environment in a given direction.
-    pub fn sample(&self, dir: Vec3) -> Color {
-        let dir_arr = [dir.x, dir.y, dir.z];
-        let rgb = self.hdr.sample(dir_arr, self.rotation);
-        Color::new(rgb[0], rgb[1], rgb[2]) * self.intensity
+    /// Get the stored rotation (radians).
+    pub fn rotation(&self) -> f32 {
+        self.rotation
     }
 
-    /// Importance-sample a direction from the environment.
+    /// Get the stored intensity.
+    pub fn intensity(&self) -> f32 {
+        self.intensity
+    }
+
+    /// Sample the environment in a given direction with explicit rotation/intensity.
+    pub fn sample_with_params(&self, dir: Vec3, rotation: f32, intensity: f32) -> Color {
+        let dir_arr = [dir.x, dir.y, dir.z];
+        let rgb = self.hdr.sample(dir_arr, rotation);
+        Color::new(rgb[0], rgb[1], rgb[2]) * intensity
+    }
+
+    /// Sample the environment in a given direction (uses stored rotation/intensity).
+    pub fn sample(&self, dir: Vec3) -> Color {
+        self.sample_with_params(dir, self.rotation, self.intensity)
+    }
+
+    /// Importance-sample a direction with explicit rotation/intensity.
     ///
     /// Returns (direction, emission_color, pdf_value).
-    pub fn sample_direction<R: RngCore + ?Sized>(&self, rng: &mut R) -> (Vec3, Color, f32) {
+    /// CDFs are rotation-independent so rotation only affects direction mapping.
+    pub fn sample_direction_with_params<R: RngCore + ?Sized>(
+        &self,
+        rng: &mut R,
+        rotation: f32,
+        intensity: f32,
+    ) -> (Vec3, Color, f32) {
         if self.total_power <= 0.0 {
-            // Fallback: uniform sphere
             let dir = random_unit_sphere(rng);
-            let emission = self.sample(dir);
+            let emission = self.sample_with_params(dir, rotation, intensity);
             let pdf = 1.0 / (4.0 * PI);
             return (dir, emission, pdf);
         }
@@ -90,28 +110,35 @@ impl HdriEnvironment {
         let u = (x as f32 + 0.5) / width;
         let v = (y as f32 + 0.5) / height;
 
-        let dir_arr = HdrImage::uv_to_direction(u, v, self.rotation);
+        let dir_arr = HdrImage::uv_to_direction(u, v, rotation);
         let dir = Vec3::new(dir_arr[0], dir_arr[1], dir_arr[2]);
 
         let emission = Color::new(
             self.hdr.pixels[y * self.hdr.width as usize + x][0],
             self.hdr.pixels[y * self.hdr.width as usize + x][1],
             self.hdr.pixels[y * self.hdr.width as usize + x][2],
-        ) * self.intensity;
+        ) * intensity;
 
-        let pdf = self.pdf_for_direction(dir);
+        let pdf = self.pdf_for_direction_with_params(dir, rotation);
 
         (dir, emission, pdf)
     }
 
-    /// Get the PDF value for a given direction.
-    pub fn pdf_for_direction(&self, dir: Vec3) -> f32 {
+    /// Importance-sample a direction (uses stored rotation/intensity).
+    ///
+    /// Returns (direction, emission_color, pdf_value).
+    pub fn sample_direction<R: RngCore + ?Sized>(&self, rng: &mut R) -> (Vec3, Color, f32) {
+        self.sample_direction_with_params(rng, self.rotation, self.intensity)
+    }
+
+    /// Get the PDF value for a given direction with explicit rotation.
+    pub fn pdf_for_direction_with_params(&self, dir: Vec3, rotation: f32) -> f32 {
         if self.total_power <= 0.0 {
             return 1.0 / (4.0 * PI);
         }
 
         let dir_arr = [dir.x, dir.y, dir.z];
-        let (u, v) = HdrImage::direction_to_uv(dir_arr, self.rotation);
+        let (u, v) = HdrImage::direction_to_uv(dir_arr, rotation);
 
         let x = (u * self.hdr.width as f32) as usize;
         let y = (v * self.hdr.height as f32) as usize;
@@ -133,6 +160,11 @@ impl HdriEnvironment {
         let pdf_solid_angle = pixel_pdf * (width * height) / (2.0 * PI * PI * sin_polar);
 
         pdf_solid_angle.max(1e-10)
+    }
+
+    /// Get the PDF value for a given direction (uses stored rotation).
+    pub fn pdf_for_direction(&self, dir: Vec3) -> f32 {
+        self.pdf_for_direction_with_params(dir, self.rotation)
     }
 
     /// Build the importance sampling distribution from pixel luminances.
