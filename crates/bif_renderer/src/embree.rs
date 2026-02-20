@@ -525,7 +525,7 @@ impl Hittable for EmbreeScene {
                 #[cfg(debug_assertions)]
                 {
                     static MISS_COUNT: AtomicU32 = AtomicU32::new(0);
-                    let count = MISS_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
+                    let count = MISS_COUNT.fetch_add(1, Ordering::Relaxed).wrapping_add(1);
                     if count <= 5 {
                         log::debug!(
                             "Ray miss #{}: origin=({}, {}, {}), dir=({}, {}, {}), tfar={}",
@@ -546,7 +546,7 @@ impl Hittable for EmbreeScene {
             #[cfg(debug_assertions)]
             {
                 static HIT_COUNT: AtomicU32 = AtomicU32::new(0);
-                let count = HIT_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
+                let count = HIT_COUNT.fetch_add(1, Ordering::Relaxed).wrapping_add(1);
                 if count <= 5 {
                     log::info!(
                         "Ray hit #{}: t={}, geom_id={}, prim_id={}, normal=({}, {}, {})",
