@@ -369,6 +369,8 @@ fn batch_render_loop(
         environment: scene.environment.clone(),
         lights: scene.lights.clone(),
         pass_number: 0,
+        hdri_rotation: None, // Batch render uses baked-in values
+        hdri_intensity: None,
     };
 
     log::info!(

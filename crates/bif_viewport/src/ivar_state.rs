@@ -337,6 +337,10 @@ pub struct IvarState {
     pub max_depth: u32,
     /// HDRI environment for lighting.
     pub environment: Option<Arc<bif_renderer::HdriEnvironment>>,
+    /// Current HDRI rotation override (radians) for live updates.
+    pub hdri_rotation: f32,
+    /// Current HDRI intensity override for live updates.
+    pub hdri_intensity: f32,
     /// Batch render settings.
     pub batch_settings: BatchRenderSettings,
     /// Batch render status.
@@ -384,6 +388,8 @@ impl Default for IvarState {
             samples_per_pixel: 16, // Lower for interactive preview
             max_depth: 8,
             environment: None,
+            hdri_rotation: 0.0,
+            hdri_intensity: 1.0,
             batch_settings: BatchRenderSettings::default(),
             batch_status: BatchRenderStatus::default(),
             preview_aov: AovChannel::default(),

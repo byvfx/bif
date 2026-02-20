@@ -103,8 +103,10 @@ impl Renderer {
                         intensity,
                         show_background,
                     );
-                    // Set Ivar CPU environment
+                    // Set Ivar CPU environment + initial params
                     self.ivar_state.environment = Some(ivar_env);
+                    self.ivar_state.hdri_rotation = rotation_rad;
+                    self.ivar_state.hdri_intensity = intensity;
                     self.node_graph_state.mark_hdri_loaded(
                         &source_path,
                         Some(load_secs),
@@ -1412,6 +1414,12 @@ impl Renderer {
                     } => {
                         let rotation_rad = rotation.to_radians();
                         self.update_environment_params(intensity, rotation_rad, show_background);
+                        // Restart Ivar so CPU path tracer reflects updated params
+                        if self.ivar_state.mode == RenderMode::Ivar
+                            && self.ivar_state.world.is_some()
+                        {
+                            self.restart_ivar_at_scale(self.ivar_state.current_scale);
+                        }
                     }
                     NodeGraphEvent::CreatePrimitive {
                         kind,

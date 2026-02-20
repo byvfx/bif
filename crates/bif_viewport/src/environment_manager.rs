@@ -73,7 +73,7 @@ impl EnvironmentManager {
         let skybox_bind_group = skybox::create_skybox_bind_group(
             device,
             &skybox_bind_group_layout,
-            &gpu_env.prefiltered_view,
+            &gpu_env.cubemap_view,
             &gpu_env.sampler,
             &gpu_env.params_buffer,
         );
@@ -212,12 +212,12 @@ impl EnvironmentManager {
             hdr_width,
             hdr_height
         );
-        // Rebuild skybox bind group
+        // Rebuild skybox bind group (use base cubemap for sharper skybox)
         let skybox_bgl = skybox::create_skybox_bind_group_layout(device);
         self.skybox_bind_group = skybox::create_skybox_bind_group(
             device,
             &skybox_bgl,
-            &self.gpu_env.prefiltered_view,
+            &self.gpu_env.cubemap_view,
             &self.gpu_env.sampler,
             &self.gpu_env.params_buffer,
         );

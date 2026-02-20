@@ -634,6 +634,8 @@ impl Renderer {
             environment: self.ivar_state.environment.clone(),
             lights: Arc::new(LightList::from(self.lights.scene_lights.as_slice())),
             pass_number,
+            hdri_rotation: Some(self.ivar_state.hdri_rotation),
+            hdri_intensity: Some(self.ivar_state.hdri_intensity),
         };
 
         log::trace!("Starting progressive pass {}", pass_number);

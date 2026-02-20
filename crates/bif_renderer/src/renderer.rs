@@ -31,6 +31,10 @@ pub struct RenderConfig {
     pub lights: Arc<LightList>,
     /// Progressive pass number (XORed into RNG seed for unique noise per pass).
     pub pass_number: u32,
+    /// Override HDRI rotation (radians). When set, used instead of the value baked into the environment.
+    pub hdri_rotation: Option<f32>,
+    /// Override HDRI intensity. When set, used instead of the value baked into the environment.
+    pub hdri_intensity: Option<f32>,
 }
 
 /// Compute the color seen by a ray.
@@ -66,12 +70,14 @@ pub fn ray_color(
             // Ray escaped - sample environment/background
             let bg = if let Some(ref env) = config.environment {
                 let dir = current_ray.direction().normalize();
-                let emission = env.sample(dir);
+                let rotation = config.hdri_rotation.unwrap_or_else(|| env.rotation());
+                let intensity = config.hdri_intensity.unwrap_or_else(|| env.intensity());
+                let emission = env.sample_with_params(dir, rotation, intensity);
                 // MIS weight for BSDF path hitting environment
                 if last_was_delta {
                     emission
                 } else {
-                    let env_pdf = env.pdf_for_direction(dir);
+                    let env_pdf = env.pdf_for_direction_with_params(dir, rotation);
                     let mis_w = power_heuristic(last_scatter_pdf, env_pdf);
                     emission * mis_w
                 }
@@ -92,7 +98,10 @@ pub fn ray_color(
         if !rec.material.is_delta() {
             // Sample HDRI environment
             if let Some(ref env) = config.environment {
-                let (light_dir, light_emission, light_pdf) = env.sample_direction(rng);
+                let rotation = config.hdri_rotation.unwrap_or_else(|| env.rotation());
+                let intensity = config.hdri_intensity.unwrap_or_else(|| env.intensity());
+                let (light_dir, light_emission, light_pdf) =
+                    env.sample_direction_with_params(rng, rotation, intensity);
                 // Shadow ray
                 let shadow_ray = Ray::new(rec.p, light_dir, current_ray.time());
                 let mut shadow_rec = HitRecord::default();
@@ -210,11 +219,13 @@ pub fn ray_color_with_aovs(
             // Ray escaped - sample environment/background
             let bg = if let Some(ref env) = config.environment {
                 let dir = current_ray.direction().normalize();
-                let emission = env.sample(dir);
+                let rotation = config.hdri_rotation.unwrap_or_else(|| env.rotation());
+                let intensity = config.hdri_intensity.unwrap_or_else(|| env.intensity());
+                let emission = env.sample_with_params(dir, rotation, intensity);
                 if last_was_delta {
                     emission
                 } else {
-                    let env_pdf = env.pdf_for_direction(dir);
+                    let env_pdf = env.pdf_for_direction_with_params(dir, rotation);
                     let mis_w = power_heuristic(last_scatter_pdf, env_pdf);
                     emission * mis_w
                 }
@@ -243,7 +254,10 @@ pub fn ray_color_with_aovs(
         if !rec.material.is_delta() {
             // Sample HDRI environment
             if let Some(ref env) = config.environment {
-                let (light_dir, light_emission, light_pdf) = env.sample_direction(rng);
+                let rotation = config.hdri_rotation.unwrap_or_else(|| env.rotation());
+                let intensity = config.hdri_intensity.unwrap_or_else(|| env.intensity());
+                let (light_dir, light_emission, light_pdf) =
+                    env.sample_direction_with_params(rng, rotation, intensity);
                 let shadow_ray = Ray::new(rec.p, light_dir, current_ray.time());
                 let mut shadow_rec = HitRecord::default();
                 if !world.hit(
@@ -521,6 +535,8 @@ mod tests {
             environment: None,
             lights: Arc::new(LightList::new()),
             pass_number: 0,
+            hdri_rotation: None,
+            hdri_intensity: None,
         };
 
         let mut rng = StdRng::seed_from_u64(42);

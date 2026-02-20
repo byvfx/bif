@@ -940,6 +940,9 @@ impl Renderer {
     ) {
         self.environment
             .update_params(&self.queue, intensity, rotation, show_background);
+        // Sync to Ivar state for live CPU path tracer updates
+        self.ivar_state.hdri_rotation = rotation;
+        self.ivar_state.hdri_intensity = intensity;
     }
 
     /// Update lights uniform buffer from scene lights.
