@@ -1,6 +1,6 @@
 # Session Handoff - February 19, 2026
 
-**Last Updated:** Code review fixes: dirty GPU writes, ref-counting bug, BFS cleanup
+**Last Updated:** Live HDRI rotation in Ivar + sharper viewport skybox
 **Next Milestone:** M29 USD Export + Non-Destructive Layers
 **Project:** BIF - VFX Scene Assembler & Renderer
 
@@ -18,6 +18,14 @@
 ---
 
 ## Recent Work
+
+### Live HDRI Rotation + Sharper Skybox (Feb 19, 2026 - Session 3)
+
+| Fix | Details |
+|-----|---------|
+| Ivar HDRI rotation | `_with_params` methods on HdriEnvironment, RenderConfig overrides, Ivar restarts on slider change |
+| Skybox quality | Skybox samples base cubemap (512x512) instead of prefiltered specular (was 128x128) |
+| Resolution bump | CUBEMAP_SIZE 256→512, PREFILTER_SIZE 128→256 (~17MB VRAM) |
 
 ### Code Review Fixes (Feb 19, 2026 - Session 2)
 
@@ -66,7 +74,11 @@ Three related fixes in primitive/instancing pipeline:
 
 ### What Works
 
-**Scatter Fixes + Code Review (latest):**
+**HDRI + Skybox (latest):**
+- HDRI rotation/intensity slider updates live in Ivar CPU path tracer
+- Viewport skybox samples full-res base cubemap (512x512)
+
+**Scatter Fixes + Code Review:**
 - Recursive dirty propagation through full node chains
 - Scatter surface geometry hidden from viewport
 - Billboard quad point rendering with size/color controls
