@@ -9,6 +9,7 @@
 //! formula and entry format port directly to WGSL with `atomicAdd` when
 //! M27 (GPU Path Tracing) arrives.
 
+use std::cell::RefCell;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::RwLock;
 
@@ -72,6 +73,12 @@ pub struct RadianceCacheConfig {
     pub ema_weight: f32,
     /// Master enable/disable.
     pub enabled: bool,
+    /// Buffer writes in thread-local storage; flush with `flush_thread_writes()`.
+    ///
+    /// Eliminates write-lock contention during rendering. Call
+    /// `rayon::broadcast(|_| cache.flush_thread_writes())` + main thread
+    /// between passes.
+    pub deferred_writes: bool,
 }
 
 impl Default for RadianceCacheConfig {
@@ -84,6 +91,7 @@ impl Default for RadianceCacheConfig {
             min_bounce_depth: 2,
             ema_weight: 0.1,
             enabled: true,
+            deferred_writes: false,
         }
     }
 }
@@ -147,6 +155,14 @@ pub fn spatial_hash(pos: Vec3, normal: Vec3, cell_size: f32, buffer_size: u32) -
         ^ iz.wrapping_mul(83492791)
         ^ n.wrapping_mul(2654435761);
     h % buffer_size
+}
+
+// ---------------------------------------------------------------------------
+// Thread-local write buffer (deferred write mode)
+// ---------------------------------------------------------------------------
+
+thread_local! {
+    static WRITE_BUFFER: RefCell<Vec<(Vec3, Vec3, Vec3)>> = const { RefCell::new(Vec::new()) };
 }
 
 // ---------------------------------------------------------------------------
@@ -252,10 +268,23 @@ impl RadianceCache {
     ///
     /// Uses EMA blending: `new = lerp(old, sample, ema_weight)`.
     /// First write to a cell initializes it directly.
+    ///
+    /// When `deferred_writes` is enabled, writes are buffered in thread-local
+    /// storage instead of taking shard write locks. Call `flush_thread_writes()`
+    /// from every thread between passes to apply them.
     pub fn write(&self, pos: Vec3, normal: Vec3, radiance: Vec3) {
         if !self.config.enabled {
             return;
         }
+        if self.config.deferred_writes {
+            WRITE_BUFFER.with(|buf| buf.borrow_mut().push((pos, normal, radiance)));
+            return;
+        }
+        self.write_to_cache(pos, normal, radiance);
+    }
+
+    /// Write directly to the shared cache (takes shard write lock).
+    fn write_to_cache(&self, pos: Vec3, normal: Vec3, radiance: Vec3) {
         let idx = spatial_hash(pos, normal, self.config.cell_size, self.config.buffer_size);
         let (shard, offset) = self.shard_and_offset(idx);
         let frame = self.current_frame.load(Ordering::Relaxed);
@@ -292,6 +321,23 @@ impl RadianceCache {
                 entry.frame_id = frame;
             }
         }
+    }
+
+    /// Flush this thread's deferred writes into the shared cache.
+    ///
+    /// Call from every rayon worker + the main thread between passes:
+    /// ```ignore
+    /// rayon::broadcast(|_| cache.flush_thread_writes());
+    /// cache.flush_thread_writes(); // main thread participates in par_iter
+    /// ```
+    pub fn flush_thread_writes(&self) {
+        WRITE_BUFFER.with(|buf| {
+            let mut writes = buf.borrow_mut();
+            for &(pos, normal, radiance) in writes.iter() {
+                self.write_to_cache(pos, normal, radiance);
+            }
+            writes.clear();
+        });
     }
 
     /// Advance the internal frame counter (call between progressive passes).
@@ -343,6 +389,16 @@ impl RadianceCache {
         let (shard, offset) = self.shard_and_offset(idx);
         let guard = self.shards[shard].read().unwrap_or_else(|e| e.into_inner());
         guard[offset].sample_count
+    }
+
+    /// Raw read count (for per-pass delta calculation).
+    pub fn stat_reads(&self) -> u64 {
+        self.stat_reads.load(Ordering::Relaxed)
+    }
+
+    /// Raw hit count (for per-pass delta calculation).
+    pub fn stat_hits(&self) -> u64 {
+        self.stat_hits.load(Ordering::Relaxed)
     }
 }
 
@@ -588,6 +644,30 @@ mod tests {
         assert!(
             cache.lookup(pos, normal).is_none(),
             "disabled cache should never return data"
+        );
+    }
+
+    #[test]
+    fn test_deferred_writes() {
+        let cache = RadianceCache::new(RadianceCacheConfig {
+            deferred_writes: true,
+            min_samples: 1,
+            ..Default::default()
+        });
+        let pos = Vec3::ZERO;
+        let normal = Vec3::Y;
+
+        cache.write(pos, normal, Vec3::ONE);
+        // Buffered — not yet in shared cache
+        assert!(
+            cache.lookup(pos, normal).is_none(),
+            "deferred write should not appear before flush"
+        );
+
+        cache.flush_thread_writes();
+        assert!(
+            cache.lookup(pos, normal).is_some(),
+            "deferred write should appear after flush"
         );
     }
 }
