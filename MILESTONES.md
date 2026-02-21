@@ -857,7 +857,7 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 - **Time Invested:** ~4 hours
 - **Goal:** Spatially Hashed Radiance Cache (idTech 8 inspired) for secondary bounce reuse
 - **Key Achievements:**
-  - `RadianceCache` with 64-shard `RwLock<Vec<CacheEntry>>` (GPU-compatible `#[repr(C)]` layout)
+  - `RadianceCache` with dual backend: lock-free `AtomicU32::from_ptr` (default) + 64-shard `RwLock` fallback (GPU-compatible `#[repr(C)]` layout)
   - Spatial hash with dominant-axis normal disambiguation (6 directions, prevents floor/ceiling leak)
   - EMA blending for cache updates, staleness eviction via `max_age` frames
   - Cache READ in bounce loop: skips remaining bounces when cached radiance available
@@ -868,7 +868,9 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
   - Batch integration: cache persists within frame, clears per-frame for animated scenes
   - Cache Heatmap AOV (sample count visualization: black → red → yellow → green)
   - egui controls: enable/disable, cell size, buffer size, min samples, min bounce, hit rate/occupancy stats
-  - 14 unit tests for hash, cache, concurrency, staleness
+  - Lock-free path: CAS on `sample_count` guards writes, atomic loads for reads, zero contention
+  - A/B/C benchmark (`cache_bench`): OFF vs RwLock vs lock-free with energy validation
+  - 18 unit tests for hash, cache, concurrency, staleness, lock-free CAS contention
 - **Key Files:**
   - `crates/bif_renderer/src/radiance_cache.rs` (NEW) — core SHARC implementation
   - `crates/bif_renderer/src/renderer.rs` — cache integration + Russian Roulette
