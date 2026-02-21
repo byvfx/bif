@@ -1,6 +1,6 @@
 # Session Handoff - February 21, 2026
 
-**Last Updated:** SHARC cache benchmark (cache slower on simple scenes)
+**Last Updated:** Lock-free radiance cache (replaced deferred writes with atomics)
 **Next Milestone:** M29 USD Export + Non-Destructive Layers
 **Project:** BIF - VFX Scene Assembler & Renderer
 
@@ -19,6 +19,17 @@
 
 ## Recent Work
 
+### Lock-free Radiance Cache (Feb 21, 2026)
+
+| Finding | Details |
+|---------|---------|
+| Change | Replaced deferred writes + sharded RwLock with lock-free `AtomicU32::from_ptr` per field |
+| Design | CAS on `sample_count` guards writes; atomic loads for reads; zero locks in hot path |
+| Dual backend | `lock_free: bool` config (default true), RwLock kept as fallback |
+| Bench | A/B/C comparison: OFF / RwLock / lock-free with energy divergence warnings |
+| Tests | 18 total (3 new: lock-free lookup, concurrent stress, CAS contention) |
+| Removed | Deferred writes infra (buggy global buffer, flush not scoped to instance) |
+
 ### SHARC Cache Benchmark v2 (Feb 21, 2026)
 
 | Finding | Details |
@@ -27,7 +38,7 @@
 | Result | Cache **0.61x** (slower) — read-lock per bounce dominates cheap 12-tri BVH |
 | Deferred writes | Thread-local write buffers tested — no improvement, confirms write-lock not bottleneck |
 | Bottleneck | **Read-lock** on every bounce, not write contention |
-| Next | Lock-free atomics for reads, or heavier scene where BVH cost >> lock cost |
+| Resolution | Lock-free atomics eliminate both read and write contention |
 
 ### M23: SHARC Radiance Cache (Feb 20, 2026)
 
@@ -95,10 +106,10 @@
 
 ## Next Session
 
-**Goal:** Lock-free cache reads or M29 USD Export
+**Goal:** Run lock-free bench, then M29 USD Export
 
-1. Lock-free atomics for cache reads (read-lock confirmed as bottleneck, not writes)
-2. Build complex test scene (USD instances) for meaningful cache A/B
+1. Run `cargo run --release --example cache_bench -p bif_renderer` — verify lock-free >= 1.0x
+2. Build complex test scene (USD instances) for meaningful cache speedup measurement
 3. M29 USD Export: stage authoring, opinion layers, PointInstancer export
 
 ---
@@ -125,4 +136,4 @@ cargo run -p bif_viewer --features oiio          # With OIIO
 ---
 
 **Branch:** main
-**Ready for:** M29 USD Export or next milestone choice
+**Ready for:** Lock-free bench validation, then M29 USD Export
