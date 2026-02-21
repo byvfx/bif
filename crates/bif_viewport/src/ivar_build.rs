@@ -785,9 +785,10 @@ impl Renderer {
                         self.ivar_state.target_spp
                     );
                     if self.ivar_state.accumulated_samples >= self.ivar_state.target_spp {
+                        let elapsed = self.ivar_state.elapsed_secs();
+                        self.ivar_state.final_render_secs = Some(elapsed);
                         self.ivar_state.render_complete = true;
                         self.node_graph_state.mark_ivar_render_complete();
-                        let elapsed = self.ivar_state.elapsed_secs();
                         log::info!(
                             "Progressive render complete: {} SPP in {:.2}s",
                             self.ivar_state.accumulated_samples,
@@ -798,6 +799,7 @@ impl Renderer {
                     self.ivar_state.receiver = None;
                 }
                 IvarMessage::RenderComplete { elapsed_secs } => {
+                    self.ivar_state.final_render_secs = Some(elapsed_secs);
                     self.ivar_state.render_complete = true;
                     self.node_graph_state.mark_ivar_render_complete();
                     log::info!("Ivar render complete in {:.2}s", elapsed_secs);

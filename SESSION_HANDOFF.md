@@ -78,6 +78,7 @@
 - bif_core tests need USD DLLs (run via `setup_usd_env.ps1`)
 - Renderer struct ~60 fields (God object)
 - ~~embree.rs debug counter overflow after ~4.3B rays~~ (fixed: `wrapping_add`)
+- ~~Ivar render timer keeps ticking after completion~~ (fixed: `final_render_secs` freeze)
 - SHARC cache bias: stores emission+NEE only (not indirect) — converges via EMA but biased low
 
 ---
