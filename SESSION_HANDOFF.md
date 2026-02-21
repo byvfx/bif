@@ -19,14 +19,15 @@
 
 ## Recent Work
 
-### SHARC Cache Benchmark (Feb 21, 2026)
+### SHARC Cache Benchmark v2 (Feb 21, 2026)
 
 | Finding | Details |
 |---------|---------|
-| Benchmark | `cache_bench` example: Cornell box, 32 passes, cache OFF vs ON |
-| Result | Cache **0.62x** (slower) — RwLock overhead dominates cheap 12-tri BVH |
-| Hit rate | 5.1% after 32 passes, 59% occupancy |
-| Conclusion | Need heavier scene to see benefit; consider lock-free atomics |
+| Benchmark | `cache_bench` v2: warmup passes, `black_box`, median timing, energy validation |
+| Result | Cache **0.61x** (slower) — read-lock per bounce dominates cheap 12-tri BVH |
+| Deferred writes | Thread-local write buffers tested — no improvement, confirms write-lock not bottleneck |
+| Bottleneck | **Read-lock** on every bounce, not write contention |
+| Next | Lock-free atomics for reads, or heavier scene where BVH cost >> lock cost |
 
 ### M23: SHARC Radiance Cache (Feb 20, 2026)
 
@@ -94,10 +95,10 @@
 
 ## Next Session
 
-**Goal:** Heavier cache benchmark or M29 USD Export
+**Goal:** Lock-free cache reads or M29 USD Export
 
-1. Build complex test scene (USD instances) for meaningful cache A/B
-2. Consider lock-free cache (atomics instead of RwLock) if overhead confirmed
+1. Lock-free atomics for cache reads (read-lock confirmed as bottleneck, not writes)
+2. Build complex test scene (USD instances) for meaningful cache A/B
 3. M29 USD Export: stage authoring, opinion layers, PointInstancer export
 
 ---
