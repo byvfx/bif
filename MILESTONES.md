@@ -788,11 +788,14 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 - **Why Now:** BIF's stated goal is "Load Houdini USD → instance massively → render → export USD." Export completes the core workflow at only 20-25h.
 - **Key Tasks:**
   - USD stage authoring via C++ bridge
+  - When laying down nodes make sure that the node grpah works like a Houdini SOP network, only viewing and evaluating only the active node and its dependencies. This way we can have a "USD Import" node that loads the USD file, and then all subsequent nodes (scatter, instancer, transform) are non-destructive edits on top of that reference. again very houdini and nuke style. This also means that we can export the modified scene as a USD sublayer that composes on top of the original file, which is a very clean workflow.
   - Opinion layer over reference (Houdini-style non-destructive editing)
   - Export modified transforms as USD sublayer
   - Export scattered points as PointInstancer
   - Layer composition: base layer + edits layer
   - Round-trip validation (export → reimport → verify)
+  - Verify with assets from Houdini, Maya, Blender
+  - Documentation for USD export workflow
 - **Architecture:**
   - Separate "edit layer" authored on top of reference layer
   - User modifications stored as opinions, not destructive edits
