@@ -382,6 +382,8 @@ pub struct IvarState {
     pub radiance_cache: Option<Arc<RadianceCache>>,
     /// Cache heatmap buffer (sample counts per pixel, from primary hit).
     pub cache_heatmap_buffer: Option<Vec<u32>>,
+    /// Frozen elapsed time (set on render completion so timer stops ticking).
+    pub final_render_secs: Option<f32>,
 }
 
 impl Default for IvarState {
@@ -420,6 +422,7 @@ impl Default for IvarState {
             radiance_cache_config: RadianceCacheConfig::default(),
             radiance_cache: None,
             cache_heatmap_buffer: None,
+            final_render_secs: None,
         }
     }
 }
@@ -441,6 +444,7 @@ impl IvarState {
         self.render_complete = false;
         self.receiver = None;
         self.render_start_time = Some(Instant::now());
+        self.final_render_secs = None;
 
         // Allocate AOV buffers
         self.alpha_buffer = Some(vec![0.0; pixel_count]);
@@ -470,8 +474,11 @@ impl IvarState {
         (self.buckets_completed as f32 / self.buckets.len() as f32) * 100.0
     }
 
-    /// Get elapsed render time in seconds.
+    /// Get elapsed render time in seconds (frozen after completion).
     pub fn elapsed_secs(&self) -> f32 {
+        if let Some(secs) = self.final_render_secs {
+            return secs;
+        }
         self.render_start_time
             .map(|t| t.elapsed().as_secs_f32())
             .unwrap_or(0.0)
@@ -506,6 +513,7 @@ impl IvarState {
         self.render_complete = false;
         self.buckets_completed = 0;
         self.render_start_time = Some(Instant::now());
+        self.final_render_secs = None;
 
         // Keep existing display pixels when dimensions match (avoids black flash
         // during camera orbit / transform drag). On dimension change, resample
@@ -857,5 +865,25 @@ mod tests {
         state.buckets_completed = 1;
         // Bucket completed but time floor not met → deny
         assert!(!state.should_restart());
+    }
+
+    #[test]
+    fn test_elapsed_secs_freezes_on_completion() {
+        let mut state = IvarState::default();
+        state.current_scale = 1;
+        state.reset_accumulation(100, 100);
+
+        // Live timer ticking
+        assert!(state.final_render_secs.is_none());
+        assert!(state.elapsed_secs() >= 0.0);
+
+        // Freeze timer
+        state.final_render_secs = Some(5.0);
+        assert_eq!(state.elapsed_secs(), 5.0);
+
+        // Reset clears freeze, timer is live again
+        state.reset_accumulation(100, 100);
+        assert!(state.final_render_secs.is_none());
+        assert!(state.elapsed_secs() < 1.0);
     }
 }

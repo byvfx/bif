@@ -883,6 +883,7 @@ impl Renderer {
             self.ivar_state.last_interaction_time = None;
             self.ivar_state.last_camera_snapshot = None;
             self.ivar_state.render_start_time = None;
+            self.ivar_state.final_render_secs = None;
 
             // Update camera aspect ratio from viewport (excludes UI panels)
             let (_, _, vp_w, vp_h) = self.viewport_rect();
