@@ -163,25 +163,8 @@ pub struct BucketResultWithAovs {
     pub normals: Vec<[f32; 3]>,
     /// Alpha values (1.0 = hit, 0.0 = miss) in row-major order.
     pub alphas: Vec<f32>,
-}
-
-impl BucketResultWithAovs {
-    /// Create a new bucket result with AOVs.
-    pub fn new(
-        bucket: Bucket,
-        pixels: Vec<Color>,
-        depths: Vec<f32>,
-        normals: Vec<[f32; 3]>,
-        alphas: Vec<f32>,
-    ) -> Self {
-        Self {
-            bucket,
-            pixels,
-            depths,
-            normals,
-            alphas,
-        }
-    }
+    /// SHARC cache sample counts at primary hit (for heatmap AOV).
+    pub cache_samples: Vec<u32>,
 }
 
 /// Render a single bucket with AOV capture.
@@ -205,6 +188,7 @@ pub fn render_bucket_with_aovs(
     let mut depths = Vec::with_capacity(capacity);
     let mut normals = Vec::with_capacity(capacity);
     let mut alphas = Vec::with_capacity(capacity);
+    let mut cache_samples = Vec::with_capacity(capacity);
 
     for local_y in 0..bucket.height {
         for local_x in 0..bucket.width {
@@ -216,10 +200,18 @@ pub fn render_bucket_with_aovs(
             depths.push(aov.depth);
             normals.push([aov.normal.x, aov.normal.y, aov.normal.z]);
             alphas.push(aov.alpha);
+            cache_samples.push(aov.cache_samples);
         }
     }
 
-    BucketResultWithAovs::new(*bucket, pixels, depths, normals, alphas)
+    BucketResultWithAovs {
+        bucket: *bucket,
+        pixels,
+        depths,
+        normals,
+        alphas,
+        cache_samples,
+    }
 }
 
 #[cfg(test)]

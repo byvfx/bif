@@ -18,6 +18,7 @@ mod instanced_geometry;
 pub mod light;
 mod material;
 pub mod pick_scene;
+pub mod radiance_cache;
 mod ray;
 mod renderer;
 mod sphere;
@@ -42,6 +43,7 @@ pub use material::{
     ScatterResult,
 };
 pub use pick_scene::{EmbreePickScene, PickError, PickResult};
+pub use radiance_cache::{RadianceCache, RadianceCacheConfig};
 pub use ray::Ray;
 pub use renderer::{
     color_to_rgba, ray_color, ray_color_with_aovs, render, render_pixel, render_pixel_with_aovs,

@@ -387,6 +387,101 @@ impl Renderer {
                                 });
                         });
 
+                        // SHARC Radiance Cache settings
+                        ui.separator();
+                        ui.collapsing("SHARC Cache", |ui| {
+                            let cfg = &mut self.ivar_state.radiance_cache_config;
+                            let mut changed = false;
+                            let mut enabled = cfg.enabled;
+                            if ui.checkbox(&mut enabled, "Enabled").changed() {
+                                cfg.enabled = enabled;
+                                changed = true;
+                            }
+                            ui.horizontal(|ui| {
+                                ui.label("Cell Size:");
+                                if ui
+                                    .add(
+                                        egui::Slider::new(&mut cfg.cell_size, 0.01..=10.0)
+                                            .logarithmic(true),
+                                    )
+                                    .changed()
+                                {
+                                    changed = true;
+                                }
+                            });
+                            ui.horizontal(|ui| {
+                                ui.label("Buffer:");
+                                let sizes = [
+                                    (256 * 1024, "256K"),
+                                    (512 * 1024, "512K"),
+                                    (1024 * 1024, "1M"),
+                                    (2 * 1024 * 1024, "2M"),
+                                    (4 * 1024 * 1024, "4M"),
+                                ];
+                                egui::ComboBox::from_id_salt("sharc_buf_size")
+                                    .selected_text(
+                                        sizes
+                                            .iter()
+                                            .find(|(s, _)| *s == cfg.buffer_size)
+                                            .map(|(_, n)| *n)
+                                            .unwrap_or("Custom"),
+                                    )
+                                    .show_ui(ui, |ui| {
+                                        for &(size, name) in &sizes {
+                                            if ui
+                                                .selectable_value(
+                                                    &mut cfg.buffer_size,
+                                                    size,
+                                                    name,
+                                                )
+                                                .changed()
+                                            {
+                                                changed = true;
+                                            }
+                                        }
+                                    });
+                            });
+                            ui.horizontal(|ui| {
+                                ui.label("Min Samples:");
+                                if ui
+                                    .add(egui::Slider::new(&mut cfg.min_samples, 1..=16))
+                                    .changed()
+                                {
+                                    changed = true;
+                                }
+                            });
+                            ui.horizontal(|ui| {
+                                ui.label("Min Bounce:");
+                                if ui
+                                    .add(egui::Slider::new(&mut cfg.min_bounce_depth, 1..=4))
+                                    .changed()
+                                {
+                                    changed = true;
+                                }
+                            });
+
+                            // Cache stats
+                            if let Some(ref cache) = self.ivar_state.radiance_cache {
+                                ui.label(format!(
+                                    "Hit: {:.1}%  Occ: {:.1}%",
+                                    cache.hit_rate() * 100.0,
+                                    cache.occupancy() * 100.0
+                                ));
+                            }
+
+                            // Rebuild cache if config changed
+                            if changed {
+                                if cfg.enabled {
+                                    let cache = std::sync::Arc::new(
+                                        bif_renderer::RadianceCache::new(cfg.clone()),
+                                    );
+                                    self.ivar_state.radiance_cache = Some(cache);
+                                } else {
+                                    self.ivar_state.radiance_cache = None;
+                                }
+                            }
+                        });
+
                         // Rebuild Scene button
                         ui.separator();
                         // Note: Can't call self.invalidate_ivar_scene() here due to borrow rules

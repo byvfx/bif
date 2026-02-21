@@ -81,6 +81,34 @@ impl Renderer {
                     image.to_rgba()
                 }
             }
+            crate::ivar_state::AovChannel::CacheHeatmap => {
+                // Cache heatmap: black → red → yellow → green
+                if let Some(ref heatmap) = self.ivar_state.cache_heatmap_buffer {
+                    heatmap
+                        .iter()
+                        .flat_map(|&count| {
+                            // Normalize: 0 = black, 16+ = green (saturated)
+                            let t = (count as f32 / 16.0).clamp(0.0, 1.0);
+                            let (r, g, b) = if t < 0.5 {
+                                // black → red (0..0.5)
+                                let s = t * 2.0;
+                                (s, 0.0, 0.0)
+                            } else if t < 0.75 {
+                                // red → yellow (0.5..0.75)
+                                let s = (t - 0.5) * 4.0;
+                                (1.0, s, 0.0)
+                            } else {
+                                // yellow → green (0.75..1.0)
+                                let s = (t - 0.75) * 4.0;
+                                (1.0 - s, 1.0, 0.0)
+                            };
+                            [(r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8, 255]
+                        })
+                        .collect()
+                } else {
+                    image.to_rgba()
+                }
+            }
         };
 
         self.queue.write_texture(
@@ -481,6 +509,15 @@ impl Renderer {
             self.ivar_state.world = Some(world);
             self.ivar_state.build_status = BuildStatus::Complete;
 
+            // Create radiance cache if enabled
+            if self.ivar_state.radiance_cache_config.enabled {
+                let cache = Arc::new(bif_renderer::RadianceCache::new(
+                    self.ivar_state.radiance_cache_config.clone(),
+                ));
+                self.ivar_state.radiance_cache = Some(cache);
+                log::info!("SHARC radiance cache created");
+            }
+
             // Clear receiver
             self.ivar_state.build_receiver = None;
 
@@ -636,6 +673,7 @@ impl Renderer {
             pass_number,
             hdri_rotation: Some(self.ivar_state.hdri_rotation),
             hdri_intensity: Some(self.ivar_state.hdri_intensity),
+            radiance_cache: self.ivar_state.radiance_cache.clone(),
         };
 
         log::trace!("Starting progressive pass {}", pass_number);
@@ -721,6 +759,14 @@ impl Renderer {
                                         normal[global_idx] = result.normals[pixel_idx];
                                     }
                                 }
+                                if let Some(ref mut heatmap) = self.ivar_state.cache_heatmap_buffer
+                                {
+                                    if pixel_idx < result.cache_samples.len()
+                                        && global_idx < heatmap.len()
+                                    {
+                                        heatmap[global_idx] = result.cache_samples[pixel_idx];
+                                    }
+                                }
                             }
                         }
                     }
@@ -728,6 +774,10 @@ impl Renderer {
                 }
                 IvarMessage::PassComplete { pass_number } => {
                     self.ivar_state.accumulated_samples = pass_number + 1;
+                    // Advance radiance cache frame between passes
+                    if let Some(ref cache) = self.ivar_state.radiance_cache {
+                        cache.advance_frame();
+                    }
                     log::info!(
                         "Pass {} complete ({}/{} SPP)",
                         pass_number,

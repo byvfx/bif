@@ -10,7 +10,8 @@ use std::time::Instant;
 
 use bif_math::{Camera, Vec3};
 use bif_renderer::{
-    generate_buckets, Bucket, BucketResultWithAovs, BvhNode, ImageBuffer, DEFAULT_BUCKET_SIZE,
+    generate_buckets, Bucket, BucketResultWithAovs, BvhNode, ImageBuffer, RadianceCache,
+    RadianceCacheConfig, DEFAULT_BUCKET_SIZE,
 };
 
 /// Render mode selection: GPU viewport or Ivar CPU path tracer.
@@ -35,6 +36,8 @@ pub enum AovChannel {
     Depth,
     /// Normal (RGB from XYZ).
     Normal,
+    /// SHARC cache heatmap (sample count visualization).
+    CacheHeatmap,
 }
 
 impl AovChannel {
@@ -45,6 +48,7 @@ impl AovChannel {
             AovChannel::Alpha => "Alpha",
             AovChannel::Depth => "Depth",
             AovChannel::Normal => "Normal",
+            AovChannel::CacheHeatmap => "Cache Heatmap",
         }
     }
 
@@ -55,6 +59,7 @@ impl AovChannel {
             AovChannel::Alpha,
             AovChannel::Depth,
             AovChannel::Normal,
+            AovChannel::CacheHeatmap,
         ]
     }
 }
@@ -166,6 +171,8 @@ pub struct BatchRenderSettings {
     pub compression: bif_renderer::ExrCompression,
     /// Camera source (viewport or USD camera).
     pub camera_source: CameraSource,
+    /// Radiance cache config for batch renders.
+    pub radiance_cache_config: bif_renderer::RadianceCacheConfig,
 }
 
 impl Default for BatchRenderSettings {
@@ -183,6 +190,7 @@ impl Default for BatchRenderSettings {
             aov_settings: AovSettings::default(),
             compression: bif_renderer::ExrCompression::default(),
             camera_source: CameraSource::default(),
+            radiance_cache_config: bif_renderer::RadianceCacheConfig::default(),
         }
     }
 }
@@ -368,6 +376,12 @@ pub struct IvarState {
     pub last_interaction_time: Option<Instant>,
     /// Milliseconds to wait before refining to next resolution level.
     pub settle_timeout_ms: u32,
+    /// SHARC radiance cache config (persists across cache rebuilds).
+    pub radiance_cache_config: RadianceCacheConfig,
+    /// Active radiance cache instance (shared with render threads).
+    pub radiance_cache: Option<Arc<RadianceCache>>,
+    /// Cache heatmap buffer (sample counts per pixel, from primary hit).
+    pub cache_heatmap_buffer: Option<Vec<u32>>,
 }
 
 impl Default for IvarState {
@@ -403,6 +417,9 @@ impl Default for IvarState {
             interaction_quality: 2,
             last_interaction_time: None,
             settle_timeout_ms: 300,
+            radiance_cache_config: RadianceCacheConfig::default(),
+            radiance_cache: None,
+            cache_heatmap_buffer: None,
         }
     }
 }
@@ -429,6 +446,7 @@ impl IvarState {
         self.alpha_buffer = Some(vec![0.0; pixel_count]);
         self.depth_buffer = Some(vec![f32::INFINITY; pixel_count]);
         self.normal_buffer = Some(vec![[0.0; 3]; pixel_count]);
+        self.cache_heatmap_buffer = Some(vec![0; pixel_count]);
     }
 
     /// Check if camera has moved and render needs restart.
@@ -531,11 +549,26 @@ impl IvarState {
                 self.depth_buffer = Some(vec![f32::INFINITY; pixel_count]);
                 self.normal_buffer = Some(vec![[0.0; 3]; pixel_count]);
             }
+            // Cache heatmap buffer
+            let reuse_heatmap = self
+                .cache_heatmap_buffer
+                .as_ref()
+                .is_some_and(|buf| buf.len() == pixel_count);
+            if reuse_heatmap {
+                self.cache_heatmap_buffer.as_mut().unwrap().fill(0);
+            } else {
+                self.cache_heatmap_buffer = Some(vec![0; pixel_count]);
+            }
         } else {
             self.alpha_buffer = None;
             self.depth_buffer = None;
             self.normal_buffer = None;
+            self.cache_heatmap_buffer = None;
         }
+
+        // Radiance cache is NOT cleared here — it stores world-space data that
+        // remains valid across camera moves. Cache is rebuilt fresh on scene
+        // changes (new RadianceCache created in ivar_build.rs on scene build).
     }
 
     /// Check if more progressive passes are needed.
