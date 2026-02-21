@@ -1,7 +1,7 @@
-//! SHARC radiance cache A/B benchmark.
+//! SHARC radiance cache A/B/C benchmark.
 //!
-//! Renders a Cornell box with cache OFF then ON, printing timing + stats.
-//! Uses deferred thread-local writes to eliminate write-lock contention.
+//! Renders a Cornell box with cache OFF, ON (RwLock), and ON (lock-free),
+//! printing timing + stats for each.
 //!
 //! Run: `cargo run --example cache_bench -p bif_renderer --release`
 
@@ -62,7 +62,7 @@ fn main() {
         TOTAL_PASSES - COLD_PASSES,
         MAX_DEPTH
     );
-    println!("Cache: deferred thread-local writes, cell_size={cell_size:.4}");
+    println!("Cache cell_size={cell_size:.4}");
     println!();
 
     // --- Warmup before OFF ---
@@ -76,24 +76,46 @@ fn main() {
     let off_stats = run_off(&buckets, &camera, &world, &lights);
     print_pass_table(&off_stats);
 
-    // --- Warmup before ON ---
+    // --- Warmup before RwLock ---
     print!("Warming up ({WARMUP_PASSES} passes)...");
     run_warmup(&buckets, &camera, &world, &lights);
     println!(" done");
     println!();
 
-    // --- Cache ON ---
-    println!("--- Cache ON (deferred writes) ---");
-    let cache = Arc::new(RadianceCache::new(RadianceCacheConfig {
+    // --- Cache ON (RwLock) ---
+    println!("--- Cache ON (RwLock) ---");
+    let rwlock_cache = Arc::new(RadianceCache::new(RadianceCacheConfig {
         cell_size,
-        deferred_writes: true,
+        lock_free: false,
         ..Default::default()
     }));
-    let on_stats = run_on(&buckets, &camera, &world, &lights, &cache);
-    print_pass_table(&on_stats);
+    let rwlock_stats = run_on(&buckets, &camera, &world, &lights, &rwlock_cache);
+    print_pass_table(&rwlock_stats);
+
+    // --- Warmup before lock-free ---
+    print!("Warming up ({WARMUP_PASSES} passes)...");
+    run_warmup(&buckets, &camera, &world, &lights);
+    println!(" done");
+    println!();
+
+    // --- Cache ON (lock-free) ---
+    println!("--- Cache ON (lock-free) ---");
+    let lf_cache = Arc::new(RadianceCache::new(RadianceCacheConfig {
+        cell_size,
+        lock_free: true,
+        ..Default::default()
+    }));
+    let lf_stats = run_on(&buckets, &camera, &world, &lights, &lf_cache);
+    print_pass_table(&lf_stats);
 
     // --- Results ---
-    print_results(&off_stats, &on_stats, &cache);
+    print_results(
+        &off_stats,
+        &rwlock_stats,
+        &lf_stats,
+        &rwlock_cache,
+        &lf_cache,
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -183,11 +205,6 @@ fn run_on(
                 pixels.iter().map(|c| (c.x + c.y + c.z) as f64).sum::<f64>()
             })
             .sum();
-
-        // Flush deferred writes from all rayon workers + main thread
-        rayon::broadcast(|_| cache.flush_thread_writes());
-        cache.flush_thread_writes();
-
         let elapsed = start.elapsed();
 
         // Per-pass delta hit rate
@@ -250,15 +267,28 @@ fn print_pass_table(stats: &[PassStats]) {
     println!();
 }
 
-fn print_results(off: &[PassStats], on: &[PassStats], cache: &RadianceCache) {
+fn print_results(
+    off: &[PassStats],
+    rwlock: &[PassStats],
+    lockfree: &[PassStats],
+    rwlock_cache: &RadianceCache,
+    lf_cache: &RadianceCache,
+) {
     let cold = COLD_PASSES as usize;
 
-    let off_total: Duration = off.iter().map(|s| s.elapsed).sum();
-    let on_total: Duration = on.iter().map(|s| s.elapsed).sum();
-    let off_cold: Duration = off.iter().take(cold).map(|s| s.elapsed).sum();
-    let on_cold: Duration = on.iter().take(cold).map(|s| s.elapsed).sum();
-    let off_warm: Duration = off.iter().skip(cold).map(|s| s.elapsed).sum();
-    let on_warm: Duration = on.iter().skip(cold).map(|s| s.elapsed).sum();
+    let sum_elapsed = |s: &[PassStats]| -> Duration { s.iter().map(|p| p.elapsed).sum() };
+    let sum_cold = |s: &[PassStats]| -> Duration { s.iter().take(cold).map(|p| p.elapsed).sum() };
+    let sum_warm = |s: &[PassStats]| -> Duration { s.iter().skip(cold).map(|p| p.elapsed).sum() };
+
+    let off_total = sum_elapsed(off);
+    let rw_total = sum_elapsed(rwlock);
+    let lf_total = sum_elapsed(lockfree);
+    let off_cold = sum_cold(off);
+    let rw_cold = sum_cold(rwlock);
+    let lf_cold = sum_cold(lockfree);
+    let off_warm = sum_warm(off);
+    let rw_warm = sum_warm(rwlock);
+    let lf_warm = sum_warm(lockfree);
 
     let speedup = |a: Duration, b: Duration| -> f64 {
         if b.as_nanos() > 0 {
@@ -268,8 +298,10 @@ fn print_results(off: &[PassStats], on: &[PassStats], cache: &RadianceCache) {
         }
     };
 
-    // Median pass time
     let median = |stats: &[PassStats]| -> Duration {
+        if stats.is_empty() {
+            return Duration::ZERO;
+        }
         let mut times: Vec<Duration> = stats.iter().map(|s| s.elapsed).collect();
         times.sort();
         times[times.len() / 2]
@@ -288,39 +320,77 @@ fn print_results(off: &[PassStats], on: &[PassStats], cache: &RadianceCache) {
         median(off).as_millis(),
     );
     println!(
-        "Cache ON:     {:>5}ms {:>5}ms {:>5}ms {:>5}ms",
-        on_total.as_millis(),
-        on_cold.as_millis(),
-        on_warm.as_millis(),
-        median(on).as_millis(),
+        "RwLock:       {:>5}ms {:>5}ms {:>5}ms {:>5}ms",
+        rw_total.as_millis(),
+        rw_cold.as_millis(),
+        rw_warm.as_millis(),
+        median(rwlock).as_millis(),
     );
     println!(
-        "Speedup:      {:>5.2}x {:>5.2}x {:>5.2}x",
-        speedup(off_total, on_total),
-        speedup(off_cold, on_cold),
-        speedup(off_warm, on_warm),
+        "Lock-free:    {:>5}ms {:>5}ms {:>5}ms {:>5}ms",
+        lf_total.as_millis(),
+        lf_cold.as_millis(),
+        lf_warm.as_millis(),
+        median(lockfree).as_millis(),
+    );
+    println!(
+        "Speedup (RW): {:>5.2}x {:>5.2}x {:>5.2}x",
+        speedup(off_total, rw_total),
+        speedup(off_cold, rw_cold),
+        speedup(off_warm, rw_warm),
+    );
+    println!(
+        "Speedup (LF): {:>5.2}x {:>5.2}x {:>5.2}x",
+        speedup(off_total, lf_total),
+        speedup(off_cold, lf_cold),
+        speedup(off_warm, lf_warm),
     );
     println!();
 
     // Energy validation
     let energy_off: f64 = off.iter().map(|s| s.energy).sum();
-    let energy_on: f64 = on.iter().map(|s| s.energy).sum();
-    let divergence = if energy_off.abs() > 1e-10 {
-        ((energy_on - energy_off) / energy_off).abs() * 100.0
-    } else {
-        0.0
+    let energy_rw: f64 = rwlock.iter().map(|s| s.energy).sum();
+    let energy_lf: f64 = lockfree.iter().map(|s| s.energy).sum();
+    let div = |e: f64| -> f64 {
+        if energy_off.abs() > 1e-10 {
+            ((e - energy_off) / energy_off).abs() * 100.0
+        } else {
+            0.0
+        }
     };
-    println!("Energy OFF: {energy_off:.2}");
-    println!("Energy ON:  {energy_on:.2}");
-    println!("Divergence: {divergence:.1}%");
+    let div_rw = div(energy_rw);
+    let div_lf = div(energy_lf);
+
+    println!("Energy OFF:    {energy_off:.2}");
+    println!("Energy RwLock: {energy_rw:.2}  (div: {div_rw:.1}%)");
+    println!("Energy LF:     {energy_lf:.2}  (div: {div_lf:.1}%)");
+    if div_rw > 20.0 {
+        println!("WARNING: RwLock energy divergence {div_rw:.1}% exceeds 20%");
+    }
+    if div_lf > 20.0 {
+        println!("WARNING: Lock-free energy divergence {div_lf:.1}% exceeds 20%");
+    }
     println!();
 
     // Final cache stats
-    println!("Hit rate:  {:.1}% (cumulative)", cache.hit_rate() * 100.0);
-    println!("Occupancy: {:.1}%", cache.occupancy() * 100.0);
-    if let Some(last) = on.last() {
+    println!(
+        "RwLock cache:    hit={:.1}%  occ={:.1}%",
+        rwlock_cache.hit_rate() * 100.0,
+        rwlock_cache.occupancy() * 100.0
+    );
+    println!(
+        "Lock-free cache: hit={:.1}%  occ={:.1}%",
+        lf_cache.hit_rate() * 100.0,
+        lf_cache.occupancy() * 100.0
+    );
+    if let Some(last) = rwlock.last() {
         if let Some(hr) = last.hit_rate {
-            println!("Last pass:  hit={:.1}%", hr * 100.0);
+            println!("RwLock last pass:    hit={:.1}%", hr * 100.0);
+        }
+    }
+    if let Some(last) = lockfree.last() {
+        if let Some(hr) = last.hit_rate {
+            println!("Lock-free last pass: hit={:.1}%", hr * 100.0);
         }
     }
 }

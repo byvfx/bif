@@ -5,11 +5,17 @@
 //! that hit a cached cell with enough samples can skip remaining bounces,
 //! cutting render time roughly in half for multi-bounce scenes.
 //!
+//! Two backends:
+//! - **Lock-free** (default): `AtomicU32` per field via `from_ptr`, zero
+//!   contention for both reads and writes. CAS on `sample_count` guards
+//!   writes; torn reads are bounded error, invisible in progressive rendering.
+//! - **Sharded RwLock** (fallback): 64 shards with `RwLock` per shard.
+//!
 //! The CPU layout (`#[repr(C)]`) mirrors the GPU buffer so the same hash
 //! formula and entry format port directly to WGSL with `atomicAdd` when
 //! M27 (GPU Path Tracing) arrives.
 
-use std::cell::RefCell;
+use std::cell::UnsafeCell;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::RwLock;
 
@@ -73,12 +79,13 @@ pub struct RadianceCacheConfig {
     pub ema_weight: f32,
     /// Master enable/disable.
     pub enabled: bool,
-    /// Buffer writes in thread-local storage; flush with `flush_thread_writes()`.
+    /// Use lock-free atomics instead of sharded RwLock (default: true).
     ///
-    /// Eliminates write-lock contention during rendering. Call
-    /// `rayon::broadcast(|_| cache.flush_thread_writes())` + main thread
-    /// between passes.
-    pub deferred_writes: bool,
+    /// Lock-free eliminates both read and write contention. Uses CAS on
+    /// `sample_count` to guard writes; torn reads are bounded error,
+    /// invisible in progressive rendering. Compiles to plain `mov` /
+    /// `cmpxchg` on x86-64.
+    pub lock_free: bool,
 }
 
 impl Default for RadianceCacheConfig {
@@ -91,7 +98,7 @@ impl Default for RadianceCacheConfig {
             min_bounce_depth: 2,
             ema_weight: 0.1,
             enabled: true,
-            deferred_writes: false,
+            lock_free: true,
         }
     }
 }
@@ -158,28 +165,112 @@ pub fn spatial_hash(pos: Vec3, normal: Vec3, cell_size: f32, buffer_size: u32) -
 }
 
 // ---------------------------------------------------------------------------
-// Thread-local write buffer (deferred write mode)
+// Lock-free atomic buffer
 // ---------------------------------------------------------------------------
 
-thread_local! {
-    static WRITE_BUFFER: RefCell<Vec<(Vec3, Vec3, Vec3)>> = const { RefCell::new(Vec::new()) };
+/// Flat buffer of `CacheEntry` with per-field atomic access via
+/// `AtomicU32::from_ptr` (stable since Rust 1.75).
+///
+/// # Safety invariants
+/// - `CacheEntry` is `#[repr(C)]` with all fields `u32`-sized and 4-byte aligned.
+/// - Buffer is allocated once in `new()` and never resized.
+/// - All field access goes through `AtomicU32` methods after construction.
+/// - On x86-64, aligned `u32` ops are hardware-atomic.
+struct AtomicCacheBuffer {
+    buf: UnsafeCell<Vec<CacheEntry>>,
+    len: usize,
+}
+
+// Safety: all runtime access goes through AtomicU32 (from_ptr), which is Sync+Send.
+// The UnsafeCell is never accessed via &mut after construction.
+unsafe impl Sync for AtomicCacheBuffer {}
+unsafe impl Send for AtomicCacheBuffer {}
+
+impl AtomicCacheBuffer {
+    fn new(size: usize) -> Self {
+        Self {
+            buf: UnsafeCell::new(vec![CacheEntry::default(); size]),
+            len: size,
+        }
+    }
+
+    /// Atomic view of `entry[idx].sample_count`.
+    ///
+    /// # Safety
+    /// `idx` must be `< self.len`.
+    #[inline]
+    unsafe fn sample_count_atomic(&self, idx: usize) -> &AtomicU32 {
+        debug_assert!(idx < self.len);
+        let entry = (*self.buf.get()).as_mut_ptr().add(idx);
+        AtomicU32::from_ptr(std::ptr::addr_of_mut!((*entry).sample_count))
+    }
+
+    /// Atomic view of `entry[idx].radiance_r` (f32 bits as u32).
+    ///
+    /// # Safety
+    /// `idx` must be `< self.len`.
+    #[inline]
+    unsafe fn radiance_r_atomic(&self, idx: usize) -> &AtomicU32 {
+        debug_assert!(idx < self.len);
+        let entry = (*self.buf.get()).as_mut_ptr().add(idx);
+        AtomicU32::from_ptr(std::ptr::addr_of_mut!((*entry).radiance_r).cast::<u32>())
+    }
+
+    /// Atomic view of `entry[idx].radiance_g` (f32 bits as u32).
+    ///
+    /// # Safety
+    /// `idx` must be `< self.len`.
+    #[inline]
+    unsafe fn radiance_g_atomic(&self, idx: usize) -> &AtomicU32 {
+        debug_assert!(idx < self.len);
+        let entry = (*self.buf.get()).as_mut_ptr().add(idx);
+        AtomicU32::from_ptr(std::ptr::addr_of_mut!((*entry).radiance_g).cast::<u32>())
+    }
+
+    /// Atomic view of `entry[idx].radiance_b` (f32 bits as u32).
+    ///
+    /// # Safety
+    /// `idx` must be `< self.len`.
+    #[inline]
+    unsafe fn radiance_b_atomic(&self, idx: usize) -> &AtomicU32 {
+        debug_assert!(idx < self.len);
+        let entry = (*self.buf.get()).as_mut_ptr().add(idx);
+        AtomicU32::from_ptr(std::ptr::addr_of_mut!((*entry).radiance_b).cast::<u32>())
+    }
+
+    /// Atomic view of `entry[idx].frame_id`.
+    ///
+    /// # Safety
+    /// `idx` must be `< self.len`.
+    #[inline]
+    unsafe fn frame_id_atomic(&self, idx: usize) -> &AtomicU32 {
+        debug_assert!(idx < self.len);
+        let entry = (*self.buf.get()).as_mut_ptr().add(idx);
+        AtomicU32::from_ptr(std::ptr::addr_of_mut!((*entry).frame_id))
+    }
 }
 
 // ---------------------------------------------------------------------------
-// Sharded radiance cache
+// Radiance cache — dual backend
 // ---------------------------------------------------------------------------
 
 const NUM_SHARDS: usize = 64;
 
-/// Thread-safe radiance cache with sharded locking.
+/// Thread-safe radiance cache with dual backends.
 ///
-/// Each shard owns a contiguous slice of the flat entry buffer and is
-/// protected by its own `RwLock`, so rayon worker threads rarely contend.
+/// **Lock-free** (default): flat buffer with per-field `AtomicU32` access.
+/// CAS on `sample_count` serializes writes per-slot; different slots are
+/// fully parallel. Torn reads are bounded error in progressive rendering.
 ///
-/// Debug impl prints config + stats (not all shard contents).
+/// **Sharded RwLock** (fallback): 64 shards with `RwLock` per shard.
+///
+/// Debug impl prints config + stats (not buffer contents).
 pub struct RadianceCache {
-    shards: Vec<RwLock<Vec<CacheEntry>>>,
-    /// Entries per shard — immutable after construction (avoids locking shard 0).
+    /// Lock-free backend (when `config.lock_free == true`).
+    atomic_buf: Option<AtomicCacheBuffer>,
+    /// Sharded RwLock backend (when `config.lock_free == false`).
+    shards: Option<Vec<RwLock<Vec<CacheEntry>>>>,
+    /// Entries per shard (only meaningful for sharded path).
     entries_per_shard: usize,
     config: RadianceCacheConfig,
     /// Monotonic frame counter (u32 matches `CacheEntry::frame_id`).
@@ -195,8 +286,7 @@ impl std::fmt::Debug for RadianceCache {
         f.debug_struct("RadianceCache")
             .field("config", &self.config)
             .field("frame", &self.current_frame.load(Ordering::Relaxed))
-            .field("shards", &self.shards.len())
-            .field("entries_per_shard", &self.entries_per_shard)
+            .field("lock_free", &self.atomic_buf.is_some())
             .finish()
     }
 }
@@ -204,18 +294,33 @@ impl std::fmt::Debug for RadianceCache {
 impl RadianceCache {
     /// Create a new cache from the given config.
     pub fn new(config: RadianceCacheConfig) -> Self {
-        let entries_per_shard = (config.buffer_size as usize).div_ceil(NUM_SHARDS);
-        let shards = (0..NUM_SHARDS)
-            .map(|_| RwLock::new(vec![CacheEntry::default(); entries_per_shard]))
-            .collect();
-        Self {
-            shards,
-            entries_per_shard,
-            config,
-            current_frame: AtomicU32::new(0),
-            stat_reads: AtomicU64::new(0),
-            stat_hits: AtomicU64::new(0),
-            stat_occupied: AtomicU64::new(0),
+        if config.lock_free {
+            let size = config.buffer_size as usize;
+            Self {
+                atomic_buf: Some(AtomicCacheBuffer::new(size)),
+                shards: None,
+                entries_per_shard: 0,
+                config,
+                current_frame: AtomicU32::new(0),
+                stat_reads: AtomicU64::new(0),
+                stat_hits: AtomicU64::new(0),
+                stat_occupied: AtomicU64::new(0),
+            }
+        } else {
+            let entries_per_shard = (config.buffer_size as usize).div_ceil(NUM_SHARDS);
+            let shards = (0..NUM_SHARDS)
+                .map(|_| RwLock::new(vec![CacheEntry::default(); entries_per_shard]))
+                .collect();
+            Self {
+                atomic_buf: None,
+                shards: Some(shards),
+                entries_per_shard,
+                config,
+                current_frame: AtomicU32::new(0),
+                stat_reads: AtomicU64::new(0),
+                stat_hits: AtomicU64::new(0),
+                stat_occupied: AtomicU64::new(0),
+            }
         }
     }
 
@@ -232,6 +337,10 @@ impl RadianceCache {
         (shard, offset)
     }
 
+    // -----------------------------------------------------------------------
+    // Lookup
+    // -----------------------------------------------------------------------
+
     /// Look up cached radiance at a world position + normal.
     ///
     /// Returns `Some(Color)` if the entry has enough samples and isn't stale.
@@ -239,13 +348,53 @@ impl RadianceCache {
         if !self.config.enabled {
             return None;
         }
+        if self.atomic_buf.is_some() {
+            self.lookup_lock_free(pos, normal)
+        } else {
+            self.lookup_sharded(pos, normal)
+        }
+    }
+
+    /// Lock-free lookup: direct index, per-field atomic loads, zero locks.
+    fn lookup_lock_free(&self, pos: Vec3, normal: Vec3) -> Option<Vec3> {
+        let buf = self.atomic_buf.as_ref().unwrap();
+        let idx =
+            spatial_hash(pos, normal, self.config.cell_size, self.config.buffer_size) as usize;
+        let frame = self.current_frame.load(Ordering::Relaxed);
+
+        self.stat_reads.fetch_add(1, Ordering::Relaxed);
+
+        // Safety: idx = hash % buffer_size, always < buf.len
+        unsafe {
+            let count = buf.sample_count_atomic(idx).load(Ordering::Relaxed);
+            if count < self.config.min_samples {
+                return None;
+            }
+            let entry_frame = buf.frame_id_atomic(idx).load(Ordering::Relaxed);
+            let age = frame.wrapping_sub(entry_frame);
+            if age > self.config.max_age {
+                return None;
+            }
+
+            self.stat_hits.fetch_add(1, Ordering::Relaxed);
+            Some(Vec3::new(
+                f32::from_bits(buf.radiance_r_atomic(idx).load(Ordering::Relaxed)),
+                f32::from_bits(buf.radiance_g_atomic(idx).load(Ordering::Relaxed)),
+                f32::from_bits(buf.radiance_b_atomic(idx).load(Ordering::Relaxed)),
+            ))
+        }
+    }
+
+    /// Sharded RwLock lookup: takes a read lock on the target shard.
+    fn lookup_sharded(&self, pos: Vec3, normal: Vec3) -> Option<Vec3> {
         let idx = spatial_hash(pos, normal, self.config.cell_size, self.config.buffer_size);
         let (shard, offset) = self.shard_and_offset(idx);
         let frame = self.current_frame.load(Ordering::Relaxed);
 
         self.stat_reads.fetch_add(1, Ordering::Relaxed);
 
-        let guard = self.shards[shard].read().unwrap_or_else(|e| e.into_inner());
+        let shards = self.shards.as_ref().unwrap();
+        let guard = shards[shard].read().unwrap_or_else(|e| e.into_inner());
         let entry = &guard[offset];
 
         if entry.sample_count < self.config.min_samples {
@@ -264,34 +413,120 @@ impl RadianceCache {
         ))
     }
 
+    // -----------------------------------------------------------------------
+    // Write
+    // -----------------------------------------------------------------------
+
     /// Write (accumulate) radiance at a world position + normal.
     ///
     /// Uses EMA blending: `new = lerp(old, sample, ema_weight)`.
     /// First write to a cell initializes it directly.
     ///
-    /// When `deferred_writes` is enabled, writes are buffered in thread-local
-    /// storage instead of taking shard write locks. Call `flush_thread_writes()`
-    /// from every thread between passes to apply them.
+    /// Lock-free path uses CAS on `sample_count`; failed CAS drops the sample
+    /// (statistically irrelevant for a progressive cache).
     pub fn write(&self, pos: Vec3, normal: Vec3, radiance: Vec3) {
         if !self.config.enabled {
             return;
         }
-        if self.config.deferred_writes {
-            WRITE_BUFFER.with(|buf| buf.borrow_mut().push((pos, normal, radiance)));
-            return;
+        if self.atomic_buf.is_some() {
+            self.write_lock_free(pos, normal, radiance);
+        } else {
+            self.write_sharded(pos, normal, radiance);
         }
-        self.write_to_cache(pos, normal, radiance);
     }
 
-    /// Write directly to the shared cache (takes shard write lock).
-    fn write_to_cache(&self, pos: Vec3, normal: Vec3, radiance: Vec3) {
+    /// Lock-free write: CAS on `sample_count` as version guard.
+    ///
+    /// - Empty slot (count=0): CAS 0→1 to claim, then store radiance + frame.
+    /// - Stale slot: CAS old→1 to reinit.
+    /// - Active slot: EMA blend, CAS old_count→old_count+1.
+    /// - CAS failure = drop sample (no retry).
+    fn write_lock_free(&self, pos: Vec3, normal: Vec3, radiance: Vec3) {
+        let buf = self.atomic_buf.as_ref().unwrap();
+        let idx =
+            spatial_hash(pos, normal, self.config.cell_size, self.config.buffer_size) as usize;
+        let frame = self.current_frame.load(Ordering::Relaxed);
+
+        // Safety: idx = hash % buffer_size, always < buf.len
+        unsafe {
+            let sc = buf.sample_count_atomic(idx);
+            let old_count = sc.load(Ordering::Relaxed);
+
+            if old_count == 0 {
+                // Empty slot — CAS 0→1 to claim
+                if sc
+                    .compare_exchange(0, 1, Ordering::Relaxed, Ordering::Relaxed)
+                    .is_ok()
+                {
+                    buf.radiance_r_atomic(idx)
+                        .store(radiance.x.to_bits(), Ordering::Relaxed);
+                    buf.radiance_g_atomic(idx)
+                        .store(radiance.y.to_bits(), Ordering::Relaxed);
+                    buf.radiance_b_atomic(idx)
+                        .store(radiance.z.to_bits(), Ordering::Relaxed);
+                    buf.frame_id_atomic(idx).store(frame, Ordering::Relaxed);
+                    self.stat_occupied.fetch_add(1, Ordering::Relaxed);
+                }
+                return;
+            }
+
+            let old_frame = buf.frame_id_atomic(idx).load(Ordering::Relaxed);
+            let age = frame.wrapping_sub(old_frame);
+
+            if age > self.config.max_age {
+                // Stale — CAS old→1 to reinit
+                if sc
+                    .compare_exchange(old_count, 1, Ordering::Relaxed, Ordering::Relaxed)
+                    .is_ok()
+                {
+                    buf.radiance_r_atomic(idx)
+                        .store(radiance.x.to_bits(), Ordering::Relaxed);
+                    buf.radiance_g_atomic(idx)
+                        .store(radiance.y.to_bits(), Ordering::Relaxed);
+                    buf.radiance_b_atomic(idx)
+                        .store(radiance.z.to_bits(), Ordering::Relaxed);
+                    buf.frame_id_atomic(idx).store(frame, Ordering::Relaxed);
+                }
+                return;
+            }
+
+            // Active — EMA blend, CAS count to commit
+            let old_r = f32::from_bits(buf.radiance_r_atomic(idx).load(Ordering::Relaxed));
+            let old_g = f32::from_bits(buf.radiance_g_atomic(idx).load(Ordering::Relaxed));
+            let old_b = f32::from_bits(buf.radiance_b_atomic(idx).load(Ordering::Relaxed));
+            let w = self.config.ema_weight;
+            let new_r = old_r * (1.0 - w) + radiance.x * w;
+            let new_g = old_g * (1.0 - w) + radiance.y * w;
+            let new_b = old_b * (1.0 - w) + radiance.z * w;
+
+            if sc
+                .compare_exchange(
+                    old_count,
+                    old_count + 1,
+                    Ordering::Relaxed,
+                    Ordering::Relaxed,
+                )
+                .is_ok()
+            {
+                buf.radiance_r_atomic(idx)
+                    .store(new_r.to_bits(), Ordering::Relaxed);
+                buf.radiance_g_atomic(idx)
+                    .store(new_g.to_bits(), Ordering::Relaxed);
+                buf.radiance_b_atomic(idx)
+                    .store(new_b.to_bits(), Ordering::Relaxed);
+                buf.frame_id_atomic(idx).store(frame, Ordering::Relaxed);
+            }
+        }
+    }
+
+    /// Sharded RwLock write: takes a write lock on the target shard.
+    fn write_sharded(&self, pos: Vec3, normal: Vec3, radiance: Vec3) {
         let idx = spatial_hash(pos, normal, self.config.cell_size, self.config.buffer_size);
         let (shard, offset) = self.shard_and_offset(idx);
         let frame = self.current_frame.load(Ordering::Relaxed);
 
-        let mut guard = self.shards[shard]
-            .write()
-            .unwrap_or_else(|e| e.into_inner());
+        let shards = self.shards.as_ref().unwrap();
+        let mut guard = shards[shard].write().unwrap_or_else(|e| e.into_inner());
         let entry = &mut guard[offset];
 
         if entry.sample_count == 0 {
@@ -323,22 +558,9 @@ impl RadianceCache {
         }
     }
 
-    /// Flush this thread's deferred writes into the shared cache.
-    ///
-    /// Call from every rayon worker + the main thread between passes:
-    /// ```ignore
-    /// rayon::broadcast(|_| cache.flush_thread_writes());
-    /// cache.flush_thread_writes(); // main thread participates in par_iter
-    /// ```
-    pub fn flush_thread_writes(&self) {
-        WRITE_BUFFER.with(|buf| {
-            let mut writes = buf.borrow_mut();
-            for &(pos, normal, radiance) in writes.iter() {
-                self.write_to_cache(pos, normal, radiance);
-            }
-            writes.clear();
-        });
-    }
+    // -----------------------------------------------------------------------
+    // Frame / clear / stats
+    // -----------------------------------------------------------------------
 
     /// Advance the internal frame counter (call between progressive passes).
     pub fn advance_frame(&self) {
@@ -352,10 +574,26 @@ impl RadianceCache {
 
     /// Clear all entries (call on scene change, NOT camera-only moves).
     pub fn clear(&self) {
-        for shard in &self.shards {
-            let mut guard = shard.write().unwrap_or_else(|e| e.into_inner());
-            for entry in guard.iter_mut() {
-                *entry = CacheEntry::default();
+        if let Some(buf) = &self.atomic_buf {
+            for i in 0..buf.len {
+                // Safety: i < buf.len
+                unsafe {
+                    buf.sample_count_atomic(i).store(0, Ordering::Relaxed);
+                    buf.radiance_r_atomic(i)
+                        .store(0.0f32.to_bits(), Ordering::Relaxed);
+                    buf.radiance_g_atomic(i)
+                        .store(0.0f32.to_bits(), Ordering::Relaxed);
+                    buf.radiance_b_atomic(i)
+                        .store(0.0f32.to_bits(), Ordering::Relaxed);
+                    buf.frame_id_atomic(i).store(0, Ordering::Relaxed);
+                }
+            }
+        } else if let Some(shards) = &self.shards {
+            for shard in shards {
+                let mut guard = shard.write().unwrap_or_else(|e| e.into_inner());
+                for entry in guard.iter_mut() {
+                    *entry = CacheEntry::default();
+                }
             }
         }
         self.stat_reads.store(0, Ordering::Relaxed);
@@ -376,7 +614,11 @@ impl RadianceCache {
     ///
     /// O(1) — uses an atomic counter updated on first write to each slot.
     pub fn occupancy(&self) -> f32 {
-        let total = self.entries_per_shard * NUM_SHARDS;
+        let total = if self.atomic_buf.is_some() {
+            self.config.buffer_size as usize
+        } else {
+            self.entries_per_shard * NUM_SHARDS
+        };
         if total == 0 {
             return 0.0;
         }
@@ -385,10 +627,18 @@ impl RadianceCache {
 
     /// Get sample count at a position (for heatmap AOV visualization).
     pub fn sample_count_at(&self, pos: Vec3, normal: Vec3) -> u32 {
-        let idx = spatial_hash(pos, normal, self.config.cell_size, self.config.buffer_size);
-        let (shard, offset) = self.shard_and_offset(idx);
-        let guard = self.shards[shard].read().unwrap_or_else(|e| e.into_inner());
-        guard[offset].sample_count
+        if let Some(buf) = &self.atomic_buf {
+            let idx =
+                spatial_hash(pos, normal, self.config.cell_size, self.config.buffer_size) as usize;
+            // Safety: idx = hash % buffer_size, always < buf.len
+            unsafe { buf.sample_count_atomic(idx).load(Ordering::Relaxed) }
+        } else {
+            let idx = spatial_hash(pos, normal, self.config.cell_size, self.config.buffer_size);
+            let (shard, offset) = self.shard_and_offset(idx);
+            let shards = self.shards.as_ref().unwrap();
+            let guard = shards[shard].read().unwrap_or_else(|e| e.into_inner());
+            guard[offset].sample_count
+        }
     }
 
     /// Raw read count (for per-pass delta calculation).
@@ -410,8 +660,17 @@ impl RadianceCache {
 mod tests {
     use super::*;
 
+    /// Default config uses lock-free path.
     fn default_cache() -> RadianceCache {
         RadianceCache::new(RadianceCacheConfig::default())
+    }
+
+    /// Explicit RwLock path for dual-backend testing.
+    fn rwlock_cache() -> RadianceCache {
+        RadianceCache::new(RadianceCacheConfig {
+            lock_free: false,
+            ..Default::default()
+        })
     }
 
     #[test]
@@ -467,6 +726,28 @@ mod tests {
         );
         let cached = result.unwrap();
         // With EMA blending and identical samples, should converge to the input
+        assert!((cached.x - color.x).abs() < 0.1);
+        assert!((cached.y - color.y).abs() < 0.1);
+        assert!((cached.z - color.z).abs() < 0.1);
+    }
+
+    #[test]
+    fn test_rwlock_insert_and_lookup() {
+        let cache = rwlock_cache();
+        let pos = Vec3::new(5.0, 5.0, 5.0);
+        let normal = Vec3::Y;
+        let color = Vec3::new(0.8, 0.4, 0.2);
+
+        for _ in 0..cache.config().min_samples {
+            cache.write(pos, normal, color);
+        }
+
+        let result = cache.lookup(pos, normal);
+        assert!(
+            result.is_some(),
+            "RwLock path should return cached value after min_samples writes"
+        );
+        let cached = result.unwrap();
         assert!((cached.x - color.x).abs() < 0.1);
         assert!((cached.y - color.y).abs() < 0.1);
         assert!((cached.z - color.z).abs() < 0.1);
@@ -648,26 +929,105 @@ mod tests {
     }
 
     #[test]
-    fn test_deferred_writes() {
+    fn test_lock_free_lookup_and_write() {
         let cache = RadianceCache::new(RadianceCacheConfig {
-            deferred_writes: true,
-            min_samples: 1,
+            lock_free: true,
+            min_samples: 2,
             ..Default::default()
         });
-        let pos = Vec3::ZERO;
+        let pos = Vec3::new(3.0, 4.0, 5.0);
+        let normal = Vec3::Z;
+        let color = Vec3::new(0.5, 0.6, 0.7);
+
+        // Below threshold
+        cache.write(pos, normal, color);
+        assert!(cache.lookup(pos, normal).is_none());
+
+        // At threshold
+        cache.write(pos, normal, color);
+        let result = cache.lookup(pos, normal);
+        assert!(result.is_some());
+        let cached = result.unwrap();
+        assert!((cached.x - color.x).abs() < 0.1);
+        assert!((cached.y - color.y).abs() < 0.1);
+        assert!((cached.z - color.z).abs() < 0.1);
+
+        // sample_count_at should match
+        assert_eq!(cache.sample_count_at(pos, normal), 2);
+    }
+
+    #[test]
+    fn test_lock_free_concurrent() {
+        use std::sync::Arc;
+
+        let cache = Arc::new(RadianceCache::new(RadianceCacheConfig {
+            lock_free: true,
+            min_samples: 1,
+            ..Default::default()
+        }));
+
+        std::thread::scope(|s| {
+            // 16 writer threads, each writing 2000 unique positions
+            for t in 0..16 {
+                let cache = Arc::clone(&cache);
+                s.spawn(move || {
+                    for i in 0..2000 {
+                        let pos = Vec3::new(t as f32, i as f32, 0.0);
+                        cache.write(pos, Vec3::Y, Vec3::ONE);
+                    }
+                });
+            }
+            // 8 reader threads, reading overlapping positions
+            for t in 0..8 {
+                let cache = Arc::clone(&cache);
+                s.spawn(move || {
+                    for i in 0..2000 {
+                        let pos = Vec3::new(t as f32, i as f32, 0.0);
+                        let _ = cache.lookup(pos, Vec3::Y);
+                    }
+                });
+            }
+        });
+        // No panic/crash = pass
+    }
+
+    #[test]
+    fn test_lock_free_cas_contention() {
+        use std::sync::Arc;
+
+        // All threads write to the SAME cell — maximum contention
+        let cache = Arc::new(RadianceCache::new(RadianceCacheConfig {
+            lock_free: true,
+            min_samples: 1,
+            ..Default::default()
+        }));
+        let pos = Vec3::new(42.0, 42.0, 42.0);
         let normal = Vec3::Y;
 
-        cache.write(pos, normal, Vec3::ONE);
-        // Buffered — not yet in shared cache
+        std::thread::scope(|s| {
+            for _ in 0..16 {
+                let cache = Arc::clone(&cache);
+                s.spawn(move || {
+                    for _ in 0..1000 {
+                        cache.write(pos, normal, Vec3::ONE);
+                    }
+                });
+            }
+        });
+
+        // Entry should exist and have a reasonable count (some CAS failures expected)
+        let count = cache.sample_count_at(pos, normal);
+        assert!(count >= 1, "at least one write should have succeeded");
+        // With 16*1000 attempts, dropped samples are OK but count should be significant
         assert!(
-            cache.lookup(pos, normal).is_none(),
-            "deferred write should not appear before flush"
+            count >= 100,
+            "CAS contention dropped too many: {count}/16000"
         );
 
-        cache.flush_thread_writes();
-        assert!(
-            cache.lookup(pos, normal).is_some(),
-            "deferred write should appear after flush"
-        );
+        // Radiance should be finite (no NaN/corruption)
+        let cached = cache.lookup(pos, normal).unwrap();
+        assert!(cached.x.is_finite());
+        assert!(cached.y.is_finite());
+        assert!(cached.z.is_finite());
     }
 }
