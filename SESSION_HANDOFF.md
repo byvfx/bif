@@ -1,6 +1,6 @@
-# Session Handoff - February 20, 2026
+# Session Handoff - February 21, 2026
 
-**Last Updated:** M23 SHARC Radiance Cache implementation
+**Last Updated:** SHARC cache benchmark (cache slower on simple scenes)
 **Next Milestone:** M29 USD Export + Non-Destructive Layers
 **Project:** BIF - VFX Scene Assembler & Renderer
 
@@ -18,6 +18,15 @@
 ---
 
 ## Recent Work
+
+### SHARC Cache Benchmark (Feb 21, 2026)
+
+| Finding | Details |
+|---------|---------|
+| Benchmark | `cache_bench` example: Cornell box, 32 passes, cache OFF vs ON |
+| Result | Cache **0.62x** (slower) — RwLock overhead dominates cheap 12-tri BVH |
+| Hit rate | 5.1% after 32 passes, 59% occupancy |
+| Conclusion | Need heavier scene to see benefit; consider lock-free atomics |
 
 ### M23: SHARC Radiance Cache (Feb 20, 2026)
 
@@ -85,12 +94,11 @@
 
 ## Next Session
 
-**Goal:** M29 USD Export + Non-Destructive Layers (or choose next milestone)
+**Goal:** Heavier cache benchmark or M29 USD Export
 
-1. USD stage authoring via C++ bridge
-2. Opinion layer over reference (Houdini-style non-destructive editing)
-3. Export scattered points as PointInstancer
-4. Round-trip validation (export → reimport → verify)
+1. Build complex test scene (USD instances) for meaningful cache A/B
+2. Consider lock-free cache (atomics instead of RwLock) if overhead confirmed
+3. M29 USD Export: stage authoring, opinion layers, PointInstancer export
 
 ---
 
