@@ -9,7 +9,8 @@ use std::sync::Arc;
 
 use crate::hdri::HdriEnvironment;
 use crate::light::LightList;
-use crate::material::power_heuristic;
+use crate::material::{gen_f32, power_heuristic};
+use crate::radiance_cache::RadianceCache;
 use crate::{Camera, Color, HitRecord, Hittable, Ray};
 use bif_math::Interval;
 use rand::RngCore;
@@ -35,6 +36,8 @@ pub struct RenderConfig {
     pub hdri_rotation: Option<f32>,
     /// Override HDRI intensity. When set, used instead of the value baked into the environment.
     pub hdri_intensity: Option<f32>,
+    /// SHARC radiance cache for secondary bounce reuse.
+    pub radiance_cache: Option<Arc<RadianceCache>>,
 }
 
 /// Compute the color seen by a ray.
@@ -43,6 +46,14 @@ pub struct RenderConfig {
 /// Uses Next Event Estimation (NEE) with Multiple Importance Sampling (MIS)
 /// for environment lighting when an HDRI is present.
 /// Pass-through scatters (opacity cutout) do not consume bounce depth.
+///
+/// SHARC integration: after `min_bounce_depth`, non-delta hits check the
+/// radiance cache. A cache hit with enough samples terminates the path early.
+/// After NEE, surface-local radiance is written back into the cache.
+///
+/// Russian Roulette: after bounce depth >= 3, paths are stochastically
+/// terminated based on throughput magnitude. Survivors are boosted to
+/// keep the estimator unbiased.
 pub fn ray_color(
     ray: &Ray,
     world: &dyn Hittable,
@@ -54,6 +65,7 @@ pub fn ray_color(
     let mut throughput = Color::ONE;
     let mut accumulated = Color::ZERO;
     let mut remaining_depth = depth;
+    let mut bounce_count = 0u32;
 
     // Resolve HDRI overrides once before the bounce loop
     let env_params = config.environment.as_ref().map(|env| {
@@ -61,6 +73,12 @@ pub fn ray_color(
         let intensity = config.hdri_intensity.unwrap_or_else(|| env.intensity());
         (env, rotation, intensity)
     });
+
+    // Cache config (read once to avoid repeated Option checks)
+    let cache = config.radiance_cache.as_deref();
+    let cache_min_depth = cache
+        .map(|c| c.config().min_bounce_depth)
+        .unwrap_or(u32::MAX);
 
     // Track last scatter PDF for MIS weighting when hitting environment
     let mut last_scatter_pdf = 0.0_f32;
@@ -95,12 +113,26 @@ pub fn ray_color(
             break;
         }
 
+        // --- SHARC cache READ (non-delta, deep enough) ---
+        let is_delta = rec.material.is_delta();
+        if !is_delta && bounce_count >= cache_min_depth {
+            if let Some(c) = cache {
+                if let Some(cached) = c.lookup(rec.p, rec.normal) {
+                    accumulated += throughput * cached;
+                    break;
+                }
+            }
+        }
+
         // Accumulate emission from hit surfaces
         let emission = rec.material.emitted(rec.u, rec.v, rec.p);
         accumulated += throughput * emission;
 
+        // Surface-local radiance (emission + NEE) — written to cache after NEE
+        let mut local_radiance = emission;
+
         // NEE: sample lights directly (non-delta materials only)
-        if !rec.material.is_delta() {
+        if !is_delta {
             // Sample HDRI environment
             if let Some((env, rotation, intensity)) = env_params.as_ref() {
                 let (light_dir, light_emission, light_pdf) =
@@ -118,8 +150,10 @@ pub fn ray_color(
                     let bsdf_pdf = rec.material.pdf(&current_ray, &rec, &shadow_ray);
                     let mis_w = power_heuristic(light_pdf, bsdf_pdf);
                     let cos_theta = rec.normal.dot(light_dir).max(0.0);
-                    accumulated += throughput * bsdf_val * light_emission * cos_theta * mis_w
-                        / light_pdf.max(1e-10);
+                    let nee_contrib =
+                        bsdf_val * light_emission * cos_theta * mis_w / light_pdf.max(1e-10);
+                    accumulated += throughput * nee_contrib;
+                    local_radiance += nee_contrib;
                 }
             }
 
@@ -139,27 +173,49 @@ pub fn ray_color(
                         let bsdf_pdf = rec.material.pdf(&current_ray, &rec, &shadow_ray);
                         let mis_w = power_heuristic(light_sample.pdf, bsdf_pdf);
                         let cos_theta = rec.normal.dot(light_sample.direction).max(0.0);
-                        accumulated +=
-                            throughput * bsdf_val * light_sample.emission * cos_theta * mis_w
-                                / light_sample.pdf.max(1e-10);
+                        let nee_contrib = bsdf_val * light_sample.emission * cos_theta * mis_w
+                            / light_sample.pdf.max(1e-10);
+                        accumulated += throughput * nee_contrib;
+                        local_radiance += nee_contrib;
                     }
                 }
+            }
+        }
+
+        // --- SHARC cache WRITE (non-delta, deep enough) ---
+        // NOTE: Stores emission + NEE only (not indirect). Biases cached values
+        // low but converges over passes via EMA blending. Acceptable for IPR
+        // preview; deferred write-back needed for final quality.
+        if !is_delta && bounce_count >= cache_min_depth {
+            if let Some(c) = cache {
+                c.write(rec.p, rec.normal, local_radiance);
             }
         }
 
         match rec.material.scatter(&current_ray, &rec, rng) {
             Some(result) => {
                 last_scatter_pdf = result.pdf;
-                last_was_delta = rec.material.is_delta();
+                last_was_delta = is_delta;
                 current_ray = result.scattered;
                 throughput *= result.attenuation;
                 if !result.pass_through {
                     remaining_depth -= 1;
+                    bounce_count += 1;
                 }
             }
             None => {
                 break;
             }
+        }
+
+        // --- Russian Roulette (after bounce >= 3) ---
+        if bounce_count >= 3 {
+            let max_component = throughput.x.max(throughput.y).max(throughput.z);
+            let survival_prob = max_component.clamp(0.0, 0.95);
+            if survival_prob < 1e-6 || gen_f32(rng) > survival_prob {
+                break;
+            }
+            throughput /= survival_prob;
         }
     }
 
@@ -175,6 +231,8 @@ pub struct AovData {
     pub normal: Color,
     /// Alpha channel (1.0 = hit, 0.0 = miss).
     pub alpha: f32,
+    /// SHARC cache sample count at primary hit (for heatmap AOV).
+    pub cache_samples: u32,
 }
 
 impl Default for AovData {
@@ -183,14 +241,15 @@ impl Default for AovData {
             depth: f32::INFINITY,
             normal: Color::ZERO,
             alpha: 0.0,
+            cache_samples: 0,
         }
     }
 }
 
 /// Compute the color and AOV data seen by a ray.
 ///
-/// This is identical to `ray_color` but also captures depth and normal
-/// from the first hit for AOV output.
+/// Identical to `ray_color` but also captures depth, normal, and
+/// cache-heatmap data from the primary hit for AOV output.
 pub fn ray_color_with_aovs(
     ray: &Ray,
     world: &dyn Hittable,
@@ -202,6 +261,7 @@ pub fn ray_color_with_aovs(
     let mut throughput = Color::ONE;
     let mut accumulated = Color::ZERO;
     let mut remaining_depth = depth;
+    let mut bounce_count = 0u32;
 
     // AOV data - captured from first hit only
     let mut aov = AovData::default();
@@ -213,6 +273,12 @@ pub fn ray_color_with_aovs(
         let intensity = config.hdri_intensity.unwrap_or_else(|| env.intensity());
         (env, rotation, intensity)
     });
+
+    // Cache config
+    let cache = config.radiance_cache.as_deref();
+    let cache_min_depth = cache
+        .map(|c| c.config().min_bounce_depth)
+        .unwrap_or(u32::MAX);
 
     // Track last scatter PDF for MIS weighting when hitting environment
     let mut last_scatter_pdf = 0.0_f32;
@@ -251,15 +317,32 @@ pub fn ray_color_with_aovs(
             aov.depth = rec.t;
             aov.normal = rec.normal;
             aov.alpha = 1.0;
+            // Cache heatmap: sample count at primary hit
+            if let Some(c) = cache {
+                aov.cache_samples = c.sample_count_at(rec.p, rec.normal);
+            }
             first_hit = false;
+        }
+
+        // --- SHARC cache READ ---
+        let is_delta = rec.material.is_delta();
+        if !is_delta && bounce_count >= cache_min_depth {
+            if let Some(c) = cache {
+                if let Some(cached) = c.lookup(rec.p, rec.normal) {
+                    accumulated += throughput * cached;
+                    break;
+                }
+            }
         }
 
         // Accumulate emission from hit surfaces
         let emission = rec.material.emitted(rec.u, rec.v, rec.p);
         accumulated += throughput * emission;
 
+        let mut local_radiance = emission;
+
         // NEE: sample lights directly (non-delta materials only)
-        if !rec.material.is_delta() {
+        if !is_delta {
             // Sample HDRI environment
             if let Some((env, rotation, intensity)) = env_params.as_ref() {
                 let (light_dir, light_emission, light_pdf) =
@@ -275,8 +358,10 @@ pub fn ray_color_with_aovs(
                     let bsdf_pdf = rec.material.pdf(&current_ray, &rec, &shadow_ray);
                     let mis_w = power_heuristic(light_pdf, bsdf_pdf);
                     let cos_theta = rec.normal.dot(light_dir).max(0.0);
-                    accumulated += throughput * bsdf_val * light_emission * cos_theta * mis_w
-                        / light_pdf.max(1e-10);
+                    let nee_contrib =
+                        bsdf_val * light_emission * cos_theta * mis_w / light_pdf.max(1e-10);
+                    accumulated += throughput * nee_contrib;
+                    local_radiance += nee_contrib;
                 }
             }
 
@@ -295,27 +380,49 @@ pub fn ray_color_with_aovs(
                         let bsdf_pdf = rec.material.pdf(&current_ray, &rec, &shadow_ray);
                         let mis_w = power_heuristic(light_sample.pdf, bsdf_pdf);
                         let cos_theta = rec.normal.dot(light_sample.direction).max(0.0);
-                        accumulated +=
-                            throughput * bsdf_val * light_sample.emission * cos_theta * mis_w
-                                / light_sample.pdf.max(1e-10);
+                        let nee_contrib = bsdf_val * light_sample.emission * cos_theta * mis_w
+                            / light_sample.pdf.max(1e-10);
+                        accumulated += throughput * nee_contrib;
+                        local_radiance += nee_contrib;
                     }
                 }
+            }
+        }
+
+        // --- SHARC cache WRITE ---
+        // NOTE: Stores emission + NEE only (not indirect). Biases cached values
+        // low but converges over passes via EMA blending. Acceptable for IPR
+        // preview; deferred write-back needed for final quality.
+        if !is_delta && bounce_count >= cache_min_depth {
+            if let Some(c) = cache {
+                c.write(rec.p, rec.normal, local_radiance);
             }
         }
 
         match rec.material.scatter(&current_ray, &rec, rng) {
             Some(result) => {
                 last_scatter_pdf = result.pdf;
-                last_was_delta = rec.material.is_delta();
+                last_was_delta = is_delta;
                 current_ray = result.scattered;
                 throughput *= result.attenuation;
                 if !result.pass_through {
                     remaining_depth -= 1;
+                    bounce_count += 1;
                 }
             }
             None => {
                 break;
             }
+        }
+
+        // --- Russian Roulette (after bounce >= 3) ---
+        if bounce_count >= 3 {
+            let max_component = throughput.x.max(throughput.y).max(throughput.z);
+            let survival_prob = max_component.clamp(0.0, 0.95);
+            if survival_prob < 1e-6 || gen_f32(rng) > survival_prob {
+                break;
+            }
+            throughput /= survival_prob;
         }
     }
 
@@ -336,12 +443,14 @@ pub fn render_pixel_with_aovs(
     let mut normal_sum = Color::ZERO;
     let mut alpha_sum = 0.0_f32;
     let mut hit_count = 0u32;
+    let mut max_cache_samples = 0u32;
 
     for _ in 0..config.samples_per_pixel {
         let ray = camera.get_ray(x, y, rng);
         let (color, aov) = ray_color_with_aovs(&ray, world, config.max_depth, config, rng);
         pixel_color += color;
         alpha_sum += aov.alpha;
+        max_cache_samples = max_cache_samples.max(aov.cache_samples);
 
         // Only average depth/normal from rays that hit something
         if aov.depth < f32::INFINITY {
@@ -358,6 +467,7 @@ pub fn render_pixel_with_aovs(
             depth: depth_sum / hit_count as f32,
             normal: (normal_sum / hit_count as f32).normalize(),
             alpha: avg_alpha,
+            cache_samples: max_cache_samples,
         }
     } else {
         AovData {
@@ -543,6 +653,7 @@ mod tests {
             pass_number: 0,
             hdri_rotation: None,
             hdri_intensity: None,
+            radiance_cache: None,
         };
 
         let mut rng = StdRng::seed_from_u64(42);

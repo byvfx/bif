@@ -361,6 +361,15 @@ fn batch_render_loop(
     }
 
     // Build render config
+    // Batch render: create a per-frame cache for multi-SPP accumulation.
+    // For animated scenes, cache is cleared per frame in the loop below.
+    let batch_cache = if settings.radiance_cache_config.enabled {
+        Some(Arc::new(bif_renderer::RadianceCache::new(
+            settings.radiance_cache_config.clone(),
+        )))
+    } else {
+        None
+    };
     let render_config = RenderConfig {
         samples_per_pixel: settings.samples_per_pixel,
         max_depth: settings.max_depth,
@@ -373,6 +382,7 @@ fn batch_render_loop(
         // Pass viewport overrides here when batch render settings UI is added.
         hdri_rotation: None,
         hdri_intensity: None,
+        radiance_cache: batch_cache.clone(),
     };
 
     log::info!(
@@ -397,6 +407,10 @@ fn batch_render_loop(
         // Rebuild scene for animated geometry
         // Always rebuild for all frames to ensure correct transforms at each time
         if scene.has_animated_geometry {
+            // Clear radiance cache — geometry moved, cached values are stale
+            if let Some(ref cache) = batch_cache {
+                cache.clear();
+            }
             if let Some(ref builder) = scene.scene_builder {
                 log::info!("Building BVH for frame {}", frame);
                 let rebuild_start = std::time::Instant::now();
@@ -627,7 +641,7 @@ where
             let result = render_bucket_with_aovs(bucket, camera, world.as_ref(), config);
 
             // Update progress
-            let done = completed.fetch_add(1, Ordering::Relaxed) + 1;
+            let done = completed.fetch_add(1, Ordering::Relaxed).wrapping_add(1);
             progress_callback(done as f32 / total_buckets as f32);
 
             Some(result)

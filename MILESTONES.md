@@ -848,18 +848,31 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 
 ---
 
-### ~~Milestone 23: Renderer Polish~~ (Dissolved)
+### Milestone 23: SHARC Radiance Cache ✅
 
-> **Status:** Dissolved — techniques cherry-picked into relevant milestones as needed.
->
-> - Blue noise dithered sampling → add with denoising (M26)
-> - Area light importance sampling → partially done in M19.2
-> - BSSRDF → add when subsurface materials needed
-> - MIS improvements → add when fireflies become a problem
-> - Specular manifold sampling → add when caustics needed
-> - .tx texture pipeline → done in M17.1 (OIIO)
->
-> **Reference:** [Arnold Research Papers](https://blogs.autodesk.com/media-and-entertainment/2024/01/04/autodesk-arnold-research-papers/)
+- **Completed:** 2026-02-20
+- **Time Invested:** ~4 hours
+- **Goal:** Spatially Hashed Radiance Cache (idTech 8 inspired) for secondary bounce reuse
+- **Key Achievements:**
+  - `RadianceCache` with 64-shard `RwLock<Vec<CacheEntry>>` (GPU-compatible `#[repr(C)]` layout)
+  - Spatial hash with dominant-axis normal disambiguation (6 directions, prevents floor/ceiling leak)
+  - EMA blending for cache updates, staleness eviction via `max_age` frames
+  - Cache READ in bounce loop: skips remaining bounces when cached radiance available
+  - Cache WRITE: stores surface-local radiance (emission + NEE) after each hit
+  - Russian Roulette path termination (bounce >= 3, throughput-proportional survival)
+  - `auto_cell_size()` from scene AABB for sensible defaults
+  - IPR integration: cache persists across progressive passes, clears on camera move
+  - Batch integration: cache persists within frame, clears per-frame for animated scenes
+  - Cache Heatmap AOV (sample count visualization: black → red → yellow → green)
+  - egui controls: enable/disable, cell size, buffer size, min samples, min bounce, hit rate/occupancy stats
+  - 14 unit tests for hash, cache, concurrency, staleness
+- **Key Files:**
+  - `crates/bif_renderer/src/radiance_cache.rs` (NEW) — core SHARC implementation
+  - `crates/bif_renderer/src/renderer.rs` — cache integration + Russian Roulette
+  - `crates/bif_viewport/src/ivar_state.rs` — cache config + AOV channel
+  - `crates/bif_viewport/src/ivar_build.rs` — cache lifecycle + heatmap piping
+  - `crates/bif_viewport/src/batch_render.rs` — batch cache lifecycle
+- **Reference:** idTech 8 GI talk, GI_ID_METHOD.md
 
 ---
 
@@ -917,6 +930,8 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 | 17.1 | OIIO/.tx | OpenImageIO texture pipeline (feature-gated) | ✅ Complete |
 | 18 | Animation | Time-sampled USD + timeline UI | ✅ Complete |
 | 18.1-18.5 | Animation Polish | Thread safety, USD fixes, multi-prototype | ✅ Complete |
+| 19-21.2 | Frame Rendering + Interactivity | Batch render, animation, picking, scatter | ✅ Complete |
+| 23 | SHARC Radiance Cache | idTech 8 cache + Russian Roulette + heatmap AOV | ✅ Complete |
 
 ### Active & Planned (new order)
 
@@ -939,7 +954,6 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 
 | # | Milestone | Status | Reason |
 |---|-----------|--------|--------|
-| 23 | Renderer Polish | Dissolved | Grab bag — techniques cherry-picked into relevant milestones |
 | 24 | Spectral Rendering | Cut | Zero production value for BIF's goals |
 
 ---
@@ -987,8 +1001,8 @@ Key papers (cherry-pick into relevant milestones as needed):
 
 ---
 
-**Last Updated:** February 15, 2026
-**Status:** Milestones 0-21.2 complete
+**Last Updated:** February 20, 2026
+**Status:** Milestones 0-23 complete (M23 repurposed for SHARC)
 **Current:** Planning next milestone
 **Next:** M29 (USD export) → M26 (denoising) → M25 (volumes)
-**Roadmap revision:** M23 dissolved, M24 cut, M29 moved up to 5th priority
+**Roadmap revision:** M23 repurposed (SHARC radiance cache), M24 cut, M29 moved up to 5th priority
