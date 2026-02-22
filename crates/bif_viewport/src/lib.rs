@@ -259,8 +259,10 @@ pub struct Renderer {
     pub(crate) working_scene: bif_core::Scene,
     /// Counters for generating unique primitive names (e.g. "Cube", "Cube_2").
     pub(crate) primitive_name_counters: std::collections::HashMap<String, usize>,
-    /// Mapping from node graph NodeId to working_scene prototype ID.
+    /// Mapping from node graph NodeId to working_scene prototype ID (single-proto nodes like Primitive).
     pub(crate) node_proto_map: std::collections::HashMap<egui_snarl::NodeId, usize>,
+    /// Mapping from node graph NodeId to multiple prototype IDs (multi-proto nodes like UsdRead).
+    pub(crate) node_proto_ids: std::collections::HashMap<egui_snarl::NodeId, Vec<usize>>,
     /// Mapping from scatter node NodeId to point cloud ID.
     pub(crate) node_cloud_map: std::collections::HashMap<egui_snarl::NodeId, usize>,
     /// Monotonically increasing counter for unique cloud IDs.
@@ -832,6 +834,7 @@ impl Renderer {
             working_scene: bif_core::Scene::new("Working"),
             primitive_name_counters: std::collections::HashMap::new(),
             node_proto_map: std::collections::HashMap::new(),
+            node_proto_ids: std::collections::HashMap::new(),
             node_cloud_map: std::collections::HashMap::new(),
             next_cloud_id: 0,
             node_scatter_surface_map: std::collections::HashMap::new(),

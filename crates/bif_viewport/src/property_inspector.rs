@@ -385,6 +385,67 @@ fn render_matrix(ui: &mut egui::Ui, matrix: &Mat4) {
     );
 }
 
+/// Render Xform node properties in the property panel (like Nuke/Houdini).
+///
+/// Returns `true` if any value was changed (caller should emit XformChanged).
+pub fn render_xform_properties(
+    ui: &mut egui::Ui,
+    translate: &mut [f32; 3],
+    rotate: &mut [f32; 3],
+    scale: &mut [f32; 3],
+    prim_filter: &mut String,
+) -> bool {
+    ui.heading("Xform");
+    ui.separator();
+
+    let mut changed = false;
+
+    ui.label("Translation");
+    egui::Grid::new("xform_translate_grid")
+        .num_columns(4)
+        .spacing([4.0, 2.0])
+        .show(ui, |ui| {
+            let (c, _) = drag_value_row(ui, &["X", "Y", "Z"], translate.as_mut_slice(), 0.1);
+            changed |= c;
+        });
+
+    ui.add_space(4.0);
+    ui.label("Rotation");
+    egui::Grid::new("xform_rotation_grid")
+        .num_columns(4)
+        .spacing([4.0, 2.0])
+        .show(ui, |ui| {
+            let (c, _) = drag_value_row(ui, &["X", "Y", "Z"], rotate.as_mut_slice(), 1.0);
+            changed |= c;
+        });
+
+    ui.add_space(4.0);
+    ui.label("Scale");
+    egui::Grid::new("xform_scale_grid")
+        .num_columns(4)
+        .spacing([4.0, 2.0])
+        .show(ui, |ui| {
+            let (c, _) = drag_value_row(ui, &["X", "Y", "Z"], scale.as_mut_slice(), 0.01);
+            changed |= c;
+        });
+
+    ui.add_space(4.0);
+    ui.horizontal(|ui| {
+        ui.label("Filter:");
+        ui.add(
+            egui::TextEdit::singleline(prim_filter)
+                .hint_text("all prims (future)")
+                .desired_width(ui.available_width()),
+        );
+    });
+    ui.colored_label(
+        egui::Color32::from_rgb(120, 120, 120),
+        "Filter is not yet implemented",
+    );
+
+    changed
+}
+
 /// Reset cached transform edit values (call when selection changes).
 pub fn reset_transform_edit_cache(ctx: &egui::Context) {
     ctx.data_mut(|d| {

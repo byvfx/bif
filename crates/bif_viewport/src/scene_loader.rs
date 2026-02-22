@@ -14,6 +14,21 @@ use crate::mesh_data::MeshData;
 use crate::timeline::TimelineState;
 use crate::{texture_loader, Renderer, MAX_INSTANCES};
 
+/// Resolve the USD prim path for an instance — use the instance's prim_path
+/// if set, otherwise synthesise one from the prototype name and index.
+fn resolve_prim_path(inst: &bif_core::Instance, scene: &bif_core::Scene, idx: usize) -> String {
+    if !inst.prim_path.is_empty() {
+        inst.prim_path.clone()
+    } else {
+        let proto_name = scene
+            .prototypes
+            .get(inst.prototype_id)
+            .map(|p| p.name.as_str())
+            .unwrap_or("unknown");
+        format!("/BIF/{}/{}", proto_name, idx)
+    }
+}
+
 impl Renderer {
     /// Load scene data from a pre-parsed Scene (pure Rust USDA parser fallback).
     ///
@@ -257,18 +272,7 @@ impl Renderer {
             .instances()
             .iter()
             .enumerate()
-            .map(|(idx, inst)| {
-                if !inst.prim_path.is_empty() {
-                    inst.prim_path.clone()
-                } else {
-                    let proto_name = scene
-                        .prototypes
-                        .get(inst.prototype_id)
-                        .map(|p| p.name.as_str())
-                        .unwrap_or("unknown");
-                    format!("/BIF/{}/{}", proto_name, idx)
-                }
-            })
+            .map(|(idx, inst)| resolve_prim_path(inst, scene, idx))
             .collect();
         self.instance_animations = scene.instance_animations().to_vec();
         self.last_evaluated_frame = 0.0;
@@ -336,17 +340,27 @@ impl Renderer {
 
     /// Remove a prototype and re-index all maps that reference prototype IDs.
     ///
-    /// Updates `node_proto_map` and `instancer_results` to account for
-    /// the index shift after removal. Returns `true` if the prototype existed.
+    /// Updates `node_proto_map`, `node_proto_ids`, and `instancer_results`
+    /// to account for the index shift after removal. Returns `true` if the
+    /// prototype existed.
     pub fn remove_and_reindex_prototype(&mut self, proto_id: usize) -> bool {
         if !self.working_scene.remove_prototype(proto_id) {
             log::error!("Prototype {} not found for removal", proto_id);
             return false;
         }
-        // Re-index node_proto_map
+        // Re-index node_proto_map (single-proto nodes)
         for v in self.node_proto_map.values_mut() {
             if *v > proto_id {
                 *v -= 1;
+            }
+        }
+        // Re-index node_proto_ids (multi-proto nodes like UsdRead)
+        for ids in self.node_proto_ids.values_mut() {
+            ids.retain(|id| *id != proto_id);
+            for id in ids.iter_mut() {
+                if *id > proto_id {
+                    *id -= 1;
+                }
             }
         }
         // Remove instancer results referencing deleted prototype
@@ -493,18 +507,39 @@ impl Renderer {
 
         let use_multi_draw = scene.prototypes.len() > 1;
 
+        // Compute active node set from display flag (None = everything active)
+        let active_nodes: Option<std::collections::HashSet<egui_snarl::NodeId>> = self
+            .node_graph_state
+            .display_node
+            .map(|dn| crate::node_graph::collect_upstream_nodes(dn, &self.node_graph_state.snarl));
+        let is_node_active = |node_id: &egui_snarl::NodeId| {
+            active_nodes.as_ref().is_none_or(|s| s.contains(node_id))
+        };
+
         // Prototypes consumed by instancers or scatter surfaces — hide from viewport
         let instanced_proto_ids: std::collections::HashSet<usize> = self
             .instancer_results
-            .values()
-            .flatten()
-            .map(|inst| inst.prototype_id)
+            .iter()
+            .filter(|(nid, _)| is_node_active(nid))
+            .flat_map(|(_, insts)| insts.iter().map(|inst| inst.prototype_id))
             .collect();
-        let scatter_surface_ids: std::collections::HashSet<usize> =
-            self.node_scatter_surface_map.values().copied().collect();
+        let scatter_surface_ids: std::collections::HashSet<usize> = self
+            .node_scatter_surface_map
+            .iter()
+            .filter(|(nid, _)| is_node_active(nid))
+            .map(|(_, &pid)| pid)
+            .collect();
+        // Also hide prototypes from inactive nodes (display flag gating)
+        let display_hidden_proto_ids: std::collections::HashSet<usize> = self
+            .node_proto_map
+            .iter()
+            .filter(|(nid, _)| !is_node_active(nid))
+            .map(|(_, &pid)| pid)
+            .collect();
         let hidden_proto_ids: std::collections::HashSet<usize> = instanced_proto_ids
             .union(&scatter_surface_ids)
             .copied()
+            .chain(display_hidden_proto_ids.iter().copied())
             .collect();
         if !hidden_proto_ids.is_empty() {
             log::debug!(
@@ -580,9 +615,15 @@ impl Renderer {
                         .map(|proto| (proto.mesh.as_ref(), inst.model_matrix(), mesh_idx))
                 })
                 .collect();
-            // Bake instancer instances so Ivar (identity transform) can render them
+            // Bake active instancer instances so Ivar (identity transform) can render them
             let base_idx = meshes_with_transforms.len();
-            for (i, inst) in self.instancer_results.values().flatten().enumerate() {
+            for (i, inst) in self
+                .instancer_results
+                .iter()
+                .filter(|(nid, _)| is_node_active(nid))
+                .flat_map(|(_, insts)| insts.iter())
+                .enumerate()
+            {
                 if let Some(proto) = scene.prototypes.get(inst.prototype_id) {
                     meshes_with_transforms.push((
                         proto.mesh.as_ref(),
@@ -601,6 +642,32 @@ impl Renderer {
                 .collect();
             MeshData::combine_with_transforms(&meshes_with_transforms)
         };
+
+        // Rebuild GPU textures from the full accumulated working_scene so that
+        // materials from multiple USD files all resolve correctly.
+        self.gpu_textures = texture_loader::create_gpu_textures_for_scene(
+            &self.device,
+            &self.queue,
+            scene,
+            self.texture_base_dir.as_deref(),
+        );
+
+        // Rebuild texture bind group for the refreshed textures
+        let texture_view_refs: Vec<&wgpu::TextureView> = self.gpu_textures.views.iter().collect();
+        self.texture_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("WS Texture Bind Group"),
+            layout: &self.texture_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureViewArray(&texture_view_refs),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&self.texture_sampler),
+                },
+            ],
+        });
 
         // Material table (use default for primitives)
         let material_table = if scene.materials.is_empty() {
@@ -647,7 +714,7 @@ impl Renderer {
             self.has_triangle_materials = false;
         }
 
-        // Rebuild material + texture bind groups
+        // Rebuild material bind group
         self.material_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("WS Material Bind Group"),
             layout: &self.material_bind_group_layout,
@@ -663,22 +730,6 @@ impl Renderer {
                 wgpu::BindGroupEntry {
                     binding: 2,
                     resource: self.triangle_material_buffer.as_entire_binding(),
-                },
-            ],
-        });
-
-        let texture_view_refs: Vec<&wgpu::TextureView> = self.gpu_textures.views.iter().collect();
-        self.texture_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("WS Texture Bind Group"),
-            layout: &self.texture_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureViewArray(&texture_view_refs),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&self.texture_sampler),
                 },
             ],
         });
@@ -708,7 +759,12 @@ impl Renderer {
             .collect();
 
         // Generate instances (pre-allocate for scene + instancer instances)
-        let instancer_count: usize = self.instancer_results.values().map(|v| v.len()).sum();
+        let instancer_count: usize = self
+            .instancer_results
+            .iter()
+            .filter(|(nid, _)| is_node_active(nid))
+            .map(|(_, v)| v.len())
+            .sum();
         let total_capacity = scene.instance_count() + instancer_count;
         let mut instance_transforms = Vec::with_capacity(total_capacity);
         let mut instance_material_ids = Vec::with_capacity(total_capacity);
@@ -759,8 +815,13 @@ impl Renderer {
                 .collect()
         };
 
-        // Append instancer-expanded instances (from Point Instancer nodes)
-        for inst in self.instancer_results.values().flatten() {
+        // Append instancer-expanded instances (from active Point Instancer nodes)
+        for inst in self
+            .instancer_results
+            .iter()
+            .filter(|(nid, _)| is_node_active(nid))
+            .flat_map(|(_, insts)| insts.iter())
+        {
             let model_matrix = inst.model_matrix();
             instance_transforms.push(model_matrix);
             instance_prototype_ids.push(inst.prototype_id);
@@ -775,6 +836,88 @@ impl Renderer {
                 model_matrix: model_matrix.to_cols_array_2d(),
                 material_id,
             });
+        }
+
+        // Apply Xform node transforms in topological order (upstream-first).
+        // Each Xform post-multiplies its T/R/S onto instances whose prototype
+        // originated from any node upstream of the Xform's scene input.
+        {
+            use egui_snarl::{InPinId, NodeId as SnarlNodeId};
+
+            // Collect active Xform nodes: (node_id, translate, rotate_deg, scale)
+            let mut xform_nodes: Vec<SnarlNodeId> = Vec::new();
+            let mut xform_params: Vec<([f32; 3], [f32; 3], [f32; 3])> = Vec::new();
+            for (nid, node) in self.node_graph_state.snarl.node_ids() {
+                if !is_node_active(&nid) {
+                    continue;
+                }
+                if let crate::node_graph::SceneNode::Xform {
+                    translate,
+                    rotate,
+                    scale,
+                    ..
+                } = node
+                {
+                    xform_nodes.push(nid);
+                    xform_params.push((*translate, *rotate, *scale));
+                }
+            }
+
+            for (idx, xform_nid) in xform_nodes.iter().enumerate() {
+                let (t, r, s) = &xform_params[idx];
+                // Build the Xform's 4x4 matrix from T/R/S (Euler XYZ degrees)
+                let rx = r[0].to_radians();
+                let ry = r[1].to_radians();
+                let rz = r[2].to_radians();
+                let rotation = bif_math::Quat::from_euler(bif_math::EulerRot::XYZ, rx, ry, rz);
+                let xform_mat = Mat4::from_scale_rotation_translation(
+                    bif_math::Vec3::new(s[0], s[1], s[2]),
+                    rotation,
+                    bif_math::Vec3::new(t[0], t[1], t[2]),
+                );
+
+                // Walk upstream from this Xform's scene input to find source nodes
+                let upstream = {
+                    let in_pin = self.node_graph_state.snarl.in_pin(InPinId {
+                        node: *xform_nid,
+                        input: 0,
+                    });
+                    if let Some(remote) = in_pin.remotes.first() {
+                        crate::node_graph::collect_upstream_nodes(
+                            remote.node,
+                            &self.node_graph_state.snarl,
+                        )
+                    } else {
+                        continue; // No input connected
+                    }
+                };
+
+                // Resolve which prototype IDs come from those upstream nodes
+                // (check both single-proto map and multi-proto map)
+                let mut affected_proto_ids: std::collections::HashSet<usize> = self
+                    .node_proto_map
+                    .iter()
+                    .filter(|(nid, _)| upstream.contains(nid))
+                    .map(|(_, &pid)| pid)
+                    .collect();
+                for (nid, pids) in &self.node_proto_ids {
+                    if upstream.contains(nid) {
+                        affected_proto_ids.extend(pids);
+                    }
+                }
+
+                if affected_proto_ids.is_empty() {
+                    continue;
+                }
+
+                // Post-multiply onto affected instances
+                for (i, proto_id) in instance_prototype_ids.iter().enumerate() {
+                    if affected_proto_ids.contains(proto_id) {
+                        instance_transforms[i] = xform_mat * instance_transforms[i];
+                        instances[i].model_matrix = instance_transforms[i].to_cols_array_2d();
+                    }
+                }
+            }
         }
 
         // Write instances to GPU (warn + truncate if exceeding buffer capacity)
@@ -826,22 +969,17 @@ impl Renderer {
             .iter()
             .enumerate()
             .filter(|(_idx, inst)| !hidden_proto_ids.contains(&inst.prototype_id))
-            .map(|(idx, inst)| {
-                if !inst.prim_path.is_empty() {
-                    inst.prim_path.clone()
-                } else {
-                    let proto_name = scene
-                        .prototypes
-                        .get(inst.prototype_id)
-                        .map(|p| p.name.as_str())
-                        .unwrap_or("unknown");
-                    format!("/BIF/{}/{}", proto_name, idx)
-                }
-            })
+            .map(|(idx, inst)| resolve_prim_path(inst, scene, idx))
             .collect();
         // Extend for instancer-expanded instances (parallel to instance_transforms)
         let scene_inst_count = prim_paths.len();
-        for (i, inst) in self.instancer_results.values().flatten().enumerate() {
+        for (i, inst) in self
+            .instancer_results
+            .iter()
+            .filter(|(nid, _)| is_node_active(nid))
+            .flat_map(|(_, insts)| insts.iter())
+            .enumerate()
+        {
             let proto_name = scene
                 .prototypes
                 .get(inst.prototype_id)
@@ -1271,18 +1409,7 @@ impl Renderer {
             .instances()
             .iter()
             .enumerate()
-            .map(|(idx, inst)| {
-                if !inst.prim_path.is_empty() {
-                    inst.prim_path.clone()
-                } else {
-                    let proto_name = scene
-                        .prototypes
-                        .get(inst.prototype_id)
-                        .map(|p| p.name.as_str())
-                        .unwrap_or("unknown");
-                    format!("/BIF/{}/{}", proto_name, idx)
-                }
-            })
+            .map(|(idx, inst)| resolve_prim_path(inst, &scene, idx))
             .collect();
 
         // Store animation data for viewport playback
@@ -1534,8 +1661,11 @@ impl Renderer {
                     .add_instance(remapped_proto_id, inst.transform.clone());
             }
         }
+        let mat_source_dir = path.parent().map(|p| p.to_path_buf());
         for mat in &scene.materials {
-            self.working_scene.add_material((**mat).clone());
+            let mut with_dir = (**mat).clone();
+            with_dir.source_dir = mat_source_dir.clone();
+            self.working_scene.add_material(with_dir);
         }
         // Merge point clouds and sync next_cloud_id to avoid ID collisions
         for cloud in &scene.point_clouds {
@@ -1556,6 +1686,11 @@ impl Renderer {
 
         // Build pick scene for viewport selection
         self.rebuild_pick_scene();
+
+        // Rebuild GPU state from accumulated working_scene so multi-USD materials resolve
+        if let Err(e) = self.reload_working_scene() {
+            log::error!("Failed to reload working scene after USD merge: {}", e);
+        }
 
         // Log viewport timing breakdown
         let total_viewport_time = viewport_load_start.elapsed();

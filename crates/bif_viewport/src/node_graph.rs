@@ -67,8 +67,8 @@ pub struct ScatterPointsParams {
 /// Events that the node graph can emit to the parent UI
 #[derive(Debug, Clone)]
 pub enum NodeGraphEvent {
-    /// Load a USD file at the given path
-    LoadUsdFile(String),
+    /// Load a USD file at the given path (from a specific UsdRead node)
+    LoadUsdFile { path: String, node_id: NodeId },
     /// Start an Ivar render with the given SPP
     StartRender { spp: u32 },
     /// Pre-convert scene textures to .tx format
@@ -128,6 +128,8 @@ pub enum NodeGraphEvent {
         as_sublayer: bool,
         export_root: String,
     },
+    /// Xform node T/R/S changed — rebuild scene transforms
+    XformChanged { node_id: NodeId },
     /// Set display flag on a node (which node feeds viewport/export)
     SetDisplayNode(NodeId),
     /// Select a node (for keyboard delete, property inspector, etc.)
@@ -259,6 +261,17 @@ pub enum SceneNode {
         /// Status text from last export attempt
         last_result: Option<String>,
     },
+    /// Transform node — applies translate/rotate/scale to upstream scene
+    Xform {
+        /// Translation offset
+        translate: [f32; 3],
+        /// Euler rotation in degrees (XYZ order)
+        rotate: [f32; 3],
+        /// Scale factors
+        scale: [f32; 3],
+        /// Prim filter (placeholder — non-functional in V1, always all upstream)
+        prim_filter: String,
+    },
     /// HDRI environment map for IBL lighting
     HdriEnvironment {
         /// Path to the HDR file
@@ -373,6 +386,16 @@ impl SceneNode {
         }
     }
 
+    /// Create a new Xform node
+    pub fn xform() -> Self {
+        Self::Xform {
+            translate: [0.0, 0.0, 0.0],
+            rotate: [0.0, 0.0, 0.0],
+            scale: [1.0, 1.0, 1.0],
+            prim_filter: String::new(),
+        }
+    }
+
     /// Create a new HDRI Environment node
     pub fn hdri_environment() -> Self {
         Self::HdriEnvironment {
@@ -401,6 +424,7 @@ impl SceneNode {
             SceneNode::ScatterPoints { .. } => "Scatter Points",
             SceneNode::PointInstancer { .. } => "Point Instancer",
             SceneNode::UsdExport { .. } => "USD Export",
+            SceneNode::Xform { .. } => "Xform",
             SceneNode::HdriEnvironment { .. } => "HDRI Environment",
         }
     }
@@ -417,6 +441,7 @@ impl SceneNode {
             },
             SceneNode::PointInstancer { .. } => 2, // points + prototype
             SceneNode::UsdExport { .. } => 1,      // scene input
+            SceneNode::Xform { .. } => 1,          // scene input
             SceneNode::HdriEnvironment { .. } => 0,
         }
     }
@@ -430,6 +455,7 @@ impl SceneNode {
             SceneNode::ScatterPoints { .. } => 1,
             SceneNode::PointInstancer { .. } => 1,
             SceneNode::UsdExport { .. } => 0, // sink node, no output
+            SceneNode::Xform { .. } => 1,
             SceneNode::HdriEnvironment { .. } => 1,
         }
     }
@@ -457,6 +483,10 @@ impl SceneNode {
                 _ => None,
             },
             SceneNode::UsdExport { .. } => match index {
+                0 => Some(("scene", PinType::Scene)),
+                _ => None,
+            },
+            SceneNode::Xform { .. } => match index {
                 0 => Some(("scene", PinType::Scene)),
                 _ => None,
             },
@@ -488,6 +518,10 @@ impl SceneNode {
                 _ => None,
             },
             SceneNode::UsdExport { .. } => None, // sink node
+            SceneNode::Xform { .. } => match index {
+                0 => Some(("scene", PinType::Scene)),
+                _ => None,
+            },
             SceneNode::HdriEnvironment { .. } => match index {
                 0 => Some(("env", PinType::Environment)),
                 _ => None,
@@ -576,6 +610,38 @@ pub(crate) fn propagate_dirty(start: NodeId, snarl: &mut Snarl<SceneNode>) {
             }
         }
     }
+}
+
+/// BFS-walk all upstream nodes from `start` (following input connections).
+///
+/// Returns a set containing `start` and every node reachable by walking
+/// backwards through input pins. Used to determine the active subgraph
+/// when a display flag is set.
+pub(crate) fn collect_upstream_nodes(
+    start: NodeId,
+    snarl: &Snarl<SceneNode>,
+) -> std::collections::HashSet<NodeId> {
+    use std::collections::{HashSet, VecDeque};
+
+    let mut visited = HashSet::from([start]);
+    let mut queue = VecDeque::from([start]);
+
+    while let Some(current) = queue.pop_front() {
+        let input_count = snarl[current].input_count();
+        for in_idx in 0..input_count {
+            let in_pin = snarl.in_pin(InPinId {
+                node: current,
+                input: in_idx,
+            });
+            for remote in &in_pin.remotes {
+                if visited.insert(remote.node) {
+                    queue.push_back(remote.node);
+                }
+            }
+        }
+    }
+
+    visited
 }
 
 impl SnarlViewer<SceneNode> for SceneNodeViewer {
@@ -681,14 +747,18 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer {
                             *is_loaded = false;
                             *error = None;
                             // Emit load event
-                            self.events
-                                .push(NodeGraphEvent::LoadUsdFile(file_path.clone()));
+                            self.events.push(NodeGraphEvent::LoadUsdFile {
+                                path: file_path.clone(),
+                                node_id,
+                            });
                         }
                     }
 
                     if ui.button("Load").clicked() && !file_path.is_empty() {
-                        self.events
-                            .push(NodeGraphEvent::LoadUsdFile(file_path.clone()));
+                        self.events.push(NodeGraphEvent::LoadUsdFile {
+                            path: file_path.clone(),
+                            node_id,
+                        });
                     }
                 });
 
@@ -1236,6 +1306,78 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer {
                     ui.colored_label(egui::Color32::RED, result.as_str());
                 }
             }
+            SceneNode::Xform {
+                translate,
+                rotate,
+                scale,
+                prim_filter,
+            } => {
+                let axis_colors = [
+                    egui::Color32::from_rgb(220, 80, 80),  // X = red
+                    egui::Color32::from_rgb(80, 200, 80),  // Y = green
+                    egui::Color32::from_rgb(80, 120, 220), // Z = blue
+                ];
+                let axis_labels = ["X", "Y", "Z"];
+
+                let mut changed = false;
+
+                ui.label("Translate");
+                ui.horizontal(|ui| {
+                    for i in 0..3 {
+                        ui.colored_label(axis_colors[i], axis_labels[i]);
+                        if ui
+                            .add(egui::DragValue::new(&mut translate[i]).speed(0.1))
+                            .changed()
+                        {
+                            changed = true;
+                        }
+                    }
+                });
+
+                ui.label("Rotate");
+                ui.horizontal(|ui| {
+                    for i in 0..3 {
+                        ui.colored_label(axis_colors[i], axis_labels[i]);
+                        if ui
+                            .add(egui::DragValue::new(&mut rotate[i]).speed(1.0).suffix("°"))
+                            .changed()
+                        {
+                            changed = true;
+                        }
+                    }
+                });
+
+                ui.label("Scale");
+                ui.horizontal(|ui| {
+                    for i in 0..3 {
+                        ui.colored_label(axis_colors[i], axis_labels[i]);
+                        if ui
+                            .add(
+                                egui::DragValue::new(&mut scale[i])
+                                    .speed(0.01)
+                                    .range(0.001..=1000.0),
+                            )
+                            .changed()
+                        {
+                            changed = true;
+                        }
+                    }
+                });
+
+                // Prim filter (placeholder, non-functional V1)
+                ui.horizontal(|ui| {
+                    ui.label("Filter:");
+                    ui.add(
+                        egui::TextEdit::singleline(prim_filter)
+                            .hint_text("all prims")
+                            .desired_width(100.0),
+                    );
+                });
+
+                if changed {
+                    self.events.push(NodeGraphEvent::XformChanged { node_id });
+                }
+            }
             SceneNode::HdriEnvironment {
                 file_path,
                 is_loaded,
@@ -1396,17 +1538,25 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer {
         _scale: f32,
         snarl: &mut Snarl<SceneNode>,
     ) {
-        // Show "Set Display" for scene-output nodes
+        // Show "Set/Clear Display" for scene-output nodes
         let is_scene_output = matches!(
             snarl[node],
             SceneNode::UsdRead { .. }
                 | SceneNode::PointInstancer { .. }
                 | SceneNode::Primitive { .. }
                 | SceneNode::IvarRender { .. }
+                | SceneNode::Xform { .. }
         );
-        if is_scene_output && ui.button("Set Display").clicked() {
-            self.events.push(NodeGraphEvent::SetDisplayNode(node));
-            ui.close_menu();
+        if is_scene_output {
+            let label = if self.display_node == Some(node) {
+                "Clear Display"
+            } else {
+                "Set Display"
+            };
+            if ui.button(label).clicked() {
+                self.events.push(NodeGraphEvent::SetDisplayNode(node));
+                ui.close_menu();
+            }
         }
         if ui.button("Delete").clicked() {
             self.events.push(NodeGraphEvent::DeleteNode(node));
@@ -1504,6 +1654,11 @@ impl NodeGraphState {
     /// Add a Primitive node at the given position
     pub fn add_primitive(&mut self, kind: bif_core::PrimitiveKind, pos: egui::Pos2) -> NodeId {
         self.snarl.insert_node(pos, SceneNode::primitive(kind))
+    }
+
+    /// Add an Xform node at the given position
+    pub fn add_xform(&mut self, pos: egui::Pos2) -> NodeId {
+        self.snarl.insert_node(pos, SceneNode::xform())
     }
 
     /// Add a USD Export node at the given position
@@ -1700,6 +1855,9 @@ pub fn render_node_graph(ui: &mut egui::Ui, state: &mut NodeGraphState) -> Vec<N
         if ui.button("+ Instancer").clicked() {
             state.add_point_instancer(egui::pos2(400.0, 300.0));
         }
+        if ui.button("+ Xform").clicked() {
+            state.add_xform(egui::pos2(250.0, 200.0));
+        }
         if ui.button("+ USD Export").clicked() {
             state.add_usd_export(egui::pos2(600.0, 100.0));
         }
@@ -1729,7 +1887,12 @@ pub fn render_node_graph(ui: &mut egui::Ui, state: &mut NodeGraphState) -> Vec<N
     for event in viewer.events {
         match &event {
             NodeGraphEvent::SetDisplayNode(id) => {
-                state.display_node = Some(*id);
+                // Toggle: clicking same node clears display
+                if state.display_node == Some(*id) {
+                    state.display_node = None;
+                } else {
+                    state.display_node = Some(*id);
+                }
             }
             NodeGraphEvent::SelectNode(id) => {
                 state.selected_node = Some(*id);

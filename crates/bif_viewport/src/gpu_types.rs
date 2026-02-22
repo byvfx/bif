@@ -301,9 +301,26 @@ pub struct MaterialGpu {
 
 impl MaterialGpu {
     pub fn from_material(material: &bif_core::Material, textures: &GpuTextureSet) -> Self {
+        let src_dir = material.source_dir.as_deref();
         let resolve_index = |path: &Option<String>| -> u32 {
             path.as_ref()
-                .and_then(|p| textures.index_map.get(p).copied())
+                .and_then(|p| {
+                    // Try raw path first (backwards compat for single-file loads)
+                    if let Some(&idx) = textures.index_map.get(p) {
+                        return Some(idx);
+                    }
+                    // Try resolved path (multi-USD: index_map has absolute paths)
+                    if let Some(dir) = src_dir {
+                        let resolved = dir.join(p);
+                        if let Some(&idx) = textures
+                            .index_map
+                            .get(&resolved.to_string_lossy().to_string())
+                        {
+                            return Some(idx);
+                        }
+                    }
+                    None
+                })
                 .unwrap_or(0)
         };
 

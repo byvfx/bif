@@ -3,6 +3,7 @@
 //! This module defines the core scene representation that maps closely
 //! to USD concepts while remaining renderer-agnostic.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use bif_math::{Aabb, Mat4, Quat, Vec3};
@@ -54,6 +55,9 @@ pub struct Material {
 
     /// Path to opacity texture
     pub opacity_texture: Option<String>,
+
+    /// Directory of the USD file this material was loaded from (for relative texture paths)
+    pub source_dir: Option<PathBuf>,
 }
 
 impl Default for Material {
@@ -72,6 +76,7 @@ impl Default for Material {
             normal_texture: None,
             emissive_texture: None,
             opacity_texture: None,
+            source_dir: None,
         }
     }
 }

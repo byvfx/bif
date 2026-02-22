@@ -25,6 +25,7 @@
 #include <pxr/base/gf/quath.h>
 #include <pxr/base/vt/array.h>
 #include <pxr/base/tf/pathUtils.h>
+#include <pxr/base/tf/diagnostic.h>
 #include <pxr/usd/sdf/layer.h>
 #include <pxr/usd/usd/references.h>
 #include <pxr/usd/ar/resolver.h>
@@ -2327,7 +2328,11 @@ UsdBridgeError usd_bridge_edit_layer_add_sublayer(
         auto rootLayer = layer->stage->GetRootLayer();
         rootLayer->InsertSubLayerPath(sublayer_path);
         return USD_BRIDGE_SUCCESS;
+    } catch (const std::exception& e) {
+        TF_WARN("usd_bridge_edit_layer_add_sublayer: %s", e.what());
+        return USD_BRIDGE_ERROR_UNKNOWN;
     } catch (...) {
+        TF_WARN("usd_bridge_edit_layer_add_sublayer: unknown exception");
         return USD_BRIDGE_ERROR_UNKNOWN;
     }
 }
@@ -2357,7 +2362,11 @@ UsdBridgeError usd_bridge_edit_layer_add_reference(
         auto refs = prim.GetReferences();
         refs.AddReference(SdfReference(reference_file, refPrimPath));
         return USD_BRIDGE_SUCCESS;
+    } catch (const std::exception& e) {
+        TF_WARN("usd_bridge_edit_layer_add_reference: %s", e.what());
+        return USD_BRIDGE_ERROR_UNKNOWN;
     } catch (...) {
+        TF_WARN("usd_bridge_edit_layer_add_reference: unknown exception");
         return USD_BRIDGE_ERROR_UNKNOWN;
     }
 }
@@ -2382,7 +2391,11 @@ UsdBridgeError usd_bridge_edit_layer_set_default_prim(
         }
         layer->stage->SetDefaultPrim(prim);
         return USD_BRIDGE_SUCCESS;
+    } catch (const std::exception& e) {
+        TF_WARN("usd_bridge_edit_layer_set_default_prim: %s", e.what());
+        return USD_BRIDGE_ERROR_UNKNOWN;
     } catch (...) {
+        TF_WARN("usd_bridge_edit_layer_set_default_prim: unknown exception");
         return USD_BRIDGE_ERROR_UNKNOWN;
     }
 }
@@ -2473,7 +2486,11 @@ UsdBridgeError usd_bridge_write_point_instancer(
         }
 
         return USD_BRIDGE_SUCCESS;
+    } catch (const std::exception& e) {
+        TF_WARN("usd_bridge_write_point_instancer: %s", e.what());
+        return USD_BRIDGE_ERROR_UNKNOWN;
     } catch (...) {
+        TF_WARN("usd_bridge_write_point_instancer: unknown exception");
         return USD_BRIDGE_ERROR_UNKNOWN;
     }
 }

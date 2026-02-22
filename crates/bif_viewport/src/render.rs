@@ -904,6 +904,38 @@ impl Renderer {
             let property_panel = egui::SidePanel::right("property_panel")
                 .default_width(280.0)
                 .show(ctx, |ui| {
+                    // If an Xform node is selected, show its T/R/S in the panel
+                    let selected_xform_id = self.node_graph_state.selected_node.filter(|nid| {
+                        matches!(
+                            self.node_graph_state.snarl[*nid],
+                            crate::node_graph::SceneNode::Xform { .. }
+                        )
+                    });
+
+                    if let Some(xform_nid) = selected_xform_id {
+                        if let crate::node_graph::SceneNode::Xform {
+                            translate,
+                            rotate,
+                            scale,
+                            prim_filter,
+                        } = &mut self.node_graph_state.snarl[xform_nid]
+                        {
+                            let changed =
+                                crate::property_inspector::render_xform_properties(
+                                    ui, translate, rotate, scale, prim_filter,
+                                );
+                            if changed {
+                                ctx.data_mut(|d| {
+                                    d.insert_temp(
+                                        egui::Id::new("xform_property_changed"),
+                                        xform_nid,
+                                    );
+                                });
+                            }
+                        }
+                        ui.separator();
+                    }
+
                     let et_ref =
                         editable_transform.as_ref().map(|(idx, t)| (*idx, t));
                     render_property_inspector(
@@ -1388,6 +1420,19 @@ impl Renderer {
             }
         }
 
+        // Handle Xform property changes from the property inspector panel
+        let xform_changed: Option<egui_snarl::NodeId> = self
+            .egui_ctx
+            .data(|d| d.get_temp(egui::Id::new("xform_property_changed")));
+        if xform_changed.is_some() {
+            self.egui_ctx.data_mut(|d| {
+                d.remove::<egui_snarl::NodeId>(egui::Id::new("xform_property_changed"))
+            });
+            if let Err(e) = self.reload_working_scene() {
+                log::error!("Failed to reload after xform property change: {}", e);
+            }
+        }
+
         // Handle set keyframe request from property inspector
         let keyframe_request: Option<u64> = self
             .egui_ctx
@@ -1446,11 +1491,38 @@ impl Renderer {
 
             for event in node_graph_events {
                 match event {
-                    NodeGraphEvent::LoadUsdFile(path) => {
+                    NodeGraphEvent::LoadUsdFile { path, node_id } => {
                         log::info!("Node graph: Loading USD file: {}", path);
+
+                        // Remove old prototypes from this UsdRead node (reload case)
+                        if let Some(old_ids) = self.node_proto_ids.remove(&node_id) {
+                            // Remove in reverse order so indices stay valid
+                            for &pid in old_ids.iter().rev() {
+                                self.remove_and_reindex_prototype(pid);
+                            }
+                            // Re-index remaining node_proto_ids entries
+                            for ids in self.node_proto_ids.values_mut() {
+                                for id in ids.iter_mut() {
+                                    for &removed in old_ids.iter().rev() {
+                                        if *id > removed {
+                                            *id -= 1;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        let proto_offset = self.working_scene.prototype_count();
                         match self.load_usd_scene(&path) {
                             Ok(()) => {
-                                // Mark the node as loaded successfully
+                                // Track which prototypes this UsdRead node owns
+                                let new_proto_count = self.working_scene.prototype_count();
+                                let proto_ids: Vec<usize> =
+                                    (proto_offset..new_proto_count).collect();
+                                if !proto_ids.is_empty() {
+                                    log::info!("UsdRead {:?} owns protos {:?}", node_id, proto_ids);
+                                    self.node_proto_ids.insert(node_id, proto_ids);
+                                }
                                 self.node_graph_state.mark_node_loaded(&path);
                                 log::info!("USD file loaded successfully: {}", path);
                             }
@@ -1840,6 +1912,7 @@ impl Renderer {
                             as_sublayer,
                             export_root,
                         };
+                        // TODO: offload export to background thread to avoid blocking UI
                         match self.export_with_config(&config) {
                             Ok(result) => {
                                 let status = format!("{}", result);
@@ -1870,15 +1943,26 @@ impl Renderer {
                             }
                         }
                     }
-                    NodeGraphEvent::SetDisplayNode(_) => {
-                        // Display flag handled in render_node_graph
+                    NodeGraphEvent::XformChanged { .. } => {
+                        if let Err(e) = self.reload_working_scene() {
+                            log::error!("Failed to reload after xform change: {}", e);
+                        }
+                    }
+                    NodeGraphEvent::SetDisplayNode(id) => {
+                        // Toggle: clicking the same node clears display
+                        if self.node_graph_state.display_node == Some(id) {
+                            self.node_graph_state.display_node = None;
+                        } else {
+                            self.node_graph_state.display_node = Some(id);
+                        }
+                        if let Err(e) = self.reload_working_scene() {
+                            log::error!("Failed to reload after display change: {}", e);
+                        }
                     }
                     NodeGraphEvent::SelectNode(_) => {
                         // Selection handled in render_node_graph
                     }
                     NodeGraphEvent::DeleteNode(node_id) => {
-                        let mut needs_reload = false;
-
                         // Clean up scatter cloud
                         if let Some(cloud_id) = self.node_cloud_map.remove(&node_id) {
                             self.working_scene.remove_point_cloud(cloud_id);
@@ -1895,35 +1979,71 @@ impl Renderer {
                             );
                             self.point_preview_params_dirty = true;
                             log::info!("Deleted scatter node {:?} → cloud {}", node_id, cloud_id);
-                            needs_reload = true;
                         }
 
                         // Clean up scatter surface mapping (rebuilt in reload_working_scene)
-                        if self.node_scatter_surface_map.remove(&node_id).is_some() {
-                            needs_reload = true;
-                        }
+                        self.node_scatter_surface_map.remove(&node_id);
 
                         // Clean up instancer results
                         if self.instancer_results.remove(&node_id).is_some() {
                             log::info!("Deleted instancer node {:?}", node_id);
-                            needs_reload = true;
                         }
 
-                        // Clean up prototype
+                        // Clean up prototype (single-proto nodes like Primitive)
                         if let Some(proto_id) = self.node_proto_map.remove(&node_id) {
                             log::info!("Deleting node {:?} → proto {}", node_id, proto_id);
-                            if self.remove_and_reindex_prototype(proto_id) {
-                                needs_reload = true;
-                            } else {
+                            if !self.remove_and_reindex_prototype(proto_id) {
                                 self.node_proto_map.insert(node_id, proto_id);
                             }
                         }
 
-                        // Single consolidated reload
-                        if needs_reload {
-                            if let Err(e) = self.reload_working_scene() {
-                                log::error!("Failed to reload after deletion: {}", e);
+                        // Clean up multi-proto nodes (UsdRead)
+                        if let Some(proto_ids) = self.node_proto_ids.remove(&node_id) {
+                            log::info!(
+                                "Deleting UsdRead node {:?} → protos {:?}",
+                                node_id,
+                                proto_ids
+                            );
+                            // Remove in reverse order so indices stay valid
+                            for &pid in proto_ids.iter().rev() {
+                                self.remove_and_reindex_prototype(pid);
                             }
+                            // Re-index remaining node_proto_ids entries
+                            for ids in self.node_proto_ids.values_mut() {
+                                for id in ids.iter_mut() {
+                                    for &removed in proto_ids.iter().rev() {
+                                        if *id > removed {
+                                            *id -= 1;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Always reload after deletion — Xform/display-flag changes
+                        // need scene rebuild even if no protos were directly owned
+                        if let Err(e) = self.reload_working_scene() {
+                            log::error!("Failed to reload after deletion: {}", e);
+                        }
+
+                        // If no loaded UsdRead nodes remain, clear USD stage state
+                        let has_usd_read =
+                            self.node_graph_state.snarl.node_ids().any(|(_, node)| {
+                                matches!(
+                                    node,
+                                    SceneNode::UsdRead {
+                                        is_loaded: true,
+                                        ..
+                                    }
+                                )
+                            });
+                        if !has_usd_read {
+                            self.usd_stage = None;
+                            self.loaded_usd_path = None;
+                            self.scene_browser_state =
+                                crate::scene_browser::SceneBrowserState::new();
+                            self.selected_prim_path = None;
+                            self.selected_prim_properties = None;
                         }
                     }
                 }
