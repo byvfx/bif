@@ -653,6 +653,66 @@ void usd_bridge_free_edit_layer(
     UsdBridgeEditLayer* layer
 );
 
+/// Add a sublayer reference to the edit layer.
+/// The sublayer's opinions will be composed under the edit layer's opinions.
+///
+/// @param layer Edit layer handle
+/// @param sublayer_path File path to the sublayer USD file
+/// @return USD_BRIDGE_SUCCESS on success
+UsdBridgeError usd_bridge_edit_layer_add_sublayer(
+    UsdBridgeEditLayer* layer,
+    const char* sublayer_path
+);
+
+/// Add a reference on a prim (for prototype linking in instancers).
+///
+/// @param layer Edit layer handle
+/// @param prim_path USD prim path to add the reference on
+/// @param reference_file File path to the referenced USD file
+/// @param reference_prim_path Prim path within the referenced file (NULL for default prim)
+/// @return USD_BRIDGE_SUCCESS on success
+UsdBridgeError usd_bridge_edit_layer_add_reference(
+    UsdBridgeEditLayer* layer,
+    const char* prim_path,
+    const char* reference_file,
+    const char* reference_prim_path
+);
+
+/// Set the default prim on the edit layer's stage.
+///
+/// @param layer Edit layer handle
+/// @param prim_path USD prim path to set as default
+/// @return USD_BRIDGE_SUCCESS on success
+UsdBridgeError usd_bridge_edit_layer_set_default_prim(
+    UsdBridgeEditLayer* layer,
+    const char* prim_path
+);
+
+/// Write a UsdGeomPointInstancer prim with positions, orientations, scales,
+/// prototype indices, and prototype relationship targets.
+///
+/// @param layer Edit layer handle
+/// @param prim_path USD prim path for the PointInstancer
+/// @param positions Flat array of float[3] per instance (count * 3 floats)
+/// @param orientations Flat array of float[4] per instance (wxyz quats, count * 4), NULL for identity
+/// @param scales Flat array of float[3] per instance (count * 3), NULL for uniform 1.0
+/// @param proto_indices Prototype index per instance (count ints)
+/// @param count Number of instances
+/// @param prototype_paths Array of prototype prim path strings
+/// @param prototype_count Number of prototype paths
+/// @return USD_BRIDGE_SUCCESS on success
+UsdBridgeError usd_bridge_write_point_instancer(
+    UsdBridgeEditLayer* layer,
+    const char* prim_path,
+    const float* positions,
+    const float* orientations,
+    const float* scales,
+    const int32_t* proto_indices,
+    size_t count,
+    const char* const* prototype_paths,
+    size_t prototype_count
+);
+
 #ifdef __cplusplus
 }
 #endif

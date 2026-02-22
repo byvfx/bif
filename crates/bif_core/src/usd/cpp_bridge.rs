@@ -360,6 +360,35 @@ extern "C" {
     fn usd_bridge_save_edit_layer(layer: *mut UsdBridgeEditLayerRaw) -> UsdBridgeErrorCode;
 
     fn usd_bridge_free_edit_layer(layer: *mut UsdBridgeEditLayerRaw);
+
+    fn usd_bridge_edit_layer_add_sublayer(
+        layer: *mut UsdBridgeEditLayerRaw,
+        sublayer_path: *const std::ffi::c_char,
+    ) -> UsdBridgeErrorCode;
+
+    fn usd_bridge_edit_layer_add_reference(
+        layer: *mut UsdBridgeEditLayerRaw,
+        prim_path: *const std::ffi::c_char,
+        reference_file: *const std::ffi::c_char,
+        reference_prim_path: *const std::ffi::c_char,
+    ) -> UsdBridgeErrorCode;
+
+    fn usd_bridge_edit_layer_set_default_prim(
+        layer: *mut UsdBridgeEditLayerRaw,
+        prim_path: *const std::ffi::c_char,
+    ) -> UsdBridgeErrorCode;
+
+    fn usd_bridge_write_point_instancer(
+        layer: *mut UsdBridgeEditLayerRaw,
+        prim_path: *const std::ffi::c_char,
+        positions: *const f32,
+        orientations: *const f32,
+        scales: *const f32,
+        proto_indices: *const i32,
+        count: usize,
+        prototype_paths: *const *const std::ffi::c_char,
+        prototype_count: usize,
+    ) -> UsdBridgeErrorCode;
 }
 
 // ============================================================================
@@ -1726,6 +1755,130 @@ impl UsdEditLayer {
         let cols = matrix.to_cols_array();
         let code = unsafe {
             usd_bridge_write_xform_opinion(self.raw, c_path.as_ptr(), time, cols.as_ptr())
+        };
+        if code != UsdBridgeErrorCode::Success {
+            return Err(code.into());
+        }
+        Ok(())
+    }
+
+    /// Add a sublayer to this edit layer (for composing over original USD).
+    pub fn add_sublayer(&mut self, sublayer_path: &str) -> UsdBridgeResult<()> {
+        let c_path = CString::new(sublayer_path).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let code = unsafe { usd_bridge_edit_layer_add_sublayer(self.raw, c_path.as_ptr()) };
+        if code != UsdBridgeErrorCode::Success {
+            return Err(code.into());
+        }
+        Ok(())
+    }
+
+    /// Add a reference on a prim.
+    pub fn add_reference(
+        &mut self,
+        prim_path: &str,
+        reference_file: &str,
+        reference_prim_path: Option<&str>,
+    ) -> UsdBridgeResult<()> {
+        let c_prim = CString::new(prim_path).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_file = CString::new(reference_file).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_ref_prim = reference_prim_path
+            .map(|p| CString::new(p).map_err(|_| UsdBridgeError::InvalidPath))
+            .transpose()?;
+        let ref_prim_ptr = c_ref_prim
+            .as_ref()
+            .map(|c| c.as_ptr())
+            .unwrap_or(ptr::null());
+        let code = unsafe {
+            usd_bridge_edit_layer_add_reference(
+                self.raw,
+                c_prim.as_ptr(),
+                c_file.as_ptr(),
+                ref_prim_ptr,
+            )
+        };
+        if code != UsdBridgeErrorCode::Success {
+            return Err(code.into());
+        }
+        Ok(())
+    }
+
+    /// Set the default prim on the stage.
+    pub fn set_default_prim(&mut self, prim_path: &str) -> UsdBridgeResult<()> {
+        let c_path = CString::new(prim_path).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let code = unsafe { usd_bridge_edit_layer_set_default_prim(self.raw, c_path.as_ptr()) };
+        if code != UsdBridgeErrorCode::Success {
+            return Err(code.into());
+        }
+        Ok(())
+    }
+
+    /// Write a PointInstancer prim from a point cloud.
+    pub fn write_point_instancer(
+        &mut self,
+        prim_path: &str,
+        cloud: &crate::point_cloud::PointCloud,
+        proto_paths: &[String],
+    ) -> UsdBridgeResult<()> {
+        let c_prim = CString::new(prim_path).map_err(|_| UsdBridgeError::InvalidPath)?;
+
+        // Flatten positions to f32 array
+        let positions: Vec<f32> = cloud
+            .positions
+            .iter()
+            .flat_map(|p| [p.x, p.y, p.z])
+            .collect();
+        let count = cloud.positions.len();
+
+        // Flatten orientations (wxyz) if available
+        let orientations: Option<Vec<f32>> =
+            cloud.attributes.orientations.as_ref().map(|orients| {
+                orients
+                    .iter()
+                    .flat_map(|q| {
+                        // glam Quat is (x, y, z, w) internally, USD wants (w, x, y, z)
+                        [q.w, q.x, q.y, q.z]
+                    })
+                    .collect()
+            });
+
+        // Flatten scales if available
+        let scales: Option<Vec<f32>> = cloud
+            .attributes
+            .scales
+            .as_ref()
+            .map(|s| s.iter().flat_map(|v| [v.x, v.y, v.z]).collect());
+
+        // Proto indices (convert u32 -> i32)
+        let proto_indices: Vec<i32> = cloud
+            .attributes
+            .proto_indices
+            .iter()
+            .map(|&i| i as i32)
+            .collect();
+
+        // Build C string array for prototype paths
+        let c_proto_paths: Vec<CString> = proto_paths
+            .iter()
+            .map(|p| CString::new(p.as_str()).unwrap_or_default())
+            .collect();
+        let c_proto_ptrs: Vec<*const std::ffi::c_char> =
+            c_proto_paths.iter().map(|c| c.as_ptr()).collect();
+
+        let code = unsafe {
+            usd_bridge_write_point_instancer(
+                self.raw,
+                c_prim.as_ptr(),
+                positions.as_ptr(),
+                orientations
+                    .as_ref()
+                    .map(|o| o.as_ptr())
+                    .unwrap_or(ptr::null()),
+                scales.as_ref().map(|s| s.as_ptr()).unwrap_or(ptr::null()),
+                proto_indices.as_ptr(),
+                count,
+                c_proto_ptrs.as_ptr(),
+                c_proto_ptrs.len(),
+            )
         };
         if code != UsdBridgeErrorCode::Success {
             return Err(code.into());
