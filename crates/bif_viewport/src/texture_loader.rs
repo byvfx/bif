@@ -289,24 +289,57 @@ pub fn create_default_gpu_textures(device: &Device, queue: &Queue) -> GpuTexture
     }
 }
 
-/// Collect unique texture paths from scene materials.
-pub fn collect_scene_texture_paths(scene: &bif_core::Scene) -> Vec<String> {
+/// Resolve a texture path against a per-material `source_dir`, falling back
+/// to `fallback_base` if the material has no `source_dir`.
+///
+/// Returns the resolved path as a `String` suitable for `TextureCache::load`.
+fn resolve_texture_path(
+    tex_path: &str,
+    material_source_dir: Option<&std::path::Path>,
+    fallback_base: Option<&std::path::Path>,
+) -> String {
+    let p = Path::new(tex_path);
+    if p.is_absolute() {
+        return tex_path.to_string();
+    }
+    // Try material-level dir first, then fallback
+    if let Some(dir) = material_source_dir.or(fallback_base) {
+        let resolved = dir.join(p);
+        if resolved.exists() {
+            return resolved.to_string_lossy().into_owned();
+        }
+    }
+    // Return as-is (TextureCache will attempt its own resolution)
+    tex_path.to_string()
+}
+
+/// Collect unique *resolved* texture paths from scene materials.
+///
+/// Each texture path is resolved against its material's `source_dir` (if set),
+/// falling back to `fallback_base`. This ensures multi-USD scenes with
+/// different base directories produce correct paths.
+pub fn collect_scene_texture_paths(
+    scene: &bif_core::Scene,
+    fallback_base: Option<&std::path::Path>,
+) -> Vec<String> {
     let mut unique_paths = HashSet::new();
     let mut paths = Vec::new();
 
     for material in &scene.materials {
-        let material = material.as_ref();
+        let mat = material.as_ref();
+        let src_dir = mat.source_dir.as_deref();
         let candidate_paths = [
-            material.diffuse_texture.as_deref(),
-            material.roughness_texture.as_deref(),
-            material.metallic_texture.as_deref(),
-            material.normal_texture.as_deref(),
-            material.emissive_texture.as_deref(),
+            mat.diffuse_texture.as_deref(),
+            mat.roughness_texture.as_deref(),
+            mat.metallic_texture.as_deref(),
+            mat.normal_texture.as_deref(),
+            mat.emissive_texture.as_deref(),
         ];
 
-        for path in candidate_paths.into_iter().flatten() {
-            if unique_paths.insert(path.to_string()) {
-                paths.push(path.to_string());
+        for raw_path in candidate_paths.into_iter().flatten() {
+            let resolved = resolve_texture_path(raw_path, src_dir, fallback_base);
+            if unique_paths.insert(resolved.clone()) {
+                paths.push(resolved);
             }
         }
     }
@@ -318,6 +351,10 @@ pub fn collect_scene_texture_paths(scene: &bif_core::Scene) -> Vec<String> {
 }
 
 /// Create GPU textures for all materials in a scene.
+///
+/// `base_dir` is a legacy fallback for materials that don't have `source_dir`
+/// set (e.g. single-file loads). For multi-USD workflows each material carries
+/// its own `source_dir` which takes precedence.
 pub fn create_gpu_textures_for_scene(
     device: &Device,
     queue: &Queue,
@@ -330,7 +367,7 @@ pub fn create_gpu_textures_for_scene(
     let mut texture_set = create_default_gpu_textures(device, queue);
     let max_dimension = device.limits().max_texture_dimension_2d;
 
-    let texture_paths = collect_scene_texture_paths(scene);
+    let texture_paths = collect_scene_texture_paths(scene, base_dir);
     let paths_to_load: Vec<_> = texture_paths
         .into_iter()
         .take(MAX_VIEWPORT_TEXTURES - 1) // Leave slot 0 for default
@@ -346,14 +383,10 @@ pub fn create_gpu_textures_for_scene(
     // Load textures. OIIO is not thread-safe for concurrent make_tx/load,
     // so we serialize when using OIIO. Without OIIO, par_iter is safe.
     let load_start = std::time::Instant::now();
-    let base_dir_owned = base_dir.map(|p| p.to_path_buf());
 
+    // Paths are already resolved — load using a bare TextureCache (no base_dir)
     let load_one = |path: &String| {
-        let mut cache = if let Some(ref base) = base_dir_owned {
-            TextureCache::with_base_dir(base)
-        } else {
-            TextureCache::new()
-        };
+        let mut cache = TextureCache::new();
         match cache.load(path) {
             Ok(tex) => Some((path.clone(), tex)),
             Err(e) => {

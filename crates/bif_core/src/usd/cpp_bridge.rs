@@ -1829,6 +1829,33 @@ impl UsdEditLayer {
             .collect();
         let count = cloud.positions.len();
 
+        // Validate parallel arrays match positions length
+        if let Some(ref orients) = cloud.attributes.orientations {
+            if orients.len() != count {
+                return Err(UsdBridgeError::InvalidPrim(format!(
+                    "orientations len {} != positions len {}",
+                    orients.len(),
+                    count
+                )));
+            }
+        }
+        if let Some(ref s) = cloud.attributes.scales {
+            if s.len() != count {
+                return Err(UsdBridgeError::InvalidPrim(format!(
+                    "scales len {} != positions len {}",
+                    s.len(),
+                    count
+                )));
+            }
+        }
+        if cloud.attributes.proto_indices.len() != count {
+            return Err(UsdBridgeError::InvalidPrim(format!(
+                "proto_indices len {} != positions len {}",
+                cloud.attributes.proto_indices.len(),
+                count
+            )));
+        }
+
         // Flatten orientations (wxyz) if available
         let orientations: Option<Vec<f32>> =
             cloud.attributes.orientations.as_ref().map(|orients| {
@@ -1848,19 +1875,23 @@ impl UsdEditLayer {
             .as_ref()
             .map(|s| s.iter().flat_map(|v| [v.x, v.y, v.z]).collect());
 
-        // Proto indices (convert u32 -> i32)
+        // Proto indices (convert u32 -> i32, checked)
         let proto_indices: Vec<i32> = cloud
             .attributes
             .proto_indices
             .iter()
-            .map(|&i| i as i32)
-            .collect();
+            .map(|&i| {
+                i32::try_from(i).map_err(|_| {
+                    UsdBridgeError::InvalidPrim(format!("proto_index {} overflows i32", i))
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
 
         // Build C string array for prototype paths
         let c_proto_paths: Vec<CString> = proto_paths
             .iter()
-            .map(|p| CString::new(p.as_str()).unwrap_or_default())
-            .collect();
+            .map(|p| CString::new(p.as_str()).map_err(|_| UsdBridgeError::InvalidPath))
+            .collect::<Result<Vec<_>, _>>()?;
         let c_proto_ptrs: Vec<*const std::ffi::c_char> =
             c_proto_paths.iter().map(|c| c.as_ptr()).collect();
 
