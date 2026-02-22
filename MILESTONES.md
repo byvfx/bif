@@ -795,10 +795,15 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
   - ✅ Phase 6: UsdExport sink node + UI
   - ✅ Phase 7: 6 round-trip validation tests passing
   - ✅ Fix `write_xform` to DefinePrim(Xform) fallback on empty stages
+  - ✅ Xform node (T/R/S transform SOP) with property inspector
+  - ✅ Multi-USD material fix (per-material source_dir, texture resolution)
+  - ✅ Display flag rendering gating (BFS upstream walk)
+  - ✅ node_proto_ids for multi-proto UsdRead node tracking + cleanup
 - **Remaining:**
   - Verify exported USD in Houdini/usdview/Maya
   - Documentation for USD export workflow
-  - Full SOP-style pull-eval refactor (deferred — display flag is lightweight version)
+  - Xform prim_filter (V1 placeholder — always all upstream)
+  - Ivar CPU renderer doesn't reflect Xform transforms yet
 - **Architecture:**
   - Separate "edit layer" authored on top of reference layer
   - User modifications stored as opinions, not destructive edits
