@@ -1,7 +1,7 @@
-# Session Handoff - February 21, 2026
+# Session Handoff - February 22, 2026
 
-**Last Updated:** M29 USD Export pipeline implemented (7 phases complete)
-**Next Milestone:** M29 validation + M26 Denoising
+**Last Updated:** Xform node, multi-USD material fix, display flag gating
+**Next Milestone:** M29 validation + Ivar Xform support + M26 Denoising
 **Project:** BIF - VFX Scene Assembler & Renderer
 
 ---
@@ -11,13 +11,26 @@
 | Status | Details |
 |--------|---------|
 | Complete | Milestones 0-23 |
-| Current | M29 USD Export — core pipeline done, needs real-world validation |
-| Tests | 68 viewport, 91 bif_core (6 new export), 247+ total passing |
+| Current | M29 USD Export — Xform node + multi-USD + display flag done |
+| Tests | 68 viewport, 91 bif_core (6 export), 253+ total passing |
 | Performance | 60 FPS viewport, 100K instances with LOD |
 
 ---
 
 ## Recent Work
+
+### Xform Node + Multi-USD Material Fix (Feb 22, 2026)
+
+| Feature | Details |
+|---------|---------|
+| Xform node | `SceneNode::Xform` with T/R/S, node body UI + property inspector panel (colored X/Y/Z DragValues) |
+| Transform apply | BFS upstream walk finds affected prototypes, post-multiplies T/R/S matrix in `reload_working_scene` |
+| Multi-USD materials | `Material.source_dir` tracks originating USD dir; `resolve_texture_path` per-material; gpu_textures rebuilt from accumulated working_scene |
+| node_proto_ids | `HashMap<NodeId, Vec<usize>>` for multi-proto UsdRead nodes; cleanup on delete + re-index |
+| Display flag gating | `collect_upstream_nodes` BFS determines active subgraph; hidden protos excluded from viewport + Ivar |
+| Toggle display | Context menu shows Set/Clear Display; Xform is display-flag-eligible |
+| C++ bridge | TF_WARN diagnostics, PointInstancer array validation, checked i32 conversion |
+| Deletion | Always reload after DeleteNode (handles Xform/display changes properly) |
 
 ### M29 USD Export Pipeline (Feb 21, 2026)
 
@@ -26,18 +39,7 @@
 | Prim paths | `Instance.prim_path` tracks real USD paths; `/BIF/` convention for BIF-created |
 | C++ bridge | 4 new APIs: sublayer, reference, default prim, PointInstancer write |
 | Export core | `export_scene()` in `bif_core::usd::export` — GUI-agnostic, writes xforms + keyframes + instancers |
-| Display flag | `display_node` on NodeGraphState, blue dot indicator (Houdini-style) |
 | UsdExport node | Sink node with path/sublayer/root config, Browse button, status display |
-| write_xform fix | OverridePrim → DefinePrim(Xform) fallback for empty stages |
-| Tests | 6 round-trip tests: valid file, xform, keyframes, instancer, sublayer, create+save |
-
-### Lock-free Radiance Cache (Feb 21, 2026)
-
-| Finding | Details |
-|---------|---------|
-| Change | Replaced deferred writes + sharded RwLock with lock-free `AtomicU32::from_ptr` per field |
-| Design | CAS on `sample_count` guards writes; atomic loads for reads; zero locks in hot path |
-| Tests | 18 total (3 new: lock-free lookup, concurrent stress, CAS contention) |
 
 ---
 
@@ -52,36 +54,42 @@
 
 ### What Works
 
+**Xform Node:**
+- T/R/S in node body + property inspector (click node to select)
+- Upstream BFS walks to find affected prototypes
+- Chaining: UsdRead → Xform1 → Xform2 applies transforms in order
+- Delete Xform → scene rebuilds without its transforms
+- Display flag properly gates Xform contributions
+
+**Multi-USD Materials:**
+- Loading 2+ USD files preserves all materials
+- Per-material `source_dir` resolves relative texture paths correctly
+- `gpu_textures` rebuilt from accumulated `working_scene` on each reload
+
 **USD Export (M29):**
 - C++ bridge: sublayer composition, reference, default prim, PointInstancer write
-- `export_scene()` writes xform overrides, keyframed transforms, point clouds as USD layers
-- Instance prim paths track real USD paths from loaded files
-- UsdExport sink node in node graph with Browse, sublayer toggle, export root config
+- `export_scene()` writes xform overrides, keyframed transforms, point clouds
 - Display flag (blue dot) for gating which node feeds viewport/export
-- 6 round-trip validation tests passing
-
-**SHARC Radiance Cache (M23):**
-- Lock-free atomics for read/write, CAS-based updates
-- Cache heatmap AOV, egui controls, live stats
 
 ### Known Issues
 
-- Multi-prototype instancing not yet supported (single proto per instancer)
+- **Ivar doesn't reflect Xform transforms** — baked mesh_data path doesn't include Xform modifications
+- Xform prim_filter is V1 placeholder (always all upstream)
 - OIIO `load_texture_with_mips` crashes on .tx files on Windows
 - bif_core tests need USD DLLs (run via `setup_usd_env.ps1`)
 - Renderer struct ~60 fields (God object)
 - Export not yet validated in Houdini/usdview/Maya
-- Display flag doesn't yet gate rendering (visual indicator only)
 
 ---
 
 ## Next Session
 
-**Goal:** Validate M29 export in external tools, then M26 Denoising
+**Goal:** Fix Ivar Xform support, validate M29 export, consider M26 Denoising
 
-1. Export a scene from BIF → open in usdview or Houdini → verify composition
-2. Test sublayer workflow: load USD → edit transforms → export → verify in Houdini
-3. Consider M26 Denoising (Intel OIDN) or display flag rendering gating
+1. Ivar: apply Xform transforms to baked mesh_data (multi-proto path)
+2. Export a scene from BIF → open in usdview or Houdini → verify composition
+3. Xform prim_filter — implement glob matching against instance prim paths
+4. Consider M26 Denoising (Intel OIDN)
 
 ---
 
@@ -108,4 +116,4 @@ cargo run -p bif_viewer --features oiio          # With OIIO
 ---
 
 **Branch:** main
-**Ready for:** M29 export validation in external tools, then M26 Denoising
+**Ready for:** Ivar Xform fix, M29 export validation, M26 Denoising
