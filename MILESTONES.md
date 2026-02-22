@@ -781,25 +781,29 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 
 ---
 
-### Milestone 29: USD Export + Non-Destructive Layers 💾
+### Milestone 29: USD Export + Non-Destructive Layers 💾 (In Progress)
 
 - **Goal:** Close the pipeline loop: import → modify → render → **export**
 - **Estimated Time:** 20-25 hours
-- **Why Now:** BIF's stated goal is "Load Houdini USD → instance massively → render → export USD." Export completes the core workflow at only 20-25h.
-- **Key Tasks:**
-  - USD stage authoring via C++ bridge
-  - When laying down nodes make sure that the node grpah works like a Houdini SOP network, only viewing and evaluating only the active node and its dependencies. This way we can have a "USD Import" node that loads the USD file, and then all subsequent nodes (scatter, instancer, transform) are non-destructive edits on top of that reference. again very houdini and nuke style. This also means that we can export the modified scene as a USD sublayer that composes on top of the original file, which is a very clean workflow.
-  - Opinion layer over reference (Houdini-style non-destructive editing)
-  - Export modified transforms as USD sublayer
-  - Export scattered points as PointInstancer
-  - Layer composition: base layer + edits layer
-  - Round-trip validation (export → reimport → verify)
-  - Verify with assets from Houdini, Maya, Blender
+- **Status:** Core export pipeline implemented, needs real-world validation
+- **Completed:**
+  - ✅ Phase 1: Instance prim path tracking (real USD paths for round-trip)
+  - ✅ Phase 2: C++ bridge — sublayer, reference, default prim APIs
+  - ✅ Phase 3: C++ bridge — PointInstancer write
+  - ✅ Phase 4: Core `export_scene()` in bif_core (GUI-agnostic)
+  - ✅ Phase 5: Display flag in node graph (Houdini-style blue flag)
+  - ✅ Phase 6: UsdExport sink node + UI
+  - ✅ Phase 7: 6 round-trip validation tests passing
+  - ✅ Fix `write_xform` to DefinePrim(Xform) fallback on empty stages
+- **Remaining:**
+  - Verify exported USD in Houdini/usdview/Maya
   - Documentation for USD export workflow
+  - Full SOP-style pull-eval refactor (deferred — display flag is lightweight version)
 - **Architecture:**
   - Separate "edit layer" authored on top of reference layer
   - User modifications stored as opinions, not destructive edits
-  - Export produces `.usd` sublayer that composes with original
+  - Export produces `.usda`/`.usdc` sublayer that composes with original
+  - All export logic in `bif_core` (no egui dependency) — clean Qt port path
 
 ---
 
