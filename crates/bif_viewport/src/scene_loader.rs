@@ -258,12 +258,16 @@ impl Renderer {
             .iter()
             .enumerate()
             .map(|(idx, inst)| {
-                let proto_name = scene
-                    .prototypes
-                    .get(inst.prototype_id)
-                    .map(|p| p.name.as_str())
-                    .unwrap_or("unknown");
-                format!("/{}/instance_{}", proto_name, idx)
+                if !inst.prim_path.is_empty() {
+                    inst.prim_path.clone()
+                } else {
+                    let proto_name = scene
+                        .prototypes
+                        .get(inst.prototype_id)
+                        .map(|p| p.name.as_str())
+                        .unwrap_or("unknown");
+                    format!("/BIF/{}/{}", proto_name, idx)
+                }
             })
             .collect();
         self.instance_animations = scene.instance_animations().to_vec();
@@ -823,12 +827,16 @@ impl Renderer {
             .enumerate()
             .filter(|(_idx, inst)| !hidden_proto_ids.contains(&inst.prototype_id))
             .map(|(idx, inst)| {
-                let proto_name = scene
-                    .prototypes
-                    .get(inst.prototype_id)
-                    .map(|p| p.name.as_str())
-                    .unwrap_or("unknown");
-                format!("/{}/instance_{}", proto_name, idx)
+                if !inst.prim_path.is_empty() {
+                    inst.prim_path.clone()
+                } else {
+                    let proto_name = scene
+                        .prototypes
+                        .get(inst.prototype_id)
+                        .map(|p| p.name.as_str())
+                        .unwrap_or("unknown");
+                    format!("/BIF/{}/{}", proto_name, idx)
+                }
             })
             .collect();
         // Extend for instancer-expanded instances (parallel to instance_transforms)
@@ -840,7 +848,7 @@ impl Renderer {
                 .map(|p| p.name.as_str())
                 .unwrap_or("unknown");
             prim_paths.push(format!(
-                "/{}/instancer_{}",
+                "/BIF/{}/instancer_{}",
                 proto_name,
                 scene_inst_count + i
             ));
@@ -1264,12 +1272,16 @@ impl Renderer {
             .iter()
             .enumerate()
             .map(|(idx, inst)| {
-                let proto_name = scene
-                    .prototypes
-                    .get(inst.prototype_id)
-                    .map(|p| p.name.as_str())
-                    .unwrap_or("unknown");
-                format!("/{}/instance_{}", proto_name, idx)
+                if !inst.prim_path.is_empty() {
+                    inst.prim_path.clone()
+                } else {
+                    let proto_name = scene
+                        .prototypes
+                        .get(inst.prototype_id)
+                        .map(|p| p.name.as_str())
+                        .unwrap_or("unknown");
+                    format!("/BIF/{}/{}", proto_name, idx)
+                }
             })
             .collect();
 
@@ -1406,6 +1418,7 @@ impl Renderer {
         }
 
         self.usd_stage = Some(stage);
+        self.loaded_usd_path = Some(path.display().to_string());
 
         // Reset scene browser selection
         self.selected_prim_path = None;

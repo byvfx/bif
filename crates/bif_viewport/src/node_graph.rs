@@ -121,6 +121,15 @@ pub enum NodeGraphEvent {
     },
     /// Invalidate an instancer (clear cached results, reload scene)
     InstancerInvalidate { node_id: NodeId },
+    /// Export USD from a UsdExport node
+    ExportUsd {
+        node_id: NodeId,
+        output_path: String,
+        as_sublayer: bool,
+        export_root: String,
+    },
+    /// Set display flag on a node (which node feeds viewport/export)
+    SetDisplayNode(NodeId),
     /// Select a node (for keyboard delete, property inspector, etc.)
     SelectNode(NodeId),
     /// Delete a node by ID
@@ -237,6 +246,19 @@ pub enum SceneNode {
         /// Whether compute failed (prevents infinite retry loop)
         compute_failed: bool,
     },
+    /// USD Export sink node — writes scene to disk
+    UsdExport {
+        /// Output file path (.usda or .usdc)
+        output_path: String,
+        /// Compose over original USD (add source as sublayer)
+        as_sublayer: bool,
+        /// Root prim path for BIF-authored prims (default "/BIF")
+        export_root: String,
+        /// Whether last export succeeded
+        is_exported: bool,
+        /// Status text from last export attempt
+        last_result: Option<String>,
+    },
     /// HDRI environment map for IBL lighting
     HdriEnvironment {
         /// Path to the HDR file
@@ -340,6 +362,17 @@ impl SceneNode {
         }
     }
 
+    /// Create a new USD Export node
+    pub fn usd_export() -> Self {
+        Self::UsdExport {
+            output_path: String::new(),
+            as_sublayer: true,
+            export_root: "/BIF".to_string(),
+            is_exported: false,
+            last_result: None,
+        }
+    }
+
     /// Create a new HDRI Environment node
     pub fn hdri_environment() -> Self {
         Self::HdriEnvironment {
@@ -367,6 +400,7 @@ impl SceneNode {
             },
             SceneNode::ScatterPoints { .. } => "Scatter Points",
             SceneNode::PointInstancer { .. } => "Point Instancer",
+            SceneNode::UsdExport { .. } => "USD Export",
             SceneNode::HdriEnvironment { .. } => "HDRI Environment",
         }
     }
@@ -382,6 +416,7 @@ impl SceneNode {
                 bif_core::PointSource::Grid | bif_core::PointSource::Sphere => 0,
             },
             SceneNode::PointInstancer { .. } => 2, // points + prototype
+            SceneNode::UsdExport { .. } => 1,      // scene input
             SceneNode::HdriEnvironment { .. } => 0,
         }
     }
@@ -394,6 +429,7 @@ impl SceneNode {
             SceneNode::Primitive { .. } => 1,
             SceneNode::ScatterPoints { .. } => 1,
             SceneNode::PointInstancer { .. } => 1,
+            SceneNode::UsdExport { .. } => 0, // sink node, no output
             SceneNode::HdriEnvironment { .. } => 1,
         }
     }
@@ -418,6 +454,10 @@ impl SceneNode {
             SceneNode::PointInstancer { .. } => match index {
                 0 => Some(("points", PinType::Scene)),
                 1 => Some(("proto", PinType::Scene)),
+                _ => None,
+            },
+            SceneNode::UsdExport { .. } => match index {
+                0 => Some(("scene", PinType::Scene)),
                 _ => None,
             },
             SceneNode::HdriEnvironment { .. } => None,
@@ -447,6 +487,7 @@ impl SceneNode {
                 0 => Some(("scene", PinType::Scene)),
                 _ => None,
             },
+            SceneNode::UsdExport { .. } => None, // sink node
             SceneNode::HdriEnvironment { .. } => match index {
                 0 => Some(("env", PinType::Environment)),
                 _ => None,
@@ -469,17 +510,22 @@ fn resolve_input_connection(inputs: &[InPin], input_index: usize) -> Option<Node
 pub struct SceneNodeViewer {
     /// Events to be processed by the parent
     pub events: Vec<NodeGraphEvent>,
+    /// Which node has the display flag (for blue indicator)
+    pub display_node: Option<NodeId>,
 }
 
 impl SceneNodeViewer {
-    pub fn new() -> Self {
-        Self { events: Vec::new() }
+    pub fn new(display_node: Option<NodeId>) -> Self {
+        Self {
+            events: Vec::new(),
+            display_node,
+        }
     }
 }
 
 impl Default for SceneNodeViewer {
     fn default() -> Self {
-        Self::new()
+        Self::new(None)
     }
 }
 
@@ -591,6 +637,19 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer {
         // Detect click on node body to select it
         if ui.rect_contains_pointer(ui.max_rect()) && ui.input(|i| i.pointer.any_pressed()) {
             self.events.push(NodeGraphEvent::SelectNode(node_id));
+        }
+
+        // Display flag indicator (blue dot like Houdini)
+        if self.display_node == Some(node_id) {
+            ui.horizontal(|ui| {
+                let (rect, _) = ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
+                ui.painter().circle_filled(
+                    rect.center(),
+                    4.0,
+                    egui::Color32::from_rgb(80, 140, 255),
+                );
+                ui.colored_label(egui::Color32::from_rgb(80, 140, 255), "Display");
+            });
         }
 
         let node = &mut snarl[node_id];
@@ -1126,6 +1185,57 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer {
                     ui.colored_label(egui::Color32::YELLOW, format!("Need: {}", need));
                 }
             }
+            SceneNode::UsdExport {
+                output_path,
+                as_sublayer,
+                export_root,
+                is_exported,
+                last_result,
+            } => {
+                ui.horizontal(|ui| {
+                    ui.label("Path:");
+                    ui.text_edit_singleline(output_path);
+                });
+
+                ui.horizontal(|ui| {
+                    if ui.button("Browse...").clicked() {
+                        if let Some(path) = rfd::FileDialog::new()
+                            .add_filter("USD Files", &["usda", "usdc"])
+                            .set_file_name("export.usda")
+                            .save_file()
+                        {
+                            *output_path = path.display().to_string();
+                            *is_exported = false;
+                            *last_result = None;
+                        }
+                    }
+                });
+
+                ui.checkbox(as_sublayer, "As Sublayer");
+
+                ui.horizontal(|ui| {
+                    ui.label("Root:");
+                    ui.text_edit_singleline(export_root);
+                });
+
+                if !output_path.is_empty() && ui.button("Export").clicked() {
+                    self.events.push(NodeGraphEvent::ExportUsd {
+                        node_id,
+                        output_path: output_path.clone(),
+                        as_sublayer: *as_sublayer,
+                        export_root: export_root.clone(),
+                    });
+                }
+
+                if *is_exported {
+                    if let Some(ref result) = last_result {
+                        ui.colored_label(egui::Color32::GREEN, result.as_str());
+                    }
+                } else if let Some(ref result) = last_result {
+                    // Error case
+                    ui.colored_label(egui::Color32::RED, result.as_str());
+                }
+            }
             SceneNode::HdriEnvironment {
                 file_path,
                 is_loaded,
@@ -1284,8 +1394,20 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer {
         _outputs: &[OutPin],
         ui: &mut egui::Ui,
         _scale: f32,
-        _snarl: &mut Snarl<SceneNode>,
+        snarl: &mut Snarl<SceneNode>,
     ) {
+        // Show "Set Display" for scene-output nodes
+        let is_scene_output = matches!(
+            snarl[node],
+            SceneNode::UsdRead { .. }
+                | SceneNode::PointInstancer { .. }
+                | SceneNode::Primitive { .. }
+                | SceneNode::IvarRender { .. }
+        );
+        if is_scene_output && ui.button("Set Display").clicked() {
+            self.events.push(NodeGraphEvent::SetDisplayNode(node));
+            ui.close_menu();
+        }
         if ui.button("Delete").clicked() {
             self.events.push(NodeGraphEvent::DeleteNode(node));
             ui.close_menu();
@@ -1301,6 +1423,9 @@ pub struct NodeGraphState {
     pub style: SnarlStyle,
     /// Currently selected node (if any)
     pub selected_node: Option<NodeId>,
+    /// Display flag: which node feeds viewport/export (like Houdini's blue flag).
+    /// When set, only this node and its upstream deps are "active".
+    pub display_node: Option<NodeId>,
 }
 
 impl Default for NodeGraphState {
@@ -1319,6 +1444,7 @@ impl NodeGraphState {
             snarl,
             style: SnarlStyle::default(),
             selected_node: None,
+            display_node: None,
         }
     }
 
@@ -1346,6 +1472,7 @@ impl NodeGraphState {
             snarl,
             style: SnarlStyle::default(),
             selected_node: None,
+            display_node: None,
         }
     }
 
@@ -1377,6 +1504,11 @@ impl NodeGraphState {
     /// Add a Primitive node at the given position
     pub fn add_primitive(&mut self, kind: bif_core::PrimitiveKind, pos: egui::Pos2) -> NodeId {
         self.snarl.insert_node(pos, SceneNode::primitive(kind))
+    }
+
+    /// Add a USD Export node at the given position
+    pub fn add_usd_export(&mut self, pos: egui::Pos2) -> NodeId {
+        self.snarl.insert_node(pos, SceneNode::usd_export())
     }
 
     /// Delete the selected node.
@@ -1530,7 +1662,7 @@ impl NodeGraphState {
 /// Render the node graph UI
 /// Returns any events that should be processed by the parent
 pub fn render_node_graph(ui: &mut egui::Ui, state: &mut NodeGraphState) -> Vec<NodeGraphEvent> {
-    let mut viewer = SceneNodeViewer::new();
+    let mut viewer = SceneNodeViewer::new(state.display_node);
 
     // Handle keyboard input for delete
     // TODO: macOS has no Delete key — add Backspace conditionally via cfg!(target_os = "macos")
@@ -1568,6 +1700,9 @@ pub fn render_node_graph(ui: &mut egui::Ui, state: &mut NodeGraphState) -> Vec<N
         if ui.button("+ Instancer").clicked() {
             state.add_point_instancer(egui::pos2(400.0, 300.0));
         }
+        if ui.button("+ USD Export").clicked() {
+            state.add_usd_export(egui::pos2(600.0, 100.0));
+        }
         ui.separator();
         if ui.button("Del Selected").clicked() {
             if let Some(node_id) = state.delete_selected() {
@@ -1593,6 +1728,9 @@ pub fn render_node_graph(ui: &mut egui::Ui, state: &mut NodeGraphState) -> Vec<N
     let mut events_out = Vec::new();
     for event in viewer.events {
         match &event {
+            NodeGraphEvent::SetDisplayNode(id) => {
+                state.display_node = Some(*id);
+            }
             NodeGraphEvent::SelectNode(id) => {
                 state.selected_node = Some(*id);
             }
@@ -1600,6 +1738,9 @@ pub fn render_node_graph(ui: &mut egui::Ui, state: &mut NodeGraphState) -> Vec<N
                 let id = *id;
                 if state.selected_node == Some(id) {
                     state.selected_node = None;
+                }
+                if state.display_node == Some(id) {
+                    state.display_node = None;
                 }
 
                 // Emit InstancerInvalidate for any downstream PointInstancer before removing.

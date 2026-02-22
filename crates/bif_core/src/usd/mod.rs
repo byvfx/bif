@@ -33,6 +33,7 @@
 //! ```
 
 pub mod cpp_bridge;
+pub mod export;
 mod loader;
 mod parser;
 mod types;
@@ -41,6 +42,7 @@ pub use cpp_bridge::{
     TransformSample, UsdAnimatedInstancerData, UsdAnimatedMeshData, UsdBridgeError, UsdEditLayer,
     UsdInstancerData, UsdLightData, UsdLightType, UsdMeshData, UsdStage, UsdTimelineData,
 };
+pub use export::{ExportConfig, ExportResult};
 pub use loader::*;
 pub use parser::*;
 pub use types::*;

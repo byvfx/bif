@@ -25,6 +25,8 @@
 #include <pxr/base/gf/quath.h>
 #include <pxr/base/vt/array.h>
 #include <pxr/base/tf/pathUtils.h>
+#include <pxr/usd/sdf/layer.h>
+#include <pxr/usd/usd/references.h>
 #include <pxr/usd/ar/resolver.h>
 #include <pxr/usd/ar/resolverContextBinder.h>
 
@@ -2238,6 +2240,10 @@ UsdBridgeError usd_bridge_write_xform_opinion(
 
     try {
         SdfPath path(prim_path);
+
+        // Try override first (for sublayer composition over existing typed prims).
+        // If the prim isn't xformable (typeless override on empty stage),
+        // fall back to defining an Xform prim.
         auto prim = layer->stage->OverridePrim(path);
         if (!prim) {
             return USD_BRIDGE_ERROR_UNKNOWN;
@@ -2245,7 +2251,14 @@ UsdBridgeError usd_bridge_write_xform_opinion(
 
         UsdGeomXformable xformable(prim);
         if (!xformable) {
-            return USD_BRIDGE_ERROR_UNKNOWN;
+            prim = layer->stage->DefinePrim(path, TfToken("Xform"));
+            if (!prim) {
+                return USD_BRIDGE_ERROR_UNKNOWN;
+            }
+            xformable = UsdGeomXformable(prim);
+            if (!xformable) {
+                return USD_BRIDGE_ERROR_UNKNOWN;
+            }
         }
 
         // Build GfMatrix4d from column-major float[16]
@@ -2300,4 +2313,167 @@ void usd_bridge_free_edit_layer(
     UsdBridgeEditLayer* layer
 ) {
     delete layer;
+}
+
+UsdBridgeError usd_bridge_edit_layer_add_sublayer(
+    UsdBridgeEditLayer* layer,
+    const char* sublayer_path
+) {
+    if (!layer || !sublayer_path) {
+        return USD_BRIDGE_ERROR_NULL_POINTER;
+    }
+
+    try {
+        auto rootLayer = layer->stage->GetRootLayer();
+        rootLayer->InsertSubLayerPath(sublayer_path);
+        return USD_BRIDGE_SUCCESS;
+    } catch (...) {
+        return USD_BRIDGE_ERROR_UNKNOWN;
+    }
+}
+
+UsdBridgeError usd_bridge_edit_layer_add_reference(
+    UsdBridgeEditLayer* layer,
+    const char* prim_path,
+    const char* reference_file,
+    const char* reference_prim_path
+) {
+    if (!layer || !prim_path || !reference_file) {
+        return USD_BRIDGE_ERROR_NULL_POINTER;
+    }
+
+    try {
+        SdfPath path(prim_path);
+        auto prim = layer->stage->OverridePrim(path);
+        if (!prim) {
+            return USD_BRIDGE_ERROR_UNKNOWN;
+        }
+
+        SdfPath refPrimPath;
+        if (reference_prim_path && reference_prim_path[0] != '\0') {
+            refPrimPath = SdfPath(reference_prim_path);
+        }
+
+        auto refs = prim.GetReferences();
+        refs.AddReference(SdfReference(reference_file, refPrimPath));
+        return USD_BRIDGE_SUCCESS;
+    } catch (...) {
+        return USD_BRIDGE_ERROR_UNKNOWN;
+    }
+}
+
+UsdBridgeError usd_bridge_edit_layer_set_default_prim(
+    UsdBridgeEditLayer* layer,
+    const char* prim_path
+) {
+    if (!layer || !prim_path) {
+        return USD_BRIDGE_ERROR_NULL_POINTER;
+    }
+
+    try {
+        SdfPath path(prim_path);
+        auto prim = layer->stage->GetPrimAtPath(path);
+        if (!prim) {
+            // Create the prim if it doesn't exist
+            prim = layer->stage->OverridePrim(path);
+        }
+        if (!prim) {
+            return USD_BRIDGE_ERROR_UNKNOWN;
+        }
+        layer->stage->SetDefaultPrim(prim);
+        return USD_BRIDGE_SUCCESS;
+    } catch (...) {
+        return USD_BRIDGE_ERROR_UNKNOWN;
+    }
+}
+
+UsdBridgeError usd_bridge_write_point_instancer(
+    UsdBridgeEditLayer* layer,
+    const char* prim_path,
+    const float* positions,
+    const float* orientations,
+    const float* scales,
+    const int32_t* proto_indices,
+    size_t count,
+    const char* const* prototype_paths,
+    size_t prototype_count
+) {
+    if (!layer || !prim_path || !positions || !proto_indices ||
+        !prototype_paths || count == 0 || prototype_count == 0) {
+        return USD_BRIDGE_ERROR_NULL_POINTER;
+    }
+
+    try {
+        SdfPath path(prim_path);
+        auto prim = layer->stage->DefinePrim(path, TfToken("PointInstancer"));
+        if (!prim) {
+            return USD_BRIDGE_ERROR_UNKNOWN;
+        }
+
+        UsdGeomPointInstancer instancer(prim);
+        if (!instancer) {
+            return USD_BRIDGE_ERROR_UNKNOWN;
+        }
+
+        // Set positions
+        VtVec3fArray posArray(count);
+        for (size_t i = 0; i < count; ++i) {
+            posArray[i] = GfVec3f(
+                positions[i * 3 + 0],
+                positions[i * 3 + 1],
+                positions[i * 3 + 2]
+            );
+        }
+        instancer.GetPositionsAttr().Set(posArray);
+
+        // Set orientations (quaternion wxyz -> GfQuath)
+        VtQuathArray orientArray(count);
+        for (size_t i = 0; i < count; ++i) {
+            if (orientations) {
+                orientArray[i] = GfQuath(
+                    GfHalf(orientations[i * 4 + 0]),  // w
+                    GfHalf(orientations[i * 4 + 1]),  // x
+                    GfHalf(orientations[i * 4 + 2]),  // y
+                    GfHalf(orientations[i * 4 + 3])   // z
+                );
+            } else {
+                orientArray[i] = GfQuath::GetIdentity();
+            }
+        }
+        instancer.GetOrientationsAttr().Set(orientArray);
+
+        // Set scales
+        VtVec3fArray scaleArray(count);
+        for (size_t i = 0; i < count; ++i) {
+            if (scales) {
+                scaleArray[i] = GfVec3f(
+                    scales[i * 3 + 0],
+                    scales[i * 3 + 1],
+                    scales[i * 3 + 2]
+                );
+            } else {
+                scaleArray[i] = GfVec3f(1.0f, 1.0f, 1.0f);
+            }
+        }
+        instancer.GetScalesAttr().Set(scaleArray);
+
+        // Set prototype indices
+        VtIntArray idxArray(count);
+        for (size_t i = 0; i < count; ++i) {
+            idxArray[i] = proto_indices[i];
+        }
+        instancer.GetProtoIndicesAttr().Set(idxArray);
+
+        // Set prototype relationships
+        auto protosRel = instancer.GetPrototypesRel();
+        for (size_t i = 0; i < prototype_count; ++i) {
+            if (prototype_paths[i]) {
+                protosRel.AddTarget(SdfPath(prototype_paths[i]));
+            }
+        }
+
+        return USD_BRIDGE_SUCCESS;
+    } catch (...) {
+        return USD_BRIDGE_ERROR_UNKNOWN;
+    }
 }

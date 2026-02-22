@@ -46,7 +46,7 @@ pub use undo::{
     CreatePrimitiveCommand, DeletePrimitiveCommand, EditState, KeyframeCommand, ScatterCommand,
     SceneOp, TransformCommand, UndoCommand, UndoStack,
 };
-pub use usd::{load_usd, load_usda, load_usda_from_string};
+pub use usd::{load_usd, load_usda, load_usda_from_string, ExportConfig, ExportResult};
 
 #[cfg(feature = "oiio")]
 pub use oiio::{

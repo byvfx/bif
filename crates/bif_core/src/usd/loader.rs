@@ -231,9 +231,14 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
         };
 
         if let Some(anim) = animation {
-            scene.add_animated_instance(proto_id, transform, anim);
+            scene.add_animated_instance_with_path(
+                proto_id,
+                transform,
+                anim,
+                mesh_data.path.clone(),
+            );
         } else {
-            scene.add_instance(proto_id, transform);
+            scene.add_instance_with_path(proto_id, transform, mesh_data.path.clone());
         }
     }
     let mesh_time = mesh_start.elapsed();
@@ -486,10 +491,16 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
                 }
             });
 
+            let prim_path = format!("{}/i{}", instancer_data.path, i);
             if let Some(anim) = animation {
-                scene.add_animated_instance(inst.prototype_id, inst.transform, anim);
+                scene.add_animated_instance_with_path(
+                    inst.prototype_id,
+                    inst.transform,
+                    anim,
+                    prim_path,
+                );
             } else {
-                scene.add_instance(inst.prototype_id, inst.transform);
+                scene.add_instance_with_path(inst.prototype_id, inst.transform, prim_path);
             }
         }
 

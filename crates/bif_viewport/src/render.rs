@@ -5,7 +5,7 @@ use crate::batch_render::BatchMessage;
 use crate::environment_manager::IblResult;
 use crate::gpu_types::InstanceData;
 use crate::ivar_state::{self, BatchRenderStatus, BuildStatus, CameraSource, RenderMode};
-use crate::node_graph::{render_node_graph, NodeGraphEvent};
+use crate::node_graph::{render_node_graph, NodeGraphEvent, SceneNode};
 use crate::property_inspector::{
     render_property_inspector, reset_transform_edit_cache, PrimProperties, TransformEdit,
 };
@@ -1827,6 +1827,51 @@ impl Renderer {
                         self.point_preview.point_size = point_size;
                         self.point_preview.color = point_color;
                         self.point_preview_params_dirty = true;
+                    }
+                    NodeGraphEvent::ExportUsd {
+                        node_id,
+                        output_path,
+                        as_sublayer,
+                        export_root,
+                    } => {
+                        let config = bif_core::ExportConfig {
+                            output_path: output_path.clone(),
+                            source_usd_path: self.loaded_usd_path.clone(),
+                            as_sublayer,
+                            export_root,
+                        };
+                        match self.export_with_config(&config) {
+                            Ok(result) => {
+                                let status = format!("{}", result);
+                                log::info!("USD export: {}", status);
+                                // Update node status
+                                if let SceneNode::UsdExport {
+                                    is_exported,
+                                    last_result,
+                                    ..
+                                } = &mut self.node_graph_state.snarl[node_id]
+                                {
+                                    *is_exported = true;
+                                    *last_result = Some(status);
+                                }
+                            }
+                            Err(e) => {
+                                let err_msg = format!("{}", e);
+                                log::error!("USD export failed: {}", err_msg);
+                                if let SceneNode::UsdExport {
+                                    is_exported,
+                                    last_result,
+                                    ..
+                                } = &mut self.node_graph_state.snarl[node_id]
+                                {
+                                    *is_exported = false;
+                                    *last_result = Some(format!("Error: {}", err_msg));
+                                }
+                            }
+                        }
+                    }
+                    NodeGraphEvent::SetDisplayNode(_) => {
+                        // Display flag handled in render_node_graph
                     }
                     NodeGraphEvent::SelectNode(_) => {
                         // Selection handled in render_node_graph

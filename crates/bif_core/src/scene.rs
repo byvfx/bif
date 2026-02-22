@@ -333,6 +333,10 @@ pub struct Instance {
 
     /// Instance transform
     pub transform: Transform,
+
+    /// USD prim path for export (e.g., `/World/mesh_0` for standalone meshes,
+    /// or empty for BIF-created instances which use `/BIF/` convention).
+    pub prim_path: String,
 }
 
 impl Instance {
@@ -341,6 +345,16 @@ impl Instance {
         Self {
             prototype_id,
             transform,
+            prim_path: String::new(),
+        }
+    }
+
+    /// Create a new instance with an explicit USD prim path.
+    pub fn with_prim_path(prototype_id: usize, transform: Transform, prim_path: String) -> Self {
+        Self {
+            prototype_id,
+            transform,
+            prim_path,
         }
     }
 
@@ -477,6 +491,18 @@ impl Scene {
         self.instance_animations.push(None);
     }
 
+    /// Add an instance with an explicit USD prim path.
+    pub fn add_instance_with_path(
+        &mut self,
+        prototype_id: usize,
+        transform: Transform,
+        prim_path: String,
+    ) {
+        self.instances
+            .push(Instance::with_prim_path(prototype_id, transform, prim_path));
+        self.instance_animations.push(None);
+    }
+
     /// Add an instance with animation data.
     pub fn add_animated_instance(
         &mut self,
@@ -485,6 +511,19 @@ impl Scene {
         animation: AnimatedTransform,
     ) {
         self.instances.push(Instance::new(prototype_id, transform));
+        self.instance_animations.push(Some(animation));
+    }
+
+    /// Add an instance with animation data and an explicit USD prim path.
+    pub fn add_animated_instance_with_path(
+        &mut self,
+        prototype_id: usize,
+        transform: Transform,
+        animation: AnimatedTransform,
+        prim_path: String,
+    ) {
+        self.instances
+            .push(Instance::with_prim_path(prototype_id, transform, prim_path));
         self.instance_animations.push(Some(animation));
     }
 

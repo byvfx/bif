@@ -200,6 +200,9 @@ pub struct Renderer {
     // Wrapped in Arc for sharing with batch render thread
     pub(crate) usd_stage: Option<Arc<UsdStage>>,
 
+    /// Path to the currently loaded USD file (for sublayer export)
+    pub(crate) loaded_usd_path: Option<String>,
+
     // Node graph state for scene assembly
     pub node_graph_state: NodeGraphState,
 
@@ -806,6 +809,7 @@ impl Renderer {
             selected_prim_path: None,
             selected_prim_properties: None,
             usd_stage: None,
+            loaded_usd_path: None,
             node_graph_state: NodeGraphState::new(),
             timeline_state: TimelineState::default(),
             environment,
@@ -1429,53 +1433,39 @@ impl Renderer {
         reset_transform_edit_cache(&self.egui_ctx);
     }
 
-    /// Export transform overrides and keyframes as a USD edit layer.
+    /// Export transform overrides, keyframes, and point clouds as a USD layer.
     pub fn export_edit_layer(&self, output_path: &str) -> anyhow::Result<()> {
-        use bif_core::usd::UsdEditLayer;
+        let config = bif_core::ExportConfig {
+            output_path: output_path.to_string(),
+            source_usd_path: self.loaded_usd_path.clone(),
+            as_sublayer: self.loaded_usd_path.is_some(),
+            export_root: "/BIF".to_string(),
+        };
 
-        let mut layer = UsdEditLayer::create(output_path)
-            .map_err(|e| anyhow::anyhow!("Failed to create edit layer: {}", e))?;
+        let result = bif_core::usd::export::export_scene(
+            &self.working_scene,
+            &self.edit_state,
+            &self.instance_prim_paths,
+            &config,
+        )
+        .map_err(|e| anyhow::anyhow!("Export failed: {}", e))?;
 
-        let mut written = 0;
-
-        // Write static transform overrides
-        for (&idx, transform) in &self.edit_state.transform_overrides {
-            let prim_path = self
-                .instance_prim_paths
-                .get(idx)
-                .cloned()
-                .unwrap_or_else(|| format!("/instance_{}", idx));
-            let mat = transform.to_matrix();
-            layer
-                .write_xform(&prim_path, -1.0, &mat)
-                .map_err(|e| anyhow::anyhow!("Failed to write xform for {}: {}", prim_path, e))?;
-            written += 1;
-        }
-
-        // Write keyframed transforms
-        for (&idx, anim) in &self.edit_state.keyframe_overrides {
-            let prim_path = self
-                .instance_prim_paths
-                .get(idx)
-                .cloned()
-                .unwrap_or_else(|| format!("/instance_{}", idx));
-            if let Some(keyframes) = &anim.keyframes {
-                for kf in keyframes {
-                    let mat = kf.transform.to_matrix();
-                    layer.write_xform(&prim_path, kf.time, &mat).map_err(|e| {
-                        anyhow::anyhow!("Failed to write keyframe for {}: {}", prim_path, e)
-                    })?;
-                    written += 1;
-                }
-            }
-        }
-
-        layer
-            .save()
-            .map_err(|e| anyhow::anyhow!("Failed to save edit layer: {}", e))?;
-
-        log::info!("Exported {} xform opinions to {}", written, output_path);
+        log::info!("Exported: {}", result);
         Ok(())
+    }
+
+    /// Export with a full config (used by UsdExport node).
+    pub fn export_with_config(
+        &self,
+        config: &bif_core::ExportConfig,
+    ) -> anyhow::Result<bif_core::ExportResult> {
+        bif_core::usd::export::export_scene(
+            &self.working_scene,
+            &self.edit_state,
+            &self.instance_prim_paths,
+            config,
+        )
+        .map_err(|e| anyhow::anyhow!("Export failed: {}", e))
     }
 
     /// Update FPS counter (call each frame with delta_time)
