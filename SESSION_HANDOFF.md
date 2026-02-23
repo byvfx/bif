@@ -1,6 +1,6 @@
 # Session Handoff - February 22, 2026
 
-**Last Updated:** Xform node, multi-USD material fix, display flag gating
+**Last Updated:** VFX code review — 9 fixes (safety, perf, async, metadata, Embree, polish)
 **Next Milestone:** M29 validation + Ivar Xform support + M26 Denoising
 **Project:** BIF - VFX Scene Assembler & Renderer
 
@@ -11,35 +11,44 @@
 | Status | Details |
 |--------|---------|
 | Complete | Milestones 0-23 |
-| Current | M29 USD Export — Xform node + multi-USD + display flag done |
+| Current | VFX code review fixes applied (9/9), M29 export done |
 | Tests | 68 viewport, 91 bif_core (6 export), 253+ total passing |
-| Performance | 60 FPS viewport, 100K instances with LOD |
+| Performance | 60 FPS viewport, 100K instances with LOD, dirty-flag skips 8MB writes |
 
 ---
 
 ## Recent Work
 
-### Xform Node + Multi-USD Material Fix (Feb 22, 2026)
+### VFX Code Review Fixes (Feb 22, 2026 — Session 3)
+
+| Fix | Details |
+|-----|---------|
+| Parser safety | Eliminated `.unwrap()` after peek in 3 parser functions + malformed-input tests |
+| Test cleanup | Removed `eprintln!` from tests, replaced with assertions |
+| Culling dirty flag | `buffer_dirty` + `cached_result` skip 8MB `write_buffer` when camera & data static |
+| Arc\<str\> refactor | `Material.name`, texture paths, `Prototype.name`, `Instance.prim_path` → `Arc<str>` |
+| Async USD loading | `mpsc::channel` + `std::thread::spawn`, progress spinner in top panel |
+| Stage metadata | C++ `usd_bridge_get_stage_metadata()` → Rust `UsdStageMetadata`, UI display + Z→Y / →m toggles |
+| Embree transform update | `update_transforms()` via `rtcSetGeometryTransform` + `rtcCommitScene` (avoids full rebuild) |
+| Named constants | `DEFAULT_NEAR_PLANE`, `DEFAULT_FAR_PLANE`, `LOD_BOX_TRIANGLES` |
+| IndexMap | `prototype_map` + `material_map` in loader.rs for deterministic ordering |
+
+### Unified Proto Maps + Topo Xform (Feb 22, 2026 — Session 2)
 
 | Feature | Details |
 |---------|---------|
-| Xform node | `SceneNode::Xform` with T/R/S, node body UI + property inspector panel (colored X/Y/Z DragValues) |
-| Transform apply | BFS upstream walk finds affected prototypes, post-multiplies T/R/S matrix in `reload_working_scene` |
-| Multi-USD materials | `Material.source_dir` tracks originating USD dir; `resolve_texture_path` per-material; gpu_textures rebuilt from accumulated working_scene |
-| node_proto_ids | `HashMap<NodeId, Vec<usize>>` for multi-proto UsdRead nodes; cleanup on delete + re-index |
-| Display flag gating | `collect_upstream_nodes` BFS determines active subgraph; hidden protos excluded from viewport + Ivar |
-| Toggle display | Context menu shows Set/Clear Display; Xform is display-flag-eligible |
-| C++ bridge | TF_WARN diagnostics, PointInstancer array validation, checked i32 conversion |
-| Deletion | Always reload after DeleteNode (handles Xform/display changes properly) |
+| Unified proto maps | `node_proto_map` + `node_proto_ids` → single `HashMap<NodeId, Vec<usize>>` |
+| Topo Xform | Sort by upstream depth so chains apply correctly |
+| materials_dirty | Skip texture rebuild on Xform drag / display toggle |
+| Identity skip | Skip no-op Xform transforms |
 
-### M29 USD Export Pipeline (Feb 21, 2026)
+### Xform Node + Multi-USD Material Fix (Feb 22, 2026 — Session 1)
 
-| Phase | Details |
-|-------|---------|
-| Prim paths | `Instance.prim_path` tracks real USD paths; `/BIF/` convention for BIF-created |
-| C++ bridge | 4 new APIs: sublayer, reference, default prim, PointInstancer write |
-| Export core | `export_scene()` in `bif_core::usd::export` — GUI-agnostic, writes xforms + keyframes + instancers |
-| UsdExport node | Sink node with path/sublayer/root config, Browse button, status display |
+| Feature | Details |
+|---------|---------|
+| Xform node | `SceneNode::Xform` with T/R/S, node body UI + property inspector |
+| Multi-USD materials | `Material.source_dir` resolves relative texture paths correctly |
+| Display flag gating | BFS walk determines active subgraph; hidden protos excluded |
 
 ---
 
@@ -54,22 +63,24 @@
 
 ### What Works
 
-**Xform Node:**
-- T/R/S in node body + property inspector (click node to select)
-- Upstream BFS walks to find affected prototypes
-- Chaining: UsdRead → Xform1 → Xform2 applies transforms in order
-- Delete Xform → scene rebuilds without its transforms
-- Display flag properly gates Xform contributions
+**VFX Review Improvements:**
+- Parser handles malformed input gracefully (no panics)
+- String cloning minimized via `Arc<str>` across core types
+- Culling skips redundant GPU writes when nothing changed
+- USD loading on background thread with progress UI
+- Stage metadata (metersPerUnit, upAxis) displayed in top panel
+- Optional Z→Y axis correction and unit scaling toggles
+- Embree supports incremental transform updates
+- Deterministic prototype/material ordering via IndexMap
 
-**Multi-USD Materials:**
-- Loading 2+ USD files preserves all materials
-- Per-material `source_dir` resolves relative texture paths correctly
-- `gpu_textures` rebuilt from accumulated `working_scene` on each reload
+**Xform Node:**
+- T/R/S in node body + property inspector
+- Topological ordering (upstream-first chain application)
+- Delete Xform → scene rebuilds without its transforms
 
 **USD Export (M29):**
 - C++ bridge: sublayer composition, reference, default prim, PointInstancer write
 - `export_scene()` writes xform overrides, keyframed transforms, point clouds
-- Display flag (blue dot) for gating which node feeds viewport/export
 
 ### Known Issues
 
