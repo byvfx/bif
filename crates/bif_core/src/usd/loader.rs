@@ -13,6 +13,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
+use indexmap::IndexMap;
+
 use bif_math::Mat4;
 use thiserror::Error;
 
@@ -108,7 +110,13 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
     let stage_time = stage_start.elapsed();
 
     let mut scene = Scene::new(name);
-    let mut prototype_map: HashMap<String, usize> = HashMap::new();
+    let mut prototype_map: IndexMap<String, usize> = IndexMap::new();
+
+    // Extract stage metadata (metersPerUnit, upAxis)
+    if let Ok(meta) = stage.get_stage_metadata() {
+        log::info!("Stage metadata: {}", meta);
+        scene.stage_metadata = Some(meta);
+    }
 
     // Extract timeline metadata
     if let Ok(timeline_data) = stage.get_timeline() {
@@ -247,7 +255,7 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
     // Load materials
     let material_start = Instant::now();
     let usd_materials = stage.materials().unwrap_or_default();
-    let mut material_map: HashMap<String, usize> = HashMap::new();
+    let mut material_map: IndexMap<String, usize> = IndexMap::new();
     let mut materialx_count = 0;
 
     for mat_data in &usd_materials {
@@ -262,18 +270,18 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
             );
         }
         let material = crate::scene::Material {
-            name: mat_data.path.clone(),
+            name: mat_data.path.clone().into(),
             diffuse_color: mat_data.diffuse_color,
             metallic: mat_data.metallic,
             roughness: mat_data.roughness,
             emissive_color: mat_data.emissive_color,
             opacity: mat_data.opacity,
             specular: mat_data.specular,
-            diffuse_texture: mat_data.diffuse_texture.clone(),
-            roughness_texture: mat_data.roughness_texture.clone(),
-            metallic_texture: mat_data.metallic_texture.clone(),
-            normal_texture: mat_data.normal_texture.clone(),
-            emissive_texture: mat_data.emissive_texture.clone(),
+            diffuse_texture: mat_data.diffuse_texture.as_deref().map(Arc::from),
+            roughness_texture: mat_data.roughness_texture.as_deref().map(Arc::from),
+            metallic_texture: mat_data.metallic_texture.as_deref().map(Arc::from),
+            normal_texture: mat_data.normal_texture.as_deref().map(Arc::from),
+            emissive_texture: mat_data.emissive_texture.as_deref().map(Arc::from),
             opacity_texture: None, // TODO: extract from USD when available
             source_dir: None,
         };
@@ -359,7 +367,7 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
                 Light::Dome {
                     rotation: 0.0,
                     intensity: light_data.intensity,
-                    texture_path: light_data.texture_path.clone(),
+                    texture_path: light_data.texture_path.as_deref().map(Arc::from),
                 }
             }
         };
@@ -584,7 +592,7 @@ pub fn load_usda_from_string(
 struct SceneBuilder {
     scene: Scene,
     /// Map from USD prim path to prototype ID
-    prototype_map: HashMap<String, usize>,
+    prototype_map: IndexMap<String, usize>,
     /// Base directory for resolving relative references
     base_dir: Option<PathBuf>,
     /// Cache of loaded reference files to avoid re-loading
@@ -595,7 +603,7 @@ impl SceneBuilder {
     fn new(name: &str, base_dir: Option<PathBuf>) -> Self {
         Self {
             scene: Scene::new(name),
-            prototype_map: HashMap::new(),
+            prototype_map: IndexMap::new(),
             base_dir,
             reference_cache: HashMap::new(),
         }

@@ -81,6 +81,78 @@ use batch_render::BatchMessage;
 /// Maximum instance count for dynamic instance buffer.
 const MAX_INSTANCES: u32 = 100_000;
 
+/// Status of an asynchronous USD load operation.
+#[derive(Debug, Clone)]
+pub enum UsdLoadStatus {
+    /// No load in progress.
+    Idle,
+    /// Loading in progress with granular progress info.
+    Loading(UsdLoadProgress),
+    /// Load completed — scene + stage ready for GPU finalization.
+    Ready,
+    /// Load failed with error message.
+    Error(String),
+}
+
+/// Granular progress stages for USD loading.
+#[derive(Debug, Clone)]
+pub enum UsdLoadProgress {
+    /// Opening the USD stage via C++ bridge.
+    OpeningStage,
+    /// Extracting mesh geometry.
+    ExtractingMeshes { current: usize, total: usize },
+    /// Extracting materials.
+    ExtractingMaterials { current: usize, total: usize },
+    /// Extracting lights.
+    ExtractingLights,
+    /// Building BIF scene graph.
+    BuildingScene,
+    /// Finalizing (creating GPU buffers).
+    Finalizing,
+}
+
+impl std::fmt::Display for UsdLoadProgress {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::OpeningStage => write!(f, "Opening USD stage..."),
+            Self::ExtractingMeshes { current, total } => {
+                write!(f, "Extracting meshes ({current}/{total})...")
+            }
+            Self::ExtractingMaterials { current, total } => {
+                write!(f, "Extracting materials ({current}/{total})...")
+            }
+            Self::ExtractingLights => write!(f, "Extracting lights..."),
+            Self::BuildingScene => write!(f, "Building scene..."),
+            Self::Finalizing => write!(f, "Creating GPU buffers..."),
+        }
+    }
+}
+
+impl std::fmt::Display for UsdLoadStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Idle => write!(f, ""),
+            Self::Loading(p) => write!(f, "{p}"),
+            Self::Ready => write!(f, "Ready"),
+            Self::Error(e) => write!(f, "Error: {e}"),
+        }
+    }
+}
+
+/// Message sent from the background USD load thread.
+pub(crate) enum UsdLoadMessage {
+    /// Progress update.
+    Progress(UsdLoadProgress),
+    /// Load completed with scene + stage.
+    Complete {
+        scene: Box<bif_core::Scene>,
+        stage: bif_core::usd::UsdStage,
+        path: std::path::PathBuf,
+    },
+    /// Load failed.
+    Failed(String),
+}
+
 /// Core renderer managing wgpu state
 pub struct Renderer {
     pub(crate) surface: Surface<'static>,
@@ -254,6 +326,10 @@ pub struct Renderer {
 
     // Viewport display toggles
     pub show_grid: bool,
+    /// Apply Z-to-Y axis correction when stage is Z-up.
+    pub apply_axis_correction: bool,
+    /// Apply metersPerUnit scaling to match viewport (assumed meters).
+    pub apply_unit_scaling: bool,
 
     /// Persistent working scene that accumulates all primitives and USD objects.
     pub(crate) working_scene: bif_core::Scene,
@@ -278,6 +354,12 @@ pub struct Renderer {
     /// BTreeMap for deterministic iteration order (picking, culling, debug).
     pub(crate) instancer_results:
         std::collections::BTreeMap<egui_snarl::NodeId, Vec<bif_core::Instance>>,
+
+    // Async USD loading state
+    /// Receiver for messages from the background USD load thread.
+    pub(crate) usd_load_receiver: Option<mpsc::Receiver<UsdLoadMessage>>,
+    /// Current status of the async USD load (for UI display).
+    pub usd_load_status: UsdLoadStatus,
 }
 
 impl Renderer {
@@ -835,6 +917,8 @@ impl Renderer {
             point_preview_last_vp: (0.0, 0.0),
             point_preview_params_dirty: true,
             show_grid: true,
+            apply_axis_correction: false,
+            apply_unit_scaling: false,
             working_scene: bif_core::Scene::new("Working"),
             primitive_name_counters: std::collections::HashMap::new(),
             node_proto_map: std::collections::HashMap::new(),
@@ -844,6 +928,8 @@ impl Renderer {
             next_cloud_id: 0,
             node_scatter_surface_map: std::collections::HashMap::new(),
             instancer_results: std::collections::BTreeMap::new(),
+            usd_load_receiver: None,
+            usd_load_status: UsdLoadStatus::Idle,
         })
     }
 
@@ -1229,6 +1315,7 @@ impl Renderer {
             let mat = transform.to_matrix();
             if idx < self.current_transforms.len() {
                 self.current_transforms[idx] = mat;
+                self.culling.mark_dirty();
                 self.update_visible_instances();
                 // Keep Embree pick scene in sync
                 if let Some(pick_scene) = &self.pick_scene {
@@ -1253,6 +1340,7 @@ impl Renderer {
         }
 
         if !overrides.is_empty() {
+            self.culling.mark_dirty();
             self.update_visible_instances();
             // Keep Embree pick scene in sync
             if let Some(pick_scene) = &self.pick_scene {
@@ -1323,6 +1411,7 @@ impl Renderer {
         if idx < self.current_transforms.len() {
             self.current_transforms[idx] = mat;
             self.edit_state.transform_overrides.insert(idx, transform);
+            self.culling.mark_dirty();
             self.update_visible_instances();
             // Keep Embree pick scene in sync
             if let Some(pick_scene) = &self.pick_scene {

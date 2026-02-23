@@ -18,12 +18,12 @@ use crate::{texture_loader, Renderer, MAX_INSTANCES};
 /// if set, otherwise synthesise one from the prototype name and index.
 fn resolve_prim_path(inst: &bif_core::Instance, scene: &bif_core::Scene, idx: usize) -> String {
     if !inst.prim_path.is_empty() {
-        inst.prim_path.clone()
+        inst.prim_path.to_string()
     } else {
         let proto_name = scene
             .prototypes
             .get(inst.prototype_id)
-            .map(|p| p.name.as_str())
+            .map(|p| &*p.name)
             .unwrap_or("unknown");
         format!("/BIF/{}/{}", proto_name, idx)
     }
@@ -159,7 +159,7 @@ impl Renderer {
                 usage: wgpu::BufferUsages::INDEX,
             });
 
-        let material_index_by_name: HashMap<String, u32> = scene
+        let material_index_by_name: HashMap<Arc<str>, u32> = scene
             .materials
             .iter()
             .enumerate()
@@ -481,6 +481,7 @@ impl Renderer {
             self.scene_cameras = scene.cameras.clone();
             self.culling.instance_aabbs.clear();
             self.culling.visible_count = 0;
+            self.culling.mark_dirty();
             self.pick_scene = None;
             self.mesh_data = MeshData {
                 vertices: vec![],
@@ -748,7 +749,7 @@ impl Renderer {
             });
 
         // Build material index lookup
-        let material_index_by_name: HashMap<String, u32> = scene
+        let material_index_by_name: HashMap<Arc<str>, u32> = scene
             .materials
             .iter()
             .enumerate()
@@ -833,6 +834,25 @@ impl Renderer {
                 model_matrix: model_matrix.to_cols_array_2d(),
                 material_id,
             });
+        }
+
+        // Apply stage metadata corrections (axis + unit) if user toggled them on.
+        if let Some(ref meta) = scene.stage_metadata {
+            let mut correction = Mat4::IDENTITY;
+            if self.apply_axis_correction && meta.up_axis == bif_core::usd::cpp_bridge::UpAxis::Z {
+                // Rotate -90 degrees around X to convert Z-up → Y-up
+                correction = Mat4::from_rotation_x(-std::f32::consts::FRAC_PI_2);
+            }
+            if self.apply_unit_scaling && (meta.meters_per_unit - 1.0).abs() > 1e-6 {
+                let s = meta.meters_per_unit as f32;
+                correction = Mat4::from_scale(bif_math::Vec3::splat(s)) * correction;
+            }
+            if correction != Mat4::IDENTITY {
+                for inst in &mut instances {
+                    let m = Mat4::from_cols_array_2d(&inst.model_matrix);
+                    inst.model_matrix = (correction * m).to_cols_array_2d();
+                }
+            }
         }
 
         // Apply Xform node transforms in topological order (upstream-first).
@@ -1008,7 +1028,7 @@ impl Renderer {
             let proto_name = scene
                 .prototypes
                 .get(inst.prototype_id)
-                .map(|p| p.name.as_str())
+                .map(|p| &*p.name)
                 .unwrap_or("unknown");
             prim_paths.push(format!(
                 "/BIF/{}/instancer_{}",
@@ -1083,7 +1103,107 @@ impl Renderer {
         Ok(())
     }
 
-    /// Load a USD scene file and update the viewport
+    /// Start loading a USD scene asynchronously on a background thread.
+    ///
+    /// Progress is reported via `UsdLoadMessage` on an `mpsc` channel.
+    /// Call `poll_usd_load()` each frame to check for completion
+    /// and finalize GPU resources on the main thread.
+    pub fn load_usd_scene_async<P: AsRef<std::path::Path>>(&mut self, path: P) {
+        use crate::{UsdLoadMessage, UsdLoadProgress, UsdLoadStatus};
+
+        let path = path.as_ref().to_path_buf();
+        if !path.exists() {
+            self.usd_load_status = UsdLoadStatus::Error(format!("File not found: {path:?}"));
+            return;
+        }
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.usd_load_receiver = Some(rx);
+        self.usd_load_status = UsdLoadStatus::Loading(UsdLoadProgress::OpeningStage);
+
+        std::thread::spawn(move || {
+            tx.send(UsdLoadMessage::Progress(UsdLoadProgress::OpeningStage))
+                .ok();
+
+            match bif_core::usd::load_usd_with_stage(&path) {
+                Ok((scene, stage)) => {
+                    tx.send(UsdLoadMessage::Complete {
+                        scene: Box::new(scene),
+                        stage,
+                        path,
+                    })
+                    .ok();
+                }
+                Err(e) => {
+                    tx.send(UsdLoadMessage::Failed(format!("Failed to load USD: {e}")))
+                        .ok();
+                }
+            }
+        });
+    }
+
+    /// Poll for async USD load completion. Call once per frame.
+    ///
+    /// When the load completes, finalizes GPU resources on the main thread
+    /// by delegating to `finalize_usd_load`.
+    pub fn poll_usd_load(&mut self) {
+        use crate::{UsdLoadMessage, UsdLoadProgress, UsdLoadStatus};
+
+        let Some(ref receiver) = self.usd_load_receiver else {
+            return;
+        };
+
+        // Drain all available messages (non-blocking)
+        loop {
+            match receiver.try_recv() {
+                Ok(UsdLoadMessage::Progress(progress)) => {
+                    self.usd_load_status = UsdLoadStatus::Loading(progress);
+                }
+                Ok(UsdLoadMessage::Complete { scene, stage, path }) => {
+                    self.usd_load_status = UsdLoadStatus::Loading(UsdLoadProgress::Finalizing);
+                    if let Err(e) = self.finalize_usd_load(*scene, stage, &path) {
+                        self.usd_load_status =
+                            UsdLoadStatus::Error(format!("GPU finalize failed: {e}"));
+                    } else {
+                        self.usd_load_status = UsdLoadStatus::Idle;
+                    }
+                    self.usd_load_receiver = None;
+                    return;
+                }
+                Ok(UsdLoadMessage::Failed(msg)) => {
+                    log::error!("Async USD load failed: {msg}");
+                    self.usd_load_status = UsdLoadStatus::Error(msg);
+                    self.usd_load_receiver = None;
+                    return;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    self.usd_load_status =
+                        UsdLoadStatus::Error("Load thread disconnected".to_string());
+                    self.usd_load_receiver = None;
+                    return;
+                }
+            }
+        }
+    }
+
+    /// Finalize a completed async USD load — create GPU resources on main thread.
+    ///
+    /// This is equivalent to the GPU-facing portion of `load_usd_scene`, called
+    /// after the background thread produces a `Scene` + `UsdStage`.
+    fn finalize_usd_load(
+        &mut self,
+        scene: bif_core::Scene,
+        stage: bif_core::usd::UsdStage,
+        path: &std::path::Path,
+    ) -> Result<()> {
+        // Delegate to the synchronous path which already handles everything
+        // after the stage/scene are loaded. We stash them and call the existing
+        // GPU finalization inline.
+        self.finalize_usd_scene(scene, stage, path)
+    }
+
+    /// Load a USD scene file and update the viewport (synchronous).
     ///
     /// This method reloads the viewport with a new USD file:
     /// 1. Loads the USD file via the C++ bridge
@@ -1095,7 +1215,6 @@ impl Renderer {
 
         let path = path.as_ref();
         log::info!("Loading USD scene: {:?}", path);
-        let viewport_load_start = Instant::now();
 
         // Check if file exists
         if !path.exists() {
@@ -1108,6 +1227,20 @@ impl Renderer {
             log::error!("Hint: Ensure USD environment is set up. Run: . .\\setup_usd_env.ps1");
             anyhow::anyhow!("Failed to load USD: {}", e)
         })?;
+
+        self.finalize_usd_scene(scene, stage, path)
+    }
+
+    /// Finalize a loaded USD scene — create GPU resources and update viewport state.
+    ///
+    /// Called by both `load_usd_scene` (sync) and `finalize_usd_load` (async).
+    fn finalize_usd_scene(
+        &mut self,
+        scene: bif_core::Scene,
+        stage: bif_core::usd::UsdStage,
+        path: &std::path::Path,
+    ) -> Result<()> {
+        let viewport_load_start = Instant::now();
 
         if scene.prototypes.is_empty() {
             return Err(anyhow::anyhow!("Scene has no geometry"));
@@ -1339,7 +1472,7 @@ impl Renderer {
                 usage: wgpu::BufferUsages::INDEX,
             });
 
-        let material_index_by_name: HashMap<String, u32> = scene
+        let material_index_by_name: HashMap<Arc<str>, u32> = scene
             .materials
             .iter()
             .enumerate()
@@ -1664,6 +1797,11 @@ impl Renderer {
             self.num_indices / 3,
             self.num_instances
         );
+
+        // Propagate stage metadata from the first USD scene loaded
+        if self.working_scene.stage_metadata.is_none() {
+            self.working_scene.stage_metadata = scene.stage_metadata.clone();
+        }
 
         // Merge USD scene into working_scene so primitives added later coexist.
         // Track offsets for remapping IDs from the loaded scene to the working scene.

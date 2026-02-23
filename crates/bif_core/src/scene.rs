@@ -18,7 +18,7 @@ use crate::point_cloud::PointCloud;
 #[derive(Clone, Debug)]
 pub struct Material {
     /// Material name (from USD prim path)
-    pub name: String,
+    pub name: Arc<str>,
 
     /// Diffuse/albedo color (RGB, 0-1)
     pub diffuse_color: Vec3,
@@ -39,22 +39,22 @@ pub struct Material {
     pub specular: f32,
 
     /// Path to diffuse/albedo texture
-    pub diffuse_texture: Option<String>,
+    pub diffuse_texture: Option<Arc<str>>,
 
     /// Path to roughness texture
-    pub roughness_texture: Option<String>,
+    pub roughness_texture: Option<Arc<str>>,
 
     /// Path to metallic texture
-    pub metallic_texture: Option<String>,
+    pub metallic_texture: Option<Arc<str>>,
 
     /// Path to normal map texture
-    pub normal_texture: Option<String>,
+    pub normal_texture: Option<Arc<str>>,
 
     /// Path to emissive texture
-    pub emissive_texture: Option<String>,
+    pub emissive_texture: Option<Arc<str>>,
 
     /// Path to opacity texture
-    pub opacity_texture: Option<String>,
+    pub opacity_texture: Option<Arc<str>>,
 
     /// Directory of the USD file this material was loaded from (for relative texture paths)
     pub source_dir: Option<PathBuf>,
@@ -63,7 +63,7 @@ pub struct Material {
 impl Default for Material {
     fn default() -> Self {
         Self {
-            name: String::new(),
+            name: Arc::from(""),
             diffuse_color: Vec3::new(0.5, 0.5, 0.5), // Grey default
             metallic: 0.0,
             roughness: 0.5,
@@ -83,7 +83,7 @@ impl Default for Material {
 
 impl Material {
     /// Create a new material with just a name and diffuse color.
-    pub fn new(name: impl Into<String>, diffuse_color: Vec3) -> Self {
+    pub fn new(name: impl Into<Arc<str>>, diffuse_color: Vec3) -> Self {
         Self {
             name: name.into(),
             diffuse_color,
@@ -116,7 +116,7 @@ pub struct Prototype {
     pub id: usize,
 
     /// Prototype name (from USD prim path)
-    pub name: String,
+    pub name: Arc<str>,
 
     /// Shared mesh geometry
     pub mesh: Arc<Mesh>,
@@ -130,7 +130,7 @@ pub struct Prototype {
 
 impl Prototype {
     /// Create a new prototype from a mesh.
-    pub fn new(id: usize, name: String, mesh: Arc<Mesh>) -> Self {
+    pub fn new(id: usize, name: Arc<str>, mesh: Arc<Mesh>) -> Self {
         let bounds = mesh.bounds;
         Self {
             id,
@@ -341,7 +341,7 @@ pub struct Instance {
 
     /// USD prim path for export (e.g., `/World/mesh_0` for standalone meshes,
     /// or empty for BIF-created instances which use `/BIF/` convention).
-    pub prim_path: String,
+    pub prim_path: Arc<str>,
 }
 
 impl Instance {
@@ -350,12 +350,12 @@ impl Instance {
         Self {
             prototype_id,
             transform,
-            prim_path: String::new(),
+            prim_path: Arc::from(""),
         }
     }
 
     /// Create a new instance with an explicit USD prim path.
-    pub fn with_prim_path(prototype_id: usize, transform: Transform, prim_path: String) -> Self {
+    pub fn with_prim_path(prototype_id: usize, transform: Transform, prim_path: Arc<str>) -> Self {
         Self {
             prototype_id,
             transform,
@@ -419,7 +419,7 @@ pub enum Light {
         /// Light intensity multiplier
         intensity: f32,
         /// Path to HDRI texture (if any)
-        texture_path: Option<String>,
+        texture_path: Option<Arc<str>>,
     },
 }
 
@@ -466,6 +466,9 @@ pub struct Scene {
     /// Timeline info (optional, only if stage has authored time range)
     pub timeline: Option<TimelineInfo>,
 
+    /// Stage metadata (metersPerUnit, upAxis) — only set for USD-loaded scenes.
+    pub stage_metadata: Option<crate::usd::cpp_bridge::UsdStageMetadata>,
+
     /// Scene cameras (from Camera primitives)
     pub cameras: Vec<SceneCamera>,
 
@@ -483,9 +486,9 @@ impl Scene {
     }
 
     /// Add a prototype to the scene and return its ID.
-    pub fn add_prototype(&mut self, mesh: Arc<Mesh>, name: String) -> usize {
+    pub fn add_prototype(&mut self, mesh: Arc<Mesh>, name: impl Into<Arc<str>>) -> usize {
         let id = self.prototypes.len();
-        let prototype = Arc::new(Prototype::new(id, name, mesh));
+        let prototype = Arc::new(Prototype::new(id, name.into(), mesh));
         self.prototypes.push(prototype);
         id
     }
@@ -501,10 +504,13 @@ impl Scene {
         &mut self,
         prototype_id: usize,
         transform: Transform,
-        prim_path: String,
+        prim_path: impl Into<Arc<str>>,
     ) {
-        self.instances
-            .push(Instance::with_prim_path(prototype_id, transform, prim_path));
+        self.instances.push(Instance::with_prim_path(
+            prototype_id,
+            transform,
+            prim_path.into(),
+        ));
         self.instance_animations.push(None);
     }
 
@@ -525,10 +531,13 @@ impl Scene {
         prototype_id: usize,
         transform: Transform,
         animation: AnimatedTransform,
-        prim_path: String,
+        prim_path: impl Into<Arc<str>>,
     ) {
-        self.instances
-            .push(Instance::with_prim_path(prototype_id, transform, prim_path));
+        self.instances.push(Instance::with_prim_path(
+            prototype_id,
+            transform,
+            prim_path.into(),
+        ));
         self.instance_animations.push(Some(animation));
     }
 

@@ -158,6 +158,22 @@ struct UsdBridgeLightDataRaw {
     texture_path: *const std::ffi::c_char,
 }
 
+/// Up axis value from C API (populated by FFI)
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
+enum UsdBridgeUpAxisRaw {
+    Y = 0,
+    Z = 1,
+}
+
+/// Stage metadata from C API
+#[repr(C)]
+struct UsdBridgeStageMetadataRaw {
+    meters_per_unit: f64,
+    up_axis: UsdBridgeUpAxisRaw,
+}
+
 /// Material data from C API (UsdPreviewSurface or MaterialX)
 #[repr(C)]
 struct UsdBridgeMaterialDataRaw {
@@ -278,6 +294,12 @@ extern "C" {
     fn usd_bridge_get_timeline(
         stage: *const UsdBridgeStageRaw,
         out_data: *mut UsdBridgeTimelineDataRaw,
+    ) -> UsdBridgeErrorCode;
+
+    // Stage metadata APIs
+    fn usd_bridge_get_stage_metadata(
+        stage: *const UsdBridgeStageRaw,
+        out_data: *mut UsdBridgeStageMetadataRaw,
     ) -> UsdBridgeErrorCode;
 
     // Animation APIs
@@ -635,6 +657,54 @@ impl Default for UsdTimelineData {
             frames_per_second: 24.0,
             has_authored_time_range: false,
         }
+    }
+}
+
+/// Up axis of a USD stage.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UpAxis {
+    Y,
+    Z,
+}
+
+impl std::fmt::Display for UpAxis {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            UpAxis::Y => write!(f, "Y-up"),
+            UpAxis::Z => write!(f, "Z-up"),
+        }
+    }
+}
+
+/// Stage-level metadata extracted from USD (metersPerUnit, upAxis).
+#[derive(Clone, Debug)]
+pub struct UsdStageMetadata {
+    /// Scene scale: 1.0 = meters, 0.01 = centimeters, etc.
+    pub meters_per_unit: f64,
+    /// Up axis (Y or Z)
+    pub up_axis: UpAxis,
+}
+
+impl Default for UsdStageMetadata {
+    fn default() -> Self {
+        Self {
+            meters_per_unit: 1.0,
+            up_axis: UpAxis::Y,
+        }
+    }
+}
+
+impl std::fmt::Display for UsdStageMetadata {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let unit = match self.meters_per_unit {
+            v if (v - 0.001).abs() < 1e-6 => "mm",
+            v if (v - 0.01).abs() < 1e-6 => "cm",
+            v if (v - 0.0254).abs() < 1e-6 => "in",
+            v if (v - 0.3048).abs() < 1e-6 => "ft",
+            v if (v - 1.0).abs() < 1e-6 => "m",
+            _ => "custom",
+        };
+        write!(f, "{}, {}", self.up_axis, unit)
     }
 }
 
@@ -1222,6 +1292,32 @@ impl UsdStage {
         }
 
         Ok(())
+    }
+
+    // ========================================================================
+    // Stage Metadata
+    // ========================================================================
+
+    /// Get stage metadata (metersPerUnit, upAxis).
+    pub fn get_stage_metadata(&self) -> UsdBridgeResult<UsdStageMetadata> {
+        let mut raw = UsdBridgeStageMetadataRaw {
+            meters_per_unit: 1.0,
+            up_axis: UsdBridgeUpAxisRaw::Y,
+        };
+
+        let result = unsafe { usd_bridge_get_stage_metadata(self.raw, &mut raw) };
+
+        if result != UsdBridgeErrorCode::Success {
+            return Err(result.into());
+        }
+
+        Ok(UsdStageMetadata {
+            meters_per_unit: raw.meters_per_unit,
+            up_axis: match raw.up_axis {
+                UsdBridgeUpAxisRaw::Z => UpAxis::Z,
+                _ => UpAxis::Y,
+            },
+        })
     }
 
     // ========================================================================
@@ -1983,10 +2079,9 @@ mod tests {
                 !mesh.vertices.is_empty(),
                 "First mesh should have vertices from referenced lucy_low.usda"
             );
-            eprintln!(
-                "First mesh: {} with {} vertices",
-                mesh.path,
-                mesh.vertices.len()
+            assert!(
+                mesh.vertices.len() > 100,
+                "First mesh should have substantial geometry"
             );
         }
     }
@@ -2025,11 +2120,9 @@ mod tests {
             "Expected 1 prototype path"
         );
 
-        eprintln!(
-            "Instancer: {} with {} instances, prototype: {:?}",
-            instancer.path,
-            instancer.transforms.len(),
-            instancer.prototype_paths
+        assert!(
+            !instancer.prototype_paths.is_empty(),
+            "Instancer should have at least one prototype path"
         );
 
         // Should have 1 mesh (the lucy prototype)

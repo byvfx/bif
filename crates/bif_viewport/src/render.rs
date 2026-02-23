@@ -19,6 +19,9 @@ impl Renderer {
         clear_color: wgpu::Color,
         window: &winit::window::Window,
     ) -> Result<()> {
+        // Poll async USD load (non-blocking)
+        self.poll_usd_load();
+
         // Process pending scene operations from undo/redo
         if !self.edit_state.pending_scene_ops.is_empty() {
             let ops: Vec<_> = self.edit_state.pending_scene_ops.drain(..).collect();
@@ -252,6 +255,67 @@ impl Renderer {
                         ui.separator();
                         ui.checkbox(&mut self.show_grid, "Grid");
                         ui.checkbox(&mut self.point_preview.visible, "Points");
+
+                        // Show async USD load status
+                        if let crate::UsdLoadStatus::Loading(ref progress) = self.usd_load_status {
+                            ui.separator();
+                            ui.spinner();
+                            ui.label(progress.to_string());
+                        } else if let crate::UsdLoadStatus::Error(ref msg) = self.usd_load_status {
+                            ui.separator();
+                            ui.colored_label(egui::Color32::RED, msg);
+                        }
+
+                        // Show stage metadata (metersPerUnit, upAxis) if available
+                        if let Some(ref meta) = self.working_scene.stage_metadata {
+                            ui.separator();
+                            ui.colored_label(
+                                egui::Color32::from_rgb(160, 160, 160),
+                                format!("[{}]", meta),
+                            );
+
+                            // Axis/unit correction toggles (only when metadata exists)
+                            let needs_axis = meta.up_axis
+                                == bif_core::usd::cpp_bridge::UpAxis::Z;
+                            let needs_scale =
+                                (meta.meters_per_unit - 1.0).abs() > 1e-6;
+
+                            if needs_axis
+                                && ui
+                                    .checkbox(
+                                        &mut self.apply_axis_correction,
+                                        "Z\u{2192}Y",
+                                    )
+                                    .on_hover_text("Rotate scene from Z-up to Y-up")
+                                    .changed()
+                            {
+                                ctx.data_mut(|d| {
+                                    d.insert_temp(
+                                        egui::Id::new("stage_correction_changed"),
+                                        true,
+                                    );
+                                });
+                            }
+                            if needs_scale
+                                && ui
+                                    .checkbox(
+                                        &mut self.apply_unit_scaling,
+                                        "\u{2192}m",
+                                    )
+                                    .on_hover_text(format!(
+                                        "Scale from {:.4} to meters",
+                                        meta.meters_per_unit
+                                    ))
+                                    .changed()
+                            {
+                                ctx.data_mut(|d| {
+                                    d.insert_temp(
+                                        egui::Id::new("stage_correction_changed"),
+                                        true,
+                                    );
+                                });
+                            }
+                        }
                     });
                 });
             top_panel_height = top_panel.response.rect.height();
@@ -515,9 +579,10 @@ impl Renderer {
                         ));
                         ui.label(format!("  Full mesh: {}", visible_instances));
                         ui.label(format!("  Box LOD: {}", lod_box_instances));
-                        // Triangle count: full mesh triangles + 12 triangles per LOD box
+                        // Triangle count: full mesh tris + LOD_BOX_TRIANGLES per box
+                        const LOD_BOX_TRIANGLES: u32 = 12; // cube = 6 faces * 2 tris
                         let full_mesh_tris = triangles_per_instance * visible_instances;
-                        let box_tris = 12 * lod_box_instances;
+                        let box_tris = LOD_BOX_TRIANGLES * lod_box_instances;
                         ui.label(format!(
                             "Triangles: {} ({}+{})",
                             full_mesh_tris + box_tris,
@@ -1403,6 +1468,7 @@ impl Renderer {
                 let mat = edit.new_transform.to_matrix();
                 if idx < self.current_transforms.len() {
                     self.current_transforms[idx] = mat;
+                    self.culling.mark_dirty();
                     self.update_visible_instances();
                     // Restart Ivar at interaction scale during drag (throttled)
                     if self.ivar_state.mode == RenderMode::Ivar {
@@ -1419,6 +1485,19 @@ impl Renderer {
         if let Some(_xform_nid) = self.xform_property_changed.take() {
             if let Err(e) = self.reload_working_scene() {
                 log::error!("Failed to reload after xform property change: {}", e);
+            }
+        }
+
+        // Handle stage correction toggle (axis/unit) from top panel
+        let stage_correction_changed: Option<bool> = self
+            .egui_ctx
+            .data(|d| d.get_temp(egui::Id::new("stage_correction_changed")));
+        if stage_correction_changed == Some(true) {
+            self.egui_ctx.data_mut(|d| {
+                d.remove::<bool>(egui::Id::new("stage_correction_changed"));
+            });
+            if let Err(e) = self.reload_working_scene() {
+                log::error!("Failed to reload after stage correction toggle: {}", e);
             }
         }
 

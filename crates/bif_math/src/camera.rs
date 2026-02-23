@@ -90,6 +90,11 @@ pub struct Camera {
     pub projection: ProjectionMode,
 }
 
+/// Default near clip plane distance.
+pub const DEFAULT_NEAR_PLANE: f32 = 0.1;
+/// Default far clip plane distance.
+pub const DEFAULT_FAR_PLANE: f32 = 100.0;
+
 impl Camera {
     /// Create a new camera
     pub fn new(position: Vec3, target: Vec3, aspect: f32) -> Self {
@@ -106,8 +111,8 @@ impl Camera {
             up: Vec3::Y,
             fov_y: 45.0_f32.to_radians(),
             aspect,
-            near: 0.1,
-            far: 100.0,
+            near: DEFAULT_NEAR_PLANE,
+            far: DEFAULT_FAR_PLANE,
             yaw,
             pitch,
             distance,

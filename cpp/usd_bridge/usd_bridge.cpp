@@ -28,6 +28,7 @@
 #include <pxr/base/tf/diagnostic.h>
 #include <pxr/usd/sdf/layer.h>
 #include <pxr/usd/usd/references.h>
+#include <pxr/usd/usdGeom/metrics.h>
 #include <pxr/usd/ar/resolver.h>
 #include <pxr/usd/ar/resolverContextBinder.h>
 
@@ -1840,6 +1841,28 @@ UsdBridgeError usd_bridge_get_timeline(
 
     // FPS - use stage metadata or default to 24
     out_data->frames_per_second = stage->stage->GetFramesPerSecond();
+
+    return USD_BRIDGE_SUCCESS;
+}
+
+UsdBridgeError usd_bridge_get_stage_metadata(
+    const UsdBridgeStage* stage,
+    UsdBridgeStageMetadata* out_data
+) {
+    if (!stage || !out_data) {
+        return USD_BRIDGE_ERROR_NULL_POINTER;
+    }
+
+    // metersPerUnit (default 0.01 = cm, per USD spec)
+    out_data->meters_per_unit = UsdGeomGetStageMetersPerUnit(stage->stage);
+
+    // upAxis (Y or Z)
+    TfToken upAxis = UsdGeomGetStageUpAxis(stage->stage);
+    if (upAxis == UsdGeomTokens->z) {
+        out_data->up_axis = USD_BRIDGE_UP_AXIS_Z;
+    } else {
+        out_data->up_axis = USD_BRIDGE_UP_AXIS_Y;
+    }
 
     return USD_BRIDGE_SUCCESS;
 }

@@ -373,6 +373,7 @@ dependencies = [
  "env_logger",
  "glam",
  "image",
+ "indexmap",
  "log",
  "rand",
  "rayon",
