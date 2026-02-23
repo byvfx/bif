@@ -138,7 +138,7 @@ fn resolve_proto_paths(scene: &Scene, cloud: &PointCloud, config: &ExportConfig)
                 .map(|proto| {
                     if proto.name.starts_with('/') {
                         // Already a USD prim path
-                        proto.name.clone()
+                        proto.name.to_string()
                     } else {
                         // BIF-created prototype
                         format!("{}/{}", config.export_root, proto.name)
@@ -269,9 +269,9 @@ mod tests {
         let mesh_count = stage.mesh_count().unwrap_or(0);
         // The export writes an Xform prim (not a mesh), so mesh_count may be 0.
         // But we can verify the file is valid and has content.
-        eprintln!(
-            "Roundtrip xform: exported 1 xform override, reopened stage has {mesh_count} meshes"
-        );
+        // Xform export writes an Xform prim, not a mesh — mesh_count may be 0
+        // but the file should be valid (we opened it successfully above)
+        let _ = mesh_count;
 
         cleanup(&out);
     }
@@ -476,10 +476,6 @@ mod tests {
         assert_eq!(
             composed_instancer_count, original_instancer_count,
             "Sublayer should preserve original instancer count"
-        );
-
-        eprintln!(
-            "Sublayer roundtrip: {original_mesh_count} meshes, {original_instancer_count} instancers preserved"
         );
 
         cleanup(&out);

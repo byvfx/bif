@@ -89,6 +89,34 @@ UsdBridgeError usd_bridge_get_timeline(
     UsdBridgeTimelineData* out_data
 );
 
+// ============================================================================
+// Stage Metadata (units/axis)
+// ============================================================================
+
+/// Up axis values
+typedef enum UsdBridgeUpAxis {
+    USD_BRIDGE_UP_AXIS_Y = 0,
+    USD_BRIDGE_UP_AXIS_Z = 1,
+} UsdBridgeUpAxis;
+
+/// Stage metadata (metersPerUnit, upAxis)
+typedef struct UsdBridgeStageMetadata {
+    /// Scene scale in meters (e.g. 0.01 = centimeters)
+    double meters_per_unit;
+    /// Up axis (Y or Z)
+    UsdBridgeUpAxis up_axis;
+} UsdBridgeStageMetadata;
+
+/// Get stage metadata (metersPerUnit, upAxis).
+///
+/// @param stage Stage handle
+/// @param out_data Pointer to receive stage metadata
+/// @return USD_BRIDGE_SUCCESS on success
+UsdBridgeError usd_bridge_get_stage_metadata(
+    const UsdBridgeStage* stage,
+    UsdBridgeStageMetadata* out_data
+);
+
 /// A single transform sample at a specific time
 typedef struct UsdBridgeXformSample {
     /// Time code for this sample

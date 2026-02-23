@@ -11,6 +11,7 @@ use crate::ivar_state::CameraSnapshot;
 use crate::mesh_data::MeshData;
 
 /// Result from culling update.
+#[derive(Clone)]
 pub struct CullingResult {
     /// Number of instances rendered with full mesh (near)
     pub near_count: u32,
@@ -50,6 +51,12 @@ pub struct CullingManager {
     max_instances: usize,
     /// Whether we've already warned about truncation (debounce per reload).
     truncation_warned: bool,
+
+    // Dirty tracking — skip GPU writes when nothing changed
+    /// Instance data has changed (transforms, scene load, scatter, etc.)
+    buffer_dirty: bool,
+    /// Cached culling result from last update
+    cached_result: CullingResult,
 }
 
 impl CullingManager {
@@ -86,6 +93,11 @@ impl CullingManager {
             lod_box_num_indices: lod_box_mesh.indices.len() as u32,
             max_instances,
             truncation_warned: false,
+            buffer_dirty: true,
+            cached_result: CullingResult {
+                near_count: 0,
+                far_count: 0,
+            },
         }
     }
 
@@ -98,6 +110,7 @@ impl CullingManager {
     ) {
         self.prototype_aabb = aabb;
         self.triangles_per_instance = tris_per_instance;
+        self.buffer_dirty = true;
 
         // Regenerate LOD box mesh for new prototype AABB
         let lod_box_mesh = MeshData::from_aabb(&aabb);
@@ -127,6 +140,15 @@ impl CullingManager {
             .iter()
             .map(|t| t.transform_aabb(&prototype_aabb))
             .collect();
+        self.buffer_dirty = true;
+    }
+
+    /// Mark instance buffer as dirty (must re-upload to GPU).
+    ///
+    /// Call after any operation that changes instance data:
+    /// transform overrides, scene load, scatter operations, etc.
+    pub fn mark_dirty(&mut self) {
+        self.buffer_dirty = true;
     }
 
     /// Invalidate frustum cache (force recompute next frame).
@@ -137,6 +159,7 @@ impl CullingManager {
     /// Perform frustum culling and LOD selection, writing visible instances to GPU buffer.
     ///
     /// Returns culling result with near/far instance counts.
+    /// Skips GPU write when neither the camera nor instance data has changed.
     pub fn update_visible_instances(
         &mut self,
         queue: &wgpu::Queue,
@@ -148,18 +171,27 @@ impl CullingManager {
         if self.instance_aabbs.is_empty() {
             self.visible_count = transforms.len() as u32;
             self.lod_box_count = 0;
-            return CullingResult {
+            self.buffer_dirty = false;
+            let result = CullingResult {
                 near_count: self.visible_count,
                 far_count: 0,
             };
+            self.cached_result = result.clone();
+            return result;
+        }
+
+        // Early return: nothing changed since last frame
+        let current_snapshot = CameraSnapshot::from_camera(camera);
+        let camera_changed = current_snapshot.has_changed(&self.camera_snapshot);
+        if !self.buffer_dirty && !camera_changed {
+            return self.cached_result.clone();
         }
 
         // Clear scratch buffers (reuse pre-allocated capacity)
         self.scratch.clear();
 
         // Update cached frustum only when camera changes
-        let current_snapshot = CameraSnapshot::from_camera(camera);
-        if current_snapshot.has_changed(&self.camera_snapshot) {
+        if camera_changed {
             let vp = camera.projection_matrix() * camera.view_matrix();
             self.cached_frustum = Frustum::from_view_projection(vp);
             self.camera_snapshot = current_snapshot;
@@ -267,10 +299,13 @@ impl CullingManager {
             transforms.len()
         );
 
-        CullingResult {
+        self.buffer_dirty = false;
+        let result = CullingResult {
             near_count: self.visible_count,
             far_count: self.lod_box_count,
-        }
+        };
+        self.cached_result = result.clone();
+        result
     }
 
     /// Get LOD box vertex buffer slice for rendering.

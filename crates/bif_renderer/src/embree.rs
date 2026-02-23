@@ -509,6 +509,44 @@ impl EmbreeScene {
     pub fn triangle_count(&self) -> usize {
         self.triangle_count
     }
+
+    /// Update instance transforms without rebuilding geometry BVH.
+    ///
+    /// Uses `rtcSetGeometryTransform` + `rtcCommitScene` for a fast refit
+    /// when only transforms changed (e.g. after Xform edits or animation).
+    /// Returns `true` if the update was applied.
+    pub fn update_transforms(&mut self, transforms: &[Mat4]) -> bool {
+        if transforms.len() != self.instance_count {
+            log::warn!(
+                "update_transforms: count mismatch ({} vs {}), skipping",
+                transforms.len(),
+                self.instance_count
+            );
+            return false;
+        }
+
+        let new_data: Vec<[f32; 16]> = transforms.iter().map(|t| t.to_cols_array()).collect();
+
+        unsafe {
+            for (idx, transform_array) in new_data.iter().enumerate() {
+                let geom = rtcGetGeometry(self.scene, idx as u32);
+                if geom.is_null() {
+                    continue;
+                }
+                rtcSetGeometryTransform(
+                    geom,
+                    0,
+                    RTCFormat::Float4x4ColumnMajor as u32,
+                    transform_array.as_ptr(),
+                );
+                rtcCommitGeometry(geom);
+            }
+            rtcCommitScene(self.scene);
+        }
+
+        self._transform_data = new_data;
+        true
+    }
 }
 
 impl Hittable for EmbreeScene {

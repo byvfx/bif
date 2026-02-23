@@ -919,7 +919,8 @@ impl UsdaParser {
                         chars.next(); // consume ')'
                         break;
                     }
-                    tuple_str.push(chars.next().unwrap());
+                    chars.next(); // advance past peeked char
+                    tuple_str.push(tc);
                 }
 
                 let parts: Vec<&str> = tuple_str.split(',').collect();
@@ -1013,7 +1014,8 @@ impl UsdaParser {
                         chars.next();
                         break;
                     }
-                    tuple_str.push(chars.next().unwrap());
+                    chars.next(); // advance past peeked char
+                    tuple_str.push(tc);
                 }
 
                 let parts: Vec<&str> = tuple_str.split(',').collect();
@@ -1063,7 +1065,8 @@ impl UsdaParser {
                         chars.next();
                         break;
                     }
-                    path.push(chars.next().unwrap());
+                    chars.next(); // advance past peeked char
+                    path.push(pc);
                 }
 
                 if !path.is_empty() {
@@ -1161,5 +1164,45 @@ def PointInstancer "Instances" {
         } else {
             panic!("Expected PointInstancer prim");
         }
+    }
+
+    #[test]
+    fn test_parse_vec3_array_malformed_no_panic() {
+        // Unclosed tuple — should not panic
+        let usda = r#"
+def Mesh "Bad" {
+    point3f[] points = [(0, 0, 0), (1, 0
+    int[] faceVertexCounts = [3]
+    int[] faceVertexIndices = [0, 1, 2]
+}
+"#;
+        // Should parse without panicking (may produce partial/empty results)
+        let _ = parse_usda(usda);
+    }
+
+    #[test]
+    fn test_parse_quat_array_malformed_no_panic() {
+        // Unclosed quat tuple
+        let usda = r#"
+def PointInstancer "Bad" {
+    quath[] orientations = [(1, 0, 0, 0), (0, 1, 0
+    int[] protoIndices = [0]
+    point3f[] positions = [(0, 0, 0)]
+}
+"#;
+        let _ = parse_usda(usda);
+    }
+
+    #[test]
+    fn test_parse_rel_array_malformed_no_panic() {
+        // Unclosed angle bracket in rel array
+        let usda = r#"
+def PointInstancer "Bad" {
+    rel prototypes = [</Proto/A>, </Proto/B
+    int[] protoIndices = [0]
+    point3f[] positions = [(0, 0, 0)]
+}
+"#;
+        let _ = parse_usda(usda);
     }
 }
