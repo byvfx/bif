@@ -925,12 +925,7 @@ impl Renderer {
                                     ui, translate, rotate, scale, prim_filter,
                                 );
                             if changed {
-                                ctx.data_mut(|d| {
-                                    d.insert_temp(
-                                        egui::Id::new("xform_property_changed"),
-                                        xform_nid,
-                                    );
-                                });
+                                self.xform_property_changed = Some(xform_nid);
                             }
                         }
                         ui.separator();
@@ -1421,13 +1416,7 @@ impl Renderer {
         }
 
         // Handle Xform property changes from the property inspector panel
-        let xform_changed: Option<egui_snarl::NodeId> = self
-            .egui_ctx
-            .data(|d| d.get_temp(egui::Id::new("xform_property_changed")));
-        if xform_changed.is_some() {
-            self.egui_ctx.data_mut(|d| {
-                d.remove::<egui_snarl::NodeId>(egui::Id::new("xform_property_changed"))
-            });
+        if let Some(_xform_nid) = self.xform_property_changed.take() {
             if let Err(e) = self.reload_working_scene() {
                 log::error!("Failed to reload after xform property change: {}", e);
             }
@@ -1494,24 +1483,14 @@ impl Renderer {
                     NodeGraphEvent::LoadUsdFile { path, node_id } => {
                         log::info!("Node graph: Loading USD file: {}", path);
 
-                        // Remove old prototypes from this UsdRead node (reload case)
-                        if let Some(old_ids) = self.node_proto_ids.remove(&node_id) {
-                            // Remove in reverse order so indices stay valid
+                        // Remove old prototypes from this node (reload case)
+                        if let Some(old_ids) = self.node_proto_map.remove(&node_id) {
                             for &pid in old_ids.iter().rev() {
                                 self.remove_and_reindex_prototype(pid);
                             }
-                            // Re-index remaining node_proto_ids entries
-                            for ids in self.node_proto_ids.values_mut() {
-                                for id in ids.iter_mut() {
-                                    for &removed in old_ids.iter().rev() {
-                                        if *id > removed {
-                                            *id -= 1;
-                                        }
-                                    }
-                                }
-                            }
                         }
 
+                        self.materials_dirty = true;
                         let proto_offset = self.working_scene.prototype_count();
                         match self.load_usd_scene(&path) {
                             Ok(()) => {
@@ -1521,7 +1500,7 @@ impl Renderer {
                                     (proto_offset..new_proto_count).collect();
                                 if !proto_ids.is_empty() {
                                     log::info!("UsdRead {:?} owns protos {:?}", node_id, proto_ids);
-                                    self.node_proto_ids.insert(node_id, proto_ids);
+                                    self.node_proto_map.insert(node_id, proto_ids);
                                 }
                                 self.node_graph_state.mark_node_loaded(&path);
                                 log::info!("USD file loaded successfully: {}", path);
@@ -1598,13 +1577,16 @@ impl Renderer {
                         log::info!("Node graph: Creating {:?} primitive (size={})", kind, size);
 
                         // Remove old prototype if re-creating (e.g. size change)
-                        if let Some(old_id) = self.node_proto_map.remove(&node_id) {
-                            self.remove_and_reindex_prototype(old_id);
+                        if let Some(old_ids) = self.node_proto_map.remove(&node_id) {
+                            for &pid in old_ids.iter().rev() {
+                                self.remove_and_reindex_prototype(pid);
+                            }
                         }
 
+                        self.materials_dirty = true;
                         match self.load_primitive(kind, size) {
                             Ok(proto_id) => {
-                                self.node_proto_map.insert(node_id, proto_id);
+                                self.node_proto_map.insert(node_id, vec![proto_id]);
 
                                 // Recursively dirty all downstream nodes
                                 crate::node_graph::propagate_dirty(
@@ -1799,8 +1781,11 @@ impl Renderer {
                     } => {
                         // Resolve cloud ID from scatter node
                         let cloud_id = self.node_cloud_map.get(&points_source_node).copied();
-                        // Resolve prototype ID from primitive/USD node
-                        let proto_id = self.node_proto_map.get(&proto_source_node).copied();
+                        // Resolve first prototype ID from primitive/USD node
+                        let proto_id = self
+                            .node_proto_map
+                            .get(&proto_source_node)
+                            .and_then(|ids| ids.first().copied());
 
                         // Helper: mark compute failed on the node (prevents infinite retry)
                         let mark_compute_failed =
@@ -1989,35 +1974,15 @@ impl Renderer {
                             log::info!("Deleted instancer node {:?}", node_id);
                         }
 
-                        // Clean up prototype (single-proto nodes like Primitive)
-                        if let Some(proto_id) = self.node_proto_map.remove(&node_id) {
-                            log::info!("Deleting node {:?} → proto {}", node_id, proto_id);
-                            if !self.remove_and_reindex_prototype(proto_id) {
-                                self.node_proto_map.insert(node_id, proto_id);
-                            }
-                        }
-
-                        // Clean up multi-proto nodes (UsdRead)
-                        if let Some(proto_ids) = self.node_proto_ids.remove(&node_id) {
-                            log::info!(
-                                "Deleting UsdRead node {:?} → protos {:?}",
-                                node_id,
-                                proto_ids
-                            );
-                            // Remove in reverse order so indices stay valid
+                        // Clean up prototypes owned by this node
+                        if let Some(proto_ids) = self.node_proto_map.remove(&node_id) {
+                            log::info!("Deleting node {:?} → protos {:?}", node_id, proto_ids);
+                            // Remove in reverse order so indices stay valid;
+                            // remove_and_reindex_prototype handles re-indexing all maps
                             for &pid in proto_ids.iter().rev() {
                                 self.remove_and_reindex_prototype(pid);
                             }
-                            // Re-index remaining node_proto_ids entries
-                            for ids in self.node_proto_ids.values_mut() {
-                                for id in ids.iter_mut() {
-                                    for &removed in proto_ids.iter().rev() {
-                                        if *id > removed {
-                                            *id -= 1;
-                                        }
-                                    }
-                                }
-                            }
+                            self.materials_dirty = true;
                         }
 
                         // Always reload after deletion — Xform/display-flag changes

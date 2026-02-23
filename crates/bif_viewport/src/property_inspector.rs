@@ -432,16 +432,13 @@ pub fn render_xform_properties(
     ui.add_space(4.0);
     ui.horizontal(|ui| {
         ui.label("Filter:");
-        ui.add(
+        ui.add_enabled(
+            false,
             egui::TextEdit::singleline(prim_filter)
                 .hint_text("all prims (future)")
                 .desired_width(ui.available_width()),
         );
     });
-    ui.colored_label(
-        egui::Color32::from_rgb(120, 120, 120),
-        "Filter is not yet implemented",
-    );
 
     changed
 }

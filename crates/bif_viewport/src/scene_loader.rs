@@ -340,22 +340,15 @@ impl Renderer {
 
     /// Remove a prototype and re-index all maps that reference prototype IDs.
     ///
-    /// Updates `node_proto_map`, `node_proto_ids`, and `instancer_results`
-    /// to account for the index shift after removal. Returns `true` if the
-    /// prototype existed.
+    /// Updates `node_proto_map` and `instancer_results` to account for the
+    /// index shift after removal. Returns `true` if the prototype existed.
     pub fn remove_and_reindex_prototype(&mut self, proto_id: usize) -> bool {
         if !self.working_scene.remove_prototype(proto_id) {
             log::error!("Prototype {} not found for removal", proto_id);
             return false;
         }
-        // Re-index node_proto_map (single-proto nodes)
-        for v in self.node_proto_map.values_mut() {
-            if *v > proto_id {
-                *v -= 1;
-            }
-        }
-        // Re-index node_proto_ids (multi-proto nodes like UsdRead)
-        for ids in self.node_proto_ids.values_mut() {
+        // Re-index node_proto_map (unified: single + multi-proto nodes)
+        for ids in self.node_proto_map.values_mut() {
             ids.retain(|id| *id != proto_id);
             for id in ids.iter_mut() {
                 if *id > proto_id {
@@ -534,7 +527,7 @@ impl Renderer {
             .node_proto_map
             .iter()
             .filter(|(nid, _)| !is_node_active(nid))
-            .map(|(_, &pid)| pid)
+            .flat_map(|(_, pids)| pids.iter().copied())
             .collect();
         let hidden_proto_ids: std::collections::HashSet<usize> = instanced_proto_ids
             .union(&scatter_surface_ids)
@@ -643,31 +636,35 @@ impl Renderer {
             MeshData::combine_with_transforms(&meshes_with_transforms)
         };
 
-        // Rebuild GPU textures from the full accumulated working_scene so that
-        // materials from multiple USD files all resolve correctly.
-        self.gpu_textures = texture_loader::create_gpu_textures_for_scene(
-            &self.device,
-            &self.queue,
-            scene,
-            self.texture_base_dir.as_deref(),
-        );
+        // Only rebuild GPU textures when materials actually changed (not on every
+        // Xform drag or display toggle). Texture loading is expensive — disk I/O,
+        // decode, GPU upload.
+        if self.materials_dirty {
+            self.gpu_textures = texture_loader::create_gpu_textures_for_scene(
+                &self.device,
+                &self.queue,
+                scene,
+                self.texture_base_dir.as_deref(),
+            );
 
-        // Rebuild texture bind group for the refreshed textures
-        let texture_view_refs: Vec<&wgpu::TextureView> = self.gpu_textures.views.iter().collect();
-        self.texture_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("WS Texture Bind Group"),
-            layout: &self.texture_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureViewArray(&texture_view_refs),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&self.texture_sampler),
-                },
-            ],
-        });
+            let texture_view_refs: Vec<&wgpu::TextureView> =
+                self.gpu_textures.views.iter().collect();
+            self.texture_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("WS Texture Bind Group"),
+                layout: &self.texture_bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureViewArray(&texture_view_refs),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&self.texture_sampler),
+                    },
+                ],
+            });
+            self.materials_dirty = false;
+        }
 
         // Material table (use default for primitives)
         let material_table = if scene.materials.is_empty() {
@@ -844,9 +841,17 @@ impl Renderer {
         {
             use egui_snarl::{InPinId, NodeId as SnarlNodeId};
 
-            // Collect active Xform nodes: (node_id, translate, rotate_deg, scale)
-            let mut xform_nodes: Vec<SnarlNodeId> = Vec::new();
-            let mut xform_params: Vec<([f32; 3], [f32; 3], [f32; 3])> = Vec::new();
+            // Collect active Xform nodes with their upstream depth for topological order.
+            // Depth = max number of Xform nodes upstream (0 = no Xform parent).
+            // Sorting by depth ensures upstream Xforms apply before downstream ones.
+            struct XformEntry {
+                node_id: SnarlNodeId,
+                translate: [f32; 3],
+                rotate: [f32; 3],
+                scale: [f32; 3],
+                depth: usize,
+            }
+            let mut xform_entries: Vec<XformEntry> = Vec::new();
             for (nid, node) in self.node_graph_state.snarl.node_ids() {
                 if !is_node_active(&nid) {
                     continue;
@@ -858,28 +863,54 @@ impl Renderer {
                     ..
                 } = node
                 {
-                    xform_nodes.push(nid);
-                    xform_params.push((*translate, *rotate, *scale));
+                    // Compute depth: count Xform nodes upstream of this one
+                    let upstream = crate::node_graph::collect_upstream_nodes(
+                        nid,
+                        &self.node_graph_state.snarl,
+                    );
+                    let depth = upstream
+                        .iter()
+                        .filter(|&&uid| uid != nid)
+                        .filter(|uid| {
+                            matches!(
+                                self.node_graph_state.snarl[**uid],
+                                crate::node_graph::SceneNode::Xform { .. }
+                            )
+                        })
+                        .count();
+                    xform_entries.push(XformEntry {
+                        node_id: nid,
+                        translate: *translate,
+                        rotate: *rotate,
+                        scale: *scale,
+                        depth,
+                    });
                 }
             }
+            // Sort upstream-first (lowest depth first)
+            xform_entries.sort_by_key(|e| e.depth);
 
-            for (idx, xform_nid) in xform_nodes.iter().enumerate() {
-                let (t, r, s) = &xform_params[idx];
+            for entry in &xform_entries {
                 // Build the Xform's 4x4 matrix from T/R/S (Euler XYZ degrees)
-                let rx = r[0].to_radians();
-                let ry = r[1].to_radians();
-                let rz = r[2].to_radians();
+                let rx = entry.rotate[0].to_radians();
+                let ry = entry.rotate[1].to_radians();
+                let rz = entry.rotate[2].to_radians();
                 let rotation = bif_math::Quat::from_euler(bif_math::EulerRot::XYZ, rx, ry, rz);
                 let xform_mat = Mat4::from_scale_rotation_translation(
-                    bif_math::Vec3::new(s[0], s[1], s[2]),
+                    bif_math::Vec3::new(entry.scale[0], entry.scale[1], entry.scale[2]),
                     rotation,
-                    bif_math::Vec3::new(t[0], t[1], t[2]),
+                    bif_math::Vec3::new(entry.translate[0], entry.translate[1], entry.translate[2]),
                 );
+
+                // Skip identity transforms (T=0, R=0, S=1)
+                if xform_mat.abs_diff_eq(Mat4::IDENTITY, 1e-7) {
+                    continue;
+                }
 
                 // Walk upstream from this Xform's scene input to find source nodes
                 let upstream = {
                     let in_pin = self.node_graph_state.snarl.in_pin(InPinId {
-                        node: *xform_nid,
+                        node: entry.node_id,
                         input: 0,
                     });
                     if let Some(remote) = in_pin.remotes.first() {
@@ -893,18 +924,12 @@ impl Renderer {
                 };
 
                 // Resolve which prototype IDs come from those upstream nodes
-                // (check both single-proto map and multi-proto map)
-                let mut affected_proto_ids: std::collections::HashSet<usize> = self
+                let affected_proto_ids: std::collections::HashSet<usize> = self
                     .node_proto_map
                     .iter()
                     .filter(|(nid, _)| upstream.contains(nid))
-                    .map(|(_, &pid)| pid)
+                    .flat_map(|(_, pids)| pids.iter().copied())
                     .collect();
-                for (nid, pids) in &self.node_proto_ids {
-                    if upstream.contains(nid) {
-                        affected_proto_ids.extend(pids);
-                    }
-                }
 
                 if affected_proto_ids.is_empty() {
                     continue;
