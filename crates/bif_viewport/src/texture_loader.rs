@@ -302,14 +302,11 @@ fn resolve_texture_path(
     if p.is_absolute() {
         return tex_path.to_string();
     }
-    // Try material-level dir first, then fallback
+    // Resolve against material-level dir first, then fallback.
+    // No filesystem check — TextureCache handles missing files gracefully.
     if let Some(dir) = material_source_dir.or(fallback_base) {
-        let resolved = dir.join(p);
-        if resolved.exists() {
-            return resolved.to_string_lossy().into_owned();
-        }
+        return dir.join(p).to_string_lossy().into_owned();
     }
-    // Return as-is (TextureCache will attempt its own resolution)
     tex_path.to_string()
 }
 

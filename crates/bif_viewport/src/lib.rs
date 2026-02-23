@@ -259,10 +259,14 @@ pub struct Renderer {
     pub(crate) working_scene: bif_core::Scene,
     /// Counters for generating unique primitive names (e.g. "Cube", "Cube_2").
     pub(crate) primitive_name_counters: std::collections::HashMap<String, usize>,
-    /// Mapping from node graph NodeId to working_scene prototype ID (single-proto nodes like Primitive).
-    pub(crate) node_proto_map: std::collections::HashMap<egui_snarl::NodeId, usize>,
-    /// Mapping from node graph NodeId to multiple prototype IDs (multi-proto nodes like UsdRead).
-    pub(crate) node_proto_ids: std::collections::HashMap<egui_snarl::NodeId, Vec<usize>>,
+    /// Mapping from node graph NodeId to working_scene prototype IDs.
+    /// Single-proto nodes (Primitive) get a Vec of length 1; multi-proto (UsdRead) get multiple.
+    pub(crate) node_proto_map: std::collections::HashMap<egui_snarl::NodeId, Vec<usize>>,
+    /// True when material set changed (new USD load, node delete) — triggers texture rebuild.
+    /// Transform-only changes (Xform drag, display toggle) skip the expensive texture path.
+    pub(crate) materials_dirty: bool,
+    /// Set by property inspector when Xform T/R/S is edited (consumed next frame).
+    pub(crate) xform_property_changed: Option<egui_snarl::NodeId>,
     /// Mapping from scatter node NodeId to point cloud ID.
     pub(crate) node_cloud_map: std::collections::HashMap<egui_snarl::NodeId, usize>,
     /// Monotonically increasing counter for unique cloud IDs.
@@ -834,7 +838,8 @@ impl Renderer {
             working_scene: bif_core::Scene::new("Working"),
             primitive_name_counters: std::collections::HashMap::new(),
             node_proto_map: std::collections::HashMap::new(),
-            node_proto_ids: std::collections::HashMap::new(),
+            materials_dirty: true,
+            xform_property_changed: None,
             node_cloud_map: std::collections::HashMap::new(),
             next_cloud_id: 0,
             node_scatter_surface_map: std::collections::HashMap::new(),

@@ -1367,9 +1367,10 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer {
                 // Prim filter (placeholder, non-functional V1)
                 ui.horizontal(|ui| {
                     ui.label("Filter:");
-                    ui.add(
+                    ui.add_enabled(
+                        false,
                         egui::TextEdit::singleline(prim_filter)
-                            .hint_text("all prims")
+                            .hint_text("all prims (future)")
                             .desired_width(100.0),
                     );
                 });
@@ -1886,13 +1887,8 @@ pub fn render_node_graph(ui: &mut egui::Ui, state: &mut NodeGraphState) -> Vec<N
     let mut events_out = Vec::new();
     for event in viewer.events {
         match &event {
-            NodeGraphEvent::SetDisplayNode(id) => {
-                // Toggle: clicking same node clears display
-                if state.display_node == Some(*id) {
-                    state.display_node = None;
-                } else {
-                    state.display_node = Some(*id);
-                }
+            NodeGraphEvent::SetDisplayNode(_) => {
+                // Toggle handled in render.rs (needs reload_working_scene)
             }
             NodeGraphEvent::SelectNode(id) => {
                 state.selected_node = Some(*id);
