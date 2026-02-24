@@ -2500,6 +2500,15 @@ impl Renderer {
     }
 }
 
+/// Canonicalize a path and strip the Windows UNC `\\?\` prefix that
+/// `std::fs::canonicalize` adds. USD's SdfLayer cannot resolve UNC paths.
+fn canonicalize_for_usd(path: &str) -> String {
+    let result = std::fs::canonicalize(path)
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|_| path.to_string());
+    result.strip_prefix(r"\\?\").unwrap_or(&result).to_string()
+}
+
 /// Walk upstream from an export node and collect AuthoredPrims, graft prefix,
 /// and the source USD path from an upstream UsdRead node.
 fn collect_export_context(
@@ -2534,11 +2543,7 @@ fn collect_export_context(
                 is_loaded: true,
                 ..
             } if !file_path.is_empty() => {
-                // Canonicalize to absolute path for reliable sublayer resolution
-                let abs_path = std::fs::canonicalize(file_path)
-                    .map(|p| p.display().to_string())
-                    .unwrap_or_else(|_| file_path.clone());
-                source_usd_path = Some(abs_path);
+                source_usd_path = Some(canonicalize_for_usd(file_path));
             }
             _ => {}
         }

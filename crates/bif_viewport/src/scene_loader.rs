@@ -1703,10 +1703,15 @@ impl Renderer {
         }
 
         self.usd_stage = Some(stage);
+        // Canonicalize and strip Windows UNC \\?\ prefix (USD can't resolve it)
+        let canonical = std::fs::canonicalize(path)
+            .unwrap_or_else(|_| path.to_path_buf())
+            .display()
+            .to_string();
         self.loaded_usd_path = Some(
-            std::fs::canonicalize(path)
-                .unwrap_or_else(|_| path.to_path_buf())
-                .display()
+            canonical
+                .strip_prefix(r"\\?\")
+                .unwrap_or(&canonical)
                 .to_string(),
         );
 
