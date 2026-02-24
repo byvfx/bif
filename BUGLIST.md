@@ -1,3 +1,3 @@
-# current bugs as of 2026-02-17
+# current bugs as of 2026-02-22
 
-- no current bugs! :)
+- usd 
