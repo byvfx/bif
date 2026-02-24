@@ -1970,13 +1970,19 @@ impl Renderer {
                         as_sublayer,
                         export_root,
                     } => {
+                        // Collect authored prims, graft prefix, and source USD path from upstream
+                        let (authored_prims, graft_prefix, upstream_usd_path) =
+                            collect_export_context(node_id, &self.node_graph_state.snarl);
+                        // Auto-enable sublayer when upstream UsdRead exists
+                        let effective_as_sublayer = as_sublayer || upstream_usd_path.is_some();
                         let config = bif_core::ExportConfig {
                             output_path: output_path.clone(),
-                            source_usd_path: self.loaded_usd_path.clone(),
-                            as_sublayer,
+                            source_usd_path: upstream_usd_path.or(self.loaded_usd_path.clone()),
+                            as_sublayer: effective_as_sublayer,
                             export_root,
+                            authored_prims,
+                            graft_prefix,
                         };
-                        // TODO: offload export to background thread to avoid blocking UI
                         match self.export_with_config(&config) {
                             Ok(result) => {
                                 let status = format!("{}", result);
@@ -2492,4 +2498,51 @@ impl Renderer {
 
         Ok(())
     }
+}
+
+/// Walk upstream from an export node and collect AuthoredPrims, graft prefix,
+/// and the source USD path from an upstream UsdRead node.
+fn collect_export_context(
+    export_node: egui_snarl::NodeId,
+    snarl: &egui_snarl::Snarl<SceneNode>,
+) -> (Vec<bif_core::AuthoredPrim>, Option<String>, Option<String>) {
+    let upstream = crate::node_graph::collect_upstream_nodes(export_node, snarl);
+    let mut authored_prims = Vec::new();
+    let mut graft_prefix: Option<String> = None;
+    let mut source_usd_path: Option<String> = None;
+
+    for &nid in &upstream {
+        match &snarl[nid] {
+            SceneNode::UsdPrim {
+                prim_path,
+                prim_type,
+                kind,
+                specifier,
+            } => {
+                authored_prims.push(bif_core::AuthoredPrim {
+                    path: prim_path.clone(),
+                    prim_type: *prim_type,
+                    kind: *kind,
+                    specifier: *specifier,
+                });
+            }
+            SceneNode::GraftBranches { destination_path } => {
+                graft_prefix = Some(destination_path.clone());
+            }
+            SceneNode::UsdRead {
+                file_path,
+                is_loaded: true,
+                ..
+            } if !file_path.is_empty() => {
+                // Canonicalize to absolute path for reliable sublayer resolution
+                let abs_path = std::fs::canonicalize(file_path)
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|_| file_path.clone());
+                source_usd_path = Some(abs_path);
+            }
+            _ => {}
+        }
+    }
+
+    (authored_prims, graft_prefix, source_usd_path)
 }

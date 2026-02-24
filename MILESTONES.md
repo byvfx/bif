@@ -799,6 +799,10 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
   - ✅ Multi-USD material fix (per-material source_dir, texture resolution)
   - ✅ Display flag rendering gating (BFS upstream walk)
   - ✅ node_proto_ids for multi-proto UsdRead node tracking + cleanup
+  - ✅ Phase 8: UsdPrim + GraftBranches nodes (scene assembly)
+  - ✅ Phase 9: C++ bridge — define_prim + set_prim_kind (Specifier, Kind, PrimType)
+  - ✅ Phase 10: Export collects source USD path from upstream UsdRead (sublayer fix)
+  - ✅ Phase 11: Canonicalize paths, diagnostic logging, auto-enable sublayer
 - **Remaining:**
   - Verify exported USD in Houdini/usdview/Maya
   - Documentation for USD export workflow

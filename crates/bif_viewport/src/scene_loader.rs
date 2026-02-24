@@ -1703,7 +1703,12 @@ impl Renderer {
         }
 
         self.usd_stage = Some(stage);
-        self.loaded_usd_path = Some(path.display().to_string());
+        self.loaded_usd_path = Some(
+            std::fs::canonicalize(path)
+                .unwrap_or_else(|_| path.to_path_buf())
+                .display()
+                .to_string(),
+        );
 
         // Reset scene browser selection
         self.selected_prim_path = None;

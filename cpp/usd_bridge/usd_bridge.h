@@ -741,6 +741,51 @@ UsdBridgeError usd_bridge_write_point_instancer(
     size_t prototype_count
 );
 
+// ============================================================================
+// Prim Authoring (define prims + set kind)
+// ============================================================================
+
+/// Prim specifier: how the prim is defined
+typedef enum UsdBridgeSpecifier {
+    USD_BRIDGE_SPECIFIER_DEFINE = 0,
+    USD_BRIDGE_SPECIFIER_OVER = 1,
+} UsdBridgeSpecifier;
+
+/// Model kind for USD's Kind system
+typedef enum UsdBridgeKind {
+    USD_BRIDGE_KIND_NONE = 0,
+    USD_BRIDGE_KIND_COMPONENT = 1,
+    USD_BRIDGE_KIND_GROUP = 2,
+    USD_BRIDGE_KIND_ASSEMBLY = 3,
+    USD_BRIDGE_KIND_SUBCOMPONENT = 4,
+} UsdBridgeKind;
+
+/// Define or override a prim at the given path.
+///
+/// @param layer Edit layer handle
+/// @param prim_path USD prim path (e.g., "/shot")
+/// @param type_name Type name (e.g., "Scope", "Xform", "" for typeless)
+/// @param specifier 0=Define, 1=Over
+/// @return USD_BRIDGE_SUCCESS on success
+UsdBridgeError usd_bridge_define_prim(
+    UsdBridgeEditLayer* layer,
+    const char* prim_path,
+    const char* type_name,
+    UsdBridgeSpecifier specifier
+);
+
+/// Set the model kind on a prim via UsdModelAPI.
+///
+/// @param layer Edit layer handle
+/// @param prim_path USD prim path
+/// @param kind Kind value (0=none, 1=component, 2=group, 3=assembly, 4=subcomponent)
+/// @return USD_BRIDGE_SUCCESS on success
+UsdBridgeError usd_bridge_set_prim_kind(
+    UsdBridgeEditLayer* layer,
+    const char* prim_path,
+    UsdBridgeKind kind
+);
+
 #ifdef __cplusplus
 }
 #endif

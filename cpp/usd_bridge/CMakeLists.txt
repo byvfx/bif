@@ -31,6 +31,7 @@ target_link_libraries(usd_bridge PUBLIC
     usdGeom
     usdShade
     usdLux
+    kind
     sdf
     tf
     gf

@@ -192,6 +192,25 @@ struct UsdBridgeMaterialDataRaw {
     is_materialx: i32,
 }
 
+/// Prim specifier from C API
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UsdBridgeSpecifierRaw {
+    Define = 0,
+    Over = 1,
+}
+
+/// Model kind from C API
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UsdBridgeKindRaw {
+    None = 0,
+    Component = 1,
+    Group = 2,
+    Assembly = 3,
+    Subcomponent = 4,
+}
+
 #[link(name = "usd_bridge")]
 extern "C" {
     fn usd_bridge_error_message(error: UsdBridgeErrorCode) -> *const std::ffi::c_char;
@@ -411,6 +430,20 @@ extern "C" {
         prototype_paths: *const *const std::ffi::c_char,
         prototype_count: usize,
     ) -> UsdBridgeErrorCode;
+
+    // Prim authoring
+    fn usd_bridge_define_prim(
+        layer: *mut UsdBridgeEditLayerRaw,
+        prim_path: *const std::ffi::c_char,
+        type_name: *const std::ffi::c_char,
+        specifier: UsdBridgeSpecifierRaw,
+    ) -> UsdBridgeErrorCode;
+
+    fn usd_bridge_set_prim_kind(
+        layer: *mut UsdBridgeEditLayerRaw,
+        prim_path: *const std::ffi::c_char,
+        kind: UsdBridgeKindRaw,
+    ) -> UsdBridgeErrorCode;
 }
 
 // ============================================================================
@@ -595,6 +628,102 @@ impl From<UsdBridgeLightType> for UsdLightType {
             UsdBridgeLightType::Sphere => UsdLightType::Sphere,
             UsdBridgeLightType::Rect => UsdLightType::Rect,
             UsdBridgeLightType::Dome => UsdLightType::Dome,
+        }
+    }
+}
+
+/// USD prim specifier — how the prim opinion is authored.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UsdSpecifier {
+    /// DefinePrim: creates a concrete prim with a type
+    Define,
+    /// OverridePrim: creates an override opinion (no type required)
+    Over,
+}
+
+impl UsdSpecifier {
+    /// All variants for UI iteration.
+    pub const ALL: [Self; 2] = [Self::Define, Self::Over];
+}
+
+impl std::fmt::Display for UsdSpecifier {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Define => write!(f, "Define"),
+            Self::Over => write!(f, "Over"),
+        }
+    }
+}
+
+/// USD model kind — used by asset pipelines (UsdModelAPI).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UsdKind {
+    /// No kind set
+    None,
+    /// Leaf-level renderable asset
+    Component,
+    /// Organizational group of assets
+    Group,
+    /// Top-level publishable asset
+    Assembly,
+    /// Part of a component (below component level)
+    Subcomponent,
+}
+
+impl UsdKind {
+    /// All variants for UI iteration.
+    pub const ALL: [Self; 5] = [
+        Self::None,
+        Self::Component,
+        Self::Group,
+        Self::Assembly,
+        Self::Subcomponent,
+    ];
+}
+
+impl std::fmt::Display for UsdKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::None => write!(f, "None"),
+            Self::Component => write!(f, "Component"),
+            Self::Group => write!(f, "Group"),
+            Self::Assembly => write!(f, "Assembly"),
+            Self::Subcomponent => write!(f, "Subcomponent"),
+        }
+    }
+}
+
+/// USD prim type for scene assembly.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UsdPrimType {
+    /// No type (typeless prim)
+    None,
+    /// Scope: organizational container (no transform)
+    Scope,
+    /// Xform: transformable container
+    Xform,
+}
+
+impl UsdPrimType {
+    /// All variants for UI iteration.
+    pub const ALL: [Self; 3] = [Self::None, Self::Scope, Self::Xform];
+
+    /// USD type name string for the C++ bridge.
+    pub fn as_usd_type_name(&self) -> &str {
+        match self {
+            Self::None => "",
+            Self::Scope => "Scope",
+            Self::Xform => "Xform",
+        }
+    }
+}
+
+impl std::fmt::Display for UsdPrimType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::None => write!(f, "(none)"),
+            Self::Scope => write!(f, "Scope"),
+            Self::Xform => write!(f, "Xform"),
         }
     }
 }
@@ -2007,6 +2136,45 @@ impl UsdEditLayer {
                 c_proto_ptrs.len(),
             )
         };
+        if code != UsdBridgeErrorCode::Success {
+            return Err(code.into());
+        }
+        Ok(())
+    }
+
+    /// Define or override a prim at the given path.
+    pub fn define_prim(
+        &mut self,
+        path: &str,
+        prim_type: UsdPrimType,
+        specifier: UsdSpecifier,
+    ) -> UsdBridgeResult<()> {
+        let c_path = CString::new(path).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let type_name = prim_type.as_usd_type_name();
+        let c_type = CString::new(type_name).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let spec_raw = match specifier {
+            UsdSpecifier::Define => UsdBridgeSpecifierRaw::Define,
+            UsdSpecifier::Over => UsdBridgeSpecifierRaw::Over,
+        };
+        let code =
+            unsafe { usd_bridge_define_prim(self.raw, c_path.as_ptr(), c_type.as_ptr(), spec_raw) };
+        if code != UsdBridgeErrorCode::Success {
+            return Err(code.into());
+        }
+        Ok(())
+    }
+
+    /// Set the model kind on a prim (must already exist).
+    pub fn set_prim_kind(&mut self, path: &str, kind: UsdKind) -> UsdBridgeResult<()> {
+        let c_path = CString::new(path).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let kind_raw = match kind {
+            UsdKind::None => UsdBridgeKindRaw::None,
+            UsdKind::Component => UsdBridgeKindRaw::Component,
+            UsdKind::Group => UsdBridgeKindRaw::Group,
+            UsdKind::Assembly => UsdBridgeKindRaw::Assembly,
+            UsdKind::Subcomponent => UsdBridgeKindRaw::Subcomponent,
+        };
+        let code = unsafe { usd_bridge_set_prim_kind(self.raw, c_path.as_ptr(), kind_raw) };
         if code != UsdBridgeErrorCode::Success {
             return Err(code.into());
         }
