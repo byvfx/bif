@@ -2596,7 +2596,10 @@ UsdBridgeError usd_bridge_set_prim_kind(
                 return USD_BRIDGE_SUCCESS;
         }
 
-        modelApi.SetKind(kindToken);
+        if (!modelApi.SetKind(kindToken)) {
+            TF_WARN("usd_bridge_set_prim_kind: SetKind failed for '%s'", prim_path);
+            return USD_BRIDGE_ERROR_UNKNOWN;
+        }
         return USD_BRIDGE_SUCCESS;
     } catch (const std::exception& e) {
         TF_WARN("usd_bridge_set_prim_kind: %s", e.what());

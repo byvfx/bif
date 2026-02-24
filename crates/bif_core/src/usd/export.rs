@@ -227,7 +227,10 @@ pub fn export_scene(
 /// E.g., path="/World/hero" + prefix="/shot" → "/shot/World/hero"
 fn apply_graft_prefix(path: &str, prefix: &Option<String>) -> String {
     match prefix {
-        Some(pfx) if !pfx.is_empty() => format!("{}{}", pfx, path),
+        Some(pfx) if !pfx.is_empty() => {
+            let pfx = pfx.trim_end_matches('/');
+            format!("{}{}", pfx, path)
+        }
         _ => path.to_string(),
     }
 }
