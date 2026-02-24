@@ -272,6 +272,22 @@ pub enum SceneNode {
         /// Prim filter (placeholder — non-functional in V1, always all upstream)
         prim_filter: String,
     },
+    /// USD Prim — defines organizational structure in the scene graph
+    UsdPrim {
+        /// USD prim path (e.g., "/shot", "/World")
+        prim_path: String,
+        /// Prim type (Scope, Xform, or None)
+        prim_type: bif_core::usd::UsdPrimType,
+        /// Model kind (Component, Group, Assembly, etc.)
+        kind: bif_core::usd::UsdKind,
+        /// Specifier (Define or Over)
+        specifier: bif_core::usd::UsdSpecifier,
+    },
+    /// Graft Branches — merge multiple branches under a parent prim
+    GraftBranches {
+        /// Destination prim path (parent for all grafted branches)
+        destination_path: String,
+    },
     /// HDRI environment map for IBL lighting
     HdriEnvironment {
         /// Path to the HDR file
@@ -396,6 +412,23 @@ impl SceneNode {
         }
     }
 
+    /// Create a new USD Prim node
+    pub fn usd_prim() -> Self {
+        Self::UsdPrim {
+            prim_path: "/root".to_string(),
+            prim_type: bif_core::usd::UsdPrimType::Scope,
+            kind: bif_core::usd::UsdKind::None,
+            specifier: bif_core::usd::UsdSpecifier::Define,
+        }
+    }
+
+    /// Create a new Graft Branches node
+    pub fn graft_branches() -> Self {
+        Self::GraftBranches {
+            destination_path: "/shot".to_string(),
+        }
+    }
+
     /// Create a new HDRI Environment node
     pub fn hdri_environment() -> Self {
         Self::HdriEnvironment {
@@ -425,6 +458,8 @@ impl SceneNode {
             SceneNode::PointInstancer { .. } => "Point Instancer",
             SceneNode::UsdExport { .. } => "USD Export",
             SceneNode::Xform { .. } => "Xform",
+            SceneNode::UsdPrim { .. } => "USD Prim",
+            SceneNode::GraftBranches { .. } => "Graft Branches",
             SceneNode::HdriEnvironment { .. } => "HDRI Environment",
         }
     }
@@ -442,6 +477,8 @@ impl SceneNode {
             SceneNode::PointInstancer { .. } => 2, // points + prototype
             SceneNode::UsdExport { .. } => 1,      // scene input
             SceneNode::Xform { .. } => 1,          // scene input
+            SceneNode::UsdPrim { .. } => 1,        // pass-through scene input
+            SceneNode::GraftBranches { .. } => 4,  // up to 4 branches
             SceneNode::HdriEnvironment { .. } => 0,
         }
     }
@@ -456,6 +493,8 @@ impl SceneNode {
             SceneNode::PointInstancer { .. } => 1,
             SceneNode::UsdExport { .. } => 0, // sink node, no output
             SceneNode::Xform { .. } => 1,
+            SceneNode::UsdPrim { .. } => 1,
+            SceneNode::GraftBranches { .. } => 1,
             SceneNode::HdriEnvironment { .. } => 1,
         }
     }
@@ -490,6 +529,17 @@ impl SceneNode {
                 0 => Some(("scene", PinType::Scene)),
                 _ => None,
             },
+            SceneNode::UsdPrim { .. } => match index {
+                0 => Some(("scene", PinType::Scene)),
+                _ => None,
+            },
+            SceneNode::GraftBranches { .. } => match index {
+                0 => Some(("branch 1", PinType::Scene)),
+                1 => Some(("branch 2", PinType::Scene)),
+                2 => Some(("branch 3", PinType::Scene)),
+                3 => Some(("branch 4", PinType::Scene)),
+                _ => None,
+            },
             SceneNode::HdriEnvironment { .. } => None,
         }
     }
@@ -522,12 +572,44 @@ impl SceneNode {
                 0 => Some(("scene", PinType::Scene)),
                 _ => None,
             },
+            SceneNode::UsdPrim { .. } => match index {
+                0 => Some(("scene", PinType::Scene)),
+                _ => None,
+            },
+            SceneNode::GraftBranches { .. } => match index {
+                0 => Some(("scene", PinType::Scene)),
+                _ => None,
+            },
             SceneNode::HdriEnvironment { .. } => match index {
                 0 => Some(("env", PinType::Environment)),
                 _ => None,
             },
         }
     }
+
+    /// Path label shown on the node (like Houdini's green prim path text).
+    pub fn prim_path_label(&self) -> Option<&str> {
+        match self {
+            SceneNode::UsdPrim { prim_path, .. } => Some(prim_path.as_str()),
+            SceneNode::GraftBranches { destination_path } => Some(destination_path.as_str()),
+            SceneNode::UsdRead { file_path, .. } if !file_path.is_empty() => {
+                // Show just the filename
+                file_path
+                    .rsplit(['/', '\\'])
+                    .next()
+                    .or(Some(file_path.as_str()))
+            }
+            SceneNode::UsdExport { output_path, .. } if !output_path.is_empty() => {
+                file_name_from_path(output_path)
+            }
+            _ => None,
+        }
+    }
+}
+
+/// Extract filename from a path string.
+fn file_name_from_path(path: &str) -> Option<&str> {
+    path.rsplit(['/', '\\']).next()
 }
 
 /// Resolve which node is connected to a given input pin.
@@ -1379,6 +1461,68 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer {
                     self.events.push(NodeGraphEvent::XformChanged { node_id });
                 }
             }
+            SceneNode::UsdPrim {
+                prim_path,
+                prim_type,
+                kind,
+                specifier,
+            } => {
+                ui.horizontal(|ui| {
+                    ui.label("Path:");
+                    ui.text_edit_singleline(prim_path);
+                });
+                // Type combo
+                ui.horizontal(|ui| {
+                    ui.label("Type:");
+                    egui::ComboBox::from_id_salt("prim_type")
+                        .selected_text(format!("{}", prim_type))
+                        .show_ui(ui, |ui| {
+                            for t in bif_core::usd::UsdPrimType::ALL {
+                                ui.selectable_value(prim_type, t, format!("{}", t));
+                            }
+                        });
+                });
+                // Kind combo
+                ui.horizontal(|ui| {
+                    ui.label("Kind:");
+                    egui::ComboBox::from_id_salt("prim_kind")
+                        .selected_text(format!("{}", kind))
+                        .show_ui(ui, |ui| {
+                            for k in bif_core::usd::UsdKind::ALL {
+                                ui.selectable_value(kind, k, format!("{}", k));
+                            }
+                        });
+                });
+                // Specifier combo
+                ui.horizontal(|ui| {
+                    ui.label("Spec:");
+                    egui::ComboBox::from_id_salt("prim_spec")
+                        .selected_text(format!("{}", specifier))
+                        .show_ui(ui, |ui| {
+                            for s in bif_core::usd::UsdSpecifier::ALL {
+                                ui.selectable_value(specifier, s, format!("{}", s));
+                            }
+                        });
+                });
+                // Prim path label
+                ui.colored_label(egui::Color32::from_rgb(100, 200, 100), prim_path.as_str());
+            }
+            SceneNode::GraftBranches { destination_path } => {
+                ui.horizontal(|ui| {
+                    ui.label("Dest:");
+                    ui.text_edit_singleline(destination_path);
+                });
+                // Show connected branch count
+                let connected = (0..4)
+                    .filter(|&i| !inputs.get(i).is_none_or(|p| p.remotes.is_empty()))
+                    .count();
+                ui.label(format!("{}/4 branches connected", connected));
+                // Destination path label
+                ui.colored_label(
+                    egui::Color32::from_rgb(100, 200, 100),
+                    destination_path.as_str(),
+                );
+            }
             SceneNode::HdriEnvironment {
                 file_path,
                 is_loaded,
@@ -1547,6 +1691,8 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer {
                 | SceneNode::Primitive { .. }
                 | SceneNode::IvarRender { .. }
                 | SceneNode::Xform { .. }
+                | SceneNode::UsdPrim { .. }
+                | SceneNode::GraftBranches { .. }
         );
         if is_scene_output {
             let label = if self.display_node == Some(node) {
@@ -1665,6 +1811,16 @@ impl NodeGraphState {
     /// Add a USD Export node at the given position
     pub fn add_usd_export(&mut self, pos: egui::Pos2) -> NodeId {
         self.snarl.insert_node(pos, SceneNode::usd_export())
+    }
+
+    /// Add a USD Prim node at the given position
+    pub fn add_usd_prim(&mut self, pos: egui::Pos2) -> NodeId {
+        self.snarl.insert_node(pos, SceneNode::usd_prim())
+    }
+
+    /// Add a Graft Branches node at the given position
+    pub fn add_graft_branches(&mut self, pos: egui::Pos2) -> NodeId {
+        self.snarl.insert_node(pos, SceneNode::graft_branches())
     }
 
     /// Delete the selected node.
@@ -1861,6 +2017,12 @@ pub fn render_node_graph(ui: &mut egui::Ui, state: &mut NodeGraphState) -> Vec<N
         }
         if ui.button("+ USD Export").clicked() {
             state.add_usd_export(egui::pos2(600.0, 100.0));
+        }
+        if ui.button("+ USD Prim").clicked() {
+            state.add_usd_prim(egui::pos2(150.0, 100.0));
+        }
+        if ui.button("+ Graft").clicked() {
+            state.add_graft_branches(egui::pos2(350.0, 200.0));
         }
         ui.separator();
         if ui.button("Del Selected").clicked() {

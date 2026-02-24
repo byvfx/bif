@@ -6,7 +6,20 @@
 use crate::point_cloud::PointCloud;
 use crate::scene::Scene;
 use crate::undo::EditState;
-use crate::usd::cpp_bridge::{UsdBridgeError, UsdEditLayer};
+use crate::usd::cpp_bridge::{UsdBridgeError, UsdEditLayer, UsdKind, UsdPrimType, UsdSpecifier};
+
+/// A prim authored by a UsdPrim node, to be written during export.
+#[derive(Clone, Debug)]
+pub struct AuthoredPrim {
+    /// USD prim path (e.g., "/shot")
+    pub path: String,
+    /// Prim type name (e.g., "Scope", "Xform")
+    pub prim_type: UsdPrimType,
+    /// Model kind
+    pub kind: UsdKind,
+    /// Define vs Over
+    pub specifier: UsdSpecifier,
+}
 
 /// Configuration for a USD export.
 #[derive(Clone, Debug)]
@@ -19,6 +32,10 @@ pub struct ExportConfig {
     pub as_sublayer: bool,
     /// Root prim path for BIF-authored prims (scattered instancers, etc.)
     pub export_root: String,
+    /// Prims authored by UsdPrim nodes
+    pub authored_prims: Vec<AuthoredPrim>,
+    /// Graft prefix: prepend to all prim paths (from GraftBranches node)
+    pub graft_prefix: Option<String>,
 }
 
 impl Default for ExportConfig {
@@ -28,6 +45,8 @@ impl Default for ExportConfig {
             source_usd_path: None,
             as_sublayer: true,
             export_root: "/BIF".to_string(),
+            authored_prims: Vec::new(),
+            graft_prefix: None,
         }
     }
 }
@@ -41,6 +60,8 @@ pub struct ExportResult {
     pub keyframe_count: usize,
     /// Number of PointInstancers written
     pub instancer_count: usize,
+    /// Number of authored prims written (from UsdPrim nodes)
+    pub prim_count: usize,
     /// Output file path
     pub output_path: String,
 }
@@ -49,8 +70,12 @@ impl std::fmt::Display for ExportResult {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "{} xforms + {} keyframes + {} instancers -> {}",
-            self.xform_count, self.keyframe_count, self.instancer_count, self.output_path
+            "{} prims + {} xforms + {} keyframes + {} instancers -> {}",
+            self.prim_count,
+            self.xform_count,
+            self.keyframe_count,
+            self.instancer_count,
+            self.output_path
         )
     }
 }
@@ -69,10 +94,43 @@ pub fn export_scene(
     let mut layer = UsdEditLayer::create(&config.output_path)?;
 
     // Sublayer composition: add source USD so our edits compose over it
+    log::debug!(
+        "Export config: as_sublayer={}, source_usd_path={:?}",
+        config.as_sublayer,
+        config.source_usd_path
+    );
     if config.as_sublayer {
         if let Some(ref source_path) = config.source_usd_path {
+            log::info!("Adding sublayer: {:?}", source_path);
             layer.add_sublayer(source_path)?;
+        } else {
+            log::warn!("as_sublayer=true but source_usd_path is None — no sublayer added");
         }
+    }
+
+    // Write authored prims (from UsdPrim nodes) — before xforms so parent prims exist
+    let mut prim_count = 0;
+    for authored in &config.authored_prims {
+        let path = apply_graft_prefix(&authored.path, &config.graft_prefix);
+        log::debug!(
+            "define_prim: path={:?} type={:?} spec={:?}",
+            path,
+            authored.prim_type,
+            authored.specifier
+        );
+        layer
+            .define_prim(&path, authored.prim_type, authored.specifier)
+            .map_err(|e| {
+                log::error!("define_prim failed for path {:?}: {}", path, e);
+                e
+            })?;
+        if authored.kind != UsdKind::None {
+            layer.set_prim_kind(&path, authored.kind).map_err(|e| {
+                log::error!("set_prim_kind failed for path {:?}: {}", path, e);
+                e
+            })?;
+        }
+        prim_count += 1;
     }
 
     let mut xform_count = 0;
@@ -84,8 +142,12 @@ pub fn export_scene(
             .get(idx)
             .cloned()
             .unwrap_or_else(|| format!("/instance_{}", idx));
+        let prim_path = apply_graft_prefix(&prim_path, &config.graft_prefix);
         let mat = transform.to_matrix();
-        layer.write_xform(&prim_path, -1.0, &mat)?;
+        layer.write_xform(&prim_path, -1.0, &mat).map_err(|e| {
+            log::error!("write_xform failed for path {:?}: {}", prim_path, e);
+            e
+        })?;
         xform_count += 1;
     }
 
@@ -95,21 +157,57 @@ pub fn export_scene(
             .get(idx)
             .cloned()
             .unwrap_or_else(|| format!("/instance_{}", idx));
+        let prim_path = apply_graft_prefix(&prim_path, &config.graft_prefix);
         if let Some(keyframes) = &anim.keyframes {
             for kf in keyframes {
                 let mat = kf.transform.to_matrix();
-                layer.write_xform(&prim_path, kf.time, &mat)?;
+                layer.write_xform(&prim_path, kf.time, &mat).map_err(|e| {
+                    log::error!(
+                        "write_xform (keyframe) failed for path {:?}: {}",
+                        prim_path,
+                        e
+                    );
+                    e
+                })?;
                 keyframe_count += 1;
             }
         }
     }
 
-    // Write PointInstancers from point clouds
+    // Write PointInstancers from point clouds (skip empty clouds)
     let mut instancer_count = 0;
     for cloud in &scene.point_clouds {
+        if cloud.positions.is_empty() || cloud.prototype_ids.is_empty() {
+            log::warn!(
+                "Skipping empty point cloud {:?} (positions={}, protos={})",
+                cloud.name,
+                cloud.positions.len(),
+                cloud.prototype_ids.len()
+            );
+            continue;
+        }
         let instancer_path = format!("{}/{}", config.export_root, cloud.name);
+        let instancer_path = apply_graft_prefix(&instancer_path, &config.graft_prefix);
         let proto_paths: Vec<String> = resolve_proto_paths(scene, cloud, config);
-        layer.write_point_instancer(&instancer_path, cloud, &proto_paths)?;
+        if proto_paths.is_empty() {
+            log::warn!(
+                "Skipping instancer {:?}: no prototype paths resolved",
+                instancer_path
+            );
+            continue;
+        }
+        layer
+            .write_point_instancer(&instancer_path, cloud, &proto_paths)
+            .map_err(|e| {
+                log::error!(
+                    "write_point_instancer failed for {:?} (instances={}, protos={}): {}",
+                    instancer_path,
+                    cloud.positions.len(),
+                    proto_paths.len(),
+                    e
+                );
+                e
+            })?;
         instancer_count += 1;
     }
 
@@ -119,8 +217,19 @@ pub fn export_scene(
         xform_count,
         keyframe_count,
         instancer_count,
+        prim_count,
         output_path: config.output_path.clone(),
     })
+}
+
+/// Prepend a graft prefix to a prim path (if set).
+///
+/// E.g., path="/World/hero" + prefix="/shot" → "/shot/World/hero"
+fn apply_graft_prefix(path: &str, prefix: &Option<String>) -> String {
+    match prefix {
+        Some(pfx) if !pfx.is_empty() => format!("{}{}", pfx, path),
+        _ => path.to_string(),
+    }
 }
 
 /// Resolve prototype prim paths for a point cloud's prototype IDs.
@@ -201,6 +310,7 @@ mod tests {
             source_usd_path: None,
             as_sublayer: false,
             export_root: "/BIF".to_string(),
+            ..Default::default()
         };
 
         let result = match export_scene(&scene, &edit_state, &[], &config) {
@@ -259,6 +369,7 @@ mod tests {
             source_usd_path: None,
             as_sublayer: false,
             export_root: "/BIF".to_string(),
+            ..Default::default()
         };
 
         let result = export_scene(&scene, &edit_state, &prim_paths, &config).expect("export");
@@ -319,6 +430,7 @@ mod tests {
             source_usd_path: None,
             as_sublayer: false,
             export_root: "/BIF".to_string(),
+            ..Default::default()
         };
 
         let result = export_scene(&scene, &edit_state, &prim_paths, &config).expect("export");
@@ -375,6 +487,7 @@ mod tests {
             source_usd_path: None,
             as_sublayer: false,
             export_root: "/BIF".to_string(),
+            ..Default::default()
         };
 
         let result = export_scene(&scene, &edit_state, &[], &config).expect("export");
@@ -457,6 +570,7 @@ mod tests {
             source_usd_path: Some(abs_source),
             as_sublayer: true,
             export_root: "/BIF".to_string(),
+            ..Default::default()
         };
 
         let result = export_scene(&scene, &edit_state, &prim_paths, &config).expect("export");
@@ -508,6 +622,138 @@ mod tests {
 
         let stage = UsdStage::open(&out).expect("reopen");
         assert!(stage.mesh_count().is_ok(), "Stage should be queryable");
+
+        cleanup(&out);
+    }
+
+    #[test]
+    fn test_export_with_authored_prims() {
+        use crate::usd::cpp_bridge::{UsdKind, UsdPrimType, UsdSpecifier};
+
+        let out = temp_usda_path("authored_prims");
+
+        if try_create_layer(&out).is_none() {
+            return;
+        }
+        cleanup(&out);
+
+        let scene = Scene::new("test");
+        let edit_state = EditState::default();
+
+        let config = ExportConfig {
+            output_path: out.clone(),
+            source_usd_path: None,
+            as_sublayer: false,
+            export_root: "/BIF".to_string(),
+            authored_prims: vec![
+                AuthoredPrim {
+                    path: "/shot".to_string(),
+                    prim_type: UsdPrimType::Scope,
+                    kind: UsdKind::Assembly,
+                    specifier: UsdSpecifier::Define,
+                },
+                AuthoredPrim {
+                    path: "/shot/geo".to_string(),
+                    prim_type: UsdPrimType::Xform,
+                    kind: UsdKind::Group,
+                    specifier: UsdSpecifier::Define,
+                },
+            ],
+            graft_prefix: None,
+        };
+
+        let result = export_scene(&scene, &edit_state, &[], &config).expect("export");
+        assert_eq!(result.prim_count, 2, "Should write 2 authored prims");
+
+        // Reopen and verify prims exist
+        let stage = UsdStage::open(&out).expect("reopen");
+        let prim_count = stage.prim_count().expect("prim_count");
+        assert!(
+            prim_count >= 2,
+            "Should have at least 2 prims, got {}",
+            prim_count
+        );
+
+        cleanup(&out);
+    }
+
+    #[test]
+    fn test_define_scope_prim() {
+        use crate::usd::cpp_bridge::{UsdPrimType, UsdSpecifier};
+
+        let out = temp_usda_path("scope_prim");
+
+        let mut layer = match UsdEditLayer::create(&out) {
+            Ok(l) => l,
+            Err(e) => {
+                eprintln!("Skipping test - USD bridge unavailable: {e}");
+                return;
+            }
+        };
+
+        layer
+            .define_prim("/World", UsdPrimType::Scope, UsdSpecifier::Define)
+            .expect("define_prim");
+        layer.save().expect("save");
+
+        let stage = UsdStage::open(&out).expect("reopen");
+        let prim_count = stage.prim_count().expect("prim_count");
+        assert!(prim_count >= 1, "Should have at least 1 prim");
+
+        cleanup(&out);
+    }
+
+    #[test]
+    fn test_define_xform_prim() {
+        use crate::usd::cpp_bridge::{UsdPrimType, UsdSpecifier};
+
+        let out = temp_usda_path("xform_prim");
+
+        let mut layer = match UsdEditLayer::create(&out) {
+            Ok(l) => l,
+            Err(e) => {
+                eprintln!("Skipping test - USD bridge unavailable: {e}");
+                return;
+            }
+        };
+
+        layer
+            .define_prim("/World", UsdPrimType::Xform, UsdSpecifier::Define)
+            .expect("define_prim");
+        layer.save().expect("save");
+
+        let stage = UsdStage::open(&out).expect("reopen");
+        let prim_count = stage.prim_count().expect("prim_count");
+        assert!(prim_count >= 1, "Should have at least 1 prim");
+
+        cleanup(&out);
+    }
+
+    #[test]
+    fn test_prim_with_kind() {
+        use crate::usd::cpp_bridge::{UsdKind, UsdPrimType, UsdSpecifier};
+
+        let out = temp_usda_path("prim_kind");
+
+        let mut layer = match UsdEditLayer::create(&out) {
+            Ok(l) => l,
+            Err(e) => {
+                eprintln!("Skipping test - USD bridge unavailable: {e}");
+                return;
+            }
+        };
+
+        layer
+            .define_prim("/shot", UsdPrimType::Scope, UsdSpecifier::Define)
+            .expect("define_prim");
+        layer
+            .set_prim_kind("/shot", UsdKind::Assembly)
+            .expect("set_prim_kind");
+        layer.save().expect("save");
+
+        let stage = UsdStage::open(&out).expect("reopen");
+        let prim_count = stage.prim_count().expect("prim_count");
+        assert!(prim_count >= 1, "Should have at least 1 prim");
 
         cleanup(&out);
     }

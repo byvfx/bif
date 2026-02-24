@@ -1537,6 +1537,8 @@ impl Renderer {
             source_usd_path: self.loaded_usd_path.clone(),
             as_sublayer: self.loaded_usd_path.is_some(),
             export_root: "/BIF".to_string(),
+            authored_prims: Vec::new(),
+            graft_prefix: None,
         };
 
         let result = bif_core::usd::export::export_scene(

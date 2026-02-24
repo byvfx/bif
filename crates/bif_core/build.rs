@@ -91,6 +91,7 @@ fn main() {
         "usd_usdShade", // For materials/shaders
         "usd_usdGeom",
         "usd_usd",
+        "usd_kind", // For UsdModelAPI kind tokens
         "usd_sdf",
         "usd_tf",
         "usd_gf",

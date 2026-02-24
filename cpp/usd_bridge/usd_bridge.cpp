@@ -31,6 +31,8 @@
 #include <pxr/usd/usdGeom/metrics.h>
 #include <pxr/usd/ar/resolver.h>
 #include <pxr/usd/ar/resolverContextBinder.h>
+#include <pxr/usd/usd/modelAPI.h>
+#include <pxr/usd/kind/registry.h>
 
 #include <vector>
 #include <string>
@@ -2514,6 +2516,93 @@ UsdBridgeError usd_bridge_write_point_instancer(
         return USD_BRIDGE_ERROR_UNKNOWN;
     } catch (...) {
         TF_WARN("usd_bridge_write_point_instancer: unknown exception");
+        return USD_BRIDGE_ERROR_UNKNOWN;
+    }
+}
+
+// ============================================================================
+// Prim Authoring
+// ============================================================================
+
+UsdBridgeError usd_bridge_define_prim(
+    UsdBridgeEditLayer* layer,
+    const char* prim_path,
+    const char* type_name,
+    UsdBridgeSpecifier specifier
+) {
+    if (!layer || !prim_path) {
+        return USD_BRIDGE_ERROR_NULL_POINTER;
+    }
+
+    try {
+        SdfPath path(prim_path);
+        UsdPrim prim;
+
+        if (specifier == USD_BRIDGE_SPECIFIER_OVER) {
+            prim = layer->stage->OverridePrim(path);
+        } else {
+            TfToken typeTok(type_name ? type_name : "");
+            prim = layer->stage->DefinePrim(path, typeTok);
+        }
+
+        if (!prim) {
+            return USD_BRIDGE_ERROR_UNKNOWN;
+        }
+
+        return USD_BRIDGE_SUCCESS;
+    } catch (const std::exception& e) {
+        TF_WARN("usd_bridge_define_prim: %s", e.what());
+        return USD_BRIDGE_ERROR_UNKNOWN;
+    } catch (...) {
+        TF_WARN("usd_bridge_define_prim: unknown exception");
+        return USD_BRIDGE_ERROR_UNKNOWN;
+    }
+}
+
+UsdBridgeError usd_bridge_set_prim_kind(
+    UsdBridgeEditLayer* layer,
+    const char* prim_path,
+    UsdBridgeKind kind
+) {
+    if (!layer || !prim_path) {
+        return USD_BRIDGE_ERROR_NULL_POINTER;
+    }
+
+    try {
+        SdfPath path(prim_path);
+        auto prim = layer->stage->GetPrimAtPath(path);
+        if (!prim) {
+            return USD_BRIDGE_ERROR_INVALID_PRIM;
+        }
+
+        UsdModelAPI modelApi(prim);
+
+        TfToken kindToken;
+        switch (kind) {
+            case USD_BRIDGE_KIND_COMPONENT:
+                kindToken = KindTokens->component;
+                break;
+            case USD_BRIDGE_KIND_GROUP:
+                kindToken = KindTokens->group;
+                break;
+            case USD_BRIDGE_KIND_ASSEMBLY:
+                kindToken = KindTokens->assembly;
+                break;
+            case USD_BRIDGE_KIND_SUBCOMPONENT:
+                kindToken = KindTokens->subcomponent;
+                break;
+            case USD_BRIDGE_KIND_NONE:
+            default:
+                return USD_BRIDGE_SUCCESS;
+        }
+
+        modelApi.SetKind(kindToken);
+        return USD_BRIDGE_SUCCESS;
+    } catch (const std::exception& e) {
+        TF_WARN("usd_bridge_set_prim_kind: %s", e.what());
+        return USD_BRIDGE_ERROR_UNKNOWN;
+    } catch (...) {
+        TF_WARN("usd_bridge_set_prim_kind: unknown exception");
         return USD_BRIDGE_ERROR_UNKNOWN;
     }
 }
