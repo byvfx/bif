@@ -1655,6 +1655,17 @@ impl Renderer {
                     } => {
                         log::info!("Node graph: Creating {:?} primitive (size={})", kind, size);
 
+                        // Read prim_path from the Primitive node for export naming
+                        let prim_path = if let crate::node_graph::SceneNode::Primitive {
+                            ref prim_path,
+                            ..
+                        } = &self.node_graph_state.snarl[node_id]
+                        {
+                            Some(prim_path.clone())
+                        } else {
+                            None
+                        };
+
                         // Remove old prototype if re-creating (e.g. size change)
                         if let Some(old_ids) = self.node_proto_map.remove(&node_id) {
                             for &pid in old_ids.iter().rev() {
@@ -1665,6 +1676,14 @@ impl Renderer {
                         self.materials_dirty = true;
                         match self.load_primitive(kind, size) {
                             Ok(proto_id) => {
+                                // Update prototype name from node's prim_path (used during export)
+                                if let Some(ref pp) = prim_path {
+                                    if let Some(proto) =
+                                        self.working_scene.prototypes.get_mut(proto_id)
+                                    {
+                                        std::sync::Arc::make_mut(proto).name = pp.as_str().into();
+                                    }
+                                }
                                 self.node_proto_map.insert(node_id, vec![proto_id]);
 
                                 // Recursively dirty all downstream nodes
@@ -1881,8 +1900,32 @@ impl Renderer {
                                 }
                             };
 
+                        // Read PointInstancer node's prim_path for export
+                        let instancer_prim_path =
+                            if let crate::node_graph::SceneNode::PointInstancer {
+                                ref prim_path,
+                                ..
+                            } = &self.node_graph_state.snarl[node_id]
+                            {
+                                Some(prim_path.clone())
+                            } else {
+                                None
+                            };
+
                         match (cloud_id, proto_id) {
                             (Some(cid), Some(pid)) => {
+                                // Update cloud name from PointInstancer prim_path (used during export)
+                                if let Some(ref prim_path) = instancer_prim_path {
+                                    if let Some(cloud) = self
+                                        .working_scene
+                                        .point_clouds
+                                        .iter_mut()
+                                        .find(|c| c.id == cid)
+                                    {
+                                        cloud.name = prim_path.clone();
+                                    }
+                                }
+
                                 // Find cloud in working scene by ID
                                 let cloud =
                                     self.working_scene.point_clouds.iter().find(|c| c.id == cid);
@@ -1904,6 +1947,7 @@ impl Renderer {
                                         is_instanced,
                                         is_computing,
                                         compute_failed,
+                                        ..
                                     } = &mut self.node_graph_state.snarl[node_id]
                                     {
                                         *instance_count = inst_count;

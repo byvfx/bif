@@ -774,6 +774,32 @@ UsdBridgeError usd_bridge_define_prim(
     UsdBridgeSpecifier specifier
 );
 
+/// Write a UsdGeomMesh prim with positions, indices, optional normals and UVs.
+///
+/// @param layer Edit layer handle
+/// @param prim_path USD prim path for the Mesh
+/// @param points Flat array of float[3] per vertex (point_count * 3 floats)
+/// @param point_count Number of vertices
+/// @param indices Flat triangle indices (index_count must be multiple of 3)
+/// @param index_count Number of indices
+/// @param normals Flat array of float[3] per vertex (NULL to skip)
+/// @param normal_count Number of normals (0 to skip)
+/// @param uvs Flat array of float[2] per vertex (NULL to skip)
+/// @param uv_count Number of UV coords (0 to skip)
+/// @return USD_BRIDGE_SUCCESS on success
+UsdBridgeError usd_bridge_write_mesh(
+    UsdBridgeEditLayer* layer,
+    const char* prim_path,
+    const float* points,
+    size_t point_count,
+    const uint32_t* indices,
+    size_t index_count,
+    const float* normals,
+    size_t normal_count,
+    const float* uvs,
+    size_t uv_count
+);
+
 /// Set the model kind on a prim via UsdModelAPI.
 ///
 /// @param layer Edit layer handle

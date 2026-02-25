@@ -431,6 +431,20 @@ extern "C" {
         prototype_count: usize,
     ) -> UsdBridgeErrorCode;
 
+    // Mesh authoring
+    fn usd_bridge_write_mesh(
+        layer: *mut UsdBridgeEditLayerRaw,
+        prim_path: *const std::ffi::c_char,
+        points: *const f32,
+        point_count: usize,
+        indices: *const u32,
+        index_count: usize,
+        normals: *const f32,
+        normal_count: usize,
+        uvs: *const f32,
+        uv_count: usize,
+    ) -> UsdBridgeErrorCode;
+
     // Prim authoring
     fn usd_bridge_define_prim(
         layer: *mut UsdBridgeEditLayerRaw,
@@ -2134,6 +2148,56 @@ impl UsdEditLayer {
                 count,
                 c_proto_ptrs.as_ptr(),
                 c_proto_ptrs.len(),
+            )
+        };
+        if code != UsdBridgeErrorCode::Success {
+            return Err(code.into());
+        }
+        Ok(())
+    }
+
+    /// Write a UsdGeomMesh prim from a `Mesh`.
+    pub fn write_mesh(&mut self, prim_path: &str, mesh: &crate::mesh::Mesh) -> UsdBridgeResult<()> {
+        let c_path = CString::new(prim_path).map_err(|_| UsdBridgeError::InvalidPath)?;
+
+        let points: Vec<f32> = mesh
+            .positions
+            .iter()
+            .flat_map(|p| [p.x, p.y, p.z])
+            .collect();
+
+        let normals_flat: Vec<f32> = mesh
+            .normals
+            .as_ref()
+            .map(|ns| ns.iter().flat_map(|n| [n.x, n.y, n.z]).collect())
+            .unwrap_or_default();
+
+        let uvs_flat: Vec<f32> = mesh
+            .uvs
+            .as_ref()
+            .map(|uvs| uvs.iter().flat_map(|uv| [uv[0], uv[1]]).collect())
+            .unwrap_or_default();
+
+        let code = unsafe {
+            usd_bridge_write_mesh(
+                self.raw,
+                c_path.as_ptr(),
+                points.as_ptr(),
+                mesh.positions.len(),
+                mesh.indices.as_ptr(),
+                mesh.indices.len(),
+                if normals_flat.is_empty() {
+                    ptr::null()
+                } else {
+                    normals_flat.as_ptr()
+                },
+                normals_flat.len() / 3,
+                if uvs_flat.is_empty() {
+                    ptr::null()
+                } else {
+                    uvs_flat.as_ptr()
+                },
+                uvs_flat.len() / 2,
             )
         };
         if code != UsdBridgeErrorCode::Success {

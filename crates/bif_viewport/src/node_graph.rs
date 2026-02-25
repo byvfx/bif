@@ -13,10 +13,18 @@
 //! - Sublayer: USD layer composition
 //! - Variant: Switch USD variant sets
 
+use std::sync::atomic::{AtomicU32, Ordering};
+
 use egui_snarl::{
     ui::{PinInfo, SnarlStyle, SnarlViewer},
     InPin, InPinId, NodeId, OutPin, OutPinId, Snarl,
 };
+
+/// Global counters for auto-incrementing prim paths per primitive kind.
+static CUBE_COUNTER: AtomicU32 = AtomicU32::new(1);
+static SPHERE_COUNTER: AtomicU32 = AtomicU32::new(1);
+static CAMERA_COUNTER: AtomicU32 = AtomicU32::new(1);
+static INSTANCER_COUNTER: AtomicU32 = AtomicU32::new(1);
 
 /// Parameters for scatter points computation.
 #[derive(Debug, Clone)]
@@ -191,6 +199,8 @@ pub enum SceneNode {
         size: f32,
         /// Whether geometry has been created
         is_created: bool,
+        /// USD prim path for export
+        prim_path: String,
     },
     /// Scatter points on surface, grid, or sphere
     ScatterPoints {
@@ -247,6 +257,8 @@ pub enum SceneNode {
         is_computing: bool,
         /// Whether compute failed (prevents infinite retry loop)
         compute_failed: bool,
+        /// USD prim path for export
+        prim_path: String,
     },
     /// USD Export sink node — writes scene to disk
     UsdExport {
@@ -342,15 +354,25 @@ impl SceneNode {
 
     /// Create a new Primitive node
     pub fn primitive(kind: bif_core::PrimitiveKind) -> Self {
-        let size = match kind {
-            bif_core::PrimitiveKind::Cube => 1.0,
-            bif_core::PrimitiveKind::Sphere => 0.5,
-            bif_core::PrimitiveKind::Camera => 1.0,
+        let (size, prim_path) = match kind {
+            bif_core::PrimitiveKind::Cube => {
+                let n = CUBE_COUNTER.fetch_add(1, Ordering::Relaxed);
+                (1.0, format!("/World/Cube{}", n))
+            }
+            bif_core::PrimitiveKind::Sphere => {
+                let n = SPHERE_COUNTER.fetch_add(1, Ordering::Relaxed);
+                (0.5, format!("/World/Sphere{}", n))
+            }
+            bif_core::PrimitiveKind::Camera => {
+                let n = CAMERA_COUNTER.fetch_add(1, Ordering::Relaxed);
+                (1.0, format!("/World/Camera{}", n))
+            }
         };
         Self::Primitive {
             kind,
             size,
             is_created: false,
+            prim_path,
         }
     }
 
@@ -383,11 +405,13 @@ impl SceneNode {
 
     /// Create a new Point Instancer node
     pub fn point_instancer() -> Self {
+        let n = INSTANCER_COUNTER.fetch_add(1, Ordering::Relaxed);
         Self::PointInstancer {
             instance_count: 0,
             is_instanced: false,
             is_computing: false,
             compute_failed: false,
+            prim_path: format!("/World/instancer{}", n),
         }
     }
 
@@ -469,7 +493,7 @@ impl SceneNode {
         match self {
             SceneNode::UsdRead { .. } => 0,
             SceneNode::IvarRender { .. } => 2, // scene + environment
-            SceneNode::Primitive { .. } => 0,
+            SceneNode::Primitive { .. } => 1,  // scene pass-through input
             SceneNode::ScatterPoints { source, .. } => match source {
                 bif_core::PointSource::Surface => 1,
                 bif_core::PointSource::Grid | bif_core::PointSource::Sphere => 0,
@@ -508,7 +532,10 @@ impl SceneNode {
                 1 => Some(("env", PinType::Environment)),
                 _ => None,
             },
-            SceneNode::Primitive { .. } => None,
+            SceneNode::Primitive { .. } => match index {
+                0 => Some(("scene", PinType::Scene)),
+                _ => None,
+            },
             SceneNode::ScatterPoints { source, .. } => match source {
                 bif_core::PointSource::Surface => match index {
                     0 => Some(("scene", PinType::Scene)),
@@ -590,6 +617,8 @@ impl SceneNode {
     /// Path label shown on the node (like Houdini's green prim path text).
     pub fn prim_path_label(&self) -> Option<&str> {
         match self {
+            SceneNode::Primitive { prim_path, .. } => Some(prim_path.as_str()),
+            SceneNode::PointInstancer { prim_path, .. } => Some(prim_path.as_str()),
             SceneNode::UsdPrim { prim_path, .. } => Some(prim_path.as_str()),
             SceneNode::GraftBranches { destination_path } => Some(destination_path.as_str()),
             SceneNode::UsdRead { file_path, .. } if !file_path.is_empty() => {
@@ -657,6 +686,9 @@ pub(crate) fn mark_node_dirty(node_id: NodeId, snarl: &mut Snarl<SceneNode>) {
             *is_instanced = false;
             *is_computing = false;
             *compute_failed = false;
+        }
+        SceneNode::Primitive { is_created, .. } => {
+            *is_created = false;
         }
         SceneNode::ScatterPoints { is_computed, .. } => {
             *is_computed = false;
@@ -885,6 +917,7 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer {
                 kind,
                 size,
                 is_created,
+                prim_path,
             } => {
                 ui.horizontal(|ui| {
                     ui.label("Size:");
@@ -894,6 +927,10 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer {
                     {
                         *is_created = false; // Need to recreate
                     }
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Path:");
+                    ui.text_edit_singleline(prim_path);
                 });
 
                 if !*is_created {
@@ -1286,7 +1323,13 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer {
                 is_instanced,
                 is_computing,
                 compute_failed,
+                prim_path,
             } => {
+                ui.horizontal(|ui| {
+                    ui.label("Path:");
+                    ui.text_edit_singleline(prim_path);
+                });
+
                 let points_node = resolve_input_connection(inputs, 0);
                 let proto_node = resolve_input_connection(inputs, 1);
                 let both_connected = points_node.is_some() && proto_node.is_some();
