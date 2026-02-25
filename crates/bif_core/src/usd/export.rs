@@ -3,6 +3,8 @@
 //! All export logic lives in `bif_core` (no egui dependency) so it can be
 //! reused from any UI framework (egui, Qt, CLI).
 
+use std::collections::HashSet;
+
 use crate::point_cloud::PointCloud;
 use crate::scene::Scene;
 use crate::undo::EditState;
@@ -62,6 +64,8 @@ pub struct ExportResult {
     pub instancer_count: usize,
     /// Number of authored prims written (from UsdPrim nodes)
     pub prim_count: usize,
+    /// Number of prototype meshes written
+    pub mesh_count: usize,
     /// Output file path
     pub output_path: String,
 }
@@ -70,8 +74,9 @@ impl std::fmt::Display for ExportResult {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "{} prims + {} xforms + {} keyframes + {} instancers -> {}",
+            "{} prims + {} meshes + {} xforms + {} keyframes + {} instancers -> {}",
             self.prim_count,
+            self.mesh_count,
             self.xform_count,
             self.keyframe_count,
             self.instancer_count,
@@ -186,7 +191,11 @@ pub fn export_scene(
             );
             continue;
         }
-        let instancer_path = format!("{}/{}", config.export_root, cloud.name);
+        let instancer_path = if cloud.name.starts_with('/') {
+            cloud.name.to_string()
+        } else {
+            format!("{}/{}", config.export_root, cloud.name)
+        };
         let instancer_path = apply_graft_prefix(&instancer_path, &config.graft_prefix);
         let proto_paths: Vec<String> = resolve_proto_paths(scene, cloud, config);
         if proto_paths.is_empty() {
@@ -211,6 +220,29 @@ pub fn export_scene(
         instancer_count += 1;
     }
 
+    // Write prototype meshes for BIF-created (non-USD) prototypes
+    let mut mesh_count = 0;
+    let mut written_protos: HashSet<String> = HashSet::new();
+    for cloud in &scene.point_clouds {
+        let proto_paths = resolve_proto_paths(scene, cloud, config);
+        for (i, &proto_id) in cloud.prototype_ids.iter().enumerate() {
+            if let Some(proto_path) = proto_paths.get(i) {
+                if written_protos.contains(proto_path) {
+                    continue;
+                }
+                if let Some(proto) = scene.prototypes.get(proto_id) {
+                    // Only write mesh for BIF-created prototypes (not USD-loaded ones)
+                    if !proto.name.starts_with('/') {
+                        let path = apply_graft_prefix(proto_path, &config.graft_prefix);
+                        layer.write_mesh(&path, &proto.mesh)?;
+                        written_protos.insert(proto_path.clone());
+                        mesh_count += 1;
+                    }
+                }
+            }
+        }
+    }
+
     layer.save()?;
 
     Ok(ExportResult {
@@ -218,6 +250,7 @@ pub fn export_scene(
         keyframe_count,
         instancer_count,
         prim_count,
+        mesh_count,
         output_path: config.output_path.clone(),
     })
 }

@@ -64,18 +64,17 @@ impl Renderer {
         self.gpu_textures =
             texture_loader::create_gpu_textures_for_scene(&self.device, &self.queue, scene, None);
 
-        let material_table = if scene.materials.is_empty() {
-            vec![MaterialGpu::from_material(
-                &bif_core::Material::default(),
-                &self.gpu_textures,
-            )]
-        } else {
-            scene
-                .materials
-                .iter()
-                .map(|mat| MaterialGpu::from_material(mat.as_ref(), &self.gpu_textures))
-                .collect()
-        };
+        let mut material_table: Vec<MaterialGpu> = scene
+            .materials
+            .iter()
+            .map(|mat| MaterialGpu::from_material(mat.as_ref(), &self.gpu_textures))
+            .collect();
+        // Always append default grey as last entry — fallback for prototypes without materials
+        let default_mat_index = material_table.len() as u32;
+        material_table.push(MaterialGpu::from_material(
+            &bif_core::Material::default(),
+            &self.gpu_textures,
+        ));
         self.material_table_len = material_table.len() as u32;
         self.material_table_buffer =
             self.device
@@ -183,7 +182,7 @@ impl Renderer {
                         .material
                         .as_ref()
                         .and_then(|mat| material_index_by_name.get(&mat.name).copied())
-                        .unwrap_or(0);
+                        .unwrap_or(default_mat_index);
                     instance_material_ids.push(material_id);
                     InstanceData {
                         model_matrix: model_matrix.to_cols_array_2d(),
@@ -204,7 +203,7 @@ impl Renderer {
                         .get(inst.prototype_id)
                         .and_then(|proto| proto.material.as_ref())
                         .and_then(|mat| material_index_by_name.get(&mat.name).copied())
-                        .unwrap_or(0);
+                        .unwrap_or(default_mat_index);
                     instance_material_ids.push(material_id);
                     InstanceData {
                         model_matrix: model_matrix.to_cols_array_2d(),
@@ -668,20 +667,18 @@ impl Renderer {
         }
 
         // Material table (use default for primitives)
-        let material_table = if scene.materials.is_empty() {
-            vec![crate::gpu_types::MaterialGpu::from_material(
-                &bif_core::Material::default(),
-                &self.gpu_textures,
-            )]
-        } else {
-            scene
-                .materials
-                .iter()
-                .map(|mat| {
-                    crate::gpu_types::MaterialGpu::from_material(mat.as_ref(), &self.gpu_textures)
-                })
-                .collect()
-        };
+        let mut material_table: Vec<crate::gpu_types::MaterialGpu> = scene
+            .materials
+            .iter()
+            .map(|mat| {
+                crate::gpu_types::MaterialGpu::from_material(mat.as_ref(), &self.gpu_textures)
+            })
+            .collect();
+        let default_mat_index = material_table.len() as u32;
+        material_table.push(crate::gpu_types::MaterialGpu::from_material(
+            &bif_core::Material::default(),
+            &self.gpu_textures,
+        ));
         self.material_table_len = material_table.len() as u32;
         self.material_table_buffer =
             self.device
@@ -781,7 +778,7 @@ impl Renderer {
                         .material
                         .as_ref()
                         .and_then(|mat| material_index_by_name.get(&mat.name).copied())
-                        .unwrap_or(0);
+                        .unwrap_or(default_mat_index);
                     instance_material_ids.push(material_id);
                     InstanceData {
                         model_matrix: model_matrix.to_cols_array_2d(),
@@ -803,7 +800,7 @@ impl Renderer {
                         .get(inst.prototype_id)
                         .and_then(|proto| proto.material.as_ref())
                         .and_then(|mat| material_index_by_name.get(&mat.name).copied())
-                        .unwrap_or(0);
+                        .unwrap_or(default_mat_index);
                     instance_material_ids.push(material_id);
                     InstanceData {
                         model_matrix: model_matrix.to_cols_array_2d(),
@@ -828,7 +825,7 @@ impl Renderer {
                 .get(inst.prototype_id)
                 .and_then(|p| p.material.as_ref())
                 .and_then(|mat| material_index_by_name.get(&mat.name).copied())
-                .unwrap_or(0);
+                .unwrap_or(default_mat_index);
             instance_material_ids.push(material_id);
             instances.push(InstanceData {
                 model_matrix: model_matrix.to_cols_array_2d(),
@@ -1373,18 +1370,16 @@ impl Renderer {
         let texture_time = texture_start.elapsed();
         let texture_count = self.gpu_textures.textures.len();
 
-        let material_table = if scene.materials.is_empty() {
-            vec![MaterialGpu::from_material(
-                &bif_core::Material::default(),
-                &self.gpu_textures,
-            )]
-        } else {
-            scene
-                .materials
-                .iter()
-                .map(|mat| MaterialGpu::from_material(mat.as_ref(), &self.gpu_textures))
-                .collect()
-        };
+        let mut material_table: Vec<MaterialGpu> = scene
+            .materials
+            .iter()
+            .map(|mat| MaterialGpu::from_material(mat.as_ref(), &self.gpu_textures))
+            .collect();
+        let default_mat_index = material_table.len() as u32;
+        material_table.push(MaterialGpu::from_material(
+            &bif_core::Material::default(),
+            &self.gpu_textures,
+        ));
         self.material_table_len = material_table.len() as u32;
         self.material_table_buffer =
             self.device
@@ -1499,7 +1494,7 @@ impl Renderer {
                         .material
                         .as_ref()
                         .and_then(|mat| material_index_by_name.get(&mat.name).copied())
-                        .unwrap_or(0);
+                        .unwrap_or(default_mat_index);
                     instance_material_ids.push(material_id);
                     InstanceData {
                         model_matrix: model_matrix.to_cols_array_2d(),
@@ -1520,7 +1515,7 @@ impl Renderer {
                         .get(inst.prototype_id)
                         .and_then(|proto| proto.material.as_ref())
                         .and_then(|mat| material_index_by_name.get(&mat.name).copied())
-                        .unwrap_or(0);
+                        .unwrap_or(default_mat_index);
                     instance_material_ids.push(material_id);
                     InstanceData {
                         model_matrix: model_matrix.to_cols_array_2d(),

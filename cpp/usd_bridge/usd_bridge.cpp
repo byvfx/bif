@@ -41,6 +41,7 @@
 #include <set>
 #include <algorithm>
 #include <chrono>
+#include <cfloat>
 
 PXR_NAMESPACE_USING_DIRECTIVE
 
@@ -2516,6 +2517,117 @@ UsdBridgeError usd_bridge_write_point_instancer(
         return USD_BRIDGE_ERROR_UNKNOWN;
     } catch (...) {
         TF_WARN("usd_bridge_write_point_instancer: unknown exception");
+        return USD_BRIDGE_ERROR_UNKNOWN;
+    }
+}
+
+// ============================================================================
+// Mesh Authoring
+// ============================================================================
+
+UsdBridgeError usd_bridge_write_mesh(
+    UsdBridgeEditLayer* layer,
+    const char* prim_path,
+    const float* points,
+    size_t point_count,
+    const uint32_t* indices,
+    size_t index_count,
+    const float* normals,
+    size_t normal_count,
+    const float* uvs,
+    size_t uv_count
+) {
+    if (!layer || !prim_path || !points || !indices ||
+        point_count == 0 || index_count == 0 || (index_count % 3) != 0) {
+        return USD_BRIDGE_ERROR_NULL_POINTER;
+    }
+
+    try {
+        SdfPath path(prim_path);
+        auto prim = layer->stage->DefinePrim(path, TfToken("Mesh"));
+        if (!prim) {
+            return USD_BRIDGE_ERROR_UNKNOWN;
+        }
+
+        UsdGeomMesh mesh(prim);
+        if (!mesh) {
+            return USD_BRIDGE_ERROR_UNKNOWN;
+        }
+
+        // Polygonal (no subdivision)
+        mesh.GetSubdivisionSchemeAttr().Set(TfToken("none"));
+
+        // Points
+        VtVec3fArray pointsArray(point_count);
+        for (size_t i = 0; i < point_count; ++i) {
+            pointsArray[i] = GfVec3f(
+                points[i * 3 + 0],
+                points[i * 3 + 1],
+                points[i * 3 + 2]
+            );
+        }
+        mesh.GetPointsAttr().Set(pointsArray);
+
+        // Face vertex counts (all triangles = 3)
+        size_t face_count = index_count / 3;
+        VtIntArray faceVertexCounts(face_count, 3);
+        mesh.GetFaceVertexCountsAttr().Set(faceVertexCounts);
+
+        // Face vertex indices
+        VtIntArray faceVertexIndices(index_count);
+        for (size_t i = 0; i < index_count; ++i) {
+            faceVertexIndices[i] = static_cast<int>(indices[i]);
+        }
+        mesh.GetFaceVertexIndicesAttr().Set(faceVertexIndices);
+
+        // Normals (optional, vertex interpolation)
+        if (normals && normal_count > 0) {
+            VtVec3fArray normalsArray(normal_count);
+            for (size_t i = 0; i < normal_count; ++i) {
+                normalsArray[i] = GfVec3f(
+                    normals[i * 3 + 0],
+                    normals[i * 3 + 1],
+                    normals[i * 3 + 2]
+                );
+            }
+            mesh.GetNormalsAttr().Set(normalsArray);
+            mesh.SetNormalsInterpolation(UsdGeomTokens->vertex);
+        }
+
+        // UVs (optional, vertex interpolation via primvars:st)
+        if (uvs && uv_count > 0) {
+            UsdGeomPrimvarsAPI primvarsAPI(mesh);
+            auto stPrimvar = primvarsAPI.CreatePrimvar(
+                TfToken("st"),
+                SdfValueTypeNames->TexCoord2fArray,
+                UsdGeomTokens->vertex
+            );
+            VtVec2fArray uvArray(uv_count);
+            for (size_t i = 0; i < uv_count; ++i) {
+                uvArray[i] = GfVec2f(uvs[i * 2 + 0], uvs[i * 2 + 1]);
+            }
+            stPrimvar.Set(uvArray);
+        }
+
+        // Extent (bounding box)
+        GfVec3f minPt(FLT_MAX, FLT_MAX, FLT_MAX);
+        GfVec3f maxPt(-FLT_MAX, -FLT_MAX, -FLT_MAX);
+        for (size_t i = 0; i < point_count; ++i) {
+            for (int c = 0; c < 3; ++c) {
+                float v = points[i * 3 + c];
+                if (v < minPt[c]) minPt[c] = v;
+                if (v > maxPt[c]) maxPt[c] = v;
+            }
+        }
+        VtVec3fArray extent = { minPt, maxPt };
+        mesh.GetExtentAttr().Set(extent);
+
+        return USD_BRIDGE_SUCCESS;
+    } catch (const std::exception& e) {
+        TF_WARN("usd_bridge_write_mesh: %s", e.what());
+        return USD_BRIDGE_ERROR_UNKNOWN;
+    } catch (...) {
+        TF_WARN("usd_bridge_write_mesh: unknown exception");
         return USD_BRIDGE_ERROR_UNKNOWN;
     }
 }
