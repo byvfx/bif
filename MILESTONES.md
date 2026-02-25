@@ -803,6 +803,11 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
   - ✅ Phase 9: C++ bridge — define_prim + set_prim_kind (Specifier, Kind, PrimType)
   - ✅ Phase 10: Export collects source USD path from upstream UsdRead (sublayer fix)
   - ✅ Phase 11: Canonicalize paths, diagnostic logging, auto-enable sublayer
+  - ✅ Phase 12: C++ `write_mesh` bridge (UsdGeomMesh with points, indices, normals, UVs, extent)
+  - ✅ Phase 13: Export prototype meshes alongside PointInstancers (fixes dangling proto refs)
+  - ✅ Phase 14: Prim paths on Primitive + PointInstancer nodes (auto-increment)
+  - ✅ Phase 15: Primitive scene input pass-through
+  - ✅ Phase 16: Material fallback fix (default grey at end of table, not index 0)
 - **Remaining:**
   - Verify exported USD in Houdini/usdview/Maya
   - Documentation for USD export workflow

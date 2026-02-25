@@ -1,6 +1,6 @@
 # Session Handoff - February 24, 2026
 
-**Last Updated:** UsdPrim + GraftBranches nodes, export sublayer fix
+**Last Updated:** write_mesh bridge, prim_path nodes, material fallback fix
 **Next Milestone:** M29 validation (Houdini/usdview), Ivar Xform, M26 Denoising
 **Project:** BIF - VFX Scene Assembler & Renderer
 
@@ -11,15 +11,27 @@
 | Status | Details |
 |--------|---------|
 | Complete | Milestones 0-23 |
-| Current | M29 export: UsdPrim/GraftBranches nodes + sublayer fix done |
-| Tests | 68 viewport, 98 bif_core, 253+ total passing |
+| Current | M29 export: mesh writing, prim paths, material fix done |
+| Tests | 95 passing (68 viewport, 27+ bif_core) |
 | Performance | 60 FPS viewport, 100K instances with LOD |
 
 ---
 
 ## Recent Work
 
-### UsdPrim + GraftBranches + Export Fix (Feb 24, 2026)
+### write_mesh + Prim Paths + Material Fix (Feb 24, 2026 - Session 2)
+
+| Change | Details |
+|--------|---------|
+| C++ write_mesh | UsdGeomMesh authoring: points, indices, normals, UVs, extent, subdivisionScheme=none |
+| Rust FFI wrapper | `UsdEditLayer::write_mesh` flattens mesh data for C++ bridge |
+| Export prototype meshes | Writes actual mesh prims alongside PointInstancers (fixes dangling proto refs) |
+| Prim paths on nodes | Primitive + PointInstancer get `prim_path` field, auto-increment `/World/Cube1` etc |
+| Primitive scene input | Pass-through input (like Xform/UsdPrim) so Primitive chains into graphs |
+| Material fallback fix | Default grey appended to end of material table; `unwrap_or(default_mat_index)` instead of `unwrap_or(0)` |
+| USD validate stub | `crates/bif_core/src/usd/validate.rs` module placeholder |
+
+### UsdPrim + GraftBranches + Export Fix (Feb 24, 2026 - Session 1)
 
 | Change | Details |
 |--------|---------|
@@ -29,18 +41,6 @@
 | Export sublayer fix | `collect_export_context()` now walks upstream to find UsdRead source path |
 | Auto sublayer | Export auto-enables sublayer when upstream UsdRead exists |
 | Path canonicalization | `loaded_usd_path` and export paths canonicalized to absolute |
-| Default path | UsdPrim defaults to "/root" (was "/World") to avoid overwriting imports |
-| Diagnostic logging | Export logs sublayer config, warns when source_usd_path is None |
-
-### VFX Code Review Fixes (Feb 22, 2026)
-
-| Fix | Details |
-|-----|---------|
-| Parser safety | Eliminated `.unwrap()` after peek in 3 parser functions |
-| Culling dirty flag | Skip redundant GPU writes when camera & data static |
-| Arc\<str\> refactor | Core types use `Arc<str>` for names/paths |
-| Async USD loading | Background thread with progress spinner |
-| Stage metadata | C++ bridge for metersPerUnit, upAxis |
 
 ---
 
@@ -49,22 +49,23 @@
 | Metric | Value |
 |--------|-------|
 | Build (dev) | ~10s |
-| Tests | 253+ passing |
+| Tests | 95 passing |
 | Vulkan FPS | 60 (VSync with Fifo) |
 | Crates | 6 (math, core, renderer, viewport, viewer, maketx) |
 
 ### What Works
 
-**Scene Assembly (New):**
+**Scene Assembly:**
 - UsdPrim node: define Scope/Xform prims with Kind + Specifier
 - GraftBranches node: merge branches under destination path
-- Export collects upstream UsdRead → adds as sublayer automatically
-- Canonical absolute paths for reliable sublayer resolution
+- Primitive node: prim_path control, scene pass-through input
+- PointInstancer node: prim_path control for export naming
 
 **USD Export (M29):**
-- C++ bridge: sublayer, reference, default prim, PointInstancer, define_prim, set_prim_kind
-- `export_scene()` writes authored prims, xform overrides, keyframes, point clouds
-- Graft prefix support for path remapping
+- C++ bridge: sublayer, reference, default prim, PointInstancer, define_prim, set_prim_kind, **write_mesh**
+- `export_scene()` writes authored prims, xform overrides, keyframes, point clouds, **prototype meshes**
+- Graft prefix support, auto-increment prim paths
+- Material fallback correctly assigns default grey to unmaterialed prims
 
 ### Known Issues
 
@@ -83,9 +84,10 @@
 **Goal:** Validate M29 export in external tools, fix Ivar Xform
 
 1. Export a scene from BIF → open in usdview or Houdini → verify composition
-2. Ivar: apply Xform transforms to baked mesh_data
-3. Xform prim_filter — implement glob matching
-4. Consider M26 Denoising (Intel OIDN)
+2. Run VFX code reviewer on latest commit
+3. Ivar: apply Xform transforms to baked mesh_data
+4. Xform prim_filter — implement glob matching
+5. Consider M26 Denoising (Intel OIDN)
 
 ---
 
@@ -112,4 +114,4 @@ cargo run -p bif_viewer --features oiio          # With OIIO
 ---
 
 **Branch:** main
-**Ready for:** M29 export validation, Ivar Xform fix, M26 Denoising
+**Ready for:** M29 export validation, VFX code review, Ivar Xform fix, M26 Denoising
