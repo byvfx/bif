@@ -1,6 +1,6 @@
-# Session Handoff - February 24, 2026
+# Session Handoff - February 26, 2026
 
-**Last Updated:** write_mesh bridge, prim_path nodes, material fallback fix
+**Last Updated:** Export fix + CompositeProvider live scene graph
 **Next Milestone:** M29 validation (Houdini/usdview), Ivar Xform, M26 Denoising
 **Project:** BIF - VFX Scene Assembler & Renderer
 
@@ -11,13 +11,24 @@
 | Status | Details |
 |--------|---------|
 | Complete | Milestones 0-23 |
-| Current | M29 export: mesh writing, prim paths, material fix done |
+| Current | M29 export: 3 export bugs fixed, live scene graph added |
 | Tests | 95 passing (68 viewport, 27+ bif_core) |
 | Performance | 60 FPS viewport, 100K instances with LOD |
 
 ---
 
 ## Recent Work
+
+### Export Fix + CompositeProvider (Feb 26, 2026)
+
+| Change | Details |
+|--------|---------|
+| cloud.prototype_ids fix | PointInstancer compute now sets `cloud.prototype_ids = vec![pid]` so export resolves correct prototype |
+| Remove starts_with('/') guard | Export was skipping BIF-created protos with prim_paths (e.g. `/World/Cube1`) — removed guard |
+| Standalone mesh export | New loop writes all prototype meshes not already written by instancer loop |
+| CompositeProvider | Merges USD stage + working_scene procedural prims into unified scene graph |
+| Scene browser enrichment | Selection shows vertex/triangle/point counts + prototype refs for procedural prims |
+| Empty message update | "No USD scene loaded" → "No scene content" |
 
 ### write_mesh + Prim Paths + Material Fix (Feb 24, 2026 - Session 2)
 
@@ -27,20 +38,6 @@
 | Rust FFI wrapper | `UsdEditLayer::write_mesh` flattens mesh data for C++ bridge |
 | Export prototype meshes | Writes actual mesh prims alongside PointInstancers (fixes dangling proto refs) |
 | Prim paths on nodes | Primitive + PointInstancer get `prim_path` field, auto-increment `/World/Cube1` etc |
-| Primitive scene input | Pass-through input (like Xform/UsdPrim) so Primitive chains into graphs |
-| Material fallback fix | Default grey appended to end of material table; `unwrap_or(default_mat_index)` instead of `unwrap_or(0)` |
-| USD validate stub | `crates/bif_core/src/usd/validate.rs` module placeholder |
-
-### UsdPrim + GraftBranches + Export Fix (Feb 24, 2026 - Session 1)
-
-| Change | Details |
-|--------|---------|
-| UsdPrim node | Define prims with path/type/kind/specifier (Scope, Xform, etc.) |
-| GraftBranches node | Merge branches under a parent prim path (up to 4 inputs) |
-| C++ bridge | `define_prim()` + `set_prim_kind()` via UsdModelAPI + Kind tokens |
-| Export sublayer fix | `collect_export_context()` now walks upstream to find UsdRead source path |
-| Auto sublayer | Export auto-enables sublayer when upstream UsdRead exists |
-| Path canonicalization | `loaded_usd_path` and export paths canonicalized to absolute |
 
 ---
 
@@ -62,10 +59,15 @@
 - PointInstancer node: prim_path control for export naming
 
 **USD Export (M29):**
-- C++ bridge: sublayer, reference, default prim, PointInstancer, define_prim, set_prim_kind, **write_mesh**
-- `export_scene()` writes authored prims, xform overrides, keyframes, point clouds, **prototype meshes**
+- C++ bridge: sublayer, reference, default prim, PointInstancer, define_prim, set_prim_kind, write_mesh
+- `export_scene()` writes authored prims, xform overrides, keyframes, point clouds, prototype meshes, standalone meshes
+- Standalone cube export confirmed working in usdview
 - Graft prefix support, auto-increment prim paths
-- Material fallback correctly assigns default grey to unmaterialed prims
+
+**Scene Browser:**
+- CompositeProvider merges USD stage + procedural prims (Mesh, PointInstancer, Scope)
+- Auto-generates intermediate Scope prims for path hierarchy
+- Selection populates property inspector with vertex/triangle/point counts
 
 ### Known Issues
 
@@ -75,15 +77,15 @@
 - bif_core tests need USD DLLs (run via `setup_usd_env.ps1`)
 - `test_should_restart_no_render` — pre-existing timing-sensitive test failure
 - Renderer struct ~60 fields (God object)
-- Export not yet validated in Houdini/usdview/Maya
+- Instancer prim_path nesting issue (e.g. `/World/Cam/World/instancer1`) — default prim_path may need review
 
 ---
 
 ## Next Session
 
-**Goal:** Validate M29 export in external tools, fix Ivar Xform
+**Goal:** Continue M29 validation, fix instancer path nesting
 
-1. Export a scene from BIF → open in usdview or Houdini → verify composition
+1. Investigate instancer prim_path nesting bug (`/World/Cam/World/instancer1`)
 2. Run VFX code reviewer on latest commit
 3. Ivar: apply Xform transforms to baked mesh_data
 4. Xform prim_filter — implement glob matching
@@ -114,4 +116,4 @@ cargo run -p bif_viewer --features oiio          # With OIIO
 ---
 
 **Branch:** main
-**Ready for:** M29 export validation, VFX code review, Ivar Xform fix, M26 Denoising
+**Ready for:** M29 instancer path fix, VFX code review, Ivar Xform fix, M26 Denoising

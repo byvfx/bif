@@ -808,8 +808,10 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
   - ✅ Phase 14: Prim paths on Primitive + PointInstancer nodes (auto-increment)
   - ✅ Phase 15: Primitive scene input pass-through
   - ✅ Phase 16: Material fallback fix (default grey at end of table, not index 0)
+  - ✅ Phase 17: Export fix — cloud.prototype_ids, remove starts_with('/') guard, standalone mesh export
+  - ✅ Phase 18: CompositeProvider — live scene graph merging USD + procedural prims
 - **Remaining:**
-  - Verify exported USD in Houdini/usdview/Maya
+  - Validate exported USD in Houdini/usdview (standalone cube confirmed working)
   - Documentation for USD export workflow
   - Xform prim_filter (V1 placeholder — always all upstream)
   - Ivar CPU renderer doesn't reflect Xform transforms yet
