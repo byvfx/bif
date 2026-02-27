@@ -9,7 +9,7 @@ use crate::node_graph::{render_node_graph, NodeGraphEvent, SceneNode};
 use crate::property_inspector::{
     render_property_inspector, reset_transform_edit_cache, PrimProperties, TransformEdit,
 };
-use crate::scene_browser::{self, EmptyPrimProvider, PrimDataProvider};
+use crate::scene_browser::{self, CompositeProvider, PrimDataProvider};
 use crate::Renderer;
 
 impl Renderer {
@@ -927,12 +927,12 @@ impl Renderer {
 
                     // Scene Browser (collapsible)
                     ui.collapsing("Scene Browser", |ui| {
-                        // Use USD stage if available, otherwise empty provider
-                        let empty_provider = EmptyPrimProvider;
-                        let provider: &dyn PrimDataProvider = match &self.usd_stage {
-                            Some(stage) => stage.as_ref(),
-                            None => &empty_provider,
-                        };
+                        // Composite provider merges USD stage + procedural prims
+                        let composite = CompositeProvider::new(
+                            self.usd_stage.as_ref().map(|s| s.as_ref() as &dyn PrimDataProvider),
+                            &self.working_scene,
+                        );
+                        let provider: &dyn PrimDataProvider = &composite;
 
                         // Store selection change request in temp data for processing after egui run
                         if let Some(new_selection) = scene_browser::render_scene_browser(
@@ -1433,12 +1433,31 @@ impl Renderer {
                 .data_mut(|d| d.remove::<String>(egui::Id::new("prim_selection_changed")));
             self.selected_prim_path = Some(prim_path.clone());
             reset_transform_edit_cache(&self.egui_ctx);
-            let provider: Option<&dyn PrimDataProvider> = self
-                .usd_stage
-                .as_ref()
-                .map(|s| s.as_ref() as &dyn PrimDataProvider);
-            if let Some(info) = provider.and_then(|p| p.get_prim_info(&prim_path)) {
-                self.selected_prim_properties = Some(PrimProperties::from_display_info(&info));
+            let composite = CompositeProvider::new(
+                self.usd_stage
+                    .as_ref()
+                    .map(|s| s.as_ref() as &dyn PrimDataProvider),
+                &self.working_scene,
+            );
+            if let Some(info) = composite.get_prim_info(&prim_path) {
+                let mut props = PrimProperties::from_display_info(&info);
+                // Enrich with procedural data if available
+                if let Some(proc_data) = composite.get_procedural_data(&prim_path) {
+                    if let Some(vc) = proc_data.vertex_count {
+                        props = props.with_attribute("Vertices", &vc.to_string());
+                    }
+                    if let Some(tc) = proc_data.triangle_count {
+                        props = props.with_attribute("Triangles", &tc.to_string());
+                    }
+                    if let Some(pc) = proc_data.point_count {
+                        props = props.with_attribute("Points", &pc.to_string());
+                    }
+                    if !proc_data.prototype_refs.is_empty() {
+                        props = props
+                            .with_attribute("Prototypes", &proc_data.prototype_refs.join(", "));
+                    }
+                }
+                self.selected_prim_properties = Some(props);
             } else {
                 self.selected_prim_properties = Some(PrimProperties {
                     path: prim_path,
@@ -1923,6 +1942,7 @@ impl Renderer {
                                         .find(|c| c.id == cid)
                                     {
                                         cloud.name = prim_path.clone();
+                                        cloud.prototype_ids = vec![pid];
                                     }
                                 }
 

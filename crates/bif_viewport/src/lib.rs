@@ -74,7 +74,10 @@ pub use node_graph::{render_node_graph, NodeGraphEvent, NodeGraphState, SceneNod
 pub use property_inspector::{
     render_property_inspector, reset_transform_edit_cache, PrimProperties, TransformEdit,
 };
-pub use scene_browser::{EmptyPrimProvider, PrimDataProvider, PrimDisplayInfo, SceneBrowserState};
+pub use scene_browser::{
+    CompositeProvider, EmptyPrimProvider, PrimDataProvider, PrimDisplayInfo, ProceduralPrim,
+    SceneBrowserState,
+};
 
 use batch_render::BatchMessage;
 
