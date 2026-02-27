@@ -220,7 +220,7 @@ pub fn export_scene(
         instancer_count += 1;
     }
 
-    // Write prototype meshes for BIF-created (non-USD) prototypes
+    // Write prototype meshes referenced by point clouds
     let mut mesh_count = 0;
     let mut written_protos: HashSet<String> = HashSet::new();
     for cloud in &scene.point_clouds {
@@ -231,16 +231,29 @@ pub fn export_scene(
                     continue;
                 }
                 if let Some(proto) = scene.prototypes.get(proto_id) {
-                    // Only write mesh for BIF-created prototypes (not USD-loaded ones)
-                    if !proto.name.starts_with('/') {
-                        let path = apply_graft_prefix(proto_path, &config.graft_prefix);
-                        layer.write_mesh(&path, &proto.mesh)?;
-                        written_protos.insert(proto_path.clone());
-                        mesh_count += 1;
-                    }
+                    let path = apply_graft_prefix(proto_path, &config.graft_prefix);
+                    layer.write_mesh(&path, &proto.mesh)?;
+                    written_protos.insert(proto_path.clone());
+                    mesh_count += 1;
                 }
             }
         }
+    }
+
+    // Write standalone prototype meshes not already written by instancer loop
+    for proto in &scene.prototypes {
+        let proto_path = if proto.name.starts_with('/') {
+            proto.name.to_string()
+        } else {
+            format!("{}/{}", config.export_root, proto.name)
+        };
+        if written_protos.contains(&proto_path) {
+            continue;
+        }
+        let path = apply_graft_prefix(&proto_path, &config.graft_prefix);
+        layer.write_mesh(&path, &proto.mesh)?;
+        written_protos.insert(proto_path);
+        mesh_count += 1;
     }
 
     layer.save()?;

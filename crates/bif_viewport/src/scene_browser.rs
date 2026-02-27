@@ -15,7 +15,7 @@
 //! - [ ] Kind column from USD metadata
 //! - [ ] Keyboard navigation with arrow keys
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 /// State for the scene browser UI.
 #[derive(Default)]
@@ -253,8 +253,8 @@ pub fn render_scene_browser(
     if root_paths.is_empty() {
         ui.vertical_centered(|ui| {
             ui.add_space(20.0);
-            ui.label("No USD scene loaded");
-            ui.label("Use the node graph to load a .usda or .usdc file");
+            ui.label("No scene content");
+            ui.label("Use the node graph to load a .usda/.usdc or add primitives");
         });
         return None;
     }
@@ -661,6 +661,202 @@ impl PrimDataProvider for UsdStage {
 
     fn get_children(&self, parent_path: &str) -> Vec<String> {
         self.child_prim_paths(parent_path).unwrap_or_default()
+    }
+}
+
+/// Procedural prim entry from working_scene.
+pub struct ProceduralPrim {
+    /// Full prim path (e.g., "/World/Cube1").
+    pub path: String,
+    /// USD type name ("Mesh", "PointInstancer", "Scope").
+    pub type_name: String,
+    /// Vertex count for Mesh prims.
+    pub vertex_count: Option<usize>,
+    /// Triangle count for Mesh prims.
+    pub triangle_count: Option<usize>,
+    /// Point count for PointInstancer prims.
+    pub point_count: Option<usize>,
+    /// Prototype prim paths referenced by instancers.
+    pub prototype_refs: Vec<String>,
+}
+
+/// Merges USD stage + working_scene procedural prims into one scene graph.
+pub struct CompositeProvider<'a> {
+    usd_stage: Option<&'a dyn PrimDataProvider>,
+    procedural_prims: HashMap<String, ProceduralPrim>,
+}
+
+impl<'a> CompositeProvider<'a> {
+    /// Build a composite provider from an optional USD stage and the working scene.
+    pub fn new(usd_stage: Option<&'a dyn PrimDataProvider>, scene: &bif_core::Scene) -> Self {
+        let mut procedural_prims = HashMap::new();
+
+        // Add prototypes as Mesh prims (skip USD-loaded prims that start with '/')
+        for proto in &scene.prototypes {
+            if proto.name.starts_with('/') {
+                continue;
+            }
+            let path = format!("/{}", proto.name);
+            let mesh = &proto.mesh;
+            procedural_prims.insert(
+                path.clone(),
+                ProceduralPrim {
+                    path,
+                    type_name: "Mesh".to_string(),
+                    vertex_count: Some(mesh.positions.len()),
+                    triangle_count: Some(mesh.indices.len() / 3),
+                    point_count: None,
+                    prototype_refs: Vec::new(),
+                },
+            );
+        }
+
+        // Add point clouds as PointInstancer prims
+        for cloud in &scene.point_clouds {
+            if cloud.positions.is_empty() {
+                continue;
+            }
+            let path = if cloud.name.starts_with('/') {
+                cloud.name.clone()
+            } else if cloud.name.is_empty() {
+                continue;
+            } else {
+                format!("/{}", cloud.name)
+            };
+            let proto_refs: Vec<String> = cloud
+                .prototype_ids
+                .iter()
+                .filter_map(|&pid| {
+                    scene.prototypes.get(pid).map(|p| {
+                        if p.name.starts_with('/') {
+                            p.name.to_string()
+                        } else {
+                            format!("/{}", p.name)
+                        }
+                    })
+                })
+                .collect();
+            procedural_prims.insert(
+                path.clone(),
+                ProceduralPrim {
+                    path,
+                    type_name: "PointInstancer".to_string(),
+                    vertex_count: None,
+                    triangle_count: None,
+                    point_count: Some(cloud.positions.len()),
+                    prototype_refs: proto_refs,
+                },
+            );
+        }
+
+        // Auto-generate intermediate Scope prims for missing path segments
+        let all_paths: Vec<String> = procedural_prims.keys().cloned().collect();
+        for path in &all_paths {
+            let mut current = String::new();
+            for segment in path.split('/').filter(|s| !s.is_empty()) {
+                current.push('/');
+                current.push_str(segment);
+                if current != *path && !procedural_prims.contains_key(&current) {
+                    procedural_prims.insert(
+                        current.clone(),
+                        ProceduralPrim {
+                            path: current.clone(),
+                            type_name: "Scope".to_string(),
+                            vertex_count: None,
+                            triangle_count: None,
+                            point_count: None,
+                            prototype_refs: Vec::new(),
+                        },
+                    );
+                }
+            }
+        }
+
+        Self {
+            usd_stage,
+            procedural_prims,
+        }
+    }
+
+    /// Get procedural prim data for the property inspector.
+    pub fn get_procedural_data(&self, path: &str) -> Option<&ProceduralPrim> {
+        self.procedural_prims.get(path)
+    }
+}
+
+/// Check if `child` is a direct child of `parent` in prim path hierarchy.
+fn is_direct_child(parent: &str, child: &str) -> bool {
+    if !child.starts_with(parent) {
+        return false;
+    }
+    let suffix = &child[parent.len()..];
+    // Direct child: suffix is "/<name>" with no further slashes
+    if let Some(rest) = suffix.strip_prefix('/') {
+        !rest.is_empty() && !rest.contains('/')
+    } else {
+        false
+    }
+}
+
+impl PrimDataProvider for CompositeProvider<'_> {
+    fn root_paths(&self) -> Vec<String> {
+        let mut roots: Vec<String> = Vec::new();
+
+        // USD roots
+        if let Some(usd) = self.usd_stage {
+            roots.extend(usd.root_paths());
+        }
+
+        // Procedural root paths (direct children of "/")
+        for path in self.procedural_prims.keys() {
+            if is_direct_child("", path) && !roots.contains(path) {
+                roots.push(path.clone());
+            }
+        }
+
+        roots.sort();
+        roots
+    }
+
+    fn get_prim_info(&self, path: &str) -> Option<PrimDisplayInfo> {
+        // Procedural prims take priority
+        if let Some(proc_prim) = self.procedural_prims.get(path) {
+            let children = self.get_children(path);
+            let child_count = children.len();
+            return Some(PrimDisplayInfo::new(
+                proc_prim.path.clone(),
+                proc_prim.type_name.clone(),
+                true,
+                child_count > 0,
+                child_count,
+            ));
+        }
+
+        // Fall back to USD stage
+        if let Some(usd) = self.usd_stage {
+            return usd.get_prim_info(path);
+        }
+
+        None
+    }
+
+    fn get_children(&self, parent_path: &str) -> Vec<String> {
+        let mut children: Vec<String> = Vec::new();
+
+        // USD children
+        if let Some(usd) = self.usd_stage {
+            children.extend(usd.get_children(parent_path));
+        }
+
+        // Procedural children
+        for path in self.procedural_prims.keys() {
+            if is_direct_child(parent_path, path) && !children.contains(path) {
+                children.push(path.clone());
+            }
+        }
+
+        children.sort();
+        children
     }
 }
 
