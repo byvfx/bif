@@ -1,6 +1,6 @@
 # Session Handoff - February 26, 2026
 
-**Last Updated:** Export fix + CompositeProvider live scene graph
+**Last Updated:** VFX review fixes — cached scene graph, enum, export dedup
 **Next Milestone:** M29 validation (Houdini/usdview), Ivar Xform, M26 Denoising
 **Project:** BIF - VFX Scene Assembler & Renderer
 
@@ -19,7 +19,18 @@
 
 ## Recent Work
 
-### Export Fix + CompositeProvider (Feb 26, 2026)
+### VFX Review Fixes (Feb 26, 2026 — Session 2)
+
+| Change | Details |
+|--------|---------|
+| CachedSceneGraph | Pre-computed children_index, rebuild only on dirty flag (not every frame) |
+| ProceduralPrimKind enum | Mesh/PointInstancer/Scope replaces optional fields |
+| proto_prim_path helper | Deduplicated path resolution in export.rs |
+| Pre-compute cloud paths | resolve_proto_paths called once per cloud, not twice |
+| All protos in browser | Removed starts_with('/') skip — all prototypes visible |
+| Unit tests | is_direct_child, kind type names, children_index |
+
+### Export Fix + CompositeProvider (Feb 26, 2026 — Session 1)
 
 | Change | Details |
 |--------|---------|
