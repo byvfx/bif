@@ -9,7 +9,7 @@ use crate::node_graph::{render_node_graph, NodeGraphEvent, SceneNode};
 use crate::property_inspector::{
     render_property_inspector, reset_transform_edit_cache, PrimProperties, TransformEdit,
 };
-use crate::scene_browser::{self, CompositeProvider, PrimDataProvider};
+use crate::scene_browser::{self, CompositeProvider, PrimDataProvider, ProceduralPrimKind};
 use crate::Renderer;
 
 impl Renderer {
@@ -21,6 +21,12 @@ impl Renderer {
     ) -> Result<()> {
         // Poll async USD load (non-blocking)
         self.poll_usd_load();
+
+        // Rebuild cached scene graph if dirty
+        if self.scene_graph_dirty {
+            self.cached_scene_graph = scene_browser::build_scene_graph_cache(&self.working_scene);
+            self.scene_graph_dirty = false;
+        }
 
         // Process pending scene operations from undo/redo
         if !self.edit_state.pending_scene_ops.is_empty() {
@@ -927,10 +933,10 @@ impl Renderer {
 
                     // Scene Browser (collapsible)
                     ui.collapsing("Scene Browser", |ui| {
-                        // Composite provider merges USD stage + procedural prims
+                        // Composite provider: lightweight wrapper over cached scene graph
                         let composite = CompositeProvider::new(
                             self.usd_stage.as_ref().map(|s| s.as_ref() as &dyn PrimDataProvider),
-                            &self.working_scene,
+                            &self.cached_scene_graph,
                         );
                         let provider: &dyn PrimDataProvider = &composite;
 
@@ -1437,24 +1443,32 @@ impl Renderer {
                 self.usd_stage
                     .as_ref()
                     .map(|s| s.as_ref() as &dyn PrimDataProvider),
-                &self.working_scene,
+                &self.cached_scene_graph,
             );
             if let Some(info) = composite.get_prim_info(&prim_path) {
                 let mut props = PrimProperties::from_display_info(&info);
                 // Enrich with procedural data if available
                 if let Some(proc_data) = composite.get_procedural_data(&prim_path) {
-                    if let Some(vc) = proc_data.vertex_count {
-                        props = props.with_attribute("Vertices", &vc.to_string());
-                    }
-                    if let Some(tc) = proc_data.triangle_count {
-                        props = props.with_attribute("Triangles", &tc.to_string());
-                    }
-                    if let Some(pc) = proc_data.point_count {
-                        props = props.with_attribute("Points", &pc.to_string());
-                    }
-                    if !proc_data.prototype_refs.is_empty() {
-                        props = props
-                            .with_attribute("Prototypes", &proc_data.prototype_refs.join(", "));
+                    match &proc_data.kind {
+                        ProceduralPrimKind::Mesh {
+                            vertex_count,
+                            triangle_count,
+                        } => {
+                            props = props
+                                .with_attribute("Vertices", &vertex_count.to_string())
+                                .with_attribute("Triangles", &triangle_count.to_string());
+                        }
+                        ProceduralPrimKind::PointInstancer {
+                            point_count,
+                            prototype_refs,
+                        } => {
+                            props = props.with_attribute("Points", &point_count.to_string());
+                            if !prototype_refs.is_empty() {
+                                props =
+                                    props.with_attribute("Prototypes", &prototype_refs.join(", "));
+                            }
+                        }
+                        ProceduralPrimKind::Scope => {}
                     }
                 }
                 self.selected_prim_properties = Some(props);
@@ -1942,7 +1956,10 @@ impl Renderer {
                                         .find(|c| c.id == cid)
                                     {
                                         cloud.name = prim_path.clone();
+                                        // TODO: multi-prototype instancing not yet supported,
+                                        // using first proto only. See node_proto_map .first().
                                         cloud.prototype_ids = vec![pid];
+                                        self.scene_graph_dirty = true;
                                     }
                                 }
 

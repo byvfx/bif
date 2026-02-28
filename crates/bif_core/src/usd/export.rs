@@ -179,25 +179,23 @@ pub fn export_scene(
         }
     }
 
-    // Write PointInstancers from point clouds (skip empty clouds)
+    // Resolve proto paths once per cloud (avoid double-compute)
+    let cloud_proto_paths: Vec<(&PointCloud, Vec<String>)> = scene
+        .point_clouds
+        .iter()
+        .filter(|c| !c.positions.is_empty() && !c.prototype_ids.is_empty())
+        .map(|c| (c, resolve_proto_paths(scene, c, config)))
+        .collect();
+
+    // Write PointInstancers from point clouds
     let mut instancer_count = 0;
-    for cloud in &scene.point_clouds {
-        if cloud.positions.is_empty() || cloud.prototype_ids.is_empty() {
-            log::warn!(
-                "Skipping empty point cloud {:?} (positions={}, protos={})",
-                cloud.name,
-                cloud.positions.len(),
-                cloud.prototype_ids.len()
-            );
-            continue;
-        }
+    for (cloud, proto_paths) in &cloud_proto_paths {
         let instancer_path = if cloud.name.starts_with('/') {
             cloud.name.to_string()
         } else {
             format!("{}/{}", config.export_root, cloud.name)
         };
         let instancer_path = apply_graft_prefix(&instancer_path, &config.graft_prefix);
-        let proto_paths: Vec<String> = resolve_proto_paths(scene, cloud, config);
         if proto_paths.is_empty() {
             log::warn!(
                 "Skipping instancer {:?}: no prototype paths resolved",
@@ -206,7 +204,7 @@ pub fn export_scene(
             continue;
         }
         layer
-            .write_point_instancer(&instancer_path, cloud, &proto_paths)
+            .write_point_instancer(&instancer_path, cloud, proto_paths)
             .map_err(|e| {
                 log::error!(
                     "write_point_instancer failed for {:?} (instances={}, protos={}): {}",
@@ -220,11 +218,10 @@ pub fn export_scene(
         instancer_count += 1;
     }
 
-    // Write prototype meshes referenced by point clouds
+    // Write prototype meshes referenced by point clouds (reuses pre-computed paths)
     let mut mesh_count = 0;
     let mut written_protos: HashSet<String> = HashSet::new();
-    for cloud in &scene.point_clouds {
-        let proto_paths = resolve_proto_paths(scene, cloud, config);
+    for (cloud, proto_paths) in &cloud_proto_paths {
         for (i, &proto_id) in cloud.prototype_ids.iter().enumerate() {
             if let Some(proto_path) = proto_paths.get(i) {
                 if written_protos.contains(proto_path) {
@@ -240,13 +237,11 @@ pub fn export_scene(
         }
     }
 
-    // Write standalone prototype meshes not already written by instancer loop
+    // Write standalone prototype meshes not already written by instancer loop.
+    // TODO: When as_sublayer=true, consider skipping USD-loaded protos (needs
+    // a `from_usd` flag on Prototype to distinguish BIF-created vs USD-loaded).
     for proto in &scene.prototypes {
-        let proto_path = if proto.name.starts_with('/') {
-            proto.name.to_string()
-        } else {
-            format!("{}/{}", config.export_root, proto.name)
-        };
+        let proto_path = proto_prim_path(proto, &config.export_root);
         if written_protos.contains(&proto_path) {
             continue;
         }
@@ -281,10 +276,19 @@ fn apply_graft_prefix(path: &str, prefix: &Option<String>) -> String {
     }
 }
 
-/// Resolve prototype prim paths for a point cloud's prototype IDs.
+/// Compute the prim path for a prototype.
 ///
-/// Uses the prototype's name (which is the USD prim path for USD-loaded protos)
-/// or constructs a BIF path for procedural protos.
+/// If the name is already a USD path (starts with '/'), return as-is.
+/// Otherwise, construct a path under the export root.
+fn proto_prim_path(proto: &crate::scene::Prototype, export_root: &str) -> String {
+    if proto.name.starts_with('/') {
+        proto.name.to_string()
+    } else {
+        format!("{}/{}", export_root, proto.name)
+    }
+}
+
+/// Resolve prototype prim paths for a point cloud's prototype IDs.
 fn resolve_proto_paths(scene: &Scene, cloud: &PointCloud, config: &ExportConfig) -> Vec<String> {
     cloud
         .prototype_ids
@@ -293,15 +297,7 @@ fn resolve_proto_paths(scene: &Scene, cloud: &PointCloud, config: &ExportConfig)
             scene
                 .prototypes
                 .get(proto_id)
-                .map(|proto| {
-                    if proto.name.starts_with('/') {
-                        // Already a USD prim path
-                        proto.name.to_string()
-                    } else {
-                        // BIF-created prototype
-                        format!("{}/{}", config.export_root, proto.name)
-                    }
-                })
+                .map(|proto| proto_prim_path(proto, &config.export_root))
                 .unwrap_or_else(|| format!("{}/proto_{}", config.export_root, proto_id))
         })
         .collect()

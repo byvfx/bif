@@ -461,6 +461,7 @@ impl Renderer {
     ///
     /// Called after adding/removing primitives or merging USD data.
     pub fn reload_working_scene(&mut self) -> Result<()> {
+        self.scene_graph_dirty = true;
         let scene = &self.working_scene;
 
         if scene.prototypes.is_empty() {
