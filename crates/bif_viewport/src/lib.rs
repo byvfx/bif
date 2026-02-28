@@ -75,8 +75,8 @@ pub use property_inspector::{
     render_property_inspector, reset_transform_edit_cache, PrimProperties, TransformEdit,
 };
 pub use scene_browser::{
-    CompositeProvider, EmptyPrimProvider, PrimDataProvider, PrimDisplayInfo, ProceduralPrim,
-    SceneBrowserState,
+    build_scene_graph_cache, CachedSceneGraph, CompositeProvider, EmptyPrimProvider,
+    PrimDataProvider, PrimDisplayInfo, ProceduralPrim, ProceduralPrimKind, SceneBrowserState,
 };
 
 use batch_render::BatchMessage;
@@ -357,6 +357,11 @@ pub struct Renderer {
     /// BTreeMap for deterministic iteration order (picking, culling, debug).
     pub(crate) instancer_results:
         std::collections::BTreeMap<egui_snarl::NodeId, Vec<bif_core::Instance>>,
+
+    /// Cached scene graph for scene browser (rebuilt when scene_graph_dirty).
+    pub(crate) cached_scene_graph: scene_browser::CachedSceneGraph,
+    /// True when working_scene changed and cached_scene_graph needs rebuild.
+    pub(crate) scene_graph_dirty: bool,
 
     // Async USD loading state
     /// Receiver for messages from the background USD load thread.
@@ -931,6 +936,8 @@ impl Renderer {
             next_cloud_id: 0,
             node_scatter_surface_map: std::collections::HashMap::new(),
             instancer_results: std::collections::BTreeMap::new(),
+            cached_scene_graph: scene_browser::CachedSceneGraph::default(),
+            scene_graph_dirty: true,
             usd_load_receiver: None,
             usd_load_status: UsdLoadStatus::Idle,
         })
