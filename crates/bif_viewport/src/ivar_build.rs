@@ -81,6 +81,22 @@ impl Renderer {
                     image.to_rgba()
                 }
             }
+            crate::ivar_state::AovChannel::Albedo => {
+                // Albedo as RGB (linear, gamma-corrected for display)
+                if let Some(ref albedo) = self.ivar_state.albedo_buffer {
+                    albedo
+                        .iter()
+                        .flat_map(|a| {
+                            let r = (a[0].sqrt().clamp(0.0, 1.0) * 255.0) as u8;
+                            let g = (a[1].sqrt().clamp(0.0, 1.0) * 255.0) as u8;
+                            let b = (a[2].sqrt().clamp(0.0, 1.0) * 255.0) as u8;
+                            [r, g, b, 255]
+                        })
+                        .collect()
+                } else {
+                    image.to_rgba()
+                }
+            }
             crate::ivar_state::AovChannel::CacheHeatmap => {
                 // Cache heatmap: black → red → yellow → green
                 if let Some(ref heatmap) = self.ivar_state.cache_heatmap_buffer {
@@ -759,6 +775,12 @@ impl Renderer {
                                         normal[global_idx] = result.normals[pixel_idx];
                                     }
                                 }
+                                if let Some(ref mut albedo) = self.ivar_state.albedo_buffer {
+                                    if pixel_idx < result.albedos.len() && global_idx < albedo.len()
+                                    {
+                                        albedo[global_idx] = result.albedos[pixel_idx];
+                                    }
+                                }
                                 if let Some(ref mut heatmap) = self.ivar_state.cache_heatmap_buffer
                                 {
                                     if pixel_idx < result.cache_samples.len()
@@ -808,6 +830,49 @@ impl Renderer {
                     log::info!("Ivar render cancelled");
                     self.ivar_state.receiver = None;
                 }
+            }
+        }
+    }
+
+    /// Denoise the current Ivar render result using OIDN.
+    ///
+    /// Reads averaged beauty, albedo, and normal buffers, calls `denoise_beauty()`,
+    /// and stores the result in `denoised_buffer`. Also copies denoised pixels
+    /// into `image_buffer` for display.
+    pub(crate) fn denoise_ivar_result(&mut self) {
+        let Some(ref image) = self.ivar_state.image_buffer else {
+            log::warn!("No image buffer to denoise");
+            return;
+        };
+        let width = image.width as usize;
+        let height = image.height as usize;
+
+        let beauty = &image.pixels;
+        let albedo = self.ivar_state.albedo_buffer.as_deref();
+        let normal = self.ivar_state.normal_buffer.as_deref();
+
+        log::info!("Denoising {}x{} image...", width, height);
+        let start = std::time::Instant::now();
+
+        match bif_renderer::denoise_beauty(width, height, beauty, albedo, normal) {
+            Ok(result) => {
+                let elapsed = start.elapsed();
+                log::info!(
+                    "Denoise complete in {:.0}ms",
+                    elapsed.as_secs_f64() * 1000.0
+                );
+
+                // Copy denoised pixels into image_buffer for display
+                if let Some(ref mut image) = self.ivar_state.image_buffer {
+                    for (i, &c) in result.beauty.iter().enumerate() {
+                        image.pixels[i] = c;
+                    }
+                }
+                self.ivar_state.denoised_buffer = Some(result.beauty);
+                self.ivar_state.is_denoised = true;
+            }
+            Err(e) => {
+                log::error!("Denoise failed: {}", e);
             }
         }
     }

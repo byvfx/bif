@@ -7,9 +7,13 @@
 
 $VcpkgRoot = "D:\__projects\_programming\vcpkg"
 $UsdBinPath = "$VcpkgRoot\installed\x64-windows\bin"
+$OidnRoot = "D:\__projects\_programming\oidn-2.4.1.x64.windows"
 
-# Add vcpkg bin to PATH for USD DLLs
-$env:PATH = "$UsdBinPath;$env:PATH"
+# Add vcpkg bin and OIDN bin to PATH for DLLs
+$env:PATH = "$UsdBinPath;$OidnRoot\bin;$env:PATH"
+
+# Set OIDN_DIR for oidn crate build.rs
+$env:OIDN_DIR = $OidnRoot
 
 # Set VCPKG_ROOT for build.rs
 $env:VCPKG_ROOT = $VcpkgRoot
@@ -19,7 +23,8 @@ $pluginDirs = Get-ChildItem "$UsdBinPath\usd" -Directory |
     ForEach-Object { $_.FullName + "\resources" }
 $env:PXR_PLUGINPATH_NAME = $pluginDirs -join ";"
 
-Write-Host "USD environment configured:" -ForegroundColor Green
+Write-Host "USD + OIDN environment configured:" -ForegroundColor Green
 Write-Host "  VCPKG_ROOT = $env:VCPKG_ROOT"
-Write-Host "  PATH includes USD DLLs"
+Write-Host "  OIDN_DIR   = $env:OIDN_DIR"
+Write-Host "  PATH includes USD + OIDN DLLs"
 Write-Host "  PXR_PLUGINPATH_NAME set with $($pluginDirs.Count) plugin directories"

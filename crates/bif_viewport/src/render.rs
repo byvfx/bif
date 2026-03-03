@@ -435,6 +435,23 @@ impl Renderer {
 
                                 if ivar_render_complete {
                                     ui.colored_label(egui::Color32::GREEN, "Render Complete");
+
+                                    // Denoise button (feature-gated)
+                                    #[cfg(feature = "oidn")]
+                                    {
+                                        if self.ivar_state.is_denoised {
+                                            ui.colored_label(egui::Color32::from_rgb(100, 200, 255), "Denoised");
+                                        } else if ui.button("Denoise (OIDN)").clicked() {
+                                            ctx.data_mut(|d| {
+                                                d.insert_temp(egui::Id::new("denoise_requested"), true)
+                                            });
+                                        }
+                                    }
+                                    #[cfg(not(feature = "oidn"))]
+                                    {
+                                        ui.add_enabled(false, egui::Button::new("Denoise (OIDN)"))
+                                            .on_disabled_hover_text("Build with --features oidn");
+                                    }
                                 } else if ivar_accumulated_spp > 0 {
                                     ui.colored_label(egui::Color32::YELLOW, "Refining...");
                                 }
@@ -820,6 +837,18 @@ impl Renderer {
                                 ui.checkbox(&mut aov.auto_depth_bounds, "Auto bounds from scene");
                             }
                             ui.checkbox(&mut aov.include_normal, "Normal (N)");
+
+                            // Denoise checkbox (feature-gated)
+                            #[cfg(feature = "oidn")]
+                            {
+                                ui.checkbox(&mut aov.denoise_output, "Denoise (OIDN)");
+                            }
+                            #[cfg(not(feature = "oidn"))]
+                            {
+                                let mut dummy = false;
+                                ui.add_enabled(false, egui::Checkbox::new(&mut dummy, "Denoise (OIDN)"))
+                                    .on_disabled_hover_text("Build with --features oidn");
+                            }
                         });
 
                         // Output path
@@ -1374,6 +1403,17 @@ impl Renderer {
             // Clear the flag
             self.egui_ctx
                 .data_mut(|d| d.remove::<bool>(egui::Id::new("rebuild_scene_requested")));
+        }
+
+        // Handle denoise request
+        let denoise_requested = self.egui_ctx.data(|d| {
+            d.get_temp::<bool>(egui::Id::new("denoise_requested"))
+                .unwrap_or(false)
+        });
+        if denoise_requested {
+            self.egui_ctx
+                .data_mut(|d| d.remove::<bool>(egui::Id::new("denoise_requested")));
+            self.denoise_ivar_result();
         }
 
         // Handle batch render start request

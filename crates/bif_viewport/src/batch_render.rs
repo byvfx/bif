@@ -441,7 +441,8 @@ fn batch_render_loop(
         });
 
         // Render frame with AOVs
-        let result = render_frame_with_aovs(
+        #[allow(unused_mut)]
+        let mut result = render_frame_with_aovs(
             &camera,
             &current_world,
             &render_config,
@@ -461,6 +462,28 @@ fn batch_render_loop(
         if cancel_flag.load(Ordering::Relaxed) {
             let _ = tx.send(BatchMessage::Cancelled);
             return;
+        }
+
+        // Denoise beauty pass before writing EXR
+        #[cfg(feature = "oidn")]
+        if settings.aov_settings.denoise_output {
+            let w = result.width as usize;
+            let h = result.height as usize;
+            match bif_renderer::denoise_beauty(
+                w,
+                h,
+                &result.beauty,
+                result.albedo.as_deref(),
+                result.normal.as_deref(),
+            ) {
+                Ok(denoised) => {
+                    log::info!("Batch frame {} denoised", frame);
+                    result.beauty = denoised.beauty;
+                }
+                Err(e) => {
+                    log::warn!("Batch denoise failed for frame {}: {}", frame, e);
+                }
+            }
         }
 
         // Build output path
@@ -626,6 +649,8 @@ where
     } else {
         None
     };
+    // Albedo always captured (needed for OIDN denoising)
+    let mut albedo = Some(vec![[0.0f32; 3]; pixel_count]);
 
     // Track completed buckets for progress
     let completed = std::sync::atomic::AtomicUsize::new(0);
@@ -669,6 +694,9 @@ where
                 if let Some(ref mut n) = normal {
                     n[global_idx] = result.normals[local_idx];
                 }
+                if let Some(ref mut a) = albedo {
+                    a[global_idx] = result.albedos[local_idx];
+                }
             }
         }
     }
@@ -680,6 +708,7 @@ where
         alpha,
         depth,
         normal,
+        albedo,
     }
 }
 

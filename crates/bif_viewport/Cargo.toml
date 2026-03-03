@@ -9,6 +9,7 @@ repository.workspace = true
 [features]
 default = []
 oiio = ["bif_core/oiio"]
+oidn = ["bif_renderer/oidn"]
 
 [dependencies]
 bif_math = { path = "../bif_math" }

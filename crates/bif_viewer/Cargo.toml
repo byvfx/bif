@@ -10,6 +10,7 @@ default-run = "bif_viewer"
 [features]
 default = []
 oiio = ["bif_core/oiio", "bif_viewport/oiio"]
+oidn = ["bif_viewport/oidn"]
 
 [dependencies]
 bif_math = { path = "../bif_math" }

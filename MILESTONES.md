@@ -815,6 +815,7 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
   - Documentation for USD export workflow
   - Xform prim_filter (V1 placeholder — always all upstream)
   - Ivar CPU renderer doesn't reflect Xform transforms yet
+  - look in to usd asset authoring like houidinis component builder.  get some screen shots to help port it over. 
 - **Architecture:**
   - Separate "edit layer" authored on top of reference layer
   - User modifications stored as opinions, not destructive edits
@@ -823,17 +824,20 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 
 ---
 
-### Milestone 26: Denoising (Intel OIDN) 🧹
+### Milestone 26: Denoising (Intel OIDN) 🧹 ✅
 
 - **Goal:** Production-quality denoising for faster convergence
-- **Estimated Time:** 10-15 hours
-- **Why Now:** Quick win (~10-15h) that makes every render 10x more usable. Clean renders without needing 1000+ spp.
+- **Status:** Complete
 - **Key Tasks:**
-  - Intel Open Image Denoise integration
-  - AOV outputs (albedo, normal) for denoiser input
-  - Interactive denoising during progressive render
-  - Final frame denoising
-  - Preserve detail in denoised output
+  - ✅ `Material::albedo()` trait method + impls (Lambertian, Metal, DisneyBSDF)
+  - ✅ Albedo AOV pipeline: `AovData` → `BucketResultWithAovs` → `IvarState` → viewport preview
+  - ✅ `AovChannel::Albedo` viewport preview with gamma-corrected display
+  - ✅ `denoise.rs` module: `denoise_beauty()` with beauty/albedo/normal guide buffers
+  - ✅ Feature-gated `oidn` crate (`--features oidn`, propagated through all crates)
+  - ✅ Viewport "Denoise (OIDN)" button after render complete
+  - ✅ Batch render denoise checkbox (denoise before EXR write)
+  - ✅ Stub when OIDN disabled (grayed-out UI, `DenoiseError::NotEnabled`)
+  - ✅ Tests: dimension mismatch, material albedo, buffer lifecycle, denoise state
 
 ---
 
@@ -958,22 +962,16 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 | 19-21.2 | Frame Rendering + Interactivity | Batch render, animation, picking, scatter | ✅ Complete |
 | 23 | SHARC Radiance Cache | idTech 8 cache + Russian Roulette + heatmap AOV | ✅ Complete |
 
-### Active & Planned (new order)
+### Active & Planned
 
-| Order | # | Milestone | Est Hours | Cumulative | What it unlocks |
-|-------|---|-----------|-----------|------------|-----------------|
-| 1 | 19 P6 | Instance anim | ~5h | 5h | Complete animation pipeline |
-| 2 | 19.6 | lib.rs cleanup | ~8-10h | 15h | Maintainable codebase for M20+ |
-| 3 | 20 | Interactivity + undo | 15-20h | 35h | Selection, gizmos, minimal undo stack |
-| 4 | 21 | Point instancing | 15-20h | 55h | Core scatter workflow |
-| 5 | 29 | USD export + layers | 20-25h | 80h | **Full pipeline: import→modify→render→export** |
-| 6 | 26 | Denoising (OIDN) | 10-15h | 95h | Clean renders without 1000spp |
-| 7 | 25 | Volumes/OpenVDB | 20-30h | 125h | Smoke, fog, clouds |
-| 8 | 22 | Viewport perf | 20-30h | 155h | Handle production scenes |
-| 9 | 27 | GPU path tracing | 30-40h | 195h | Near-realtime quality |
-| 10 | 28 | Qt 6 UI | 50+h | 245h | Professional interface |
-
-**At 15h/week: core pipeline complete in ~5.5 weeks (through M29).**
+| Order | # | Milestone | What it unlocks |
+|-------|---|-----------|-----------------|
+| 1 | 29 | USD export (in-progress) | **Full pipeline: import→modify→render→export** |
+| 2 | 26 | Denoising (OIDN) | Clean renders without 1000spp |
+| 3 | 25 | Volumes/OpenVDB | Smoke, fog, clouds |
+| 4 | 22 | Viewport perf | Handle production scenes |
+| 5 | 27 | GPU path tracing | Near-realtime quality |
+| 6 | 28 | Qt 6 UI | Professional interface |
 
 ### Dissolved / Cut
 
@@ -1026,8 +1024,7 @@ Key papers (cherry-pick into relevant milestones as needed):
 
 ---
 
-**Last Updated:** February 20, 2026
-**Status:** Milestones 0-23 complete (M23 repurposed for SHARC)
-**Current:** Planning next milestone
-**Next:** M29 (USD export) → M26 (denoising) → M25 (volumes)
-**Roadmap revision:** M23 repurposed (SHARC radiance cache), M24 cut, M29 moved up to 5th priority
+**Last Updated:** March 2, 2026
+**Status:** Milestones 0-23 complete
+**Current:** M29 USD export (in-progress, most phases done)
+**Next:** M26 (denoising) → M25 (volumes) → M22 (viewport perf)

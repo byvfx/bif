@@ -165,6 +165,8 @@ pub struct BucketResultWithAovs {
     pub alphas: Vec<f32>,
     /// SHARC cache sample counts at primary hit (for heatmap AOV).
     pub cache_samples: Vec<u32>,
+    /// Surface albedo at first hit (for denoiser guide image).
+    pub albedos: Vec<[f32; 3]>,
 }
 
 /// Render a single bucket with AOV capture.
@@ -189,6 +191,7 @@ pub fn render_bucket_with_aovs(
     let mut normals = Vec::with_capacity(capacity);
     let mut alphas = Vec::with_capacity(capacity);
     let mut cache_samples = Vec::with_capacity(capacity);
+    let mut albedos = Vec::with_capacity(capacity);
 
     for local_y in 0..bucket.height {
         for local_x in 0..bucket.width {
@@ -201,6 +204,7 @@ pub fn render_bucket_with_aovs(
             normals.push([aov.normal.x, aov.normal.y, aov.normal.z]);
             alphas.push(aov.alpha);
             cache_samples.push(aov.cache_samples);
+            albedos.push([aov.albedo.x, aov.albedo.y, aov.albedo.z]);
         }
     }
 
@@ -211,6 +215,7 @@ pub fn render_bucket_with_aovs(
         normals,
         alphas,
         cache_samples,
+        albedos,
     }
 }
 

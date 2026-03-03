@@ -233,6 +233,8 @@ pub struct AovData {
     pub alpha: f32,
     /// SHARC cache sample count at primary hit (for heatmap AOV).
     pub cache_samples: u32,
+    /// Surface albedo at first hit (for denoiser guide image).
+    pub albedo: Color,
 }
 
 impl Default for AovData {
@@ -242,6 +244,7 @@ impl Default for AovData {
             normal: Color::ZERO,
             alpha: 0.0,
             cache_samples: 0,
+            albedo: Color::ZERO,
         }
     }
 }
@@ -317,6 +320,7 @@ pub fn ray_color_with_aovs(
             aov.depth = rec.t;
             aov.normal = rec.normal;
             aov.alpha = 1.0;
+            aov.albedo = rec.material.albedo(rec.u, rec.v);
             // Cache heatmap: sample count at primary hit
             if let Some(c) = cache {
                 aov.cache_samples = c.sample_count_at(rec.p, rec.normal);
@@ -441,6 +445,7 @@ pub fn render_pixel_with_aovs(
     let mut pixel_color = Color::ZERO;
     let mut depth_sum = 0.0_f32;
     let mut normal_sum = Color::ZERO;
+    let mut albedo_sum = Color::ZERO;
     let mut alpha_sum = 0.0_f32;
     let mut hit_count = 0u32;
     let mut max_cache_samples = 0u32;
@@ -452,10 +457,11 @@ pub fn render_pixel_with_aovs(
         alpha_sum += aov.alpha;
         max_cache_samples = max_cache_samples.max(aov.cache_samples);
 
-        // Only average depth/normal from rays that hit something
+        // Only average depth/normal/albedo from rays that hit something
         if aov.depth < f32::INFINITY {
             depth_sum += aov.depth;
             normal_sum += aov.normal;
+            albedo_sum += aov.albedo;
             hit_count += 1;
         }
     }
@@ -468,6 +474,7 @@ pub fn render_pixel_with_aovs(
             normal: (normal_sum / hit_count as f32).normalize(),
             alpha: avg_alpha,
             cache_samples: max_cache_samples,
+            albedo: albedo_sum / hit_count as f32,
         }
     } else {
         AovData {

@@ -6,6 +6,10 @@ authors.workspace = true
 license.workspace = true
 description = "CPU path tracing renderer for BIF"
 
+[features]
+default = []
+oidn = ["dep:oidn"]
+
 [dependencies]
 bif_core = { path = "../bif_core" }
 bif_math = { path = "../bif_math" }
@@ -17,3 +21,4 @@ log.workspace = true
 exr = "1.72"
 half = "2.4"
 thiserror.workspace = true
+oidn = { version = "2.3", optional = true }

@@ -36,6 +36,8 @@ pub enum AovChannel {
     Depth,
     /// Normal (RGB from XYZ).
     Normal,
+    /// Surface albedo (RGB).
+    Albedo,
     /// SHARC cache heatmap (sample count visualization).
     CacheHeatmap,
 }
@@ -48,6 +50,7 @@ impl AovChannel {
             AovChannel::Alpha => "Alpha",
             AovChannel::Depth => "Depth",
             AovChannel::Normal => "Normal",
+            AovChannel::Albedo => "Albedo",
             AovChannel::CacheHeatmap => "Cache Heatmap",
         }
     }
@@ -59,6 +62,7 @@ impl AovChannel {
             AovChannel::Alpha,
             AovChannel::Depth,
             AovChannel::Normal,
+            AovChannel::Albedo,
             AovChannel::CacheHeatmap,
         ]
     }
@@ -129,6 +133,8 @@ pub struct AovSettings {
     pub depth_far: f32,
     /// Auto-compute depth bounds from scene AABB.
     pub auto_depth_bounds: bool,
+    /// Denoise beauty pass before writing EXR (requires OIDN feature).
+    pub denoise_output: bool,
 }
 
 impl Default for AovSettings {
@@ -140,6 +146,7 @@ impl Default for AovSettings {
             depth_near: 0.01,
             depth_far: 10000.0,
             auto_depth_bounds: false,
+            denoise_output: false,
         }
     }
 }
@@ -361,6 +368,8 @@ pub struct IvarState {
     pub depth_buffer: Option<Vec<f32>>,
     /// Normal buffer for AOV preview (stored per pixel as [x, y, z]).
     pub normal_buffer: Option<Vec<[f32; 3]>>,
+    /// Albedo buffer for denoiser guide image (stored per pixel as [r, g, b]).
+    pub albedo_buffer: Option<Vec<[f32; 3]>>,
     /// Running sum per pixel for progressive accumulation.
     pub accumulation_buffer: Option<Vec<Vec3>>,
     /// Number of completed progressive passes.
@@ -384,6 +393,10 @@ pub struct IvarState {
     pub cache_heatmap_buffer: Option<Vec<u32>>,
     /// Frozen elapsed time (set on render completion so timer stops ticking).
     pub final_render_secs: Option<f32>,
+    /// Whether the current beauty buffer has been denoised.
+    pub is_denoised: bool,
+    /// Denoised beauty buffer (stored separately so raw can be recovered via AOV switch).
+    pub denoised_buffer: Option<Vec<Vec3>>,
 }
 
 impl Default for IvarState {
@@ -412,6 +425,7 @@ impl Default for IvarState {
             alpha_buffer: None,
             depth_buffer: None,
             normal_buffer: None,
+            albedo_buffer: None,
             accumulation_buffer: None,
             accumulated_samples: 0,
             target_spp: 16,
@@ -423,6 +437,8 @@ impl Default for IvarState {
             radiance_cache: None,
             cache_heatmap_buffer: None,
             final_render_secs: None,
+            is_denoised: false,
+            denoised_buffer: None,
         }
     }
 }
@@ -445,11 +461,14 @@ impl IvarState {
         self.receiver = None;
         self.render_start_time = Some(Instant::now());
         self.final_render_secs = None;
+        self.is_denoised = false;
+        self.denoised_buffer = None;
 
         // Allocate AOV buffers
         self.alpha_buffer = Some(vec![0.0; pixel_count]);
         self.depth_buffer = Some(vec![f32::INFINITY; pixel_count]);
         self.normal_buffer = Some(vec![[0.0; 3]; pixel_count]);
+        self.albedo_buffer = Some(vec![[0.0; 3]; pixel_count]);
         self.cache_heatmap_buffer = Some(vec![0; pixel_count]);
     }
 
@@ -514,6 +533,8 @@ impl IvarState {
         self.buckets_completed = 0;
         self.render_start_time = Some(Instant::now());
         self.final_render_secs = None;
+        self.is_denoised = false;
+        self.denoised_buffer = None;
 
         // Keep existing display pixels when dimensions match (avoids black flash
         // during camera orbit / transform drag). On dimension change, resample
@@ -552,10 +573,12 @@ impl IvarState {
                 self.alpha_buffer.as_mut().unwrap().fill(0.0);
                 self.depth_buffer.as_mut().unwrap().fill(f32::INFINITY);
                 self.normal_buffer.as_mut().unwrap().fill([0.0; 3]);
+                self.albedo_buffer.as_mut().unwrap().fill([0.0; 3]);
             } else {
                 self.alpha_buffer = Some(vec![0.0; pixel_count]);
                 self.depth_buffer = Some(vec![f32::INFINITY; pixel_count]);
                 self.normal_buffer = Some(vec![[0.0; 3]; pixel_count]);
+                self.albedo_buffer = Some(vec![[0.0; 3]; pixel_count]);
             }
             // Cache heatmap buffer
             let reuse_heatmap = self
@@ -571,6 +594,7 @@ impl IvarState {
             self.alpha_buffer = None;
             self.depth_buffer = None;
             self.normal_buffer = None;
+            self.albedo_buffer = None;
             self.cache_heatmap_buffer = None;
         }
 
@@ -885,5 +909,58 @@ mod tests {
         state.reset_accumulation(100, 100);
         assert!(state.final_render_secs.is_none());
         assert!(state.elapsed_secs() < 1.0);
+    }
+
+    #[test]
+    fn test_reset_render_allocates_albedo_buffer() {
+        let mut state = IvarState::default();
+        assert!(state.albedo_buffer.is_none());
+
+        state.reset_render(100, 100);
+
+        let albedo = state.albedo_buffer.as_ref().unwrap();
+        assert_eq!(albedo.len(), 10000);
+        assert_eq!(albedo[0], [0.0; 3]);
+    }
+
+    #[test]
+    fn test_reset_accumulation_albedo_lifecycle() {
+        let mut state = IvarState::default();
+
+        // Full scale: albedo allocated
+        state.current_scale = 1;
+        state.reset_accumulation(50, 50);
+        assert!(state.albedo_buffer.is_some());
+        assert_eq!(state.albedo_buffer.as_ref().unwrap().len(), 2500);
+
+        // Reduced scale: albedo cleared
+        state.current_scale = 4;
+        state.reset_accumulation(12, 12);
+        assert!(state.albedo_buffer.is_none());
+    }
+
+    #[test]
+    fn test_reset_render_clears_denoise_state() {
+        let mut state = IvarState::default();
+        state.is_denoised = true;
+        state.denoised_buffer = Some(vec![Vec3::ONE; 100]);
+
+        state.reset_render(10, 10);
+
+        assert!(!state.is_denoised);
+        assert!(state.denoised_buffer.is_none());
+    }
+
+    #[test]
+    fn test_reset_accumulation_clears_denoise_state() {
+        let mut state = IvarState::default();
+        state.current_scale = 1;
+        state.is_denoised = true;
+        state.denoised_buffer = Some(vec![Vec3::ONE; 100]);
+
+        state.reset_accumulation(10, 10);
+
+        assert!(!state.is_denoised);
+        assert!(state.denoised_buffer.is_none());
     }
 }

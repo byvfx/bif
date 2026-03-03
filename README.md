@@ -2,15 +2,15 @@
 
 > Production-grade renderer inspired by Isotropix Clarisse, built in Rust
 
-## Current Status: Milestone 19 In Progress
+## Current Status: Milestone 29 In Progress
 
-**Batch Render to Disk** - USD camera animation working
+**USD Export Pipeline** — full import→modify→render→export workflow
 
 - Dual rendering: Vulkan viewport (60 FPS) + Ivar CPU path tracer
+- **USD export:** Sublayer composition, xform/keyframe overrides, point instancers
 - **Batch render:** EXR sequences with AOVs, USD camera animation
 - GPU instancing: 10K+ instances with LOD culling
 - USD support: USDA (pure Rust) + USDC/references (C++ bridge)
-- **USD:** Relative refs, UNC network paths, camera animation
 - **Animation:** Timeline UI, transform + vertex animation, viewport camera sync
 - Intel Embree 4: Production-quality ray tracing
 - Materials: UsdPreviewSurface + MaterialX standard_surface
@@ -18,10 +18,12 @@
 - HDRI environment maps: GPU compute IBL (irradiance + prefiltered + BRDF LUT)
 - Textured PBR viewport with per-face materials (GeomSubsets)
 - OpenImageIO integration with subprocess .tx conversion (optional)
-- Node graph + scene browser + property inspector
-- 137+ tests passing across 6 crates
+- **Node graph:** 10 node types (scatter, instance, export, etc.)
+- Scene browser + property inspector + undo/redo
+- SHARC radiance cache (idTech 8 inspired)
+- 274+ tests passing across 6 crates
 
-**Next:** M19 geometry animation per frame
+**Next:** Complete M29 export pipeline
 
 ---
 
@@ -33,6 +35,10 @@ cargo run --package bif_viewer
 
 # Build with OIIO support (optional, requires vcpkg openimageio)
 cargo build --features oiio
+
+# Build with OIDN denoising (optional, requires Intel OIDN)
+# Set OIDN_DIR to your OIDN install path, ensure DLLs in PATH
+cargo build --features oidn
 
 # Run tests
 cargo test
@@ -53,6 +59,7 @@ cargo run -p bif_viewer -- --usd assets/lucy/usd/assets/lucy/lucy.usd
 - **USD Workflow:** Import USDA/USDC scenes from Houdini/Maya
 - **Materials:** UsdPreviewSurface + MaterialX standard_surface
 - **Textures:** Per-face materials via GeomSubsets, parallel loading
+- **OIDN Denoising:** Optional Intel OIDN for final-frame denoising (viewport + batch)
 - **OIIO Support:** Optional OpenImageIO with subprocess .tx conversion and mipmaps
 - **IBL:** GPU compute environment maps (irradiance, prefiltered, BRDF LUT)
 - **Intel Embree 4:** Production two-level BVH ray tracing
@@ -101,13 +108,14 @@ bif/
 
 ---
 
-## Statistics (Milestone 18.5)
+## Statistics (Milestone 23)
 
 | Metric | Value |
 |--------|-------|
 | Total LOC | ~12,000 |
-| Tests Passing | 137+ |
-| Milestones Complete | 18.5 |
+| Tests Passing | 274+ |
+| Milestones Complete | 23 |
+| Node Types | 10 |
 | Build Time (dev) | ~5s |
 | Runtime FPS | 60+ (VSync) |
 | Instances Rendered | 10K+ with LOD |
@@ -198,30 +206,32 @@ Use the egui side panel to switch between:
 
 See [MILESTONES.md](MILESTONES.md) for complete history and future plans.
 
-### Completed (Milestone 18.5)
+### Completed (Milestone 23)
 
 - Math library, wgpu viewport, camera controls
 - OBJ/USD loading, GPU instancing, Embree 4
 - egui UI, CPU path tracer "Ivar"
 - USD C++ bridge (USDC, references)
-- Scene browser, property inspector, node graph
+- Scene browser, property inspector, node graph (10 node types)
 - UsdPreviewSurface + MaterialX materials
 - Disney Principled BSDF with NEE/MIS
 - Textured PBR viewport with GeomSubsets
 - OpenImageIO + .tx texture pipeline (subprocess)
 - HDRI IBL: GPU compute prefiltering, async loading
-- **Animation:** Timeline UI, transform + vertex animation, multi-mesh rendering
-- **Performance:** USD load profiling, 23x speedup via I/O optimization
+- Animation: Timeline UI, transform + vertex animation, batch EXR render
+- Scene interactivity: Picking, gizmos, undo/redo, keyframing
+- Point instancing + scattering (scatter points, PointInstancer node)
+- SHARC radiance cache + Russian roulette path termination
+- USD export pipeline (sublayer composition, xform overrides)
 
 ### Next Up
 
-- **Milestone 19:** Frame Rendering
-- **Milestone 20:** Scene Interactivity + Keyframing
-- **Milestone 21:** Point Instancing + Scattering
+- **Milestone 29:** USD Export (in-progress — most phases done)
+- **Milestone 26:** Denoising (OIDN) — albedo AOV pipeline + OIDN integration
+- **Milestone 25:** Volumes/OpenVDB
 
 ### Future
 
-- Point instancing + scattering
 - GPU path tracing + ReSTIR
 - Qt 6 UI
 
@@ -250,5 +260,5 @@ MIT License - See [LICENSE](LICENSE) for details
 
 ---
 
-**Last Updated:** February 1, 2026
-**Status:** M18.5 Complete | USD load 23x faster, profiling instrumentation added
+**Last Updated:** March 2, 2026
+**Status:** M23 Complete, M29 In Progress | USD export pipeline, node graph, SHARC cache
