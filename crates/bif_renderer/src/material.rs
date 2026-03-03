@@ -66,6 +66,14 @@ pub trait Material: Send + Sync {
     fn is_delta(&self) -> bool {
         false
     }
+
+    /// Surface albedo at given UV coordinates (for denoiser guide image).
+    ///
+    /// Returns the diffuse reflectance color at this point. Used by OIDN
+    /// as a guide buffer to preserve texture detail during denoising.
+    fn albedo(&self, _u: f32, _v: f32) -> Color {
+        Color::ONE
+    }
 }
 
 /// Power heuristic for Multiple Importance Sampling (beta=2).
@@ -167,6 +175,10 @@ impl Material for Lambertian {
         let cos_theta = rec.normal.dot(scattered.direction().normalize()).max(0.0);
         (cos_theta / PI).max(0.0001)
     }
+
+    fn albedo(&self, _u: f32, _v: f32) -> Color {
+        self.albedo
+    }
 }
 
 /// Metal (specular) material.
@@ -215,6 +227,10 @@ impl Material for Metal {
 
     fn is_delta(&self) -> bool {
         self.fuzz < 0.001
+    }
+
+    fn albedo(&self, _u: f32, _v: f32) -> Color {
+        self.albedo
     }
 }
 
@@ -308,6 +324,10 @@ impl Material for DiffuseLight {
     fn emitted(&self, _u: f32, _v: f32, _p: Vec3) -> Color {
         self.emit
     }
+
+    fn albedo(&self, _u: f32, _v: f32) -> Color {
+        Color::ZERO
+    }
 }
 
 // =============================================================================
@@ -376,4 +396,41 @@ pub fn cosine_weighted_hemisphere(normal: Vec3, rng: &mut dyn RngCore) -> Vec3 {
 
     // Transform to world space
     x * tangent + y * bitangent + z * normal
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_lambertian_albedo() {
+        let mat = Lambertian::new(Color::new(0.8, 0.2, 0.1));
+        let albedo = mat.albedo(0.5, 0.5);
+        assert!((albedo.x - 0.8).abs() < 0.001);
+        assert!((albedo.y - 0.2).abs() < 0.001);
+        assert!((albedo.z - 0.1).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_metal_albedo() {
+        let mat = Metal::new(Color::new(1.0, 0.8, 0.0), 0.1);
+        let albedo = mat.albedo(0.0, 0.0);
+        assert!((albedo.x - 1.0).abs() < 0.001);
+        assert!((albedo.y - 0.8).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_default_material_albedo() {
+        // Dielectric uses default (ONE)
+        let mat = Dielectric::new(1.5);
+        let albedo = mat.albedo(0.0, 0.0);
+        assert!((albedo.x - 1.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_diffuse_light_albedo_zero() {
+        let mat = DiffuseLight::new(Color::new(10.0, 10.0, 10.0));
+        let albedo = mat.albedo(0.0, 0.0);
+        assert!((albedo.x).abs() < 0.001);
+    }
 }

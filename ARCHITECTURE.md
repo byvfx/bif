@@ -1,7 +1,7 @@
 # BIF Architecture
 
-**Version:** 0.2.0
-**Last Updated:** January 8, 2026 (Milestones 0-13b Complete)
+**Version:** 0.3.0
+**Last Updated:** March 2, 2026 (Milestones 0-23 Complete, M29 In Progress)
 
 ## Vision
 
@@ -60,8 +60,8 @@ BIF's scene graph maps cleanly to USD but doesn't use USD C++ internally initial
 **Implementation Status:**
 
 1. ✅ **Milestones 0-11:** Pure Rust USDA parser (import text files)
-2. 🎯 **Milestone 13:** USD C++ integration (USDC binary + references)
-3. 🔮 **Future:** Full bidirectional USD workflow with export
+2. ✅ **Milestone 13:** USD C++ integration (USDC binary + references)
+3. ✅ **Milestone 29 (in-progress):** Full bidirectional USD — import, modify, render, export
 
 ### 3. Dual Rendering Architecture
 
@@ -158,55 +158,38 @@ scene.commit();  // Embree builds optimized two-level BVH
 
 ```rust
 pub struct Scene {
-    prototypes: Vec<Arc<Prototype>>,
-    instances: Vec<Instance>,
-    layers: Vec<Layer>,
+    pub prototypes: Vec<Arc<Prototype>>,
+    instances: Vec<Instance>,               // Private, accessor-guarded
+    instance_animations: Vec<Option<AnimatedTransform>>,
+    pub materials: Vec<Arc<Material>>,
+    pub lights: Vec<Light>,
+    pub cameras: Vec<SceneCamera>,
+    pub point_clouds: Vec<PointCloud>,
+    pub timeline: Option<TimelineInfo>,
+    pub stage_metadata: Option<UsdStageMetadata>,
+    pub name: String,
 }
 
-pub struct Mesh {
-    vertices: Vec<Vec3>,
-    normals: Vec<Vec3>,
-    uvs: Vec<Vec2>,
-    indices: Vec<u32>,
+// Non-destructive edits live outside Scene:
+pub struct EditState {
+    pub transform_overrides: HashMap<usize, Transform>,
+    pub keyframe_overrides: HashMap<usize, AnimatedTransform>,
+    // + pending scene ops for undo/redo
 }
-
-pub struct Layer {
-    name: String,
-    enabled: bool,
-    overrides: HashMap<u32, Override>,  // instance_id → override
-}
-
-pub enum Override {
-    Transform(Mat4),
-    Visibility(bool),
-    Material(Arc<Material>),
-}
+pub struct UndoStack { commands: Vec<Box<dyn UndoCommand>>, cursor: usize }
 ```
 
-### Layer System (Non-Destructive Edits)
+### Non-Destructive Edits (EditState + Undo)
 
-Layers allow temporary changes without modifying base instances:
+Transform overrides and keyframes live in `EditState`, separate from the base `Scene`. The `UndoStack` tracks all mutations as `UndoCommand` objects (move, keyframe, delete, etc.). Export merges EditState overrides back onto the USD stage via `export_scene()`.
 
 ```rust
-// Base: 1000 trees
-for i in 0..1000 {
-    scene.add_instance(tree_prototype, transform);
-}
+// Gizmo move → EditState override (base Scene untouched)
+edit_state.transform_overrides.insert(instance_idx, new_transform);
+undo_stack.push(MoveCommand { idx, old, new });
 
-// Layer 1: Hide near camera
-let layer = scene.create_layer("hide_near_camera");
-for instance in near_instances {
-    layer.add_override(instance.id, Override::Visibility(false));
-}
-
-// Layer 2: LOD for distant
-let layer2 = scene.create_layer("LOD_distant");
-for instance in distant_instances {
-    layer2.add_override(instance.id, Override::Prototype(low_poly_tree));
-}
-
-// Toggle without rebuilding
-scene.set_layer_enabled("hide_near_camera", false);
+// Export applies overrides to USD
+export_scene(&scene, &edit_state, &prim_paths, &config)?;
 ```
 
 ## Material System & USD Integration
@@ -350,6 +333,61 @@ impl UsdStage {
 }
 ```
 
+## Node Graph Architecture
+
+**Library:** egui-snarl (immediate-mode node graph for egui)
+
+**10 Node Types:**
+
+| Node | Purpose |
+|------|---------|
+| UsdRead | Load USD file from disk |
+| Primitive | Generate procedural geometry (cube, sphere, etc.) |
+| ScatterPoints | Scatter points on surface |
+| PointInstancer | Instance prototypes at point positions |
+| Xform | Transform override |
+| UsdExport | Export scene to USD file |
+| UsdPrim | Reference a specific prim from loaded stage |
+| GraftBranches | Merge multiple scene branches |
+| HdriEnvironment | Load HDRI for IBL + background |
+| IvarRender | Trigger CPU path trace render |
+
+**Data flow:** Nodes auto-compute on dirty propagation. Node evaluation populates `working_scene` which the viewport and renderer consume.
+
+**Implementation:** `crates/bif_viewport/src/node_graph.rs`
+
+## USD Export Pipeline
+
+**Entry point:** `bif_core::usd::export::export_scene()`
+
+```rust
+pub fn export_scene(
+    scene: &Scene,
+    edit_state: &EditState,
+    instance_prim_paths: &[String],
+    config: &ExportConfig,
+) -> Result<ExportResult, UsdBridgeError>
+```
+
+**Write order:** authored prims → xform overrides → keyframes → point instancers → meshes
+
+**Composition:** Export creates a new USD layer. When `use_sublayer_composition` is set, the source USD is added as a sublayer so edits compose over the original non-destructively.
+
+**Implementation:** `crates/bif_core/src/usd/export.rs`
+
+## Scene Browser / CompositeProvider
+
+The scene browser merges the loaded USD hierarchy with BIF-generated procedural prims into a unified tree view.
+
+**Key types:**
+- `CachedSceneGraph` — cached tree of USD prim hierarchy, rebuilt on dirty flag
+- `ProceduralPrimKind` — enum for BIF-generated prims (ScatterPoints, PointInstancer, Primitive, etc.)
+- `CompositeProvider` — merges USD stage tree + procedural prims for the scene browser UI
+
+**Pattern:** Dirty-flag rebuild — scene graph cache invalidated when USD stage changes or nodes recompute.
+
+**Implementation:** `crates/bif_viewport/src/scene_browser.rs`, `crates/bif_viewport/src/scene_loader.rs`
+
 ## Rendering Architecture
 
 ### GPU Viewport (wgpu)
@@ -406,69 +444,84 @@ fn trace_ray(ray: Ray, scene: &Scene, depth: u32) -> Color {
 
 ## Development Roadmap
 
-### Milestones 0-11: Core Foundation ✅ COMPLETE (December 2025)
+### Milestones 0-23: Complete ✅ (Dec 2025 – Feb 2026)
 
-**Completed:**
-- ✅ Math library (Vec3, Ray, AABB, Camera, Transform)
-- ✅ wgpu viewport with GPU instancing (100+ instances @ 60 FPS)
-- ✅ CPU path tracer "Ivar" with progressive rendering
-- ✅ egui UI for development workflow
-- ✅ USD USDA import (Houdini-compatible)
-- ✅ Instance-aware BVH (no UI freeze, sub-millisecond builds)
-- ✅ Background threading for scene builds
-- ✅ 60+ tests across 4 crates
+- ✅ M0-11: Math, wgpu viewport, CPU path tracer, USD USDA parser, instance-aware BVH
+- ✅ M12: Intel Embree 4 integration (10K+ instances)
+- ✅ M13: USD C++ bridge (USDC binary, references)
+- ✅ M14: GPU instancing + frustum culling + LOD
+- ✅ M15: UsdPreviewSurface + Disney Principled BSDF
+- ✅ M16: MaterialX standard_surface
+- ✅ M17: Textured PBR viewport + GeomSubsets
+- ✅ M17.1: OpenImageIO .tx texture pipeline
+- ✅ M18-18.5: USD animation, timeline UI, multi-prototype
+- ✅ M19-19.5: Batch render (EXR + AOVs), frame rendering
+- ✅ M20: Scene interactivity (picking, gizmos, undo)
+- ✅ M21-21.2: Point instancing, scattering, node graph
+- ✅ M23: SHARC radiance cache + Russian roulette
 
-**Actual Timeline:** ~34 hours over 2 weeks (December 2025)
+**274+ tests across 6 crates**
 
-**Key Learnings:** Rust ownership, wgpu pipeline, USD parsing, BVH optimization
+### In Progress
+
+- 🔧 **M29:** USD export — import→modify→render→export pipeline (most phases done)
+
+### Next Up
+
+| Order | # | What it unlocks |
+|-------|---|-----------------|
+| 1 | 29 | USD export (in-progress) — full pipeline |
+| 2 | 26 | Denoising (OIDN) — clean renders |
+| 3 | 25 | Volumes/OpenVDB — smoke, fog |
+| 4 | 22 | Viewport perf — production scenes |
+| 5 | 27 | GPU path tracing — near-realtime |
+| 6 | 28 | Qt 6 UI — professional interface |
 
 **See:** [MILESTONES.md](MILESTONES.md) for complete milestone details
-
-### Milestone 12: Embree Integration 🎯 NEXT
-
-- Replace instance-aware BVH with Embree
-- Target: 10K+ instances @ 60 FPS
-- Estimated: 8-12 hours
-
-**See:** [MILESTONES.md#milestone-12](MILESTONES.md#milestone-12-embree-integration-🎯-next)
-
-### Milestone 13: USD C++ Integration
-
-- USDC binary format support
-- USD references (@path@</prim>)
-- Full bidirectional USD workflow
-- Estimated: 15-20 hours
-
-**See:** [MILESTONES.md#milestone-13](MILESTONES.md#milestone-13-usd-c-integration-usdc-binary--references)
-
-### Future Milestones
-
-- Milestone 14: Materials (UsdPreviewSurface)
-- Milestone 15: Qt 6 UI Integration (optional)
-- Milestone 16+: Layers, Python scripting, GPU path tracing
 
 ## File Structure
 
 ```
 bif/
-├── Cargo.toml              # Rust workspace
+├── Cargo.toml                  # Rust workspace
 ├── crates/
-│   ├── bif_math/           # Math primitives (Vec3, Ray, Aabb, Camera, Transform)
-│   ├── bif_core/           # Scene graph, USD parser, mesh data
-│   ├── bif_viewport/       # GPU viewport (wgpu + Vulkan + egui)
-│   ├── bif_renderer/       # CPU path tracer "Ivar" (progressive rendering)
-│   └── bif_viewer/         # Application entry point (winit event loop)
-├── legacy/
-│   └── go-raytracing/      # Original Go raytracer (reference)
-├── devlog/                 # Development session logs
-├── docs/archive/           # Archived documentation
-├── renders/                # Render output files
-└── assets/                 # Test scenes, meshes, HDRIs
+│   ├── bif_math/               # Math primitives (Vec3, Ray, Aabb, Camera, Transform)
+│   ├── bif_core/               # Scene graph, USD, mesh, materials, textures
+│   │   └── src/
+│   │       ├── scene.rs        # Scene struct
+│   │       ├── undo.rs         # EditState + UndoStack
+│   │       ├── point_cloud.rs  # Point cloud data
+│   │       ├── scatter.rs      # Scatter algorithms
+│   │       ├── primitives.rs   # Procedural geometry
+│   │       └── usd/
+│   │           ├── export.rs   # USD export pipeline (ExportConfig, export_scene)
+│   │           └── cpp_bridge.rs # Rust↔C++ FFI wrapper
+│   ├── bif_viewport/           # GPU viewport (wgpu + Vulkan + egui)
+│   │   └── src/
+│   │       ├── node_graph.rs   # egui-snarl node graph (10 node types)
+│   │       ├── scene_browser.rs # CompositeProvider, CachedSceneGraph
+│   │       ├── scene_loader.rs # USD loading orchestration
+│   │       ├── render.rs       # Viewport render pipeline
+│   │       ├── ivar_build.rs   # Ivar scene building
+│   │       ├── ivar_state.rs   # Ivar render state machine
+│   │       ├── ivar_renderer.rs # Ivar render integration
+│   │       ├── property_inspector.rs # Property editing UI
+│   │       └── point_preview.rs # Point cloud preview
+│   ├── bif_renderer/           # CPU path tracer "Ivar" (Embree + Disney BSDF)
+│   │   └── src/
+│   │       ├── radiance_cache.rs # SHARC radiance cache
+│   │       ├── pick_scene.rs   # Ray-based object picking
+│   │       └── bucket.rs       # Bucket rendering
+│   ├── bif_viewer/             # Application entry point
+│   └── bif_maketx/             # Standalone .tx converter (OIIO subprocess)
+├── cpp/
+│   ├── usd_bridge/             # C++ FFI bridge to Pixar USD
+│   └── oiio_bridge/            # C++ FFI bridge to OpenImageIO
+├── devlog/                     # Development session logs
+├── legacy/                     # Original Go raytracer (reference)
+├── renders/                    # Render output files
+└── assets/                     # Test scenes, meshes, HDRIs
 ```
-
-**Note:** Milestones 0-11 established the actual crate structure shown above. Future milestones may add:
-- `cpp/usd_bridge/` - USD C++ FFI (Milestone 13)
-- `cpp/embree_bridge/` - Embree FFI if needed (Milestone 12)
 
 ## Design Decisions
 
@@ -478,50 +531,39 @@ bif/
 - Better C++ FFI for USD/Embree
 - Zero-cost abstractions, no GC pauses
 
-### 2. Instance-Aware BVH (Milestones 0-11), Then Embree (Milestone 12)
+### 2. Instance-Aware BVH → Embree (M0-11 → M12)
 
-**Decision:** Start with instance-aware BVH in pure Rust, migrate to Embree for 10K+ scalability
+**Decision:** Started with instance-aware BVH in pure Rust, migrated to Embree at M12.
 
-**Rationale:**
-- Milestones 0-11: Prove architecture with pure Rust (100 instances)
-- Milestone 12: Add Embree for production scale (10K+ instances)
-- Optional feature flag: Fallback to instance-aware BVH if Embree unavailable
+- M0-11: Proved architecture with pure Rust BVH (100 instances)
+- M12: Embree for production scale (10K+ instances, two-level BVH, SIMD)
 
-### 3. Instance-Aware BVH (Milestones 0-11 Implementation)
+### 3. USD-Compatible → USD-Native (M0-11 → M13 → M29)
 
-**Decision:** Build ONE BVH for prototype geometry, transform rays per-instance
+- M0-11: Pure Rust USDA parser for text files
+- M13: USD C++ bridge added for USDC binary + references
+- M29: Full bidirectional export via `export_scene()`
 
-**Rationale:**
-- 100x memory reduction vs duplicating geometry
-- 100x faster build time (40ms vs 4000ms)
-- Eliminates UI freeze on render mode switch
-- Rendering ~3x slower than two-level BVH, but acceptable for 100 instances
-- Proves architecture before committing to Embree complexity
-
-**Trade-off:** Linear instance search O(100). For 10K+ instances, Milestone 12 (Embree) needed.
-
-**Implementation:** See [instanced_geometry.rs](crates/bif_renderer/src/instanced_geometry.rs)
-
-### 4. USD-Compatible Over USD-Native
-
-- Start simple with pure Rust USDA parser (Milestones 0-11)
-- Add USD C++ for USDC + references when proven necessary (Milestone 13)
-- Can always extend later
-
-### 5. Dual Rendering (GPU + CPU)
+### 4. Dual Rendering (GPU + CPU)
 
 - GPU: Interactive assembly (60 FPS)
 - CPU: Production quality
 - Best of both worlds
 
-### 6. egui for Development, Qt 6 Optional
+### 5. egui for Development, Qt 6 Optional
 
-**Decision:** Start with egui (pure Rust), migrate to Qt only if needed
+**Decision:** Started with egui (pure Rust), Qt migration deferred until egui hits limitations.
 
-**Rationale:**
-- egui sufficient for Milestones 0-11 workflow validation
-- Qt 6 adds complexity (C++ FFI, build system)
-- Defer Qt decision until core functionality proven
+- egui + egui-snarl proved sufficient through M23 (node graph, scene browser, property inspector)
+- Qt 6 remains an option for professional UI needs (M28)
+
+### 6. Node Graph (egui-snarl)
+
+**Decision:** Used egui-snarl for node-based workflow instead of a custom graph implementation.
+
+- 10 node types cover the full import→scatter→instance→render→export pipeline
+- Auto-compute dirty propagation keeps scene synchronized
+- Avoids the complexity of a custom graph editor
 
 ## Non-Goals
 
@@ -534,7 +576,7 @@ bif/
 
 ---
 
-**Document Status:** Living document - updated for Milestones 0-11 completion
+**Document Status:** Living document — updated for M0-23 complete, M29 in progress
 
 **See Also:**
 - [MILESTONES.md](MILESTONES.md) - Complete milestone history and roadmap

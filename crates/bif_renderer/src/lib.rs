@@ -8,6 +8,7 @@
 mod bucket;
 mod bvh;
 mod camera;
+pub mod denoise;
 pub mod disney;
 mod embree;
 pub mod embree_ffi;
@@ -30,6 +31,7 @@ pub use bucket::{
 };
 pub use bvh::BvhNode;
 pub use camera::Camera;
+pub use denoise::{denoise_beauty, DenoiseError, DenoiseResult};
 pub use disney::DisneyBSDF;
 pub use embree::EmbreeScene;
 pub use exr_writer::{format_frame_path, write_exr, ExrCompression, ExrError, ExrOutput};

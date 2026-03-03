@@ -14,10 +14,19 @@ You Create a new DCC that is inspired by Clarisse / Houdini, focused on VFX scen
 
 **BIF** - VFX scene assembler/renderer (like Clarisse/Houdini).
 
-- **Status:** Milestones 0-16 complete (viewport, instancing, USD C++, Embree, materials, MaterialX)
-- **Current:** M17 - Viewport PBR + Textures
+- **Status:** Milestones 0-23 + M26 complete (viewport, instancing, USD C++, Embree, materials, MaterialX, animation, batch render, node graph, scatter, SHARC cache, OIDN denoising)
+- **Current:** M29 - USD Export (in-progress, most phases done)
 - **Goal:** Load Houdini USD → instance massively → render → export USD
 - **Timeline:** Side project, 10-20 hrs/week
+
+### Key Architecture
+
+- **6 crates:** bif_math, bif_core, bif_renderer, bif_viewport, bif_viewer, bif_maketx
+- **Node graph:** egui-snarl, 10 node types (UsdRead, Primitive, Scatter, PointInstancer, Xform, UsdExport, UsdPrim, GraftBranches, HdriEnvironment, IvarRender)
+- **Scene browser:** CompositeProvider merges USD stage + procedural prims via CachedSceneGraph
+- **Export:** `export_scene()` in `bif_core/src/usd/export.rs`
+- **Renderer:** `Renderer` struct (~75 fields, God object — cleanup deferred)
+- **274+ tests** across crates
 
 ## Related Docs
 

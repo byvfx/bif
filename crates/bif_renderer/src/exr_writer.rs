@@ -76,6 +76,8 @@ pub struct ExrOutput {
     pub depth: Option<Vec<f32>>,
     /// World-space normals AOV. None if disabled.
     pub normal: Option<Vec<[f32; 3]>>,
+    /// Albedo AOV (denoiser guide, not written to EXR). None if disabled.
+    pub albedo: Option<Vec<[f32; 3]>>,
 }
 
 /// Error type for EXR operations.
@@ -659,6 +661,7 @@ mod tests {
             alpha: None,
             depth: None,
             normal: None,
+            albedo: None,
         };
 
         let result = write_exr(&output, Path::new("test.exr"), ExrCompression::Zip);
@@ -674,6 +677,7 @@ mod tests {
             alpha: None,
             depth: None,
             normal: None,
+            albedo: None,
         };
 
         let result = write_exr(&output, Path::new("test.exr"), ExrCompression::Zip);

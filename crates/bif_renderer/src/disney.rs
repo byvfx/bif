@@ -416,6 +416,10 @@ impl Material for DisneyBSDF {
         self.roughness < 0.001 && self.metallic > 0.999
     }
 
+    fn albedo(&self, u: f32, v: f32) -> Color {
+        self.sample_base_color(u, v)
+    }
+
     fn scatter(
         &self,
         ray_in: &Ray,
@@ -865,5 +869,15 @@ mod tests {
         // Check unit length
         assert!((t.length() - 1.0).abs() < 0.001);
         assert!((b.length() - 1.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_disney_albedo_delegates_to_base_color() {
+        let mat = DisneyBSDF::diffuse(Color::new(0.9, 0.1, 0.3));
+        // Without texture, albedo should return base_color
+        let albedo = Material::albedo(&mat, 0.5, 0.5);
+        assert!((albedo.x - 0.9).abs() < 0.001);
+        assert!((albedo.y - 0.1).abs() < 0.001);
+        assert!((albedo.z - 0.3).abs() < 0.001);
     }
 }

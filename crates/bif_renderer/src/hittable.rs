@@ -17,6 +17,10 @@ impl Material for DummyMaterial {
     ) -> Option<ScatterResult> {
         None
     }
+
+    fn albedo(&self, _u: f32, _v: f32) -> crate::Color {
+        crate::Color::ZERO
+    }
 }
 
 /// Static dummy material instance for Default impl.
