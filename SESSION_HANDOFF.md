@@ -1,7 +1,7 @@
 # Session Handoff - March 3, 2026
 
-**Last Updated:** M26 OIDN Denoising complete
-**Next Milestone:** M29 validation (Houdini/usdview), Ivar Xform, M25 Volumes
+**Last Updated:** OIDN installed + tested, setup_usd_env.ps1 updated
+**Next Milestone:** M29 validation, visual denoise test, Ivar Xform
 **Project:** BIF - VFX Scene Assembler & Renderer
 
 ---
@@ -12,7 +12,7 @@
 |--------|---------|
 | Complete | Milestones 0-23, M26 (OIDN denoising) |
 | Current | M29 export validation |
-| Tests | 95+ passing (68 renderer, 24 viewport, 27+ bif_core) |
+| Tests | 95+ passing (69 renderer w/ OIDN, 24 viewport, 27+ bif_core) |
 | Performance | 60 FPS viewport, 100K instances with LOD |
 
 ---
@@ -69,7 +69,7 @@
 
 ### Known Issues
 
-- **OIDN not tested end-to-end** — need to install OIDN DLLs and test with `--features oidn`
+- **OIDN visual test pending** — build+unit tests pass, need manual viewport/batch visual verification
 - **Ivar doesn't reflect Xform transforms** — baked mesh_data path doesn't include Xform mods
 - Xform prim_filter is V1 placeholder
 - bif_core tests need USD DLLs (run via `setup_usd_env.ps1`)
@@ -80,13 +80,13 @@
 
 ## Next Session
 
-**Goal:** Install OIDN + visual test, continue M29 validation
+**Goal:** Visual denoise test, M29 validation
 
-1. Install Intel OIDN, set `OIDN_DIR`, test `cargo build --features oidn`
-2. Visual test: render scene, click Denoise, verify quality
-3. Visual test: batch render with denoise checkbox
-4. Investigate instancer prim_path nesting bug
-5. Ivar: apply Xform transforms to baked mesh_data
+1. Visual test: render scene → click Denoise (OIDN) → verify quality
+2. Visual test: batch render with denoise checkbox
+3. Investigate instancer prim_path nesting bug
+4. Ivar: apply Xform transforms to baked mesh_data
+5. USD asset authoring (Houdini component builder port)
 
 ---
 
@@ -114,4 +114,4 @@ cargo run -p bif_viewer --features oidn          # With OIDN denoising
 ---
 
 **Branch:** main
-**Ready for:** OIDN install + visual test, M29 validation, Ivar Xform fix
+**Ready for:** Visual denoise test, M29 validation, Ivar Xform fix
