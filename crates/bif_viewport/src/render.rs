@@ -439,8 +439,10 @@ impl Renderer {
                                     // Denoise button (feature-gated)
                                     #[cfg(feature = "oidn")]
                                     {
-                                        if self.ivar_state.is_denoised {
+                                        if self.ivar_state.denoise.is_denoised {
                                             ui.colored_label(egui::Color32::from_rgb(100, 200, 255), "Denoised");
+                                        } else if self.ivar_state.denoise.in_progress {
+                                            ui.colored_label(egui::Color32::YELLOW, "Denoising...");
                                         } else if ui.button("Denoise (OIDN)").clicked() {
                                             ctx.data_mut(|d| {
                                                 d.insert_temp(egui::Id::new("denoise_requested"), true)
@@ -2513,6 +2515,9 @@ impl Renderer {
 
                 // 2. Poll for scene build completion
                 self.poll_scene_build();
+
+                // 2b. Poll for async denoise completion
+                self.poll_denoise_result();
 
                 // 3. Poll for completed buckets / pass completion (before settle timer
                 //    so is_pass_in_flight() reflects actual state)

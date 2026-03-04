@@ -441,8 +441,7 @@ fn batch_render_loop(
         });
 
         // Render frame with AOVs
-        #[allow(unused_mut)]
-        let mut result = render_frame_with_aovs(
+        let result = render_frame_with_aovs(
             &camera,
             &current_world,
             &render_config,
@@ -464,9 +463,9 @@ fn batch_render_loop(
             return;
         }
 
-        // Denoise beauty pass before writing EXR
+        // Denoise beauty pass before writing EXR (shadows immutable `result`)
         #[cfg(feature = "oidn")]
-        if settings.aov_settings.denoise_output {
+        let result = if settings.aov_settings.denoise_output {
             let w = result.width as usize;
             let h = result.height as usize;
             match bif_renderer::denoise_beauty(
@@ -478,13 +477,19 @@ fn batch_render_loop(
             ) {
                 Ok(denoised) => {
                     log::info!("Batch frame {} denoised", frame);
-                    result.beauty = denoised.beauty;
+                    ExrOutput {
+                        beauty: denoised.beauty,
+                        ..result
+                    }
                 }
                 Err(e) => {
                     log::warn!("Batch denoise failed for frame {}: {}", frame, e);
+                    result
                 }
             }
-        }
+        } else {
+            result
+        };
 
         // Build output path
         let filename = format_frame_path(&settings.output_pattern, frame);
@@ -649,8 +654,12 @@ where
     } else {
         None
     };
-    // Albedo always captured (needed for OIDN denoising)
-    let mut albedo = Some(vec![[0.0f32; 3]; pixel_count]);
+    // Albedo only needed for OIDN denoising — skip allocation when disabled
+    let mut albedo = if aov_settings.denoise_output {
+        Some(vec![[0.0f32; 3]; pixel_count])
+    } else {
+        None
+    };
 
     // Track completed buckets for progress
     let completed = std::sync::atomic::AtomicUsize::new(0);

@@ -402,6 +402,7 @@ version = "0.1.0"
 dependencies = [
  "bif_core",
  "bif_math",
+ "bytemuck",
  "exr",
  "glam",
  "half",

@@ -296,6 +296,15 @@ impl Material for Dielectric {
     fn is_delta(&self) -> bool {
         true
     }
+
+    /// Schlick F0 reflectance at normal incidence.
+    ///
+    /// For glass (IOR 1.5) this returns ~0.04 — the fraction of light
+    /// reflected straight-on. Used as denoiser guide albedo.
+    fn albedo(&self, _u: f32, _v: f32) -> Color {
+        let f0 = ((1.0 - self.ior) / (1.0 + self.ior)).powi(2);
+        Color::splat(f0)
+    }
 }
 
 /// Diffuse light emitter.
@@ -420,11 +429,11 @@ mod tests {
     }
 
     #[test]
-    fn test_default_material_albedo() {
-        // Dielectric uses default (ONE)
+    fn test_dielectric_albedo_f0() {
+        // Dielectric returns Schlick F0: ((1-1.5)/(1+1.5))^2 ≈ 0.04
         let mat = Dielectric::new(1.5);
         let albedo = mat.albedo(0.0, 0.0);
-        assert!((albedo.x - 1.0).abs() < 0.001);
+        assert!((albedo.x - 0.04).abs() < 0.001);
     }
 
     #[test]

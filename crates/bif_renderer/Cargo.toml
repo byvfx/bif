@@ -22,3 +22,4 @@ exr = "1.72"
 half = "2.4"
 thiserror.workspace = true
 oidn = { version = "2.3", optional = true }
+bytemuck = "1"
