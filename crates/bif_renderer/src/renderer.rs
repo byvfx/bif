@@ -445,10 +445,12 @@ pub fn render_pixel_with_aovs(
     let mut pixel_color = Color::ZERO;
     let mut depth_sum = 0.0_f32;
     let mut normal_sum = Color::ZERO;
-    let mut albedo_sum = Color::ZERO;
     let mut alpha_sum = 0.0_f32;
     let mut hit_count = 0u32;
     let mut max_cache_samples = 0u32;
+    // First-hit albedo: material property, not stochastic — no averaging needed
+    let mut first_albedo = Color::ZERO;
+    let mut first_albedo_captured = false;
 
     for _ in 0..config.samples_per_pixel {
         let ray = camera.get_ray(x, y, rng);
@@ -457,11 +459,14 @@ pub fn render_pixel_with_aovs(
         alpha_sum += aov.alpha;
         max_cache_samples = max_cache_samples.max(aov.cache_samples);
 
-        // Only average depth/normal/albedo from rays that hit something
+        // Only average depth/normal from rays that hit something
         if aov.depth < f32::INFINITY {
             depth_sum += aov.depth;
             normal_sum += aov.normal;
-            albedo_sum += aov.albedo;
+            if !first_albedo_captured {
+                first_albedo = aov.albedo;
+                first_albedo_captured = true;
+            }
             hit_count += 1;
         }
     }
@@ -474,7 +479,7 @@ pub fn render_pixel_with_aovs(
             normal: (normal_sum / hit_count as f32).normalize(),
             alpha: avg_alpha,
             cache_samples: max_cache_samples,
-            albedo: albedo_sum / hit_count as f32,
+            albedo: first_albedo,
         }
     } else {
         AovData {

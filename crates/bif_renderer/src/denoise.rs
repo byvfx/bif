@@ -113,22 +113,9 @@ fn denoise_impl(
 
     let mut output = vec![0.0f32; pixel_count * 3];
 
-    // Flatten albedo/normal guide buffers
-    let albedo_flat: Option<Vec<f32>> = albedo.map(|a| {
-        let mut flat = Vec::with_capacity(pixel_count * 3);
-        for px in a {
-            flat.extend_from_slice(px);
-        }
-        flat
-    });
-
-    let normal_flat: Option<Vec<f32>> = normal.map(|n| {
-        let mut flat = Vec::with_capacity(pixel_count * 3);
-        for px in n {
-            flat.extend_from_slice(px);
-        }
-        flat
-    });
+    // Zero-copy flatten of guide buffers ([f32; 3] → &[f32])
+    let albedo_flat: Option<&[f32]> = albedo.map(|a| bytemuck::cast_slice::<[f32; 3], f32>(a));
+    let normal_flat: Option<&[f32]> = normal.map(|n| bytemuck::cast_slice::<[f32; 3], f32>(n));
 
     let device = oidn::Device::new();
 
@@ -143,7 +130,10 @@ fn denoise_impl(
         (Some(a), None) => {
             filter.albedo(a);
         }
-        _ => {}
+        (None, Some(_)) => {
+            log::warn!("OIDN: normal guide ignored — albedo required when using normals");
+        }
+        (None, None) => {}
     }
 
     filter

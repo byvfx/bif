@@ -10,7 +10,7 @@ use std::time::Instant;
 
 use bif_math::{Camera, Vec3};
 use bif_renderer::{
-    generate_buckets, Bucket, BucketResultWithAovs, BvhNode, ImageBuffer, RadianceCache,
+    generate_buckets, Bucket, BucketResultWithAovs, BvhNode, Color, ImageBuffer, RadianceCache,
     RadianceCacheConfig, DEFAULT_BUCKET_SIZE,
 };
 
@@ -315,6 +315,25 @@ pub enum IvarMessage {
     Cancelled,
 }
 
+/// Result sent from background denoise thread.
+pub struct DenoiseComplete {
+    /// Denoised beauty pixels.
+    pub beauty: Vec<Color>,
+}
+
+/// State for OIDN denoising (async thread + result channel).
+#[derive(Default)]
+pub struct DenoiseState {
+    /// Whether the current beauty buffer has been denoised.
+    pub is_denoised: bool,
+    /// Denoised beauty buffer (stored separately so raw can be recovered via AOV switch).
+    pub denoised_buffer: Option<Vec<Vec3>>,
+    /// Receiver for async denoise result.
+    pub receiver: Option<mpsc::Receiver<DenoiseComplete>>,
+    /// Whether a denoise is currently in progress on a background thread.
+    pub in_progress: bool,
+}
+
 /// Minimum interval (ms) between Ivar render restarts during interaction.
 const RESTART_THROTTLE_MS: u64 = 50;
 
@@ -393,10 +412,8 @@ pub struct IvarState {
     pub cache_heatmap_buffer: Option<Vec<u32>>,
     /// Frozen elapsed time (set on render completion so timer stops ticking).
     pub final_render_secs: Option<f32>,
-    /// Whether the current beauty buffer has been denoised.
-    pub is_denoised: bool,
-    /// Denoised beauty buffer (stored separately so raw can be recovered via AOV switch).
-    pub denoised_buffer: Option<Vec<Vec3>>,
+    /// OIDN denoise state (async thread + result).
+    pub denoise: DenoiseState,
 }
 
 impl Default for IvarState {
@@ -437,8 +454,7 @@ impl Default for IvarState {
             radiance_cache: None,
             cache_heatmap_buffer: None,
             final_render_secs: None,
-            is_denoised: false,
-            denoised_buffer: None,
+            denoise: DenoiseState::default(),
         }
     }
 }
@@ -461,8 +477,7 @@ impl IvarState {
         self.receiver = None;
         self.render_start_time = Some(Instant::now());
         self.final_render_secs = None;
-        self.is_denoised = false;
-        self.denoised_buffer = None;
+        self.denoise = DenoiseState::default();
 
         // Allocate AOV buffers
         self.alpha_buffer = Some(vec![0.0; pixel_count]);
@@ -533,8 +548,7 @@ impl IvarState {
         self.buckets_completed = 0;
         self.render_start_time = Some(Instant::now());
         self.final_render_secs = None;
-        self.is_denoised = false;
-        self.denoised_buffer = None;
+        self.denoise = DenoiseState::default();
 
         // Keep existing display pixels when dimensions match (avoids black flash
         // during camera orbit / transform drag). On dimension change, resample
@@ -942,25 +956,25 @@ mod tests {
     #[test]
     fn test_reset_render_clears_denoise_state() {
         let mut state = IvarState::default();
-        state.is_denoised = true;
-        state.denoised_buffer = Some(vec![Vec3::ONE; 100]);
+        state.denoise.is_denoised = true;
+        state.denoise.denoised_buffer = Some(vec![Vec3::ONE; 100]);
 
         state.reset_render(10, 10);
 
-        assert!(!state.is_denoised);
-        assert!(state.denoised_buffer.is_none());
+        assert!(!state.denoise.is_denoised);
+        assert!(state.denoise.denoised_buffer.is_none());
     }
 
     #[test]
     fn test_reset_accumulation_clears_denoise_state() {
         let mut state = IvarState::default();
         state.current_scale = 1;
-        state.is_denoised = true;
-        state.denoised_buffer = Some(vec![Vec3::ONE; 100]);
+        state.denoise.is_denoised = true;
+        state.denoise.denoised_buffer = Some(vec![Vec3::ONE; 100]);
 
         state.reset_accumulation(10, 10);
 
-        assert!(!state.is_denoised);
-        assert!(state.denoised_buffer.is_none());
+        assert!(!state.denoise.is_denoised);
+        assert!(state.denoise.denoised_buffer.is_none());
     }
 }

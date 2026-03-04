@@ -834,45 +834,94 @@ impl Renderer {
         }
     }
 
-    /// Denoise the current Ivar render result using OIDN.
+    /// Denoise the current Ivar render result using OIDN (async).
     ///
-    /// Reads averaged beauty, albedo, and normal buffers, calls `denoise_beauty()`,
-    /// and stores the result in `denoised_buffer`. Also copies denoised pixels
-    /// into `image_buffer` for display.
+    /// Clones beauty/albedo/normal buffers, spawns background thread with OIDN,
+    /// stores receiver in `denoise.receiver`. Call `poll_denoise_result()` each
+    /// frame to check for completion.
     pub(crate) fn denoise_ivar_result(&mut self) {
         let Some(ref image) = self.ivar_state.image_buffer else {
             log::warn!("No image buffer to denoise");
             return;
         };
+        if self.ivar_state.denoise.in_progress {
+            log::warn!("Denoise already in progress");
+            return;
+        }
+
         let width = image.width as usize;
         let height = image.height as usize;
+        let beauty = image.pixels.clone();
+        let albedo = self.ivar_state.albedo_buffer.clone();
+        let normal = self.ivar_state.normal_buffer.clone();
 
-        let beauty = &image.pixels;
-        let albedo = self.ivar_state.albedo_buffer.as_deref();
-        let normal = self.ivar_state.normal_buffer.as_deref();
+        let (tx, rx) = mpsc::channel();
+        self.ivar_state.denoise.receiver = Some(rx);
+        self.ivar_state.denoise.in_progress = true;
 
-        log::info!("Denoising {}x{} image...", width, height);
-        let start = std::time::Instant::now();
+        log::info!("Denoising {}x{} image (async)...", width, height);
 
-        match bif_renderer::denoise_beauty(width, height, beauty, albedo, normal) {
+        std::thread::spawn(move || {
+            let start = Instant::now();
+            match bif_renderer::denoise_beauty(
+                width,
+                height,
+                &beauty,
+                albedo.as_deref(),
+                normal.as_deref(),
+            ) {
+                Ok(result) => {
+                    let elapsed = start.elapsed();
+                    log::info!(
+                        "Denoise complete in {:.0}ms",
+                        elapsed.as_secs_f64() * 1000.0
+                    );
+                    let _ = tx.send(crate::ivar_state::DenoiseComplete {
+                        beauty: result.beauty,
+                    });
+                }
+                Err(e) => {
+                    log::error!("Denoise failed: {}", e);
+                    // Don't send — receiver will see channel closed
+                }
+            }
+        });
+    }
+
+    /// Poll for async denoise completion (call each frame).
+    pub(crate) fn poll_denoise_result(&mut self) {
+        if !self.ivar_state.denoise.in_progress {
+            return;
+        }
+
+        let Some(ref receiver) = self.ivar_state.denoise.receiver else {
+            return;
+        };
+
+        match receiver.try_recv() {
             Ok(result) => {
-                let elapsed = start.elapsed();
-                log::info!(
-                    "Denoise complete in {:.0}ms",
-                    elapsed.as_secs_f64() * 1000.0
-                );
-
                 // Copy denoised pixels into image_buffer for display
                 if let Some(ref mut image) = self.ivar_state.image_buffer {
                     for (i, &c) in result.beauty.iter().enumerate() {
-                        image.pixels[i] = c;
+                        if i < image.pixels.len() {
+                            image.pixels[i] = c;
+                        }
                     }
                 }
-                self.ivar_state.denoised_buffer = Some(result.beauty);
-                self.ivar_state.is_denoised = true;
+                self.ivar_state.denoise.denoised_buffer = Some(result.beauty);
+                self.ivar_state.denoise.is_denoised = true;
+                self.ivar_state.denoise.in_progress = false;
+                self.ivar_state.denoise.receiver = None;
+                log::info!("Denoise result applied to display");
             }
-            Err(e) => {
-                log::error!("Denoise failed: {}", e);
+            Err(mpsc::TryRecvError::Empty) => {
+                // Still in progress
+            }
+            Err(mpsc::TryRecvError::Disconnected) => {
+                // Thread finished without sending (error case)
+                self.ivar_state.denoise.in_progress = false;
+                self.ivar_state.denoise.receiver = None;
+                log::warn!("Denoise thread ended without result");
             }
         }
     }

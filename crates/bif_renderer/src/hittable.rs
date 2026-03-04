@@ -18,6 +18,8 @@ impl Material for DummyMaterial {
         None
     }
 
+    /// Returns ZERO (not the trait default ONE) because DummyMaterial
+    /// represents a non-surface placeholder used in `HitRecord::default()`.
     fn albedo(&self, _u: f32, _v: f32) -> crate::Color {
         crate::Color::ZERO
     }
