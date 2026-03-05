@@ -187,6 +187,7 @@ impl Renderer {
                     InstanceData {
                         model_matrix: model_matrix.to_cols_array_2d(),
                         material_id,
+                        tri_mat_offset: 0,
                     }
                 })
                 .collect()
@@ -208,6 +209,7 @@ impl Renderer {
                     InstanceData {
                         model_matrix: model_matrix.to_cols_array_2d(),
                         material_id,
+                        tri_mat_offset: 0,
                     }
                 })
                 .collect()
@@ -544,51 +546,63 @@ impl Renderer {
             );
         }
 
-        // Create per-prototype GPU data
-        let prototype_gpu_data: Vec<PrototypeGpuData> = scene
-            .prototypes
-            .iter()
-            .enumerate()
-            .map(|(proto_id, proto)| {
-                let md = MeshData::from_core_mesh(&proto.mesh);
+        // Create per-prototype GPU data and build compact triangle material buffer.
+        // The compact buffer contains one copy of each prototype's per-triangle material
+        // IDs (not duplicated per instance), keeping the GPU buffer small.
+        let mut compact_tri_mats: Vec<u32> = Vec::new();
+        let mut prototype_gpu_data: Vec<PrototypeGpuData> = Vec::new();
 
-                let vertex_buffer =
-                    self.device
-                        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                            label: Some(&format!("WS Proto {} VB", proto_id)),
-                            contents: bytemuck::cast_slice(&md.vertices),
-                            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                        });
+        for (proto_id, proto) in scene.prototypes.iter().enumerate() {
+            let md = MeshData::from_core_mesh(&proto.mesh);
+            let num_triangles = md.indices.len() as u32 / 3;
 
-                let index_buffer =
-                    self.device
-                        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                            label: Some(&format!("WS Proto {} IB", proto_id)),
-                            contents: bytemuck::cast_slice(&md.indices),
-                            usage: wgpu::BufferUsages::INDEX,
-                        });
-
-                let triangle_material_buffer = md.triangle_material_ids.as_ref().map(|tri_mats| {
-                    self.device
-                        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                            label: Some(&format!("WS Proto {} TMB", proto_id)),
-                            contents: bytemuck::cast_slice(tri_mats),
-                            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-                        })
+            let vertex_buffer = self
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some(&format!("WS Proto {} VB", proto_id)),
+                    contents: bytemuck::cast_slice(&md.vertices),
+                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
                 });
 
-                PrototypeGpuData {
-                    vertex_buffer,
-                    index_buffer,
-                    num_indices: md.indices.len() as u32,
-                    num_vertices: md.vertices.len() as u32,
-                    prototype_id: proto_id,
-                    mesh_idx: proto_id,
-                    triangle_material_buffer,
-                    vertices: md.vertices,
-                }
-            })
-            .collect();
+            let index_buffer = self
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some(&format!("WS Proto {} IB", proto_id)),
+                    contents: bytemuck::cast_slice(&md.indices),
+                    usage: wgpu::BufferUsages::INDEX,
+                });
+
+            let triangle_material_buffer = md.triangle_material_ids.as_ref().map(|tri_mats| {
+                self.device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some(&format!("WS Proto {} TMB", proto_id)),
+                        contents: bytemuck::cast_slice(tri_mats),
+                        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                    })
+            });
+
+            // Track offset into compact buffer before appending this prototype
+            let tri_mat_offset = compact_tri_mats.len() as u32;
+            if let Some(ref tri_mats) = md.triangle_material_ids {
+                compact_tri_mats.extend_from_slice(tri_mats);
+            } else {
+                // No per-face materials: fill with sentinel (0xFFFFFFFF)
+                compact_tri_mats.extend(std::iter::repeat_n(0xFFFFFFFFu32, num_triangles as usize));
+            }
+
+            prototype_gpu_data.push(PrototypeGpuData {
+                vertex_buffer,
+                index_buffer,
+                num_indices: md.indices.len() as u32,
+                num_vertices: md.vertices.len() as u32,
+                prototype_id: proto_id,
+                mesh_idx: proto_id,
+                triangle_material_buffer,
+                tri_mat_offset,
+                num_triangles,
+                vertices: md.vertices,
+            });
+        }
 
         // Combined mesh_data for single-draw fallback and Ivar.
         // Single prototype: raw mesh (Ivar applies per-instance transforms).
@@ -689,13 +703,15 @@ impl Renderer {
                     usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                 });
 
-        // Triangle material buffer
-        if let Some(ref tri_mats) = mesh_data.triangle_material_ids {
+        // Triangle material buffer — use compact buffer (one copy per prototype,
+        // not duplicated per instance) to stay within GPU buffer size limits.
+        let has_any_tri_mats = compact_tri_mats.iter().any(|&id| id != 0xFFFFFFFFu32);
+        if has_any_tri_mats {
             self.triangle_material_buffer =
                 self.device
                     .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("WS Triangle Material Buffer"),
-                        contents: bytemuck::cast_slice(tri_mats),
+                        label: Some("WS Triangle Material Buffer (compact)"),
+                        contents: bytemuck::cast_slice(&compact_tri_mats),
                         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                     });
             self.has_triangle_materials = true;
@@ -784,6 +800,7 @@ impl Renderer {
                     InstanceData {
                         model_matrix: model_matrix.to_cols_array_2d(),
                         material_id,
+                        tri_mat_offset: 0,
                     }
                 })
                 .collect()
@@ -806,6 +823,7 @@ impl Renderer {
                     InstanceData {
                         model_matrix: model_matrix.to_cols_array_2d(),
                         material_id,
+                        tri_mat_offset: 0,
                     }
                 })
                 .collect()
@@ -831,6 +849,7 @@ impl Renderer {
             instances.push(InstanceData {
                 model_matrix: model_matrix.to_cols_array_2d(),
                 material_id,
+                tri_mat_offset: 0,
             });
         }
 
@@ -1255,64 +1274,72 @@ impl Renderer {
             );
         }
 
-        // Create per-prototype GPU data
+        // Create per-prototype GPU data and build compact triangle material buffer
         let gpu_start = Instant::now();
-        let prototype_gpu_data: Vec<PrototypeGpuData> = scene
-            .prototypes
-            .iter()
-            .enumerate()
-            .map(|(proto_id, proto)| {
-                let mesh_data = MeshData::from_core_mesh(&proto.mesh);
+        let mut compact_tri_mats: Vec<u32> = Vec::new();
+        let mut prototype_gpu_data: Vec<PrototypeGpuData> = Vec::new();
 
-                let vertex_buffer =
+        for (proto_id, proto) in scene.prototypes.iter().enumerate() {
+            let mesh_data = MeshData::from_core_mesh(&proto.mesh);
+            let num_triangles = mesh_data.indices.len() as u32 / 3;
+
+            let vertex_buffer = self
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some(&format!("Prototype {} Vertex Buffer", proto_id)),
+                    contents: bytemuck::cast_slice(&mesh_data.vertices),
+                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                });
+
+            let index_buffer = self
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some(&format!("Prototype {} Index Buffer", proto_id)),
+                    contents: bytemuck::cast_slice(&mesh_data.indices),
+                    usage: wgpu::BufferUsages::INDEX,
+                });
+
+            let triangle_material_buffer =
+                mesh_data.triangle_material_ids.as_ref().map(|tri_mats| {
                     self.device
                         .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                            label: Some(&format!("Prototype {} Vertex Buffer", proto_id)),
-                            contents: bytemuck::cast_slice(&mesh_data.vertices),
-                            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                        });
+                            label: Some(&format!(
+                                "Prototype {} Triangle Material Buffer",
+                                proto_id
+                            )),
+                            contents: bytemuck::cast_slice(tri_mats),
+                            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                        })
+                });
 
-                let index_buffer =
-                    self.device
-                        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                            label: Some(&format!("Prototype {} Index Buffer", proto_id)),
-                            contents: bytemuck::cast_slice(&mesh_data.indices),
-                            usage: wgpu::BufferUsages::INDEX,
-                        });
+            // Track offset into compact buffer before appending
+            let tri_mat_offset = compact_tri_mats.len() as u32;
+            if let Some(ref tri_mats) = mesh_data.triangle_material_ids {
+                compact_tri_mats.extend_from_slice(tri_mats);
+            } else {
+                compact_tri_mats.extend(std::iter::repeat_n(0xFFFFFFFFu32, num_triangles as usize));
+            }
 
-                // Per-triangle material buffer if present
-                let triangle_material_buffer =
-                    mesh_data.triangle_material_ids.as_ref().map(|tri_mats| {
-                        self.device
-                            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                                label: Some(&format!(
-                                    "Prototype {} Triangle Material Buffer",
-                                    proto_id
-                                )),
-                                contents: bytemuck::cast_slice(tri_mats),
-                                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-                            })
-                    });
+            log::debug!(
+                "Prototype {}: {} vertices, {} indices",
+                proto_id,
+                mesh_data.vertices.len(),
+                mesh_data.indices.len()
+            );
 
-                log::debug!(
-                    "Prototype {}: {} vertices, {} indices",
-                    proto_id,
-                    mesh_data.vertices.len(),
-                    mesh_data.indices.len()
-                );
-
-                PrototypeGpuData {
-                    vertex_buffer,
-                    index_buffer,
-                    num_indices: mesh_data.indices.len() as u32,
-                    num_vertices: mesh_data.vertices.len() as u32,
-                    prototype_id: proto_id,
-                    mesh_idx: proto_id,
-                    triangle_material_buffer,
-                    vertices: mesh_data.vertices.clone(),
-                }
-            })
-            .collect();
+            prototype_gpu_data.push(PrototypeGpuData {
+                vertex_buffer,
+                index_buffer,
+                num_indices: mesh_data.indices.len() as u32,
+                num_vertices: mesh_data.vertices.len() as u32,
+                prototype_id: proto_id,
+                mesh_idx: proto_id,
+                triangle_material_buffer,
+                tri_mat_offset,
+                num_triangles,
+                vertices: mesh_data.vertices.clone(),
+            });
+        }
 
         // For backwards compatibility, also create a combined mesh_data for single-draw fallback
         // and for Ivar rendering (which expects a single mesh)
@@ -1390,17 +1417,18 @@ impl Renderer {
                     usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                 });
 
-        // Create triangle material buffer from mesh data
-        if let Some(ref tri_mats) = mesh_data.triangle_material_ids {
+        // Triangle material buffer — use compact buffer (one copy per prototype)
+        let has_any_tri_mats = compact_tri_mats.iter().any(|&id| id != 0xFFFFFFFFu32);
+        if has_any_tri_mats {
             log::info!(
-                "Creating triangle material buffer with {} entries",
-                tri_mats.len()
+                "Creating compact triangle material buffer with {} entries",
+                compact_tri_mats.len()
             );
             self.triangle_material_buffer =
                 self.device
                     .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("Triangle Material Buffer"),
-                        contents: bytemuck::cast_slice(tri_mats),
+                        label: Some("Triangle Material Buffer (compact)"),
+                        contents: bytemuck::cast_slice(&compact_tri_mats),
                         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                     });
             self.has_triangle_materials = true;
@@ -1500,6 +1528,7 @@ impl Renderer {
                     InstanceData {
                         model_matrix: model_matrix.to_cols_array_2d(),
                         material_id,
+                        tri_mat_offset: 0,
                     }
                 })
                 .collect()
@@ -1521,6 +1550,7 @@ impl Renderer {
                     InstanceData {
                         model_matrix: model_matrix.to_cols_array_2d(),
                         material_id,
+                        tri_mat_offset: 0,
                     }
                 })
                 .collect()

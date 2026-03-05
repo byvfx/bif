@@ -744,6 +744,7 @@ impl Renderer {
         let dummy_instance = InstanceData {
             model_matrix: Mat4::IDENTITY.to_cols_array_2d(),
             material_id: 0,
+            tri_mat_offset: 0,
         };
 
         // Preallocate instance buffer for up to MAX_INSTANCES (100K)

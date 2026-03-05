@@ -26,7 +26,40 @@ You Create a new DCC that is inspired by Clarisse / Houdini, focused on VFX scen
 - **Scene browser:** CompositeProvider merges USD stage + procedural prims via CachedSceneGraph
 - **Export:** `export_scene()` in `bif_core/src/usd/export.rs`
 - **Renderer:** `Renderer` struct (~75 fields, God object — cleanup deferred)
-- **274+ tests** across crates
+- **160+ tests** across crates (95+ without USD env, full suite needs `setup_usd_env.ps1`)
+
+## Quick Commands
+
+```bash
+# Build
+cargo build                    # Dev (~10s)
+cargo build --features oiio    # With OpenImageIO
+cargo build --features oidn    # With Intel OIDN denoising
+
+# Test
+cargo test -p bif_math         # 41 tests (no deps)
+cargo test -p bif_renderer     # 68+ tests (includes denoise, materials)
+cargo test -p bif_viewport     # 24 tests
+. .\setup_usd_env.ps1          # Required before bif_core tests
+cargo test -p bif_core -- --test-threads=1  # 27+ tests (needs USD DLLs)
+
+# Run
+cargo run -p bif_viewer
+cargo run -p bif_viewer --features oidn  # With denoising
+
+# Checks
+cargo clippy -- -D warnings
+cargo fmt --check
+```
+
+## Gotchas
+
+- **USD env required:** `setup_usd_env.ps1` must be sourced before running bif_core tests or loading USD scenes
+- **bif_core tests are single-threaded:** USD C++ bridge is not thread-safe, use `--test-threads=1`
+- **C++ bridge builds via CMake:** `bif_core/build.rs` triggers CMake for `cpp/usd_bridge/` — needs Visual Studio 2022 C++ workload
+- **OIDN DLLs must be in PATH:** Set `OIDN_DIR` and add its `bin/` to PATH for `--features oidn`
+- **Feature flags are optional:** `oiio` and `oidn` are off by default, UI gracefully degrades without them
+- **`test_should_restart_no_render`:** Known timing-sensitive flaky test
 
 ## Related Docs
 
@@ -125,7 +158,7 @@ Before diving into code:
 - No compiler warnings (`cargo build`)
 - Clippy passes (`cargo clippy -- -D warnings`)
 - Code formatted (`cargo fmt --check`)
-- Make new devolog entry
+- Make new devlog entry
 - Update SESSION_HANDOFF.md if needed
 - Update MILESTONES.md if needed
 - update README.md if needed
@@ -135,7 +168,7 @@ Before diving into code:
 
 ## After Committing
 
-- clear context and run the vfx-code-reviewer tool on the commit
+- Clear context and run `/vfx-code-reviewer` skill on the commit (reviews for VFX production patterns)
 
 ## Don'ts
 

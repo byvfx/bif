@@ -1748,7 +1748,6 @@ impl Renderer {
                             }
                         }
 
-                        self.materials_dirty = true;
                         match self.load_primitive(kind, size) {
                             Ok(proto_id) => {
                                 // Update prototype name from node's prim_path (used during export)
