@@ -97,6 +97,7 @@ struct VertexInput {
     @location(7) model_matrix_2: vec4<f32>,
     @location(8) model_matrix_3: vec4<f32>,
     @location(9) instance_material_id: u32,
+    @location(10) tri_mat_offset: u32,
 }
 
 struct VertexOutput {
@@ -106,6 +107,7 @@ struct VertexOutput {
     @location(2) world_pos: vec3<f32>,     // World-space position
     @location(3) @interpolate(flat) instance_material_id: u32,
     @location(4) @interpolate(flat) instance_idx: u32,
+    @location(5) @interpolate(flat) tri_mat_offset: u32,
 }
 
 @vertex
@@ -129,6 +131,7 @@ fn vs_main(in: VertexInput, @builtin(instance_index) instance_index: u32) -> Ver
     out.uv = in.uv;
     out.instance_material_id = in.instance_material_id;
     out.instance_idx = instance_index;
+    out.tri_mat_offset = in.tri_mat_offset;
 
     return out;
 }
@@ -266,7 +269,7 @@ fn fs_main(
     @builtin(primitive_index) primitive_id: u32,
 ) -> @location(0) vec4<f32> {
     // Material lookup
-    var material_id = triangle_materials[primitive_id];
+    var material_id = triangle_materials[primitive_id + in.tri_mat_offset];
     if (material_id == 0xFFFFFFFFu) {
         material_id = in.instance_material_id;
     }

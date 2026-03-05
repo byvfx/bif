@@ -107,6 +107,7 @@ impl Renderer {
             instances.push(InstanceData {
                 model_matrix: model_matrix.to_cols_array_2d(),
                 material_id,
+                tri_mat_offset: 0,
             });
         }
 

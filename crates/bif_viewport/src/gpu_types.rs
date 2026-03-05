@@ -466,16 +466,21 @@ impl Vertex {
 pub struct InstanceData {
     pub model_matrix: [[f32; 4]; 4],
     pub material_id: u32,
+    /// Offset into the compact triangle material buffer for this instance's prototype.
+    /// The shader adds this to `primitive_index` to index the correct prototype's
+    /// per-triangle material IDs.
+    pub tri_mat_offset: u32,
 }
 
 impl InstanceData {
-    // Shifted to slots 5-9 to make room for vertex material_id at slot 4
-    const ATTRIBS: [wgpu::VertexAttribute; 5] = wgpu::vertex_attr_array![
+    // Shifted to slots 5-10 to make room for vertex material_id at slot 4
+    const ATTRIBS: [wgpu::VertexAttribute; 6] = wgpu::vertex_attr_array![
         5 => Float32x4,
         6 => Float32x4,
         7 => Float32x4,
         8 => Float32x4,
-        9 => Uint32
+        9 => Uint32,
+        10 => Uint32
     ];
 
     pub fn desc<'a>() -> wgpu::VertexBufferLayout<'a> {
@@ -516,6 +521,10 @@ pub struct PrototypeGpuData {
     pub mesh_idx: usize,
     /// Per-triangle material IDs buffer (optional, for GeomSubsets)
     pub triangle_material_buffer: Option<wgpu::Buffer>,
+    /// Offset into the compact triangle material buffer for this prototype.
+    pub tri_mat_offset: u32,
+    /// Number of triangles in this prototype (for compact buffer building).
+    pub num_triangles: u32,
     /// Original vertices (CPU-side) for vertex animation updates.
     /// Stores normals/UVs so we can update just positions.
     pub vertices: Vec<Vertex>,
@@ -555,6 +564,7 @@ mod tests {
         scratch.near_instances.push(InstanceData {
             model_matrix: [[0.0; 4]; 4],
             material_id: 0,
+            tri_mat_offset: 0,
         });
         scratch.clear();
         assert!(scratch.visible_with_distance.is_empty());

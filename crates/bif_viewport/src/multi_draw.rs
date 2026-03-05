@@ -67,6 +67,12 @@ impl MultiDrawState {
                 .push(InstanceData {
                     model_matrix: model_matrix.to_cols_array_2d(),
                     material_id,
+                    tri_mat_offset: self
+                        .prototype_gpu_data
+                        .iter()
+                        .find(|p| p.prototype_id == prototype_id)
+                        .map(|p| p.tri_mat_offset)
+                        .unwrap_or(0),
                 });
         }
     }

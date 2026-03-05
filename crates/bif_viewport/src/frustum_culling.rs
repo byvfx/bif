@@ -101,6 +101,7 @@ pub fn update_visible_instances(
         scratch.near_instances.push(InstanceData {
             model_matrix: transform.to_cols_array_2d(),
             material_id,
+            tri_mat_offset: 0,
         });
     }
 
@@ -110,6 +111,7 @@ pub fn update_visible_instances(
         scratch.far_instances.push(InstanceData {
             model_matrix: transform.to_cols_array_2d(),
             material_id,
+            tri_mat_offset: 0,
         });
     }
 

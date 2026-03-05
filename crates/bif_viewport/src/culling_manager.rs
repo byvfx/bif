@@ -238,6 +238,7 @@ impl CullingManager {
             self.scratch.near_instances.push(InstanceData {
                 model_matrix: transform.to_cols_array_2d(),
                 material_id,
+                tri_mat_offset: 0,
             });
         }
 
@@ -247,6 +248,7 @@ impl CullingManager {
             self.scratch.far_instances.push(InstanceData {
                 model_matrix: transform.to_cols_array_2d(),
                 material_id,
+                tri_mat_offset: 0,
             });
         }
 

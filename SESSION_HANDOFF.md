@@ -1,7 +1,7 @@
-# Session Handoff - March 3, 2026
+# Session Handoff - March 4, 2026
 
-**Last Updated:** OIDN installed + tested, setup_usd_env.ps1 updated
-**Next Milestone:** M29 validation, visual denoise test, Ivar Xform
+**Last Updated:** VFX review fixes: async denoise, Dielectric F0, DenoiseState
+**Next Milestone:** Visual denoise test, VFX code review, Ivar Xform
 **Project:** BIF - VFX Scene Assembler & Renderer
 
 ---
@@ -18,6 +18,19 @@
 ---
 
 ## Recent Work
+
+### VFX Review Fixes — OIDN (Mar 4, 2026)
+
+| Change | Details |
+|--------|---------|
+| `denoise.rs` | Warn normal-without-albedo, bytemuck `cast_slice` zero-copy (no manual f32→u8) |
+| `material.rs` | `Dielectric::albedo()` Schlick F0 `(1-ior)/(1+ior)` squared |
+| `hittable.rs` | `DummyMaterial::albedo()` doc comment explaining white default |
+| `renderer.rs` | First-hit albedo only (`depth == 0`), skip recursive bounces |
+| `batch_render.rs` | Conditional albedo alloc (only when OIDN enabled + denoise checked), removed `allow(unused_mut)` |
+| `ivar_state.rs` | `DenoiseState` sub-struct extracted from `IvarState` (channel, thread handle, flag) |
+| `ivar_build.rs` | Async denoise: spawns thread + channel + poll loop instead of blocking UI |
+| `render.rs` | Poll denoise result, show "Denoising..." label in viewport |
 
 ### M26 OIDN Denoising (Mar 3, 2026)
 
@@ -55,9 +68,9 @@
 
 **Denoising (M26):**
 - Feature-gated OIDN: `cargo build --features oidn`
-- Albedo AOV captured from all materials (Lambertian, Metal, Disney, etc.)
-- Viewport: render → click "Denoise (OIDN)" → denoised beauty display
-- Batch: checkbox auto-denoises before EXR write
+- Albedo AOV captured from all materials (Lambertian, Metal, Disney, Dielectric, etc.)
+- Viewport: render → click "Denoise (OIDN)" → async denoise with "Denoising..." label
+- Batch: checkbox auto-denoises before EXR write (conditional albedo alloc)
 - Without OIDN feature: UI shows grayed-out button, `DenoiseError::NotEnabled`
 
 **USD Export (M29):**
@@ -80,13 +93,14 @@
 
 ## Next Session
 
-**Goal:** Visual denoise test, M29 validation
+**Goal:** Visual denoise test, VFX code review, Ivar Xform
 
-1. Visual test: render scene → click Denoise (OIDN) → verify quality
+1. Visual test: render scene → click Denoise (OIDN) → verify async denoise quality
 2. Visual test: batch render with denoise checkbox
-3. Investigate instancer prim_path nesting bug
-4. Ivar: apply Xform transforms to baked mesh_data
-5. USD asset authoring (Houdini component builder port)
+3. VFX code review on commit `71aae62`
+4. Investigate instancer prim_path nesting bug
+5. Ivar: apply Xform transforms to baked mesh_data
+6. USD asset authoring (Houdini component builder port)
 
 ---
 
@@ -114,4 +128,4 @@ cargo run -p bif_viewer --features oidn          # With OIDN denoising
 ---
 
 **Branch:** main
-**Ready for:** Visual denoise test, M29 validation, Ivar Xform fix
+**Ready for:** Visual denoise test, VFX code review on `71aae62`, Ivar Xform fix
