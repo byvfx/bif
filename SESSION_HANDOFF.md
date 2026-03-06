@@ -23,7 +23,7 @@
 
 | Change | Details |
 |--------|---------|
-| `build.rs` | Check vcpkg.cmake toolchain file (not just dir), pass resolved path to `build_usd_bridge()` |
+| `build.rs` | Check vcpkg.cmake + `pxr/pxr.h` header (not just dir), pass resolved path to `build_usd_bridge()` |
 | `vcpkg.json` | Removed `pxr` (not a standard vcpkg port), keep `openimageio` for release job |
 
 ### Fix CI Check Job (Mar 6, 2026)
