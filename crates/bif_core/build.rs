@@ -14,23 +14,30 @@ fn main() {
     #[cfg(feature = "oiio")]
     build_oiio_bridge();
 
-    // Skip USD bridge build if vcpkg toolchain not available
-    let vcpkg_toolchain = env::var("VCPKG_ROOT")
-        .map(|r| format!("{}/scripts/buildsystems/vcpkg.cmake", r))
+    // Find vcpkg root with USD installed (toolchain + pxr headers must exist)
+    let vcpkg_root = env::var("VCPKG_ROOT")
         .ok()
-        .filter(|p| Path::new(p).exists())
-        .or_else(|| {
+        .into_iter()
+        .chain(
             ["D:\\__projects\\_programming\\vcpkg", "C:\\vcpkg"]
                 .iter()
-                .map(|r| format!("{}/scripts/buildsystems/vcpkg.cmake", r))
-                .find(|p| Path::new(p).exists())
+                .map(|s| s.to_string()),
+        )
+        .find(|root| {
+            Path::new(root)
+                .join("scripts/buildsystems/vcpkg.cmake")
+                .exists()
+                && Path::new(root)
+                    .join("installed/x64-windows/include/pxr/pxr.h")
+                    .exists()
         });
 
-    if vcpkg_toolchain.is_none() {
-        println!("cargo:warning=vcpkg toolchain not found, skipping USD bridge build");
+    if vcpkg_root.is_none() {
+        println!("cargo:warning=vcpkg with USD not found, skipping USD bridge build");
         return;
     }
-    let vcpkg_toolchain = vcpkg_toolchain.unwrap();
+    let vcpkg_root = vcpkg_root.unwrap();
+    let vcpkg_toolchain = format!("{}/scripts/buildsystems/vcpkg.cmake", vcpkg_root);
 
     // Paths
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
