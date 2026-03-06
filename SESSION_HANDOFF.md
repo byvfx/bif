@@ -1,6 +1,6 @@
 # Session Handoff - March 6, 2026
 
-**Last Updated:** Fix CI check job (build.rs vcpkg skip + remove USD test steps)
+**Last Updated:** Fix CI: vcpkg toolchain detection + vcpkg install in check job
 **Next Milestone:** Visual denoise test, VFX code review, Ivar Xform
 **Project:** BIF - VFX Scene Assembler & Renderer
 
@@ -18,6 +18,13 @@
 ---
 
 ## Recent Work
+
+### Fix CI vcpkg detection (Mar 6, 2026)
+
+| Change | Details |
+|--------|---------|
+| `build.rs` | Check vcpkg.cmake toolchain file (not just dir), pass resolved path to `build_usd_bridge()` |
+| `ci.yml` | Add `lukka/run-vcpkg@v11` to check job (installs USD/OIIO, sets VCPKG_ROOT) |
 
 ### Fix CI Check Job (Mar 6, 2026)
 
