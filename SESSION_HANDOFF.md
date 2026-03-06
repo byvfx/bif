@@ -1,6 +1,6 @@
-# Session Handoff - March 4, 2026
+# Session Handoff - March 5, 2026
 
-**Last Updated:** VFX review fixes: async denoise, Dielectric F0, DenoiseState
+**Last Updated:** CI/CD pipeline + CHANGELOG automation
 **Next Milestone:** Visual denoise test, VFX code review, Ivar Xform
 **Project:** BIF - VFX Scene Assembler & Renderer
 
@@ -18,6 +18,16 @@
 ---
 
 ## Recent Work
+
+### CI/CD Pipeline + CHANGELOG (Mar 5, 2026)
+
+| Change | Details |
+|--------|---------|
+| `ci.yml` | GitHub Actions: `check` (fmt/clippy/test) on push/PR, `release` (vcpkg+OIDN build + DLL bundle) on v* tags |
+| `vcpkg.json` | Manifest for USD (`pxr`) + OIIO (`openimageio`) deps |
+| `CHANGELOG.md` | Keep a Changelog format, auto-updated during `/bif-commit`, used for release notes |
+| `bif-commit.md` | Added CHANGELOG update step, co-author → Opus 4.6 |
+| `CLAUDE.md` | CHANGELOG added to pre-commit checklist |
 
 ### VFX Review Fixes — OIDN (Mar 4, 2026)
 
