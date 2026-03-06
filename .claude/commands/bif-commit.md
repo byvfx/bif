@@ -37,11 +37,12 @@ Based on the diff above:
 - Commit with message ending in:
 
  txt```
-  Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>
+  Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
 
  txt```
 
 ### 4. Update Documentation and Devlog
+- Update `CHANGELOG.md`: add entries under `## [Unreleased]` in the appropriate section (Added/Changed/Fixed). Keep entries concise (one line each). Do NOT create a new version heading — that happens at release time.
 - Update `MILESTONES.md` if relevant (e.g. mark milestone complete, update next steps)
 - Update `SESSION_HANDOFF.md` if relevant (e.g. note any important context for next session)
 - Add a new entry to `devlog/DEVLOG_YYYY-MM-DD.md` with today's date, summarizing the session:
