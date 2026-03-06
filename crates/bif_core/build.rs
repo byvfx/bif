@@ -14,15 +14,23 @@ fn main() {
     #[cfg(feature = "oiio")]
     build_oiio_bridge();
 
-    // Skip USD bridge build if vcpkg not available (allows clippy without USD env)
-    let has_vcpkg = env::var("VCPKG_ROOT").is_ok()
-        || Path::new("D:\\__projects\\_programming\\vcpkg").exists()
-        || Path::new("C:\\vcpkg").exists();
+    // Skip USD bridge build if vcpkg toolchain not available
+    let vcpkg_toolchain = env::var("VCPKG_ROOT")
+        .map(|r| format!("{}/scripts/buildsystems/vcpkg.cmake", r))
+        .ok()
+        .filter(|p| Path::new(p).exists())
+        .or_else(|| {
+            ["D:\\__projects\\_programming\\vcpkg", "C:\\vcpkg"]
+                .iter()
+                .map(|r| format!("{}/scripts/buildsystems/vcpkg.cmake", r))
+                .find(|p| Path::new(p).exists())
+        });
 
-    if !has_vcpkg {
-        println!("cargo:warning=vcpkg not found, skipping USD bridge build (clippy-only mode)");
+    if vcpkg_toolchain.is_none() {
+        println!("cargo:warning=vcpkg toolchain not found, skipping USD bridge build");
         return;
     }
+    let vcpkg_toolchain = vcpkg_toolchain.unwrap();
 
     // Paths
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
@@ -56,7 +64,7 @@ fn main() {
 
     if needs_rebuild {
         println!("cargo:warning=Building USD bridge via CMake...");
-        build_usd_bridge(&cpp_dir, &build_dir);
+        build_usd_bridge(&cpp_dir, &build_dir, &vcpkg_toolchain);
     } else {
         println!("cargo:warning=USD bridge up to date, skipping CMake");
     }
@@ -186,17 +194,12 @@ fn find_cmake() -> String {
 }
 
 /// Build the USD bridge using CMake.
-fn build_usd_bridge(cpp_dir: &Path, build_dir: &Path) {
+fn build_usd_bridge(cpp_dir: &Path, build_dir: &Path, toolchain: &str) {
     // Create build directory
     fs::create_dir_all(build_dir).expect("Failed to create build directory");
 
     // Find CMake
     let cmake = find_cmake();
-
-    // Find vcpkg toolchain file
-    let vcpkg_root = env::var("VCPKG_ROOT")
-        .unwrap_or_else(|_| "D:\\__projects\\_programming\\vcpkg".to_string());
-    let toolchain = format!("{}/scripts/buildsystems/vcpkg.cmake", vcpkg_root);
 
     // CMake configure
     let configure_status = Command::new(&cmake)
