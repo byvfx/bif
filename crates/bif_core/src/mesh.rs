@@ -172,11 +172,11 @@ impl Mesh {
         };
 
         if should_compute {
-            if self.normals.is_some() {
+            if let Some(normals) = &self.normals {
                 // Only log at debug level - this is expected for face-varying normals from USD
                 log::debug!(
                     "Normals array length ({}) doesn't match vertex count ({}), computing smooth normals",
-                    self.normals.as_ref().unwrap().len(),
+                    normals.len(),
                     self.positions.len()
                 );
             }
