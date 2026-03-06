@@ -1,0 +1,137 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    name: Check
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Format
+        run: cargo fmt --check
+
+      - name: Clippy
+        run: cargo clippy -p bif_math -p bif_renderer -p bif_viewport -- -D warnings
+
+      - name: Test bif_math
+        run: cargo test -p bif_math
+
+      - name: Test bif_renderer
+        run: cargo test -p bif_renderer
+
+      - name: Test bif_viewport
+        run: cargo test -p bif_viewport
+
+  release:
+    name: Release
+    runs-on: windows-latest
+    needs: check
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install vcpkg deps
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgGitCommitId: "a42af01b72c28a8e1d7b48107b33e4f286a55ef6"
+          runVcpkgInstall: true
+
+      - name: Download OIDN SDK
+        shell: pwsh
+        run: |
+          $oidnVersion = "2.4.1"
+          $oidnUrl = "https://github.com/RenderKit/oidn/releases/download/v${oidnVersion}/oidn-${oidnVersion}.x64.windows.zip"
+          $oidnZip = "$env:RUNNER_TEMP\oidn.zip"
+          $oidnDir = "$env:RUNNER_TEMP\oidn-${oidnVersion}.x64.windows"
+          Invoke-WebRequest -Uri $oidnUrl -OutFile $oidnZip
+          Expand-Archive -Path $oidnZip -DestinationPath $env:RUNNER_TEMP
+          echo "OIDN_DIR=$oidnDir" >> $env:GITHUB_ENV
+          echo "$oidnDir\bin" >> $env:GITHUB_PATH
+
+      - name: Set env
+        shell: pwsh
+        run: |
+          $vcpkgBin = "$env:VCPKG_ROOT\installed\x64-windows\bin"
+          echo "$vcpkgBin" >> $env:GITHUB_PATH
+
+      - name: Build release
+        run: cargo build --release -p bif_viewer --features oiio,oidn
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $staging = "$env:RUNNER_TEMP\bif-release"
+          New-Item -ItemType Directory -Force -Path $staging | Out-Null
+
+          # Copy main binary
+          Copy-Item "target\release\bif_viewer.exe" $staging
+
+          # Copy USD + OIIO DLLs from vcpkg
+          $vcpkgBin = "$env:VCPKG_ROOT\installed\x64-windows\bin"
+          if (Test-Path $vcpkgBin) {
+            Get-ChildItem "$vcpkgBin\usd_*.dll" | Copy-Item -Destination $staging
+            Get-ChildItem "$vcpkgBin\tbb12.dll" -ErrorAction SilentlyContinue | Copy-Item -Destination $staging
+            Get-ChildItem "$vcpkgBin\OpenImageIO*.dll" -ErrorAction SilentlyContinue | Copy-Item -Destination $staging
+            Get-ChildItem "$vcpkgBin\OpenEXR*.dll" -ErrorAction SilentlyContinue | Copy-Item -Destination $staging
+          }
+
+          # Copy OIDN DLLs
+          $oidnBin = "$env:OIDN_DIR\bin"
+          if (Test-Path $oidnBin) {
+            Get-ChildItem "$oidnBin\OpenImageDenoise*.dll" | Copy-Item -Destination $staging
+            # tbb12.dll from OIDN (skip if already copied)
+            Get-ChildItem "$oidnBin\tbb12.dll" -ErrorAction SilentlyContinue | ForEach-Object {
+              if (-not (Test-Path "$staging\tbb12.dll")) {
+                Copy-Item $_.FullName -Destination $staging
+              }
+            }
+          }
+
+          Compress-Archive -Path "$staging\*" -DestinationPath "bif-windows-x64.zip"
+
+      - name: Extract release notes from CHANGELOG
+        id: notes
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $version = $tag -replace '^v', ''
+          $changelog = Get-Content CHANGELOG.md -Raw
+          # Extract section for this version, or Unreleased if not found
+          if ($changelog -match "(?s)## \[$version\]\s*\n(.*?)(?=\n## \[|$)") {
+            $body = $Matches[1].Trim()
+          } elseif ($changelog -match "(?s)## \[Unreleased\]\s*\n(.*?)(?=\n## \[|$)") {
+            $body = $Matches[1].Trim()
+          } else {
+            $body = "Release $tag"
+          }
+          "body<<EOF" >> $env:GITHUB_OUTPUT
+          $body >> $env:GITHUB_OUTPUT
+          "EOF" >> $env:GITHUB_OUTPUT
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          body: ${{ steps.notes.outputs.body }}
+          files: bif-windows-x64.zip

@@ -158,6 +158,7 @@ Before diving into code:
 - No compiler warnings (`cargo build`)
 - Clippy passes (`cargo clippy -- -D warnings`)
 - Code formatted (`cargo fmt --check`)
+- Update CHANGELOG.md `## [Unreleased]` section
 - Make new devlog entry
 - Update SESSION_HANDOFF.md if needed
 - Update MILESTONES.md if needed
