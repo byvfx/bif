@@ -32,12 +32,6 @@ jobs:
       - name: Test bif_math
         run: cargo test -p bif_math
 
-      - name: Test bif_renderer
-        run: cargo test -p bif_renderer
-
-      - name: Test bif_viewport
-        run: cargo test -p bif_viewport
-
   release:
     name: Release
     runs-on: windows-latest

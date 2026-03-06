@@ -13,3 +13,5 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 
 ### Fixed
+- CI: `bif_core` build.rs no longer panics when vcpkg not installed (graceful skip for clippy-only mode)
+- CI: removed bif_renderer/bif_viewport test steps that can't link without USD env

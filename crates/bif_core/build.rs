@@ -13,6 +13,17 @@ fn main() {
     // Build OIIO bridge if feature enabled
     #[cfg(feature = "oiio")]
     build_oiio_bridge();
+
+    // Skip USD bridge build if vcpkg not available (allows clippy without USD env)
+    let has_vcpkg = env::var("VCPKG_ROOT").is_ok()
+        || Path::new("D:\\__projects\\_programming\\vcpkg").exists()
+        || Path::new("C:\\vcpkg").exists();
+
+    if !has_vcpkg {
+        println!("cargo:warning=vcpkg not found, skipping USD bridge build (clippy-only mode)");
+        return;
+    }
+
     // Paths
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
     let workspace_root = Path::new(&manifest_dir).parent().unwrap().parent().unwrap();
