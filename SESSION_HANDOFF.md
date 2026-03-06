@@ -24,7 +24,7 @@
 | Change | Details |
 |--------|---------|
 | `build.rs` | Check vcpkg.cmake toolchain file (not just dir), pass resolved path to `build_usd_bridge()` |
-| `ci.yml` | Add `lukka/run-vcpkg@v11` to check job (installs USD/OIIO, sets VCPKG_ROOT) |
+| `vcpkg.json` | Removed `pxr` (not a standard vcpkg port), keep `openimageio` for release job |
 
 ### Fix CI Check Job (Mar 6, 2026)
 
