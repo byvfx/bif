@@ -108,13 +108,13 @@ bif/
 
 ---
 
-## Statistics (Milestone 23)
+## Statistics (Milestone 26)
 
 | Metric | Value |
 |--------|-------|
 | Total LOC | ~12,000 |
 | Tests Passing | 274+ |
-| Milestones Complete | 23 |
+| Milestones Complete | 23 + M26 |
 | Node Types | 10 |
 | Build Time (dev) | ~5s |
 | Runtime FPS | 60+ (VSync) |
@@ -227,7 +227,6 @@ See [MILESTONES.md](MILESTONES.md) for complete history and future plans.
 ### Next Up
 
 - **Milestone 29:** USD Export (in-progress — most phases done)
-- **Milestone 26:** Denoising (OIDN) — albedo AOV pipeline + OIDN integration
 - **Milestone 25:** Volumes/OpenVDB
 
 ### Future
@@ -260,5 +259,5 @@ MIT License - See [LICENSE](LICENSE) for details
 
 ---
 
-**Last Updated:** March 2, 2026
-**Status:** M23 Complete, M29 In Progress | USD export pipeline, node graph, SHARC cache
+**Last Updated:** March 6, 2026
+**Status:** M23 + M26 Complete, M29 In Progress | USD export, OIDN denoising, CI/CD pipeline
