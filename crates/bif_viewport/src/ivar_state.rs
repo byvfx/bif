@@ -10,8 +10,8 @@ use std::time::Instant;
 
 use bif_math::{Camera, Vec3};
 use bif_renderer::{
-    generate_buckets, Bucket, BucketResultWithAovs, BvhNode, Color, ImageBuffer, RadianceCache,
-    RadianceCacheConfig, DEFAULT_BUCKET_SIZE,
+    generate_buckets, Bucket, BucketResultWithAovs, BvhNode, Color, ImageBuffer, PixelFilter,
+    PixelFilterConfig, RadianceCache, RadianceCacheConfig, SamplerMode, DEFAULT_BUCKET_SIZE,
 };
 
 /// Render mode selection: GPU viewport or Ivar CPU path tracer.
@@ -180,6 +180,10 @@ pub struct BatchRenderSettings {
     pub camera_source: CameraSource,
     /// Radiance cache config for batch renders.
     pub radiance_cache_config: bif_renderer::RadianceCacheConfig,
+    /// Pixel reconstruction filter for batch rendering.
+    pub pixel_filter: PixelFilterConfig,
+    /// Camera jitter sampler mode for batch rendering.
+    pub sampler_mode: SamplerMode,
 }
 
 impl Default for BatchRenderSettings {
@@ -198,6 +202,8 @@ impl Default for BatchRenderSettings {
             compression: bif_renderer::ExrCompression::default(),
             camera_source: CameraSource::default(),
             radiance_cache_config: bif_renderer::RadianceCacheConfig::default(),
+            pixel_filter: PixelFilterConfig::new(PixelFilter::Mitchell),
+            sampler_mode: SamplerMode::default(),
         }
     }
 }
@@ -414,6 +420,14 @@ pub struct IvarState {
     pub final_render_secs: Option<f32>,
     /// OIDN denoise state (async thread + result).
     pub denoise: DenoiseState,
+    /// Auto-trigger OIDN denoise when render completes.
+    pub auto_denoise: bool,
+    /// Pixel reconstruction filter for sample weighting.
+    pub pixel_filter: PixelFilterConfig,
+    /// Per-pixel accumulated filter weight for progressive rendering.
+    pub weight_buffer: Option<Vec<f32>>,
+    /// Camera jitter sampler mode.
+    pub sampler_mode: SamplerMode,
 }
 
 impl Default for IvarState {
@@ -455,6 +469,10 @@ impl Default for IvarState {
             cache_heatmap_buffer: None,
             final_render_secs: None,
             denoise: DenoiseState::default(),
+            auto_denoise: false,
+            pixel_filter: PixelFilterConfig::default(),
+            weight_buffer: None,
+            sampler_mode: SamplerMode::default(),
         }
     }
 }
@@ -541,6 +559,21 @@ impl IvarState {
             self.accumulation_buffer.as_mut().unwrap().fill(Vec3::ZERO);
         } else {
             self.accumulation_buffer = Some(vec![Vec3::ZERO; pixel_count]);
+        }
+
+        // Weight buffer (for non-box filters)
+        if !self.pixel_filter.is_box() {
+            let reuse_weight = self
+                .weight_buffer
+                .as_ref()
+                .is_some_and(|buf| buf.len() == pixel_count);
+            if reuse_weight {
+                self.weight_buffer.as_mut().unwrap().fill(0.0);
+            } else {
+                self.weight_buffer = Some(vec![0.0; pixel_count]);
+            }
+        } else {
+            self.weight_buffer = None;
         }
 
         self.accumulated_samples = 0;

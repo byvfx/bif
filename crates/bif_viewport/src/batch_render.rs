@@ -383,6 +383,8 @@ fn batch_render_loop(
         hdri_rotation: None,
         hdri_intensity: None,
         radiance_cache: batch_cache.clone(),
+        pixel_filter: settings.pixel_filter,
+        sampler_mode: settings.sampler_mode,
     };
 
     log::info!(

@@ -5,6 +5,7 @@
 //!
 //! Named "Ivar" to distinguish from the GPU viewport renderer.
 
+pub mod blue_noise;
 mod bucket;
 mod bvh;
 mod camera;
@@ -13,6 +14,7 @@ pub mod disney;
 mod embree;
 pub mod embree_ffi;
 pub mod exr_writer;
+pub mod filter;
 pub mod hdri;
 mod hittable;
 mod instanced_geometry;
@@ -25,6 +27,7 @@ mod renderer;
 mod sphere;
 mod triangle;
 
+pub use blue_noise::SamplerMode;
 pub use bucket::{
     generate_buckets, render_bucket, render_bucket_with_aovs, Bucket, BucketResult,
     BucketResultWithAovs, DEFAULT_BUCKET_SIZE,
@@ -35,6 +38,7 @@ pub use denoise::{denoise_beauty, DenoiseError, DenoiseResult};
 pub use disney::DisneyBSDF;
 pub use embree::EmbreeScene;
 pub use exr_writer::{format_frame_path, write_exr, ExrCompression, ExrError, ExrOutput};
+pub use filter::{PixelFilter, PixelFilterConfig};
 pub use hdri::HdriEnvironment;
 pub use hittable::{HitRecord, Hittable, HittableList};
 pub use instanced_geometry::InstancedGeometry;

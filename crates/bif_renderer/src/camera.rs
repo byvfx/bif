@@ -1,5 +1,6 @@
 //! Camera for ray generation.
 
+use crate::blue_noise;
 use crate::{gen_f32, Ray};
 use bif_math::Vec3;
 use rand::RngCore;
@@ -142,6 +143,15 @@ impl Camera {
 
     /// Generate a ray for pixel (i, j) with random sampling.
     pub fn get_ray(&self, i: u32, j: u32, rng: &mut dyn RngCore) -> Ray {
+        let (ray, _offset) = self.get_ray_with_offset(i, j, rng);
+        ray
+    }
+
+    /// Generate a ray for pixel (i, j) with random sampling, returning the jitter offset.
+    ///
+    /// The offset (dx, dy) is the sub-pixel displacement from the pixel center,
+    /// in the range [-0.5, 0.5]. Used by pixel reconstruction filters to weight samples.
+    pub fn get_ray_with_offset(&self, i: u32, j: u32, rng: &mut dyn RngCore) -> (Ray, [f32; 2]) {
         let offset = sample_square(rng);
 
         let pixel_sample = self.pixel00_loc
@@ -157,7 +167,43 @@ impl Camera {
         let ray_direction = pixel_sample - ray_origin;
         let ray_time = gen_f32(rng);
 
-        Ray::new(ray_origin, ray_direction, ray_time)
+        (
+            Ray::new(ray_origin, ray_direction, ray_time),
+            [offset.x, offset.y],
+        )
+    }
+
+    /// Generate a ray using blue noise sub-pixel jitter.
+    ///
+    /// Blue noise provides the (dx, dy) offset for spatially-uniform error distribution.
+    /// RNG is still used for defocus disk and ray time (not spatially correlated).
+    /// Returns the ray and the jitter offset in [-0.5, 0.5] for filter weighting.
+    pub fn get_ray_blue_noise(
+        &self,
+        i: u32,
+        j: u32,
+        pass_number: u32,
+        rng: &mut dyn RngCore,
+    ) -> (Ray, [f32; 2]) {
+        let (bx, by) = blue_noise::sample_2d(i, j, pass_number);
+        // Map [0,1) to [-0.5, 0.5) for sub-pixel jitter
+        let dx = bx - 0.5;
+        let dy = by - 0.5;
+
+        let pixel_sample = self.pixel00_loc
+            + ((i as f32) + dx) * self.pixel_delta_u
+            + ((j as f32) + dy) * self.pixel_delta_v;
+
+        let ray_origin = if self.defocus_angle <= 0.0 {
+            self.center
+        } else {
+            self.defocus_disk_sample(rng)
+        };
+
+        let ray_direction = pixel_sample - ray_origin;
+        let ray_time = gen_f32(rng);
+
+        (Ray::new(ray_origin, ray_direction, ray_time), [dx, dy])
     }
 
     /// Sample a point on the defocus disk.

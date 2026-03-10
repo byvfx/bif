@@ -7,6 +7,8 @@
 
 use std::sync::Arc;
 
+use crate::blue_noise::SamplerMode;
+use crate::filter::PixelFilterConfig;
 use crate::hdri::HdriEnvironment;
 use crate::light::LightList;
 use crate::material::{gen_f32, power_heuristic};
@@ -38,6 +40,10 @@ pub struct RenderConfig {
     pub hdri_intensity: Option<f32>,
     /// SHARC radiance cache for secondary bounce reuse.
     pub radiance_cache: Option<Arc<RadianceCache>>,
+    /// Pixel reconstruction filter for sample weighting.
+    pub pixel_filter: PixelFilterConfig,
+    /// Camera jitter sampler mode (white noise vs blue noise).
+    pub sampler_mode: SamplerMode,
 }
 
 /// Compute the color seen by a ray.
@@ -433,7 +439,11 @@ pub fn ray_color_with_aovs(
     (accumulated, aov)
 }
 
-/// Render a single pixel with multi-sampling, returning color and AOV data.
+/// Render a single pixel with multi-sampling, returning color, AOV data, and total filter weight.
+///
+/// When using a non-box filter, samples are weighted by the pixel reconstruction filter.
+/// The returned weight is the sum of all sample weights (for progressive accumulation).
+/// Filtered AOVs: beauty, alpha, normal, albedo. Depth stays unweighted (nearest-hit average).
 pub fn render_pixel_with_aovs(
     camera: &Camera,
     world: &dyn Hittable,
@@ -441,45 +451,74 @@ pub fn render_pixel_with_aovs(
     y: u32,
     config: &RenderConfig,
     rng: &mut dyn RngCore,
-) -> (Color, AovData) {
+) -> (Color, AovData, f32) {
     let mut pixel_color = Color::ZERO;
+    let mut total_weight = 0.0_f32;
     let mut depth_sum = 0.0_f32;
     let mut normal_sum = Color::ZERO;
+    let mut normal_weight_sum = 0.0_f32;
     let mut alpha_sum = 0.0_f32;
+    let mut albedo_sum = Color::ZERO;
+    let mut albedo_weight_sum = 0.0_f32;
     let mut hit_count = 0u32;
     let mut max_cache_samples = 0u32;
-    // First-hit albedo: material property, not stochastic — no averaging needed
-    let mut first_albedo = Color::ZERO;
-    let mut first_albedo_captured = false;
 
-    for _ in 0..config.samples_per_pixel {
-        let ray = camera.get_ray(x, y, rng);
+    let use_blue_noise = config.sampler_mode == SamplerMode::BlueNoise;
+
+    for s in 0..config.samples_per_pixel {
+        let (ray, offset) = if use_blue_noise {
+            camera.get_ray_blue_noise(x, y, config.pass_number + s, rng)
+        } else {
+            camera.get_ray_with_offset(x, y, rng)
+        };
         let (color, aov) = ray_color_with_aovs(&ray, world, config.max_depth, config, rng);
-        pixel_color += color;
-        alpha_sum += aov.alpha;
+
+        let w = config.pixel_filter.evaluate(offset[0], offset[1]);
+
+        pixel_color += w * color;
+        alpha_sum += w * aov.alpha;
+        total_weight += w;
         max_cache_samples = max_cache_samples.max(aov.cache_samples);
 
-        // Only average depth/normal from rays that hit something
         if aov.depth < f32::INFINITY {
+            // Depth: unweighted (geometric distance, filtering blurs edges badly)
             depth_sum += aov.depth;
-            normal_sum += aov.normal;
-            if !first_albedo_captured {
-                first_albedo = aov.albedo;
-                first_albedo_captured = true;
-            }
+            // Normal + albedo: weighted
+            normal_sum += w * aov.normal;
+            normal_weight_sum += w;
+            albedo_sum += w * aov.albedo;
+            albedo_weight_sum += w;
             hit_count += 1;
         }
     }
 
-    let avg_color = pixel_color / config.samples_per_pixel as f32;
-    let avg_alpha = alpha_sum / config.samples_per_pixel as f32;
+    let avg_color = if total_weight > 0.0 {
+        pixel_color / total_weight
+    } else {
+        Color::ZERO
+    };
+    let avg_alpha = if total_weight > 0.0 {
+        alpha_sum / total_weight
+    } else {
+        0.0
+    };
     let avg_aov = if hit_count > 0 {
+        let avg_normal = if normal_weight_sum > 0.0 {
+            (normal_sum / normal_weight_sum).normalize()
+        } else {
+            Color::ZERO
+        };
+        let avg_albedo = if albedo_weight_sum > 0.0 {
+            albedo_sum / albedo_weight_sum
+        } else {
+            Color::ZERO
+        };
         AovData {
             depth: depth_sum / hit_count as f32,
-            normal: (normal_sum / hit_count as f32).normalize(),
+            normal: avg_normal,
             alpha: avg_alpha,
             cache_samples: max_cache_samples,
-            albedo: first_albedo,
+            albedo: avg_albedo,
         }
     } else {
         AovData {
@@ -488,7 +527,7 @@ pub fn render_pixel_with_aovs(
         }
     };
 
-    (avg_color, avg_aov)
+    (avg_color, avg_aov, total_weight)
 }
 
 /// Compute sky gradient background.
@@ -535,15 +574,24 @@ pub fn render_pixel(
     rng: &mut dyn RngCore,
 ) -> Color {
     let mut pixel_color = Color::ZERO;
+    let mut total_weight = 0.0_f32;
+    let use_blue_noise = config.sampler_mode == SamplerMode::BlueNoise;
 
-    for _ in 0..config.samples_per_pixel {
-        // Camera.get_ray already adds random offset for anti-aliasing
-        let ray = camera.get_ray(x, y, rng);
-        pixel_color += ray_color(&ray, world, config.max_depth, config, rng);
+    for s in 0..config.samples_per_pixel {
+        let (ray, offset) = if use_blue_noise {
+            camera.get_ray_blue_noise(x, y, config.pass_number + s, rng)
+        } else {
+            camera.get_ray_with_offset(x, y, rng)
+        };
+        let w = config.pixel_filter.evaluate(offset[0], offset[1]);
+        pixel_color += w * ray_color(&ray, world, config.max_depth, config, rng);
+        total_weight += w;
     }
-
-    // Average the samples
-    pixel_color / config.samples_per_pixel as f32
+    if total_weight > 0.0 {
+        pixel_color / total_weight
+    } else {
+        Color::ZERO
+    }
 }
 
 /// Simple image buffer for storing render output.
@@ -666,6 +714,8 @@ mod tests {
             hdri_rotation: None,
             hdri_intensity: None,
             radiance_cache: None,
+            pixel_filter: PixelFilterConfig::default(),
+            sampler_mode: SamplerMode::default(),
         };
 
         let mut rng = StdRng::seed_from_u64(42);

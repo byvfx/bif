@@ -936,6 +936,84 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 
 ---
 
+### Milestone 30: Project File Save/Load 💾
+
+- **Goal:** Persistent project sessions via `.bif` file format
+- **Estimated Time:** 15-20 hours
+- **Why Next:** Foundation — everything else is lost without save.
+- **Key Tasks:**
+  - `#[derive(Serialize, Deserialize)]` on `SceneNode` enum + key types
+  - Serialize `Snarl<SceneNode>` graph (nodes, connections, positions)
+  - `.bif` project file format (JSON-based)
+  - File → New / Open / Save / Save As menu
+  - Recent files list, dirty flag, "unsaved changes" prompt
+  - Stores: node graph, HDRI path, viewport camera, render settings
+  - Does NOT store: USD stage data (referenced by path), rendered images
+
+---
+
+### Milestone 31: Lights Authoring 💡
+
+- **Goal:** Light creation UI + graph nodes for scene lighting without USD
+- **Estimated Time:** 10-15 hours
+- **Why:** Renderer already has full light support — just need creation UI + graph nodes.
+- **Key Tasks:**
+  - Light graph nodes: DistantLight, PointLight, RectLight (output Scene pin)
+  - Property inspector: edit color, intensity, position, radius, angle
+  - Viewport light visualization (wireframe icons)
+  - Lights in scene browser hierarchy
+  - Export lights to USD
+- **Existing Code:** `bif_renderer/src/light.rs` (DistantLight, SphereLight, RectLight + NEE/MIS)
+
+---
+
+### Milestone 32: Material Authoring 🎨
+
+- **Goal:** Property editor + basic shader graph for material creation
+- **Estimated Time:** 20-25 hours
+- **Key Tasks:**
+  - Material creation: presets (diffuse, metal, glass, emissive)
+  - Property inspector: PBR params (diffuse color, roughness, metallic, specular, textures)
+  - Texture slot assignment (file picker)
+  - Material assignment to prims
+  - Material library panel
+  - Basic shader graph in Materials context: simple nodes (Mix, Multiply, Texture, Output)
+  - Export authored materials to USD (UsdPreviewSurface)
+- **Existing Code:** `bif_core/src/scene.rs` Material struct, `bif_renderer/src/material.rs`
+
+---
+
+### Milestone 33: Context System 🔀
+
+- **Goal:** Houdini-style contexts — biggest refactor, needs M30-M32 first
+- **Estimated Time:** 30-40 hours
+- **Key Tasks:**
+  - Refactor `SceneNode` into context-specific enums or trait-based system
+  - **Assembly context** (current graph): UsdRead, Scatter, Instancer, Xform, Export
+  - **Materials context**: shader graph nodes from M32, expanded
+  - **Animation context**: timeline-focused, keyframe/expression nodes
+  - Context switcher UI (tabs or dropdown)
+  - Each context has its own `Snarl` graph
+  - Shared data flows between contexts
+
+---
+
+### Milestone 34: MaterialX Authoring 🧪
+
+- **Goal:** Full MaterialX `standard_surface` node graph with round-trip XML export
+- **Estimated Time:** 25-30 hours
+- **Why:** M32 covers basic PBR presets — this is the full shader graph experience in the Materials context (M33)
+- **Key Tasks:**
+  - Full `standard_surface` node graph (beyond M32 presets)
+  - MaterialX node types: Math, Color, Texture, Noise, Normal map, etc.
+  - MaterialX XML export/import (round-trip)
+  - Connect to existing MaterialX parsing from M16
+  - Node preview thumbnails (sphere render per node)
+  - Layer/blend material stacking
+- **Existing Code:** `bif_core/src/materialx.rs` (M16 parser), `bif_renderer/src/material.rs`
+
+---
+
 ### ~~Milestone 24: Spectral Rendering~~ (Cut)
 
 > **Status:** Cut from roadmap — zero production value for BIF's goals.
@@ -961,17 +1039,22 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 | 18.1-18.5 | Animation Polish | Thread safety, USD fixes, multi-prototype | ✅ Complete |
 | 19-21.2 | Frame Rendering + Interactivity | Batch render, animation, picking, scatter | ✅ Complete |
 | 23 | SHARC Radiance Cache | idTech 8 cache + Russian Roulette + heatmap AOV | ✅ Complete |
+| 26 | OIDN Denoising | Intel OIDN + albedo AOV pipeline | ✅ Complete |
 
 ### Active & Planned
 
 | Order | # | Milestone | What it unlocks |
 |-------|---|-----------|-----------------|
-| 1 | 29 | USD export (in-progress) | **Full pipeline: import→modify→render→export** |
-| 2 | 26 | Denoising (OIDN) | Clean renders without 1000spp |
-| 3 | 25 | Volumes/OpenVDB | Smoke, fog, clouds |
-| 4 | 22 | Viewport perf | Handle production scenes |
-| 5 | 27 | GPU path tracing | Near-realtime quality |
-| 6 | 28 | Qt 6 UI | Professional interface |
+| 1 | 29 | USD export (in-progress) | Full pipeline: import→modify→render→export |
+| 2 | 30 | Project save/load | Persistent sessions (.bif files) |
+| 3 | 31 | Lights authoring | Lit scenes without USD, viewport light viz |
+| 4 | 32 | Material authoring | PBR editing + basic shader graph |
+| 5 | 33 | Context system | Assembly/Materials/Animation contexts |
+| 6 | 34 | MaterialX authoring | Full standard_surface node graph + XML round-trip |
+| 7 | 25 | Volumes/OpenVDB | Smoke, fog, clouds |
+| 8 | 22 | Viewport perf | Handle production scenes |
+| 9 | 27 | GPU path tracing | Near-realtime quality |
+| 10 | 28 | Qt 6 UI | Professional interface |
 
 ### Dissolved / Cut
 
@@ -1024,7 +1107,7 @@ Key papers (cherry-pick into relevant milestones as needed):
 
 ---
 
-**Last Updated:** March 2, 2026
-**Status:** Milestones 0-23 complete
-**Current:** M29 USD export (in-progress, most phases done)
-**Next:** M26 (denoising) → M25 (volumes) → M22 (viewport perf)
+**Last Updated:** March 7, 2026
+**Status:** Milestones 0-23 + M26 complete
+**Current:** M29 USD export (in-progress)
+**Next:** M30 (save/load) → M31 (lights) → M32 (materials) → M33 (contexts) → M34 (MaterialX)
