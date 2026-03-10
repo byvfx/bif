@@ -423,6 +423,50 @@ impl Renderer {
                                     );
                                 });
 
+                                // Pixel filter dropdown
+                                ui.horizontal(|ui| {
+                                    ui.label("Filter:");
+                                    let current_filter = self.ivar_state.pixel_filter.filter;
+                                    egui::ComboBox::from_id_salt("pixel_filter")
+                                        .selected_text(current_filter.display_name())
+                                        .show_ui(ui, |ui| {
+                                            for &f in bif_renderer::PixelFilter::all() {
+                                                if ui.selectable_value(
+                                                    &mut self.ivar_state.pixel_filter.filter,
+                                                    f,
+                                                    f.display_name(),
+                                                ).changed() {
+                                                    self.ivar_state.pixel_filter.radius = f.default_radius();
+                                                    // Signal restart: mixing different filter weights is wrong
+                                                    ctx.data_mut(|d| {
+                                                        d.insert_temp(egui::Id::new("filter_changed"), true)
+                                                    });
+                                                }
+                                            }
+                                        });
+                                });
+
+                                // Sampler mode dropdown
+                                ui.horizontal(|ui| {
+                                    ui.label("Sampler:");
+                                    let current_sampler = self.ivar_state.sampler_mode;
+                                    egui::ComboBox::from_id_salt("sampler_mode")
+                                        .selected_text(current_sampler.display_name())
+                                        .show_ui(ui, |ui| {
+                                            for &s in bif_renderer::SamplerMode::all() {
+                                                if ui.selectable_value(
+                                                    &mut self.ivar_state.sampler_mode,
+                                                    s,
+                                                    s.display_name(),
+                                                ).changed() {
+                                                    ctx.data_mut(|d| {
+                                                        d.insert_temp(egui::Id::new("filter_changed"), true)
+                                                    });
+                                                }
+                                            }
+                                        });
+                                });
+
                                 // Show current preview scale when not at full res
                                 if ivar_current_scale > 1 {
                                     ui.colored_label(
@@ -432,6 +476,12 @@ impl Renderer {
                                 }
 
                                 ui.label(format!("Time: {:.1}s", ivar_elapsed));
+
+                                // Auto-denoise checkbox (feature-gated)
+                                #[cfg(feature = "oidn")]
+                                {
+                                    ui.checkbox(&mut self.ivar_state.auto_denoise, "Auto-denoise");
+                                }
 
                                 if ivar_render_complete {
                                     ui.colored_label(egui::Color32::GREEN, "Render Complete");
@@ -443,7 +493,7 @@ impl Renderer {
                                             ui.colored_label(egui::Color32::from_rgb(100, 200, 255), "Denoised");
                                         } else if self.ivar_state.denoise.in_progress {
                                             ui.colored_label(egui::Color32::YELLOW, "Denoising...");
-                                        } else if ui.button("Denoise (OIDN)").clicked() {
+                                        } else if !self.ivar_state.auto_denoise && ui.button("Denoise (OIDN)").clicked() {
                                             ctx.data_mut(|d| {
                                                 d.insert_temp(egui::Id::new("denoise_requested"), true)
                                             });
@@ -814,6 +864,24 @@ impl Renderer {
                                             *comp,
                                             comp.display_name(),
                                         );
+                                    }
+                                });
+                        });
+
+                        // Pixel filter
+                        ui.horizontal(|ui| {
+                            ui.label("Filter:");
+                            egui::ComboBox::from_id_salt("batch_pixel_filter")
+                                .selected_text(settings.pixel_filter.filter.display_name())
+                                .show_ui(ui, |ui| {
+                                    for &f in bif_renderer::PixelFilter::all() {
+                                        if ui.selectable_value(
+                                            &mut settings.pixel_filter.filter,
+                                            f,
+                                            f.display_name(),
+                                        ).changed() {
+                                            settings.pixel_filter.radius = f.default_radius();
+                                        }
                                     }
                                 });
                         });
@@ -1416,6 +1484,21 @@ impl Renderer {
             self.egui_ctx
                 .data_mut(|d| d.remove::<bool>(egui::Id::new("denoise_requested")));
             self.denoise_ivar_result();
+        }
+
+        // Handle filter change — restart progressive render
+        let filter_changed = self.egui_ctx.data(|d| {
+            d.get_temp::<bool>(egui::Id::new("filter_changed"))
+                .unwrap_or(false)
+        });
+        if filter_changed {
+            self.egui_ctx
+                .data_mut(|d| d.remove::<bool>(egui::Id::new("filter_changed")));
+            if self.ivar_state.mode == RenderMode::Ivar {
+                self.ivar_state.current_scale = 1;
+                self.ivar_state.last_interaction_time = None;
+                self.start_ivar_render();
+            }
         }
 
         // Handle batch render start request

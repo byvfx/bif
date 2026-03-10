@@ -690,6 +690,8 @@ impl Renderer {
             hdri_rotation: Some(self.ivar_state.hdri_rotation),
             hdri_intensity: Some(self.ivar_state.hdri_intensity),
             radiance_cache: self.ivar_state.radiance_cache.clone(),
+            pixel_filter: self.ivar_state.pixel_filter,
+            sampler_mode: self.ivar_state.sampler_mode,
         };
 
         log::trace!("Starting progressive pass {}", pass_number);
@@ -746,10 +748,35 @@ impl Renderer {
                             if pixel_idx < result.pixels.len() {
                                 if let Some(ref mut accum) = self.ivar_state.accumulation_buffer {
                                     if global_idx < accum.len() {
-                                        accum[global_idx] += result.pixels[pixel_idx];
-                                        // Update display: divide by (completed passes + 1)
-                                        let divisor = (current_pass + 1) as f32;
-                                        let avg = accum[global_idx] / divisor;
+                                        // Weighted accumulation: pixels already contain
+                                        // weight*color from render_pixel_with_aovs
+                                        let pixel_weight = if pixel_idx < result.weights.len() {
+                                            result.weights[pixel_idx]
+                                        } else {
+                                            1.0
+                                        };
+                                        accum[global_idx] +=
+                                            result.pixels[pixel_idx] * pixel_weight;
+
+                                        // Compute display average
+                                        let avg = if let Some(ref mut wbuf) =
+                                            self.ivar_state.weight_buffer
+                                        {
+                                            if global_idx < wbuf.len() {
+                                                wbuf[global_idx] += pixel_weight;
+                                                if wbuf[global_idx] > 0.0 {
+                                                    accum[global_idx] / wbuf[global_idx]
+                                                } else {
+                                                    accum[global_idx]
+                                                }
+                                            } else {
+                                                accum[global_idx] / (current_pass + 1) as f32
+                                            }
+                                        } else {
+                                            // Box filter: equal weights, simple pass count
+                                            accum[global_idx] / (current_pass + 1) as f32
+                                        };
+
                                         if let Some(ref mut image) = self.ivar_state.image_buffer {
                                             image.set(global_x, global_y, avg);
                                         }
@@ -816,6 +843,11 @@ impl Renderer {
                             self.ivar_state.accumulated_samples,
                             elapsed
                         );
+                        // Auto-denoise on completion
+                        #[cfg(feature = "oidn")]
+                        if self.ivar_state.auto_denoise {
+                            self.denoise_ivar_result();
+                        }
                     }
                     // Clear receiver so main loop can detect "no pass in flight"
                     self.ivar_state.receiver = None;
@@ -825,6 +857,10 @@ impl Renderer {
                     self.ivar_state.render_complete = true;
                     self.node_graph_state.mark_ivar_render_complete();
                     log::info!("Ivar render complete in {:.2}s", elapsed_secs);
+                    #[cfg(feature = "oidn")]
+                    if self.ivar_state.auto_denoise {
+                        self.denoise_ivar_result();
+                    }
                 }
                 IvarMessage::Cancelled => {
                     log::info!("Ivar render cancelled");

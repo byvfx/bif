@@ -167,6 +167,8 @@ pub struct BucketResultWithAovs {
     pub cache_samples: Vec<u32>,
     /// Surface albedo at first hit (for denoiser guide image).
     pub albedos: Vec<[f32; 3]>,
+    /// Per-pixel filter weights (sum of sample weights for this bucket's pass).
+    pub weights: Vec<f32>,
 }
 
 /// Render a single bucket with AOV capture.
@@ -192,12 +194,13 @@ pub fn render_bucket_with_aovs(
     let mut alphas = Vec::with_capacity(capacity);
     let mut cache_samples = Vec::with_capacity(capacity);
     let mut albedos = Vec::with_capacity(capacity);
+    let mut weights = Vec::with_capacity(capacity);
 
     for local_y in 0..bucket.height {
         for local_x in 0..bucket.width {
             let global_x = bucket.x + local_x;
             let global_y = bucket.y + local_y;
-            let (color, aov) =
+            let (color, aov, weight) =
                 render_pixel_with_aovs(camera, world, global_x, global_y, config, &mut rng);
             pixels.push(color);
             depths.push(aov.depth);
@@ -205,6 +208,7 @@ pub fn render_bucket_with_aovs(
             alphas.push(aov.alpha);
             cache_samples.push(aov.cache_samples);
             albedos.push([aov.albedo.x, aov.albedo.y, aov.albedo.z]);
+            weights.push(weight);
         }
     }
 
@@ -216,6 +220,7 @@ pub fn render_bucket_with_aovs(
         alphas,
         cache_samples,
         albedos,
+        weights,
     }
 }
 
