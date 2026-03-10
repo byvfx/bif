@@ -186,7 +186,7 @@ At end of each plan, list unresolved questions (if any).
 
 ### Daily Development Log
 
-At end of each session, create/update `devlog/DEVLOG_YYYY-MM-DD.md`:
+At end of each session, create/update `devlog/YYYY-MM/DEVLOG_YYYY-MM-DD.md`:
 
 ```markdown
 # Development Log - YYYY-MM-DD

@@ -4,7 +4,7 @@ This directory contains detailed session logs for the BIF project development. E
 
 ## Format
 
-Files are named `DEVLOG_YYYY-MM-DD.md` and follow a consistent structure:
+Files are organized into monthly folders as `YYYY-MM/DEVLOG_YYYY-MM-DD.md` and follow a consistent structure:
 
 - Session Duration
 - Goals
