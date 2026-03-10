@@ -7,6 +7,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- Blue noise camera jitter with Cranley-Patterson rotation (256x256 void-and-cluster texture)
+- SamplerMode enum (WhiteNoise/BlueNoise) with UI dropdown, default BlueNoise
+- Pixel reconstruction filters: Box, Gaussian, Mitchell-Netravali, Blackman-Harris
+- Weighted progressive accumulation for non-box filters
+- Auto-denoise on render completion (OIDN feature)
+- Milestones 30-35 roadmap (project save, lights, materials, shader graph, timeline, render queue)
 - CI/CD pipeline: GitHub Actions for fmt/clippy/test on push/PR, release builds on tags
 - CHANGELOG.md for tracking release notes
 
