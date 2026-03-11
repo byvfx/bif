@@ -109,6 +109,13 @@ impl UsdMesh {
 
             // Fan triangulation: for a polygon with vertices [0, 1, 2, 3, ...n-1]
             // create triangles: (0,1,2), (0,2,3), (0,3,4), ... (0,n-2,n-1)
+            if vertex_offset + count > self.face_vertex_indices.len() {
+                log::warn!(
+                    "face_vertex_indices truncated at offset {}, skipping remaining faces",
+                    vertex_offset
+                );
+                break;
+            }
             for i in 1..(count - 1) {
                 let i0 = self.face_vertex_indices[vertex_offset] as u32;
                 let i1 = self.face_vertex_indices[vertex_offset + i] as u32;

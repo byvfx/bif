@@ -925,9 +925,18 @@ impl UsdaParser {
 
                 let parts: Vec<&str> = tuple_str.split(',').collect();
                 if parts.len() == 3 {
-                    let x = parts[0].trim().parse::<f32>().unwrap_or(0.0);
-                    let y = parts[1].trim().parse::<f32>().unwrap_or(0.0);
-                    let z = parts[2].trim().parse::<f32>().unwrap_or(0.0);
+                    let x = parts[0].trim().parse::<f32>().unwrap_or_else(|e| {
+                        log::warn!("USDA parse: bad float '{}': {}", parts[0].trim(), e);
+                        0.0
+                    });
+                    let y = parts[1].trim().parse::<f32>().unwrap_or_else(|e| {
+                        log::warn!("USDA parse: bad float '{}': {}", parts[1].trim(), e);
+                        0.0
+                    });
+                    let z = parts[2].trim().parse::<f32>().unwrap_or_else(|e| {
+                        log::warn!("USDA parse: bad float '{}': {}", parts[2].trim(), e);
+                        0.0
+                    });
                     result.push(Vec3::new(x, y, z));
                 }
             } else {
@@ -1021,10 +1030,22 @@ impl UsdaParser {
                 let parts: Vec<&str> = tuple_str.split(',').collect();
                 if parts.len() == 4 {
                     // USD uses (imaginary x, imaginary y, imaginary z, real w) format for quath
-                    let x = parts[0].trim().parse::<f32>().unwrap_or(0.0);
-                    let y = parts[1].trim().parse::<f32>().unwrap_or(0.0);
-                    let z = parts[2].trim().parse::<f32>().unwrap_or(0.0);
-                    let w = parts[3].trim().parse::<f32>().unwrap_or(1.0);
+                    let x = parts[0].trim().parse::<f32>().unwrap_or_else(|e| {
+                        log::warn!("USDA parse: bad quat float '{}': {}", parts[0].trim(), e);
+                        0.0
+                    });
+                    let y = parts[1].trim().parse::<f32>().unwrap_or_else(|e| {
+                        log::warn!("USDA parse: bad quat float '{}': {}", parts[1].trim(), e);
+                        0.0
+                    });
+                    let z = parts[2].trim().parse::<f32>().unwrap_or_else(|e| {
+                        log::warn!("USDA parse: bad quat float '{}': {}", parts[2].trim(), e);
+                        0.0
+                    });
+                    let w = parts[3].trim().parse::<f32>().unwrap_or_else(|e| {
+                        log::warn!("USDA parse: bad quat float '{}': {}", parts[3].trim(), e);
+                        1.0
+                    });
                     result.push(Quat::from_xyzw(x, y, z, w));
                 }
             } else {
