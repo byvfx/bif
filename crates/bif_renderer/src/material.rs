@@ -144,19 +144,13 @@ impl Material for Lambertian {
         rec: &HitRecord,
         rng: &mut dyn RngCore,
     ) -> Option<ScatterResult> {
-        // Scatter in a random direction on the hemisphere around the normal
-        let mut scatter_direction = rec.normal + random_unit_vector(rng);
-
-        // Catch degenerate scatter direction
-        if scatter_direction.length_squared() < 1e-8 {
-            scatter_direction = rec.normal;
-        }
-
+        // Cosine-weighted hemisphere sampling via Malley's method
+        let scatter_direction = cosine_weighted_hemisphere(rec.normal, rng);
         let scattered = Ray::new(rec.p, scatter_direction, ray_in.time());
 
-        // Cosine-weighted PDF: cos(theta) / pi
+        // PDF = cos(theta) / PI
         let cos_theta = rec.normal.dot(scatter_direction.normalize()).max(0.0);
-        let pdf = (cos_theta / PI).max(0.0001); // Clamp to prevent div-by-zero
+        let pdf = (cos_theta / PI).max(0.0001);
 
         Some(ScatterResult {
             attenuation: self.albedo,

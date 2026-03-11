@@ -8,7 +8,7 @@ use crate::{
     hittable::{HitRecord, Hittable},
     Ray,
 };
-use bif_math::{Aabb, Interval, Mat4, Vec3};
+use bif_math::{Aabb, Interval, Mat3, Mat4, Vec3};
 #[cfg(debug_assertions)]
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
@@ -118,6 +118,9 @@ pub struct EmbreeScene {
     normal_data: Vec<[f32; 3]>,
     tangent_data: Vec<[f32; 3]>,
 
+    // Per-instance inverse-transpose Mat3 for correct normal transformation
+    normal_matrices: Vec<Mat3>,
+
     // For debugging/stats
     instance_count: usize,
     triangle_count: usize,
@@ -197,14 +200,15 @@ impl EmbreeScene {
 
             // 3. Flatten triangles into separate vertex and index arrays
             // Embree requires indexed triangle meshes
-            let mut vertex_data = Vec::with_capacity(vertices.len() * 9);
+            // Use 4 floats per vertex (16-byte stride) for SIMD alignment
+            let mut vertex_data = Vec::with_capacity(vertices.len() * 12);
             let mut index_data = Vec::with_capacity(vertices.len() * 3);
 
             for (tri_idx, tri) in vertices.iter().enumerate() {
-                // Add 3 vertices
-                vertex_data.extend_from_slice(&[tri[0].x, tri[0].y, tri[0].z]);
-                vertex_data.extend_from_slice(&[tri[1].x, tri[1].y, tri[1].z]);
-                vertex_data.extend_from_slice(&[tri[2].x, tri[2].y, tri[2].z]);
+                // Add 3 vertices with padding float for 16-byte alignment
+                vertex_data.extend_from_slice(&[tri[0].x, tri[0].y, tri[0].z, 0.0]);
+                vertex_data.extend_from_slice(&[tri[1].x, tri[1].y, tri[1].z, 0.0]);
+                vertex_data.extend_from_slice(&[tri[2].x, tri[2].y, tri[2].z, 0.0]);
 
                 // Add indices (each triangle uses 3 consecutive vertices)
                 let base_idx = (tri_idx * 3) as u32;
@@ -240,11 +244,11 @@ impl EmbreeScene {
             log::info!(
                 "Setting up triangle geometry: {} triangles, {} vertices, {} indices",
                 vertices.len(),
-                vertex_data.len() / 3,
+                vertex_data.len() / 4,
                 index_data.len()
             );
 
-            // 5. Set vertex buffer
+            // 5. Set vertex buffer (16-byte stride for SIMD alignment)
             rtcSetSharedGeometryBuffer(
                 geom,
                 RTCBufferType::Vertex as u32,
@@ -252,8 +256,8 @@ impl EmbreeScene {
                 RTCFormat::Float3 as u32,
                 vertex_data.as_ptr() as *const std::ffi::c_void,
                 0,                     // byte offset
-                12,                    // stride: 3 * f32 = 12 bytes per vertex
-                vertex_data.len() / 3, // vertex count
+                16,                    // stride: 4 * f32 = 16 bytes per vertex (SIMD aligned)
+                vertex_data.len() / 4, // vertex count
             );
 
             let err = rtcGetDeviceError(device);
@@ -482,6 +486,12 @@ impl EmbreeScene {
                 triangle_material_ids.to_vec()
             };
 
+            // Precompute per-instance inverse-transpose Mat3 for normal transforms
+            let normal_matrices: Vec<Mat3> = transforms
+                .iter()
+                .map(|t| Mat3::from_mat4(*t).inverse().transpose())
+                .collect();
+
             Ok(Self {
                 device,
                 scene,
@@ -494,6 +504,7 @@ impl EmbreeScene {
                 uv_data,
                 normal_data,
                 tangent_data,
+                normal_matrices,
                 instance_count: transforms.len(),
                 triangle_count: vertices.len(),
             })
@@ -545,6 +556,13 @@ impl EmbreeScene {
         }
 
         self._transform_data = new_data;
+
+        // Recompute normal matrices for correct shading normals
+        self.normal_matrices = transforms
+            .iter()
+            .map(|t| Mat3::from_mat4(*t).inverse().transpose())
+            .collect();
+
         true
     }
 }
@@ -626,7 +644,7 @@ impl Hittable for EmbreeScene {
             rec.u = bary_w * uv0[0] + bary_u * uv1[0] + bary_v * uv2[0];
             rec.v = bary_w * uv0[1] + bary_u * uv1[1] + bary_v * uv2[1];
 
-            // Interpolate shading normal
+            // Interpolate shading normal (in prototype local space)
             let n0 = self.normal_data[base];
             let n1 = self.normal_data[base + 1];
             let n2 = self.normal_data[base + 2];
@@ -635,7 +653,14 @@ impl Hittable for EmbreeScene {
                 bary_w * n0[1] + bary_u * n1[1] + bary_v * n2[1],
                 bary_w * n0[2] + bary_u * n1[2] + bary_v * n2[2],
             );
-            let normal = interp_normal.normalize();
+
+            // Transform normal to world space using per-instance inverse-transpose
+            let inst_id = rayhit.hit.inst_id[0] as usize;
+            let normal = if inst_id < self.normal_matrices.len() {
+                (self.normal_matrices[inst_id] * interp_normal).normalize()
+            } else {
+                interp_normal.normalize()
+            };
             rec.normal = normal;
 
             // Per-triangle tangent (constant across triangle, no interpolation needed)
