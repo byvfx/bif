@@ -2246,9 +2246,10 @@ impl UsdEditLayer {
     }
 
     /// Save the edit layer to disk, then free the handle.
-    pub fn save(self) -> UsdBridgeResult<()> {
+    pub fn save(mut self) -> UsdBridgeResult<()> {
         let code = unsafe { usd_bridge_save_edit_layer(self.raw) };
-        // Drop handles freeing regardless of save success/failure
+        // Null out pointer so Drop won't double-free (C++ side frees the handle)
+        self.raw = std::ptr::null_mut();
         if code != UsdBridgeErrorCode::Success {
             return Err(code.into());
         }

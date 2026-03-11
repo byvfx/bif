@@ -142,7 +142,7 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
     // Load all meshes as prototypes (with deduplication)
     let mesh_start = Instant::now();
     let meshes = stage.meshes()?;
-    for mesh_data in &meshes {
+    for (mesh_idx, mesh_data) in meshes.iter().enumerate() {
         let vertices = mesh_data.vertices.clone();
         let indices = mesh_data.indices.clone();
         let normals = mesh_data.normals.clone();
@@ -190,10 +190,6 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
         let transform = Transform::from_matrix(mesh_data.transform);
 
         // Check for animation data
-        let mesh_idx = meshes
-            .iter()
-            .position(|m| m.path == mesh_data.path)
-            .unwrap_or(0);
         let animation = if scene.timeline.is_some() {
             match stage.get_mesh_animation(mesh_idx) {
                 Ok(anim_data) => {

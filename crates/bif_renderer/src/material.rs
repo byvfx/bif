@@ -39,15 +39,15 @@ pub trait Material: Send + Sync {
     ///
     /// Returns the BSDF value f(wo, wi) for the given incoming and outgoing directions.
     fn bsdf(&self, _ray_in: &Ray, _rec: &HitRecord, _scattered: &Ray) -> Color {
-        // Default: uniform BSDF
-        Color::splat(1.0 / PI)
+        // Default: uniform hemisphere BSDF (matches pdf default)
+        Color::splat(1.0 / (2.0 * PI))
     }
 
     /// Get PDF for the given scattered direction.
     ///
     /// Returns the probability density of scattering in direction `scattered`.
     fn pdf(&self, _ray_in: &Ray, _rec: &HitRecord, _scattered: &Ray) -> f32 {
-        // Default: cosine-weighted hemisphere
+        // Default: uniform hemisphere
         1.0 / (2.0 * PI)
     }
 

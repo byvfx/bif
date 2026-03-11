@@ -37,10 +37,10 @@ fn parse_args() -> CliOptions {
             }
             arg if !arg.starts_with('-') && opts.usda_path.is_none() && opts.usd_path.is_none() => {
                 // Positional argument - auto-detect based on extension
-                if arg.ends_with(".usdc") {
-                    opts.usd_path = Some(arg.to_string());
-                } else if arg.ends_with(".usda") || arg.ends_with(".usd") {
+                if arg.ends_with(".usda") {
                     opts.usda_path = Some(arg.to_string());
+                } else if arg.ends_with(".usd") || arg.ends_with(".usdc") {
+                    opts.usd_path = Some(arg.to_string());
                 }
             }
             "--help" | "-h" => {
@@ -514,21 +514,17 @@ impl ApplicationHandler for App {
                     }
                 }
 
-                // Request next frame
-                if let Some(window) = &self.window {
-                    window.request_redraw();
-                }
+                // Redraw requested by about_to_wait when needed
             }
             _ => {}
         }
     }
 
     fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
-        // Request continuous redraw when keys are pressed for smooth movement
-        if !self.keys_pressed.is_empty() {
-            if let Some(window) = &self.window {
-                window.request_redraw();
-            }
+        // Always request redraw: progressive rendering, animation, async polling need it.
+        // TODO: Make conditional (skip when fully converged + idle) to save CPU
+        if let Some(window) = &self.window {
+            window.request_redraw();
         }
     }
 }
@@ -553,7 +549,7 @@ fn main() -> Result<()> {
     }
 
     let event_loop = EventLoop::new()?;
-    event_loop.set_control_flow(ControlFlow::Poll);
+    event_loop.set_control_flow(ControlFlow::Wait);
 
     let mut app = App::new(opts.usda_path, opts.usd_path);
 

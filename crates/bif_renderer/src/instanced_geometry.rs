@@ -152,10 +152,12 @@ impl<M: Material + Clone + 'static> Hittable for InstancedGeometry<M> {
                 rec.t = local_rec.t;
                 rec.p = transform.transform_point3(local_rec.p);
 
-                // Transform normal to world space
-                // Note: For non-uniform scales, we'd need inverse-transpose,
-                // but for uniform scales, just transforming and normalizing works
-                rec.normal = transform.transform_vector3(local_rec.normal).normalize();
+                // Transform normal to world space using inverse-transpose
+                // (correct for non-uniform scales: N' = (M^-1)^T * N)
+                rec.normal = inv_transform
+                    .transpose()
+                    .transform_vector3(local_rec.normal)
+                    .normalize();
 
                 rec.u = local_rec.u;
                 rec.v = local_rec.v;
