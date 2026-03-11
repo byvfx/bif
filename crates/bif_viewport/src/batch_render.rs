@@ -320,6 +320,10 @@ pub struct BatchSceneData {
     pub scene_builder: Option<SceneBuilderFn>,
     /// Explicit lights (USD lights) for NEE.
     pub lights: Arc<LightList>,
+    /// HDRI rotation override from viewport slider (radians).
+    pub hdri_rotation: Option<f32>,
+    /// HDRI intensity override from viewport slider.
+    pub hdri_intensity: Option<f32>,
 }
 
 /// Start a batch render in a background thread.
@@ -378,10 +382,8 @@ fn batch_render_loop(
         environment: scene.environment.clone(),
         lights: scene.lights.clone(),
         pass_number: 0,
-        // TODO: Batch render uses baked-in HDRI values — won't reflect slider adjustments.
-        // Pass viewport overrides here when batch render settings UI is added.
-        hdri_rotation: None,
-        hdri_intensity: None,
+        hdri_rotation: scene.hdri_rotation,
+        hdri_intensity: scene.hdri_intensity,
         radiance_cache: batch_cache.clone(),
         pixel_filter: settings.pixel_filter,
         sampler_mode: settings.sampler_mode,

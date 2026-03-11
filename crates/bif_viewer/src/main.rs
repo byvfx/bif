@@ -9,6 +9,14 @@ use winit::{
     window::{Window, WindowId},
 };
 
+// Camera interaction constants
+const ORBIT_SENSITIVITY: f32 = 0.005;
+const PAN_SENSITIVITY: f32 = 0.1;
+const PAN_DISTANCE_SCALE: f32 = 0.0001;
+const SCROLL_DOLLY_SCALE: f32 = 0.1;
+const SCROLL_PIXEL_TO_LINES: f32 = 50.0;
+const CLICK_THRESHOLD: f64 = 3.0;
+
 /// CLI options
 #[derive(Default)]
 struct CliOptions {
@@ -266,7 +274,7 @@ impl ApplicationHandler for App {
                                 renderer.gizmo_state.is_dragging = false;
                                 renderer.gizmo_state.active_axis =
                                     bif_viewport::gizmo::GizmoAxis::None;
-                            } else if self.mouse_drag_distance < 3.0 {
+                            } else if self.mouse_drag_distance < CLICK_THRESHOLD {
                                 // Click detection: pick instance
                                 if let Some(pos) = self.mouse_press_pos {
                                     let picked =
@@ -341,24 +349,23 @@ impl ApplicationHandler for App {
                             } else if !renderer.is_camera_locked() {
                                 // Normal camera controls
                                 if self.left_mouse_pressed && !renderer.camera.is_ortho() {
-                                    let sensitivity = 0.005;
                                     renderer.camera.orbit(
-                                        -delta_x as f32 * sensitivity,
-                                        -delta_y as f32 * sensitivity,
+                                        -delta_x as f32 * ORBIT_SENSITIVITY,
+                                        -delta_y as f32 * ORBIT_SENSITIVITY,
                                     );
                                 } else if self.middle_mouse_pressed {
-                                    let sensitivity = 0.1;
-                                    let distance_scale = renderer.camera.distance * 0.0001;
+                                    let distance_scale =
+                                        renderer.camera.distance * PAN_DISTANCE_SCALE;
                                     renderer.camera.pan(
-                                        -delta_x as f32 * sensitivity * distance_scale,
-                                        delta_y as f32 * sensitivity * distance_scale,
+                                        -delta_x as f32 * PAN_SENSITIVITY * distance_scale,
+                                        delta_y as f32 * PAN_SENSITIVITY * distance_scale,
                                         0.0,
                                         1.0,
                                     );
                                 } else if self.right_mouse_pressed {
-                                    let sensitivity = 0.005;
-                                    let dolly_amount =
-                                        delta_y as f32 * sensitivity * renderer.camera.distance;
+                                    let dolly_amount = delta_y as f32
+                                        * ORBIT_SENSITIVITY
+                                        * renderer.camera.distance;
                                     renderer.camera.dolly(dolly_amount);
                                 }
                                 renderer.update_camera();
@@ -375,10 +382,13 @@ impl ApplicationHandler for App {
                         // Handle mouse wheel for dolly (zoom in/out) - scaled with distance
                         let scroll_lines = match delta {
                             winit::event::MouseScrollDelta::LineDelta(_, y) => y,
-                            winit::event::MouseScrollDelta::PixelDelta(pos) => pos.y as f32 / 50.0,
+                            winit::event::MouseScrollDelta::PixelDelta(pos) => {
+                                pos.y as f32 / SCROLL_PIXEL_TO_LINES
+                            }
                         };
                         // Scale dolly with distance for consistent feel
-                        let dolly_amount = -scroll_lines * renderer.camera.distance * 0.1;
+                        let dolly_amount =
+                            -scroll_lines * renderer.camera.distance * SCROLL_DOLLY_SCALE;
                         renderer.camera.dolly(dolly_amount);
                         renderer.update_camera();
                     }

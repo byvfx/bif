@@ -19,6 +19,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 
 ### Fixed
+- Batch render now uses viewport HDRI rotation/intensity instead of baked-in values
+- Camera interaction magic numbers extracted to named constants
 - Bucket RNG seed finalization — bit-mixing for uncorrelated seeds between adjacent passes
 - ImageBuffer debug_assert bounds checking in get()/set()
 - Mesh dedup hash — DefaultHasher with sampled vertices instead of weak XOR
