@@ -1033,6 +1033,8 @@ impl Renderer {
             has_animated_geometry,
             scene_builder,
             lights: Arc::new(LightList::from(self.lights.scene_lights.as_slice())),
+            hdri_rotation: Some(self.ivar_state.hdri_rotation),
+            hdri_intensity: Some(self.ivar_state.hdri_intensity),
         };
 
         // Clone settings and compute auto depth bounds if enabled

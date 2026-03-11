@@ -115,6 +115,7 @@ mod tests {
         assert_ne!(x0, x1, "pass 0 and 1 should differ in x");
         assert_ne!(x1, x2, "pass 1 and 2 should differ in x");
         assert_ne!(y0, y1, "pass 0 and 1 should differ in y");
+        assert_ne!(y1, y2, "pass 1 and 2 should differ in y");
     }
 
     #[test]
