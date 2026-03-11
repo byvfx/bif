@@ -149,23 +149,29 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
         let uvs = mesh_data.uvs.clone();
 
         // Create a hash key based on mesh geometry
-        // Use vertex count, index count, and hash of first few vertices
-        let vertex_hash = if vertices.len() >= 3 {
-            // Hash first 3 vertices (as Vec3)
-            let bits: u64 = vertices
-                .iter()
-                .take(3)
-                .enumerate()
-                .map(|(i, v)| {
-                    let x = v.x.to_bits() as u64;
-                    let y = v.y.to_bits() as u64;
-                    let z = v.z.to_bits() as u64;
-                    (x ^ y.rotate_left(21) ^ z.rotate_left(42)).wrapping_mul(i as u64 + 1)
-                })
-                .fold(0, |acc, x| acc ^ x);
-            bits
-        } else {
-            0
+        // Hash vertex/index count + sampled vertex positions for collision resistance
+        let vertex_hash = {
+            use std::collections::hash_map::DefaultHasher;
+            use std::hash::{Hash, Hasher};
+            let mut hasher = DefaultHasher::new();
+            vertices.len().hash(&mut hasher);
+            indices.len().hash(&mut hasher);
+            // Sample first, middle, and last vertices
+            let sample_indices = [0, vertices.len() / 2, vertices.len().saturating_sub(1)];
+            for &idx in &sample_indices {
+                if let Some(v) = vertices.get(idx) {
+                    v.x.to_bits().hash(&mut hasher);
+                    v.y.to_bits().hash(&mut hasher);
+                    v.z.to_bits().hash(&mut hasher);
+                }
+            }
+            // Also hash a few index values
+            for &idx in &sample_indices {
+                if let Some(&i) = indices.get(idx) {
+                    i.hash(&mut hasher);
+                }
+            }
+            hasher.finish()
         };
         let dedup_key = (vertices.len(), indices.len(), vertex_hash);
 

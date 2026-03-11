@@ -613,11 +613,23 @@ impl ImageBuffer {
 
     /// Get the pixel at (x, y).
     pub fn get(&self, x: u32, y: u32) -> Color {
+        debug_assert!(
+            x < self.width && y < self.height,
+            "ImageBuffer OOB: ({x},{y}) in {w}x{h}",
+            w = self.width,
+            h = self.height
+        );
         self.pixels[(y * self.width + x) as usize]
     }
 
     /// Set the pixel at (x, y).
     pub fn set(&mut self, x: u32, y: u32, color: Color) {
+        debug_assert!(
+            x < self.width && y < self.height,
+            "ImageBuffer OOB: ({x},{y}) in {w}x{h}",
+            w = self.width,
+            h = self.height
+        );
         self.pixels[(y * self.width + x) as usize] = color;
     }
 
