@@ -508,15 +508,9 @@ impl MeshData {
                 let transformed = *transform * pos4;
                 let transformed_pos = Vec3::new(transformed.x, transformed.y, transformed.z);
 
-                // Transform normal (use upper-left 3x3, ignore translation)
-                let normal4 = bif_math::Vec4::new(normal.x, normal.y, normal.z, 0.0);
-                let transformed_normal = *transform * normal4;
-                let transformed_normal = Vec3::new(
-                    transformed_normal.x,
-                    transformed_normal.y,
-                    transformed_normal.z,
-                )
-                .normalize();
+                // Transform normal using inverse-transpose (correct for non-uniform scale)
+                let normal_matrix = bif_math::Mat3::from_mat4(*transform).inverse().transpose();
+                let transformed_normal = (normal_matrix * *normal).normalize();
 
                 let color = [
                     transformed_normal.x.abs(),
