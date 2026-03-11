@@ -3,6 +3,7 @@
 //! Supports USD light types: Distant, Point (Sphere), Rect, and Dome (via HDRI).
 //! These lights are sampled via Next Event Estimation (NEE) alongside HDRI.
 
+use crate::material::gen_f32;
 use bif_math::Vec3;
 use rand::RngCore;
 
@@ -342,7 +343,9 @@ impl LightList {
         let idx = (gen_f32(rng) * self.lights.len() as f32) as usize;
         let idx = idx.min(self.lights.len() - 1);
 
-        let sample = self.lights[idx].sample(point, rng);
+        let mut sample = self.lights[idx].sample(point, rng);
+        // Include uniform light selection probability (1/N) in PDF
+        sample.pdf /= self.lights.len() as f32;
         Some((sample, idx))
     }
 
@@ -458,9 +461,4 @@ fn orthonormal_basis(n: Vec3) -> (Vec3, Vec3) {
     let u = Vec3::new(1.0 + sign * n.x * n.x * a, sign * b, -sign * n.x);
     let v = Vec3::new(b, sign + n.y * n.y * a, -n.y);
     (u, v)
-}
-
-/// Generate random f32 in [0, 1).
-fn gen_f32(rng: &mut dyn RngCore) -> f32 {
-    (rng.next_u32() as f64 / u32::MAX as f64) as f32
 }

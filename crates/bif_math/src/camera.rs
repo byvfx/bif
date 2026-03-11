@@ -93,7 +93,7 @@ pub struct Camera {
 /// Default near clip plane distance.
 pub const DEFAULT_NEAR_PLANE: f32 = 0.1;
 /// Default far clip plane distance.
-pub const DEFAULT_FAR_PLANE: f32 = 100.0;
+pub const DEFAULT_FAR_PLANE: f32 = 10000.0;
 
 impl Camera {
     /// Create a new camera

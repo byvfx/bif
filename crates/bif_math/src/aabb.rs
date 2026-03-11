@@ -61,13 +61,15 @@ impl Aabb {
         match n {
             0 => self.x,
             1 => self.y,
-            _ => self.z,
+            2 => self.z,
+            _ => panic!("axis_interval: invalid axis {n}, expected 0-2"),
         }
     }
 
     /// Test if a ray intersects this AABB within the given interval.
     ///
     /// Uses the slab method - efficient ray-box intersection test.
+    #[inline]
     pub fn hit(&self, r: &Ray, mut ray_t: Interval) -> bool {
         let ray_orig = r.origin;
         let ray_dir = r.direction;

@@ -776,14 +776,11 @@ impl PrimDataProvider for CompositeProvider<'_> {
 
         // Procedural root paths from pre-computed index (children of "")
         if let Some(proc_roots) = self.cache.children_index.get("") {
-            for path in proc_roots {
-                if !roots.contains(path) {
-                    roots.push(path.clone());
-                }
-            }
+            roots.extend(proc_roots.iter().cloned());
         }
 
         roots.sort();
+        roots.dedup();
         roots
     }
 
@@ -828,14 +825,11 @@ impl PrimDataProvider for CompositeProvider<'_> {
 
         // Procedural children from pre-computed index (O(1) lookup)
         if let Some(proc_children) = self.cache.children_index.get(parent_path) {
-            for path in proc_children {
-                if !children.contains(path) {
-                    children.push(path.clone());
-                }
-            }
+            children.extend(proc_children.iter().cloned());
         }
 
         children.sort();
+        children.dedup();
         children
     }
 }
