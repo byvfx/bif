@@ -1,7 +1,7 @@
-# Session Handoff - March 10, 2026
+# Session Handoff - March 11, 2026
 
-**Last Updated:** Full codebase code review + critical fixes
-**Next Milestone:** Tier 2 code review fixes (Embree normals, USD safety)
+**Last Updated:** Code review complete — all tiers fixed
+**Next Milestone:** Resume milestone work
 **Project:** BIF - VFX Scene Assembler & Renderer
 
 ---
@@ -11,46 +11,43 @@
 | Status | Details |
 |--------|---------|
 | Complete | Milestones 0-23, M26 (OIDN denoising) |
-| Current | Code review fixes (Tier 1 done, Tier 2-4 planned) |
-| Tests | 82 renderer, 41 math, 24 viewport, 27+ bif_core |
+| Current | Code review complete, ready for new milestone work |
+| Tests | 80 renderer, 41 math, 24 viewport, 27+ bif_core |
 | Performance | 60 FPS viewport, 100K instances with LOD |
 
 ---
 
 ## Recent Work
 
-### Full Codebase Code Review + Fixes (Mar 10, 2026)
+### Full Codebase Code Review + Fixes (Mar 10-11, 2026)
 
-4 parallel VFX code review agents reviewed all 6 crates. ~50 issues found.
+4 parallel VFX code review agents reviewed all 6 crates. ~50 issues found, all actionable items fixed across 8 commits.
 
-**Critical fixes applied:**
-- Normal transform inverse-transpose in instanced_geometry.rs
-- UsdEditLayer::save() double-free prevention
-- ControlFlow::Poll → Wait (was burning 100% CPU idle)
-- NEE MIS light selection PDF (1/N) correction
-- Deleted dead instanced_geometry_bvh.rs (broken UB)
+**Summary of all fixes:**
+- 5 critical bugs (normal transforms, double-free, CPU burn, MIS PDF, dead UB code)
+- 8 quick wins (dedup, perf, correctness)
+- 4 rendering correctness (Embree normals, viewport normals, vertex stride, Lambertian)
+- 4 USD safety (bounds check, env vars, source_dir, parse warnings)
+- 3 misc quality (RNG seed, ImageBuffer bounds, mesh dedup hash)
+- 3 camera/HDRI (constants, batch HDRI pass-through, test warning)
+- 2 major dedup (ray_color -160 lines, EXR writer -370 lines)
+- 3 structural (Ray unification, explicit re-exports, UsdStage audit)
 
-**Quick wins applied:**
-- Duplicate gen_f32, O(n²) mesh lookup, #[inline] Aabb::hit
-- DEFAULT_FAR_PLANE 100→10000, axis_interval catch-all
-- BSDF/PDF default mismatch, .usd routing, CompositeProvider dedup
-
-**Result:** 10 files, +34/-319 lines, all tests pass
+**Net result:** ~900+ lines deleted, all tests pass
 
 ---
 
 ## Architecture Notes
 
+- **Single Ray type:** `bif_math::Ray` used everywhere (bif_renderer::Ray deleted)
 - **Blue noise default:** BlueNoise is the default sampler mode
 - **Pixel filter default:** Box for viewport (fast), Mitchell for batch (quality)
-- **Embree normals bug (known):** Shading normals in prototype-local space not transformed by instance inverse-transpose — Tier 2 fix
-- **Renderer God object:** ~80 fields, cleanup deferred to Tier 4
+- **EXR writer:** Single `AnyChannels`-based function, dynamically adds AOV channels
+- **Renderer God object:** ~80 fields, cleanup deferred to when needed
 
 ---
 
 ## Next Steps
 
-1. **Tier 2 Session A:** Embree shading normal transform, viewport normal transform, Embree stride 12→16, Lambertian scatter fix
-2. **Tier 2 Session B:** UsdMesh::triangulate bounds check, hardcoded paths → env vars, source_dir, silent parse errors
-3. **Tier 3:** ray_color dedup (-150 lines), EXR writer dedup (-300 lines)
-4. Continue M29 USD export validation
+1. Continue M29 USD export validation or next milestone
+2. Tier 4 items deferred: Renderer God object split, egui event bus, MAX_INSTANCES dynamic
