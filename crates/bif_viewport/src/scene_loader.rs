@@ -1204,6 +1204,64 @@ impl Renderer {
         }
     }
 
+    /// Poll for async texture load completion. Call once per frame.
+    ///
+    /// Uploads completed textures from the background thread and rebuilds
+    /// the texture bind group when new textures arrive.
+    pub fn poll_texture_loads(&mut self) {
+        let Some(ref receiver) = self.texture_load_receiver else {
+            return;
+        };
+
+        let max_dimension = self.device.limits().max_texture_dimension_2d;
+        let mut uploaded = 0u32;
+
+        // Drain all available textures (non-blocking)
+        loop {
+            match receiver.try_recv() {
+                Ok(msg) => {
+                    if texture_loader::upload_streamed_texture(
+                        &self.device,
+                        &self.queue,
+                        &mut self.gpu_textures,
+                        &msg,
+                        max_dimension,
+                        Some(&self.mipmap_generator),
+                    ) {
+                        uploaded += 1;
+                    }
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    // Background thread done — no more textures coming
+                    self.texture_load_receiver = None;
+                    break;
+                }
+            }
+        }
+
+        // Rebuild bind group if any textures were uploaded this frame
+        if uploaded > 0 {
+            let texture_view_refs: Vec<&wgpu::TextureView> =
+                self.gpu_textures.views.iter().collect();
+            self.texture_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("Texture Bind Group (streamed)"),
+                layout: &self.texture_bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureViewArray(&texture_view_refs),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&self.texture_sampler),
+                    },
+                ],
+            });
+            log::info!("Streamed {} textures to GPU", uploaded);
+        }
+    }
+
     /// Finalize a completed async USD load — create GPU resources on main thread.
     ///
     /// This is equivalent to the GPU-facing portion of `load_usd_scene`, called
@@ -1386,15 +1444,19 @@ impl Renderer {
         );
         let gpu_time = gpu_start.elapsed();
 
-        // Refresh texture resources and material table for the new scene
+        // Prepare placeholder textures (instant) and start async loading
         let texture_start = Instant::now();
         let base_dir = path.parent();
-        self.gpu_textures = texture_loader::create_gpu_textures_for_scene(
+        self.gpu_textures = texture_loader::prepare_texture_placeholders(
             &self.device,
             &self.queue,
             &scene,
             base_dir,
         );
+        // Start background texture loading — textures stream in via poll_texture_loads()
+        self.texture_load_receiver = Some(texture_loader::start_texture_loading_async(
+            &scene, base_dir,
+        ));
         let texture_time = texture_start.elapsed();
         let texture_count = self.gpu_textures.textures.len();
 

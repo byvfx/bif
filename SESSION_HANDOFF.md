@@ -1,7 +1,7 @@
-# Session Handoff - March 11, 2026
+# Session Handoff - March 12, 2026
 
-**Last Updated:** Code review complete — all tiers fixed
-**Next Milestone:** Resume milestone work
+**Last Updated:** Texture optimization visually verified, STORAGE_BINDING sRGB crash fixed
+**Next Milestone:** Resume M29 USD export or next milestone
 **Project:** BIF - VFX Scene Assembler & Renderer
 
 ---
@@ -11,13 +11,25 @@
 | Status | Details |
 |--------|---------|
 | Complete | Milestones 0-23, M26 (OIDN denoising) |
-| Current | Code review complete, ready for new milestone work |
+| Current | Texture optimization complete + verified, STORAGE_BINDING fix landed |
 | Tests | 80 renderer, 41 math, 24 viewport, 27+ bif_core |
 | Performance | 60 FPS viewport, 100K instances with LOD |
 
 ---
 
 ## Recent Work
+
+### Texture Loading Optimization (Mar 11, 2026)
+
+Implemented full 3-tier texture loading optimization. Expected: 125s→<1s perceived.
+
+**T1 (Quick Wins):** Disabled CPU mipmaps for viewport, parallelized OIIO loading with rayon.
+**T2 (Format Conversion):** C++ reads LDR as u8 directly, Rust uploads raw u8 to GPU (Rgba8UnormSrgb handles sRGB decode in hardware). Eliminated triple format conversion.
+**T3 (GPU/Async):** GPU mipmap compute shader, async texture streaming (placeholders→stream in), viewport size limit (2048px).
+
+**Key files:** `texture_loader.rs`, `oiio_bridge.cpp`, `scene_loader.rs`, `mipmap_downsample.wgsl`
+
+**Verified:** Scene loads in ~2s (was 125s), sRGB colors correct, STORAGE_BINDING crash fixed.
 
 ### Full Codebase Code Review + Fixes (Mar 10-11, 2026)
 
@@ -49,5 +61,6 @@
 
 ## Next Steps
 
-1. Continue M29 USD export validation or next milestone
+1. Resume M29 USD export validation or next milestone
 2. Tier 4 items deferred: Renderer God object split, egui event bus, MAX_INSTANCES dynamic
+3. Consider exposing viewport texture size limit in UI

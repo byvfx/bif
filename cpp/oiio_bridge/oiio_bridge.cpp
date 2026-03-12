@@ -64,6 +64,14 @@ static bool is_linear_format(const std::string& ext) {
     return lower == "exr" || lower == "hdr" || lower == "tx";
 }
 
+/// Check if format can be read directly as u8 (LDR formats)
+static bool is_ldr_format(const std::string& ext) {
+    std::string lower = ext;
+    std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+    return lower == "png" || lower == "jpg" || lower == "jpeg" ||
+           lower == "tga" || lower == "bmp" || lower == "tif" || lower == "tiff";
+}
+
 static std::string get_extension(const std::string& path) {
     size_t dot = path.rfind('.');
     if (dot == std::string::npos) return "";
@@ -121,19 +129,12 @@ OiioBridgeError oiio_load_texture(const char* path, OiioTextureData** out_data) 
     // Determine if source is linear
     std::string ext = get_extension(path);
     bool is_linear = is_linear_format(ext);
-
-    // Read as float for processing
-    std::vector<float> pixels(width * height * nchannels);
-    if (!inp->read_image(0, 0, 0, nchannels, TypeDesc::FLOAT, pixels.data())) {
-        g_last_error = inp->geterror();
-        inp->close();
-        return OIIO_BRIDGE_ERROR_READ_FAILED;
-    }
-    inp->close();
+    bool ldr = is_ldr_format(ext);
 
     // Allocate output structure
     OiioTextureData* data = new (std::nothrow) OiioTextureData;
     if (!data) {
+        inp->close();
         return OIIO_BRIDGE_ERROR_OUT_OF_MEMORY;
     }
 
@@ -143,47 +144,78 @@ OiioBridgeError oiio_load_texture(const char* path, OiioTextureData** out_data) 
     data->is_linear = is_linear ? 1 : 0;
     data->mip_count = 1;
 
-    // Allocate single mip level
     data->mip_levels = new (std::nothrow) OiioMipLevel[1];
     if (!data->mip_levels) {
         delete data;
+        inp->close();
         return OIIO_BRIDGE_ERROR_OUT_OF_MEMORY;
     }
 
-    size_t byte_size = width * height * 4;
+    size_t byte_size = static_cast<size_t>(width) * height * 4;
     uint8_t* rgba_data = new (std::nothrow) uint8_t[byte_size];
     if (!rgba_data) {
         delete[] data->mip_levels;
         delete data;
+        inp->close();
         return OIIO_BRIDGE_ERROR_OUT_OF_MEMORY;
     }
 
-    // Convert to RGBA u8
-    for (int y = 0; y < height; ++y) {
-        for (int x = 0; x < width; ++x) {
-            int src_idx = (y * width + x) * nchannels;
-            int dst_idx = (y * width + x) * 4;
+    if (ldr && nchannels >= 3) {
+        // LDR fast path: read directly as UINT8, skip float intermediate
+        if (nchannels >= 4) {
+            // RGBA — read straight into output buffer
+            if (!inp->read_image(0, 0, 0, 4, TypeDesc::UINT8, rgba_data)) {
+                g_last_error = inp->geterror();
+                delete[] rgba_data;
+                delete[] data->mip_levels;
+                delete data;
+                inp->close();
+                return OIIO_BRIDGE_ERROR_READ_FAILED;
+            }
+        } else {
+            // RGB — read into temp buffer, expand to RGBA
+            std::vector<uint8_t> rgb(width * height * 3);
+            if (!inp->read_image(0, 0, 0, 3, TypeDesc::UINT8, rgb.data())) {
+                g_last_error = inp->geterror();
+                delete[] rgba_data;
+                delete[] data->mip_levels;
+                delete data;
+                inp->close();
+                return OIIO_BRIDGE_ERROR_READ_FAILED;
+            }
+            for (int i = 0; i < width * height; ++i) {
+                rgba_data[i * 4 + 0] = rgb[i * 3 + 0];
+                rgba_data[i * 4 + 1] = rgb[i * 3 + 1];
+                rgba_data[i * 4 + 2] = rgb[i * 3 + 2];
+                rgba_data[i * 4 + 3] = 255;
+            }
+        }
+    } else {
+        // HDR/float path: read as float, convert to u8
+        std::vector<float> pixels(width * height * nchannels);
+        if (!inp->read_image(0, 0, 0, nchannels, TypeDesc::FLOAT, pixels.data())) {
+            g_last_error = inp->geterror();
+            delete[] rgba_data;
+            delete[] data->mip_levels;
+            delete data;
+            inp->close();
+            return OIIO_BRIDGE_ERROR_READ_FAILED;
+        }
 
+        for (int i = 0; i < width * height; ++i) {
+            int src_idx = i * nchannels;
+            int dst_idx = i * 4;
             float r = pixels[src_idx];
             float g = nchannels > 1 ? pixels[src_idx + 1] : r;
             float b = nchannels > 2 ? pixels[src_idx + 2] : r;
             float a = nchannels > 3 ? pixels[src_idx + 3] : 1.0f;
-
-            if (is_linear) {
-                // Keep linear for GPU (sRGB conversion in shader or via texture format)
-                rgba_data[dst_idx + 0] = float_to_u8(r);
-                rgba_data[dst_idx + 1] = float_to_u8(g);
-                rgba_data[dst_idx + 2] = float_to_u8(b);
-                rgba_data[dst_idx + 3] = float_to_u8(a);
-            } else {
-                // sRGB data - keep as-is (already gamma encoded)
-                rgba_data[dst_idx + 0] = float_to_u8(r);
-                rgba_data[dst_idx + 1] = float_to_u8(g);
-                rgba_data[dst_idx + 2] = float_to_u8(b);
-                rgba_data[dst_idx + 3] = float_to_u8(a);
-            }
+            rgba_data[dst_idx + 0] = float_to_u8(r);
+            rgba_data[dst_idx + 1] = float_to_u8(g);
+            rgba_data[dst_idx + 2] = float_to_u8(b);
+            rgba_data[dst_idx + 3] = float_to_u8(a);
         }
     }
+    inp->close();
 
     data->mip_levels[0].data = rgba_data;
     data->mip_levels[0].width = width;
@@ -272,18 +304,11 @@ OiioBridgeError oiio_load_texture_with_mips(const char* path, OiioTextureData** 
         data->mip_levels[i].byte_size = 0;
     }
 
-    // Read base level first
-    std::vector<float> base_pixels(base_width * base_height * nchannels);
-    if (!inp->read_image(0, 0, 0, nchannels, TypeDesc::FLOAT, base_pixels.data())) {
-        g_last_error = inp->geterror();
-        delete[] data->mip_levels;
-        delete data;
-        inp->close();
-        return OIIO_BRIDGE_ERROR_READ_FAILED;
-    }
+    // Determine format for fast path
+    bool ldr = is_ldr_format(ext);
 
-    // Convert base level to RGBA u8
-    size_t base_byte_size = base_width * base_height * 4;
+    // Read base level
+    size_t base_byte_size = static_cast<size_t>(base_width) * base_height * 4;
     uint8_t* base_rgba = new (std::nothrow) uint8_t[base_byte_size];
     if (!base_rgba) {
         delete[] data->mip_levels;
@@ -292,16 +317,52 @@ OiioBridgeError oiio_load_texture_with_mips(const char* path, OiioTextureData** 
         return OIIO_BRIDGE_ERROR_OUT_OF_MEMORY;
     }
 
-    for (int y = 0; y < base_height; ++y) {
-        for (int x = 0; x < base_width; ++x) {
-            int src_idx = (y * base_width + x) * nchannels;
-            int dst_idx = (y * base_width + x) * 4;
-
+    if (ldr && nchannels >= 3) {
+        // LDR fast path: read directly as UINT8
+        if (nchannels >= 4) {
+            if (!inp->read_image(0, 0, 0, 4, TypeDesc::UINT8, base_rgba)) {
+                g_last_error = inp->geterror();
+                delete[] base_rgba;
+                delete[] data->mip_levels;
+                delete data;
+                inp->close();
+                return OIIO_BRIDGE_ERROR_READ_FAILED;
+            }
+        } else {
+            std::vector<uint8_t> rgb(base_width * base_height * 3);
+            if (!inp->read_image(0, 0, 0, 3, TypeDesc::UINT8, rgb.data())) {
+                g_last_error = inp->geterror();
+                delete[] base_rgba;
+                delete[] data->mip_levels;
+                delete data;
+                inp->close();
+                return OIIO_BRIDGE_ERROR_READ_FAILED;
+            }
+            for (int i = 0; i < base_width * base_height; ++i) {
+                base_rgba[i * 4 + 0] = rgb[i * 3 + 0];
+                base_rgba[i * 4 + 1] = rgb[i * 3 + 1];
+                base_rgba[i * 4 + 2] = rgb[i * 3 + 2];
+                base_rgba[i * 4 + 3] = 255;
+            }
+        }
+    } else {
+        // HDR/float path
+        std::vector<float> base_pixels(base_width * base_height * nchannels);
+        if (!inp->read_image(0, 0, 0, nchannels, TypeDesc::FLOAT, base_pixels.data())) {
+            g_last_error = inp->geterror();
+            delete[] base_rgba;
+            delete[] data->mip_levels;
+            delete data;
+            inp->close();
+            return OIIO_BRIDGE_ERROR_READ_FAILED;
+        }
+        for (int i = 0; i < base_width * base_height; ++i) {
+            int src_idx = i * nchannels;
+            int dst_idx = i * 4;
             float r = base_pixels[src_idx];
             float g = nchannels > 1 ? base_pixels[src_idx + 1] : r;
             float b = nchannels > 2 ? base_pixels[src_idx + 2] : r;
             float a = nchannels > 3 ? base_pixels[src_idx + 3] : 1.0f;
-
             base_rgba[dst_idx + 0] = float_to_u8(r);
             base_rgba[dst_idx + 1] = float_to_u8(g);
             base_rgba[dst_idx + 2] = float_to_u8(b);
@@ -323,25 +384,41 @@ OiioBridgeError oiio_load_texture_with_mips(const char* path, OiioTextureData** 
         int mip_width = mip_spec.width;
         int mip_height = mip_spec.height;
 
-        std::vector<float> mip_pixels(mip_width * mip_height * nchannels);
-        if (!inp->read_image(0, 0, 0, nchannels, TypeDesc::FLOAT, mip_pixels.data())) {
-            break;
-        }
-
-        size_t mip_byte_size = mip_width * mip_height * 4;
+        size_t mip_byte_size = static_cast<size_t>(mip_width) * mip_height * 4;
         uint8_t* mip_rgba = new (std::nothrow) uint8_t[mip_byte_size];
         if (!mip_rgba) break;
 
-        for (int y = 0; y < mip_height; ++y) {
-            for (int x = 0; x < mip_width; ++x) {
-                int src_idx = (y * mip_width + x) * nchannels;
-                int dst_idx = (y * mip_width + x) * 4;
-
+        if (ldr && nchannels >= 3) {
+            // LDR fast path for mip levels
+            if (nchannels >= 4) {
+                if (!inp->read_image(0, 0, 0, 4, TypeDesc::UINT8, mip_rgba)) break;
+            } else {
+                std::vector<uint8_t> rgb(mip_width * mip_height * 3);
+                if (!inp->read_image(0, 0, 0, 3, TypeDesc::UINT8, rgb.data())) {
+                    delete[] mip_rgba;
+                    break;
+                }
+                for (int i = 0; i < mip_width * mip_height; ++i) {
+                    mip_rgba[i * 4 + 0] = rgb[i * 3 + 0];
+                    mip_rgba[i * 4 + 1] = rgb[i * 3 + 1];
+                    mip_rgba[i * 4 + 2] = rgb[i * 3 + 2];
+                    mip_rgba[i * 4 + 3] = 255;
+                }
+            }
+        } else {
+            // HDR/float path for mip levels
+            std::vector<float> mip_pixels(mip_width * mip_height * nchannels);
+            if (!inp->read_image(0, 0, 0, nchannels, TypeDesc::FLOAT, mip_pixels.data())) {
+                delete[] mip_rgba;
+                break;
+            }
+            for (int i = 0; i < mip_width * mip_height; ++i) {
+                int src_idx = i * nchannels;
+                int dst_idx = i * 4;
                 float r = mip_pixels[src_idx];
                 float g = nchannels > 1 ? mip_pixels[src_idx + 1] : r;
                 float b = nchannels > 2 ? mip_pixels[src_idx + 2] : r;
                 float a = nchannels > 3 ? mip_pixels[src_idx + 3] : 1.0f;
-
                 mip_rgba[dst_idx + 0] = float_to_u8(r);
                 mip_rgba[dst_idx + 1] = float_to_u8(g);
                 mip_rgba[dst_idx + 2] = float_to_u8(b);
