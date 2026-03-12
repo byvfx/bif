@@ -29,12 +29,6 @@ pub enum BvhNode {
     Empty,
 }
 
-/// Convert our Ray to bif_math::Ray for AABB intersection.
-#[inline]
-fn to_math_ray(ray: &Ray) -> bif_math::Ray {
-    bif_math::Ray::new(ray.origin(), ray.direction(), ray.time())
-}
-
 impl BvhNode {
     /// Create a BVH from a list of hittable objects.
     pub fn new(objects: Vec<Box<dyn Hittable + Send + Sync>>) -> Self {
@@ -114,13 +108,11 @@ impl BvhNode {
 
 impl Hittable for BvhNode {
     fn hit<'a>(&'a self, ray: &Ray, ray_t: Interval, rec: &mut HitRecord<'a>) -> bool {
-        let math_ray = to_math_ray(ray);
-
         match self {
             BvhNode::Empty => false,
 
             BvhNode::Leaf { objects, bbox } => {
-                if !bbox.hit(&math_ray, ray_t) {
+                if !bbox.hit(ray, ray_t) {
                     return false;
                 }
 
@@ -138,7 +130,7 @@ impl Hittable for BvhNode {
             }
 
             BvhNode::Branch { left, right, bbox } => {
-                if !bbox.hit(&math_ray, ray_t) {
+                if !bbox.hit(ray, ray_t) {
                     return false;
                 }
 

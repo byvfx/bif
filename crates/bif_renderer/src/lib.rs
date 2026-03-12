@@ -22,11 +22,11 @@ pub mod light;
 mod material;
 pub mod pick_scene;
 pub mod radiance_cache;
-mod ray;
 mod renderer;
 mod sphere;
 mod triangle;
 
+pub use bif_math::Ray;
 pub use blue_noise::SamplerMode;
 pub use bucket::{
     generate_buckets, render_bucket, render_bucket_with_aovs, Bucket, BucketResult,
@@ -50,7 +50,6 @@ pub use material::{
 };
 pub use pick_scene::{EmbreePickScene, PickError, PickResult};
 pub use radiance_cache::{RadianceCache, RadianceCacheConfig};
-pub use ray::Ray;
 pub use renderer::{
     color_to_rgba, ray_color, ray_color_with_aovs, render, render_pixel, render_pixel_with_aovs,
     AovData, ImageBuffer, RenderConfig,
