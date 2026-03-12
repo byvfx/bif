@@ -17,6 +17,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - CHANGELOG.md for tracking release notes
 
 ### Changed
+- `ray_color` now delegates to `ray_color_with_aovs` (eliminates ~160 lines of duplicate bounce loop)
+- EXR writer: single `AnyChannels`-based function replaces 8 combinatorial variants (-370 lines)
 
 ### Fixed
 - Batch render now uses viewport HDRI rotation/intensity instead of baked-in values

@@ -4,10 +4,11 @@
 
 use crate::Color;
 use exr::image::write::WritableImage;
-use exr::image::{Blocks, Encoding, Image, Layer, SpecificChannels};
+use exr::image::{AnyChannel, AnyChannels, Blocks, Encoding, FlatSamples, Image, Layer};
 use exr::math::Vec2;
 use exr::meta::attribute::{Compression, LineOrder};
 use exr::meta::header::LayerAttributes;
+use exr::prelude::SmallVec;
 use half::f16;
 use std::path::Path;
 
@@ -188,399 +189,75 @@ pub fn write_exr(
         }
     }
 
-    // Write based on AOV configuration (alpha, depth, normal)
-    match (&output.alpha, &output.depth, &output.normal) {
-        (Some(a), Some(d), Some(n)) => {
-            write_exr_rgba_depth_normal(output, a, d, n, path, compression)
-        }
-        (Some(a), Some(d), None) => write_exr_rgba_depth(output, a, d, path, compression),
-        (Some(a), None, Some(n)) => write_exr_rgba_normal(output, a, n, path, compression),
-        (Some(a), None, None) => write_exr_rgba(output, a, path, compression),
-        (None, Some(d), Some(n)) => write_exr_rgb_depth_normal(output, d, n, path, compression),
-        (None, Some(d), None) => write_exr_rgb_depth(output, d, path, compression),
-        (None, None, Some(n)) => write_exr_rgb_normal(output, n, path, compression),
-        (None, None, None) => write_exr_rgb(output, path, compression),
+    // Build channel buffers dynamically based on which AOVs are present
+    let beauty = &output.beauty;
+    let mut channels: SmallVec<[AnyChannel<FlatSamples>; 4]> = SmallVec::new();
+
+    // Beauty (RGB) — half float
+    let r: Vec<f16> = beauty.iter().map(|c| f16::from_f32(c.x)).collect();
+    let g: Vec<f16> = beauty.iter().map(|c| f16::from_f32(c.y)).collect();
+    let b: Vec<f16> = beauty.iter().map(|c| f16::from_f32(c.z)).collect();
+    channels.push(make_f16_channel("R", r));
+    channels.push(make_f16_channel("G", g));
+    channels.push(make_f16_channel("B", b));
+
+    // Alpha — half float
+    if let Some(ref alpha) = output.alpha {
+        let a: Vec<f16> = alpha.iter().map(|v| f16::from_f32(*v)).collect();
+        channels.push(make_f16_channel("A", a));
+    }
+
+    // Normal — half float
+    if let Some(ref normal) = output.normal {
+        let nx: Vec<f16> = normal.iter().map(|n| f16::from_f32(n[0])).collect();
+        let ny: Vec<f16> = normal.iter().map(|n| f16::from_f32(n[1])).collect();
+        let nz: Vec<f16> = normal.iter().map(|n| f16::from_f32(n[2])).collect();
+        channels.push(make_f16_channel("N.X", nx));
+        channels.push(make_f16_channel("N.Y", ny));
+        channels.push(make_f16_channel("N.Z", nz));
+    }
+
+    // Depth — full f32 (not converted to half)
+    if let Some(ref depth) = output.depth {
+        channels.push(make_f32_channel("Z", depth.clone()));
+    }
+
+    let any_channels = AnyChannels::sort(channels);
+
+    let layer = Layer::new(
+        (w, h),
+        LayerAttributes::named("main"),
+        make_encoding(compression),
+        any_channels,
+    );
+
+    let image = Image::from_layer(layer);
+    image
+        .write()
+        .to_file(path)
+        .map_err(|e| ExrError::Exr(format!("{}", e)))?;
+
+    Ok(())
+}
+
+/// Create a half-float (f16) channel.
+fn make_f16_channel(name: &str, data: Vec<f16>) -> AnyChannel<FlatSamples> {
+    AnyChannel {
+        name: exr::meta::attribute::Text::from(name),
+        sample_data: FlatSamples::F16(data),
+        quantize_linearly: false,
+        sampling: Vec2(1, 1),
     }
 }
 
-/// Write EXR with RGB only.
-fn write_exr_rgb(
-    output: &ExrOutput,
-    path: &Path,
-    compression: ExrCompression,
-) -> Result<(), ExrError> {
-    let w = output.width as usize;
-    let h = output.height as usize;
-    let beauty = &output.beauty;
-
-    let channels = SpecificChannels::build()
-        .with_channel("R")
-        .with_channel("G")
-        .with_channel("B")
-        .with_pixel_fn(|pos: Vec2<usize>| {
-            let idx = pos.y() * w + pos.x();
-            let c = beauty[idx];
-            (f16::from_f32(c.x), f16::from_f32(c.y), f16::from_f32(c.z))
-        });
-
-    let layer = Layer::new(
-        (w, h),
-        LayerAttributes::named("main"),
-        make_encoding(compression),
-        channels,
-    );
-
-    let image = Image::from_layer(layer);
-    image
-        .write()
-        .to_file(path)
-        .map_err(|e| ExrError::Exr(format!("{}", e)))?;
-
-    Ok(())
-}
-
-/// Write EXR with RGBA.
-fn write_exr_rgba(
-    output: &ExrOutput,
-    alpha: &[f32],
-    path: &Path,
-    compression: ExrCompression,
-) -> Result<(), ExrError> {
-    let w = output.width as usize;
-    let h = output.height as usize;
-    let beauty = &output.beauty;
-
-    let channels = SpecificChannels::build()
-        .with_channel("R")
-        .with_channel("G")
-        .with_channel("B")
-        .with_channel("A")
-        .with_pixel_fn(|pos: Vec2<usize>| {
-            let idx = pos.y() * w + pos.x();
-            let c = beauty[idx];
-            let a = alpha[idx];
-            (
-                f16::from_f32(c.x),
-                f16::from_f32(c.y),
-                f16::from_f32(c.z),
-                f16::from_f32(a),
-            )
-        });
-
-    let layer = Layer::new(
-        (w, h),
-        LayerAttributes::named("main"),
-        make_encoding(compression),
-        channels,
-    );
-
-    let image = Image::from_layer(layer);
-    image
-        .write()
-        .to_file(path)
-        .map_err(|e| ExrError::Exr(format!("{}", e)))?;
-
-    Ok(())
-}
-
-/// Write EXR with RGB + depth (Z).
-fn write_exr_rgb_depth(
-    output: &ExrOutput,
-    depth: &[f32],
-    path: &Path,
-    compression: ExrCompression,
-) -> Result<(), ExrError> {
-    let w = output.width as usize;
-    let h = output.height as usize;
-    let beauty = &output.beauty;
-
-    let channels = SpecificChannels::build()
-        .with_channel("R")
-        .with_channel("G")
-        .with_channel("B")
-        .with_channel("Z")
-        .with_pixel_fn(|pos: Vec2<usize>| {
-            let idx = pos.y() * w + pos.x();
-            let c = beauty[idx];
-            let z = depth[idx];
-            (
-                f16::from_f32(c.x),
-                f16::from_f32(c.y),
-                f16::from_f32(c.z),
-                z,
-            )
-        });
-
-    let layer = Layer::new(
-        (w, h),
-        LayerAttributes::named("main"),
-        make_encoding(compression),
-        channels,
-    );
-
-    let image = Image::from_layer(layer);
-    image
-        .write()
-        .to_file(path)
-        .map_err(|e| ExrError::Exr(format!("{}", e)))?;
-
-    Ok(())
-}
-
-/// Write EXR with RGBA + depth (Z).
-fn write_exr_rgba_depth(
-    output: &ExrOutput,
-    alpha: &[f32],
-    depth: &[f32],
-    path: &Path,
-    compression: ExrCompression,
-) -> Result<(), ExrError> {
-    let w = output.width as usize;
-    let h = output.height as usize;
-    let beauty = &output.beauty;
-
-    let channels = SpecificChannels::build()
-        .with_channel("R")
-        .with_channel("G")
-        .with_channel("B")
-        .with_channel("A")
-        .with_channel("Z")
-        .with_pixel_fn(|pos: Vec2<usize>| {
-            let idx = pos.y() * w + pos.x();
-            let c = beauty[idx];
-            let a = alpha[idx];
-            let z = depth[idx];
-            (
-                f16::from_f32(c.x),
-                f16::from_f32(c.y),
-                f16::from_f32(c.z),
-                f16::from_f32(a),
-                z,
-            )
-        });
-
-    let layer = Layer::new(
-        (w, h),
-        LayerAttributes::named("main"),
-        make_encoding(compression),
-        channels,
-    );
-
-    let image = Image::from_layer(layer);
-    image
-        .write()
-        .to_file(path)
-        .map_err(|e| ExrError::Exr(format!("{}", e)))?;
-
-    Ok(())
-}
-
-/// Write EXR with RGB + normal (N.X, N.Y, N.Z).
-fn write_exr_rgb_normal(
-    output: &ExrOutput,
-    normal: &[[f32; 3]],
-    path: &Path,
-    compression: ExrCompression,
-) -> Result<(), ExrError> {
-    let w = output.width as usize;
-    let h = output.height as usize;
-    let beauty = &output.beauty;
-
-    let channels = SpecificChannels::build()
-        .with_channel("R")
-        .with_channel("G")
-        .with_channel("B")
-        .with_channel("N.X")
-        .with_channel("N.Y")
-        .with_channel("N.Z")
-        .with_pixel_fn(|pos: Vec2<usize>| {
-            let idx = pos.y() * w + pos.x();
-            let c = beauty[idx];
-            let n = normal[idx];
-            (
-                f16::from_f32(c.x),
-                f16::from_f32(c.y),
-                f16::from_f32(c.z),
-                f16::from_f32(n[0]),
-                f16::from_f32(n[1]),
-                f16::from_f32(n[2]),
-            )
-        });
-
-    let layer = Layer::new(
-        (w, h),
-        LayerAttributes::named("main"),
-        make_encoding(compression),
-        channels,
-    );
-
-    let image = Image::from_layer(layer);
-    image
-        .write()
-        .to_file(path)
-        .map_err(|e| ExrError::Exr(format!("{}", e)))?;
-
-    Ok(())
-}
-
-/// Write EXR with RGBA + normal (N.X, N.Y, N.Z).
-fn write_exr_rgba_normal(
-    output: &ExrOutput,
-    alpha: &[f32],
-    normal: &[[f32; 3]],
-    path: &Path,
-    compression: ExrCompression,
-) -> Result<(), ExrError> {
-    let w = output.width as usize;
-    let h = output.height as usize;
-    let beauty = &output.beauty;
-
-    let channels = SpecificChannels::build()
-        .with_channel("R")
-        .with_channel("G")
-        .with_channel("B")
-        .with_channel("A")
-        .with_channel("N.X")
-        .with_channel("N.Y")
-        .with_channel("N.Z")
-        .with_pixel_fn(|pos: Vec2<usize>| {
-            let idx = pos.y() * w + pos.x();
-            let c = beauty[idx];
-            let a = alpha[idx];
-            let n = normal[idx];
-            (
-                f16::from_f32(c.x),
-                f16::from_f32(c.y),
-                f16::from_f32(c.z),
-                f16::from_f32(a),
-                f16::from_f32(n[0]),
-                f16::from_f32(n[1]),
-                f16::from_f32(n[2]),
-            )
-        });
-
-    let layer = Layer::new(
-        (w, h),
-        LayerAttributes::named("main"),
-        make_encoding(compression),
-        channels,
-    );
-
-    let image = Image::from_layer(layer);
-    image
-        .write()
-        .to_file(path)
-        .map_err(|e| ExrError::Exr(format!("{}", e)))?;
-
-    Ok(())
-}
-
-/// Write EXR with RGB + depth (Z) + normal (N.X, N.Y, N.Z).
-fn write_exr_rgb_depth_normal(
-    output: &ExrOutput,
-    depth: &[f32],
-    normal: &[[f32; 3]],
-    path: &Path,
-    compression: ExrCompression,
-) -> Result<(), ExrError> {
-    let w = output.width as usize;
-    let h = output.height as usize;
-    let beauty = &output.beauty;
-
-    let channels = SpecificChannels::build()
-        .with_channel("R")
-        .with_channel("G")
-        .with_channel("B")
-        .with_channel("Z")
-        .with_channel("N.X")
-        .with_channel("N.Y")
-        .with_channel("N.Z")
-        .with_pixel_fn(|pos: Vec2<usize>| {
-            let idx = pos.y() * w + pos.x();
-            let c = beauty[idx];
-            let z = depth[idx];
-            let n = normal[idx];
-            (
-                f16::from_f32(c.x),
-                f16::from_f32(c.y),
-                f16::from_f32(c.z),
-                z,
-                f16::from_f32(n[0]),
-                f16::from_f32(n[1]),
-                f16::from_f32(n[2]),
-            )
-        });
-
-    let layer = Layer::new(
-        (w, h),
-        LayerAttributes::named("main"),
-        make_encoding(compression),
-        channels,
-    );
-
-    let image = Image::from_layer(layer);
-    image
-        .write()
-        .to_file(path)
-        .map_err(|e| ExrError::Exr(format!("{}", e)))?;
-
-    Ok(())
-}
-
-/// Write EXR with RGBA + depth (Z) + normal (N.X, N.Y, N.Z).
-fn write_exr_rgba_depth_normal(
-    output: &ExrOutput,
-    alpha: &[f32],
-    depth: &[f32],
-    normal: &[[f32; 3]],
-    path: &Path,
-    compression: ExrCompression,
-) -> Result<(), ExrError> {
-    let w = output.width as usize;
-    let h = output.height as usize;
-    let beauty = &output.beauty;
-
-    let channels = SpecificChannels::build()
-        .with_channel("R")
-        .with_channel("G")
-        .with_channel("B")
-        .with_channel("A")
-        .with_channel("Z")
-        .with_channel("N.X")
-        .with_channel("N.Y")
-        .with_channel("N.Z")
-        .with_pixel_fn(|pos: Vec2<usize>| {
-            let idx = pos.y() * w + pos.x();
-            let c = beauty[idx];
-            let a = alpha[idx];
-            let z = depth[idx];
-            let n = normal[idx];
-            (
-                f16::from_f32(c.x),
-                f16::from_f32(c.y),
-                f16::from_f32(c.z),
-                f16::from_f32(a),
-                z,
-                f16::from_f32(n[0]),
-                f16::from_f32(n[1]),
-                f16::from_f32(n[2]),
-            )
-        });
-
-    let layer = Layer::new(
-        (w, h),
-        LayerAttributes::named("main"),
-        make_encoding(compression),
-        channels,
-    );
-
-    let image = Image::from_layer(layer);
-    image
-        .write()
-        .to_file(path)
-        .map_err(|e| ExrError::Exr(format!("{}", e)))?;
-
-    Ok(())
+/// Create a full-float (f32) channel.
+fn make_f32_channel(name: &str, data: Vec<f32>) -> AnyChannel<FlatSamples> {
+    AnyChannel {
+        name: exr::meta::attribute::Text::from(name),
+        sample_data: FlatSamples::F32(data),
+        quantize_linearly: false,
+        sampling: Vec2(1, 1),
+    }
 }
 
 /// Format a frame path with frame number substitution.
