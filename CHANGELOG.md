@@ -19,13 +19,34 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 - `ray_color` now delegates to `ray_color_with_aovs` (eliminates ~160 lines of duplicate bounce loop)
 - EXR writer: single `AnyChannels`-based function replaces 8 combinatorial variants (-370 lines)
+- `ControlFlow::Poll` → `Wait` in winit event loop (was burning 100% CPU when idle)
+- Lambertian scatter uses `cosine_weighted_hemisphere()` (Malley's method) instead of rejection sampling
+- Embree vertex stride 12→16 bytes (SIMD alignment)
+- `DEFAULT_FAR_PLANE` 100→10000 (was clipping VFX scenes)
+- `CompositeProvider` dedup: `sort+dedup` replaces O(n²) `Vec::contains`
+- `.usd` binary files now route to C++ bridge (was going to pure-Rust USDA parser)
 
 ### Fixed
+- Normal transforms use inverse-transpose for non-uniform scale (instanced_geometry + Embree + viewport)
+- UsdEditLayer double-free — `save()` nulls pointer before Drop runs
+- NEE MIS light PDF — `sample_one` includes 1/N light selection probability
+- Default BSDF/PDF mismatch — both return `1/(2*PI)` consistently
+- `UsdMesh::triangulate` bounds check — break on truncated indices instead of panic
+- USD toolkit path uses `USD_TOOLKIT_DIR` env var instead of hardcoded path
+- Material `source_dir` derived from input file path for relative texture resolution
+- USDA parser logs warnings on bad floats instead of silent `unwrap_or(0.0)`
 - Batch render now uses viewport HDRI rotation/intensity instead of baked-in values
 - Camera interaction magic numbers extracted to named constants
 - Bucket RNG seed finalization — bit-mixing for uncorrelated seeds between adjacent passes
 - ImageBuffer debug_assert bounds checking in get()/set()
 - Mesh dedup hash — DefaultHasher with sampled vertices instead of weak XOR
+- Duplicate `gen_f32` in light.rs removed (imports from material.rs)
+- O(n²) mesh animation lookup replaced with `enumerate()`
+- `#[inline]` on `Aabb::hit()` for cross-crate BVH inlining
+- `axis_interval` catch-all `_` replaced with explicit match + panic
+
+### Removed
+- Dead `instanced_geometry_bvh.rs` (274 lines, broken UB, never compiled)
 - CI: `bif_core` build.rs no longer panics when vcpkg not installed (graceful skip for clippy-only mode)
 - CI: removed bif_renderer/bif_viewport test steps that can't link without USD env
 - CI: build.rs vcpkg detection checks toolchain file + USD headers (fixes false positive on GH Actions `C:\vcpkg`)
