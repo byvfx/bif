@@ -45,11 +45,28 @@ impl Ray {
         self.time
     }
 
+    /// Create a ray at time 0.
+    #[inline]
+    pub fn new_simple(origin: Vec3, direction: Vec3) -> Self {
+        Self::new(origin, direction, 0.0)
+    }
+
     /// Get the point along the ray at parameter t.
     ///
     /// Returns: origin + t * direction
+    #[inline]
     pub fn at(&self, t: f32) -> Vec3 {
         self.origin + self.direction * t
+    }
+}
+
+impl Default for Ray {
+    fn default() -> Self {
+        Self {
+            origin: Vec3::ZERO,
+            direction: Vec3::Z,
+            time: 0.0,
+        }
     }
 }
 

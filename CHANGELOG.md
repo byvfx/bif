@@ -19,6 +19,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 - `ray_color` now delegates to `ray_color_with_aovs` (eliminates ~160 lines of duplicate bounce loop)
 - EXR writer: single `AnyChannels`-based function replaces 8 combinatorial variants (-370 lines)
+- Unified Ray type: deleted `bif_renderer::Ray`, use `bif_math::Ray` everywhere
+- USD module: wildcard re-exports replaced with explicit imports
 - `ControlFlow::Poll` → `Wait` in winit event loop (was burning 100% CPU when idle)
 - Lambertian scatter uses `cosine_weighted_hemisphere()` (Malley's method) instead of rejection sampling
 - Embree vertex stride 12→16 bytes (SIMD alignment)

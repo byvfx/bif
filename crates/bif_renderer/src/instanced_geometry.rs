@@ -133,9 +133,7 @@ impl<M: Material + Clone + 'static> Hittable for InstancedGeometry<M> {
             self.inv_transforms.iter().zip(&self.transforms).enumerate()
         {
             // Early bbox rejection using precomputed world-space bbox
-            // Convert bif_renderer::Ray to bif_math::Ray for Aabb::hit
-            let math_ray = bif_math::Ray::new(ray.origin(), ray.direction(), ray.time());
-            if !self.instance_bboxes[i].hit(&math_ray, Interval::new(ray_t.min, closest)) {
+            if !self.instance_bboxes[i].hit(ray, Interval::new(ray_t.min, closest)) {
                 continue; // Skip this instance
             }
             // Transform ray to local space

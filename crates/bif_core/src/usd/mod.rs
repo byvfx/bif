@@ -45,6 +45,10 @@ pub use cpp_bridge::{
     UsdStage, UsdTimelineData,
 };
 pub use export::{AuthoredPrim, ExportConfig, ExportResult};
-pub use loader::*;
-pub use parser::*;
-pub use types::*;
+pub use loader::{
+    load_usd, load_usd_with_stage, load_usda, load_usda_from_string, LoadError, LoadResult,
+};
+pub use parser::{parse_usda, ParseError, ParseResult, UsdaParser};
+pub use types::{
+    compose_xform_ops, UsdMesh, UsdPointInstancer, UsdPrim, UsdReference, UsdXform, XformOp,
+};
