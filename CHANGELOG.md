@@ -7,6 +7,23 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- GPU mipmap compute shader (`mipmap_downsample.wgsl`) — box-filter downsample on GPU
+- `MipmapGenerator` compute pipeline for GPU-side mipmap generation
+- Async texture streaming: placeholders load instantly, textures stream in via background thread
+- `poll_texture_loads()` per-frame texture streaming with automatic bind group rebuild
+- Viewport texture size limit (`DEFAULT_MAX_VIEWPORT_TEXTURE_SIZE = 2048`) — auto-downscales large textures
+- `RawTexture` u8 loading path — bypasses f32 intermediate for viewport textures
+- `downscale_raw_nearest()` — nearest-neighbor downscale operating on u8 RGBA data
+
+### Changed
+- **Texture loading ~25-50x faster**: eliminated triple format conversion (C++ float→u8, Rust u8→f32, GPU f32→u8)
+- C++ OIIO bridge reads LDR textures as UINT8 directly (skip float allocation + per-pixel conversion)
+- Viewport texture loading uses raw u8 path — `Rgba8UnormSrgb` GPU format handles sRGB decode in hardware
+- OIIO texture loading parallelized with rayon (`par_iter` for both OIIO and non-OIIO paths)
+- CPU mipmap generation disabled for viewport (GPU mipmaps replace it)
+- USD scene finalization uses async texture streaming (instant scene display with placeholder textures)
+
+### Added (continued)
 - Blue noise camera jitter with Cranley-Patterson rotation (256x256 void-and-cluster texture)
 - SamplerMode enum (WhiteNoise/BlueNoise) with UI dropdown, default BlueNoise
 - Pixel reconstruction filters: Box, Gaussian, Mitchell-Netravali, Blackman-Harris
@@ -29,6 +46,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `.usd` binary files now route to C++ bridge (was going to pure-Rust USDA parser)
 
 ### Fixed
+- GPU mipmap sRGB crash — `upload_raw_texture` creates sRGB textures as `Rgba8Unorm` (storage-compatible) with `Rgba8UnormSrgb` view for correct hardware sRGB decode
 - Normal transforms use inverse-transpose for non-uniform scale (instanced_geometry + Embree + viewport)
 - UsdEditLayer double-free — `save()` nulls pointer before Drop runs
 - NEE MIS light PDF — `sample_one` includes 1/N light selection probability

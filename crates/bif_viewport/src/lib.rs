@@ -66,7 +66,8 @@ pub use mesh_data::MeshData;
 pub use multi_draw::MultiDrawState;
 pub use texture_loader::{
     collect_scene_texture_paths, create_default_gpu_textures, create_gpu_texture,
-    create_gpu_textures_for_scene,
+    create_gpu_textures_for_scene, MipmapGenerator, TextureLoadMessage,
+    DEFAULT_MAX_VIEWPORT_TEXTURE_SIZE,
 };
 pub use timeline::TimelineState;
 
@@ -368,6 +369,12 @@ pub struct Renderer {
     pub(crate) usd_load_receiver: Option<mpsc::Receiver<UsdLoadMessage>>,
     /// Current status of the async USD load (for UI display).
     pub usd_load_status: UsdLoadStatus,
+
+    // Async texture streaming state
+    /// Receiver for textures loaded on background thread.
+    pub(crate) texture_load_receiver: Option<mpsc::Receiver<texture_loader::TextureLoadMessage>>,
+    /// GPU compute mipmap generator (shared across texture uploads).
+    pub(crate) mipmap_generator: texture_loader::MipmapGenerator,
 }
 
 impl Renderer {
@@ -835,6 +842,8 @@ impl Renderer {
 
         log::info!("Ivar resources initialized");
 
+        let mipmap_generator = texture_loader::MipmapGenerator::new(&device);
+
         Ok(Self {
             surface,
             device,
@@ -941,6 +950,8 @@ impl Renderer {
             scene_graph_dirty: true,
             usd_load_receiver: None,
             usd_load_status: UsdLoadStatus::Idle,
+            texture_load_receiver: None,
+            mipmap_generator,
         })
     }
 

@@ -22,6 +22,9 @@ impl Renderer {
         // Poll async USD load (non-blocking)
         self.poll_usd_load();
 
+        // Poll async texture streaming (non-blocking)
+        self.poll_texture_loads();
+
         // Rebuild cached scene graph if dirty
         if self.scene_graph_dirty {
             self.cached_scene_graph = scene_browser::build_scene_graph_cache(&self.working_scene);
