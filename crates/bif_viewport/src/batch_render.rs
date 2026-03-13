@@ -38,8 +38,47 @@ pub enum BatchMessage {
     Error(String),
 }
 
+/// Build DisneyBSDF materials from scene materials, loading textures from disk.
+///
+/// Shared helper to avoid duplicating material construction logic.
+pub fn build_materials(
+    scene_materials: &[Arc<bif_core::Material>],
+    fallback: &bif_core::Material,
+    texture_base_dir: Option<&Path>,
+) -> Vec<Arc<DisneyBSDF>> {
+    let mut texture_cache = match texture_base_dir {
+        Some(dir) => bif_core::texture::TextureCache::with_base_dir(dir.to_path_buf()),
+        None => bif_core::texture::TextureCache::new(),
+    };
+    let materials = if scene_materials.is_empty() {
+        vec![Arc::new(DisneyBSDF::from_material_with_textures(
+            fallback,
+            &mut texture_cache,
+        ))]
+    } else {
+        scene_materials
+            .iter()
+            .map(|mat| {
+                Arc::new(DisneyBSDF::from_material_with_textures(
+                    mat.as_ref(),
+                    &mut texture_cache,
+                ))
+            })
+            .collect()
+    };
+    log::info!(
+        "Built {} materials (textures cached: {})",
+        materials.len(),
+        texture_cache.len()
+    );
+    materials
+}
+
 /// Scene builder function type for per-frame geometry updates.
-pub type SceneBuilderFn = Box<dyn Fn(f64) -> Arc<BvhNode> + Send + Sync>;
+///
+/// `FnMut` because `SceneBuilderData::build_scene_at_time` caches materials internally.
+/// Batch render calls this sequentially per frame — no concurrent access needed.
+pub type SceneBuilderFn = Box<dyn FnMut(f64) -> Arc<BvhNode> + Send>;
 
 /// Data needed to rebuild the Embree scene for animated geometry.
 #[derive(Clone)]
@@ -156,27 +195,11 @@ impl SceneBuilderData {
         let materials: Vec<Arc<DisneyBSDF>> = if let Some(ref cached) = self.ivar_materials {
             cached.clone()
         } else {
-            let mut texture_cache = match &self.texture_base_dir {
-                Some(dir) => bif_core::texture::TextureCache::with_base_dir(dir.clone()),
-                None => bif_core::texture::TextureCache::new(),
-            };
-            let mats: Vec<Arc<DisneyBSDF>> = if self.scene_materials.is_empty() {
-                vec![Arc::new(DisneyBSDF::from_material_with_textures(
-                    &self.scene_material,
-                    &mut texture_cache,
-                ))]
-            } else {
-                self.scene_materials
-                    .iter()
-                    .map(|mat| {
-                        Arc::new(DisneyBSDF::from_material_with_textures(
-                            mat.as_ref(),
-                            &mut texture_cache,
-                        ))
-                    })
-                    .collect()
-            };
-            // Cache for subsequent frames
+            let mats = build_materials(
+                &self.scene_materials,
+                &self.scene_material,
+                self.texture_base_dir.as_deref(),
+            );
             self.ivar_materials = Some(mats.clone());
             mats
         };
@@ -193,7 +216,6 @@ impl SceneBuilderData {
             self.evaluate_transforms_at_time(time)
         };
 
-        #[allow(deprecated)]
         if let Some(embree_scene) = EmbreeScene::try_from_indexed(
             &positions,
             &normals_soa,
@@ -286,7 +308,7 @@ pub fn start_batch_render(
 /// Main batch render loop.
 fn batch_render_loop(
     settings: BatchRenderSettings,
-    scene: BatchSceneData,
+    mut scene: BatchSceneData,
     tx: mpsc::Sender<BatchMessage>,
     cancel_flag: Arc<AtomicBool>,
 ) {
@@ -354,7 +376,7 @@ fn batch_render_loop(
             if let Some(ref cache) = batch_cache {
                 cache.clear();
             }
-            if let Some(ref builder) = scene.scene_builder {
+            if let Some(ref mut builder) = scene.scene_builder {
                 log::info!("Building BVH for frame {}", frame);
                 let rebuild_start = std::time::Instant::now();
                 // Drop old scene before building new one to free Embree resources

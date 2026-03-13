@@ -115,10 +115,16 @@ pub struct EmbreeScene {
     _index_data: Vec<u32>,
     _transform_data: Vec<[f32; 16]>,
 
-    // Per-vertex UV, normal, and tangent data for interpolation (3 entries per triangle)
+    // Per-triangle UV, normal, and tangent data for interpolation (3 entries per triangle).
+    // Used by the old `new()` path. Empty when using indexed path.
     uv_data: Vec<[f32; 2]>,
     normal_data: Vec<[f32; 3]>,
     tangent_data: Vec<[f32; 3]>,
+
+    // Per-vertex data for indexed path (lookup via _index_data in hit()).
+    // When non-empty, these are used instead of per-triangle uv_data/normal_data.
+    per_vertex_uvs: Vec<[f32; 2]>,
+    per_vertex_normals: Vec<[f32; 3]>,
 
     // Per-instance inverse-transpose Mat3 for correct normal transformation
     normal_matrices: Vec<Mat3>,
@@ -130,8 +136,8 @@ pub struct EmbreeScene {
 
 impl EmbreeScene {
     /// Try to create Embree scene, returns None if Embree unavailable or error occurs.
-    #[deprecated(note = "use try_from_indexed() for better perf with shared vertices")]
-    #[allow(deprecated)]
+    ///
+    /// Prefer `try_from_indexed()` for better perf with shared vertices.
     pub fn try_new(
         vertices: &[[Vec3; 3]],
         uvs: &[[[f32; 2]; 3]],
@@ -168,7 +174,8 @@ impl EmbreeScene {
     ///
     /// # Errors
     /// Returns `EmbreeError` if device/scene creation fails or materials is empty.
-    #[deprecated(note = "use from_indexed() for better perf with shared vertices")]
+    ///
+    /// Prefer `from_indexed()` for better perf with shared vertices.
     pub fn new(
         vertices: &[[Vec3; 3]],
         uvs: &[[[f32; 2]; 3]],
@@ -433,6 +440,8 @@ impl EmbreeScene {
                 uv_data,
                 normal_data,
                 tangent_data,
+                per_vertex_uvs: vec![],
+                per_vertex_normals: vec![],
                 normal_matrices,
                 instance_count: transforms.len(),
                 triangle_count: vertices.len(),
@@ -470,6 +479,29 @@ impl EmbreeScene {
         }
 
         let tri_count = indices.len() / 3;
+
+        // Validate index buffer bounds upfront
+        if let Some(&max_idx) = indices.iter().max() {
+            let max = max_idx as usize;
+            if max >= positions.len() {
+                log::warn!(
+                    "Index buffer contains index {} but only {} positions — OOB entries will use defaults",
+                    max, positions.len()
+                );
+            }
+            if max >= normals.len() {
+                log::warn!(
+                    "Index buffer contains index {} but only {} normals — OOB entries will use defaults",
+                    max, normals.len()
+                );
+            }
+            if max >= uvs.len() {
+                log::warn!(
+                    "Index buffer contains index {} but only {} UVs — OOB entries will use defaults",
+                    max, uvs.len()
+                );
+            }
+        }
 
         unsafe {
             // 1. Device
@@ -616,53 +648,15 @@ impl EmbreeScene {
             rtcCommitScene(scene);
             let instance_ms = t0.elapsed().as_secs_f64() * 1000.0;
 
-            // 6. Build per-triangle hit data in parallel via rayon
+            // 6. Build hit data in parallel via rayon
             let t0 = Instant::now();
 
-            // UV data: 3 entries per triangle, looked up via indices
-            let uv_data: Vec<[f32; 2]> = (0..tri_count)
-                .into_par_iter()
-                .flat_map_iter(|tri| {
-                    let i0 = indices[tri * 3] as usize;
-                    let i1 = indices[tri * 3 + 1] as usize;
-                    let i2 = indices[tri * 3 + 2] as usize;
-                    [
-                        if i0 < uvs.len() { uvs[i0] } else { [0.0, 0.0] },
-                        if i1 < uvs.len() { uvs[i1] } else { [0.0, 0.0] },
-                        if i2 < uvs.len() { uvs[i2] } else { [0.0, 0.0] },
-                    ]
-                })
-                .collect();
+            // Store per-vertex UV/normal data directly (indexed lookup in hit()).
+            // Saves ~6x memory vs expanding to per-triangle for high-sharing meshes.
+            let per_vertex_uvs = uvs.to_vec();
+            let per_vertex_normals = normals.to_vec();
 
-            // Normal data: 3 entries per triangle
-            let normal_data: Vec<[f32; 3]> = (0..tri_count)
-                .into_par_iter()
-                .flat_map_iter(|tri| {
-                    let i0 = indices[tri * 3] as usize;
-                    let i1 = indices[tri * 3 + 1] as usize;
-                    let i2 = indices[tri * 3 + 2] as usize;
-                    let default_n = [0.0, 1.0, 0.0];
-                    [
-                        if i0 < normals.len() {
-                            normals[i0]
-                        } else {
-                            default_n
-                        },
-                        if i1 < normals.len() {
-                            normals[i1]
-                        } else {
-                            default_n
-                        },
-                        if i2 < normals.len() {
-                            normals[i2]
-                        } else {
-                            default_n
-                        },
-                    ]
-                })
-                .collect();
-
-            // Tangent data: 1 per triangle, computed from edges + UVs
+            // Tangent data: 1 per triangle, computed from edges + UVs (must be per-triangle)
             let tangent_data: Vec<[f32; 3]> = (0..tri_count)
                 .into_par_iter()
                 .map(|tri| {
@@ -742,9 +736,11 @@ impl EmbreeScene {
                 _vertex_data: vertex_data,
                 _index_data: index_data,
                 _transform_data: transform_data,
-                uv_data,
-                normal_data,
+                uv_data: vec![],
+                normal_data: vec![],
                 tangent_data,
+                per_vertex_uvs,
+                per_vertex_normals,
                 normal_matrices,
                 instance_count: transforms.len(),
                 triangle_count: tri_count,
@@ -895,27 +891,47 @@ impl Hittable for EmbreeScene {
             let bary_v = rayhit.hit.v;
             let bary_w = 1.0 - bary_u - bary_v;
 
-            // Interpolate texture UVs: w*uv0 + u*uv1 + v*uv2
-            let base = prim_id * 3;
-            debug_assert!(base + 2 < self.uv_data.len(), "prim_id OOB on uv_data");
-            debug_assert!(
-                base + 2 < self.normal_data.len(),
-                "prim_id OOB on normal_data"
-            );
+            // Look up per-vertex UVs and normals — indexed path uses per-vertex
+            // arrays with index buffer lookup, old path uses pre-expanded per-triangle arrays.
             debug_assert!(
                 prim_id < self.tangent_data.len(),
                 "prim_id OOB on tangent_data"
             );
-            let uv0 = self.uv_data[base];
-            let uv1 = self.uv_data[base + 1];
-            let uv2 = self.uv_data[base + 2];
+            let (uv0, uv1, uv2, n0, n1, n2) = if !self.per_vertex_uvs.is_empty() {
+                // Indexed path: look up via index buffer
+                let idx_base = prim_id * 3;
+                let i0 = self._index_data[idx_base] as usize;
+                let i1 = self._index_data[idx_base + 1] as usize;
+                let i2 = self._index_data[idx_base + 2] as usize;
+                (
+                    self.per_vertex_uvs[i0],
+                    self.per_vertex_uvs[i1],
+                    self.per_vertex_uvs[i2],
+                    self.per_vertex_normals[i0],
+                    self.per_vertex_normals[i1],
+                    self.per_vertex_normals[i2],
+                )
+            } else {
+                // Old per-triangle path
+                let base = prim_id * 3;
+                debug_assert!(base + 2 < self.uv_data.len(), "prim_id OOB on uv_data");
+                debug_assert!(
+                    base + 2 < self.normal_data.len(),
+                    "prim_id OOB on normal_data"
+                );
+                (
+                    self.uv_data[base],
+                    self.uv_data[base + 1],
+                    self.uv_data[base + 2],
+                    self.normal_data[base],
+                    self.normal_data[base + 1],
+                    self.normal_data[base + 2],
+                )
+            };
+
+            // Interpolate texture UVs: w*uv0 + u*uv1 + v*uv2
             rec.u = bary_w * uv0[0] + bary_u * uv1[0] + bary_v * uv2[0];
             rec.v = bary_w * uv0[1] + bary_u * uv1[1] + bary_v * uv2[1];
-
-            // Interpolate shading normal (in prototype local space)
-            let n0 = self.normal_data[base];
-            let n1 = self.normal_data[base + 1];
-            let n2 = self.normal_data[base + 2];
             let interp_normal = Vec3::new(
                 bary_w * n0[0] + bary_u * n1[0] + bary_v * n2[0],
                 bary_w * n0[1] + bary_u * n1[1] + bary_v * n2[1],
@@ -1004,3 +1020,142 @@ impl Drop for EmbreeScene {
 // - Drop releases Embree resources before Rust data
 unsafe impl Send for EmbreeScene {}
 unsafe impl Sync for EmbreeScene {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::disney::DisneyBSDF;
+
+    fn default_material() -> Vec<Arc<DisneyBSDF>> {
+        vec![Arc::new(DisneyBSDF::default())]
+    }
+
+    #[test]
+    fn test_from_indexed_basic_triangle() {
+        // Single triangle on XZ plane at y=0
+        let positions: Vec<[f32; 3]> = vec![[-1.0, 0.0, -1.0], [1.0, 0.0, -1.0], [0.0, 0.0, 1.0]];
+        let normals: Vec<[f32; 3]> = vec![[0.0, 1.0, 0.0]; 3];
+        let uvs: Vec<[f32; 2]> = vec![[0.0, 0.0], [1.0, 0.0], [0.5, 1.0]];
+        let indices: Vec<u32> = vec![0, 1, 2];
+
+        let scene = EmbreeScene::from_indexed(
+            &positions,
+            &normals,
+            &uvs,
+            &indices,
+            vec![Mat4::IDENTITY],
+            default_material(),
+            &[0],
+        )
+        .expect("should build from indexed");
+
+        // Ray from above pointing down — should hit
+        let ray = Ray::new(Vec3::new(0.0, 5.0, 0.0), Vec3::new(0.0, -1.0, 0.0), 0.0);
+        let mut rec = HitRecord::default();
+        assert!(scene.hit(&ray, Interval::new(0.001, f32::INFINITY), &mut rec));
+        assert!((rec.p.y).abs() < 0.01, "hit y={}, expected ~0", rec.p.y);
+
+        // Ray from above pointing up — should miss
+        let ray_miss = Ray::new(Vec3::new(0.0, 5.0, 0.0), Vec3::new(0.0, 1.0, 0.0), 0.0);
+        assert!(!scene.hit(&ray_miss, Interval::new(0.001, f32::INFINITY), &mut rec));
+    }
+
+    #[test]
+    fn test_from_indexed_shared_vertices() {
+        // Two triangles sharing 2 vertices (a quad split into 2 tris)
+        let positions: Vec<[f32; 3]> = vec![
+            [-1.0, 0.0, -1.0], // 0
+            [1.0, 0.0, -1.0],  // 1
+            [1.0, 0.0, 1.0],   // 2
+            [-1.0, 0.0, 1.0],  // 3
+        ];
+        let normals: Vec<[f32; 3]> = vec![[0.0, 1.0, 0.0]; 4];
+        let uvs: Vec<[f32; 2]> = vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
+        let indices: Vec<u32> = vec![0, 1, 2, 0, 2, 3]; // 2 triangles, shared verts
+
+        let scene = EmbreeScene::from_indexed(
+            &positions,
+            &normals,
+            &uvs,
+            &indices,
+            vec![Mat4::IDENTITY],
+            default_material(),
+            &[0, 0],
+        )
+        .expect("should build shared-vertex quad");
+
+        // Hit center of quad
+        let ray = Ray::new(Vec3::new(0.0, 5.0, 0.0), Vec3::new(0.0, -1.0, 0.0), 0.0);
+        let mut rec = HitRecord::default();
+        assert!(scene.hit(&ray, Interval::new(0.001, f32::INFINITY), &mut rec));
+
+        // UV should be interpolated correctly (~0.5, 0.5 at center)
+        assert!((rec.u - 0.5).abs() < 0.2, "u={}, expected ~0.5", rec.u);
+    }
+
+    #[test]
+    fn test_from_indexed_instanced() {
+        // Triangle with two instances at different positions
+        let positions: Vec<[f32; 3]> = vec![[-0.5, 0.0, -0.5], [0.5, 0.0, -0.5], [0.0, 0.0, 0.5]];
+        let normals: Vec<[f32; 3]> = vec![[0.0, 1.0, 0.0]; 3];
+        let uvs: Vec<[f32; 2]> = vec![[0.0, 0.0]; 3];
+        let indices: Vec<u32> = vec![0, 1, 2];
+        let transforms = vec![
+            Mat4::IDENTITY,
+            Mat4::from_translation(Vec3::new(10.0, 0.0, 0.0)),
+        ];
+
+        let scene = EmbreeScene::from_indexed(
+            &positions,
+            &normals,
+            &uvs,
+            &indices,
+            transforms,
+            default_material(),
+            &[0],
+        )
+        .expect("should build instanced scene");
+
+        // Hit instance 0 at origin
+        let ray0 = Ray::new(Vec3::new(0.0, 5.0, 0.0), Vec3::new(0.0, -1.0, 0.0), 0.0);
+        let mut rec = HitRecord::default();
+        assert!(scene.hit(&ray0, Interval::new(0.001, f32::INFINITY), &mut rec));
+        assert!(
+            rec.p.x.abs() < 1.0,
+            "hit should be near origin, got x={}",
+            rec.p.x
+        );
+
+        // Hit instance 1 at x=10
+        let ray1 = Ray::new(Vec3::new(10.0, 5.0, 0.0), Vec3::new(0.0, -1.0, 0.0), 0.0);
+        assert!(scene.hit(&ray1, Interval::new(0.001, f32::INFINITY), &mut rec));
+        assert!(
+            (rec.p.x - 10.0).abs() < 1.0,
+            "hit should be near x=10, got x={}",
+            rec.p.x
+        );
+
+        // Miss between instances
+        let ray_miss = Ray::new(Vec3::new(5.0, 5.0, 0.0), Vec3::new(0.0, -1.0, 0.0), 0.0);
+        assert!(!scene.hit(&ray_miss, Interval::new(0.001, f32::INFINITY), &mut rec));
+    }
+
+    #[test]
+    fn test_from_indexed_no_materials_error() {
+        let positions: Vec<[f32; 3]> = vec![[0.0; 3]; 3];
+        let normals: Vec<[f32; 3]> = vec![[0.0, 1.0, 0.0]; 3];
+        let uvs: Vec<[f32; 2]> = vec![[0.0; 2]; 3];
+        let indices: Vec<u32> = vec![0, 1, 2];
+
+        let result = EmbreeScene::from_indexed(
+            &positions,
+            &normals,
+            &uvs,
+            &indices,
+            vec![Mat4::IDENTITY],
+            vec![], // empty materials
+            &[0],
+        );
+        assert!(result.is_err());
+    }
+}

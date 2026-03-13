@@ -232,6 +232,22 @@ impl Renderer {
         let tri_count = indices.len() / 3;
         let instance_count = transforms.len();
 
+        // If prewarm is in-flight, try to grab its result before spawning a redundant load
+        if self.ivar_materials.is_none() {
+            if let Some(ref rx) = self.ivar_materials_receiver {
+                // Brief blocking wait — prewarm may be nearly done
+                use std::time::Duration;
+                if let Ok(materials) = rx.recv_timeout(Duration::from_millis(50)) {
+                    log::info!(
+                        "Grabbed pre-warmed materials ({}) before build",
+                        materials.len()
+                    );
+                    self.ivar_materials = Some(materials);
+                    self.ivar_materials_receiver = None;
+                }
+            }
+        }
+
         // Check for cached materials (cheap Arc clones)
         let cached_materials = self.ivar_materials.clone();
 
@@ -251,43 +267,24 @@ impl Renderer {
                 log::info!("Using cached materials ({} materials)", cached.len());
                 cached
             } else {
-                let mut texture_cache = match texture_base_dir {
-                    Some(dir) => bif_core::texture::TextureCache::with_base_dir(dir),
-                    None => bif_core::texture::TextureCache::new(),
-                };
-                let mats: Vec<Arc<DisneyBSDF>> = if scene_materials.is_empty() {
-                    vec![Arc::new(DisneyBSDF::from_material_with_textures(
-                        &fallback_material,
-                        &mut texture_cache,
-                    ))]
-                } else {
-                    scene_materials
-                        .iter()
-                        .map(|mat| {
-                            Arc::new(DisneyBSDF::from_material_with_textures(
-                                mat.as_ref(),
-                                &mut texture_cache,
-                            ))
-                        })
-                        .collect()
-                };
-                log::info!(
-                    "Loaded {} materials for Ivar (textures cached: {})",
-                    mats.len(),
-                    texture_cache.len()
-                );
-                mats
+                batch_render::build_materials(
+                    &scene_materials,
+                    &fallback_material,
+                    texture_base_dir.as_deref(),
+                )
             };
 
+            // Clone materials for cache return (cheap Arc bumps)
+            let materials_for_cache = materials.clone();
+
             // Use from_indexed() — keeps shared vertices, builds hit data in parallel
-            #[allow(deprecated)]
             let world = if let Some(embree_scene) = EmbreeScene::try_from_indexed(
                 &positions,
                 &normals_soa,
                 &uvs_soa,
                 &indices,
                 transforms,
-                materials.clone(),
+                materials,
                 &tri_mat_ids,
             ) {
                 log::info!("Using Embree (indexed) for hardware-accelerated ray tracing");
@@ -305,7 +302,7 @@ impl Renderer {
                 elapsed.as_secs_f64() * 1000.0
             );
 
-            let _ = tx.send((world, materials));
+            let _ = tx.send((world, materials_for_cache));
         });
     }
 
@@ -407,27 +404,11 @@ impl Renderer {
             log::info!("Using cached materials ({} materials)", cached.len());
             cached.clone()
         } else {
-            let mut texture_cache = match &self.texture_base_dir {
-                Some(dir) => bif_core::texture::TextureCache::with_base_dir(dir.clone()),
-                None => bif_core::texture::TextureCache::new(),
-            };
-            let mats: Vec<Arc<DisneyBSDF>> = if self.scene_materials.is_empty() {
-                vec![Arc::new(DisneyBSDF::from_material_with_textures(
-                    &self.scene_material,
-                    &mut texture_cache,
-                ))]
-            } else {
-                self.scene_materials
-                    .iter()
-                    .map(|mat| {
-                        Arc::new(DisneyBSDF::from_material_with_textures(
-                            mat.as_ref(),
-                            &mut texture_cache,
-                        ))
-                    })
-                    .collect()
-            };
-            // Cache for next time
+            let mats = batch_render::build_materials(
+                &self.scene_materials,
+                &self.scene_material,
+                self.texture_base_dir.as_deref(),
+            );
             self.ivar_materials = Some(mats.clone());
             mats
         };
@@ -445,7 +426,6 @@ impl Renderer {
             self.current_transforms.clone()
         };
 
-        #[allow(deprecated)]
         let world = if let Some(embree_scene) = EmbreeScene::try_from_indexed(
             &positions,
             &normals_soa,
@@ -533,26 +513,11 @@ impl Renderer {
 
         std::thread::spawn(move || {
             let start = Instant::now();
-            let mut texture_cache = match texture_base_dir {
-                Some(dir) => bif_core::texture::TextureCache::with_base_dir(dir),
-                None => bif_core::texture::TextureCache::new(),
-            };
-            let materials: Vec<Arc<DisneyBSDF>> = if scene_materials.is_empty() {
-                vec![Arc::new(DisneyBSDF::from_material_with_textures(
-                    &fallback_material,
-                    &mut texture_cache,
-                ))]
-            } else {
-                scene_materials
-                    .iter()
-                    .map(|mat| {
-                        Arc::new(DisneyBSDF::from_material_with_textures(
-                            mat.as_ref(),
-                            &mut texture_cache,
-                        ))
-                    })
-                    .collect()
-            };
+            let materials = batch_render::build_materials(
+                &scene_materials,
+                &fallback_material,
+                texture_base_dir.as_deref(),
+            );
             log::info!(
                 "Pre-warmed {} materials in {:.2}ms",
                 materials.len(),
@@ -1086,7 +1051,7 @@ impl Renderer {
 
         // Create scene builder for animated geometry
         let scene_builder: Option<batch_render::SceneBuilderFn> = if has_animated_geometry {
-            let builder_data = std::sync::Mutex::new(SceneBuilderData {
+            let mut builder_data = SceneBuilderData {
                 vertices: self.mesh_data.vertices.clone(),
                 indices: self.mesh_data.indices.clone(),
                 triangle_material_ids: self.mesh_data.triangle_material_ids.clone(),
@@ -1100,9 +1065,9 @@ impl Renderer {
                 stage: self.usd_stage.clone(),
                 mesh_ranges: self.mesh_data.mesh_ranges.clone(),
                 ivar_materials: self.ivar_materials.clone(),
-            });
+            };
             Some(Box::new(move |time: f64| {
-                builder_data.lock().unwrap().build_scene_at_time(time)
+                builder_data.build_scene_at_time(time)
             }))
         } else {
             None
