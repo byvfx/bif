@@ -1905,9 +1905,24 @@ impl Renderer {
         // Track offsets for remapping IDs from the loaded scene to the working scene.
         let proto_offset = self.working_scene.prototype_count();
         let instance_offset = self.working_scene.instance_count();
+        // Material offset: face_material_ids in the loaded scene are 0-based,
+        // but after merge they must index into working_scene.materials which
+        // already contains materials from prior scenes.
+        let mat_offset = self.working_scene.materials.len() as u32;
         for proto in &scene.prototypes {
-            self.working_scene
-                .add_prototype(proto.mesh.clone(), proto.name.clone());
+            let mut remapped = (**proto).clone();
+            // Remap per-face material IDs to account for existing materials
+            if mat_offset > 0 {
+                if let Some(ref mut ids) =
+                    Arc::make_mut(&mut remapped.mesh).face_material_ids
+                {
+                    for id in ids.iter_mut() {
+                        *id += mat_offset;
+                    }
+                }
+            }
+            remapped.id = self.working_scene.prototype_count();
+            self.working_scene.prototypes.push(Arc::new(remapped));
         }
         for (inst, anim) in scene.instances_with_animations() {
             let remapped_proto_id = inst.prototype_id + proto_offset;

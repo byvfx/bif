@@ -6,6 +6,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- Textures persisting from first USD scene when loading second scene — two bugs:
+  - `add_prototype()` during scene merge dropped material bindings (replaced with full prototype clone)
+  - `face_material_ids` not remapped by material offset after merge (GeomSubset indices pointed at wrong materials)
+
 ### Added
 - GPU mipmap compute shader (`mipmap_downsample.wgsl`) — box-filter downsample on GPU
 - `MipmapGenerator` compute pipeline for GPU-side mipmap generation

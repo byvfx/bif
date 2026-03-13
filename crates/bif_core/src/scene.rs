@@ -493,6 +493,18 @@ impl Scene {
         id
     }
 
+    /// Add an existing prototype, re-assigning its ID to fit this scene.
+    ///
+    /// Unlike `add_prototype`, this preserves the material binding and all
+    /// other fields from the source prototype.
+    pub fn add_prototype_full(&mut self, proto: &Arc<Prototype>) -> usize {
+        let id = self.prototypes.len();
+        let mut p = (**proto).clone();
+        p.id = id;
+        self.prototypes.push(Arc::new(p));
+        id
+    }
+
     /// Add an instance of a prototype.
     pub fn add_instance(&mut self, prototype_id: usize, transform: Transform) {
         self.instances.push(Instance::new(prototype_id, transform));
