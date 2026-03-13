@@ -1,6 +1,6 @@
 # Session Handoff - March 12, 2026
 
-**Last Updated:** Texture optimization visually verified, STORAGE_BINDING sRGB crash fixed
+**Last Updated:** Fixed texture persistence bug when loading multiple USD scenes
 **Next Milestone:** Resume M29 USD export or next milestone
 **Project:** BIF - VFX Scene Assembler & Renderer
 
@@ -11,7 +11,7 @@
 | Status | Details |
 |--------|---------|
 | Complete | Milestones 0-23, M26 (OIDN denoising) |
-| Current | Texture optimization complete + verified, STORAGE_BINDING fix landed |
+| Current | Fixed multi-scene texture persistence bug (material binding + face_material_ids remap) |
 | Tests | 80 renderer, 41 math, 24 viewport, 27+ bif_core |
 | Performance | 60 FPS viewport, 100K instances with LOD |
 
