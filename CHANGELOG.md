@@ -6,6 +6,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-03-12
+
 ### Fixed
 - Textures persisting from first USD scene when loading second scene — two bugs:
   - `add_prototype()` during scene merge dropped material bindings (replaced with full prototype clone)
