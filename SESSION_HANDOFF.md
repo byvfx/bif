@@ -1,6 +1,6 @@
 # Session Handoff - March 12, 2026
 
-**Last Updated:** Fixed texture persistence bug when loading multiple USD scenes
+**Last Updated:** Ivar material cache + pre-warm + Embree indexed geometry optimization
 **Next Milestone:** Resume M29 USD export or next milestone
 **Project:** BIF - VFX Scene Assembler & Renderer
 
@@ -10,57 +10,50 @@
 
 | Status | Details |
 |--------|---------|
-| Complete | Milestones 0-23, M26 (OIDN denoising) |
-| Current | Fixed multi-scene texture persistence bug (material binding + face_material_ids remap) |
+| Complete | Milestones 0-23, M26 (OIDN), M26.1 (Ivar material cache) |
+| Current | Ivar build pipeline fully optimized: materials cached + geometry indexed |
 | Tests | 80 renderer, 41 math, 24 viewport, 27+ bif_core |
-| Performance | 60 FPS viewport, 100K instances with LOD |
+| Performance | 60 FPS viewport, 100K instances with LOD, Ivar build ~47ms (was 6.7s) |
 
 ---
 
 ## Recent Work
 
-### Texture Loading Optimization (Mar 11, 2026)
+### Ivar Material Cache + Pre-warm (Mar 12, 2026)
 
-Implemented full 3-tier texture loading optimization. Expected: 125s→<1s perceived.
+Eliminated 6.7s texture loading on every Ivar scene build. Three-part unified approach:
 
-**T1 (Quick Wins):** Disabled CPU mipmaps for viewport, parallelized OIIO loading with rayon.
-**T2 (Format Conversion):** C++ reads LDR as u8 directly, Rust uploads raw u8 to GPU (Rgba8UnormSrgb handles sRGB decode in hardware). Eliminated triple format conversion.
-**T3 (GPU/Async):** GPU mipmap compute shader, async texture streaming (placeholders→stream in), viewport size limit (2048px).
+1. **`ivar_materials` cache** — `Vec<Arc<DisneyBSDF>>` persists on Renderer, cheap Arc clone across builds
+2. **Channel return** — build thread sends materials back alongside BVH for caching
+3. **Pre-warm on scene load** — `prewarm_ivar_materials()` spawns background thread immediately after scene load
 
-**Key files:** `texture_loader.rs`, `oiio_bridge.cpp`, `scene_loader.rs`, `mipmap_downsample.wgsl`
+**Invalidation:** Only on scene reload or material edit (not camera/transform/geometry).
+**Batch render:** `SceneBuilderData` carries `ivar_materials` for per-frame reuse.
 
-**Verified:** Scene loads in ~2s (was 125s), sRGB colors correct, STORAGE_BINDING crash fixed.
+**Key files:** `ivar_build.rs` (cache logic, prewarm, invalidate), `lib.rs` (fields), `batch_render.rs` (SceneBuilderData), `scene_loader.rs` (prewarm + invalidate calls), `ivar_state.rs` (channel type)
 
-### Full Codebase Code Review + Fixes (Mar 10-11, 2026)
+### Embree Indexed Geometry (Mar 12, 2026)
 
-4 parallel VFX code review agents reviewed all 6 crates. ~50 issues found, all actionable items fixed across 8 commits.
+New `try_from_indexed()` / `from_indexed()` paths that use shared vertex buffers instead of per-triangle vertex arrays. Parallel hit data construction with rayon.
 
-**Summary of all fixes:**
-- 5 critical bugs (normal transforms, double-free, CPU burn, MIS PDF, dead UB code)
-- 8 quick wins (dedup, perf, correctness)
-- 4 rendering correctness (Embree normals, viewport normals, vertex stride, Lambertian)
-- 4 USD safety (bounds check, env vars, source_dir, parse warnings)
-- 3 misc quality (RNG seed, ImageBuffer bounds, mesh dedup hash)
-- 3 camera/HDRI (constants, batch HDRI pass-through, test warning)
-- 2 major dedup (ray_color -160 lines, EXR writer -370 lines)
-- 3 structural (Ray unification, explicit re-exports, UsdStage audit)
+**Key files:** `embree.rs` (new indexed path), `pick_scene.rs` (indexed pick scene), `mesh_data.rs` (SOA extractors)
 
-**Net result:** ~900+ lines deleted, all tests pass
+### Texture Loading Optimization (Mar 11-12, 2026)
+
+3-tier optimization: GPU mips, async streaming, u8 direct path. 125s → ~2s.
 
 ---
 
-## Architecture Notes
+## Blockers / Known Issues
 
-- **Single Ray type:** `bif_math::Ray` used everywhere (bif_renderer::Ray deleted)
-- **Blue noise default:** BlueNoise is the default sampler mode
-- **Pixel filter default:** Box for viewport (fast), Mitchell for batch (quality)
-- **EXR writer:** Single `AnyChannels`-based function, dynamically adds AOV channels
-- **Renderer God object:** ~80 fields, cleanup deferred to when needed
+- `test_should_restart_no_render` — known flaky timing test
+- bif_viewport tests need USD DLLs (`setup_usd_env.ps1`)
+- bif_viewer.exe locked during build if app is running
 
 ---
 
 ## Next Steps
 
-1. Resume M29 USD export validation or next milestone
-2. Tier 4 items deferred: Renderer God object split, egui event bus, MAX_INSTANCES dynamic
-3. Consider exposing viewport texture size limit in UI
+- Verify material cache in practice: load scene → wait → switch to Ivar → check timing log
+- Resume M29 USD export remaining items
+- Consider M30 project save/load

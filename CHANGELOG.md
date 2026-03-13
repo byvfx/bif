@@ -6,6 +6,23 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- Ivar material cache (`ivar_materials`) — persists `Vec<Arc<DisneyBSDF>>` across Ivar builds
+- Material pre-warm (`prewarm_ivar_materials()`) — background thread builds materials on scene load
+- Embree indexed geometry path (`try_from_indexed`, `from_indexed`) — shared vertices, parallel hit data build
+- `EmbreePickScene::from_indexed()` — indexed pick scene for viewport selection
+- `MeshData::extract_positions/normals/uvs()` — SOA extraction helpers
+
+### Changed
+- Ivar scene build sends materials back via channel for caching (subsequent builds skip texture loading)
+- Batch render `SceneBuilderData` carries cached materials for per-frame reuse
+- Material cache invalidated only on scene reload or material edit, not on camera/transform changes
+
+### Performance
+- Ivar subsequent builds: 6.7s → ~47ms (cached materials skip texture loading)
+- Ivar first build with pre-warm: 6.7s → ~47ms (materials ready before render starts)
+- Embree indexed geometry: 37s → 47ms BVH build (shared vertices)
+
 ## [0.1.0] - 2026-03-12
 
 ### Fixed

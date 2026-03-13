@@ -257,6 +257,11 @@ pub struct Renderer {
     // Base directory for resolving texture paths
     pub(crate) texture_base_dir: Option<std::path::PathBuf>,
 
+    /// Cached DisneyBSDF materials (avoids re-loading textures on every Ivar build).
+    pub(crate) ivar_materials: Option<Vec<Arc<bif_renderer::DisneyBSDF>>>,
+    /// Receiver for background material pre-warm thread.
+    pub(crate) ivar_materials_receiver: Option<mpsc::Receiver<Vec<Arc<bif_renderer::DisneyBSDF>>>>,
+
     // Multi-draw state for per-prototype rendering
     pub(crate) multi_draw: MultiDrawState,
 
@@ -909,6 +914,8 @@ impl Renderer {
             scene_material: bif_core::Material::default(),
             scene_materials: vec![],
             texture_base_dir: None,
+            ivar_materials: None,
+            ivar_materials_receiver: None,
             multi_draw: MultiDrawState::new(),
             culling,
             scene_browser_state: SceneBrowserState::new(),
@@ -1231,30 +1238,19 @@ impl Renderer {
             return;
         }
 
-        // Extract triangle vertices from mesh data
-        let indices = &self.mesh_data.indices;
-        let verts = &self.mesh_data.vertices;
-        let tri_count = indices.len() / 3;
-        let mut triangles = Vec::with_capacity(tri_count);
+        // Use indexed path — pass shared positions + indices directly
+        let positions = self.mesh_data.extract_positions();
 
-        for tri in 0..tri_count {
-            let i0 = indices[tri * 3] as usize;
-            let i1 = indices[tri * 3 + 1] as usize;
-            let i2 = indices[tri * 3 + 2] as usize;
-            if i0 < verts.len() && i1 < verts.len() && i2 < verts.len() {
-                triangles.push([
-                    Vec3::from_array(verts[i0].position),
-                    Vec3::from_array(verts[i1].position),
-                    Vec3::from_array(verts[i2].position),
-                ]);
-            }
-        }
-
-        match bif_renderer::EmbreePickScene::new(&triangles, &self.current_transforms) {
+        match bif_renderer::EmbreePickScene::from_indexed(
+            &positions,
+            &self.mesh_data.indices,
+            &self.current_transforms,
+        ) {
             Ok(scene) => {
                 log::info!(
-                    "Pick scene rebuilt: {} tris, {} instances",
-                    triangles.len(),
+                    "Pick scene rebuilt (indexed): {} tris, {} shared verts, {} instances",
+                    self.mesh_data.indices.len() / 3,
+                    positions.len(),
                     self.current_transforms.len()
                 );
                 self.pick_scene = Some(scene);

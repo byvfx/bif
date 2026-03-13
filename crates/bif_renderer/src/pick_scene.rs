@@ -181,6 +181,126 @@ impl EmbreePickScene {
         }
     }
 
+    /// Build a pick scene from indexed mesh data (shared vertices).
+    ///
+    /// # Arguments
+    /// * `positions` - Shared vertex positions as `[f32; 3]`
+    /// * `indices` - Triangle indices (len = tri_count * 3)
+    /// * `transforms` - Per-instance world transforms
+    pub fn from_indexed(
+        positions: &[[f32; 3]],
+        indices: &[u32],
+        transforms: &[Mat4],
+    ) -> Result<Self, PickError> {
+        if positions.is_empty() {
+            return Err(PickError::NoVertices);
+        }
+        let tri_count = indices.len() / 3;
+
+        unsafe {
+            let device = rtcNewDevice(std::ptr::null());
+            if device.is_null() {
+                return Err(PickError::DeviceCreation);
+            }
+            if rtcGetDeviceError(device) != 0 {
+                rtcReleaseDevice(device);
+                return Err(PickError::DeviceCreation);
+            }
+
+            let prototype_scene = rtcNewScene(device);
+            if prototype_scene.is_null() {
+                rtcReleaseDevice(device);
+                return Err(PickError::SceneCreation);
+            }
+
+            // Pad to 16-byte stride
+            let mut vertex_data = Vec::with_capacity(positions.len() * 4);
+            for pos in positions {
+                vertex_data.extend_from_slice(&[pos[0], pos[1], pos[2], 0.0]);
+            }
+            let index_data = indices.to_vec();
+
+            let geom = rtcNewGeometry(device, RTCGeometryType::Triangle);
+            if geom.is_null() {
+                rtcReleaseScene(prototype_scene);
+                rtcReleaseDevice(device);
+                return Err(PickError::GeometryCreation);
+            }
+
+            rtcSetSharedGeometryBuffer(
+                geom,
+                RTCBufferType::Vertex as u32,
+                0,
+                RTCFormat::Float3 as u32,
+                vertex_data.as_ptr() as *const std::ffi::c_void,
+                0,
+                16,
+                positions.len(),
+            );
+            rtcSetSharedGeometryBuffer(
+                geom,
+                RTCBufferType::Index as u32,
+                0,
+                RTCFormat::UInt3 as u32,
+                index_data.as_ptr() as *const std::ffi::c_void,
+                0,
+                12,
+                tri_count,
+            );
+
+            rtcCommitGeometry(geom);
+            rtcAttachGeometryByID(prototype_scene, geom, 0);
+            rtcReleaseGeometry(geom);
+            rtcCommitScene(prototype_scene);
+
+            let scene = rtcNewScene(device);
+            if scene.is_null() {
+                rtcReleaseScene(prototype_scene);
+                rtcReleaseDevice(device);
+                return Err(PickError::SceneCreation);
+            }
+
+            let transform_data: Vec<[f32; 16]> =
+                transforms.iter().map(|t| t.to_cols_array()).collect();
+
+            for (idx, xfm) in transform_data.iter().enumerate() {
+                let inst_geom = rtcNewGeometry(device, RTCGeometryType::Instance);
+                if inst_geom.is_null() {
+                    continue;
+                }
+                rtcSetGeometryInstancedScene(inst_geom, prototype_scene);
+                rtcSetGeometryTransform(
+                    inst_geom,
+                    0,
+                    RTCFormat::Float4x4ColumnMajor as u32,
+                    xfm.as_ptr(),
+                );
+                rtcCommitGeometry(inst_geom);
+                rtcAttachGeometryByID(scene, inst_geom, idx as u32);
+                rtcReleaseGeometry(inst_geom);
+            }
+
+            rtcCommitScene(scene);
+
+            log::info!(
+                "Pick scene built (indexed): {} triangles, {} instances, {} shared verts",
+                tri_count,
+                transforms.len(),
+                positions.len()
+            );
+
+            Ok(Self {
+                device,
+                scene,
+                prototype_scene,
+                _vertex_data: vertex_data,
+                _index_data: index_data,
+                _transform_data: transform_data,
+                instance_count: transforms.len(),
+            })
+        }
+    }
+
     /// Cast a ray and return the closest hit instance.
     ///
     /// # Arguments

@@ -42,6 +42,21 @@ impl MeshData {
         (self.bounds_max - self.bounds_min).length()
     }
 
+    /// Extract position array from interleaved vertices (AOS → SOA).
+    pub fn extract_positions(&self) -> Vec<[f32; 3]> {
+        self.vertices.iter().map(|v| v.position).collect()
+    }
+
+    /// Extract normal array from interleaved vertices (AOS → SOA).
+    pub fn extract_normals(&self) -> Vec<[f32; 3]> {
+        self.vertices.iter().map(|v| v.normal).collect()
+    }
+
+    /// Extract UV array from interleaved vertices (AOS → SOA).
+    pub fn extract_uvs(&self) -> Vec<[f32; 2]> {
+        self.vertices.iter().map(|v| v.uv).collect()
+    }
+
     /// Create a box mesh from AABB (for LOD proxy rendering).
     ///
     /// Generates a simple box with 8 vertices, 36 indices (12 triangles).

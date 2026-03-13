@@ -841,6 +841,32 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 
 ---
 
+### Milestone 26.1: Ivar Material Cache + Pre-warm ⚡ ✅
+
+- **Completed:** 2026-03-12
+- **Goal:** Cache built DisneyBSDF materials across Ivar builds; pre-warm on scene load
+- **Problem:** TextureCache created fresh every Ivar build → 6.7s texture loading each time
+- **Solution (unified approach — 3 parts):**
+  1. **`ivar_materials` cache** on Renderer — `Vec<Arc<DisneyBSDF>>` persists across builds
+  2. **Channel return** — background build thread sends materials back alongside BVH for caching
+  3. **Pre-warm on scene load** — `prewarm_ivar_materials()` spawns background thread to build materials immediately after scene load, so first Ivar build is also fast
+- **Invalidation:** Materials cleared only on scene reload or material edit, NOT on camera/transform/geometry changes
+- **Batch render:** `SceneBuilderData` carries `ivar_materials` for per-frame reuse
+- **Performance:**
+  | Scenario | Before | After |
+  |----------|--------|-------|
+  | First Ivar (cold) | 6.7s | 6.7s |
+  | First Ivar (pre-warmed) | 6.7s | ~47ms |
+  | Subsequent rebuilds | 6.7s | ~47ms |
+  | Batch render per frame | 6.7s | ~47ms |
+- **Key Files:**
+  - `crates/bif_viewport/src/lib.rs` — `ivar_materials`, `ivar_materials_receiver` fields
+  - `crates/bif_viewport/src/ivar_build.rs` — cache usage, `prewarm_ivar_materials()`, `invalidate_ivar_materials()`
+  - `crates/bif_viewport/src/batch_render.rs` — `SceneBuilderData.ivar_materials`
+  - `crates/bif_viewport/src/scene_loader.rs` — prewarm + invalidate calls
+
+---
+
 ### Milestone 25: Volumes + OpenVDB 🌫️
 
 - **Goal:** Render fog, smoke, clouds, and VDB volumes
@@ -1040,6 +1066,7 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 | 19-21.2 | Frame Rendering + Interactivity | Batch render, animation, picking, scatter | ✅ Complete |
 | 23 | SHARC Radiance Cache | idTech 8 cache + Russian Roulette + heatmap AOV | ✅ Complete |
 | 26 | OIDN Denoising | Intel OIDN + albedo AOV pipeline | ✅ Complete |
+| 26.1 | Ivar Material Cache | Pre-warm + persist DisneyBSDF materials | ✅ Complete |
 
 ### Active & Planned
 
@@ -1107,7 +1134,7 @@ Key papers (cherry-pick into relevant milestones as needed):
 
 ---
 
-**Last Updated:** March 7, 2026
-**Status:** Milestones 0-23 + M26 complete
+**Last Updated:** March 12, 2026
+**Status:** Milestones 0-23 + M26 + M26.1 complete
 **Current:** M29 USD export (in-progress)
 **Next:** M30 (save/load) → M31 (lights) → M32 (materials) → M33 (contexts) → M34 (MaterialX)

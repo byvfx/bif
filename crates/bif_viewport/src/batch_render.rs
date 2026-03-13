@@ -41,9 +41,6 @@ pub enum BatchMessage {
 /// Scene builder function type for per-frame geometry updates.
 pub type SceneBuilderFn = Box<dyn Fn(f64) -> Arc<BvhNode> + Send + Sync>;
 
-/// Triangle data type: (vertices, UVs, normals).
-pub type TriangleData = (Vec<[Vec3; 3]>, Vec<[[f32; 2]; 3]>, Vec<[[f32; 3]; 3]>);
-
 /// Data needed to rebuild the Embree scene for animated geometry.
 #[derive(Clone)]
 pub struct SceneBuilderData {
@@ -71,28 +68,20 @@ pub struct SceneBuilderData {
     pub stage: Option<Arc<UsdStage>>,
     /// Mesh ranges for multi-mesh scenes (vertex offset/count per mesh).
     pub mesh_ranges: Option<Vec<MeshRange>>,
+    /// Cached DisneyBSDF materials (avoids re-loading textures per frame).
+    pub ivar_materials: Option<Vec<Arc<DisneyBSDF>>>,
 }
 
 impl SceneBuilderData {
-    /// Build triangles at a specific time, querying USD for animated vertices.
-    pub fn build_triangles_at_time(&self, time: f64) -> TriangleData {
-        let tri_count = self.indices.len() / 3;
-        let mut triangle_vertices = Vec::with_capacity(tri_count);
-        let mut triangle_uvs: Vec<[[f32; 2]; 3]> = Vec::with_capacity(tri_count);
-        let mut triangle_normals: Vec<[[f32; 3]; 3]> = Vec::with_capacity(tri_count);
+    /// Get animated vertex buffer at a specific time, or None if static.
+    fn get_animated_vertices(&self, time: f64) -> Option<Vec<Vertex>> {
+        if self.vertex_animated_meshes.is_empty() {
+            return None;
+        }
 
-        // Query animated vertices if applicable and update positions in-place
-        // Clone vertices so we can update positions while keeping UVs/normals
-        let vertices: Vec<Vertex> = if self.vertex_animated_meshes.is_empty() {
-            // No animation or multi-draw mode - use static vertices
-            self.vertices.clone()
-        } else if let Some(ref ranges) = self.mesh_ranges {
-            // Multi-mesh scene: update each animated mesh's vertex range
+        if let Some(ref ranges) = self.mesh_ranges {
             let mut updated = self.vertices.clone();
-            let stage = match self.stage.as_ref() {
-                Some(s) => s,
-                None => return self.build_static_triangles(),
-            };
+            let stage = self.stage.as_ref()?;
 
             for &mesh_idx in &self.vertex_animated_meshes {
                 let range = match ranges.iter().find(|r| r.usd_mesh_index == mesh_idx) {
@@ -116,15 +105,15 @@ impl SceneBuilderData {
                     continue;
                 }
 
-                // Update only this mesh's vertex range
                 let start = range.vertex_offset as usize;
                 for (i, v) in updated[start..start + vertex_count].iter_mut().enumerate() {
                     v.position = [positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2]];
                 }
             }
-            updated
-        } else if self.vertex_animated_meshes.len() == 1 {
-            // Single-mesh fallback (original logic)
+            return Some(updated);
+        }
+
+        if self.vertex_animated_meshes.len() == 1 {
             let mesh_idx = self.vertex_animated_meshes[0];
             match self
                 .stage
@@ -139,107 +128,57 @@ impl SceneBuilderData {
                             vertex_count,
                             self.vertices.len()
                         );
-                        self.vertices.clone()
-                    } else {
-                        // Update positions while preserving UVs/normals
-                        let mut updated = self.vertices.clone();
-                        for (i, v) in updated.iter_mut().enumerate() {
-                            v.position =
-                                [positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2]];
-                        }
-                        updated
+                        return None;
                     }
+                    let mut updated = self.vertices.clone();
+                    for (i, v) in updated.iter_mut().enumerate() {
+                        v.position = [positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2]];
+                    }
+                    Some(updated)
                 }
-                None => self.vertices.clone(),
+                None => None,
             }
         } else {
-            // Multiple animated meshes but no mesh_ranges - can't update
-            self.vertices.clone()
-        };
-
-        for i in (0..self.indices.len()).step_by(3) {
-            let i0 = self.indices[i] as usize;
-            let i1 = self.indices[i + 1] as usize;
-            let i2 = self.indices[i + 2] as usize;
-
-            triangle_vertices.push([
-                Vec3::from_array(vertices[i0].position),
-                Vec3::from_array(vertices[i1].position),
-                Vec3::from_array(vertices[i2].position),
-            ]);
-
-            triangle_uvs.push([vertices[i0].uv, vertices[i1].uv, vertices[i2].uv]);
-
-            triangle_normals.push([
-                vertices[i0].normal,
-                vertices[i1].normal,
-                vertices[i2].normal,
-            ]);
+            None
         }
-
-        (triangle_vertices, triangle_uvs, triangle_normals)
-    }
-
-    /// Helper to build static triangles (no animation).
-    fn build_static_triangles(&self) -> TriangleData {
-        let tri_count = self.indices.len() / 3;
-        let mut triangle_vertices = Vec::with_capacity(tri_count);
-        let mut triangle_uvs: Vec<[[f32; 2]; 3]> = Vec::with_capacity(tri_count);
-        let mut triangle_normals: Vec<[[f32; 3]; 3]> = Vec::with_capacity(tri_count);
-
-        for i in (0..self.indices.len()).step_by(3) {
-            let i0 = self.indices[i] as usize;
-            let i1 = self.indices[i + 1] as usize;
-            let i2 = self.indices[i + 2] as usize;
-
-            triangle_vertices.push([
-                Vec3::from_array(self.vertices[i0].position),
-                Vec3::from_array(self.vertices[i1].position),
-                Vec3::from_array(self.vertices[i2].position),
-            ]);
-
-            triangle_uvs.push([
-                self.vertices[i0].uv,
-                self.vertices[i1].uv,
-                self.vertices[i2].uv,
-            ]);
-
-            triangle_normals.push([
-                self.vertices[i0].normal,
-                self.vertices[i1].normal,
-                self.vertices[i2].normal,
-            ]);
-        }
-
-        (triangle_vertices, triangle_uvs, triangle_normals)
     }
 
     /// Build Embree scene at a specific time.
-    pub fn build_scene_at_time(&self, time: f64) -> Arc<BvhNode> {
-        let (triangle_vertices, triangle_uvs, triangle_normals) =
-            self.build_triangles_at_time(time);
+    pub fn build_scene_at_time(&mut self, time: f64) -> Arc<BvhNode> {
+        // Get vertex data — animated or static
+        let updated = self.get_animated_vertices(time);
+        let verts = updated.as_deref().unwrap_or(&self.vertices);
+        let positions: Vec<[f32; 3]> = verts.iter().map(|v| v.position).collect();
+        let normals_soa: Vec<[f32; 3]> = verts.iter().map(|v| v.normal).collect();
+        let uvs_soa: Vec<[f32; 2]> = verts.iter().map(|v| v.uv).collect();
 
-        // Load materials with textures
-        let mut texture_cache = match &self.texture_base_dir {
-            Some(dir) => bif_core::texture::TextureCache::with_base_dir(dir.clone()),
-            None => bif_core::texture::TextureCache::new(),
-        };
-
-        let materials: Vec<Arc<DisneyBSDF>> = if self.scene_materials.is_empty() {
-            vec![Arc::new(DisneyBSDF::from_material_with_textures(
-                &self.scene_material,
-                &mut texture_cache,
-            ))]
+        // Use cached materials or build from scratch
+        let materials: Vec<Arc<DisneyBSDF>> = if let Some(ref cached) = self.ivar_materials {
+            cached.clone()
         } else {
-            self.scene_materials
-                .iter()
-                .map(|mat| {
-                    Arc::new(DisneyBSDF::from_material_with_textures(
-                        mat.as_ref(),
-                        &mut texture_cache,
-                    ))
-                })
-                .collect()
+            let mut texture_cache = match &self.texture_base_dir {
+                Some(dir) => bif_core::texture::TextureCache::with_base_dir(dir.clone()),
+                None => bif_core::texture::TextureCache::new(),
+            };
+            let mats: Vec<Arc<DisneyBSDF>> = if self.scene_materials.is_empty() {
+                vec![Arc::new(DisneyBSDF::from_material_with_textures(
+                    &self.scene_material,
+                    &mut texture_cache,
+                ))]
+            } else {
+                self.scene_materials
+                    .iter()
+                    .map(|mat| {
+                        Arc::new(DisneyBSDF::from_material_with_textures(
+                            mat.as_ref(),
+                            &mut texture_cache,
+                        ))
+                    })
+                    .collect()
+            };
+            // Cache for subsequent frames
+            self.ivar_materials = Some(mats.clone());
+            mats
         };
 
         let tri_mat_ids: Vec<u32> = self
@@ -248,18 +187,18 @@ impl SceneBuilderData {
             .cloned()
             .unwrap_or_default();
 
-        // Use identity if multi-draw (transforms already baked)
-        // Otherwise, evaluate animated transforms at the given time
         let ivar_transforms = if self.use_multi_draw {
             vec![Mat4::IDENTITY]
         } else {
             self.evaluate_transforms_at_time(time)
         };
 
-        if let Some(embree_scene) = EmbreeScene::try_new(
-            &triangle_vertices,
-            &triangle_uvs,
-            &triangle_normals,
+        #[allow(deprecated)]
+        if let Some(embree_scene) = EmbreeScene::try_from_indexed(
+            &positions,
+            &normals_soa,
+            &uvs_soa,
+            &self.indices,
             ivar_transforms,
             materials,
             &tri_mat_ids,
@@ -755,6 +694,7 @@ mod tests {
             vertex_animated_meshes: vec![],
             stage: None,
             mesh_ranges: None,
+            ivar_materials: None,
         }
     }
 

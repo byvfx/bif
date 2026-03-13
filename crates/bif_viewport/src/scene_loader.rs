@@ -304,7 +304,8 @@ impl Renderer {
         self.camera.update_position_from_angles();
         self.update_camera();
 
-        // Invalidate Ivar scene
+        // Invalidate Ivar scene + materials (new scene = new materials)
+        self.invalidate_ivar_materials();
         self.ivar_state.world = None;
         self.ivar_state.build_status = BuildStatus::NotStarted;
         self.ivar_state.cancel_flag.store(true, Ordering::Relaxed);
@@ -321,6 +322,9 @@ impl Renderer {
 
         // Build pick scene for viewport selection
         self.rebuild_pick_scene();
+
+        // Pre-warm materials for Ivar
+        self.prewarm_ivar_materials();
 
         Ok(())
     }
@@ -1107,6 +1111,12 @@ impl Renderer {
         self.ivar_state.cancel_flag.store(true, Ordering::Relaxed);
         self.ivar_state.render_complete = false;
 
+        // Invalidate material cache when materials changed; prewarm new ones
+        if self.materials_dirty {
+            self.invalidate_ivar_materials();
+            self.prewarm_ivar_materials();
+        }
+
         // Rebuild pick scene
         self.rebuild_pick_scene();
 
@@ -1815,7 +1825,8 @@ impl Renderer {
         self.camera.update_position_from_angles();
         self.update_camera();
 
-        // Invalidate Ivar scene cache
+        // Invalidate Ivar scene + materials (new scene = new materials)
+        self.invalidate_ivar_materials();
         self.ivar_state.world = None;
         self.ivar_state.build_status = BuildStatus::NotStarted;
         self.ivar_state.cancel_flag.store(true, Ordering::Relaxed);
@@ -1913,9 +1924,7 @@ impl Renderer {
             let mut remapped = (**proto).clone();
             // Remap per-face material IDs to account for existing materials
             if mat_offset > 0 {
-                if let Some(ref mut ids) =
-                    Arc::make_mut(&mut remapped.mesh).face_material_ids
-                {
+                if let Some(ref mut ids) = Arc::make_mut(&mut remapped.mesh).face_material_ids {
                     for id in ids.iter_mut() {
                         *id += mat_offset;
                     }
@@ -1981,6 +1990,9 @@ impl Renderer {
             "  Total:       {:>7.1}ms",
             total_viewport_time.as_secs_f64() * 1000.0
         );
+
+        // Pre-warm Ivar materials (if not already started by reload_working_scene)
+        self.prewarm_ivar_materials();
 
         Ok(())
     }

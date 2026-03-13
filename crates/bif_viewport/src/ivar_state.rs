@@ -369,8 +369,9 @@ pub struct IvarState {
     pub world: Option<Arc<BvhNode>>,
     /// Scene build status for async construction.
     pub build_status: BuildStatus,
-    /// Receiver for scene build completion.
-    pub build_receiver: Option<mpsc::Receiver<Arc<BvhNode>>>,
+    /// Receiver for scene build completion (BVH + materials for caching).
+    #[allow(clippy::type_complexity)]
+    pub build_receiver: Option<mpsc::Receiver<(Arc<BvhNode>, Vec<Arc<bif_renderer::DisneyBSDF>>)>>,
     /// Samples per pixel for batch rendering.
     pub samples_per_pixel: u32,
     /// Max bounce depth.
