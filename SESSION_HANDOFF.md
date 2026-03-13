@@ -1,6 +1,6 @@
-# Session Handoff - March 12, 2026
+# Session Handoff - March 13, 2026
 
-**Last Updated:** Ivar material cache + pre-warm + Embree indexed geometry optimization
+**Last Updated:** VFX code review fixes for M26.1 (shared helpers, FnMut, per-vertex storage, tests)
 **Next Milestone:** Resume M29 USD export or next milestone
 **Project:** BIF - VFX Scene Assembler & Renderer
 
@@ -12,7 +12,7 @@
 |--------|---------|
 | Complete | Milestones 0-23, M26 (OIDN), M26.1 (Ivar material cache) |
 | Current | Ivar build pipeline fully optimized: materials cached + geometry indexed |
-| Tests | 80 renderer, 41 math, 24 viewport, 27+ bif_core |
+| Tests | 84 renderer, 41 math, 24 viewport, 27+ bif_core |
 | Performance | 60 FPS viewport, 100K instances with LOD, Ivar build ~47ms (was 6.7s) |
 
 ---
@@ -37,6 +37,15 @@ Eliminated 6.7s texture loading on every Ivar scene build. Three-part unified ap
 New `try_from_indexed()` / `from_indexed()` paths that use shared vertex buffers instead of per-triangle vertex arrays. Parallel hit data construction with rayon.
 
 **Key files:** `embree.rs` (new indexed path), `pick_scene.rs` (indexed pick scene), `mesh_data.rs` (SOA extractors)
+
+### VFX Code Review Fixes (Mar 13, 2026)
+
+Addressed all important + suggestion issues from VFX code review:
+- Shared `build_materials()` helper (was 4x duplicated)
+- `SceneBuilderFn`: `Fn`+`Mutex` → `FnMut` (correct semantics)
+- Per-vertex UV/normal storage with index lookup (~6x memory savings)
+- Prewarm/build race guard (50ms recv_timeout)
+- Index buffer OOB validation, 4 new `from_indexed()` tests
 
 ### Texture Loading Optimization (Mar 11-12, 2026)
 

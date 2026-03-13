@@ -12,11 +12,17 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Embree indexed geometry path (`try_from_indexed`, `from_indexed`) — shared vertices, parallel hit data build
 - `EmbreePickScene::from_indexed()` — indexed pick scene for viewport selection
 - `MeshData::extract_positions/normals/uvs()` — SOA extraction helpers
+- Shared `build_materials()` helper deduplicating 4 material construction sites
+- 4 unit tests for `EmbreeScene::from_indexed()` (basic hit, shared verts, instancing, error)
+- Index buffer OOB validation with `log::warn` in Embree indexed path
+- Prewarm/build race guard: 50ms `recv_timeout` before fallback to full material load
 
 ### Changed
 - Ivar scene build sends materials back via channel for caching (subsequent builds skip texture loading)
 - Batch render `SceneBuilderData` carries cached materials for per-frame reuse
 - Material cache invalidated only on scene reload or material edit, not on camera/transform changes
+- `SceneBuilderFn` changed from `Fn`+`Mutex` to `FnMut` (correct interior mutation semantics)
+- Embree indexed path stores per-vertex UV/normals with index lookup (~6x memory savings vs per-triangle expansion)
 
 ### Performance
 - Ivar subsequent builds: 6.7s → ~47ms (cached materials skip texture loading)
