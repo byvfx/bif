@@ -1,7 +1,7 @@
 # Session Handoff - March 13, 2026
 
-**Last Updated:** VFX code review fixes for M26.1 (shared helpers, FnMut, per-vertex storage, tests)
-**Next Milestone:** Resume M29 USD export or next milestone
+**Last Updated:** Roadmap overhaul — new M29.5-M36+ milestones from architecture evaluation
+**Next Milestone:** Finish M29 USD Export, then M29.5 egui upgrade
 **Project:** BIF - VFX Scene Assembler & Renderer
 
 ---
@@ -11,7 +11,7 @@
 | Status | Details |
 |--------|---------|
 | Complete | Milestones 0-23, M26 (OIDN), M26.1 (Ivar material cache) |
-| Current | Ivar build pipeline fully optimized: materials cached + geometry indexed |
+| Current | M29 USD Export (most phases done, needs validation) |
 | Tests | 84 renderer, 41 math, 24 viewport, 27+ bif_core |
 | Performance | 60 FPS viewport, 100K instances with LOD, Ivar build ~47ms (was 6.7s) |
 
@@ -19,37 +19,22 @@
 
 ## Recent Work
 
-### Ivar Material Cache + Pre-warm (Mar 12, 2026)
+### Roadmap Overhaul (Mar 13, 2026)
 
-Eliminated 6.7s texture loading on every Ivar scene build. Three-part unified approach:
+Evaluated 7 feature areas against current architecture (~42K LOC). Key decisions:
 
-1. **`ivar_materials` cache** — `Vec<Arc<DisneyBSDF>>` persists on Renderer, cheap Arc clone across builds
-2. **Channel return** — build thread sends materials back alongside BVH for caching
-3. **Pre-warm on scene load** — `prewarm_ivar_materials()` spawns background thread immediately after scene load
-
-**Invalidation:** Only on scene reload or material edit (not camera/transform/geometry).
-**Batch render:** `SceneBuilderData` carries `ivar_materials` for per-frame reuse.
-
-**Key files:** `ivar_build.rs` (cache logic, prewarm, invalidate), `lib.rs` (fields), `batch_render.rs` (SceneBuilderData), `scene_loader.rs` (prewarm + invalidate calls), `ivar_state.rs` (channel type)
-
-### Embree Indexed Geometry (Mar 12, 2026)
-
-New `try_from_indexed()` / `from_indexed()` paths that use shared vertex buffers instead of per-triangle vertex arrays. Parallel hit data construction with rayon.
-
-**Key files:** `embree.rs` (new indexed path), `pick_scene.rs` (indexed pick scene), `mesh_data.rs` (SOA extractors)
+- **Nodes stay** — BIF's node graph is operations (verbs), not scene hierarchy. Correct model.
+- **New M29.5-M36+** — egui upgrade, persistence, per-node viz, opinion trace, USD debug, Python hooks, API cleanup, framework extraction
+- **Old M31-M34** (lights, materials, contexts, MaterialX) → renumbered M37-M40
+- **No MDL** — MaterialX is ASWF standard, MDL is Nvidia-only
+- **Python hooks via PyO3** — embedded interpreter, not subprocess
+- **Framework vision** — "Arch Linux for VFX": library crates → widget crates → plugins → DCC connectors
+- **File formats** — `.bif` (bincode binary) + `.bifa` (JSON pretty-print ascii)
+- **Vertical node layout** — egui-snarl 0.6+ `NodeLayout::Sandwich`, needs egui 0.30
 
 ### VFX Code Review Fixes (Mar 13, 2026)
 
-Addressed all important + suggestion issues from VFX code review:
-- Shared `build_materials()` helper (was 4x duplicated)
-- `SceneBuilderFn`: `Fn`+`Mutex` → `FnMut` (correct semantics)
-- Per-vertex UV/normal storage with index lookup (~6x memory savings)
-- Prewarm/build race guard (50ms recv_timeout)
-- Index buffer OOB validation, 4 new `from_indexed()` tests
-
-### Texture Loading Optimization (Mar 11-12, 2026)
-
-3-tier optimization: GPU mips, async streaming, u8 direct path. 125s → ~2s.
+Fixed all issues from vfx-code-reviewer: shared `build_materials()`, `FnMut` scene builder, per-vertex indexed storage, prewarm race guard, 4 new tests.
 
 ---
 
@@ -63,6 +48,7 @@ Addressed all important + suggestion issues from VFX code review:
 
 ## Next Steps
 
-- Verify material cache in practice: load scene → wait → switch to Ivar → check timing log
-- Resume M29 USD export remaining items
-- Consider M30 project save/load
+1. Finish M29 remaining items (validate exported USD in Houdini/usdview, docs)
+2. M29.5: egui 0.29→0.30 upgrade + egui-snarl 0.5→0.6 + vertical node layout
+3. M30: Node graph save/load (`.bif`/`.bifa`) + evaluation modes + cache node
+4. M31: Per-node scene graph visualization (click node → see tree at that point)

@@ -962,23 +962,144 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 
 ---
 
-### Milestone 30: Project File Save/Load 💾
+### Milestone 29.5: egui 0.30 Upgrade + Vertical Node Layout 📐
 
-- **Goal:** Persistent project sessions via `.bif` file format
-- **Estimated Time:** 15-20 hours
-- **Why Next:** Foundation — everything else is lost without save.
+- **Goal:** Upgrade egui ecosystem to 0.30, enable top-to-bottom node layout
+- **Estimated Time:** 5-8 hours
+- **Why:** egui-snarl 0.6.0+ has `NodeLayout::Sandwich` (inputs top, outputs bottom) — requires egui 0.30+
+- **Pre-requisite for:** M30 (node persistence needs stable snarl API)
+- **Dependency Bumps:**
+  - egui 0.29 → 0.30+
+  - egui-wgpu 0.29 → 0.30+
+  - egui-winit 0.29 → 0.30+
+  - egui-snarl 0.5.0 → 0.6.0+
 - **Key Tasks:**
-  - `#[derive(Serialize, Deserialize)]` on `SceneNode` enum + key types
-  - Serialize `Snarl<SceneNode>` graph (nodes, connections, positions)
-  - `.bif` project file format (JSON-based)
-  - File → New / Open / Save / Save As menu
-  - Recent files list, dirty flag, "unsaved changes" prompt
-  - Stores: node graph, HDRI path, viewport camera, render settings
-  - Does NOT store: USD stage data (referenced by path), rendered images
+  - Bump versions in workspace `Cargo.toml`
+  - Fix breaking API changes (egui 0.29→0.30 migration)
+  - Set `style.node_layout = Some(NodeLayout::Sandwich)` for vertical flow
+  - Set `style.pin_placement` (Edge looks cleanest for vertical)
+  - Optionally add per-node layout override via `SnarlViewer::node_layout()`
+  - Run all tests, verify node graph renders correctly
+- **Key File:** `crates/bif_viewport/src/node_graph.rs` (SnarlStyle initialization)
+- **Layout:** Sandwich = inputs top, body middle, outputs bottom → top-to-bottom data flow
 
 ---
 
-### Milestone 31: Lights Authoring 💡
+### Milestone 30: Node Graph Persistence & Evaluation Modes 💾
+
+- **Goal:** Save/load node graphs + Houdini-style evaluation control
+- **Estimated Time:** 15-20 hours
+- **Why:** Foundation — everything else is lost without save. Eval modes prevent unnecessary recomputation.
+- **Save/Load:**
+  - `#[derive(Serialize, Deserialize)]` on `SceneNode` enum + `NodeGraphState` + key types
+  - Serialize `Snarl<SceneNode>` graph (nodes, connections, positions)
+  - Dual format: `.bif` binary (bincode) for fast load + `.bifa` ascii (JSON pretty-print) for human-readable/diffable
+  - File → New / Open / Save / Save As menu, recent files list, dirty flag, unsaved changes prompt
+  - Stores: node graph, HDRI path, viewport camera, render settings
+  - Does NOT store: USD stage data (referenced by path), rendered images
+- **Evaluation Modes:**
+  - Auto: current behavior (immediate re-eval on any change)
+  - Manual: explicit "cook" button, dirty nodes shown visually
+  - On-Mouse-Release: re-eval when slider/drag released (not during)
+  - Toggle in node graph toolbar
+- **Cache Node:** New `SceneNode::Cache` variant
+  - Stores evaluated scene snapshot at that point in chain
+  - Bypass toggle (re-evaluate through cache vs use cached)
+  - Visual indicator (green = cached, yellow = stale)
+  - Writes `.bif_cache` files to disk for persistent caching
+
+---
+
+### Milestone 31: Per-Node Scene Graph Visualization 🌲
+
+- **Goal:** Click any node → see scene graph tree at that evaluation point
+- **Estimated Time:** 10-15 hours
+- **Why:** Makes the node workflow click — users can see what each node contributes
+- **Already Built (80%):** CompositeProvider, CachedSceneGraph, scene browser, PrimDataProvider trait
+- **Key Tasks:**
+  - Per-node evaluation: click node → evaluate chain up to that node only → show resulting tree
+  - Highlight prims added/modified by selected node (color-coded in scene browser)
+  - Dual-panel layout: node graph + live scene graph tree side-by-side
+  - Node contribution markers: each prim tagged with which node produced it
+  - Evaluation display: badge/overlay on each node showing prim count it contributes
+
+---
+
+### Milestone 32: USD Composition Inspector & Opinion Trace 🔍
+
+- **Goal:** Trace USD attribute opinions — show which layer "wins" and why
+- **Estimated Time:** 15-20 hours
+- **Why:** Essential for a USD-focused tool. Without this, debugging composition is guesswork.
+- **Reference:** [havocado/usd-opinion-trace](https://github.com/havocado/usd-opinion-trace) (reimplement natively, don't clone)
+- **C++ Bridge Extensions:**
+  - Expose `PcpPrimIndex` — composition arcs per prim
+  - Expose `SdfLayerStack` — layer ordering
+  - Expose opinion queries — which layer sets which attribute
+- **Composition Inspector Panel:**
+  - Tree view of composition arcs (references, payloads, sublayers, inherits, variants)
+  - Click arc → jump to source layer/prim
+- **Opinion Trace Panel:**
+  - Select attribute → see full opinion stack (all layers)
+  - Winning opinion highlighted, blocking reason explained
+  - LIVRPS ordering visualized
+
+---
+
+### Milestone 33: USD Debugging Tools 🛠️
+
+- **Goal:** usdview-parity debugging: variants, layers, metadata, namespace editing
+- **Estimated Time:** 10-15 hours
+- **Key Tasks:**
+  - **Variant Set Selector:** Interactive variant switching in property inspector
+  - **Layer Stack Viewer:** Which layers contribute to selected prim
+  - **Prim Metadata Inspector:** kind, purpose, apiSchemas, custom data
+  - **Namespace Editor:** Rename/reparent prims (writes to edit layer)
+
+---
+
+### Milestone 34: Pipeline Integration (Python Hooks) 🐍
+
+- **Goal:** Embedded Python (PyO3) for pipeline extensibility
+- **Estimated Time:** 15-20 hours
+- **Why:** Every VFX DCC ships embedded Python. BIF should integrate with studio pipelines, not replace them.
+- **Key Tasks:**
+  - **Embedded Python (PyO3):** Python interpreter in BIF process
+  - Expose bif_core types to Python (Scene, Prim, Material, etc.)
+  - **Hook points:** pre-load, post-load, pre-export, post-export, pre-render, post-render
+  - **Configurable paths:** Template-based output paths (`$SHOW/$SHOT/$ASSET/...`)
+  - **Metadata propagation:** Custom USD attributes carried through pipeline
+- **Approach:** Bundle Python interpreter (like Houdini hython, Maya mayapy). PyO3 static linking. ~30-50MB dist size.
+
+---
+
+### Milestone 35: Public API Cleanup (Framework Phase 1) 📚
+
+- **Goal:** Make bif_core/bif_renderer usable as Rust libraries
+- **Estimated Time:** 10-15 hours
+- **Why:** Foundation for "Arch Linux for VFX" framework vision
+- **Key Tasks:**
+  - **bif_core:** Clean public API, doc comments on all public items, examples
+  - **bif_renderer:** Clean entry point for headless rendering, examples
+  - **bif_math:** Already clean, add examples
+  - Internal only but crates.io-ready code quality
+
+---
+
+### Milestone 36+: Framework Phase 2 (Widget Extraction) 🧩
+
+- **Goal:** Extract reusable UI crates + dynamic node registry + DCC connectors
+- **Estimated Time:** 40+ hours (multi-milestone)
+- **Widget Extraction:**
+  - `bif_node_graph` — configurable node graph widget
+  - `bif_scene_browser` — scene browser widget
+  - `bif_viewport_3d` — 3D viewport widget
+- **Dynamic Node Registry:** Trait objects replacing `SceneNode` enum, `.dll`/`.so` plugin loading
+- **Houdini Live-Link:** Shared USD stage over network (UsdUtilsStageCache), first DCC connector
+- **Python Bindings:** PyO3 bindings for bif_core/bif_renderer
+
+---
+
+### Milestone 37: Lights Authoring 💡
 
 - **Goal:** Light creation UI + graph nodes for scene lighting without USD
 - **Estimated Time:** 10-15 hours
@@ -993,7 +1114,7 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 
 ---
 
-### Milestone 32: Material Authoring 🎨
+### Milestone 38: Material Authoring 🎨
 
 - **Goal:** Property editor + basic shader graph for material creation
 - **Estimated Time:** 20-25 hours
@@ -1009,14 +1130,14 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 
 ---
 
-### Milestone 33: Context System 🔀
+### Milestone 39: Context System 🔀
 
-- **Goal:** Houdini-style contexts — biggest refactor, needs M30-M32 first
+- **Goal:** Houdini-style contexts — biggest refactor, needs M30+ first
 - **Estimated Time:** 30-40 hours
 - **Key Tasks:**
   - Refactor `SceneNode` into context-specific enums or trait-based system
   - **Assembly context** (current graph): UsdRead, Scatter, Instancer, Xform, Export
-  - **Materials context**: shader graph nodes from M32, expanded
+  - **Materials context**: shader graph nodes from M38, expanded
   - **Animation context**: timeline-focused, keyframe/expression nodes
   - Context switcher UI (tabs or dropdown)
   - Each context has its own `Snarl` graph
@@ -1024,13 +1145,13 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 
 ---
 
-### Milestone 34: MaterialX Authoring 🧪
+### Milestone 40: MaterialX Authoring 🧪
 
 - **Goal:** Full MaterialX `standard_surface` node graph with round-trip XML export
 - **Estimated Time:** 25-30 hours
-- **Why:** M32 covers basic PBR presets — this is the full shader graph experience in the Materials context (M33)
+- **Why:** M38 covers basic PBR presets — this is the full shader graph experience in the Materials context (M39)
 - **Key Tasks:**
-  - Full `standard_surface` node graph (beyond M32 presets)
+  - Full `standard_surface` node graph (beyond M38 presets)
   - MaterialX node types: Math, Color, Texture, Noise, Normal map, etc.
   - MaterialX XML export/import (round-trip)
   - Connect to existing MaterialX parsing from M16
@@ -1073,21 +1194,29 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 | Order | # | Milestone | What it unlocks |
 |-------|---|-----------|-----------------|
 | 1 | 29 | USD export (in-progress) | Full pipeline: import→modify→render→export |
-| 2 | 30 | Project save/load | Persistent sessions (.bif files) |
-| 3 | 31 | Lights authoring | Lit scenes without USD, viewport light viz |
-| 4 | 32 | Material authoring | PBR editing + basic shader graph |
-| 5 | 33 | Context system | Assembly/Materials/Animation contexts |
-| 6 | 34 | MaterialX authoring | Full standard_surface node graph + XML round-trip |
-| 7 | 25 | Volumes/OpenVDB | Smoke, fog, clouds |
-| 8 | 22 | Viewport perf | Handle production scenes |
-| 9 | 27 | GPU path tracing | Near-realtime quality |
-| 10 | 28 | Qt 6 UI | Professional interface |
+| 2 | 29.5 | egui 0.30 + vertical nodes | Sandwich layout, prerequisite for M30 |
+| 3 | 30 | Node persistence + eval modes | Save/load `.bif`/`.bifa`, cache node, cook modes |
+| 4 | 31 | Per-node scene graph viz | Click node → see tree at that eval point |
+| 5 | 32 | Composition inspector + opinion trace | USD debugging: which layer wins and why |
+| 6 | 33 | USD debugging tools | Variants, layer stack, metadata, namespace |
+| 7 | 34 | Pipeline integration (PyO3) | Embedded Python hooks for studio pipelines |
+| 8 | 35 | Public API cleanup | bif_core/bif_renderer as Rust libraries |
+| 9 | 36+ | Framework extraction | Widget crates, plugin system, DCC connectors |
+| 10 | 37 | Lights authoring | Lit scenes without USD, viewport light viz |
+| 11 | 38 | Material authoring | PBR editing + basic shader graph |
+| 12 | 39 | Context system | Assembly/Materials/Animation contexts |
+| 13 | 40 | MaterialX authoring | Full standard_surface node graph + XML round-trip |
+| — | 25 | Volumes/OpenVDB | Smoke, fog, clouds |
+| — | 22 | Viewport perf | Handle production scenes |
+| — | 27 | GPU path tracing | Near-realtime quality |
+| — | 28 | Qt 6 UI | Professional interface |
 
 ### Dissolved / Cut
 
 | # | Milestone | Status | Reason |
 |---|-----------|--------|--------|
 | 24 | Spectral Rendering | Cut | Zero production value for BIF's goals |
+| — | MDL Support | Skipped | MaterialX is ASWF standard; MDL is Nvidia-only. Convert on export if needed |
 
 ---
 
@@ -1134,7 +1263,7 @@ Key papers (cherry-pick into relevant milestones as needed):
 
 ---
 
-**Last Updated:** March 12, 2026
+**Last Updated:** March 13, 2026
 **Status:** Milestones 0-23 + M26 + M26.1 complete
 **Current:** M29 USD export (in-progress)
-**Next:** M30 (save/load) → M31 (lights) → M32 (materials) → M33 (contexts) → M34 (MaterialX)
+**Next:** M29.5 (egui upgrade) → M30 (persistence/eval) → M31 (per-node viz) → M32 (opinion trace) → M33 (USD debug) → M34 (Python hooks) → M35 (API cleanup) → M36+ (framework)

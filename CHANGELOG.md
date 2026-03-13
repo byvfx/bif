@@ -6,7 +6,16 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- Roadmap overhaul: new M29.5-M36+ milestones (egui upgrade, persistence, per-node viz, opinion trace, USD debug, Python hooks, API cleanup, framework extraction)
+- Old M31-M34 (lights, materials, contexts, MaterialX) renumbered to M37-M40
+- MDL support skipped (MaterialX is ASWF standard)
+
+## [0.11.0] - 2026-03-13
+
 ### Added
+
 - Ivar material cache (`ivar_materials`) — persists `Vec<Arc<DisneyBSDF>>` across Ivar builds
 - Material pre-warm (`prewarm_ivar_materials()`) — background thread builds materials on scene load
 - Embree indexed geometry path (`try_from_indexed`, `from_indexed`) — shared vertices, parallel hit data build
@@ -18,6 +27,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Prewarm/build race guard: 50ms `recv_timeout` before fallback to full material load
 
 ### Changed
+
 - Ivar scene build sends materials back via channel for caching (subsequent builds skip texture loading)
 - Batch render `SceneBuilderData` carries cached materials for per-frame reuse
 - Material cache invalidated only on scene reload or material edit, not on camera/transform changes
@@ -25,6 +35,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Embree indexed path stores per-vertex UV/normals with index lookup (~6x memory savings vs per-triangle expansion)
 
 ### Performance
+
 - Ivar subsequent builds: 6.7s → ~47ms (cached materials skip texture loading)
 - Ivar first build with pre-warm: 6.7s → ~47ms (materials ready before render starts)
 - Embree indexed geometry: 37s → 47ms BVH build (shared vertices)
@@ -32,11 +43,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [0.1.0] - 2026-03-12
 
 ### Fixed
+
 - Textures persisting from first USD scene when loading second scene — two bugs:
   - `add_prototype()` during scene merge dropped material bindings (replaced with full prototype clone)
   - `face_material_ids` not remapped by material offset after merge (GeomSubset indices pointed at wrong materials)
 
 ### Added
+
 - GPU mipmap compute shader (`mipmap_downsample.wgsl`) — box-filter downsample on GPU
 - `MipmapGenerator` compute pipeline for GPU-side mipmap generation
 - Async texture streaming: placeholders load instantly, textures stream in via background thread
@@ -46,6 +59,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `downscale_raw_nearest()` — nearest-neighbor downscale operating on u8 RGBA data
 
 ### Changed
+
 - **Texture loading ~25-50x faster**: eliminated triple format conversion (C++ float→u8, Rust u8→f32, GPU f32→u8)
 - C++ OIIO bridge reads LDR textures as UINT8 directly (skip float allocation + per-pixel conversion)
 - Viewport texture loading uses raw u8 path — `Rgba8UnormSrgb` GPU format handles sRGB decode in hardware
@@ -54,6 +68,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - USD scene finalization uses async texture streaming (instant scene display with placeholder textures)
 
 ### Added (continued)
+
 - Blue noise camera jitter with Cranley-Patterson rotation (256x256 void-and-cluster texture)
 - SamplerMode enum (WhiteNoise/BlueNoise) with UI dropdown, default BlueNoise
 - Pixel reconstruction filters: Box, Gaussian, Mitchell-Netravali, Blackman-Harris
@@ -64,6 +79,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - CHANGELOG.md for tracking release notes
 
 ### Changed
+
 - `ray_color` now delegates to `ray_color_with_aovs` (eliminates ~160 lines of duplicate bounce loop)
 - EXR writer: single `AnyChannels`-based function replaces 8 combinatorial variants (-370 lines)
 - Unified Ray type: deleted `bif_renderer::Ray`, use `bif_math::Ray` everywhere
@@ -76,6 +92,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `.usd` binary files now route to C++ bridge (was going to pure-Rust USDA parser)
 
 ### Fixed
+
 - GPU mipmap sRGB crash — `upload_raw_texture` creates sRGB textures as `Rgba8Unorm` (storage-compatible) with `Rgba8UnormSrgb` view for correct hardware sRGB decode
 - Normal transforms use inverse-transpose for non-uniform scale (instanced_geometry + Embree + viewport)
 - UsdEditLayer double-free — `save()` nulls pointer before Drop runs
@@ -96,6 +113,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `axis_interval` catch-all `_` replaced with explicit match + panic
 
 ### Removed
+
 - Dead `instanced_geometry_bvh.rs` (274 lines, broken UB, never compiled)
 - CI: `bif_core` build.rs no longer panics when vcpkg not installed (graceful skip for clippy-only mode)
 - CI: removed bif_renderer/bif_viewport test steps that can't link without USD env
