@@ -171,7 +171,7 @@ impl Renderer {
 
         log::info!(
             "Starting background Ivar scene build: {} instances, {} tris/instance",
-            self.instance_transforms.len(),
+            self.instances.transforms.len(),
             self.mesh_data.indices.len() / 3
         );
 
@@ -186,7 +186,7 @@ impl Renderer {
             );
             vec![Mat4::IDENTITY]
         } else {
-            self.current_transforms.clone()
+            self.instances.current.clone()
         };
         let scene_materials = self.scene_materials.clone();
         let fallback_material = self.scene_material.clone();
@@ -234,7 +234,7 @@ impl Renderer {
 
         // If prewarm is in-flight, try to grab its result before spawning a redundant load
         if self.ivar_materials.is_none() {
-            if let Some(ref rx) = self.ivar_materials_receiver {
+            if let Some(ref rx) = self.async_channels.ivar_materials_receiver {
                 // Brief blocking wait — prewarm may be nearly done
                 use std::time::Duration;
                 if let Ok(materials) = rx.recv_timeout(Duration::from_millis(50)) {
@@ -243,7 +243,7 @@ impl Renderer {
                         materials.len()
                     );
                     self.ivar_materials = Some(materials);
-                    self.ivar_materials_receiver = None;
+                    self.async_channels.ivar_materials_receiver = None;
                 }
             }
         }
@@ -388,7 +388,7 @@ impl Renderer {
         log::info!(
             "Building Ivar scene (sync): {} triangles, {} instances, time={:?}",
             self.mesh_data.indices.len() / 3,
-            self.instance_transforms.len(),
+            self.instances.transforms.len(),
             time
         );
 
@@ -423,7 +423,7 @@ impl Renderer {
         let ivar_transforms = if self.multi_draw.enabled {
             vec![Mat4::IDENTITY]
         } else {
-            self.current_transforms.clone()
+            self.instances.current.clone()
         };
 
         let world = if let Some(embree_scene) = EmbreeScene::try_from_indexed(
@@ -487,7 +487,7 @@ impl Renderer {
             log::info!("Invalidating cached Ivar materials");
         }
         self.ivar_materials = None;
-        self.ivar_materials_receiver = None;
+        self.async_channels.ivar_materials_receiver = None;
     }
 
     /// Pre-warm DisneyBSDF materials on a background thread.
@@ -500,7 +500,7 @@ impl Renderer {
             return;
         }
         // Skip if already cached or already loading
-        if self.ivar_materials.is_some() || self.ivar_materials_receiver.is_some() {
+        if self.ivar_materials.is_some() || self.async_channels.ivar_materials_receiver.is_some() {
             return;
         }
 
@@ -509,7 +509,7 @@ impl Renderer {
         let texture_base_dir = self.texture_base_dir.clone();
 
         let (tx, rx) = mpsc::channel();
-        self.ivar_materials_receiver = Some(rx);
+        self.async_channels.ivar_materials_receiver = Some(rx);
 
         std::thread::spawn(move || {
             let start = Instant::now();
@@ -540,14 +540,14 @@ impl Renderer {
     /// 3. Starts the render
     pub(crate) fn poll_scene_build(&mut self) {
         // Poll for pre-warmed materials (from prewarm_ivar_materials)
-        if let Some(ref rx) = self.ivar_materials_receiver {
+        if let Some(ref rx) = self.async_channels.ivar_materials_receiver {
             if let Ok(materials) = rx.try_recv() {
                 log::info!(
                     "Pre-warmed {} materials received on main thread",
                     materials.len()
                 );
                 self.ivar_materials = Some(materials);
-                self.ivar_materials_receiver = None;
+                self.async_channels.ivar_materials_receiver = None;
             }
         }
 
@@ -1058,7 +1058,7 @@ impl Renderer {
                 scene_materials: self.scene_materials.clone(),
                 scene_material: self.scene_material.clone(),
                 texture_base_dir: self.texture_base_dir.clone(),
-                instance_transforms: self.instance_transforms.clone(),
+                instance_transforms: self.instances.transforms.clone(),
                 instance_animations: self.instance_animations.clone(),
                 use_multi_draw: self.multi_draw.enabled,
                 vertex_animated_meshes: self.vertex_animated_meshes.clone(),
@@ -1115,8 +1115,8 @@ impl Renderer {
 
         // Start the batch render
         let (rx, cancel_flag) = batch_render::start_batch_render(settings, scene_data);
-        self.batch_receiver = Some(rx);
-        self.batch_cancel_flag = Some(cancel_flag);
+        self.async_channels.batch_receiver = Some(rx);
+        self.async_channels.batch_cancel_flag = Some(cancel_flag);
         self.ivar_state.batch_status = BatchRenderStatus::Rendering {
             current_frame: 1,
             total_frames: self.ivar_state.batch_settings.frame_count(),

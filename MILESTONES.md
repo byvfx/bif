@@ -271,7 +271,7 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 | **Milestones Complete** | 0-19.4 (~25 sub-milestones) |
 | **Time Invested** | ~55+ hours documented |
 | **Crates** | 6 (math, core, renderer, viewport, viewer, maketx) |
-| **lib.rs** | ~4,800 lines (cleanup planned M19.6) |
+| **lib.rs** | ~1,622 lines (M19.6 cleanup done) |
 | **bif_viewport total** | ~10K lines (19 files) |
 
 ---

@@ -8,9 +8,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
-- Roadmap overhaul: new M29.5-M36+ milestones (egui upgrade, persistence, per-node viz, opinion trace, USD debug, Python hooks, API cleanup, framework extraction)
-- Old M31-M34 (lights, materials, contexts, MaterialX) renumbered to M37-M40
-- MDL support skipped (MaterialX is ASWF standard)
+- M19.6: Split `render()` (2,695 lines) into 6 phase methods + extracted helpers
+- Extract left/stats panel to `render_ui.rs` with `StatsPanelParams` struct
+- Group 15 flat `Renderer` fields into 3 sub-structs (`AsyncChannels`, `UiLayout`, `SceneInstances`)
+- Split `node_graph.rs` (2,272 lines) into `node_graph/` module directory (mod.rs, viewer.rs, ops.rs)
 
 ## [0.11.0] - 2026-03-13
 

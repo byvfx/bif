@@ -1,6 +1,5 @@
 use anyhow::Result;
 use std::num::NonZeroU32;
-use std::sync::mpsc;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
@@ -37,6 +36,7 @@ mod ivar_build;
 pub mod node_graph;
 pub mod property_inspector;
 mod render;
+mod render_ui;
 pub mod scene_browser;
 mod scene_loader;
 pub mod skybox;
@@ -79,8 +79,6 @@ pub use scene_browser::{
     build_scene_graph_cache, CachedSceneGraph, CompositeProvider, EmptyPrimProvider,
     PrimDataProvider, PrimDisplayInfo, ProceduralPrim, ProceduralPrimKind, SceneBrowserState,
 };
-
-use batch_render::BatchMessage;
 
 /// Maximum instance count for dynamic instance buffer.
 const MAX_INSTANCES: u32 = 100_000;
@@ -157,6 +155,62 @@ pub(crate) enum UsdLoadMessage {
     Failed(String),
 }
 
+/// Async channel receivers and status for background operations.
+pub(crate) struct AsyncChannels {
+    /// Receiver for messages from the background USD load thread.
+    pub usd_load_receiver: Option<std::sync::mpsc::Receiver<UsdLoadMessage>>,
+    /// Current status of the async USD load (for UI display).
+    pub usd_load_status: UsdLoadStatus,
+    /// Receiver for textures loaded on background thread.
+    pub texture_load_receiver:
+        Option<std::sync::mpsc::Receiver<texture_loader::TextureLoadMessage>>,
+    /// Receiver for batch render messages.
+    pub batch_receiver: Option<std::sync::mpsc::Receiver<batch_render::BatchMessage>>,
+    /// Cancel flag for batch render.
+    pub batch_cancel_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    /// Receiver for background material pre-warm thread.
+    pub ivar_materials_receiver:
+        Option<std::sync::mpsc::Receiver<Vec<std::sync::Arc<bif_renderer::DisneyBSDF>>>>,
+}
+
+impl Default for AsyncChannels {
+    fn default() -> Self {
+        Self {
+            usd_load_receiver: None,
+            usd_load_status: UsdLoadStatus::Idle,
+            texture_load_receiver: None,
+            batch_receiver: None,
+            batch_cancel_flag: None,
+            ivar_materials_receiver: None,
+        }
+    }
+}
+
+/// UI panel dimensions (for viewport-safe overlays).
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct UiLayout {
+    pub left_panel_width: f32,
+    pub right_panel_width: f32,
+    pub top_panel_height: f32,
+    pub bottom_panel_height: f32,
+}
+
+/// Parallel arrays of per-instance data (transforms, materials, prototype IDs, prim paths).
+/// Named `SceneInstances` to avoid confusion with `gpu_types::InstanceData`.
+#[derive(Default)]
+pub(crate) struct SceneInstances {
+    /// Base transforms (from scene load) — used for re-evaluation.
+    pub transforms: Vec<Mat4>,
+    /// Current transforms (after animation evaluation) — used for rendering.
+    pub current: Vec<Mat4>,
+    /// Material ID per instance.
+    pub material_ids: Vec<u32>,
+    /// Prototype ID per instance (for multi-draw rebuild).
+    pub prototype_ids: Vec<usize>,
+    /// Prim path per instance (for USD export).
+    pub prim_paths: Vec<String>,
+}
+
 /// Core renderer managing wgpu state
 pub struct Renderer {
     pub(crate) surface: Surface<'static>,
@@ -214,10 +268,7 @@ pub struct Renderer {
     pub(crate) num_triangles: u64,
 
     // UI layout metrics (for viewport-safe overlays)
-    pub(crate) ui_left_panel_width: f32,
-    pub(crate) ui_right_panel_width: f32,
-    pub(crate) ui_top_panel_height: f32,
-    pub(crate) ui_bottom_panel_height: f32,
+    pub(crate) ui_layout: UiLayout,
 
     // Ivar CPU path tracer state
     pub ivar_state: IvarState,
@@ -231,16 +282,8 @@ pub struct Renderer {
     // Cached mesh data for Ivar scene building
     pub(crate) mesh_data: MeshData,
 
-    // Instance transforms for Ivar (stored as Mat4 arrays)
-    /// Base transforms (from scene load) - used for re-evaluation
-    pub(crate) instance_transforms: Vec<Mat4>,
-    /// Current transforms (after animation evaluation) - used for rendering
-    pub(crate) current_transforms: Vec<Mat4>,
-    pub(crate) instance_material_ids: Vec<u32>,
-    /// Prototype ID for each instance (parallel to instance_transforms, for multi-draw rebuild)
-    pub(crate) instance_prototype_ids: Vec<usize>,
-    /// Prim path for each instance (parallel to instance_transforms, for USD export)
-    pub(crate) instance_prim_paths: Vec<String>,
+    /// Per-instance parallel arrays (transforms, materials, prototype IDs, prim paths).
+    pub(crate) instances: SceneInstances,
 
     // Animation data for viewport playback
     /// Animated transforms for instances (parallel to instances)
@@ -259,8 +302,6 @@ pub struct Renderer {
 
     /// Cached DisneyBSDF materials (avoids re-loading textures on every Ivar build).
     pub(crate) ivar_materials: Option<Vec<Arc<bif_renderer::DisneyBSDF>>>,
-    /// Receiver for background material pre-warm thread.
-    pub(crate) ivar_materials_receiver: Option<mpsc::Receiver<Vec<Arc<bif_renderer::DisneyBSDF>>>>,
 
     // Multi-draw state for per-prototype rendering
     pub(crate) multi_draw: MultiDrawState,
@@ -295,10 +336,6 @@ pub struct Renderer {
 
     // Lights state (UsdLux)
     pub(crate) lights: LightsManager,
-
-    // Batch render state
-    pub(crate) batch_receiver: Option<mpsc::Receiver<BatchMessage>>,
-    pub(crate) batch_cancel_flag: Option<Arc<AtomicBool>>,
 
     // Viewport camera selection state
     /// Active camera source for viewport (separate from batch render settings)
@@ -369,15 +406,8 @@ pub struct Renderer {
     /// True when working_scene changed and cached_scene_graph needs rebuild.
     pub(crate) scene_graph_dirty: bool,
 
-    // Async USD loading state
-    /// Receiver for messages from the background USD load thread.
-    pub(crate) usd_load_receiver: Option<mpsc::Receiver<UsdLoadMessage>>,
-    /// Current status of the async USD load (for UI display).
-    pub usd_load_status: UsdLoadStatus,
-
-    // Async texture streaming state
-    /// Receiver for textures loaded on background thread.
-    pub(crate) texture_load_receiver: Option<mpsc::Receiver<texture_loader::TextureLoadMessage>>,
+    /// Async channel receivers and status for background operations.
+    pub(crate) async_channels: AsyncChannels,
     /// GPU compute mipmap generator (shared across texture uploads).
     pub(crate) mipmap_generator: texture_loader::MipmapGenerator,
 }
@@ -891,10 +921,7 @@ impl Renderer {
             frame_count: 0,
             fps_update_timer: 0.0,
             num_triangles,
-            ui_left_panel_width: 0.0,
-            ui_right_panel_width: 0.0,
-            ui_top_panel_height: 0.0,
-            ui_bottom_panel_height: 0.0,
+            ui_layout: UiLayout::default(),
             ivar_state: IvarState::default(),
             ivar_texture,
             ivar_texture_view,
@@ -903,11 +930,7 @@ impl Renderer {
             ivar_bind_group_layout,
             ivar_pipeline,
             mesh_data,
-            instance_transforms: vec![], // Empty scene - no instances
-            current_transforms: vec![],
-            instance_material_ids: vec![],
-            instance_prototype_ids: vec![],
-            instance_prim_paths: vec![],
+            instances: SceneInstances::default(),
             instance_animations: vec![],
             last_evaluated_frame: 0.0,
             vertex_animated_meshes: vec![],
@@ -915,7 +938,6 @@ impl Renderer {
             scene_materials: vec![],
             texture_base_dir: None,
             ivar_materials: None,
-            ivar_materials_receiver: None,
             multi_draw: MultiDrawState::new(),
             culling,
             scene_browser_state: SceneBrowserState::new(),
@@ -927,8 +949,6 @@ impl Renderer {
             timeline_state: TimelineState::default(),
             environment,
             lights,
-            batch_receiver: None,
-            batch_cancel_flag: None,
             viewport_camera_source: CameraSource::Viewport,
             camera_locked: false,
             selected_usd_camera: None,
@@ -955,9 +975,7 @@ impl Renderer {
             instancer_results: std::collections::BTreeMap::new(),
             cached_scene_graph: scene_browser::CachedSceneGraph::default(),
             scene_graph_dirty: true,
-            usd_load_receiver: None,
-            usd_load_status: UsdLoadStatus::Idle,
-            texture_load_receiver: None,
+            async_channels: AsyncChannels::default(),
             mipmap_generator,
         })
     }
@@ -1022,12 +1040,16 @@ impl Renderer {
 
     /// Returns the viewport rect (x, y, w, h) in pixels after subtracting all UI panels.
     pub fn viewport_rect(&self) -> (f32, f32, f32, f32) {
-        let x = self.ui_left_panel_width;
-        let y = self.ui_top_panel_height;
-        let w =
-            (self.size.0 as f32 - self.ui_left_panel_width - self.ui_right_panel_width).max(1.0);
-        let h =
-            (self.size.1 as f32 - self.ui_top_panel_height - self.ui_bottom_panel_height).max(1.0);
+        let x = self.ui_layout.left_panel_width;
+        let y = self.ui_layout.top_panel_height;
+        let w = (self.size.0 as f32
+            - self.ui_layout.left_panel_width
+            - self.ui_layout.right_panel_width)
+            .max(1.0);
+        let h = (self.size.1 as f32
+            - self.ui_layout.top_panel_height
+            - self.ui_layout.bottom_panel_height)
+            .max(1.0);
         (x, y, w, h)
     }
 
@@ -1096,8 +1118,8 @@ impl Renderer {
             &self.queue,
             &self.instance_buffer,
             &self.camera,
-            &self.current_transforms,
-            &self.instance_material_ids,
+            &self.instances.current,
+            &self.instances.material_ids,
         );
     }
 
@@ -1186,12 +1208,12 @@ impl Renderer {
         };
 
         let inst_idx = cam.instance_index;
-        if inst_idx >= self.current_transforms.len() {
+        if inst_idx >= self.instances.current.len() {
             log::warn!("Scene camera instance {} out of range", inst_idx);
             return;
         }
 
-        let mat = self.current_transforms[inst_idx];
+        let mat = self.instances.current[inst_idx];
         let transform = bif_core::Transform::from_matrix(mat);
 
         // Camera looks down -Z in its local space
@@ -1233,7 +1255,7 @@ impl Renderer {
     /// Call after scene load or when geometry changes. Uses the first prototype's
     /// triangles (single-draw) or combined mesh triangles.
     pub fn rebuild_pick_scene(&mut self) {
-        if self.mesh_data.indices.is_empty() || self.current_transforms.is_empty() {
+        if self.mesh_data.indices.is_empty() || self.instances.current.is_empty() {
             self.pick_scene = None;
             return;
         }
@@ -1244,14 +1266,14 @@ impl Renderer {
         match bif_renderer::EmbreePickScene::from_indexed(
             &positions,
             &self.mesh_data.indices,
-            &self.current_transforms,
+            &self.instances.current,
         ) {
             Ok(scene) => {
                 log::info!(
                     "Pick scene rebuilt (indexed): {} tris, {} shared verts, {} instances",
                     self.mesh_data.indices.len() / 3,
                     positions.len(),
-                    self.current_transforms.len()
+                    self.instances.current.len()
                 );
                 self.pick_scene = Some(scene);
             }
@@ -1331,8 +1353,8 @@ impl Renderer {
     pub fn apply_transform_override(&mut self, idx: usize) {
         if let Some(transform) = self.edit_state.transform_overrides.get(&idx) {
             let mat = transform.to_matrix();
-            if idx < self.current_transforms.len() {
-                self.current_transforms[idx] = mat;
+            if idx < self.instances.current.len() {
+                self.instances.current[idx] = mat;
                 self.culling.mark_dirty();
                 self.update_visible_instances();
                 // Keep Embree pick scene in sync
@@ -1349,12 +1371,12 @@ impl Renderer {
             .edit_state
             .transform_overrides
             .iter()
-            .filter(|(idx, _)| **idx < self.current_transforms.len())
+            .filter(|(idx, _)| **idx < self.instances.current.len())
             .map(|(idx, t)| (*idx, t.to_matrix()))
             .collect();
 
         for (idx, mat) in &overrides {
-            self.current_transforms[*idx] = *mat;
+            self.instances.current[*idx] = *mat;
         }
 
         if !overrides.is_empty() {
@@ -1415,9 +1437,9 @@ impl Renderer {
         if let Some(t) = self.edit_state.transform_overrides.get(&idx) {
             return Some(t.clone());
         }
-        if idx < self.current_transforms.len() {
+        if idx < self.instances.current.len() {
             return Some(bif_core::Transform::from_matrix(
-                self.current_transforms[idx],
+                self.instances.current[idx],
             ));
         }
         None
@@ -1426,8 +1448,8 @@ impl Renderer {
     /// Set a live transform override and update GPU (without undo).
     pub fn set_live_transform(&mut self, idx: usize, transform: bif_core::Transform) {
         let mat = transform.to_matrix();
-        if idx < self.current_transforms.len() {
-            self.current_transforms[idx] = mat;
+        if idx < self.instances.current.len() {
+            self.instances.current[idx] = mat;
             self.edit_state.transform_overrides.insert(idx, transform);
             self.culling.mark_dirty();
             self.update_visible_instances();
@@ -1562,7 +1584,7 @@ impl Renderer {
         let result = bif_core::usd::export::export_scene(
             &self.working_scene,
             &self.edit_state,
-            &self.instance_prim_paths,
+            &self.instances.prim_paths,
             &config,
         )
         .map_err(|e| anyhow::anyhow!("Export failed: {}", e))?;
@@ -1579,7 +1601,7 @@ impl Renderer {
         bif_core::usd::export::export_scene(
             &self.working_scene,
             &self.edit_state,
-            &self.instance_prim_paths,
+            &self.instances.prim_paths,
             config,
         )
         .map_err(|e| anyhow::anyhow!("Export failed: {}", e))

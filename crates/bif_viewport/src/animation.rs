@@ -71,11 +71,12 @@ impl Renderer {
     /// Evaluate all animated transforms at the given frame and update GPU buffer.
     fn evaluate_animation_frame(&mut self, frame: f64) {
         // Build updated instances
-        let mut instances: Vec<InstanceData> = Vec::with_capacity(self.instance_transforms.len());
-        let mut updated_transforms: Vec<Mat4> = Vec::with_capacity(self.instance_transforms.len());
+        let mut instances: Vec<InstanceData> = Vec::with_capacity(self.instances.transforms.len());
+        let mut updated_transforms: Vec<Mat4> = Vec::with_capacity(self.instances.transforms.len());
 
         for (i, (base_transform, anim)) in self
-            .instance_transforms
+            .instances
+            .transforms
             .iter()
             .zip(self.instance_animations.iter())
             .enumerate()
@@ -103,7 +104,7 @@ impl Renderer {
 
             updated_transforms.push(model_matrix);
 
-            let material_id = self.instance_material_ids.get(i).copied().unwrap_or(0);
+            let material_id = self.instances.material_ids.get(i).copied().unwrap_or(0);
             instances.push(InstanceData {
                 model_matrix: model_matrix.to_cols_array_2d(),
                 material_id,
@@ -113,10 +114,10 @@ impl Renderer {
 
         // Store evaluated transforms for use by update_visible_instances
         // base transforms stay in instance_transforms for re-evaluation
-        self.current_transforms = updated_transforms;
+        self.instances.current = updated_transforms;
 
         // Recompute instance AABBs for frustum culling
-        self.culling.update_instance_aabbs(&self.current_transforms);
+        self.culling.update_instance_aabbs(&self.instances.current);
 
         // Invalidate frustum cache
         self.culling.invalidate_frustum();
@@ -124,9 +125,9 @@ impl Renderer {
         // Rebuild instance_groups with animated transforms for multi-draw rendering
         if self.multi_draw.enabled {
             self.multi_draw.rebuild_instance_groups(
-                &self.current_transforms,
-                &self.instance_prototype_ids,
-                &self.instance_material_ids,
+                &self.instances.current,
+                &self.instances.prototype_ids,
+                &self.instances.material_ids,
             );
         }
     }

@@ -264,12 +264,12 @@ impl Renderer {
         self.mesh_bounds_max = mesh_data.bounds_max;
         self.num_triangles = triangles_per_instance as u64 * write_count as u64;
         self.mesh_data = mesh_data;
-        self.current_transforms = instance_transforms.clone();
-        self.instance_transforms = instance_transforms;
-        self.instance_material_ids = instance_material_ids;
-        self.instance_prototype_ids = instance_prototype_ids;
+        self.instances.current = instance_transforms.clone();
+        self.instances.transforms = instance_transforms;
+        self.instances.material_ids = instance_material_ids;
+        self.instances.prototype_ids = instance_prototype_ids;
         // Build prim path mapping for USD export
-        self.instance_prim_paths = scene
+        self.instances.prim_paths = scene
             .instances()
             .iter()
             .enumerate()
@@ -478,11 +478,11 @@ impl Renderer {
             self.multi_draw.enabled = false;
             self.multi_draw.prototype_gpu_data.clear();
             self.multi_draw.instance_groups.clear();
-            self.instance_transforms.clear();
-            self.current_transforms.clear();
-            self.instance_material_ids.clear();
-            self.instance_prototype_ids.clear();
-            self.instance_prim_paths.clear();
+            self.instances.transforms.clear();
+            self.instances.current.clear();
+            self.instances.material_ids.clear();
+            self.instances.prototype_ids.clear();
+            self.instances.prim_paths.clear();
             self.instance_animations = scene.instance_animations().to_vec();
             self.scene_cameras = scene.cameras.clone();
             self.culling.instance_aabbs.clear();
@@ -1024,10 +1024,10 @@ impl Renderer {
         self.mesh_bounds_max = mesh_data.bounds_max;
         self.num_triangles = triangles_per_instance as u64 * write_count as u64;
         self.mesh_data = mesh_data;
-        self.current_transforms = instance_transforms.clone();
-        self.instance_transforms = instance_transforms;
-        self.instance_material_ids = instance_material_ids;
-        self.instance_prototype_ids = instance_prototype_ids;
+        self.instances.current = instance_transforms.clone();
+        self.instances.transforms = instance_transforms;
+        self.instances.material_ids = instance_material_ids;
+        self.instances.prototype_ids = instance_prototype_ids;
 
         // Build prim paths for scene instances (skip instanced prototypes)
         let mut prim_paths: Vec<String> = scene
@@ -1057,7 +1057,7 @@ impl Renderer {
                 scene_inst_count + i
             ));
         }
-        self.instance_prim_paths = prim_paths;
+        self.instances.prim_paths = prim_paths;
 
         // Animations: filtered scene instances + None entries for instancer instances
         let mut animations: Vec<_> = scene
@@ -1092,9 +1092,9 @@ impl Renderer {
         self.multi_draw.prototype_gpu_data = prototype_gpu_data;
         self.multi_draw.enabled = use_multi_draw;
         self.multi_draw.rebuild_instance_groups(
-            &self.instance_transforms,
-            &self.instance_prototype_ids,
-            &self.instance_material_ids,
+            &self.instances.transforms,
+            &self.instances.prototype_ids,
+            &self.instances.material_ids,
         );
 
         // Material uniform
@@ -1140,13 +1140,14 @@ impl Renderer {
 
         let path = path.as_ref().to_path_buf();
         if !path.exists() {
-            self.usd_load_status = UsdLoadStatus::Error(format!("File not found: {path:?}"));
+            self.async_channels.usd_load_status =
+                UsdLoadStatus::Error(format!("File not found: {path:?}"));
             return;
         }
 
         let (tx, rx) = std::sync::mpsc::channel();
-        self.usd_load_receiver = Some(rx);
-        self.usd_load_status = UsdLoadStatus::Loading(UsdLoadProgress::OpeningStage);
+        self.async_channels.usd_load_receiver = Some(rx);
+        self.async_channels.usd_load_status = UsdLoadStatus::Loading(UsdLoadProgress::OpeningStage);
 
         std::thread::spawn(move || {
             tx.send(UsdLoadMessage::Progress(UsdLoadProgress::OpeningStage))
@@ -1176,7 +1177,7 @@ impl Renderer {
     pub fn poll_usd_load(&mut self) {
         use crate::{UsdLoadMessage, UsdLoadProgress, UsdLoadStatus};
 
-        let Some(ref receiver) = self.usd_load_receiver else {
+        let Some(ref receiver) = self.async_channels.usd_load_receiver else {
             return;
         };
 
@@ -1184,30 +1185,31 @@ impl Renderer {
         loop {
             match receiver.try_recv() {
                 Ok(UsdLoadMessage::Progress(progress)) => {
-                    self.usd_load_status = UsdLoadStatus::Loading(progress);
+                    self.async_channels.usd_load_status = UsdLoadStatus::Loading(progress);
                 }
                 Ok(UsdLoadMessage::Complete { scene, stage, path }) => {
-                    self.usd_load_status = UsdLoadStatus::Loading(UsdLoadProgress::Finalizing);
+                    self.async_channels.usd_load_status =
+                        UsdLoadStatus::Loading(UsdLoadProgress::Finalizing);
                     if let Err(e) = self.finalize_usd_load(*scene, stage, &path) {
-                        self.usd_load_status =
+                        self.async_channels.usd_load_status =
                             UsdLoadStatus::Error(format!("GPU finalize failed: {e}"));
                     } else {
-                        self.usd_load_status = UsdLoadStatus::Idle;
+                        self.async_channels.usd_load_status = UsdLoadStatus::Idle;
                     }
-                    self.usd_load_receiver = None;
+                    self.async_channels.usd_load_receiver = None;
                     return;
                 }
                 Ok(UsdLoadMessage::Failed(msg)) => {
                     log::error!("Async USD load failed: {msg}");
-                    self.usd_load_status = UsdLoadStatus::Error(msg);
-                    self.usd_load_receiver = None;
+                    self.async_channels.usd_load_status = UsdLoadStatus::Error(msg);
+                    self.async_channels.usd_load_receiver = None;
                     return;
                 }
                 Err(std::sync::mpsc::TryRecvError::Empty) => break,
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                    self.usd_load_status =
+                    self.async_channels.usd_load_status =
                         UsdLoadStatus::Error("Load thread disconnected".to_string());
-                    self.usd_load_receiver = None;
+                    self.async_channels.usd_load_receiver = None;
                     return;
                 }
             }
@@ -1219,7 +1221,7 @@ impl Renderer {
     /// Uploads completed textures from the background thread and rebuilds
     /// the texture bind group when new textures arrive.
     pub fn poll_texture_loads(&mut self) {
-        let Some(ref receiver) = self.texture_load_receiver else {
+        let Some(ref receiver) = self.async_channels.texture_load_receiver else {
             return;
         };
 
@@ -1244,7 +1246,7 @@ impl Renderer {
                 Err(std::sync::mpsc::TryRecvError::Empty) => break,
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                     // Background thread done — no more textures coming
-                    self.texture_load_receiver = None;
+                    self.async_channels.texture_load_receiver = None;
                     break;
                 }
             }
@@ -1464,9 +1466,9 @@ impl Renderer {
             base_dir,
         );
         // Start background texture loading — textures stream in via poll_texture_loads()
-        self.texture_load_receiver = Some(texture_loader::start_texture_loading_async(
-            &scene, base_dir,
-        ));
+        self.async_channels.texture_load_receiver = Some(
+            texture_loader::start_texture_loading_async(&scene, base_dir),
+        );
         let texture_time = texture_start.elapsed();
         let texture_count = self.gpu_textures.textures.len();
 
@@ -1658,10 +1660,10 @@ impl Renderer {
             write_count
         );
 
-        self.instance_material_ids = instance_material_ids;
-        self.instance_prototype_ids = instance_prototype_ids;
+        self.instances.material_ids = instance_material_ids;
+        self.instances.prototype_ids = instance_prototype_ids;
         // Build prim path mapping for USD export
-        self.instance_prim_paths = scene
+        self.instances.prim_paths = scene
             .instances()
             .iter()
             .enumerate()
@@ -1726,8 +1728,8 @@ impl Renderer {
         self.mesh_bounds_min = mesh_data.bounds_min;
         self.mesh_bounds_max = mesh_data.bounds_max;
         self.mesh_data = mesh_data;
-        self.current_transforms = instance_transforms.clone();
-        self.instance_transforms = instance_transforms;
+        self.instances.current = instance_transforms.clone();
+        self.instances.transforms = instance_transforms;
         self.scene_material = scene_material.clone();
         self.scene_materials = scene.materials.clone();
         self.scene_cameras = scene.cameras.clone();
@@ -1746,9 +1748,9 @@ impl Renderer {
 
         // Group instances by prototype for multi-draw rendering
         self.multi_draw.rebuild_instance_groups(
-            &self.instance_transforms,
-            &self.instance_prototype_ids,
-            &self.instance_material_ids,
+            &self.instances.transforms,
+            &self.instances.prototype_ids,
+            &self.instances.material_ids,
         );
 
         if use_multi_draw {
