@@ -1218,6 +1218,7 @@ impl Renderer {
 
         let max_dimension = self.device.limits().max_texture_dimension_2d;
         let mut uploaded = 0u32;
+        let mut has_udim = false;
 
         // Drain all available textures (non-blocking)
         loop {
@@ -1232,6 +1233,9 @@ impl Renderer {
                         Some(&self.mipmap_generator),
                     ) {
                         uploaded += 1;
+                        if msg.udim_grid_cols > 0 {
+                            has_udim = true;
+                        }
                     }
                 }
                 Err(std::sync::mpsc::TryRecvError::Empty) => break,
@@ -1262,6 +1266,26 @@ impl Renderer {
                 ],
             });
             log::info!("Streamed {} textures to GPU", uploaded);
+
+            // Rebuild material table if UDIM textures arrived — grid info wasn't
+            // available at initial material build time, so extra_indices need updating.
+            if has_udim {
+                let mut material_table: Vec<MaterialGpu> = self
+                    .scene_materials
+                    .iter()
+                    .map(|mat| MaterialGpu::from_material(mat.as_ref(), &self.gpu_textures))
+                    .collect();
+                material_table.push(MaterialGpu::from_material(
+                    &bif_core::Material::default(),
+                    &self.gpu_textures,
+                ));
+                self.queue.write_buffer(
+                    &self.material_table_buffer,
+                    0,
+                    bytemuck::cast_slice(&material_table),
+                );
+                log::info!("Rebuilt material table with UDIM grid info");
+            }
         }
     }
 
@@ -1404,7 +1428,7 @@ impl Renderer {
 
         // For backwards compatibility, also create a combined mesh_data for single-draw fallback
         // and for Ivar rendering (which expects a single mesh)
-        let mesh_data = if scene.prototypes.len() == 1 {
+        let mut mesh_data = if scene.prototypes.len() == 1 {
             MeshData::from_core_mesh(&scene.prototypes[0].mesh)
         } else if !scene.instances().is_empty() {
             // Instanced scene: combine prototypes with instance transforms
@@ -1642,6 +1666,35 @@ impl Renderer {
 
         self.instances.material_ids = instance_material_ids;
         self.instances.prototype_ids = instance_prototype_ids;
+
+        // Post-fill per-triangle material IDs for Ivar combined mesh.
+        // combine_with_transforms() returns None when meshes lack GeomSubsets (all zeros).
+        // Ivar needs per-tri mat IDs to render distinct materials per instance.
+        if mesh_data.triangle_material_ids.is_none()
+            && scene.prototypes.len() > 1
+            && !scene.instances().is_empty()
+        {
+            let mut tri_mat_ids = Vec::new();
+            for (inst_idx, inst) in scene.instances().iter().enumerate() {
+                if let Some(proto) = scene.prototypes.get(inst.prototype_id) {
+                    let num_tris = proto.mesh.indices.len() / 3;
+                    let mat_id = self
+                        .instances
+                        .material_ids
+                        .get(inst_idx)
+                        .copied()
+                        .unwrap_or(default_mat_index);
+                    tri_mat_ids.extend(std::iter::repeat_n(mat_id, num_tris));
+                }
+            }
+            log::info!(
+                "Post-filled {} tri_mat_ids for Ivar ({} instances)",
+                tri_mat_ids.len(),
+                scene.instances().len(),
+            );
+            mesh_data.triangle_material_ids = Some(tri_mat_ids);
+        }
+
         // Build prim path mapping for USD export
         self.instances.prim_paths = scene
             .instances()

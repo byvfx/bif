@@ -19,6 +19,11 @@ pub struct TextureLoadMessage {
     pub height: u32,
     pub data: Vec<u8>,
     pub is_linear: bool,
+    /// UDIM atlas grid dimensions (0 = not a UDIM texture)
+    pub udim_grid_cols: u32,
+    pub udim_grid_rows: u32,
+    pub udim_min_col: u32,
+    pub udim_min_row: u32,
 }
 
 /// Default maximum texture dimension for viewport rendering.
@@ -34,6 +39,11 @@ struct RawTexture {
     data: Vec<u8>,
     is_linear: bool,
     path: String,
+    /// UDIM atlas grid dimensions (0 = not a UDIM texture)
+    udim_grid_cols: u32,
+    udim_grid_rows: u32,
+    udim_min_col: u32,
+    udim_min_row: u32,
 }
 
 /// Minimum texture size (in either dimension) to use GPU mipmaps.
@@ -320,6 +330,10 @@ fn load_raw_texture(path: &str) -> Option<RawTexture> {
                 data: base.data.clone(),
                 is_linear: oiio_tex.is_linear || is_linear,
                 path: path.to_string(),
+                udim_grid_cols: 0,
+                udim_grid_rows: 0,
+                udim_min_col: 0,
+                udim_min_row: 0,
             })
         }
         Err(e) => {
@@ -355,6 +369,10 @@ fn load_raw_texture(path: &str) -> Option<RawTexture> {
                 data,
                 is_linear,
                 path: path.to_string(),
+                udim_grid_cols: 0,
+                udim_grid_rows: 0,
+                udim_min_col: 0,
+                udim_min_row: 0,
             })
         }
         Err(e) => {
@@ -684,6 +702,7 @@ pub fn create_default_gpu_textures(device: &Device, queue: &Queue) -> GpuTexture
         textures,
         views,
         index_map: HashMap::new(),
+        udim_grid: HashMap::new(),
     }
 }
 
@@ -814,6 +833,10 @@ fn load_udim_atlas(pattern: &str) -> Option<RawTexture> {
         data: atlas_data,
         is_linear,
         path: pattern.to_string(),
+        udim_grid_cols: num_cols,
+        udim_grid_rows: num_rows,
+        udim_min_col: min_col,
+        udim_min_row: min_row,
     })
 }
 
@@ -938,6 +961,20 @@ pub fn create_gpu_textures_for_scene(
 
         texture_set.textures.push(gpu_texture);
         texture_set.views[index as usize] = view;
+
+        // Store UDIM grid info if this is a UDIM atlas
+        if raw_tex.udim_grid_cols > 0 {
+            texture_set.udim_grid.insert(
+                index,
+                [
+                    raw_tex.udim_grid_cols,
+                    raw_tex.udim_grid_rows,
+                    raw_tex.udim_min_col,
+                    raw_tex.udim_min_row,
+                ],
+            );
+        }
+
         texture_set.index_map.insert(path, index);
     }
     let upload_time = upload_start.elapsed();
@@ -1033,6 +1070,10 @@ pub fn start_texture_loading_async(
                 height: raw_tex.height,
                 data: raw_tex.data,
                 is_linear: raw_tex.is_linear,
+                udim_grid_cols: raw_tex.udim_grid_cols,
+                udim_grid_rows: raw_tex.udim_grid_rows,
+                udim_min_col: raw_tex.udim_min_col,
+                udim_min_row: raw_tex.udim_min_row,
             });
         }
     });
@@ -1063,6 +1104,10 @@ pub fn upload_streamed_texture(
         data: msg.data.clone(),
         is_linear: msg.is_linear,
         path: msg.path.clone(),
+        udim_grid_cols: msg.udim_grid_cols,
+        udim_grid_rows: msg.udim_grid_rows,
+        udim_min_col: msg.udim_min_col,
+        udim_min_row: msg.udim_min_row,
     };
 
     let label = format!("Viewport Texture: {}", msg.path);
@@ -1079,6 +1124,19 @@ pub fn upload_streamed_texture(
     // Replace placeholder
     texture_set.textures[index as usize] = gpu_texture;
     texture_set.views[index as usize] = view;
+
+    // Store UDIM grid info if this is a UDIM atlas
+    if msg.udim_grid_cols > 0 {
+        texture_set.udim_grid.insert(
+            index,
+            [
+                msg.udim_grid_cols,
+                msg.udim_grid_rows,
+                msg.udim_min_col,
+                msg.udim_min_row,
+            ],
+        );
+    }
 
     true
 }

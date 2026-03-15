@@ -10,7 +10,9 @@ use bif_math::{Mat4, Vec4};
 use crate::Camera;
 
 /// Maximum number of textures in the viewport texture array.
-pub const MAX_VIEWPORT_TEXTURES: usize = 128;
+/// 512 supports complex scenes like ALab (272+ textures). Modern desktop GPUs
+/// handle thousands of descriptors; this is well within safe limits.
+pub const MAX_VIEWPORT_TEXTURES: usize = 512;
 
 /// No selection sentinel (0xFFFFFFFF means nothing is selected).
 pub const NO_SELECTION: u32 = 0xFFFFFFFF;
@@ -297,7 +299,8 @@ pub struct MaterialGpu {
     pub diffuse_color: [f32; 4],      // RGB + padding
     pub metallic_roughness: [f32; 4], // metallic, roughness, specular, padding
     pub texture_indices: [u32; 4],    // diffuse, roughness, metallic, emissive
-    pub extra_indices: [u32; 4],      // normal, reserved, reserved, reserved
+    /// [0]=normal, [1]=udim_grid(cols<<16|rows), [2]=udim_offset(min_col<<16|min_row), [3]=reserved
+    pub extra_indices: [u32; 4],
 }
 
 impl MaterialGpu {
@@ -329,6 +332,23 @@ impl MaterialGpu {
                 .unwrap_or(0)
         };
 
+        let diffuse_idx = resolve_index(&material.diffuse_texture);
+        let rough_idx = resolve_index(&material.roughness_texture);
+        let metal_idx = resolve_index(&material.metallic_texture);
+        let emissive_idx = resolve_index(&material.emissive_texture);
+        let normal_idx = resolve_index(&material.normal_texture);
+
+        // Pack UDIM grid info from any texture on this material.
+        // All channels in a material typically share the same UDIM layout.
+        let udim_info = [diffuse_idx, rough_idx, metal_idx, normal_idx, emissive_idx]
+            .iter()
+            .filter(|&&idx| idx != 0) // skip default white texture
+            .find_map(|&idx| textures.udim_grid.get(&idx))
+            .copied();
+        let (grid_packed, offset_packed) = udim_info
+            .map(|g| ((g[0] << 16) | g[1], (g[2] << 16) | g[3]))
+            .unwrap_or((0, 0));
+
         Self {
             diffuse_color: [
                 material.diffuse_color.x,
@@ -342,13 +362,8 @@ impl MaterialGpu {
                 material.specular,
                 0.0,
             ],
-            texture_indices: [
-                resolve_index(&material.diffuse_texture),
-                resolve_index(&material.roughness_texture),
-                resolve_index(&material.metallic_texture),
-                resolve_index(&material.emissive_texture),
-            ],
-            extra_indices: [resolve_index(&material.normal_texture), 0, 0, 0],
+            texture_indices: [diffuse_idx, rough_idx, metal_idx, emissive_idx],
+            extra_indices: [normal_idx, grid_packed, offset_packed, 0],
         }
     }
 }
@@ -501,6 +516,8 @@ pub struct GpuTextureSet {
     pub textures: Vec<wgpu::Texture>,
     pub views: Vec<wgpu::TextureView>,
     pub index_map: HashMap<String, u32>,
+    /// UDIM atlas grid info per texture: tex_index → [cols, rows, min_col, min_row]
+    pub udim_grid: HashMap<u32, [u32; 4]>,
 }
 
 /// Per-prototype GPU buffers for multi-draw rendering.

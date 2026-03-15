@@ -278,11 +278,37 @@ fn fs_main(
     let metallic = mat.metallic_roughness.x;
     let roughness = mat.metallic_roughness.y;
 
+    // Compute sample UV — apply UDIM atlas transform if present
+    var sample_uv = vec2<f32>(in.uv.x, 1.0 - in.uv.y);
+    let udim_packed = mat.extra_indices.y;
+    if (udim_packed != 0u) {
+        let grid_cols = udim_packed >> 16u;
+        let grid_rows = udim_packed & 0xFFFFu;
+        let offset_packed = mat.extra_indices.z;
+        let min_col = offset_packed >> 16u;
+        let min_row = offset_packed & 0xFFFFu;
+
+        // Use signed math to avoid u32 underflow on out-of-range UVs
+        let raw_col = i32(floor(in.uv.x)) - i32(min_col);
+        let raw_row = i32(floor(in.uv.y)) - i32(min_row);
+        let col = u32(clamp(raw_col, 0, i32(grid_cols) - 1));
+        let row = u32(clamp(raw_row, 0, i32(grid_rows) - 1));
+        let sub_u = fract(in.uv.x);
+        let sub_v = fract(in.uv.y);
+
+        // Atlas row 0 = UDIM row (num_rows-1) due to pixel-space flip in stitcher
+        let flipped_row = grid_rows - 1u - row;
+
+        sample_uv = vec2<f32>(
+            (f32(col) + sub_u) / f32(grid_cols),
+            (f32(flipped_row) + (1.0 - sub_v)) / f32(grid_rows)
+        );
+    }
+
     var base_color = mat.diffuse_color.rgb;
     let diffuse_tex_index = mat.texture_indices.x;
     if (diffuse_tex_index != 0u) {
-        let flipped_uv = vec2<f32>(in.uv.x, 1.0 - in.uv.y);
-        let tex_sample = textureSample(textures[diffuse_tex_index], texture_sampler, flipped_uv);
+        let tex_sample = textureSample(textures[diffuse_tex_index], texture_sampler, sample_uv);
         base_color = tex_sample.rgb;
     }
 
