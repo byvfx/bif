@@ -8,6 +8,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- UDIM UV transformation in viewport shader — atlas grid metadata packed into MaterialGpu.extra_indices
+- Per-triangle material IDs for Ivar combined mesh — post-fill from instance material bindings
 - USD native instance support (`instanceable=true`) — `UsdTraverseInstanceProxies()` predicate
 - `MeshPurpose` enum (Default/Render/Proxy/Guide) from `UsdGeomImageable` purpose attribute
 - Native instance FFI: `usd_bridge_get_native_instance_count/get_native_instance`
@@ -25,6 +27,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - UDIM/relative texture path resolution — anchor against source layer via `SdfComputeAssetPathRelativeToLayer()`
 - Texture index path normalization — backslash/forward-slash mismatch on Windows
 - Purpose filtering — use `ComputePurpose()` for inherited purpose (was only reading directly-authored)
+- MAX_VIEWPORT_TEXTURES 128→512 — ALab's 272 textures were truncated at 127
+- UDIM shader UV underflow — signed math prevents garbage sampling on out-of-range UVs
+- Material table rebuild after UDIM texture streaming — grid info unavailable at initial build
 
 ### Changed
 
