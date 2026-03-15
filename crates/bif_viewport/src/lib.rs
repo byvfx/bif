@@ -1212,8 +1212,8 @@ impl Renderer {
                 // Sync FOV/near/far from USD camera properties
                 if let Ok(props) = stage.get_camera_properties(camera_path, time) {
                     self.camera.fov_y = props.fov_y();
-                    self.camera.near = props.clip_near;
-                    self.camera.far = props.clip_far;
+                    self.camera.near = props.clip_near.max(0.001);
+                    self.camera.far = props.clip_far.max(props.clip_near + 1.0);
                 }
 
                 // Yaw/pitch must match Camera::new / update_position_from_angles convention

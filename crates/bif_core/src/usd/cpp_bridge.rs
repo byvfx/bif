@@ -838,6 +838,9 @@ impl CameraProperties {
     ///
     /// `fov_y = 2 * atan(vertical_aperture / (2 * focal_length))`
     pub fn fov_y(&self) -> f32 {
+        if self.focal_length <= 0.0 {
+            return 45.0_f32.to_radians();
+        }
         2.0 * (self.vertical_aperture / (2.0 * self.focal_length)).atan()
     }
 }
