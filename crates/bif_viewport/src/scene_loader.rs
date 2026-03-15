@@ -707,28 +707,19 @@ impl Renderer {
                     usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                 });
 
-        // Triangle material buffer — use compact buffer (one copy per prototype,
-        // not duplicated per instance) to stay within GPU buffer size limits.
-        let has_any_tri_mats = compact_tri_mats.iter().any(|&id| id != 0xFFFFFFFFu32);
-        if has_any_tri_mats {
-            self.triangle_material_buffer =
-                self.device
-                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("WS Triangle Material Buffer (compact)"),
-                        contents: bytemuck::cast_slice(&compact_tri_mats),
-                        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-                    });
-            self.has_triangle_materials = true;
-        } else {
-            self.triangle_material_buffer =
-                self.device
-                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("WS Triangle Material Buffer"),
-                        contents: bytemuck::cast_slice(&[0xFFFFFFFFu32]),
-                        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-                    });
-            self.has_triangle_materials = false;
+        // Triangle material buffer — use compact buffer (one copy per prototype).
+        // Must always be full-sized: shader indexes by primitive_id + tri_mat_offset.
+        self.has_triangle_materials = compact_tri_mats.iter().any(|&id| id != 0xFFFFFFFFu32);
+        if compact_tri_mats.is_empty() {
+            compact_tri_mats.push(0xFFFFFFFFu32);
         }
+        self.triangle_material_buffer =
+            self.device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("WS Triangle Material Buffer (compact)"),
+                    contents: bytemuck::cast_slice(&compact_tri_mats),
+                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                });
 
         // Rebuild material bind group
         self.material_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -1491,31 +1482,20 @@ impl Renderer {
                     usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                 });
 
-        // Triangle material buffer — use compact buffer (one copy per prototype)
-        let has_any_tri_mats = compact_tri_mats.iter().any(|&id| id != 0xFFFFFFFFu32);
-        if has_any_tri_mats {
-            log::info!(
-                "Creating compact triangle material buffer with {} entries",
-                compact_tri_mats.len()
-            );
-            self.triangle_material_buffer =
-                self.device
-                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("Triangle Material Buffer (compact)"),
-                        contents: bytemuck::cast_slice(&compact_tri_mats),
-                        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-                    });
-            self.has_triangle_materials = true;
-        } else {
-            self.triangle_material_buffer =
-                self.device
-                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("Triangle Material Buffer"),
-                        contents: bytemuck::cast_slice(&[0xFFFFFFFFu32]),
-                        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-                    });
-            self.has_triangle_materials = false;
+        // Triangle material buffer — use compact buffer (one copy per prototype).
+        // Must always be full-sized: the shader indexes by primitive_id + tri_mat_offset,
+        // and out-of-bounds GPU storage reads return 0 (not sentinel 0xFFFFFFFF).
+        self.has_triangle_materials = compact_tri_mats.iter().any(|&id| id != 0xFFFFFFFFu32);
+        if compact_tri_mats.is_empty() {
+            compact_tri_mats.push(0xFFFFFFFFu32);
         }
+        self.triangle_material_buffer =
+            self.device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("Triangle Material Buffer (compact)"),
+                    contents: bytemuck::cast_slice(&compact_tri_mats),
+                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                });
 
         self.material_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Material Bind Group"),

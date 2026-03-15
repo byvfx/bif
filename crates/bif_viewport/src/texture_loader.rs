@@ -296,8 +296,14 @@ fn downscale_raw_nearest(
 /// Load texture as raw u8 RGBA for direct GPU upload (OIIO path).
 ///
 /// Skips the f32 intermediate — raw sRGB bytes go straight to GPU.
+/// Handles UDIM patterns by stitching tile atlases.
 #[cfg(feature = "oiio")]
 fn load_raw_texture(path: &str) -> Option<RawTexture> {
+    // Handle UDIM textures
+    if is_udim_path(path) {
+        return load_udim_atlas(path);
+    }
+
     let is_linear = is_linear_texture_path(path);
 
     // Use OIIO to load as u8 directly (no mips for viewport)
@@ -328,8 +334,14 @@ fn load_raw_texture(path: &str) -> Option<RawTexture> {
 /// Falls back to TextureCache which loads via the `image` crate as f32,
 /// then converts to u8 for upload. The f32 overhead is acceptable here
 /// since the `image` crate path is already slower than OIIO.
+/// Handles UDIM patterns by stitching tile atlases.
 #[cfg(not(feature = "oiio"))]
 fn load_raw_texture(path: &str) -> Option<RawTexture> {
+    // Handle UDIM textures
+    if is_udim_path(path) {
+        return load_udim_atlas(path);
+    }
+
     use bif_core::texture::TextureCache;
 
     let mut cache = TextureCache::new();
@@ -673,6 +685,136 @@ pub fn create_default_gpu_textures(device: &Device, queue: &Queue) -> GpuTexture
         views,
         index_map: HashMap::new(),
     }
+}
+
+/// Check if a texture path contains a UDIM token (`<UDIM>`).
+pub fn is_udim_path(path: &str) -> bool {
+    path.contains("<UDIM>")
+}
+
+/// Scan filesystem for existing UDIM tiles matching the pattern.
+/// Returns a vec of (udim_id, path) sorted by UDIM ID.
+fn find_udim_tiles(pattern: &str) -> Vec<(u32, String)> {
+    let mut tiles = Vec::new();
+    // UDIM range: 1001..=1100 (10 columns x 10 rows)
+    for udim in 1001..=1100 {
+        let tile_path = pattern.replace("<UDIM>", &udim.to_string());
+        if Path::new(&tile_path).exists() {
+            tiles.push((udim, tile_path));
+        }
+    }
+    tiles.sort_by_key(|(id, _)| *id);
+    tiles
+}
+
+/// Resolve UDIM texture: load all tiles and stitch into a single atlas.
+/// Returns the stitched atlas as raw RGBA bytes + grid dimensions.
+fn load_udim_atlas(pattern: &str) -> Option<RawTexture> {
+    let tiles = find_udim_tiles(pattern);
+    if tiles.is_empty() {
+        log::warn!("No UDIM tiles found for pattern: {}", pattern);
+        return None;
+    }
+
+    // Load all tiles
+    let mut loaded_tiles: Vec<(u32, RawTexture)> = Vec::new();
+    for (udim, tile_path) in &tiles {
+        if let Some(tex) = load_raw_texture(tile_path) {
+            loaded_tiles.push((*udim, tex));
+        } else {
+            log::warn!("Failed to load UDIM tile {}: {}", udim, tile_path);
+        }
+    }
+
+    if loaded_tiles.is_empty() {
+        return None;
+    }
+
+    // Determine grid bounds from UDIM IDs
+    // UDIM = 1000 + col + row*10, col in 1..=10, row in 0..=9
+    let mut min_col = u32::MAX;
+    let mut max_col = 0u32;
+    let mut min_row = u32::MAX;
+    let mut max_row = 0u32;
+    for (udim, _) in &loaded_tiles {
+        let col = (udim - 1001) % 10;
+        let row = (udim - 1001) / 10;
+        min_col = min_col.min(col);
+        max_col = max_col.max(col);
+        min_row = min_row.min(row);
+        max_row = max_row.max(row);
+    }
+    let num_cols = max_col - min_col + 1;
+    let num_rows = max_row - min_row + 1;
+
+    // Find max tile dimensions (handle mixed resolutions)
+    let max_tile_w = loaded_tiles.iter().map(|(_, t)| t.width).max().unwrap_or(1);
+    let max_tile_h = loaded_tiles
+        .iter()
+        .map(|(_, t)| t.height)
+        .max()
+        .unwrap_or(1);
+
+    let atlas_w = num_cols * max_tile_w;
+    let atlas_h = num_rows * max_tile_h;
+    let mut atlas_data = vec![0u8; (atlas_w * atlas_h * 4) as usize];
+
+    // Stitch tiles into atlas
+    for (udim, tile) in &loaded_tiles {
+        let col = (udim - 1001) % 10 - min_col;
+        let row = (udim - 1001) / 10 - min_row;
+        // USD UDIM: row 0 is bottom, but in atlas pixel space row 0 is top.
+        // Flip row so UDIM row 0 maps to the bottom of the atlas.
+        let flipped_row = (num_rows - 1) - row;
+
+        // Resize tile if smaller than max tile size
+        let (tw, th, tdata) = if tile.width != max_tile_w || tile.height != max_tile_h {
+            downscale_raw_nearest(
+                tile.width,
+                tile.height,
+                &tile.data,
+                max_tile_w.max(max_tile_h),
+            )
+        } else {
+            (tile.width, tile.height, tile.data.clone())
+        };
+
+        let dest_x = col * max_tile_w;
+        let dest_y = flipped_row * max_tile_h;
+        for y in 0..th.min(max_tile_h) {
+            let src_off = (y * tw * 4) as usize;
+            let dst_off = ((dest_y + y) * atlas_w + dest_x) as usize * 4;
+            let copy_bytes = (tw.min(max_tile_w) * 4) as usize;
+            if src_off + copy_bytes <= tdata.len() && dst_off + copy_bytes <= atlas_data.len() {
+                atlas_data[dst_off..dst_off + copy_bytes]
+                    .copy_from_slice(&tdata[src_off..src_off + copy_bytes]);
+            }
+        }
+    }
+
+    let is_linear = loaded_tiles
+        .first()
+        .map(|(_, t)| t.is_linear)
+        .unwrap_or(false);
+
+    log::info!(
+        "UDIM atlas: {} tiles -> {}x{} ({}x{} grid, tile {}x{})",
+        loaded_tiles.len(),
+        atlas_w,
+        atlas_h,
+        num_cols,
+        num_rows,
+        max_tile_w,
+        max_tile_h
+    );
+
+    Some(RawTexture {
+        width: atlas_w,
+        height: atlas_h,
+        data: atlas_data,
+        is_linear,
+        path: pattern.to_string(),
+    })
 }
 
 /// Resolve a texture path against a per-material `source_dir`, falling back

@@ -139,10 +139,17 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
     // This handles referenced meshes that appear multiple times with different transforms
     let mut mesh_dedup: HashMap<(usize, usize, u64), usize> = HashMap::new();
 
-    // Load all meshes as prototypes (with deduplication)
+    // Load all meshes as prototypes (with deduplication).
+    // Skip proxy/guide purpose meshes — they overlap with render-purpose geometry.
     let mesh_start = Instant::now();
     let meshes = stage.meshes()?;
     for (mesh_idx, mesh_data) in meshes.iter().enumerate() {
+        if matches!(
+            mesh_data.purpose,
+            crate::usd::cpp_bridge::MeshPurpose::Proxy | crate::usd::cpp_bridge::MeshPurpose::Guide
+        ) {
+            continue;
+        }
         let vertices = mesh_data.vertices.clone();
         let indices = mesh_data.indices.clone();
         let normals = mesh_data.normals.clone();
@@ -254,6 +261,28 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
     let mesh_time = mesh_start.elapsed();
     let total_verts: usize = meshes.iter().map(|m| m.vertices.len()).sum();
 
+    // Load native instances (from USD instanceable=true prims)
+    let native_start = Instant::now();
+    let native_instances = stage.native_instances().unwrap_or_default();
+    for native_inst in &native_instances {
+        // Map native instance's mesh index to BIF prototype
+        if let Some(mesh_data) = meshes.get(native_inst.proto_mesh_idx) {
+            if let Some(&proto_id) = prototype_map.get(&mesh_data.path) {
+                let transform = Transform::from_matrix(native_inst.transform);
+                let prim_path = format!("{}/native_{}", mesh_data.path, scene.instance_count());
+                scene.add_instance_with_path(proto_id, transform, prim_path);
+            }
+        }
+    }
+    let native_time = native_start.elapsed();
+    if !native_instances.is_empty() {
+        log::info!(
+            "Native instances: {} ({:.1}ms)",
+            native_instances.len(),
+            native_time.as_secs_f64() * 1000.0
+        );
+    }
+
     // Load materials
     let material_start = Instant::now();
     let usd_materials = stage.materials().unwrap_or_default();
@@ -296,27 +325,27 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
     }
 
     // Bind materials to prototypes via mesh material paths
+    let mut bound_count = 0usize;
     for (mesh_idx, mesh_data) in meshes.iter().enumerate() {
         if let Ok(Some(mat_path)) = stage.get_mesh_material_path(mesh_idx) {
             if let Some(&mat_id) = material_map.get(&mat_path) {
-                // Find the prototype for this mesh and bind the material
                 if let Some(&proto_id) = prototype_map.get(&mesh_data.path) {
                     if let Some(proto) = scene.prototypes.get(proto_id) {
                         let mut updated_proto: crate::scene::Prototype = (**proto).clone();
                         let mat = &scene.materials[mat_id];
-                        log::debug!(
-                            "Binding {} to prototype {} (diffuse={:?})",
-                            mat.name,
-                            proto_id,
-                            mat.diffuse_color
-                        );
                         updated_proto.material = Some(mat.clone());
                         scene.prototypes[proto_id] = Arc::new(updated_proto);
+                        bound_count += 1;
                     }
                 }
             }
         }
     }
+    log::info!(
+        "Bound {} / {} meshes to materials",
+        bound_count,
+        meshes.len()
+    );
 
     let material_time = material_start.elapsed();
 

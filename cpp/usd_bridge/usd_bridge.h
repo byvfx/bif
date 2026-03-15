@@ -293,6 +293,14 @@ UsdBridgeError usd_bridge_get_instancer_count(
 // Mesh Data Extraction
 // ============================================================================
 
+/// Mesh purpose enumeration (UsdGeomImageable purpose attribute)
+typedef enum UsdBridgePurpose {
+    USD_BRIDGE_PURPOSE_DEFAULT = 0,
+    USD_BRIDGE_PURPOSE_RENDER = 1,
+    USD_BRIDGE_PURPOSE_PROXY = 2,
+    USD_BRIDGE_PURPOSE_GUIDE = 3,
+} UsdBridgePurpose;
+
 /// Mesh data structure for FFI transfer
 typedef struct UsdBridgeMeshData {
     /// Prim path (e.g., "/World/Mesh")
@@ -321,6 +329,12 @@ typedef struct UsdBridgeMeshData {
 
     /// World transform (4x4 column-major matrix)
     float transform[16];
+
+    /// Mesh purpose (default/render/proxy/guide)
+    UsdBridgePurpose purpose;
+
+    /// 1 if this mesh came from a native instance proxy, 0 otherwise
+    int is_instance_proxy;
 } UsdBridgeMeshData;
 
 /// Get mesh data by index.
@@ -334,6 +348,42 @@ UsdBridgeError usd_bridge_get_mesh(
     const UsdBridgeStage* stage,
     size_t index,
     UsdBridgeMeshData* out_data
+);
+
+// ============================================================================
+// Native Instance Data (for USD instanceable=true meshes)
+// ============================================================================
+
+/// Native instance data — one per occurrence of an instanced mesh
+typedef struct UsdNativeInstanceData {
+    /// Index into the meshes array for prototype geometry
+    int proto_mesh_idx;
+    /// World transform (4x4 column-major matrix)
+    float transform[16];
+    /// Material override index (-1 = use prototype material)
+    int material_override_idx;
+} UsdNativeInstanceData;
+
+/// Get the number of native instances (from instanceable=true prims).
+///
+/// @param stage Stage handle
+/// @param out_count Pointer to receive native instance count
+/// @return USD_BRIDGE_SUCCESS on success
+UsdBridgeError usd_bridge_get_native_instance_count(
+    const UsdBridgeStage* stage,
+    size_t* out_count
+);
+
+/// Get native instance data by index.
+///
+/// @param stage Stage handle
+/// @param index Native instance index
+/// @param out_data Pointer to receive native instance data
+/// @return USD_BRIDGE_SUCCESS on success
+UsdBridgeError usd_bridge_get_native_instance(
+    const UsdBridgeStage* stage,
+    size_t index,
+    UsdNativeInstanceData* out_data
 );
 
 // ============================================================================

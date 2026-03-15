@@ -1,7 +1,7 @@
 # Session Handoff - March 14, 2026
 
-**Last Updated:** M19.6 bif_viewport structural cleanup complete
-**Next Milestone:** Finish M29 USD Export, then M29.5 egui upgrade
+**Last Updated:** ALab material/texture binding fixes — 7 bugs fixed, 127 textures loading
+**Next Milestone:** Fix remaining texture mapping issues, then M29.5 egui upgrade
 **Project:** BIF - VFX Scene Assembler & Renderer
 
 ---
@@ -11,13 +11,22 @@
 | Status | Details |
 |--------|---------|
 | Complete | Milestones 0-23, M26 (OIDN), M26.1 (Ivar material cache), M19.6 (viewport cleanup) |
-| Current | M29 USD Export (most phases done, needs validation) |
-| Tests | 84 renderer, 41 math, 24 viewport, 27+ bif_core |
+| Current | ALab material/texture fixes — 7 bugs fixed, Z-fighting resolved, 127 textures loading |
+| Tests | 84 renderer, 41 math, 79 viewport, 93 bif_core |
 | Performance | 60 FPS viewport, 100K instances with LOD, Ivar build ~47ms (was 6.7s) |
 
 ---
 
 ## Recent Work
+
+### USD Native Instance + Purpose + UDIM (Mar 14, 2026)
+
+- **C++ Bridge:** All `Traverse()` calls use `UsdTraverseInstanceProxies()` — instance proxy meshes now visible
+- **Native instances:** Dedup by prototype path, `CachedNativeInstance` for additional occurrences
+- **Purpose:** Read `UsdGeomImageable::GetPurposeAttr()` per mesh (default/render/proxy/guide)
+- **UDIM:** `<UDIM>` token detection, tile scanning (1001-1100), atlas stitching with mixed-res support
+- **Display UI:** PurposeMode toggle (Render/Proxy) + LOD enable checkbox in Scene Stats
+- **Bug fix:** `mesh_material_paths` was populated before meshes cached (always empty)
 
 ### M19.6 bif_viewport Structural Cleanup (Mar 14, 2026)
 
@@ -49,7 +58,8 @@ Evaluated 7 feature areas against current architecture (~42K LOC). Key decisions
 
 ## Next Steps
 
-1. Finish M29 remaining items (validate exported USD in Houdini/usdview, docs)
-2. M29.5: egui 0.29→0.30 upgrade + egui-snarl 0.5→0.6 + vertical node layout
-3. M30: Node graph save/load (`.bif`/`.bifa`) + evaluation modes + cache node
-4. M31: Per-node scene graph visualization (click node → see tree at that point)
+1. **Fix:** Texture mapping still wrong on some ALab meshes — may be UDIM atlas tile ordering or UV offset issue
+2. **Fix:** Ivar per-triangle material assignment — combined mesh needs per-instance→per-triangle material mapping
+3. **Fix:** Texture limit — 272 paths but MAX_VIEWPORT_TEXTURES=128 (half dropped)
+4. M29.5: egui 0.29→0.30 upgrade + egui-snarl 0.5→0.6 + vertical node layout
+5. M30: Node graph save/load (`.bif`/`.bifa`) + evaluation modes + cache node

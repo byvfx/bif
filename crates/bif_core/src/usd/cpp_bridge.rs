@@ -51,6 +51,17 @@ enum UsdBridgeErrorCode {
     Unknown = 99,
 }
 
+/// Mesh purpose from C API
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
+enum UsdBridgePurposeRaw {
+    Default = 0,
+    Render = 1,
+    Proxy = 2,
+    Guide = 3,
+}
+
 /// Mesh data from C API
 #[repr(C)]
 struct UsdBridgeMeshDataRaw {
@@ -66,6 +77,16 @@ struct UsdBridgeMeshDataRaw {
     face_material_ids: *const u32,
     triangle_count: usize,
     transform: [f32; 16],
+    purpose: UsdBridgePurposeRaw,
+    is_instance_proxy: i32,
+}
+
+/// Native instance data from C API
+#[repr(C)]
+struct UsdNativeInstanceDataRaw {
+    proto_mesh_idx: i32,
+    transform: [f32; 16],
+    material_override_idx: i32,
 }
 
 /// Instancer data from C API
@@ -242,6 +263,17 @@ extern "C" {
         stage: *const UsdBridgeStageRaw,
         index: usize,
         out_data: *mut UsdBridgeInstancerDataRaw,
+    ) -> UsdBridgeErrorCode;
+
+    fn usd_bridge_get_native_instance_count(
+        stage: *const UsdBridgeStageRaw,
+        out_count: *mut usize,
+    ) -> UsdBridgeErrorCode;
+
+    fn usd_bridge_get_native_instance(
+        stage: *const UsdBridgeStageRaw,
+        index: usize,
+        out_data: *mut UsdNativeInstanceDataRaw,
     ) -> UsdBridgeErrorCode;
 
     fn usd_bridge_export_stage(
@@ -519,6 +551,19 @@ pub type UsdBridgeResult<T> = Result<T, UsdBridgeError>;
 // Safe Rust Types
 // ============================================================================
 
+/// Mesh purpose attribute from USD (UsdGeomImageable).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MeshPurpose {
+    /// Default purpose (always visible)
+    Default,
+    /// Render-quality geometry
+    Render,
+    /// Proxy/low-res geometry (used for viewport preview)
+    Proxy,
+    /// Guide geometry (helper visualization, usually hidden)
+    Guide,
+}
+
 /// Mesh data extracted from USD.
 #[derive(Clone, Debug)]
 pub struct UsdMeshData {
@@ -542,6 +587,23 @@ pub struct UsdMeshData {
 
     /// World transform matrix
     pub transform: Mat4,
+
+    /// Mesh purpose (default/render/proxy/guide)
+    pub purpose: MeshPurpose,
+
+    /// True if this mesh came from a native instance proxy
+    pub is_instance_proxy: bool,
+}
+
+/// Native instance data — references a prototype mesh with a unique transform.
+#[derive(Clone, Debug)]
+pub struct UsdNativeInstance {
+    /// Index into the meshes array for prototype geometry
+    pub proto_mesh_idx: usize,
+    /// World transform
+    pub transform: Mat4,
+    /// Material override index (-1 = use prototype material)
+    pub material_override_idx: i32,
 }
 
 /// Point instancer data extracted from USD.
@@ -994,6 +1056,8 @@ impl UsdStage {
             face_material_ids: ptr::null(),
             triangle_count: 0,
             transform: [0.0; 16],
+            purpose: UsdBridgePurposeRaw::Default,
+            is_instance_proxy: 0,
         };
 
         let result = unsafe { usd_bridge_get_mesh(self.raw, index, &mut raw_data) };
@@ -1084,6 +1148,13 @@ impl UsdStage {
         // Convert transform (column-major f32[16] to Mat4)
         let transform = Mat4::from_cols_array(&raw_data.transform);
 
+        let purpose = match raw_data.purpose {
+            UsdBridgePurposeRaw::Render => MeshPurpose::Render,
+            UsdBridgePurposeRaw::Proxy => MeshPurpose::Proxy,
+            UsdBridgePurposeRaw::Guide => MeshPurpose::Guide,
+            _ => MeshPurpose::Default,
+        };
+
         Ok(UsdMeshData {
             path,
             vertices,
@@ -1092,6 +1163,8 @@ impl UsdStage {
             uvs,
             face_material_ids,
             transform,
+            purpose,
+            is_instance_proxy: raw_data.is_instance_proxy != 0,
         })
     }
 
@@ -1198,6 +1271,55 @@ impl UsdStage {
             instancers.push(self.get_instancer(i)?);
         }
         Ok(instancers)
+    }
+
+    // ========================================================================
+    // Native Instances (instanceable=true)
+    // ========================================================================
+
+    /// Get the number of native instances (from instanceable=true prims).
+    pub fn native_instance_count(&self) -> UsdBridgeResult<usize> {
+        let mut count: usize = 0;
+        let result = unsafe { usd_bridge_get_native_instance_count(self.raw, &mut count) };
+        if result != UsdBridgeErrorCode::Success {
+            return Err(result.into());
+        }
+        Ok(count)
+    }
+
+    /// Get native instance data by index.
+    pub fn get_native_instance(&self, index: usize) -> UsdBridgeResult<UsdNativeInstance> {
+        let mut raw_data = UsdNativeInstanceDataRaw {
+            proto_mesh_idx: 0,
+            transform: [0.0; 16],
+            material_override_idx: -1,
+        };
+
+        let result = unsafe { usd_bridge_get_native_instance(self.raw, index, &mut raw_data) };
+        if result != UsdBridgeErrorCode::Success {
+            return Err(match result {
+                UsdBridgeErrorCode::InvalidPrim => {
+                    UsdBridgeError::InvalidPrim(format!("native instance index {}", index))
+                }
+                other => other.into(),
+            });
+        }
+
+        Ok(UsdNativeInstance {
+            proto_mesh_idx: raw_data.proto_mesh_idx as usize,
+            transform: Mat4::from_cols_array(&raw_data.transform),
+            material_override_idx: raw_data.material_override_idx,
+        })
+    }
+
+    /// Get all native instances.
+    pub fn native_instances(&self) -> UsdBridgeResult<Vec<UsdNativeInstance>> {
+        let count = self.native_instance_count()?;
+        let mut instances = Vec::with_capacity(count);
+        for i in 0..count {
+            instances.push(self.get_native_instance(i)?);
+        }
+        Ok(instances)
     }
 
     /// Get the number of materials in the stage.

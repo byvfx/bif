@@ -160,6 +160,7 @@ impl CullingManager {
     ///
     /// Returns culling result with near/far instance counts.
     /// Skips GPU write when neither the camera nor instance data has changed.
+    /// When `lod_enabled` is false, all visible instances render with full mesh.
     pub fn update_visible_instances(
         &mut self,
         queue: &wgpu::Queue,
@@ -167,6 +168,7 @@ impl CullingManager {
         camera: &Camera,
         transforms: &[Mat4],
         material_ids: &[u32],
+        lod_enabled: bool,
     ) -> CullingResult {
         if self.instance_aabbs.is_empty() {
             self.visible_count = transforms.len() as u32;
@@ -209,13 +211,18 @@ impl CullingManager {
             self.scratch.visible_with_distance.push((distance_sq, idx));
         }
 
-        // Calculate how many instances fit in polygon budget
-        let tris_per_instance = self.triangles_per_instance as u64;
-        let max_polys = self.lod_max_polys as u64;
-        let budget_count = if tris_per_instance > 0 {
-            (max_polys / tris_per_instance) as usize
-        } else {
+        // Calculate how many instances fit in polygon budget.
+        // When LOD is disabled, all visible instances get full mesh.
+        let budget_count = if !lod_enabled {
             self.scratch.visible_with_distance.len()
+        } else {
+            let tris_per_instance = self.triangles_per_instance as u64;
+            let max_polys = self.lod_max_polys as u64;
+            if tris_per_instance > 0 {
+                (max_polys / tris_per_instance) as usize
+            } else {
+                self.scratch.visible_with_distance.len()
+            }
         };
 
         let visible_count = self.scratch.visible_with_distance.len();

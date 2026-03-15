@@ -161,6 +161,7 @@ impl Renderer {
         let mut ivar_target_spp = self.ivar_state.target_spp;
         let ivar_current_scale = self.ivar_state.current_scale;
         let mut ivar_nav_quality = self.ivar_state.interaction_quality;
+        let mut display_settings = self.display_settings.clone();
 
         let full_output = self.egui_ctx.run(raw_input, |ctx| {
             if !show_ui {
@@ -270,6 +271,7 @@ impl Renderer {
                             lod_max_polys: &mut lod_max_polys,
                             ivar_target_spp: &mut ivar_target_spp,
                             ivar_nav_quality: &mut ivar_nav_quality,
+                            display_settings: &mut display_settings,
                         },
                     );
                 });
@@ -665,8 +667,9 @@ impl Renderer {
             self.update_camera();
         }
 
-        // Update LOD max polys from UI
+        // Update LOD max polys and display settings from UI
         self.culling.lod_max_polys = lod_max_polys;
+        self.display_settings = display_settings;
 
         // Write render mode back; detect mode change via egui temp data
         let mode_changed = self.ivar_state.mode != render_mode;

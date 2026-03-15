@@ -1,5 +1,6 @@
 use crate::ivar_state::{self, BuildStatus, RenderMode};
 use crate::scene_browser::{self, CompositeProvider, PrimDataProvider};
+use crate::{DisplaySettings, PurposeMode};
 
 /// All data the left stats panel needs, passed by value or reference
 /// to avoid borrowing `self` inside the closure.
@@ -42,6 +43,9 @@ pub(crate) struct StatsPanelParams<'a> {
     pub lod_max_polys: &'a mut u32,
     pub ivar_target_spp: &'a mut u32,
     pub ivar_nav_quality: &'a mut u32,
+
+    /// Display settings (purpose toggle, LOD enable)
+    pub display_settings: &'a mut DisplaySettings,
 }
 
 /// Renders the left stats/settings panel body.
@@ -393,6 +397,29 @@ pub(crate) fn render_stats_panel(
         }
         let budget_used = (full_mesh_tris as f32 / *p.lod_max_polys as f32 * 100.0).min(100.0);
         ui.label(format!("Budget: {:.0}% used", budget_used));
+
+        ui.separator();
+        ui.checkbox(&mut p.display_settings.lod_enabled, "Enable LOD");
+        ui.horizontal(|ui| {
+            ui.label("Purpose:");
+            egui::ComboBox::from_id_salt("display_purpose")
+                .selected_text(match p.display_settings.purpose_mode {
+                    PurposeMode::Render => "Render",
+                    PurposeMode::Proxy => "Proxy",
+                })
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(
+                        &mut p.display_settings.purpose_mode,
+                        PurposeMode::Render,
+                        "Render",
+                    );
+                    ui.selectable_value(
+                        &mut p.display_settings.purpose_mode,
+                        PurposeMode::Proxy,
+                        "Proxy",
+                    );
+                });
+        });
     });
 
     ui.separator();

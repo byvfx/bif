@@ -6,6 +6,26 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- USD native instance support (`instanceable=true`) — `UsdTraverseInstanceProxies()` predicate
+- `MeshPurpose` enum (Default/Render/Proxy/Guide) from `UsdGeomImageable` purpose attribute
+- Native instance FFI: `usd_bridge_get_native_instance_count/get_native_instance`
+- UDIM texture atlas stitching — detects `<UDIM>` tokens, scans tiles 1001-1100, builds atlas
+- `DisplaySettings` struct with `PurposeMode` toggle and `lod_enabled` flag
+- UI controls for purpose mode (Render/Proxy) and LOD enable checkbox
+
+### Fixed
+
+- `mesh_material_paths` populated after mesh caching (was empty due to init ordering bug)
+- Material dedup for instance proxies — same material visited per-instance now cached once (keyed on prototype path)
+- Instance proxy mesh material binding — resolve `bound_material_path` during traversal (proxy paths fail `GetPrimAtPath()` afterward)
+- Empty `face_material_ids` forcing material 0 on all faces — only populate when GeomSubsets exist
+- Undersized triangle material buffer — GPU OOB reads returned 0 instead of 0xFFFFFFFF sentinel
+- UDIM/relative texture path resolution — anchor against source layer via `SdfComputeAssetPathRelativeToLayer()`
+- Texture index path normalization — backslash/forward-slash mismatch on Windows
+- Purpose filtering — use `ComputePurpose()` for inherited purpose (was only reading directly-authored)
+
 ### Changed
 
 - M19.6: Split `render()` (2,695 lines) into 6 phase methods + extracted helpers

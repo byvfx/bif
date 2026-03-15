@@ -83,6 +83,33 @@ pub use scene_browser::{
 /// Maximum instance count for dynamic instance buffer.
 const MAX_INSTANCES: u32 = 100_000;
 
+/// Which USD purpose geometry to display in the viewport.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PurposeMode {
+    /// Show render-purpose geometry (full detail).
+    Render,
+    /// Show proxy-purpose geometry where available (low-res preview).
+    Proxy,
+}
+
+/// Framework-agnostic display settings — UI layer reads/writes these.
+#[derive(Debug, Clone)]
+pub struct DisplaySettings {
+    /// Which purpose geometry to show (Render or Proxy).
+    pub purpose_mode: PurposeMode,
+    /// Whether the built-in box-LOD system is enabled.
+    pub lod_enabled: bool,
+}
+
+impl Default for DisplaySettings {
+    fn default() -> Self {
+        Self {
+            purpose_mode: PurposeMode::Render,
+            lod_enabled: true,
+        }
+    }
+}
+
 /// Status of an asynchronous USD load operation.
 #[derive(Debug, Clone)]
 pub enum UsdLoadStatus {
@@ -308,6 +335,9 @@ pub struct Renderer {
 
     // Culling and LOD state
     pub(crate) culling: CullingManager,
+
+    /// Display settings (purpose toggle, LOD enable)
+    pub display_settings: DisplaySettings,
 
     // Scene browser state
     pub scene_browser_state: SceneBrowserState,
@@ -977,6 +1007,7 @@ impl Renderer {
             scene_graph_dirty: true,
             async_channels: AsyncChannels::default(),
             mipmap_generator,
+            display_settings: DisplaySettings::default(),
         })
     }
 
@@ -1114,12 +1145,14 @@ impl Renderer {
     /// Uses `lod_max_polys` as the polygon budget - nearest instances get full
     /// mesh until budget is exhausted, then remaining use box proxy.
     pub fn update_visible_instances(&mut self) {
+        let lod_enabled = self.display_settings.lod_enabled;
         self.culling.update_visible_instances(
             &self.queue,
             &self.instance_buffer,
             &self.camera,
             &self.instances.current,
             &self.instances.material_ids,
+            lod_enabled,
         );
     }
 

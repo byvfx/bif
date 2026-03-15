@@ -306,17 +306,21 @@ impl MaterialGpu {
         let resolve_index = |path: &Option<Arc<str>>| -> u32 {
             path.as_ref()
                 .and_then(|p| {
-                    // Try raw path first (backwards compat for single-file loads)
+                    // Normalize to forward slashes for consistent lookup
+                    // (C++ USD returns backslashes on Windows, Rust paths use forward)
+                    let normalized = p.replace('\\', "/");
+                    if let Some(&idx) = textures.index_map.get(&normalized) {
+                        return Some(idx);
+                    }
+                    // Try raw path as-is (backwards compat)
                     if let Some(&idx) = textures.index_map.get(&**p) {
                         return Some(idx);
                     }
                     // Try resolved path (multi-USD: index_map has absolute paths)
                     if let Some(dir) = src_dir {
                         let resolved = dir.join(&**p);
-                        if let Some(&idx) = textures
-                            .index_map
-                            .get(&resolved.to_string_lossy().to_string())
-                        {
+                        let resolved_str = resolved.to_string_lossy().replace('\\', "/");
+                        if let Some(&idx) = textures.index_map.get(&resolved_str) {
                             return Some(idx);
                         }
                     }

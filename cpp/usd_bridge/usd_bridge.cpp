@@ -33,6 +33,9 @@
 #include <pxr/usd/ar/resolverContextBinder.h>
 #include <pxr/usd/usd/modelAPI.h>
 #include <pxr/usd/kind/registry.h>
+#include <pxr/usd/usdGeom/imageable.h>
+#include <pxr/usd/usdGeom/tokens.h>
+#include <pxr/usd/sdf/layerUtils.h>
 
 #include <vector>
 #include <string>
@@ -64,6 +67,23 @@ struct CachedMesh {
     // Used to expand animated vertices to match split mesh
     std::vector<uint32_t> vertex_index_map;
     bool has_uv_split = false;
+
+    // Purpose attribute (default/render/proxy/guide)
+    int purpose = 0;  // 0=default, 1=render, 2=proxy, 3=guide
+
+    // True if this mesh came from a native instance proxy
+    bool is_instance_proxy = false;
+
+    // Material path resolved during traversal (needed for instance proxies
+    // whose virtual paths fail GetPrimAtPath() after traversal)
+    std::string bound_material_path;
+};
+
+/// Native instance: references a prototype mesh with a unique world transform
+struct CachedNativeInstance {
+    int prototype_mesh_index;
+    GfMatrix4d world_transform;
+    int material_override_index;  // -1 = use prototype material
 };
 
 /// Cached instancer data for FFI transfer
@@ -156,6 +176,7 @@ struct UsdBridgeStage {
     std::vector<CachedInstancer> instancers;
     std::vector<CachedMaterial> materials;
     std::vector<CachedLight> lights;
+    std::vector<CachedNativeInstance> native_instances;
     std::vector<std::string> mesh_material_paths;  // Material path per mesh
     std::vector<CachedPrimInfo> all_prims;  // All prims in traversal order
     std::vector<std::string> root_paths;    // Direct children of pseudo-root
@@ -252,8 +273,9 @@ static void cache_prim_data(UsdBridgeStage* bridge) {
         bridge->root_path_ptrs.push_back(path.c_str());
     }
 
-    // Traverse all prims in depth-first order
-    for (const UsdPrim& prim : bridge->stage->Traverse()) {
+    // Traverse all prims in depth-first order (including instance proxies)
+    for (const UsdPrim& prim : bridge->stage->Traverse(
+            UsdTraverseInstanceProxies(UsdPrimDefaultPredicate))) {
         CachedPrimInfo info;
         info.path = prim.GetPath().GetString();
         info.type_name = prim.GetTypeName().GetString();
@@ -294,22 +316,55 @@ static void cache_stage_data(UsdBridgeStage* bridge) {
 
     UsdGeomXformCache xform_cache;
 
-    // Track seen mesh paths to avoid duplicates
-    // (USD traverse can visit same prim multiple times via different composition arcs)
-    std::set<std::string> seen_mesh_paths;
+    // Track seen mesh paths to avoid duplicates.
+    // For instance proxies, key on prototype path so geometry is cached once.
+    // Maps dedup_path -> index in bridge->meshes.
+    std::map<std::string, int> prototype_mesh_index;
 
-    // Traverse all prims
-    for (const UsdPrim& prim : bridge->stage->Traverse()) {
+    // Traverse all prims (including instance proxies for native instancing)
+    for (const UsdPrim& prim : bridge->stage->Traverse(
+            UsdTraverseInstanceProxies(UsdPrimDefaultPredicate))) {
         // Check for UsdGeomMesh
         if (prim.IsA<UsdGeomMesh>()) {
             std::string prim_path = prim.GetPath().GetString();
 
-            // Skip if already processed (deduplication)
-            // USD traverse can visit same prim multiple times via different composition arcs
-            if (seen_mesh_paths.count(prim_path) > 0) {
+            // For instance proxies, dedup by prototype path (shared geometry).
+            // For regular meshes, dedup by scene path (same as before).
+            std::string dedup_path = prim_path;
+            bool is_proxy = prim.IsInstanceProxy();
+            if (is_proxy) {
+                UsdPrim proto_prim = prim.GetPrimInPrototype();
+                if (proto_prim) {
+                    dedup_path = proto_prim.GetPath().GetString();
+                }
+            }
+
+            // If geometry already cached, add as native instance
+            auto proto_it = prototype_mesh_index.find(dedup_path);
+            if (proto_it != prototype_mesh_index.end()) {
+                CachedNativeInstance inst;
+                inst.prototype_mesh_index = proto_it->second;
+                inst.world_transform = xform_cache.GetLocalToWorldTransform(prim);
+                inst.material_override_index = -1;
+
+                // Check for material override vs prototype
+                UsdShadeMaterialBindingAPI binding_api(prim);
+                UsdShadeMaterial bound_material = binding_api.ComputeBoundMaterial();
+                if (bound_material) {
+                    std::string mat_path = bound_material.GetPath().GetString();
+                    // Look up material index
+                    for (size_t mi = 0; mi < bridge->materials.size(); ++mi) {
+                        if (bridge->materials[mi].path == mat_path) {
+                            inst.material_override_index = static_cast<int>(mi);
+                            break;
+                        }
+                    }
+                }
+
+                bridge->native_instances.push_back(inst);
                 continue;
             }
-            seen_mesh_paths.insert(prim_path);
+
             UsdGeomMesh mesh(prim);
             CachedMesh cached;
             cached.path = prim.GetPath().GetString();
@@ -362,7 +417,6 @@ static void cache_stage_data(UsdBridgeStage* bridge) {
             // Extract GeomSubsets for per-face material assignment
             auto subset_start = high_resolution_clock::now();
             size_t num_faces = face_vertex_counts.size();
-            std::vector<uint32_t> face_material_map(num_faces, 0);  // Default material 0
 
             std::vector<UsdGeomSubset> subsets = UsdGeomSubset::GetAllGeomSubsets(mesh);
 
@@ -372,6 +426,8 @@ static void cache_stage_data(UsdBridgeStage* bridge) {
                 for (size_t i = 0; i < bridge->materials.size(); ++i) {
                     material_path_to_index[bridge->materials[i].path] = static_cast<uint32_t>(i);
                 }
+
+                std::vector<uint32_t> face_material_map(num_faces, 0);
 
                 for (const auto& subset : subsets) {
                     // Get material binding for this subset
@@ -401,13 +457,15 @@ static void cache_stage_data(UsdBridgeStage* bridge) {
                         }
                     }
                 }
-            }
 
-            // Map per-original-face materials to per-triangle
-            cached.face_material_ids.reserve(triangle_face_indices.size());
-            for (uint32_t orig_face : triangle_face_indices) {
-                cached.face_material_ids.push_back(face_material_map[orig_face]);
+                // Map per-original-face materials to per-triangle
+                cached.face_material_ids.reserve(triangle_face_indices.size());
+                for (uint32_t orig_face : triangle_face_indices) {
+                    cached.face_material_ids.push_back(face_material_map[orig_face]);
+                }
             }
+            // When no GeomSubsets, leave face_material_ids empty.
+            // The shader will use the per-instance material binding instead.
             time_subsets += duration_cast<milliseconds>(high_resolution_clock::now() - subset_start).count();
 
             // Get normals (optional) - track interpolation for UV seam split
@@ -563,11 +621,34 @@ static void cache_stage_data(UsdBridgeStage* bridge) {
             cached.transform = xform_cache.GetLocalToWorldTransform(prim);
             time_transform += duration_cast<milliseconds>(high_resolution_clock::now() - xform_start).count();
 
+            // Compute inherited purpose (not just directly-authored)
+            UsdGeomImageable imageable(prim);
+            TfToken purposeToken = imageable.ComputePurpose();
+            if (purposeToken == UsdGeomTokens->render) cached.purpose = 1;
+            else if (purposeToken == UsdGeomTokens->proxy) cached.purpose = 2;
+            else if (purposeToken == UsdGeomTokens->guide) cached.purpose = 3;
+
+            cached.is_instance_proxy = is_proxy;
+
+            // Resolve material binding while we have the live prim
+            // (instance proxy paths are virtual — GetPrimAtPath() fails afterward)
+            {
+                UsdShadeMaterialBindingAPI binding_api(prim);
+                UsdShadeMaterial bound_material = binding_api.ComputeBoundMaterial();
+                if (bound_material) {
+                    cached.bound_material_path = bound_material.GetPath().GetString();
+                }
+            }
+
+            // Track mesh index for native instance dedup
+            int mesh_idx = static_cast<int>(bridge->meshes.size());
+            prototype_mesh_index[dedup_path] = mesh_idx;
+
             bridge->meshes.push_back(std::move(cached));
         }
 
-        // Check for UsdGeomPointInstancer
-        if (prim.IsA<UsdGeomPointInstancer>()) {
+        // Check for UsdGeomPointInstancer (skip instance proxies — they reference prototype instancers)
+        if (prim.IsA<UsdGeomPointInstancer>() && !prim.IsInstanceProxy()) {
             UsdGeomPointInstancer instancer(prim);
             CachedInstancer cached;
             cached.path = prim.GetPath().GetString();
@@ -611,6 +692,13 @@ static void cache_stage_data(UsdBridgeStage* bridge) {
         }
     }
 
+    // Populate mesh-to-material bindings from pre-resolved paths
+    // (resolved during traversal when the live prim was available)
+    bridge->mesh_material_paths.clear();
+    for (const auto& mesh : bridge->meshes) {
+        bridge->mesh_material_paths.push_back(mesh.bound_material_path);
+    }
+
     // Print timing breakdown
     auto total_time = duration_cast<milliseconds>(high_resolution_clock::now() - func_start).count();
     std::cout << "[USD_BRIDGE] cache_stage_data breakdown:" << std::endl;
@@ -621,9 +709,40 @@ static void cache_stage_data(UsdBridgeStage* bridge) {
     std::cout << "[USD_BRIDGE]   Normals:      " << time_normals << "ms" << std::endl;
     std::cout << "[USD_BRIDGE]   UVs:          " << time_uvs << "ms" << std::endl;
     std::cout << "[USD_BRIDGE]   Transforms:   " << time_transform << "ms" << std::endl;
+    std::cout << "[USD_BRIDGE]   Native inst:  " << bridge->native_instances.size() << std::endl;
     std::cout << "[USD_BRIDGE]   SUBTOTAL:     " << total_time << "ms" << std::endl;
 
     bridge->cached = true;
+}
+
+/// Resolve an SdfAssetPath, anchoring relative paths against the shader's
+/// source layer so that paths like "../../texture/foo.<UDIM>.jpg" resolve
+/// correctly even when the material lives in a sublayer/reference.
+static std::string resolve_asset_path(const SdfAssetPath& asset_path,
+                                       const UsdPrim& shader_prim) {
+    // Prefer the pre-resolved absolute path (works for non-UDIM textures)
+    if (!asset_path.GetResolvedPath().empty()) {
+        return asset_path.GetResolvedPath();
+    }
+
+    std::string raw = asset_path.GetAssetPath();
+    if (raw.empty()) return "";
+
+    // For relative paths (including UDIM templates), anchor against the
+    // USD layer that defines this shader prim.
+    UsdPrim lookup_prim = shader_prim.IsInstanceProxy()
+        ? shader_prim.GetPrimInPrototype()
+        : shader_prim;
+
+    auto prim_stack = lookup_prim.GetPrimStack();
+    if (!prim_stack.empty()) {
+        SdfLayerHandle source_layer = prim_stack[0]->GetLayer();
+        if (source_layer) {
+            return SdfComputeAssetPathRelativeToLayer(source_layer, raw);
+        }
+    }
+
+    return raw;
 }
 
 /// Helper to extract a texture path from a shader input connection
@@ -653,9 +772,7 @@ static std::string get_texture_path(const UsdShadeInput& input) {
             if (file_input) {
                 SdfAssetPath asset_path;
                 if (file_input.Get(&asset_path)) {
-                    return asset_path.GetResolvedPath().empty()
-                        ? asset_path.GetAssetPath()
-                        : asset_path.GetResolvedPath();
+                    return resolve_asset_path(asset_path, shader_prim);
                 }
             }
         }
@@ -700,9 +817,7 @@ static std::string get_materialx_texture_path(const UsdShadeInput& input) {
             if (file_input) {
                 SdfAssetPath asset_path;
                 if (file_input.Get(&asset_path)) {
-                    return asset_path.GetResolvedPath().empty()
-                        ? asset_path.GetAssetPath()
-                        : asset_path.GetResolvedPath();
+                    return resolve_asset_path(asset_path, shader_prim);
                 }
             }
         }
@@ -716,13 +831,32 @@ static void cache_material_data(UsdBridgeStage* bridge) {
 
     bridge->materials.clear();
 
-    // Find all UsdShadeMaterial prims
-    for (const UsdPrim& prim : bridge->stage->Traverse()) {
+    // Dedup set: instance proxies visit the same material once per instance.
+    // Key on prototype path so identical materials are cached only once.
+    std::set<std::string> seen_material_paths;
+
+    // Find all UsdShadeMaterial prims (including inside instance prototypes)
+    for (const UsdPrim& prim : bridge->stage->Traverse(
+            UsdTraverseInstanceProxies(UsdPrimDefaultPredicate))) {
         if (!prim.IsA<UsdShadeMaterial>()) continue;
+
+        std::string mat_path = prim.GetPath().GetString();
+
+        // For instance proxies, dedup by prototype path (shared material)
+        std::string dedup_key = mat_path;
+        if (prim.IsInstanceProxy()) {
+            UsdPrim proto_prim = prim.GetPrimInPrototype();
+            if (proto_prim) {
+                dedup_key = proto_prim.GetPath().GetString();
+            }
+        }
+
+        if (seen_material_paths.count(dedup_key) > 0) continue;
+        seen_material_paths.insert(dedup_key);
 
         UsdShadeMaterial material(prim);
         CachedMaterial cached;
-        cached.path = prim.GetPath().GetString();
+        cached.path = mat_path;
 
         // Initialize defaults
         cached.diffuse_color[0] = 0.5f;
@@ -1041,30 +1175,7 @@ static void cache_material_data(UsdBridgeStage* bridge) {
         bridge->materials.push_back(std::move(cached));
     }
 
-    // Also collect mesh-to-material bindings
-    // Note: Material bindings can be inherited from parent prims
-    bridge->mesh_material_paths.clear();
-    for (const auto& mesh : bridge->meshes) {
-        UsdPrim mesh_prim = bridge->stage->GetPrimAtPath(SdfPath(mesh.path));
-        std::string mat_path;
-
-        if (mesh_prim) {
-            // Walk up the hierarchy to find material binding
-            UsdPrim current = mesh_prim;
-            while (current) {
-                UsdShadeMaterialBindingAPI binding_api(current);
-                UsdShadeMaterial bound_material = binding_api.ComputeBoundMaterial();
-                if (bound_material) {
-                    mat_path = bound_material.GetPath().GetString();
-                    break;
-                }
-                current = current.GetParent();
-            }
-        }
-
-        bridge->mesh_material_paths.push_back(mat_path);
-    }
-
+    // Note: mesh_material_paths is populated in cache_stage_data() after meshes are cached
     bridge->materials_cached = true;
 }
 
@@ -1076,8 +1187,9 @@ static void cache_light_data(UsdBridgeStage* bridge) {
 
     UsdGeomXformCache xform_cache;
 
-    // Traverse all prims looking for lights
-    for (const UsdPrim& prim : bridge->stage->Traverse()) {
+    // Traverse all prims looking for lights (including instance proxies)
+    for (const UsdPrim& prim : bridge->stage->Traverse(
+            UsdTraverseInstanceProxies(UsdPrimDefaultPredicate))) {
         CachedLight light;
         bool is_light = false;
 
@@ -1382,6 +1494,45 @@ UsdBridgeError usd_bridge_get_mesh(
     // Copy transform
     float mat_data[16];
     matrix_to_float16(mesh.transform, mat_data);
+    for (int i = 0; i < 16; ++i) {
+        out_data->transform[i] = mat_data[i];
+    }
+
+    out_data->purpose = static_cast<UsdBridgePurpose>(mesh.purpose);
+    out_data->is_instance_proxy = mesh.is_instance_proxy ? 1 : 0;
+
+    return USD_BRIDGE_SUCCESS;
+}
+
+UsdBridgeError usd_bridge_get_native_instance_count(
+    const UsdBridgeStage* stage,
+    size_t* out_count
+) {
+    if (!stage || !out_count) {
+        return USD_BRIDGE_ERROR_NULL_POINTER;
+    }
+    *out_count = stage->native_instances.size();
+    return USD_BRIDGE_SUCCESS;
+}
+
+UsdBridgeError usd_bridge_get_native_instance(
+    const UsdBridgeStage* stage,
+    size_t index,
+    UsdNativeInstanceData* out_data
+) {
+    if (!stage || !out_data) {
+        return USD_BRIDGE_ERROR_NULL_POINTER;
+    }
+    if (index >= stage->native_instances.size()) {
+        return USD_BRIDGE_ERROR_INVALID_PRIM;
+    }
+
+    const CachedNativeInstance& inst = stage->native_instances[index];
+    out_data->proto_mesh_idx = inst.prototype_mesh_index;
+    out_data->material_override_idx = inst.material_override_index;
+
+    float mat_data[16];
+    matrix_to_float16(inst.world_transform, mat_data);
     for (int i = 0; i < 16; ++i) {
         out_data->transform[i] = mat_data[i];
     }
