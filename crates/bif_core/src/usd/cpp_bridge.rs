@@ -153,6 +153,15 @@ struct UsdBridgeVertexAnimationInfoRaw {
     time_samples: *const f64,
 }
 
+/// Camera properties from C API
+#[repr(C)]
+struct UsdBridgeCameraPropertiesRaw {
+    focal_length: f32,
+    vertical_aperture: f32,
+    clip_near: f32,
+    clip_far: f32,
+}
+
 /// Light type enumeration from C API
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -389,6 +398,13 @@ extern "C" {
         camera_path: *const std::ffi::c_char,
         time: f64,
         out_transform: *mut f32,
+    ) -> UsdBridgeErrorCode;
+
+    fn usd_bridge_get_camera_properties(
+        stage: *const UsdBridgeStageRaw,
+        camera_path: *const std::ffi::c_char,
+        time: f64,
+        out_props: *mut UsdBridgeCameraPropertiesRaw,
     ) -> UsdBridgeErrorCode;
 
     fn usd_bridge_get_mesh_vertex_animation_info(
@@ -801,6 +817,28 @@ impl std::fmt::Display for UsdPrimType {
             Self::Scope => write!(f, "Scope"),
             Self::Xform => write!(f, "Xform"),
         }
+    }
+}
+
+/// Camera lens/clipping properties from UsdGeomCamera.
+#[derive(Clone, Debug)]
+pub struct CameraProperties {
+    /// Focal length in mm
+    pub focal_length: f32,
+    /// Vertical aperture in mm
+    pub vertical_aperture: f32,
+    /// Near clipping plane in scene units
+    pub clip_near: f32,
+    /// Far clipping plane in scene units
+    pub clip_far: f32,
+}
+
+impl CameraProperties {
+    /// Compute vertical field of view in radians.
+    ///
+    /// `fov_y = 2 * atan(vertical_aperture / (2 * focal_length))`
+    pub fn fov_y(&self) -> f32 {
+        2.0 * (self.vertical_aperture / (2.0 * self.focal_length)).atan()
     }
 }
 
@@ -1823,6 +1861,36 @@ impl UsdStage {
         Ok(Mat4::from_cols_array(&transform))
     }
 
+    /// Get camera lens and clipping properties at a specific time.
+    pub fn get_camera_properties(
+        &self,
+        camera_path: &str,
+        time: f64,
+    ) -> UsdBridgeResult<CameraProperties> {
+        let c_path = CString::new(camera_path).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let mut props = UsdBridgeCameraPropertiesRaw {
+            focal_length: 0.0,
+            vertical_aperture: 0.0,
+            clip_near: 0.0,
+            clip_far: 0.0,
+        };
+
+        let result = unsafe {
+            usd_bridge_get_camera_properties(self.raw, c_path.as_ptr(), time, &mut props)
+        };
+
+        if result != UsdBridgeErrorCode::Success {
+            return Err(result.into());
+        }
+
+        Ok(CameraProperties {
+            focal_length: props.focal_length,
+            vertical_aperture: props.vertical_aperture,
+            clip_near: props.clip_near,
+            clip_far: props.clip_far,
+        })
+    }
+
     // ========================================================================
     // Vertex Animation (Point Deformation)
     // ========================================================================
@@ -2397,6 +2465,38 @@ impl Drop for UsdEditLayer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_fov_from_focal_length() {
+        // USD default: 50mm focal, 24.89mm vertical aperture → ~27.9° vertical FOV
+        let props = CameraProperties {
+            focal_length: 50.0,
+            vertical_aperture: 24.89,
+            clip_near: 0.1,
+            clip_far: 10000.0,
+        };
+        let fov_deg = props.fov_y().to_degrees();
+        assert!(
+            (fov_deg - 27.93).abs() < 0.1,
+            "Expected ~27.93° FOV, got {fov_deg:.2}°"
+        );
+    }
+
+    #[test]
+    fn test_fov_wide_lens() {
+        // 24mm wide lens → should be >50° FOV
+        let props = CameraProperties {
+            focal_length: 24.0,
+            vertical_aperture: 24.89,
+            clip_near: 1.0,
+            clip_far: 100000.0,
+        };
+        let fov_deg = props.fov_y().to_degrees();
+        assert!(
+            fov_deg > 50.0,
+            "24mm lens should give >50° FOV, got {fov_deg:.2}°"
+        );
+    }
 
     #[test]
     fn test_error_codes() {

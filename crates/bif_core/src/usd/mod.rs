@@ -40,9 +40,9 @@ mod types;
 pub mod validate;
 
 pub use cpp_bridge::{
-    MeshPurpose, TransformSample, UsdAnimatedInstancerData, UsdAnimatedMeshData, UsdBridgeError,
-    UsdEditLayer, UsdInstancerData, UsdKind, UsdLightData, UsdLightType, UsdMeshData,
-    UsdNativeInstance, UsdPrimType, UsdSpecifier, UsdStage, UsdTimelineData,
+    CameraProperties, MeshPurpose, TransformSample, UsdAnimatedInstancerData, UsdAnimatedMeshData,
+    UsdBridgeError, UsdEditLayer, UsdInstancerData, UsdKind, UsdLightData, UsdLightType,
+    UsdMeshData, UsdNativeInstance, UsdPrimType, UsdSpecifier, UsdStage, UsdTimelineData,
 };
 pub use export::{AuthoredPrim, ExportConfig, ExportResult};
 pub use loader::{

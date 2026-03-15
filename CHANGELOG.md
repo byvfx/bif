@@ -8,6 +8,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- USD camera properties FFI — read focal_length, vertical_aperture, clipping_range from UsdGeomCamera
+- `CameraProperties` struct with `fov_y()` computation (2*atan(aperture/2*focal))
+- Viewport syncs FOV/near/far from USD cameras (graceful fallback on error)
+- UDIM atlas stitching in Ivar TextureCache — probe/downscale/stitch pipeline with memory caps
+- UDIM UV transform in `Texture::sample`/`sample_channel` via `transform_uv()`
 - UDIM UV transformation in viewport shader — atlas grid metadata packed into MaterialGpu.extra_indices
 - Per-triangle material IDs for Ivar combined mesh — post-fill from instance material bindings
 - USD native instance support (`instanceable=true`) — `UsdTraverseInstanceProxies()` predicate
@@ -30,6 +35,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - MAX_VIEWPORT_TEXTURES 128→512 — ALab's 272 textures were truncated at 127
 - UDIM shader UV underflow — signed math prevents garbage sampling on out-of-range UVs
 - Material table rebuild after UDIM texture streaming — grid info unavailable at initial build
+- Backface culling winding order — `FrontFace::Cw` → `FrontFace::Ccw` (USD rightHanded = CCW front faces)
+- Camera direction extraction in `sync_viewport_to_usd_camera` — use row-based forward/up vectors
 
 ### Changed
 

@@ -2181,6 +2181,58 @@ UsdBridgeError usd_bridge_get_camera_xform_at_time(
     return USD_BRIDGE_SUCCESS;
 }
 
+UsdBridgeError usd_bridge_get_camera_properties(
+    const UsdBridgeStage* stage,
+    const char* camera_path,
+    double time,
+    UsdBridgeCameraProperties* out_props
+) {
+    if (!stage || !camera_path || !out_props) {
+        return USD_BRIDGE_ERROR_NULL_POINTER;
+    }
+
+    SdfPath path(camera_path);
+    UsdPrim prim = stage->stage->GetPrimAtPath(path);
+    if (!prim || !prim.IsA<UsdGeomCamera>()) {
+        return USD_BRIDGE_ERROR_INVALID_PRIM;
+    }
+
+    UsdGeomCamera camera(prim);
+    UsdTimeCode tc(time);
+
+    float focalLength = 50.0f;
+    float verticalAperture = 24.89f;
+    float clipNear = 0.1f;
+    float clipFar = 10000.0f;
+
+    {
+        float val;
+        if (camera.GetFocalLengthAttr().Get(&val, tc)) {
+            focalLength = val;
+        }
+    }
+    {
+        float val;
+        if (camera.GetVerticalApertureAttr().Get(&val, tc)) {
+            verticalAperture = val;
+        }
+    }
+    {
+        GfVec2f range;
+        if (camera.GetClippingRangeAttr().Get(&range, tc)) {
+            clipNear = range[0];
+            clipFar = range[1];
+        }
+    }
+
+    out_props->focal_length = focalLength;
+    out_props->vertical_aperture = verticalAperture;
+    out_props->clip_near = clipNear;
+    out_props->clip_far = clipFar;
+
+    return USD_BRIDGE_SUCCESS;
+}
+
 // ============================================================================
 // Vertex Animation
 // ============================================================================

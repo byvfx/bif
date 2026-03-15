@@ -226,6 +226,32 @@ UsdBridgeError usd_bridge_get_camera_xform_at_time(
     float* out_transform
 );
 
+/// Camera lens/clipping properties from UsdGeomCamera
+typedef struct UsdBridgeCameraProperties {
+    /// Focal length in mm
+    float focal_length;
+    /// Vertical aperture in mm
+    float vertical_aperture;
+    /// Near clipping plane in scene units
+    float clip_near;
+    /// Far clipping plane in scene units
+    float clip_far;
+} UsdBridgeCameraProperties;
+
+/// Get camera lens and clipping properties at a specific time.
+///
+/// @param stage Stage handle
+/// @param camera_path Path to the UsdGeomCamera prim
+/// @param time Time code to evaluate at
+/// @param out_props Pointer to receive camera properties
+/// @return USD_BRIDGE_SUCCESS on success
+UsdBridgeError usd_bridge_get_camera_properties(
+    const UsdBridgeStage* stage,
+    const char* camera_path,
+    double time,
+    UsdBridgeCameraProperties* out_props
+);
+
 /// Vertex animation info for a mesh
 typedef struct UsdBridgeVertexAnimationInfo {
     /// 1 if mesh has animated vertices, 0 otherwise

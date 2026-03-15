@@ -74,6 +74,15 @@ pub struct Texture {
 
     /// Whether the source was linear (EXR/HDR) or sRGB
     pub is_linear: bool,
+
+    /// UDIM atlas grid columns (0 = not a UDIM texture)
+    pub udim_grid_cols: u32,
+    /// UDIM atlas grid rows
+    pub udim_grid_rows: u32,
+    /// Minimum column index in the UDIM grid
+    pub udim_min_col: u32,
+    /// Minimum row index in the UDIM grid
+    pub udim_min_row: u32,
 }
 
 impl Texture {
@@ -86,6 +95,10 @@ impl Texture {
             mip_levels: Vec::new(),
             path: path.into(),
             is_linear: false,
+            udim_grid_cols: 0,
+            udim_grid_rows: 0,
+            udim_min_col: 0,
+            udim_min_row: 0,
         }
     }
 
@@ -105,6 +118,10 @@ impl Texture {
             mip_levels,
             path: path.into(),
             is_linear,
+            udim_grid_cols: 0,
+            udim_grid_rows: 0,
+            udim_min_col: 0,
+            udim_min_row: 0,
         }
     }
 
@@ -117,6 +134,10 @@ impl Texture {
             mip_levels: Vec::new(),
             path: "<solid>".to_string(),
             is_linear: false,
+            udim_grid_cols: 0,
+            udim_grid_rows: 0,
+            udim_min_col: 0,
+            udim_min_row: 0,
         }
     }
 
@@ -125,18 +146,43 @@ impl Texture {
         1 + self.mip_levels.len() as u32
     }
 
+    /// Whether this texture is a UDIM atlas.
+    pub fn is_udim(&self) -> bool {
+        self.udim_grid_cols > 0
+    }
+
     /// Check if this texture has mipmaps.
     pub fn has_mipmaps(&self) -> bool {
         !self.mip_levels.is_empty()
+    }
+
+    /// Transform UV coordinates for UDIM atlas lookup.
+    ///
+    /// For non-UDIM textures, wraps UVs to [0, 1].
+    /// For UDIM atlases, maps tile-space UVs to atlas-space UVs
+    /// using the same math as `basic.wgsl` lines 281-305.
+    #[inline]
+    fn transform_uv(&self, u: f32, v: f32) -> (f32, f32) {
+        if !self.is_udim() {
+            return (u.rem_euclid(1.0), v.rem_euclid(1.0));
+        }
+        let raw_col = u.floor() as i32 - self.udim_min_col as i32;
+        let raw_row = v.floor() as i32 - self.udim_min_row as i32;
+        let col = raw_col.clamp(0, self.udim_grid_cols as i32 - 1) as u32;
+        let row = raw_row.clamp(0, self.udim_grid_rows as i32 - 1) as u32;
+        let sub_u = u.fract().rem_euclid(1.0);
+        let sub_v = v.fract().rem_euclid(1.0);
+        let flipped_row = self.udim_grid_rows - 1 - row;
+        let atlas_u = (col as f32 + sub_u) / self.udim_grid_cols as f32;
+        let atlas_v = (flipped_row as f32 + (1.0 - sub_v)) / self.udim_grid_rows as f32;
+        (atlas_u, atlas_v)
     }
 
     /// Sample the texture at UV coordinates (bilinear filtering).
     ///
     /// UV coordinates are in [0, 1] range, with (0, 0) at bottom-left.
     pub fn sample(&self, u: f32, v: f32) -> Vec3 {
-        // Wrap UV coordinates
-        let u = u.rem_euclid(1.0);
-        let v = v.rem_euclid(1.0);
+        let (u, v) = self.transform_uv(u, v);
 
         // Convert to pixel coordinates
         let x = u * (self.width as f32 - 1.0);
@@ -173,8 +219,7 @@ impl Texture {
 
     /// Sample a single channel with bilinear filtering (for roughness/metallic maps).
     pub fn sample_channel(&self, u: f32, v: f32, channel: usize) -> f32 {
-        let u = u.rem_euclid(1.0);
-        let v = v.rem_euclid(1.0);
+        let (u, v) = self.transform_uv(u, v);
         let ch = channel.min(3);
 
         let x = u * (self.width as f32 - 1.0);
@@ -293,6 +338,13 @@ impl TextureCache {
             return Ok(texture.clone());
         }
 
+        // UDIM atlas: stitch tiles into single texture
+        if is_udim_path(path) {
+            let texture = Arc::new(self.load_udim_atlas(path, false)?);
+            self.textures.insert(path.to_string(), texture.clone());
+            return Ok(texture);
+        }
+
         // Resolve path
         let full_path = self.resolve_path(path);
 
@@ -328,6 +380,13 @@ impl TextureCache {
         let cache_key = format!("{}_linear", path);
         if let Some(texture) = self.textures.get(&cache_key) {
             return Ok(texture.clone());
+        }
+
+        // UDIM atlas: stitch tiles into single texture (linear)
+        if is_udim_path(path) {
+            let texture = Arc::new(self.load_udim_atlas(path, true)?);
+            self.textures.insert(cache_key, texture.clone());
+            return Ok(texture);
         }
 
         let full_path = self.resolve_path(path);
@@ -486,6 +545,159 @@ impl TextureCache {
             path,
             oiio_tex.is_linear,
         ))
+    }
+
+    /// Load a UDIM texture atlas from tiled files.
+    ///
+    /// Two-pass approach to limit peak memory:
+    ///   1. Probe tile dimensions via header read (no pixel decode)
+    ///   2. Load each tile one at a time, downscale, stitch into atlas, drop
+    ///
+    /// Tiles larger than `MAX_IVAR_UDIM_TILE_SIZE` are downscaled before
+    /// stitching so the atlas stays within reasonable memory bounds.
+    fn load_udim_atlas(&self, pattern: &str, linear: bool) -> TextureResult<Texture> {
+        let resolved_pattern = self.resolve_path(pattern).to_string_lossy().into_owned();
+        let tiles = find_udim_tiles(&resolved_pattern);
+        if tiles.is_empty() {
+            return Err(TextureError::LoadError(format!(
+                "No UDIM tiles found for pattern: {}",
+                pattern
+            )));
+        }
+
+        // Phase 1: Probe dimensions from headers (no pixel decode)
+        struct TileInfo {
+            udim: u32,
+            path: String,
+        }
+        let mut tile_infos = Vec::new();
+        let mut min_col = u32::MAX;
+        let mut max_col = 0u32;
+        let mut min_row = u32::MAX;
+        let mut max_row = 0u32;
+        let mut raw_max_w = 0u32;
+        let mut raw_max_h = 0u32;
+
+        for (udim, tile_path) in &tiles {
+            let (w, h) = image::image_dimensions(tile_path).map_err(|e| {
+                TextureError::LoadError(format!("Can't probe {}: {}", tile_path, e))
+            })?;
+            let col = (udim - 1001) % 10;
+            let row = (udim - 1001) / 10;
+            min_col = min_col.min(col);
+            max_col = max_col.max(col);
+            min_row = min_row.min(row);
+            max_row = max_row.max(row);
+            raw_max_w = raw_max_w.max(w);
+            raw_max_h = raw_max_h.max(h);
+            tile_infos.push(TileInfo {
+                udim: *udim,
+                path: tile_path.clone(),
+            });
+        }
+
+        let num_cols = max_col - min_col + 1;
+        let num_rows = max_row - min_row + 1;
+
+        // Cap per-tile dimensions to limit memory
+        let mut target_w = raw_max_w;
+        let mut target_h = raw_max_h;
+        if target_w > MAX_IVAR_UDIM_TILE_SIZE || target_h > MAX_IVAR_UDIM_TILE_SIZE {
+            let scale = MAX_IVAR_UDIM_TILE_SIZE as f32 / target_w.max(target_h) as f32;
+            target_w = ((target_w as f32 * scale) as u32).max(1);
+            target_h = ((target_h as f32 * scale) as u32).max(1);
+        }
+
+        // Cap total atlas to MAX_IVAR_ATLAS_SIZE (tiles * grid can still exceed)
+        let atlas_w_raw = num_cols * target_w;
+        let atlas_h_raw = num_rows * target_h;
+        if atlas_w_raw > MAX_IVAR_ATLAS_SIZE || atlas_h_raw > MAX_IVAR_ATLAS_SIZE {
+            let scale = MAX_IVAR_ATLAS_SIZE as f32 / atlas_w_raw.max(atlas_h_raw) as f32;
+            target_w = ((target_w as f32 * scale) as u32).max(1);
+            target_h = ((target_h as f32 * scale) as u32).max(1);
+        }
+
+        if target_w != raw_max_w || target_h != raw_max_h {
+            log::info!(
+                "UDIM tiles capped {}x{} -> {}x{} for Ivar ({}x{} grid)",
+                raw_max_w,
+                raw_max_h,
+                target_w,
+                target_h,
+                num_cols,
+                num_rows
+            );
+        }
+
+        let atlas_w = num_cols * target_w;
+        let atlas_h = num_rows * target_h;
+
+        let mut atlas_pixels = vec![[0.0f32; 4]; (atlas_w * atlas_h) as usize];
+
+        // Phase 2: Load each tile, downscale, stitch, drop (one at a time)
+        let mut tiles_loaded = 0u32;
+        for info in &tile_infos {
+            let tile_full = Path::new(&info.path);
+            let tex = if linear {
+                load_texture_linear(tile_full)?
+            } else {
+                #[cfg(feature = "oiio")]
+                {
+                    self.load_with_oiio(tile_full, &info.path)?
+                }
+                #[cfg(not(feature = "oiio"))]
+                {
+                    load_texture_file(tile_full)?
+                }
+            };
+
+            let col = (info.udim - 1001) % 10 - min_col;
+            let row = (info.udim - 1001) / 10 - min_row;
+            let flipped_row = (num_rows - 1) - row;
+
+            // Downscale to target tile size if needed
+            let tile_pixels = if tex.width != target_w || tex.height != target_h {
+                scale_pixels_nearest(&tex.pixels, tex.width, tex.height, target_w, target_h)
+            } else {
+                tex.pixels
+            };
+            // tex dropped here — only one tile in memory at a time
+
+            let dest_x = col * target_w;
+            let dest_y = flipped_row * target_h;
+            for y in 0..target_h {
+                for x in 0..target_w {
+                    let src_idx = (y * target_w + x) as usize;
+                    let dst_idx = ((dest_y + y) * atlas_w + dest_x + x) as usize;
+                    atlas_pixels[dst_idx] = tile_pixels[src_idx];
+                }
+            }
+            tiles_loaded += 1;
+        }
+
+        log::info!(
+            "UDIM atlas (Ivar): {} tiles -> {}x{} ({}x{} grid, tile {}x{})",
+            tiles_loaded,
+            atlas_w,
+            atlas_h,
+            num_cols,
+            num_rows,
+            target_w,
+            target_h
+        );
+
+        Ok(Texture {
+            width: atlas_w,
+            height: atlas_h,
+            pixels: atlas_pixels,
+            mip_levels: Vec::new(),
+            path: pattern.to_string(),
+            is_linear: linear,
+            udim_grid_cols: num_cols,
+            udim_grid_rows: num_rows,
+            udim_min_col: min_col,
+            udim_min_row: min_row,
+        })
     }
 
     /// Get a cached texture without loading.
@@ -719,6 +931,55 @@ fn convert_u8_to_f32_pixels(data: &[u8], is_linear: bool) -> Vec<[f32; 4]> {
     pixels
 }
 
+/// Maximum per-tile dimension for Ivar UDIM atlases.
+/// Tiles larger than this are downscaled before stitching to limit memory.
+const MAX_IVAR_UDIM_TILE_SIZE: u32 = 2048;
+
+/// Maximum atlas dimension (either axis) for Ivar UDIM atlases.
+/// Prevents multi-tile grids from creating huge f32 buffers.
+/// 8192x8192 * 16 bytes = 1 GB — the hard upper bound.
+const MAX_IVAR_ATLAS_SIZE: u32 = 8192;
+
+/// Check if a texture path contains a UDIM token (`<UDIM>`).
+pub fn is_udim_path(path: &str) -> bool {
+    path.contains("<UDIM>")
+}
+
+/// Scan filesystem for existing UDIM tiles matching the pattern.
+/// Returns a vec of (udim_id, path) sorted by UDIM ID.
+fn find_udim_tiles(pattern: &str) -> Vec<(u32, String)> {
+    let mut tiles = Vec::new();
+    for udim in 1001..=1100 {
+        let tile_path = pattern.replace("<UDIM>", &udim.to_string());
+        if Path::new(&tile_path).exists() {
+            tiles.push((udim, tile_path));
+        }
+    }
+    tiles.sort_by_key(|(id, _)| *id);
+    tiles
+}
+
+/// Scale f32 pixel data to target dimensions using nearest-neighbor sampling.
+fn scale_pixels_nearest(
+    src: &[[f32; 4]],
+    src_w: u32,
+    src_h: u32,
+    dst_w: u32,
+    dst_h: u32,
+) -> Vec<[f32; 4]> {
+    let mut out = vec![[0.0; 4]; (dst_w * dst_h) as usize];
+    for y in 0..dst_h {
+        let src_y = ((y as f32 / dst_h as f32) * src_h as f32).floor() as u32;
+        let src_y = src_y.min(src_h - 1);
+        for x in 0..dst_w {
+            let src_x = ((x as f32 / dst_w as f32) * src_w as f32).floor() as u32;
+            let src_x = src_x.min(src_w - 1);
+            out[(y * dst_w + x) as usize] = src[(src_y * src_w + src_x) as usize];
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -740,6 +1001,91 @@ mod tests {
         let cache = TextureCache::new();
         assert!(cache.is_empty());
         assert_eq!(cache.len(), 0);
+    }
+
+    #[test]
+    fn test_is_udim_path() {
+        assert!(is_udim_path("color_<UDIM>.exr"));
+        assert!(is_udim_path("/textures/diffuse_<UDIM>.png"));
+        assert!(!is_udim_path("color_1001.exr"));
+        assert!(!is_udim_path("diffuse.png"));
+    }
+
+    #[test]
+    fn test_transform_uv_non_udim() {
+        let tex = Texture::solid_color(Vec3::new(1.0, 0.0, 0.0));
+        // Non-UDIM wraps to [0,1]
+        let (u, v) = tex.transform_uv(1.5, -0.3);
+        assert!((u - 0.5).abs() < 1e-5);
+        assert!((v - 0.7).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_transform_uv_2x2_grid() {
+        // Simulate a 2x2 UDIM grid (tiles 1001, 1002, 1011, 1012)
+        let mut tex = Texture::solid_color(Vec3::new(0.0, 0.0, 0.0));
+        tex.udim_grid_cols = 2;
+        tex.udim_grid_rows = 2;
+        tex.udim_min_col = 0;
+        tex.udim_min_row = 0;
+
+        // Tile 1001 (col=0, row=0): UV (0.5, 0.5) → atlas bottom-left
+        let (au, av) = tex.transform_uv(0.5, 0.5);
+        // col=0, row=0, flipped_row=1
+        // atlas_u = (0 + 0.5) / 2 = 0.25
+        // atlas_v = (1 + 0.5) / 2 = 0.75
+        assert!((au - 0.25).abs() < 1e-5, "tile 1001 u: got {}", au);
+        assert!((av - 0.75).abs() < 1e-5, "tile 1001 v: got {}", av);
+
+        // Tile 1002 (col=1, row=0): UV (1.5, 0.5) → atlas bottom-right
+        let (au, av) = tex.transform_uv(1.5, 0.5);
+        assert!((au - 0.75).abs() < 1e-5, "tile 1002 u: got {}", au);
+        assert!((av - 0.75).abs() < 1e-5, "tile 1002 v: got {}", av);
+
+        // Tile 1011 (col=0, row=1): UV (0.5, 1.5) → atlas top-left
+        let (au, av) = tex.transform_uv(0.5, 1.5);
+        assert!((au - 0.25).abs() < 1e-5, "tile 1011 u: got {}", au);
+        assert!((av - 0.25).abs() < 1e-5, "tile 1011 v: got {}", av);
+
+        // Tile 1012 (col=1, row=1): UV (1.5, 1.5) → atlas top-right
+        let (au, av) = tex.transform_uv(1.5, 1.5);
+        assert!((au - 0.75).abs() < 1e-5, "tile 1012 u: got {}", au);
+        assert!((av - 0.25).abs() < 1e-5, "tile 1012 v: got {}", av);
+    }
+
+    #[test]
+    fn test_udim_sample_tile_color() {
+        // Build a 2x1 UDIM atlas: left tile=red, right tile=blue
+        // Each tile is 2px wide so bilinear sampling stays within tile at center
+        let pixels = vec![
+            [1.0, 0.0, 0.0, 1.0], // tile 1001 px 0
+            [1.0, 0.0, 0.0, 1.0], // tile 1001 px 1
+            [0.0, 0.0, 1.0, 1.0], // tile 1002 px 0
+            [0.0, 0.0, 1.0, 1.0], // tile 1002 px 1
+        ];
+        let mut tex = Texture::new(4, 1, pixels, "<udim_test>");
+        tex.udim_grid_cols = 2;
+        tex.udim_grid_rows = 1;
+        tex.udim_min_col = 0;
+        tex.udim_min_row = 0;
+
+        // Sample tile 1001 center (u=0.5, v=0.5) → should be red
+        let color = tex.sample(0.5, 0.5);
+        assert!(
+            (color.x - 1.0).abs() < 0.01,
+            "expected red, got {:?}",
+            color
+        );
+        assert!(color.z < 0.01, "expected no blue, got {:?}", color);
+
+        // Sample tile 1002 center (u=1.5, v=0.5) → should be blue
+        let color = tex.sample(1.5, 0.5);
+        assert!(color.x < 0.01, "expected no red, got {:?}", color);
+        assert!(
+            (color.z - 1.0).abs() < 0.01,
+            "expected blue, got {:?}",
+            color
+        );
     }
 
     #[test]

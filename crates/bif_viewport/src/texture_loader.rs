@@ -708,7 +708,7 @@ pub fn create_default_gpu_textures(device: &Device, queue: &Queue) -> GpuTexture
 
 /// Check if a texture path contains a UDIM token (`<UDIM>`).
 pub fn is_udim_path(path: &str) -> bool {
-    path.contains("<UDIM>")
+    bif_core::texture::is_udim_path(path)
 }
 
 /// Scan filesystem for existing UDIM tiles matching the pattern.

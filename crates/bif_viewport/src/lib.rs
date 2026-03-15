@@ -765,7 +765,7 @@ impl Renderer {
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,
                 strip_index_format: None,
-                front_face: wgpu::FrontFace::Cw, // USD uses CW winding
+                front_face: wgpu::FrontFace::Ccw, // USD rightHanded = CCW front faces
                 cull_mode: Some(wgpu::Face::Back),
                 polygon_mode: wgpu::PolygonMode::Fill,
                 unclipped_depth: false,
@@ -1186,19 +1186,14 @@ impl Renderer {
 
         match stage.get_camera_xform_at_time(camera_path, time) {
             Ok(xform) => {
-                // USD stores translation in row 3, not column 3
+                // C++ bridge outputs column-major (transposed from USD row-major).
+                // In this layout, USD basis rows become glam rows:
+                //   row(0) = local X axis in world,  row(1) = local Y (up),
+                //   row(2) = local Z axis in world,  row(3) = translation
                 let position = xform.row(3).truncate();
-
-                // Extract forward direction (negative Z in camera space)
-                // USD row-major: row 2 is the Z axis
-                let forward =
-                    -Vec3::new(xform.row(0).z, xform.row(1).z, xform.row(2).z).normalize();
-
-                // Target is position + forward * reasonable distance
+                let forward = -xform.row(2).truncate().normalize(); // camera looks -Z
+                let up = xform.row(1).truncate().normalize();
                 let target = position + forward * 10.0;
-
-                // Extract up vector (Y axis) from rows
-                let up = Vec3::new(xform.row(0).y, xform.row(1).y, xform.row(2).y).normalize();
 
                 log::info!(
                     "USD camera '{}' at frame {}: pos={:?}, target={:?}, up={:?}",
@@ -1209,16 +1204,22 @@ impl Renderer {
                     up
                 );
 
-                // Update viewport camera
                 self.camera.position = position;
                 self.camera.target = target;
                 self.camera.up = up;
                 self.camera.distance = 10.0;
 
-                // Recalculate yaw/pitch from the new orientation
+                // Sync FOV/near/far from USD camera properties
+                if let Ok(props) = stage.get_camera_properties(camera_path, time) {
+                    self.camera.fov_y = props.fov_y();
+                    self.camera.near = props.clip_near;
+                    self.camera.far = props.clip_far;
+                }
+
+                // Yaw/pitch must match Camera::new / update_position_from_angles convention
                 let dir = (position - target).normalize();
-                self.camera.yaw = dir.x.atan2(dir.z);
-                self.camera.pitch = (-dir.y).asin();
+                self.camera.yaw = dir.z.atan2(dir.x);
+                self.camera.pitch = dir.y.asin();
 
                 self.update_camera();
             }
