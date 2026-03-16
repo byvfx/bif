@@ -8,6 +8,16 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- USD spec compliance (sessions 1-3): 15 new FFI fields for read-side mesh/instancer/camera/stage
+- Mesh read: visibility, doubleSided, subdivisionScheme, normalsInterpolation, displayColor/Opacity, resetXformStack
+- Instancer read: velocities, angularVelocities, invisibleIds (filtered in loader)
+- Camera read: horizontalAperture + aspect_ratio() helper
+- Stage read: timeCodesPerSecond
+- Lights: CylinderLight + DiskLight types, ShapingAPI (cone angle/softness/focus/IES)
+- New UsdGeomPoints read support (positions, widths, normals, IDs)
+- Arbitrary primvar query API (float/float2/float3/int, per-mesh)
+- Material.double_sided field
+- Scene browser shows real USD inherited visibility
 - 50 new tests: bif_math camera/aabb/basis/frustum/interval (31), bif_renderer EXR negative frames (1), bif_viewer CLI parsing + click detection (19)
 - `Renderer::needs_redraw()` for conditional redraw in viewer
 - `#[must_use]` on pure functions in texture.rs and scene.rs
