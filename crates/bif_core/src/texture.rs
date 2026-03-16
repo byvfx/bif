@@ -231,6 +231,9 @@ impl Texture {
     /// Sample a single channel with bilinear filtering (for roughness/metallic maps).
     #[must_use]
     pub fn sample_channel(&self, u: f32, v: f32, channel: usize) -> f32 {
+        if self.width == 0 || self.height == 0 {
+            return 0.0;
+        }
         let (u, v) = self.transform_uv(u, v);
         let ch = channel.min(3);
 

@@ -248,7 +248,6 @@ static void triangulate_mesh(
 /// Rust side calls from_cols_array() on this data, which implicitly transposes
 /// from USD's row-vector convention to glam's column-vector convention.
 static void matrix_to_float16(const GfMatrix4d& mat, float* out) {
-    GfMatrix4f matf(mat);
     const double* data = mat.GetArray();
     for (int i = 0; i < 16; ++i) {
         out[i] = static_cast<float>(data[i]);
