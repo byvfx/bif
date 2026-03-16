@@ -479,6 +479,31 @@ impl Default for IvarState {
 }
 
 impl IvarState {
+    /// Invalidate scene: clear world/build, cancel render, mark incomplete.
+    /// Used when scene geometry changes (USD load, node graph edit, etc.).
+    pub fn invalidate_scene(&mut self) {
+        self.world = None;
+        self.build_status = BuildStatus::NotStarted;
+        self.cancel_flag.store(true, Ordering::Relaxed);
+        self.render_complete = false;
+    }
+
+    /// Full reset on window resize: cancel render, clear all progressive state.
+    pub fn reset_on_resize(&mut self) {
+        self.cancel_flag.store(true, Ordering::Relaxed);
+        self.cancel_flag = Arc::new(AtomicBool::new(false));
+        self.receiver = None;
+        self.image_buffer = None;
+        self.render_complete = false;
+        self.accumulated_samples = 0;
+        self.buckets_completed = 0;
+        self.current_scale = 1;
+        self.last_interaction_time = None;
+        self.last_camera_snapshot = None;
+        self.render_start_time = None;
+        self.final_render_secs = None;
+    }
+
     /// Reset render state (call when starting new render).
     pub fn reset_render(&mut self, width: u32, height: u32) {
         // Cancel any existing render

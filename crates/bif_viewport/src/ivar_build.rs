@@ -461,20 +461,10 @@ impl Renderer {
     pub fn invalidate_ivar_scene(&mut self) {
         log::info!("Invalidating Ivar scene cache");
 
-        // Clear cached scene
-        self.ivar.ivar_state.world = None;
-        self.ivar.ivar_state.build_status = BuildStatus::NotStarted;
+        // Clear cached scene + cancel render
+        self.ivar.ivar_state.invalidate_scene();
         self.ivar.ivar_state.build_receiver = None;
-
-        // Cancel any active render
-        self.ivar
-            .ivar_state
-            .cancel_flag
-            .store(true, Ordering::Relaxed);
         self.ivar.ivar_state.cancel_flag = Arc::new(AtomicBool::new(false));
-
-        // Clear render state
-        self.ivar.ivar_state.render_complete = false;
         self.ivar.ivar_state.buckets_completed = 0;
         self.ivar.ivar_state.image_buffer = None;
 

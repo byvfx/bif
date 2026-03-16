@@ -1,9 +1,6 @@
 use anyhow::Result;
 use std::num::NonZeroU32;
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Arc,
-};
+use std::sync::Arc;
 use wgpu::{util::DeviceExt, Device, Instance, Queue, Surface, SurfaceConfiguration};
 
 use bif_math::{Camera, Mat4, Vec3};
@@ -249,12 +246,12 @@ pub(crate) struct GpuContext {
 /// Camera state — camera, uniform, GPU buffer, bind group, viewport source.
 pub struct CameraState {
     pub camera: Camera,
-    pub camera_uniform: CameraUniform,
-    pub camera_buffer: wgpu::Buffer,
-    pub camera_bind_group: wgpu::BindGroup,
-    pub viewport_camera_source: CameraSource,
-    pub camera_locked: bool,
-    pub selected_usd_camera: Option<String>,
+    pub(crate) camera_uniform: CameraUniform,
+    pub(crate) camera_buffer: wgpu::Buffer,
+    pub(crate) camera_bind_group: wgpu::BindGroup,
+    pub(crate) viewport_camera_source: CameraSource,
+    pub(crate) camera_locked: bool,
+    pub(crate) selected_usd_camera: Option<String>,
 }
 
 /// Ivar CPU path tracer integration — state, GPU resources, materials.
@@ -1071,21 +1068,7 @@ impl Renderer {
             // image_buffer = None because target dims are unknown until next
             // frame's viewport_rect(). One frame of black during resize is
             // acceptable (fundamentally different from orbit).
-            self.ivar
-                .ivar_state
-                .cancel_flag
-                .store(true, Ordering::Relaxed);
-            self.ivar.ivar_state.cancel_flag = Arc::new(AtomicBool::new(false));
-            self.ivar.ivar_state.receiver = None;
-            self.ivar.ivar_state.image_buffer = None;
-            self.ivar.ivar_state.render_complete = false;
-            self.ivar.ivar_state.accumulated_samples = 0;
-            self.ivar.ivar_state.buckets_completed = 0;
-            self.ivar.ivar_state.current_scale = 1;
-            self.ivar.ivar_state.last_interaction_time = None;
-            self.ivar.ivar_state.last_camera_snapshot = None;
-            self.ivar.ivar_state.render_start_time = None;
-            self.ivar.ivar_state.final_render_secs = None;
+            self.ivar.ivar_state.reset_on_resize();
 
             // Update camera aspect ratio from viewport (excludes UI panels)
             let (_, _, vp_w, vp_h) = self.viewport_rect();

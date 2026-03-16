@@ -1,6 +1,5 @@
 use anyhow::Result;
 use std::collections::HashMap;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -9,7 +8,6 @@ use wgpu::util::DeviceExt;
 use bif_math::{Aabb, Mat4, Mat4Ext, Vec3};
 
 use crate::gpu_types::{InstanceData, MaterialGpu, MaterialUniform, PrototypeGpuData};
-use crate::ivar_state::BuildStatus;
 use crate::mesh_data::MeshData;
 use crate::timeline::TimelineState;
 use crate::{texture_loader, Renderer, MAX_INSTANCES};
@@ -321,13 +319,7 @@ impl Renderer {
 
         // Invalidate Ivar scene + materials (new scene = new materials)
         self.invalidate_ivar_materials();
-        self.ivar.ivar_state.world = None;
-        self.ivar.ivar_state.build_status = BuildStatus::NotStarted;
-        self.ivar
-            .ivar_state
-            .cancel_flag
-            .store(true, Ordering::Relaxed);
-        self.ivar.ivar_state.render_complete = false;
+        self.ivar.ivar_state.invalidate_scene();
 
         // Update lights
         self.update_lights(&scene.lights);
@@ -517,13 +509,7 @@ impl Renderer {
                 mesh_ranges: None,
             };
             // Invalidate Ivar
-            self.ivar.ivar_state.world = None;
-            self.ivar.ivar_state.build_status = BuildStatus::NotStarted;
-            self.ivar
-                .ivar_state
-                .cancel_flag
-                .store(true, Ordering::Relaxed);
-            self.ivar.ivar_state.render_complete = false;
+            self.ivar.ivar_state.invalidate_scene();
             return Ok(());
         }
 
@@ -1142,13 +1128,7 @@ impl Renderer {
         );
 
         // Invalidate Ivar
-        self.ivar.ivar_state.world = None;
-        self.ivar.ivar_state.build_status = BuildStatus::NotStarted;
-        self.ivar
-            .ivar_state
-            .cancel_flag
-            .store(true, Ordering::Relaxed);
-        self.ivar.ivar_state.render_complete = false;
+        self.ivar.ivar_state.invalidate_scene();
 
         // Invalidate material cache when materials changed; prewarm new ones
         if self.nodes.materials_dirty {
@@ -1929,13 +1909,7 @@ impl Renderer {
 
         // Invalidate Ivar scene + materials (new scene = new materials)
         self.invalidate_ivar_materials();
-        self.ivar.ivar_state.world = None;
-        self.ivar.ivar_state.build_status = BuildStatus::NotStarted;
-        self.ivar
-            .ivar_state
-            .cancel_flag
-            .store(true, Ordering::Relaxed);
-        self.ivar.ivar_state.render_complete = false;
+        self.ivar.ivar_state.invalidate_scene();
 
         // Initialize timeline from scene data
         if let Some(ref timeline) = scene.timeline {
