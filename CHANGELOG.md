@@ -8,6 +8,49 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- 50 new tests: bif_math camera/aabb/basis/frustum/interval (31), bif_renderer EXR negative frames (1), bif_viewer CLI parsing + click detection (19)
+- `Renderer::needs_redraw()` for conditional redraw in viewer
+- `#[must_use]` on pure functions in texture.rs and scene.rs
+- Interval doc comment, debug_assert on inverted intervals
+- UDIM atlas pixel budget constant `MAX_IVAR_ATLAS_PIXELS`
+
+### Changed
+
+- Explicit glam re-exports (was `pub use glam::*` re-exporting 200+ items)
+- Arvo's method for AABB transform (~2x faster)
+- Prototype lookup uses HashMap (was O(N*P) linear scan)
+- Mesh dedup hash samples 10 vertices (was 3)
+- SphereLight uses solid-angle sampling (was ad-hoc inverse-square)
+- SHARC radiance cache uses CAS loop (was racy lock-free write)
+- Camera matrix path uses flat copy like meshes (was inconsistent transposition)
+- Viewer CLI validates args, .expect()→graceful exit, conditional redraw
+- Send+Sync safety comments expanded on UsdStage/UsdEditLayer
+
+### Fixed
+
+- **Memory leak:** UsdEditLayer::save() nulled pointer preventing Drop from freeing C++ handle
+- **SHARC race:** two threads CAS-increment sample_count but only one's radiance survived
+- **Instance hit:** re-normalization after inverse transform broke rec.t for non-uniform scales
+- **AOV correlated noise:** missing seed finalization hash in render_bucket_with_aovs
+- **Matrix convention:** camera xform used row/col transpose while meshes used flat copy
+- **Culling OOB panic:** instance_aabbs/transforms length mismatch after partial scene update
+- **Duplicate CullingResult:** consolidated to single definition in frustum_culling
+- **Shader specular:** extreme values at grazing angles, clamped n_dot_v/n_dot_l ≥ 0.001
+- **Distant light cone:** cos(1 - angle/2) → cos(angle/2)
+- **Lambertian BSDF:** removed baked cos_theta that double-weighted NEE
+- **is_delta():** returns false when roughness/metallic textures bound
+- NaN guards on Camera::new, Camera::pan, Camera::set_from_matrix, Aabb::hit, Renderer throughput
+- Texture::sample() 0-size panic guard
+- HDRI pole singularity clamp widened
+- EXR negative frame filename collision
+- Hardcoded dev-machine path in validate.rs → requires USD_TOOLKIT_DIR env var
+- prim_matches_path loose suffix → checks path component boundary
+- Point instancer silent fallback → log::warn
+- debug_usd_mesh normals bounds check validates all 3 indices
+- C++ dead computation in matrix_to_float16, reserve()+shrink_to_fit()
+- Removed duplicate Aabb::empty() (use Aabb::EMPTY)
+- texture_loader use-after-move bug
+
 - USD camera properties FFI — read focal_length, vertical_aperture, clipping_range from UsdGeomCamera
 - `CameraProperties` struct with `fov_y()` computation (2*atan(aperture/2*focal))
 - Viewport syncs FOV/near/far from USD cameras (graceful fallback on error)
