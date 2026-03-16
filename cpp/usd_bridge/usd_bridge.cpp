@@ -19,6 +19,10 @@
 #include <pxr/usd/usdLux/sphereLight.h>
 #include <pxr/usd/usdLux/rectLight.h>
 #include <pxr/usd/usdLux/domeLight.h>
+#include <pxr/usd/usdLux/cylinderLight.h>
+#include <pxr/usd/usdLux/diskLight.h>
+#include <pxr/usd/usdLux/shapingAPI.h>
+#include <pxr/usd/usdGeom/points.h>
 #include <pxr/base/gf/matrix4f.h>
 #include <pxr/base/gf/vec2f.h>
 #include <pxr/base/gf/vec3f.h>
@@ -74,6 +78,27 @@ struct CachedMesh {
     // True if this mesh came from a native instance proxy
     bool is_instance_proxy = false;
 
+    // Computed visibility (inherited)
+    bool visible = true;
+
+    // Double-sided flag
+    bool double_sided = false;
+
+    // Subdivision scheme
+    std::string subdivision_scheme = "none";
+
+    // Normals interpolation (0=vertex, 1=faceVarying, 2=uniform, 3=constant)
+    int normals_interpolation = 0;
+
+    // Display color (primvars:displayColor — RGB, per-vertex or single)
+    std::vector<float> display_color;
+
+    // Display opacity (primvars:displayOpacity — single value)
+    float display_opacity = 1.0f;
+
+    // True if xformOpOrder contains !resetXformStack!
+    bool resets_xform_stack = false;
+
     // Material path resolved during traversal (needed for instance proxies
     // whose virtual paths fail GetPrimAtPath() after traversal)
     std::string bound_material_path;
@@ -93,6 +118,9 @@ struct CachedInstancer {
     std::vector<const char*> prototype_path_ptrs;  // For C API
     std::vector<float> transforms;
     std::vector<int32_t> proto_indices;
+    std::vector<float> velocities;         // vec3 per instance
+    std::vector<float> angular_velocities; // vec3 per instance
+    std::vector<int64_t> invisible_ids;    // IDs of invisible instances
 };
 
 /// Cached prim info for scene browser
@@ -104,6 +132,7 @@ struct CachedPrimInfo {
     size_t child_count;
     std::vector<std::string> child_paths;
     std::vector<const char*> child_path_ptrs;  // For C API
+    bool visible = true;  // Computed inherited visibility
 };
 
 /// Cached animation sample for a single time
@@ -163,10 +192,37 @@ struct CachedLight {
     float exposure;
     float transform[16];
     float angle;   // DistantLight
-    float radius;  // SphereLight
+    float radius;  // SphereLight/DiskLight
     float width;   // RectLight
     float height;  // RectLight
     std::string texture_path;  // DomeLight
+    float length;  // CylinderLight
+
+    // ShapingAPI
+    float shaping_cone_angle = 0.0f;
+    float shaping_cone_softness = 0.0f;
+    float shaping_focus = 0.0f;
+    std::string shaping_ies_file;
+};
+
+/// Cached UsdGeomPoints data for FFI transfer
+struct CachedPoints {
+    std::string path;
+    std::vector<float> positions;  // xyz triplets
+    std::vector<float> widths;
+    std::vector<float> normals;    // xyz triplets
+    std::vector<int64_t> ids;
+    float transform[16];
+};
+
+/// Cached primvar data for a mesh
+struct CachedPrimvar {
+    std::string name;
+    UsdBridgePrimvarType type;
+    UsdBridgePrimvarInterpolation interpolation;
+    std::vector<float> float_data;
+    std::vector<int32_t> int_data;
+    size_t element_count = 0;
 };
 
 /// Internal stage representation
@@ -181,10 +237,13 @@ struct UsdBridgeStage {
     std::vector<CachedPrimInfo> all_prims;  // All prims in traversal order
     std::vector<std::string> root_paths;    // Direct children of pseudo-root
     std::vector<const char*> root_path_ptrs;
+    std::vector<CachedPoints> points_prims;
+    std::vector<std::vector<CachedPrimvar>> mesh_primvars;  // Per-mesh primvars
     bool cached;
     bool prims_cached;
     bool materials_cached;
     bool lights_cached;
+    bool points_cached;
     bool animation_cached;
 
     // Animation caches
@@ -194,7 +253,7 @@ struct UsdBridgeStage {
     std::vector<CachedVertexAnimation> vertex_animations;
     bool vertex_animation_cached;
 
-    UsdBridgeStage() : cached(false), prims_cached(false), materials_cached(false), lights_cached(false), animation_cached(false), vertex_animation_cached(false) {}
+    UsdBridgeStage() : cached(false), prims_cached(false), materials_cached(false), lights_cached(false), points_cached(false), animation_cached(false), vertex_animation_cached(false) {}
 
     ~UsdBridgeStage() {
         // Clear cached data to ensure proper cleanup
@@ -291,6 +350,12 @@ static void cache_prim_data(UsdBridgeStage* bridge) {
         }
         info.has_children = !info.child_paths.empty();
         info.child_count = info.child_paths.size();
+
+        // Compute inherited visibility
+        UsdGeomImageable imageable(prim);
+        if (imageable) {
+            info.visible = (imageable.ComputeVisibility() != UsdGeomTokens->invisible);
+        }
 
         bridge->all_prims.push_back(std::move(info));
     }
@@ -481,6 +546,17 @@ static void cache_stage_data(UsdBridgeStage* bridge) {
                     cached.normals.push_back(n[1]);
                     cached.normals.push_back(n[2]);
                 }
+
+                // Store normals interpolation enum
+                if (normalsInterpolation == UsdGeomTokens->faceVarying) {
+                    cached.normals_interpolation = 1;
+                } else if (normalsInterpolation == UsdGeomTokens->uniform) {
+                    cached.normals_interpolation = 2;
+                } else if (normalsInterpolation == UsdGeomTokens->constant) {
+                    cached.normals_interpolation = 3;
+                } else {
+                    cached.normals_interpolation = 0; // vertex (default)
+                }
             }
             time_normals += duration_cast<milliseconds>(high_resolution_clock::now() - normal_start).count();
 
@@ -631,6 +707,60 @@ static void cache_stage_data(UsdBridgeStage* bridge) {
 
             cached.is_instance_proxy = is_proxy;
 
+            // Computed visibility (considers ancestor visibility)
+            cached.visible = (imageable.ComputeVisibility() != UsdGeomTokens->invisible);
+
+            // Double-sided flag
+            {
+                bool ds = false;
+                if (mesh.GetDoubleSidedAttr().Get(&ds)) {
+                    cached.double_sided = ds;
+                }
+            }
+
+            // Subdivision scheme
+            {
+                TfToken subdivScheme;
+                if (mesh.GetSubdivisionSchemeAttr().Get(&subdivScheme)) {
+                    cached.subdivision_scheme = subdivScheme.GetString();
+                }
+            }
+
+            // Display color (primvars:displayColor — fallback when no material)
+            {
+                UsdGeomPrimvar displayColorPv = primvarsAPI.GetPrimvar(TfToken("displayColor"));
+                if (displayColorPv) {
+                    VtArray<GfVec3f> colors;
+                    if (displayColorPv.Get(&colors, timeCode) && !colors.empty()) {
+                        cached.display_color.reserve(colors.size() * 3);
+                        for (const auto& c : colors) {
+                            cached.display_color.push_back(c[0]);
+                            cached.display_color.push_back(c[1]);
+                            cached.display_color.push_back(c[2]);
+                        }
+                    }
+                }
+            }
+
+            // Display opacity (primvars:displayOpacity)
+            {
+                UsdGeomPrimvar displayOpacityPv = primvarsAPI.GetPrimvar(TfToken("displayOpacity"));
+                if (displayOpacityPv) {
+                    VtArray<float> opacities;
+                    if (displayOpacityPv.Get(&opacities, timeCode) && !opacities.empty()) {
+                        cached.display_opacity = opacities[0];
+                    }
+                }
+            }
+
+            // Check for !resetXformStack! in xformOpOrder
+            {
+                UsdGeomXformable xformable(prim);
+                bool resetsXform = false;
+                xformable.GetOrderedXformOps(&resetsXform);
+                cached.resets_xform_stack = resetsXform;
+            }
+
             // Resolve material binding while we have the live prim
             // (instance proxy paths are virtual — GetPrimAtPath() fails afterward)
             {
@@ -687,6 +817,40 @@ static void cache_stage_data(UsdBridgeStage* bridge) {
                     }
                 }
                 cached.transforms.shrink_to_fit();
+            }
+
+            // Velocities (for motion blur interpolation)
+            {
+                VtArray<GfVec3f> vels;
+                if (instancer.GetVelocitiesAttr().Get(&vels, UsdTimeCode::Default()) && !vels.empty()) {
+                    cached.velocities.reserve(vels.size() * 3);
+                    for (const auto& v : vels) {
+                        cached.velocities.push_back(v[0]);
+                        cached.velocities.push_back(v[1]);
+                        cached.velocities.push_back(v[2]);
+                    }
+                }
+            }
+
+            // Angular velocities (for motion blur)
+            {
+                VtArray<GfVec3f> angVels;
+                if (instancer.GetAngularVelocitiesAttr().Get(&angVels, UsdTimeCode::Default()) && !angVels.empty()) {
+                    cached.angular_velocities.reserve(angVels.size() * 3);
+                    for (const auto& v : angVels) {
+                        cached.angular_velocities.push_back(v[0]);
+                        cached.angular_velocities.push_back(v[1]);
+                        cached.angular_velocities.push_back(v[2]);
+                    }
+                }
+            }
+
+            // Invisible instance IDs
+            {
+                VtArray<int64_t> invisIds;
+                if (instancer.GetInvisibleIdsAttr().Get(&invisIds) && !invisIds.empty()) {
+                    cached.invisible_ids.assign(invisIds.begin(), invisIds.end());
+                }
             }
 
             bridge->instancers.push_back(std::move(cached));
@@ -1181,6 +1345,152 @@ static void cache_material_data(UsdBridgeStage* bridge) {
 }
 
 /// Cache all light data from the stage (UsdLux)
+/// Cache UsdGeomPoints prims
+static void cache_points_data(UsdBridgeStage* bridge) {
+    if (bridge->points_cached) return;
+
+    bridge->points_prims.clear();
+    UsdGeomXformCache xform_cache;
+
+    for (const UsdPrim& prim : bridge->stage->Traverse(
+            UsdTraverseInstanceProxies(UsdPrimDefaultPredicate))) {
+        if (!prim.IsA<UsdGeomPoints>()) continue;
+
+        UsdGeomPoints pointsPrim(prim);
+        CachedPoints cached;
+        cached.path = prim.GetPath().GetString();
+
+        // Positions
+        VtArray<GfVec3f> positions;
+        if (pointsPrim.GetPointsAttr().Get(&positions)) {
+            cached.positions.reserve(positions.size() * 3);
+            for (const auto& p : positions) {
+                cached.positions.push_back(p[0]);
+                cached.positions.push_back(p[1]);
+                cached.positions.push_back(p[2]);
+            }
+        }
+
+        // Widths
+        VtArray<float> widths;
+        if (pointsPrim.GetWidthsAttr().Get(&widths)) {
+            cached.widths.assign(widths.begin(), widths.end());
+        }
+
+        // Normals
+        VtArray<GfVec3f> normals;
+        if (pointsPrim.GetNormalsAttr().Get(&normals)) {
+            cached.normals.reserve(normals.size() * 3);
+            for (const auto& n : normals) {
+                cached.normals.push_back(n[0]);
+                cached.normals.push_back(n[1]);
+                cached.normals.push_back(n[2]);
+            }
+        }
+
+        // IDs
+        VtArray<int64_t> ids;
+        if (pointsPrim.GetIdsAttr().Get(&ids)) {
+            cached.ids.assign(ids.begin(), ids.end());
+        }
+
+        // Transform
+        GfMatrix4d world_xform = xform_cache.GetLocalToWorldTransform(prim);
+        matrix_to_float16(world_xform, cached.transform);
+
+        bridge->points_prims.push_back(std::move(cached));
+    }
+
+    bridge->points_cached = true;
+}
+
+/// Cache arbitrary primvars for all meshes (excludes built-in st, normals, displayColor, displayOpacity)
+static void cache_mesh_primvars(UsdBridgeStage* bridge) {
+    // Must be called after cache_stage_data
+    if (!bridge->cached) return;
+
+    bridge->mesh_primvars.resize(bridge->meshes.size());
+
+    static const std::set<std::string> built_in = {
+        "st", "normals", "displayColor", "displayOpacity"
+    };
+
+    for (size_t mesh_idx = 0; mesh_idx < bridge->meshes.size(); ++mesh_idx) {
+        const CachedMesh& mesh = bridge->meshes[mesh_idx];
+        UsdPrim prim = bridge->stage->GetPrimAtPath(SdfPath(mesh.path));
+        if (!prim) continue;
+
+        UsdGeomPrimvarsAPI pvAPI(prim);
+        std::vector<UsdGeomPrimvar> primvars = pvAPI.GetPrimvars();
+
+        for (const auto& pv : primvars) {
+            std::string name = pv.GetPrimvarName().GetString();
+            if (built_in.count(name)) continue;
+
+            TfToken interp = pv.GetInterpolation();
+            SdfValueTypeName typeName = pv.GetTypeName();
+
+            CachedPrimvar cached;
+            cached.name = name;
+
+            // Map interpolation
+            if (interp == UsdGeomTokens->constant) cached.interpolation = USD_PRIMVAR_INTERP_CONSTANT;
+            else if (interp == UsdGeomTokens->uniform) cached.interpolation = USD_PRIMVAR_INTERP_UNIFORM;
+            else if (interp == UsdGeomTokens->vertex) cached.interpolation = USD_PRIMVAR_INTERP_VERTEX;
+            else if (interp == UsdGeomTokens->faceVarying) cached.interpolation = USD_PRIMVAR_INTERP_FACE_VARYING;
+            else cached.interpolation = USD_PRIMVAR_INTERP_VERTEX;
+
+            // Extract data based on type
+            if (typeName == SdfValueTypeNames->FloatArray || typeName == SdfValueTypeNames->Float) {
+                VtArray<float> data;
+                if (pv.Get(&data)) {
+                    cached.type = USD_PRIMVAR_FLOAT;
+                    cached.float_data.assign(data.begin(), data.end());
+                    cached.element_count = data.size();
+                }
+            } else if (typeName == SdfValueTypeNames->Float2Array || typeName == SdfValueTypeNames->Float2) {
+                VtArray<GfVec2f> data;
+                if (pv.Get(&data)) {
+                    cached.type = USD_PRIMVAR_FLOAT2;
+                    cached.float_data.reserve(data.size() * 2);
+                    for (const auto& v : data) {
+                        cached.float_data.push_back(v[0]);
+                        cached.float_data.push_back(v[1]);
+                    }
+                    cached.element_count = data.size();
+                }
+            } else if (typeName == SdfValueTypeNames->Float3Array || typeName == SdfValueTypeNames->Float3 ||
+                       typeName == SdfValueTypeNames->Color3fArray || typeName == SdfValueTypeNames->Vector3fArray ||
+                       typeName == SdfValueTypeNames->Normal3fArray || typeName == SdfValueTypeNames->Point3fArray) {
+                VtArray<GfVec3f> data;
+                if (pv.Get(&data)) {
+                    cached.type = USD_PRIMVAR_FLOAT3;
+                    cached.float_data.reserve(data.size() * 3);
+                    for (const auto& v : data) {
+                        cached.float_data.push_back(v[0]);
+                        cached.float_data.push_back(v[1]);
+                        cached.float_data.push_back(v[2]);
+                    }
+                    cached.element_count = data.size();
+                }
+            } else if (typeName == SdfValueTypeNames->IntArray || typeName == SdfValueTypeNames->Int) {
+                VtArray<int> data;
+                if (pv.Get(&data)) {
+                    cached.type = USD_PRIMVAR_INT;
+                    cached.int_data.assign(data.begin(), data.end());
+                    cached.element_count = data.size();
+                }
+            } else {
+                continue; // Skip unsupported types
+            }
+
+            if (cached.element_count > 0) {
+                bridge->mesh_primvars[mesh_idx].push_back(std::move(cached));
+            }
+        }
+    }
+}
+
 static void cache_light_data(UsdBridgeStage* bridge) {
     if (bridge->lights_cached) return;
 
@@ -1251,6 +1561,33 @@ static void cache_light_data(UsdBridgeStage* bridge) {
             light.width = 0.0f;
             light.height = 0.0f;
         }
+        else if (prim.IsA<UsdLuxCylinderLight>()) {
+            UsdLuxCylinderLight cylinder(prim);
+            light.type = USD_LIGHT_CYLINDER;
+            is_light = true;
+
+            float radius = 0.5f, length = 1.0f;
+            cylinder.GetRadiusAttr().Get(&radius);
+            cylinder.GetLengthAttr().Get(&length);
+            light.radius = radius;
+            light.length = length;
+            light.angle = 0.0f;
+            light.width = 0.0f;
+            light.height = 0.0f;
+        }
+        else if (prim.IsA<UsdLuxDiskLight>()) {
+            UsdLuxDiskLight disk(prim);
+            light.type = USD_LIGHT_DISK;
+            is_light = true;
+
+            float radius = 0.5f;
+            disk.GetRadiusAttr().Get(&radius);
+            light.radius = radius;
+            light.angle = 0.0f;
+            light.length = 0.0f;
+            light.width = 0.0f;
+            light.height = 0.0f;
+        }
 
         if (!is_light) continue;
 
@@ -1283,6 +1620,27 @@ static void cache_light_data(UsdBridgeStage* bridge) {
         // Get world transform
         GfMatrix4d world_xform = xform_cache.GetLocalToWorldTransform(prim);
         matrix_to_float16(world_xform, light.transform);
+
+        // ShapingAPI (spotlight cone, IES profiles)
+        UsdLuxShapingAPI shaping(prim);
+        if (shaping) {
+            float coneAngle = 0.0f, coneSoftness = 0.0f, focus = 0.0f;
+            shaping.GetShapingConeAngleAttr().Get(&coneAngle);
+            shaping.GetShapingConeSoftnessAttr().Get(&coneSoftness);
+            shaping.GetShapingFocusAttr().Get(&focus);
+            light.shaping_cone_angle = coneAngle;
+            light.shaping_cone_softness = coneSoftness;
+            light.shaping_focus = focus;
+
+            SdfAssetPath iesPath;
+            if (shaping.GetShapingIesFileAttr().Get(&iesPath)) {
+                if (!iesPath.GetResolvedPath().empty()) {
+                    light.shaping_ies_file = iesPath.GetResolvedPath();
+                } else if (!iesPath.GetAssetPath().empty()) {
+                    light.shaping_ies_file = iesPath.GetAssetPath();
+                }
+            }
+        }
 
         bridge->lights.push_back(std::move(light));
     }
@@ -1501,6 +1859,14 @@ UsdBridgeError usd_bridge_get_mesh(
 
     out_data->purpose = static_cast<UsdBridgePurpose>(mesh.purpose);
     out_data->is_instance_proxy = mesh.is_instance_proxy ? 1 : 0;
+    out_data->visibility = mesh.visible ? 1 : 0;
+    out_data->double_sided = mesh.double_sided ? 1 : 0;
+    out_data->subdivision_scheme = mesh.subdivision_scheme.c_str();
+    out_data->normals_interpolation = mesh.normals_interpolation;
+    out_data->display_color = mesh.display_color.empty() ? nullptr : mesh.display_color.data();
+    out_data->display_color_count = mesh.display_color.size() / 3;
+    out_data->display_opacity = mesh.display_opacity;
+    out_data->resets_xform_stack = mesh.resets_xform_stack ? 1 : 0;
 
     return USD_BRIDGE_SUCCESS;
 }
@@ -1562,6 +1928,12 @@ UsdBridgeError usd_bridge_get_instancer(
     out_data->transforms = instancer.transforms.data();
     out_data->instance_count = instancer.transforms.size() / 16;
     out_data->proto_indices = instancer.proto_indices.data();
+    out_data->velocities = instancer.velocities.empty() ? nullptr : instancer.velocities.data();
+    out_data->velocity_count = instancer.velocities.size() / 3;
+    out_data->angular_velocities = instancer.angular_velocities.empty() ? nullptr : instancer.angular_velocities.data();
+    out_data->angular_velocity_count = instancer.angular_velocities.size() / 3;
+    out_data->invisible_ids = instancer.invisible_ids.empty() ? nullptr : instancer.invisible_ids.data();
+    out_data->invisible_id_count = instancer.invisible_ids.size();
 
     return USD_BRIDGE_SUCCESS;
 }
@@ -1689,6 +2061,7 @@ UsdBridgeError usd_bridge_get_prim_info(
     out_info->is_active = info.is_active ? 1 : 0;
     out_info->has_children = info.has_children ? 1 : 0;
     out_info->child_count = info.child_count;
+    out_info->visibility = info.visible ? 1 : 0;
 
     return USD_BRIDGE_SUCCESS;
 }
@@ -1810,6 +2183,7 @@ UsdBridgeError usd_bridge_get_prim_info_by_path(
             out_info->is_active = info.is_active ? 1 : 0;
             out_info->has_children = info.has_children ? 1 : 0;
             out_info->child_count = info.child_count;
+            out_info->visibility = info.visible ? 1 : 0;
             return USD_BRIDGE_SUCCESS;
         }
     }
@@ -2019,6 +2393,9 @@ UsdBridgeError usd_bridge_get_stage_metadata(
         out_data->up_axis = USD_BRIDGE_UP_AXIS_Y;
     }
 
+    // timeCodesPerSecond (default 24.0 per USD spec)
+    out_data->time_codes_per_second = stage->stage->GetTimeCodesPerSecond();
+
     return USD_BRIDGE_SUCCESS;
 }
 
@@ -2200,6 +2577,7 @@ UsdBridgeError usd_bridge_get_camera_properties(
 
     float focalLength = 50.0f;
     float verticalAperture = 24.89f;
+    float horizontalAperture = 36.0f;
     float clipNear = 0.1f;
     float clipFar = 10000.0f;
 
@@ -2216,6 +2594,12 @@ UsdBridgeError usd_bridge_get_camera_properties(
         }
     }
     {
+        float val;
+        if (camera.GetHorizontalApertureAttr().Get(&val, tc)) {
+            horizontalAperture = val;
+        }
+    }
+    {
         GfVec2f range;
         if (camera.GetClippingRangeAttr().Get(&range, tc)) {
             clipNear = range[0];
@@ -2227,11 +2611,13 @@ UsdBridgeError usd_bridge_get_camera_properties(
     // (Rust side also guards, but C++ bridge should not emit garbage)
     if (focalLength <= 0.0f) focalLength = 50.0f;
     if (verticalAperture <= 0.0f) verticalAperture = 24.89f;
+    if (horizontalAperture <= 0.0f) horizontalAperture = 36.0f;
     if (clipNear <= 0.0f) clipNear = 0.1f;
     if (clipFar <= clipNear) clipFar = clipNear + 10000.0f;
 
     out_props->focal_length = focalLength;
     out_props->vertical_aperture = verticalAperture;
+    out_props->horizontal_aperture = horizontalAperture;
     out_props->clip_near = clipNear;
     out_props->clip_far = clipFar;
 
@@ -2426,6 +2812,11 @@ UsdBridgeError usd_bridge_get_light(
     out_data->width = light.width;
     out_data->height = light.height;
     out_data->texture_path = light.texture_path.empty() ? nullptr : light.texture_path.c_str();
+    out_data->length = light.length;
+    out_data->shaping_cone_angle = light.shaping_cone_angle;
+    out_data->shaping_cone_softness = light.shaping_cone_softness;
+    out_data->shaping_focus = light.shaping_focus;
+    out_data->shaping_ies_file = light.shaping_ies_file.empty() ? nullptr : light.shaping_ies_file.c_str();
 
     return USD_BRIDGE_SUCCESS;
 }
@@ -2433,6 +2824,91 @@ UsdBridgeError usd_bridge_get_light(
 // ============================================================================
 // Edit Layer Export
 // ============================================================================
+
+// ============================================================================
+// UsdGeomPoints API
+// ============================================================================
+
+UsdBridgeError usd_bridge_get_points_count(
+    const UsdBridgeStage* stage,
+    size_t* out_count
+) {
+    if (!stage || !out_count) return USD_BRIDGE_ERROR_NULL_POINTER;
+    const_cast<UsdBridgeStage*>(stage)->points_cached || (cache_points_data(const_cast<UsdBridgeStage*>(stage)), true);
+    *out_count = stage->points_prims.size();
+    return USD_BRIDGE_SUCCESS;
+}
+
+UsdBridgeError usd_bridge_get_points(
+    const UsdBridgeStage* stage,
+    size_t index,
+    UsdBridgePointsData* out_data
+) {
+    if (!stage || !out_data) return USD_BRIDGE_ERROR_NULL_POINTER;
+    const_cast<UsdBridgeStage*>(stage)->points_cached || (cache_points_data(const_cast<UsdBridgeStage*>(stage)), true);
+
+    if (index >= stage->points_prims.size()) return USD_BRIDGE_ERROR_INVALID_PRIM;
+
+    const CachedPoints& pts = stage->points_prims[index];
+    out_data->path = pts.path.c_str();
+    out_data->positions = pts.positions.empty() ? nullptr : pts.positions.data();
+    out_data->point_count = pts.positions.size() / 3;
+    out_data->widths = pts.widths.empty() ? nullptr : pts.widths.data();
+    out_data->width_count = pts.widths.size();
+    out_data->normals = pts.normals.empty() ? nullptr : pts.normals.data();
+    out_data->normal_count = pts.normals.size() / 3;
+    out_data->ids = pts.ids.empty() ? nullptr : pts.ids.data();
+    out_data->id_count = pts.ids.size();
+    for (int i = 0; i < 16; ++i) out_data->transform[i] = pts.transform[i];
+
+    return USD_BRIDGE_SUCCESS;
+}
+
+// ============================================================================
+// Primvar Query API
+// ============================================================================
+
+UsdBridgeError usd_bridge_get_mesh_primvar_count(
+    const UsdBridgeStage* stage,
+    size_t mesh_index,
+    size_t* out_count
+) {
+    if (!stage || !out_count) return USD_BRIDGE_ERROR_NULL_POINTER;
+
+    // Lazy-cache primvars
+    UsdBridgeStage* mutable_stage = const_cast<UsdBridgeStage*>(stage);
+    if (mutable_stage->mesh_primvars.empty() && !mutable_stage->meshes.empty()) {
+        cache_mesh_primvars(mutable_stage);
+    }
+
+    if (mesh_index >= stage->mesh_primvars.size()) {
+        *out_count = 0;
+        return USD_BRIDGE_SUCCESS;
+    }
+    *out_count = stage->mesh_primvars[mesh_index].size();
+    return USD_BRIDGE_SUCCESS;
+}
+
+UsdBridgeError usd_bridge_get_mesh_primvar(
+    const UsdBridgeStage* stage,
+    size_t mesh_index,
+    size_t primvar_index,
+    UsdBridgePrimvarData* out_data
+) {
+    if (!stage || !out_data) return USD_BRIDGE_ERROR_NULL_POINTER;
+    if (mesh_index >= stage->mesh_primvars.size()) return USD_BRIDGE_ERROR_INVALID_PRIM;
+    if (primvar_index >= stage->mesh_primvars[mesh_index].size()) return USD_BRIDGE_ERROR_INVALID_PRIM;
+
+    const CachedPrimvar& pv = stage->mesh_primvars[mesh_index][primvar_index];
+    out_data->name = pv.name.c_str();
+    out_data->type = pv.type;
+    out_data->interpolation = pv.interpolation;
+    out_data->float_data = pv.float_data.empty() ? nullptr : pv.float_data.data();
+    out_data->int_data = pv.int_data.empty() ? nullptr : pv.int_data.data();
+    out_data->element_count = pv.element_count;
+
+    return USD_BRIDGE_SUCCESS;
+}
 
 struct UsdBridgeEditLayer {
     UsdStageRefPtr stage;

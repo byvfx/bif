@@ -99,12 +99,14 @@ typedef enum UsdBridgeUpAxis {
     USD_BRIDGE_UP_AXIS_Z = 1,
 } UsdBridgeUpAxis;
 
-/// Stage metadata (metersPerUnit, upAxis)
+/// Stage metadata (metersPerUnit, upAxis, timeCodesPerSecond)
 typedef struct UsdBridgeStageMetadata {
     /// Scene scale in meters (e.g. 0.01 = centimeters)
     double meters_per_unit;
     /// Up axis (Y or Z)
     UsdBridgeUpAxis up_axis;
+    /// Time codes per second (default 24.0)
+    double time_codes_per_second;
 } UsdBridgeStageMetadata;
 
 /// Get stage metadata (metersPerUnit, upAxis).
@@ -236,6 +238,8 @@ typedef struct UsdBridgeCameraProperties {
     float clip_near;
     /// Far clipping plane in scene units
     float clip_far;
+    /// Horizontal aperture in mm
+    float horizontal_aperture;
 } UsdBridgeCameraProperties;
 
 /// Get camera lens and clipping properties at a specific time.
@@ -361,6 +365,28 @@ typedef struct UsdBridgeMeshData {
 
     /// 1 if this mesh came from a native instance proxy, 0 otherwise
     int is_instance_proxy;
+
+    /// Computed visibility: 1=visible, 0=invisible (considers inherited visibility)
+    int visibility;
+
+    /// Double-sided flag from UsdGeomMesh (1=double-sided, 0=single-sided)
+    int double_sided;
+
+    /// Subdivision scheme ("none", "catmullClark", "loop", "bilinear")
+    const char* subdivision_scheme;
+
+    /// Normals interpolation: 0=vertex, 1=faceVarying, 2=uniform, 3=constant
+    int normals_interpolation;
+
+    /// Display color (primvars:displayColor, RGB per-vertex or single, optional)
+    const float* display_color;
+    size_t display_color_count;
+
+    /// Display opacity (primvars:displayOpacity, single value, default 1.0)
+    float display_opacity;
+
+    /// 1 if xformOpOrder contains !resetXformStack! (ignore parent transforms)
+    int resets_xform_stack;
 } UsdBridgeMeshData;
 
 /// Get mesh data by index.
@@ -431,6 +457,18 @@ typedef struct UsdBridgeInstancerData {
 
     /// Prototype index per instance
     const int32_t* proto_indices;
+
+    /// Velocities (vec3 per instance, optional — for motion blur interpolation)
+    const float* velocities;
+    size_t velocity_count;
+
+    /// Angular velocities (vec3 per instance, optional — for motion blur)
+    const float* angular_velocities;
+    size_t angular_velocity_count;
+
+    /// Invisible instance IDs (instances to hide)
+    const int64_t* invisible_ids;
+    size_t invisible_id_count;
 } UsdBridgeInstancerData;
 
 /// Get point instancer data by index.
@@ -555,6 +593,9 @@ typedef struct UsdBridgePrimInfo {
 
     /// Number of direct children
     size_t child_count;
+
+    /// Computed visibility: 1=visible, 0=invisible (considers inherited visibility)
+    int visibility;
 } UsdBridgePrimInfo;
 
 /// Get the total number of prims in the stage (including all types).
@@ -650,6 +691,8 @@ typedef enum UsdBridgeLightType {
     USD_LIGHT_SPHERE = 1,
     USD_LIGHT_RECT = 2,
     USD_LIGHT_DOME = 3,
+    USD_LIGHT_CYLINDER = 4,
+    USD_LIGHT_DISK = 5,
 } UsdBridgeLightType;
 
 /// Light data structure for FFI transfer
@@ -686,6 +729,21 @@ typedef struct UsdBridgeLightData {
 
     /// Dome light: texture path (NULL if none)
     const char* texture_path;
+
+    /// Cylinder light: length
+    float length;
+
+    /// ShapingAPI: cone angle in degrees (spotlight, 0 = no shaping)
+    float shaping_cone_angle;
+
+    /// ShapingAPI: cone softness (0-1)
+    float shaping_cone_softness;
+
+    /// ShapingAPI: focus (0 = uniform)
+    float shaping_focus;
+
+    /// ShapingAPI: IES profile path (NULL if none)
+    const char* shaping_ies_file;
 } UsdBridgeLightData;
 
 /// Get the number of lights in the stage.
@@ -709,6 +767,104 @@ UsdBridgeError usd_bridge_get_light(
     const UsdBridgeStage* stage,
     size_t index,
     UsdBridgeLightData* out_data
+);
+
+// ============================================================================
+// UsdGeomPoints Data Extraction
+// ============================================================================
+
+/// Points data structure for FFI transfer (UsdGeomPoints — particle/point cloud)
+typedef struct UsdBridgePointsData {
+    /// Prim path
+    const char* path;
+
+    /// Point positions (x, y, z triplets)
+    const float* positions;
+    size_t point_count;
+
+    /// Per-point widths (optional, may be NULL)
+    const float* widths;
+    size_t width_count;
+
+    /// Per-point normals (optional, may be NULL)
+    const float* normals;
+    size_t normal_count;
+
+    /// Per-point IDs (optional, may be NULL)
+    const int64_t* ids;
+    size_t id_count;
+
+    /// World transform (4x4 column-major matrix)
+    float transform[16];
+} UsdBridgePointsData;
+
+/// Get the number of UsdGeomPoints prims in the stage.
+UsdBridgeError usd_bridge_get_points_count(
+    const UsdBridgeStage* stage,
+    size_t* out_count
+);
+
+/// Get points data by index.
+UsdBridgeError usd_bridge_get_points(
+    const UsdBridgeStage* stage,
+    size_t index,
+    UsdBridgePointsData* out_data
+);
+
+// ============================================================================
+// Arbitrary Primvar Query API
+// ============================================================================
+
+/// Primvar data type enumeration
+typedef enum UsdBridgePrimvarType {
+    USD_PRIMVAR_FLOAT = 0,
+    USD_PRIMVAR_FLOAT2 = 1,
+    USD_PRIMVAR_FLOAT3 = 2,
+    USD_PRIMVAR_INT = 3,
+} UsdBridgePrimvarType;
+
+/// Primvar interpolation enumeration
+typedef enum UsdBridgePrimvarInterpolation {
+    USD_PRIMVAR_INTERP_CONSTANT = 0,
+    USD_PRIMVAR_INTERP_UNIFORM = 1,
+    USD_PRIMVAR_INTERP_VERTEX = 2,
+    USD_PRIMVAR_INTERP_FACE_VARYING = 3,
+} UsdBridgePrimvarInterpolation;
+
+/// Arbitrary primvar data for FFI transfer
+typedef struct UsdBridgePrimvarData {
+    /// Primvar name (e.g., "Cd", "pscale")
+    const char* name;
+
+    /// Data type
+    UsdBridgePrimvarType type;
+
+    /// Interpolation
+    UsdBridgePrimvarInterpolation interpolation;
+
+    /// Raw float data (for float/float2/float3 types)
+    const float* float_data;
+
+    /// Raw int data (for int type)
+    const int32_t* int_data;
+
+    /// Number of elements
+    size_t element_count;
+} UsdBridgePrimvarData;
+
+/// Get the number of user primvars on a mesh (excludes built-in st, normals, displayColor).
+UsdBridgeError usd_bridge_get_mesh_primvar_count(
+    const UsdBridgeStage* stage,
+    size_t mesh_index,
+    size_t* out_count
+);
+
+/// Get a user primvar by index for a mesh.
+UsdBridgeError usd_bridge_get_mesh_primvar(
+    const UsdBridgeStage* stage,
+    size_t mesh_index,
+    size_t primvar_index,
+    UsdBridgePrimvarData* out_data
 );
 
 // ============================================================================

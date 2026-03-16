@@ -558,13 +558,15 @@ impl PrimDataProvider for UsdStage {
 
     fn get_prim_info(&self, path: &str) -> Option<PrimDisplayInfo> {
         self.get_prim_info_by_path(path).ok().map(|info| {
-            PrimDisplayInfo::new(
+            let mut display = PrimDisplayInfo::new(
                 info.path,
                 info.type_name,
                 info.is_active,
                 info.has_children,
                 info.child_count,
-            )
+            );
+            display.is_visible = info.visible;
+            display
         })
     }
 

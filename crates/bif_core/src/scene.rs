@@ -58,6 +58,9 @@ pub struct Material {
 
     /// Directory of the USD file this material was loaded from (for relative texture paths)
     pub source_dir: Option<PathBuf>,
+
+    /// Double-sided flag (from UsdGeomMesh, applies to geometry using this material)
+    pub double_sided: bool,
 }
 
 impl Default for Material {
@@ -77,6 +80,7 @@ impl Default for Material {
             emissive_texture: None,
             opacity_texture: None,
             source_dir: None,
+            double_sided: false,
         }
     }
 }

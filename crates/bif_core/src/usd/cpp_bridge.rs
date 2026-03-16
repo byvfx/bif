@@ -79,6 +79,14 @@ struct UsdBridgeMeshDataRaw {
     transform: [f32; 16],
     purpose: UsdBridgePurposeRaw,
     is_instance_proxy: i32,
+    visibility: i32,
+    double_sided: i32,
+    subdivision_scheme: *const std::ffi::c_char,
+    normals_interpolation: i32,
+    display_color: *const f32,
+    display_color_count: usize,
+    display_opacity: f32,
+    resets_xform_stack: i32,
 }
 
 /// Native instance data from C API
@@ -98,6 +106,12 @@ struct UsdBridgeInstancerDataRaw {
     transforms: *const f32,
     instance_count: usize,
     proto_indices: *const i32,
+    velocities: *const f32,
+    velocity_count: usize,
+    angular_velocities: *const f32,
+    angular_velocity_count: usize,
+    invisible_ids: *const i64,
+    invisible_id_count: usize,
 }
 
 /// Prim info from C API (for scene browser)
@@ -108,6 +122,7 @@ struct UsdBridgePrimInfoRaw {
     is_active: i32,
     has_children: i32,
     child_count: usize,
+    visibility: i32,
 }
 
 /// Timeline data from C API
@@ -160,6 +175,7 @@ struct UsdBridgeCameraPropertiesRaw {
     vertical_aperture: f32,
     clip_near: f32,
     clip_far: f32,
+    horizontal_aperture: f32,
 }
 
 /// Light type enumeration from C API
@@ -170,6 +186,8 @@ pub enum UsdBridgeLightType {
     Sphere = 1,
     Rect = 2,
     Dome = 3,
+    Cylinder = 4,
+    Disk = 5,
 }
 
 /// Light data from C API
@@ -186,6 +204,59 @@ struct UsdBridgeLightDataRaw {
     width: f32,
     height: f32,
     texture_path: *const std::ffi::c_char,
+    length: f32,
+    shaping_cone_angle: f32,
+    shaping_cone_softness: f32,
+    shaping_focus: f32,
+    shaping_ies_file: *const std::ffi::c_char,
+}
+
+/// Points data from C API (UsdGeomPoints)
+#[repr(C)]
+struct UsdBridgePointsDataRaw {
+    path: *const std::ffi::c_char,
+    positions: *const f32,
+    point_count: usize,
+    widths: *const f32,
+    width_count: usize,
+    normals: *const f32,
+    normal_count: usize,
+    ids: *const i64,
+    id_count: usize,
+    transform: [f32; 16],
+}
+
+/// Primvar data type from C API
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
+enum UsdBridgePrimvarTypeRaw {
+    Float = 0,
+    Float2 = 1,
+    Float3 = 2,
+    Int = 3,
+}
+
+/// Primvar interpolation from C API
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
+enum UsdBridgePrimvarInterpolationRaw {
+    Constant = 0,
+    Uniform = 1,
+    Vertex = 2,
+    FaceVarying = 3,
+}
+
+/// Primvar data from C API
+#[repr(C)]
+struct UsdBridgePrimvarDataRaw {
+    name: *const std::ffi::c_char,
+    primvar_type: UsdBridgePrimvarTypeRaw,
+    interpolation: UsdBridgePrimvarInterpolationRaw,
+    float_data: *const f32,
+    int_data: *const i32,
+    element_count: usize,
 }
 
 /// Up axis value from C API (populated by FFI)
@@ -202,6 +273,7 @@ enum UsdBridgeUpAxisRaw {
 struct UsdBridgeStageMetadataRaw {
     meters_per_unit: f64,
     up_axis: UsdBridgeUpAxisRaw,
+    time_codes_per_second: f64,
 }
 
 /// Material data from C API (UsdPreviewSurface or MaterialX)
@@ -433,6 +505,32 @@ extern "C" {
         out_data: *mut UsdBridgeLightDataRaw,
     ) -> UsdBridgeErrorCode;
 
+    // Points APIs (UsdGeomPoints)
+    fn usd_bridge_get_points_count(
+        stage: *const UsdBridgeStageRaw,
+        out_count: *mut usize,
+    ) -> UsdBridgeErrorCode;
+
+    fn usd_bridge_get_points(
+        stage: *const UsdBridgeStageRaw,
+        index: usize,
+        out_data: *mut UsdBridgePointsDataRaw,
+    ) -> UsdBridgeErrorCode;
+
+    // Primvar query APIs
+    fn usd_bridge_get_mesh_primvar_count(
+        stage: *const UsdBridgeStageRaw,
+        mesh_index: usize,
+        out_count: *mut usize,
+    ) -> UsdBridgeErrorCode;
+
+    fn usd_bridge_get_mesh_primvar(
+        stage: *const UsdBridgeStageRaw,
+        mesh_index: usize,
+        primvar_index: usize,
+        out_data: *mut UsdBridgePrimvarDataRaw,
+    ) -> UsdBridgeErrorCode;
+
     // Edit layer export
     fn usd_bridge_create_edit_layer(
         output_path: *const std::ffi::c_char,
@@ -567,6 +665,32 @@ pub type UsdBridgeResult<T> = Result<T, UsdBridgeError>;
 // Safe Rust Types
 // ============================================================================
 
+/// Subdivision scheme from UsdGeomMesh.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SubdivisionScheme {
+    /// No subdivision (polygonal mesh)
+    None,
+    /// Catmull-Clark subdivision
+    CatmullClark,
+    /// Loop subdivision (triangles only)
+    Loop,
+    /// Bilinear subdivision
+    Bilinear,
+}
+
+/// Normals interpolation mode from USD.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NormalsInterpolation {
+    /// One normal per vertex (shared across faces)
+    Vertex,
+    /// One normal per face-vertex (unique per face corner)
+    FaceVarying,
+    /// One normal per face
+    Uniform,
+    /// Single normal for entire mesh
+    Constant,
+}
+
 /// Mesh purpose attribute from USD (UsdGeomImageable).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MeshPurpose {
@@ -609,6 +733,27 @@ pub struct UsdMeshData {
 
     /// True if this mesh came from a native instance proxy
     pub is_instance_proxy: bool,
+
+    /// Computed visibility (considering inherited visibility)
+    pub visible: bool,
+
+    /// Double-sided flag from UsdGeomMesh
+    pub double_sided: bool,
+
+    /// Subdivision scheme
+    pub subdivision_scheme: SubdivisionScheme,
+
+    /// Normals interpolation mode
+    pub normals_interpolation: NormalsInterpolation,
+
+    /// Display color (primvars:displayColor — fallback when no material bound)
+    pub display_color: Option<Vec<Vec3>>,
+
+    /// Display opacity (primvars:displayOpacity, default 1.0)
+    pub display_opacity: f32,
+
+    /// True if xformOpOrder contains !resetXformStack! (ignore parent transforms)
+    pub resets_xform_stack: bool,
 }
 
 /// Native instance data — references a prototype mesh with a unique transform.
@@ -636,6 +781,15 @@ pub struct UsdInstancerData {
 
     /// Prototype index for each instance
     pub proto_indices: Vec<i32>,
+
+    /// Velocities (vec3 per instance, for motion blur interpolation)
+    pub velocities: Option<Vec<Vec3>>,
+
+    /// Angular velocities (vec3 per instance, for motion blur)
+    pub angular_velocities: Option<Vec<Vec3>>,
+
+    /// IDs of invisible instances
+    pub invisible_ids: Vec<i64>,
 }
 
 /// Prim info for scene hierarchy browsing.
@@ -655,6 +809,9 @@ pub struct UsdPrimInfo {
 
     /// Number of direct children
     pub child_count: usize,
+
+    /// Computed visibility (considering inherited visibility)
+    pub visible: bool,
 }
 
 /// Material data extracted from USD (UsdPreviewSurface or MaterialX).
@@ -711,6 +868,10 @@ pub enum UsdLightType {
     Rect,
     /// Environment/dome light
     Dome,
+    /// Cylinder light
+    Cylinder,
+    /// Disk light
+    Disk,
 }
 
 impl From<UsdBridgeLightType> for UsdLightType {
@@ -720,8 +881,75 @@ impl From<UsdBridgeLightType> for UsdLightType {
             UsdBridgeLightType::Sphere => UsdLightType::Sphere,
             UsdBridgeLightType::Rect => UsdLightType::Rect,
             UsdBridgeLightType::Dome => UsdLightType::Dome,
+            UsdBridgeLightType::Cylinder => UsdLightType::Cylinder,
+            UsdBridgeLightType::Disk => UsdLightType::Disk,
         }
     }
+}
+
+/// Shaping API data (spotlight cone, IES profiles).
+#[derive(Clone, Debug, Default)]
+pub struct UsdLightShaping {
+    /// Cone angle in degrees (0 = no shaping)
+    pub cone_angle: f32,
+    /// Cone softness (0-1)
+    pub cone_softness: f32,
+    /// Focus (0 = uniform)
+    pub focus: f32,
+    /// IES profile path
+    pub ies_file: Option<String>,
+}
+
+/// Primvar data type.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PrimvarType {
+    Float,
+    Float2,
+    Float3,
+    Int,
+}
+
+/// Primvar interpolation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PrimvarInterpolation {
+    Constant,
+    Uniform,
+    Vertex,
+    FaceVarying,
+}
+
+/// Arbitrary primvar data extracted from USD.
+#[derive(Clone, Debug)]
+pub struct UsdPrimvarData {
+    /// Primvar name
+    pub name: String,
+    /// Data type
+    pub primvar_type: PrimvarType,
+    /// Interpolation
+    pub interpolation: PrimvarInterpolation,
+    /// Float data (for Float/Float2/Float3 types)
+    pub float_data: Vec<f32>,
+    /// Int data (for Int type)
+    pub int_data: Vec<i32>,
+    /// Number of elements
+    pub element_count: usize,
+}
+
+/// UsdGeomPoints data (point cloud / particles).
+#[derive(Clone, Debug)]
+pub struct UsdPointsData {
+    /// Prim path
+    pub path: String,
+    /// Point positions
+    pub positions: Vec<Vec3>,
+    /// Per-point widths (optional)
+    pub widths: Option<Vec<f32>>,
+    /// Per-point normals (optional)
+    pub normals: Option<Vec<Vec3>>,
+    /// Per-point IDs (optional)
+    pub ids: Option<Vec<i64>>,
+    /// World transform
+    pub transform: Mat4,
 }
 
 /// USD prim specifier — how the prim opinion is authored.
@@ -831,6 +1059,8 @@ pub struct CameraProperties {
     pub clip_near: f32,
     /// Far clipping plane in scene units
     pub clip_far: f32,
+    /// Horizontal aperture in mm
+    pub horizontal_aperture: f32,
 }
 
 impl CameraProperties {
@@ -842,6 +1072,16 @@ impl CameraProperties {
             return 45.0_f32.to_radians();
         }
         2.0 * (self.vertical_aperture / (2.0 * self.focal_length)).atan()
+    }
+
+    /// Compute aspect ratio from aperture dimensions.
+    ///
+    /// `aspect = horizontal_aperture / vertical_aperture`
+    pub fn aspect_ratio(&self) -> f32 {
+        if self.vertical_aperture <= 0.0 {
+            return 16.0 / 9.0;
+        }
+        self.horizontal_aperture / self.vertical_aperture
     }
 }
 
@@ -877,6 +1117,12 @@ pub struct UsdLightData {
 
     /// Dome light: texture path (if any)
     pub texture_path: Option<String>,
+
+    /// Cylinder light: length
+    pub length: f32,
+
+    /// ShapingAPI data (spotlight cone, IES)
+    pub shaping: UsdLightShaping,
 }
 
 /// Timeline metadata extracted from USD stage.
@@ -929,6 +1175,8 @@ pub struct UsdStageMetadata {
     pub meters_per_unit: f64,
     /// Up axis (Y or Z)
     pub up_axis: UpAxis,
+    /// Time codes per second (default 24.0)
+    pub time_codes_per_second: f64,
 }
 
 impl Default for UsdStageMetadata {
@@ -936,6 +1184,7 @@ impl Default for UsdStageMetadata {
         Self {
             meters_per_unit: 1.0,
             up_axis: UpAxis::Y,
+            time_codes_per_second: 24.0,
         }
     }
 }
@@ -950,7 +1199,11 @@ impl std::fmt::Display for UsdStageMetadata {
             v if (v - 1.0).abs() < 1e-6 => "m",
             _ => "custom",
         };
-        write!(f, "{}, {}", self.up_axis, unit)
+        write!(
+            f,
+            "{}, {}, tcps={}",
+            self.up_axis, unit, self.time_codes_per_second
+        )
     }
 }
 
@@ -1106,6 +1359,14 @@ impl UsdStage {
             transform: [0.0; 16],
             purpose: UsdBridgePurposeRaw::Default,
             is_instance_proxy: 0,
+            visibility: 1,
+            double_sided: 0,
+            subdivision_scheme: ptr::null(),
+            normals_interpolation: 0,
+            display_color: ptr::null(),
+            display_color_count: 0,
+            display_opacity: 1.0,
+            resets_xform_stack: 0,
         };
 
         let result = unsafe { usd_bridge_get_mesh(self.raw, index, &mut raw_data) };
@@ -1204,6 +1465,29 @@ impl UsdStage {
             _ => MeshPurpose::Default,
         };
 
+        let subdivision_scheme = unsafe {
+            if raw_data.subdivision_scheme.is_null() {
+                SubdivisionScheme::None
+            } else {
+                match CStr::from_ptr(raw_data.subdivision_scheme)
+                    .to_str()
+                    .unwrap_or("none")
+                {
+                    "catmullClark" => SubdivisionScheme::CatmullClark,
+                    "loop" => SubdivisionScheme::Loop,
+                    "bilinear" => SubdivisionScheme::Bilinear,
+                    _ => SubdivisionScheme::None,
+                }
+            }
+        };
+
+        let normals_interpolation = match raw_data.normals_interpolation {
+            1 => NormalsInterpolation::FaceVarying,
+            2 => NormalsInterpolation::Uniform,
+            3 => NormalsInterpolation::Constant,
+            _ => NormalsInterpolation::Vertex,
+        };
+
         Ok(UsdMeshData {
             path,
             vertices,
@@ -1214,6 +1498,28 @@ impl UsdStage {
             transform,
             purpose,
             is_instance_proxy: raw_data.is_instance_proxy != 0,
+            visible: raw_data.visibility != 0,
+            double_sided: raw_data.double_sided != 0,
+            subdivision_scheme,
+            normals_interpolation,
+            display_color: unsafe {
+                if raw_data.display_color.is_null() || raw_data.display_color_count == 0 {
+                    None
+                } else {
+                    let slice = std::slice::from_raw_parts(
+                        raw_data.display_color,
+                        raw_data.display_color_count * 3,
+                    );
+                    Some(
+                        slice
+                            .chunks_exact(3)
+                            .map(|c| Vec3::new(c[0], c[1], c[2]))
+                            .collect(),
+                    )
+                }
+            },
+            display_opacity: raw_data.display_opacity,
+            resets_xform_stack: raw_data.resets_xform_stack != 0,
         })
     }
 
@@ -1226,6 +1532,12 @@ impl UsdStage {
             transforms: ptr::null(),
             instance_count: 0,
             proto_indices: ptr::null(),
+            velocities: ptr::null(),
+            velocity_count: 0,
+            angular_velocities: ptr::null(),
+            angular_velocity_count: 0,
+            invisible_ids: ptr::null(),
+            invisible_id_count: 0,
         };
 
         let result = unsafe { usd_bridge_get_instancer(self.raw, index, &mut raw_data) };
@@ -1294,11 +1606,58 @@ impl UsdStage {
             }
         };
 
+        // Convert velocities (optional)
+        let velocities = unsafe {
+            if raw_data.velocities.is_null() || raw_data.velocity_count == 0 {
+                None
+            } else {
+                let slice =
+                    std::slice::from_raw_parts(raw_data.velocities, raw_data.velocity_count * 3);
+                Some(
+                    slice
+                        .chunks_exact(3)
+                        .map(|c| Vec3::new(c[0], c[1], c[2]))
+                        .collect(),
+                )
+            }
+        };
+
+        // Convert angular velocities (optional)
+        let angular_velocities = unsafe {
+            if raw_data.angular_velocities.is_null() || raw_data.angular_velocity_count == 0 {
+                None
+            } else {
+                let slice = std::slice::from_raw_parts(
+                    raw_data.angular_velocities,
+                    raw_data.angular_velocity_count * 3,
+                );
+                Some(
+                    slice
+                        .chunks_exact(3)
+                        .map(|c| Vec3::new(c[0], c[1], c[2]))
+                        .collect(),
+                )
+            }
+        };
+
+        // Convert invisible IDs
+        let invisible_ids = unsafe {
+            if raw_data.invisible_ids.is_null() || raw_data.invisible_id_count == 0 {
+                Vec::new()
+            } else {
+                std::slice::from_raw_parts(raw_data.invisible_ids, raw_data.invisible_id_count)
+                    .to_vec()
+            }
+        };
+
         Ok(UsdInstancerData {
             path,
             prototype_paths,
             transforms,
             proto_indices,
+            velocities,
+            angular_velocities,
+            invisible_ids,
         })
     }
 
@@ -1527,6 +1886,11 @@ impl UsdStage {
             width: 0.0,
             height: 0.0,
             texture_path: ptr::null(),
+            length: 0.0,
+            shaping_cone_angle: 0.0,
+            shaping_cone_softness: 0.0,
+            shaping_focus: 0.0,
+            shaping_ies_file: ptr::null(),
         };
 
         let result = unsafe { usd_bridge_get_light(self.raw, index, &mut raw_data) };
@@ -1579,6 +1943,26 @@ impl UsdStage {
             width: raw_data.width,
             height: raw_data.height,
             texture_path,
+            length: raw_data.length,
+            shaping: UsdLightShaping {
+                cone_angle: raw_data.shaping_cone_angle,
+                cone_softness: raw_data.shaping_cone_softness,
+                focus: raw_data.shaping_focus,
+                ies_file: if raw_data.shaping_ies_file.is_null() {
+                    None
+                } else {
+                    let s = unsafe {
+                        CStr::from_ptr(raw_data.shaping_ies_file)
+                            .to_string_lossy()
+                            .into_owned()
+                    };
+                    if s.is_empty() {
+                        None
+                    } else {
+                        Some(s)
+                    }
+                },
+            },
         })
     }
 
@@ -1590,6 +1974,196 @@ impl UsdStage {
             lights.push(self.get_light(i)?);
         }
         Ok(lights)
+    }
+
+    // ========================================================================
+    // UsdGeomPoints
+    // ========================================================================
+
+    /// Get the number of UsdGeomPoints prims.
+    pub fn points_count(&self) -> UsdBridgeResult<usize> {
+        let mut count: usize = 0;
+        let result = unsafe { usd_bridge_get_points_count(self.raw, &mut count) };
+        if result != UsdBridgeErrorCode::Success {
+            return Err(result.into());
+        }
+        Ok(count)
+    }
+
+    /// Get points data by index.
+    pub fn get_points(&self, index: usize) -> UsdBridgeResult<UsdPointsData> {
+        let mut raw = UsdBridgePointsDataRaw {
+            path: ptr::null(),
+            positions: ptr::null(),
+            point_count: 0,
+            widths: ptr::null(),
+            width_count: 0,
+            normals: ptr::null(),
+            normal_count: 0,
+            ids: ptr::null(),
+            id_count: 0,
+            transform: [0.0; 16],
+        };
+
+        let result = unsafe { usd_bridge_get_points(self.raw, index, &mut raw) };
+        if result != UsdBridgeErrorCode::Success {
+            return Err(result.into());
+        }
+
+        let path = unsafe {
+            if raw.path.is_null() {
+                String::new()
+            } else {
+                CStr::from_ptr(raw.path).to_string_lossy().into_owned()
+            }
+        };
+
+        let positions = unsafe {
+            if raw.positions.is_null() || raw.point_count == 0 {
+                Vec::new()
+            } else {
+                let s = std::slice::from_raw_parts(raw.positions, raw.point_count * 3);
+                s.chunks_exact(3)
+                    .map(|c| Vec3::new(c[0], c[1], c[2]))
+                    .collect()
+            }
+        };
+
+        let widths = unsafe {
+            if raw.widths.is_null() || raw.width_count == 0 {
+                None
+            } else {
+                Some(std::slice::from_raw_parts(raw.widths, raw.width_count).to_vec())
+            }
+        };
+
+        let normals = unsafe {
+            if raw.normals.is_null() || raw.normal_count == 0 {
+                None
+            } else {
+                let s = std::slice::from_raw_parts(raw.normals, raw.normal_count * 3);
+                Some(
+                    s.chunks_exact(3)
+                        .map(|c| Vec3::new(c[0], c[1], c[2]))
+                        .collect(),
+                )
+            }
+        };
+
+        let ids = unsafe {
+            if raw.ids.is_null() || raw.id_count == 0 {
+                None
+            } else {
+                Some(std::slice::from_raw_parts(raw.ids, raw.id_count).to_vec())
+            }
+        };
+
+        Ok(UsdPointsData {
+            path,
+            positions,
+            widths,
+            normals,
+            ids,
+            transform: Mat4::from_cols_array(&raw.transform),
+        })
+    }
+
+    /// Get all UsdGeomPoints prims.
+    pub fn points(&self) -> UsdBridgeResult<Vec<UsdPointsData>> {
+        let count = self.points_count()?;
+        let mut pts = Vec::with_capacity(count);
+        for i in 0..count {
+            pts.push(self.get_points(i)?);
+        }
+        Ok(pts)
+    }
+
+    // ========================================================================
+    // Primvar Query
+    // ========================================================================
+
+    /// Get user primvars for a mesh (excludes built-in st, normals, displayColor).
+    pub fn get_mesh_primvars(&self, mesh_index: usize) -> UsdBridgeResult<Vec<UsdPrimvarData>> {
+        let mut count: usize = 0;
+        let result = unsafe { usd_bridge_get_mesh_primvar_count(self.raw, mesh_index, &mut count) };
+        if result != UsdBridgeErrorCode::Success {
+            return Err(result.into());
+        }
+
+        let mut primvars = Vec::with_capacity(count);
+        for i in 0..count {
+            let mut raw = UsdBridgePrimvarDataRaw {
+                name: ptr::null(),
+                primvar_type: UsdBridgePrimvarTypeRaw::Float,
+                interpolation: UsdBridgePrimvarInterpolationRaw::Vertex,
+                float_data: ptr::null(),
+                int_data: ptr::null(),
+                element_count: 0,
+            };
+
+            let result = unsafe { usd_bridge_get_mesh_primvar(self.raw, mesh_index, i, &mut raw) };
+            if result != UsdBridgeErrorCode::Success {
+                continue;
+            }
+
+            let name = unsafe {
+                if raw.name.is_null() {
+                    String::new()
+                } else {
+                    CStr::from_ptr(raw.name).to_string_lossy().into_owned()
+                }
+            };
+
+            let primvar_type = match raw.primvar_type {
+                UsdBridgePrimvarTypeRaw::Float => PrimvarType::Float,
+                UsdBridgePrimvarTypeRaw::Float2 => PrimvarType::Float2,
+                UsdBridgePrimvarTypeRaw::Float3 => PrimvarType::Float3,
+                UsdBridgePrimvarTypeRaw::Int => PrimvarType::Int,
+            };
+
+            let interpolation = match raw.interpolation {
+                UsdBridgePrimvarInterpolationRaw::Constant => PrimvarInterpolation::Constant,
+                UsdBridgePrimvarInterpolationRaw::Uniform => PrimvarInterpolation::Uniform,
+                UsdBridgePrimvarInterpolationRaw::Vertex => PrimvarInterpolation::Vertex,
+                UsdBridgePrimvarInterpolationRaw::FaceVarying => PrimvarInterpolation::FaceVarying,
+            };
+
+            let float_count = match primvar_type {
+                PrimvarType::Float => raw.element_count,
+                PrimvarType::Float2 => raw.element_count * 2,
+                PrimvarType::Float3 => raw.element_count * 3,
+                PrimvarType::Int => 0,
+            };
+
+            let float_data = unsafe {
+                if raw.float_data.is_null() || float_count == 0 {
+                    Vec::new()
+                } else {
+                    std::slice::from_raw_parts(raw.float_data, float_count).to_vec()
+                }
+            };
+
+            let int_data = unsafe {
+                if raw.int_data.is_null() || raw.element_count == 0 {
+                    Vec::new()
+                } else if matches!(primvar_type, PrimvarType::Int) {
+                    std::slice::from_raw_parts(raw.int_data, raw.element_count).to_vec()
+                } else {
+                    Vec::new()
+                }
+            };
+
+            primvars.push(UsdPrimvarData {
+                name,
+                primvar_type,
+                interpolation,
+                float_data,
+                int_data,
+                element_count: raw.element_count,
+            });
+        }
+
+        Ok(primvars)
     }
 
     /// Export the stage to a file.
@@ -1617,6 +2191,7 @@ impl UsdStage {
         let mut raw = UsdBridgeStageMetadataRaw {
             meters_per_unit: 1.0,
             up_axis: UsdBridgeUpAxisRaw::Y,
+            time_codes_per_second: 24.0,
         };
 
         let result = unsafe { usd_bridge_get_stage_metadata(self.raw, &mut raw) };
@@ -1631,6 +2206,7 @@ impl UsdStage {
                 UsdBridgeUpAxisRaw::Z => UpAxis::Z,
                 _ => UpAxis::Y,
             },
+            time_codes_per_second: raw.time_codes_per_second,
         })
     }
 
@@ -1884,6 +2460,7 @@ impl UsdStage {
             vertical_aperture: 0.0,
             clip_near: 0.0,
             clip_far: 0.0,
+            horizontal_aperture: 0.0,
         };
 
         let result = unsafe {
@@ -1899,6 +2476,7 @@ impl UsdStage {
             vertical_aperture: props.vertical_aperture,
             clip_near: props.clip_near,
             clip_far: props.clip_far,
+            horizontal_aperture: props.horizontal_aperture,
         })
     }
 
@@ -1995,6 +2573,7 @@ impl UsdStage {
             is_active: 0,
             has_children: 0,
             child_count: 0,
+            visibility: 1,
         };
 
         let result = unsafe { usd_bridge_get_prim_info(self.raw, index, &mut raw_info) };
@@ -2020,6 +2599,7 @@ impl UsdStage {
             is_active: 0,
             has_children: 0,
             child_count: 0,
+            visibility: 1,
         };
 
         let result =
@@ -2144,6 +2724,7 @@ impl UsdStage {
             is_active: raw.is_active != 0,
             has_children: raw.has_children != 0,
             child_count: raw.child_count,
+            visible: raw.visibility != 0,
         })
     }
 }

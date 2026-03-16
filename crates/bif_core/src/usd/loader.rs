@@ -150,6 +150,10 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
         ) {
             continue;
         }
+        // Skip invisible meshes (inherited visibility = invisible)
+        if !mesh_data.visible {
+            continue;
+        }
         let vertices = mesh_data.vertices.clone();
         let indices = mesh_data.indices.clone();
         let normals = mesh_data.normals.clone();
@@ -328,6 +332,7 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
             emissive_texture: mat_data.emissive_texture.as_deref().map(Arc::from),
             opacity_texture: None, // TODO: extract from USD when available
             source_dir: path.parent().map(|p| p.to_path_buf()),
+            double_sided: false, // Set per-mesh via UsdGeomMesh::GetDoubleSidedAttr
         };
         let mat_id = scene.add_material(material);
         material_map.insert(mat_data.path.clone(), mat_id);
@@ -412,6 +417,28 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
                     rotation: 0.0,
                     intensity: light_data.intensity,
                     texture_path: light_data.texture_path.as_deref().map(Arc::from),
+                }
+            }
+            UsdLightType::Cylinder => {
+                // Map cylinder to point light (approximate — BIF doesn't have cylinder light yet)
+                let position =
+                    bif_math::Vec3::new(transform.col(3).x, transform.col(3).y, transform.col(3).z);
+                Light::Point {
+                    position,
+                    color: light_data.color,
+                    intensity: light_data.intensity,
+                    radius: light_data.radius,
+                }
+            }
+            UsdLightType::Disk => {
+                // Map disk to rect light (approximate — BIF doesn't have disk light yet)
+                let diameter = light_data.radius * 2.0;
+                Light::Rect {
+                    transform,
+                    color: light_data.color,
+                    intensity: light_data.intensity,
+                    width: diameter,
+                    height: diameter,
                 }
             }
         };
@@ -513,7 +540,16 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
             None
         };
 
+        // Build set of invisible instance IDs for fast lookup
+        let invisible_set: std::collections::HashSet<i64> =
+            instancer_data.invisible_ids.iter().copied().collect();
+
         for (i, inst) in expanded.into_iter().enumerate() {
+            // Skip invisible instances (from UsdGeomPointInstancer::GetInvisibleIdsAttr)
+            if invisible_set.contains(&(i as i64)) {
+                continue;
+            }
+
             // Build animation for this instance if available
             let animation = instancer_anim.as_ref().and_then(|anim| {
                 if anim.time_samples.is_empty() || i >= anim.instance_count {
