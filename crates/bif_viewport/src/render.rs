@@ -36,9 +36,10 @@ impl Renderer {
         self.poll_texture_loads();
 
         // Rebuild cached scene graph if dirty
-        if self.scene_graph_dirty {
-            self.cached_scene_graph = scene_browser::build_scene_graph_cache(&self.working_scene);
-            self.scene_graph_dirty = false;
+        if self.nodes.scene_graph_dirty {
+            self.nodes.cached_scene_graph =
+                scene_browser::build_scene_graph_cache(&self.working_scene);
+            self.nodes.scene_graph_dirty = false;
         }
 
         // Process pending scene operations from undo/redo
@@ -69,8 +70,11 @@ impl Renderer {
                             .iter()
                             .flat_map(|c| c.positions.iter().copied())
                             .collect();
-                        self.point_preview
-                            .upload_points(&self.device, &self.queue, &all_positions);
+                        self.point_preview.upload_points(
+                            &self.gpu.device,
+                            &self.gpu.queue,
+                            &all_positions,
+                        );
                         self.point_preview_params_dirty = true;
                         self.point_preview.visible = true;
                     }
@@ -84,8 +88,8 @@ impl Renderer {
                                 .flat_map(|c| c.positions.iter().copied())
                                 .collect();
                             self.point_preview.upload_points(
-                                &self.device,
-                                &self.queue,
+                                &self.gpu.device,
+                                &self.gpu.queue,
                                 &all_positions,
                             );
                             self.point_preview_params_dirty = true;
@@ -111,19 +115,19 @@ impl Renderer {
             .selected_instance_index
             .map(|i| i as u32)
             .unwrap_or(crate::gpu_types::NO_SELECTION);
-        if self.camera_uniform.selected_instance_id != sel_id {
-            self.camera_uniform.selected_instance_id = sel_id;
-            self.queue.write_buffer(
-                &self.camera_buffer,
+        if self.cam.camera_uniform.selected_instance_id != sel_id {
+            self.cam.camera_uniform.selected_instance_id = sel_id;
+            self.gpu.queue.write_buffer(
+                &self.cam.camera_buffer,
                 0,
-                bytemuck::cast_slice(&[self.camera_uniform]),
+                bytemuck::cast_slice(&[self.cam.camera_uniform]),
             );
             // Reset transform edit cache when selection changes
             reset_transform_edit_cache(&self.egui_ctx);
         }
 
         // Update frustum culling before rendering (in Vulkan mode)
-        if self.ivar_state.mode == RenderMode::Vulkan {
+        if self.ivar.ivar_state.mode == RenderMode::Vulkan {
             self.update_visible_instances();
         }
     }
@@ -136,7 +140,7 @@ impl Renderer {
         // Build UI - need to split borrow to avoid closure borrowing entire self
         let show_ui = self.show_ui;
         let fps = self.fps;
-        let camera = &self.camera;
+        let camera = &self.cam.camera;
         let num_instances = self.num_instances;
         let visible_instances = self.culling.visible_count;
         let lod_box_instances = self.culling.lod_box_count;
@@ -152,15 +156,15 @@ impl Renderer {
         let mut bottom_panel_height = self.ui_layout.bottom_panel_height;
 
         // Ivar state for UI
-        let mut render_mode = self.ivar_state.mode;
-        let ivar_buckets_completed = self.ivar_state.buckets_completed;
-        let ivar_total_buckets = self.ivar_state.buckets.len();
-        let ivar_elapsed = self.ivar_state.elapsed_secs();
-        let ivar_render_complete = self.ivar_state.render_complete;
-        let ivar_accumulated_spp = self.ivar_state.accumulated_samples;
-        let mut ivar_target_spp = self.ivar_state.target_spp;
-        let ivar_current_scale = self.ivar_state.current_scale;
-        let mut ivar_nav_quality = self.ivar_state.interaction_quality;
+        let mut render_mode = self.ivar.ivar_state.mode;
+        let ivar_buckets_completed = self.ivar.ivar_state.buckets_completed;
+        let ivar_total_buckets = self.ivar.ivar_state.buckets.len();
+        let ivar_elapsed = self.ivar.ivar_state.elapsed_secs();
+        let ivar_render_complete = self.ivar.ivar_state.render_complete;
+        let ivar_accumulated_spp = self.ivar.ivar_state.accumulated_samples;
+        let mut ivar_target_spp = self.ivar.ivar_state.target_spp;
+        let ivar_current_scale = self.ivar.ivar_state.current_scale;
+        let mut ivar_nav_quality = self.ivar.ivar_state.interaction_quality;
         let mut display_settings = self.display_settings.clone();
 
         let full_output = self.egui_ctx.run(raw_input, |ctx| {
@@ -242,11 +246,11 @@ impl Renderer {
                         ui,
                         ctx,
                         &mut crate::render_ui::StatsPanelParams {
-                            ivar_state: &mut self.ivar_state,
+                            ivar_state: &mut self.ivar.ivar_state,
                             scene_browser_state: &mut self.scene_browser_state,
                             usd_stage: &self.usd_stage,
                             timeline_state: &self.timeline_state,
-                            cached_scene_graph: &self.cached_scene_graph,
+                            cached_scene_graph: &self.nodes.cached_scene_graph,
                             fps,
                             camera,
                             num_instances,
@@ -296,12 +300,13 @@ impl Renderer {
                 .default_width(280.0)
                 .show(ctx, |ui| {
                     // If an Xform node is selected, show its T/R/S in the panel
-                    let selected_xform_id = self.node_graph_state.selected_node.filter(|nid| {
-                        matches!(
-                            self.node_graph_state.snarl[*nid],
-                            crate::node_graph::SceneNode::Xform { .. }
-                        )
-                    });
+                    let selected_xform_id =
+                        self.nodes.node_graph_state.selected_node.filter(|nid| {
+                            matches!(
+                                self.nodes.node_graph_state.snarl[*nid],
+                                crate::node_graph::SceneNode::Xform { .. }
+                            )
+                        });
 
                     if let Some(xform_nid) = selected_xform_id {
                         if let crate::node_graph::SceneNode::Xform {
@@ -309,7 +314,7 @@ impl Renderer {
                             rotate,
                             scale,
                             prim_filter,
-                        } = &mut self.node_graph_state.snarl[xform_nid]
+                        } = &mut self.nodes.node_graph_state.snarl[xform_nid]
                         {
                             let changed = crate::property_inspector::render_xform_properties(
                                 ui,
@@ -319,7 +324,7 @@ impl Renderer {
                                 prim_filter,
                             );
                             if changed {
-                                self.xform_property_changed = Some(xform_nid);
+                                self.nodes.xform_property_changed = Some(xform_nid);
                             }
                         }
                         ui.separator();
@@ -358,7 +363,7 @@ impl Renderer {
 
                     ui.horizontal_centered(|ui| {
                         // Camera dropdown
-                        let cam_display = match &self.viewport_camera_source {
+                        let cam_display = match &self.cam.viewport_camera_source {
                             CameraSource::SceneCamera(idx) => self
                                 .scene_cameras
                                 .get(*idx)
@@ -374,16 +379,16 @@ impl Renderer {
                                 if ui
                                     .selectable_label(
                                         matches!(
-                                            self.viewport_camera_source,
+                                            self.cam.viewport_camera_source,
                                             CameraSource::Viewport
                                         ),
                                         "Perspective",
                                     )
                                     .clicked()
                                 {
-                                    self.viewport_camera_source = CameraSource::Viewport;
-                                    self.camera_locked = false;
-                                    self.selected_usd_camera = None;
+                                    self.cam.viewport_camera_source = CameraSource::Viewport;
+                                    self.cam.camera_locked = false;
+                                    self.cam.selected_usd_camera = None;
                                     ctx.data_mut(|d| {
                                         d.insert_temp(
                                             egui::Id::new("camera_projection_change"),
@@ -396,14 +401,14 @@ impl Renderer {
                                     if let Ok(paths) = stage.camera_paths() {
                                         for path in paths {
                                             let is_selected = matches!(
-                                                &self.viewport_camera_source,
+                                                &self.cam.viewport_camera_source,
                                                 CameraSource::UsdCamera(p) if p == &path
                                             );
                                             if ui.selectable_label(is_selected, &path).clicked() {
-                                                self.viewport_camera_source =
+                                                self.cam.viewport_camera_source =
                                                     CameraSource::UsdCamera(path.clone());
-                                                self.selected_usd_camera = Some(path.clone());
-                                                self.camera_locked = true;
+                                                self.cam.selected_usd_camera = Some(path.clone());
+                                                self.cam.camera_locked = true;
                                                 // Sync to camera immediately (via egui temp data)
                                                 ctx.data_mut(|d| {
                                                     d.insert_temp(
@@ -419,17 +424,17 @@ impl Renderer {
                                 ui.separator();
                                 for preset in bif_math::OrthoPreset::all() {
                                     let is_selected = matches!(
-                                        &self.viewport_camera_source,
+                                        &self.cam.viewport_camera_source,
                                         CameraSource::OrthoView(p) if p == preset
                                     );
                                     if ui
                                         .selectable_label(is_selected, preset.display_name())
                                         .clicked()
                                     {
-                                        self.viewport_camera_source =
+                                        self.cam.viewport_camera_source =
                                             CameraSource::OrthoView(*preset);
-                                        self.camera_locked = false;
-                                        self.selected_usd_camera = None;
+                                        self.cam.camera_locked = false;
+                                        self.cam.selected_usd_camera = None;
                                         ctx.data_mut(|d| {
                                             d.insert_temp(
                                                 egui::Id::new("camera_projection_change"),
@@ -443,14 +448,14 @@ impl Renderer {
                                     ui.separator();
                                     for (idx, cam) in self.scene_cameras.iter().enumerate() {
                                         let is_selected = matches!(
-                                            &self.viewport_camera_source,
+                                            &self.cam.viewport_camera_source,
                                             CameraSource::SceneCamera(i) if *i == idx
                                         );
                                         if ui.selectable_label(is_selected, &cam.name).clicked() {
-                                            self.viewport_camera_source =
+                                            self.cam.viewport_camera_source =
                                                 CameraSource::SceneCamera(idx);
-                                            self.camera_locked = true;
-                                            self.selected_usd_camera = None;
+                                            self.cam.camera_locked = true;
+                                            self.cam.selected_usd_camera = None;
                                             ctx.data_mut(|d| {
                                                 d.insert_temp(
                                                     egui::Id::new("sync_scene_camera"),
@@ -464,12 +469,16 @@ impl Renderer {
 
                         // Lock/Unlock toggle (show when USD or scene camera selected)
                         if matches!(
-                            self.viewport_camera_source,
+                            self.cam.viewport_camera_source,
                             CameraSource::UsdCamera(_) | CameraSource::SceneCamera(_)
                         ) {
-                            let icon = if self.camera_locked { "Lock" } else { "Free" };
+                            let icon = if self.cam.camera_locked {
+                                "Lock"
+                            } else {
+                                "Free"
+                            };
                             if ui.button(icon).clicked() {
-                                self.camera_locked = !self.camera_locked;
+                                self.cam.camera_locked = !self.cam.camera_locked;
                             }
                         }
 
@@ -580,7 +589,7 @@ impl Renderer {
                 .default_height(200.0)
                 .resizable(true)
                 .show(ctx, |ui| {
-                    let events = render_node_graph(ui, &mut self.node_graph_state);
+                    let events = render_node_graph(ui, &mut self.nodes.node_graph_state);
                     // Store events for processing after egui frame ends
                     for event in events {
                         ctx.data_mut(|d| {
@@ -620,7 +629,7 @@ impl Renderer {
 
                     let hovered = crate::gizmo::draw_gizmo(
                         &painter,
-                        &self.camera,
+                        &self.cam.camera,
                         world_pos,
                         vp_rect,
                         &self.gizmo_state,
@@ -646,14 +655,14 @@ impl Renderer {
         // Update gnomon size from UI
         self.gnomon.size = gnomon_size;
         // Update target SPP from UI (may resume rendering if increased)
-        if ivar_target_spp != self.ivar_state.target_spp {
-            self.ivar_state.target_spp = ivar_target_spp;
-            if ivar_target_spp > self.ivar_state.accumulated_samples {
-                self.ivar_state.render_complete = false;
+        if ivar_target_spp != self.ivar.ivar_state.target_spp {
+            self.ivar.ivar_state.target_spp = ivar_target_spp;
+            if ivar_target_spp > self.ivar.ivar_state.accumulated_samples {
+                self.ivar.ivar_state.render_complete = false;
             }
         }
         // Update interaction quality from UI slider
-        self.ivar_state.interaction_quality = ivar_nav_quality;
+        self.ivar.ivar_state.interaction_quality = ivar_nav_quality;
         self.ui_layout.left_panel_width = left_panel_width;
         self.ui_layout.right_panel_width = right_panel_width;
         self.ui_layout.top_panel_height = top_panel_height;
@@ -662,8 +671,8 @@ impl Renderer {
         // Update camera aspect to match viewport (not full window)
         let (_, _, vp_w, vp_h) = self.viewport_rect();
         let new_aspect = vp_w / vp_h;
-        if (self.camera.aspect - new_aspect).abs() > 0.001 {
-            self.camera.set_aspect(new_aspect);
+        if (self.cam.camera.aspect - new_aspect).abs() > 0.001 {
+            self.cam.camera.set_aspect(new_aspect);
             self.update_camera();
         }
 
@@ -672,8 +681,8 @@ impl Renderer {
         self.display_settings = display_settings;
 
         // Write render mode back; detect mode change via egui temp data
-        let mode_changed = self.ivar_state.mode != render_mode;
-        self.ivar_state.mode = render_mode;
+        let mode_changed = self.ivar.ivar_state.mode != render_mode;
+        self.ivar.ivar_state.mode = render_mode;
         if mode_changed {
             self.egui_ctx.data_mut(|d| {
                 d.insert_temp(egui::Id::new("_render_mode_changed"), true);
@@ -685,7 +694,7 @@ impl Renderer {
 
     /// Phase 4: Dispatch deferred events from egui temp data.
     fn dispatch_deferred_events(&mut self) {
-        let render_mode = self.ivar_state.mode;
+        let render_mode = self.ivar.ivar_state.mode;
 
         // Detect mode change (set by run_egui_frame)
         let mode_changed = self.egui_ctx.data(|d| {
@@ -700,8 +709,8 @@ impl Renderer {
         // Handle mode switch to Ivar - start render if needed
         if mode_changed && render_mode == RenderMode::Ivar {
             log::info!("Switched to Ivar mode - starting render");
-            self.ivar_state.current_scale = 1;
-            self.ivar_state.last_interaction_time = None;
+            self.ivar.ivar_state.current_scale = 1;
+            self.ivar.ivar_state.last_interaction_time = None;
             self.start_ivar_render();
         }
 
@@ -737,9 +746,9 @@ impl Renderer {
         if filter_changed {
             self.egui_ctx
                 .data_mut(|d| d.remove::<bool>(egui::Id::new("filter_changed")));
-            if self.ivar_state.mode == RenderMode::Ivar {
-                self.ivar_state.current_scale = 1;
-                self.ivar_state.last_interaction_time = None;
+            if self.ivar.ivar_state.mode == RenderMode::Ivar {
+                self.ivar.ivar_state.current_scale = 1;
+                self.ivar.ivar_state.last_interaction_time = None;
                 self.start_ivar_render();
             }
         }
@@ -811,7 +820,7 @@ impl Renderer {
                 self.usd_stage
                     .as_ref()
                     .map(|s| s.as_ref() as &dyn PrimDataProvider),
-                &self.cached_scene_graph,
+                &self.nodes.cached_scene_graph,
             );
             if let Some(info) = composite.get_prim_info(&prim_path) {
                 let mut props = PrimProperties::from_display_info(&info);
@@ -872,18 +881,21 @@ impl Renderer {
                     self.culling.mark_dirty();
                     self.update_visible_instances();
                     // Restart Ivar at interaction scale during drag (throttled)
-                    if self.ivar_state.mode == RenderMode::Ivar {
-                        if self.ivar_state.should_restart() && self.ivar_state.world.is_some() {
-                            self.restart_ivar_at_scale(self.ivar_state.interaction_scale());
+                    if self.ivar.ivar_state.mode == RenderMode::Ivar {
+                        if self.ivar.ivar_state.should_restart()
+                            && self.ivar.ivar_state.world.is_some()
+                        {
+                            self.restart_ivar_at_scale(self.ivar.ivar_state.interaction_scale());
                         }
-                        self.ivar_state.last_interaction_time = Some(std::time::Instant::now());
+                        self.ivar.ivar_state.last_interaction_time =
+                            Some(std::time::Instant::now());
                     }
                 }
             }
         }
 
         // Handle Xform property changes from the property inspector panel
-        if let Some(_xform_nid) = self.xform_property_changed.take() {
+        if let Some(_xform_nid) = self.nodes.xform_property_changed.take() {
             if let Err(e) = self.reload_working_scene() {
                 log::error!("Failed to reload after xform property change: {}", e);
             }
@@ -923,11 +935,11 @@ impl Renderer {
             self.egui_ctx
                 .data_mut(|d| d.remove::<String>(egui::Id::new("camera_projection_change")));
             if change == "perspective" {
-                self.camera.set_perspective();
+                self.cam.camera.set_perspective();
             } else if let Some(preset_name) = change.strip_prefix("ortho:") {
                 for preset in bif_math::OrthoPreset::all() {
                     if preset.display_name() == preset_name {
-                        self.camera.set_ortho_preset(*preset);
+                        self.cam.camera.set_ortho_preset(*preset);
                         break;
                     }
                 }
@@ -971,13 +983,13 @@ impl Renderer {
                 log::info!("Node graph: Loading USD file: {}", path);
 
                 // Remove old prototypes from this node (reload case)
-                if let Some(old_ids) = self.node_proto_map.remove(&node_id) {
+                if let Some(old_ids) = self.nodes.node_proto_map.remove(&node_id) {
                     for &pid in old_ids.iter().rev() {
                         self.remove_and_reindex_prototype(pid);
                     }
                 }
 
-                self.materials_dirty = true;
+                self.nodes.materials_dirty = true;
                 let proto_offset = self.working_scene.prototype_count();
                 match self.load_usd_scene(&path) {
                     Ok(()) => {
@@ -986,23 +998,25 @@ impl Renderer {
                         let proto_ids: Vec<usize> = (proto_offset..new_proto_count).collect();
                         if !proto_ids.is_empty() {
                             log::info!("UsdRead {:?} owns protos {:?}", node_id, proto_ids);
-                            self.node_proto_map.insert(node_id, proto_ids);
+                            self.nodes.node_proto_map.insert(node_id, proto_ids);
                         }
-                        self.node_graph_state.mark_node_loaded(&path);
+                        self.nodes.node_graph_state.mark_node_loaded(&path);
                         log::info!("USD file loaded successfully: {}", path);
                     }
                     Err(e) => {
                         log::error!("Failed to load USD file: {}", e);
-                        self.node_graph_state.mark_node_error(&path, e.to_string());
+                        self.nodes
+                            .node_graph_state
+                            .mark_node_error(&path, e.to_string());
                     }
                 }
             }
             NodeGraphEvent::StartRender { spp } => {
                 log::info!("Node graph: Starting render with {} SPP", spp);
-                self.ivar_state.samples_per_pixel = spp;
-                self.ivar_state.mode = RenderMode::Ivar;
-                self.ivar_state.current_scale = 1;
-                self.ivar_state.last_interaction_time = None;
+                self.ivar.ivar_state.samples_per_pixel = spp;
+                self.ivar.ivar_state.mode = RenderMode::Ivar;
+                self.ivar.ivar_state.current_scale = 1;
+                self.ivar.ivar_state.last_interaction_time = None;
                 self.start_ivar_render();
             }
             NodeGraphEvent::ConvertTexturesToTx => {
@@ -1010,7 +1024,8 @@ impl Renderer {
                 {
                     let paths = self.collect_material_texture_paths();
                     if paths.is_empty() {
-                        self.node_graph_state
+                        self.nodes
+                            .node_graph_state
                             .mark_tx_conversion_complete("No textures".into());
                     } else {
                         log::info!("Converting {} textures to .tx", paths.len());
@@ -1020,7 +1035,8 @@ impl Renderer {
                 }
                 #[cfg(not(feature = "oiio"))]
                 {
-                    self.node_graph_state
+                    self.nodes
+                        .node_graph_state
                         .mark_tx_conversion_complete("OIIO not available".into());
                 }
             }
@@ -1031,7 +1047,7 @@ impl Renderer {
                 show_background,
             } => {
                 log::info!("Node graph: Loading HDRI (async): {}", path);
-                self.node_graph_state.mark_hdri_loading(&path);
+                self.nodes.node_graph_state.mark_hdri_loading(&path);
                 self.environment.start_hdri_load(
                     std::path::Path::new(&path),
                     rotation,
@@ -1048,11 +1064,11 @@ impl Renderer {
                 self.update_environment_params(intensity, rotation_rad, show_background);
                 // Restart Ivar so CPU path tracer reflects updated params.
                 // Throttled: slider drag fires every frame, avoid excessive cancel+spawn.
-                if self.ivar_state.mode == RenderMode::Ivar
-                    && self.ivar_state.world.is_some()
-                    && self.ivar_state.should_restart()
+                if self.ivar.ivar_state.mode == RenderMode::Ivar
+                    && self.ivar.ivar_state.world.is_some()
+                    && self.ivar.ivar_state.should_restart()
                 {
-                    self.restart_ivar_at_scale(self.ivar_state.current_scale);
+                    self.restart_ivar_at_scale(self.ivar.ivar_state.current_scale);
                 }
             }
             NodeGraphEvent::CreatePrimitive {
@@ -1065,7 +1081,7 @@ impl Renderer {
                 // Read prim_path from the Primitive node for export naming
                 let prim_path =
                     if let crate::node_graph::SceneNode::Primitive { ref prim_path, .. } =
-                        &self.node_graph_state.snarl[node_id]
+                        &self.nodes.node_graph_state.snarl[node_id]
                     {
                         Some(prim_path.clone())
                     } else {
@@ -1073,7 +1089,7 @@ impl Renderer {
                     };
 
                 // Remove old prototype if re-creating (e.g. size change)
-                if let Some(old_ids) = self.node_proto_map.remove(&node_id) {
+                if let Some(old_ids) = self.nodes.node_proto_map.remove(&node_id) {
                     for &pid in old_ids.iter().rev() {
                         self.remove_and_reindex_prototype(pid);
                     }
@@ -1087,12 +1103,12 @@ impl Renderer {
                                 std::sync::Arc::make_mut(proto).name = pp.as_str().into();
                             }
                         }
-                        self.node_proto_map.insert(node_id, vec![proto_id]);
+                        self.nodes.node_proto_map.insert(node_id, vec![proto_id]);
 
                         // Recursively dirty all downstream nodes
                         crate::node_graph::propagate_dirty(
                             node_id,
-                            &mut self.node_graph_state.snarl,
+                            &mut self.nodes.node_graph_state.snarl,
                         );
 
                         if let Err(e) = self.reload_working_scene() {
@@ -1113,11 +1129,11 @@ impl Renderer {
                 );
 
                 // Remove previous cloud for this node (if regenerating)
-                if let Some(old_cloud_id) = self.node_cloud_map.remove(&node_id) {
+                if let Some(old_cloud_id) = self.nodes.node_cloud_map.remove(&node_id) {
                     self.working_scene.remove_point_cloud(old_cloud_id);
                 }
                 // Clear old surface mapping (rebuilt in reload_working_scene)
-                self.node_scatter_surface_map.remove(&node_id);
+                self.nodes.node_scatter_surface_map.remove(&node_id);
 
                 let cloud = match params.source {
                     bif_core::PointSource::Surface => {
@@ -1160,7 +1176,8 @@ impl Renderer {
                             }
 
                             // Track surface proto for hiding (rebuilt in reload_working_scene)
-                            self.node_scatter_surface_map
+                            self.nodes
+                                .node_scatter_surface_map
                                 .insert(node_id, scatter_mesh_idx);
 
                             Some(cloud)
@@ -1224,10 +1241,10 @@ impl Renderer {
                 };
 
                 if let Some(mut cloud) = cloud {
-                    let cloud_id = self.next_cloud_id;
-                    self.next_cloud_id += 1;
+                    let cloud_id = self.nodes.next_cloud_id;
+                    self.nodes.next_cloud_id += 1;
                     cloud.id = cloud_id;
-                    self.node_cloud_map.insert(node_id, cloud_id);
+                    self.nodes.node_cloud_map.insert(node_id, cloud_id);
 
                     let pt_count = cloud.positions.len();
                     self.working_scene.add_point_cloud(cloud);
@@ -1239,8 +1256,11 @@ impl Renderer {
                         .iter()
                         .flat_map(|c| c.positions.iter().copied())
                         .collect();
-                    self.point_preview
-                        .upload_points(&self.device, &self.queue, &all_positions);
+                    self.point_preview.upload_points(
+                        &self.gpu.device,
+                        &self.gpu.queue,
+                        &all_positions,
+                    );
                     self.point_preview_params_dirty = true;
 
                     // Auto-enable point preview and sync color/size from node
@@ -1249,7 +1269,7 @@ impl Renderer {
                         point_size,
                         point_color,
                         ..
-                    } = &self.node_graph_state.snarl[node_id]
+                    } = &self.nodes.node_graph_state.snarl[node_id]
                     {
                         self.point_preview.point_size = *point_size;
                         self.point_preview.color = *point_color;
@@ -1264,7 +1284,10 @@ impl Renderer {
                     }
 
                     // Recursively dirty all downstream nodes
-                    crate::node_graph::propagate_dirty(node_id, &mut self.node_graph_state.snarl);
+                    crate::node_graph::propagate_dirty(
+                        node_id,
+                        &mut self.nodes.node_graph_state.snarl,
+                    );
                 }
             }
             NodeGraphEvent::PointInstancerCompute {
@@ -1273,9 +1296,10 @@ impl Renderer {
                 proto_source_node,
             } => {
                 // Resolve cloud ID from scatter node
-                let cloud_id = self.node_cloud_map.get(&points_source_node).copied();
+                let cloud_id = self.nodes.node_cloud_map.get(&points_source_node).copied();
                 // Resolve first prototype ID from primitive/USD node
                 let proto_id = self
+                    .nodes
                     .node_proto_map
                     .get(&proto_source_node)
                     .and_then(|ids| ids.first().copied());
@@ -1298,7 +1322,7 @@ impl Renderer {
                 // Read PointInstancer node's prim_path for export
                 let instancer_prim_path =
                     if let crate::node_graph::SceneNode::PointInstancer { ref prim_path, .. } =
-                        &self.node_graph_state.snarl[node_id]
+                        &self.nodes.node_graph_state.snarl[node_id]
                     {
                         Some(prim_path.clone())
                     } else {
@@ -1319,7 +1343,7 @@ impl Renderer {
                                 // TODO: multi-prototype instancing not yet supported,
                                 // using first proto only. See node_proto_map .first().
                                 cloud.prototype_ids = vec![pid];
-                                self.scene_graph_dirty = true;
+                                self.nodes.scene_graph_dirty = true;
                             }
                         }
 
@@ -1330,7 +1354,7 @@ impl Renderer {
                             let pt_count = cloud.positions.len();
                             let expanded = cloud.expand_with_prototype(pid);
                             let inst_count = expanded.len();
-                            self.instancer_results.insert(node_id, expanded);
+                            self.nodes.instancer_results.insert(node_id, expanded);
 
                             // Reload scene to rebuild GPU buffers with instancer instances
                             if let Err(e) = self.reload_working_scene() {
@@ -1344,7 +1368,7 @@ impl Renderer {
                                 is_computing,
                                 compute_failed,
                                 ..
-                            } = &mut self.node_graph_state.snarl[node_id]
+                            } = &mut self.nodes.node_graph_state.snarl[node_id]
                             {
                                 *instance_count = inst_count;
                                 *is_instanced = true;
@@ -1360,7 +1384,7 @@ impl Renderer {
                             );
                         } else {
                             log::warn!("Point Instancer: cloud {} not found in scene", cid);
-                            mark_compute_failed(&mut self.node_graph_state.snarl, node_id);
+                            mark_compute_failed(&mut self.nodes.node_graph_state.snarl, node_id);
                         }
                     }
                     (None, _) => {
@@ -1368,19 +1392,19 @@ impl Renderer {
                             "Point Instancer: no cloud for source node {:?}",
                             points_source_node
                         );
-                        mark_compute_failed(&mut self.node_graph_state.snarl, node_id);
+                        mark_compute_failed(&mut self.nodes.node_graph_state.snarl, node_id);
                     }
                     (_, None) => {
                         log::warn!(
                             "Point Instancer: no prototype for source node {:?}",
                             proto_source_node
                         );
-                        mark_compute_failed(&mut self.node_graph_state.snarl, node_id);
+                        mark_compute_failed(&mut self.nodes.node_graph_state.snarl, node_id);
                     }
                 }
             }
             NodeGraphEvent::InstancerInvalidate { node_id } => {
-                if self.instancer_results.remove(&node_id).is_some() {
+                if self.nodes.instancer_results.remove(&node_id).is_some() {
                     if let Err(e) = self.reload_working_scene() {
                         log::error!("Failed to reload after instancer invalidate: {}", e);
                     }
@@ -1412,7 +1436,7 @@ impl Renderer {
             } => {
                 // Collect authored prims, graft prefix, and source USD path from upstream
                 let (authored_prims, graft_prefix, upstream_usd_path) =
-                    collect_export_context(node_id, &self.node_graph_state.snarl);
+                    collect_export_context(node_id, &self.nodes.node_graph_state.snarl);
                 // Auto-enable sublayer when upstream UsdRead exists
                 let effective_as_sublayer = as_sublayer || upstream_usd_path.is_some();
                 let config = bif_core::ExportConfig {
@@ -1432,7 +1456,7 @@ impl Renderer {
                             is_exported,
                             last_result,
                             ..
-                        } = &mut self.node_graph_state.snarl[node_id]
+                        } = &mut self.nodes.node_graph_state.snarl[node_id]
                         {
                             *is_exported = true;
                             *last_result = Some(status);
@@ -1445,7 +1469,7 @@ impl Renderer {
                             is_exported,
                             last_result,
                             ..
-                        } = &mut self.node_graph_state.snarl[node_id]
+                        } = &mut self.nodes.node_graph_state.snarl[node_id]
                         {
                             *is_exported = false;
                             *last_result = Some(format!("Error: {}", err_msg));
@@ -1460,10 +1484,10 @@ impl Renderer {
             }
             NodeGraphEvent::SetDisplayNode(id) => {
                 // Toggle: clicking the same node clears display
-                if self.node_graph_state.display_node == Some(id) {
-                    self.node_graph_state.display_node = None;
+                if self.nodes.node_graph_state.display_node == Some(id) {
+                    self.nodes.node_graph_state.display_node = None;
                 } else {
-                    self.node_graph_state.display_node = Some(id);
+                    self.nodes.node_graph_state.display_node = Some(id);
                 }
                 if let Err(e) = self.reload_working_scene() {
                     log::error!("Failed to reload after display change: {}", e);
@@ -1474,7 +1498,7 @@ impl Renderer {
             }
             NodeGraphEvent::DeleteNode(node_id) => {
                 // Clean up scatter cloud
-                if let Some(cloud_id) = self.node_cloud_map.remove(&node_id) {
+                if let Some(cloud_id) = self.nodes.node_cloud_map.remove(&node_id) {
                     self.working_scene.remove_point_cloud(cloud_id);
                     let all_positions: Vec<bif_math::Vec3> = self
                         .working_scene
@@ -1482,29 +1506,32 @@ impl Renderer {
                         .iter()
                         .flat_map(|c| c.positions.iter().copied())
                         .collect();
-                    self.point_preview
-                        .upload_points(&self.device, &self.queue, &all_positions);
+                    self.point_preview.upload_points(
+                        &self.gpu.device,
+                        &self.gpu.queue,
+                        &all_positions,
+                    );
                     self.point_preview_params_dirty = true;
                     log::info!("Deleted scatter node {:?} → cloud {}", node_id, cloud_id);
                 }
 
                 // Clean up scatter surface mapping (rebuilt in reload_working_scene)
-                self.node_scatter_surface_map.remove(&node_id);
+                self.nodes.node_scatter_surface_map.remove(&node_id);
 
                 // Clean up instancer results
-                if self.instancer_results.remove(&node_id).is_some() {
+                if self.nodes.instancer_results.remove(&node_id).is_some() {
                     log::info!("Deleted instancer node {:?}", node_id);
                 }
 
                 // Clean up prototypes owned by this node
-                if let Some(proto_ids) = self.node_proto_map.remove(&node_id) {
+                if let Some(proto_ids) = self.nodes.node_proto_map.remove(&node_id) {
                     log::info!("Deleting node {:?} → protos {:?}", node_id, proto_ids);
                     // Remove in reverse order so indices stay valid;
                     // remove_and_reindex_prototype handles re-indexing all maps
                     for &pid in proto_ids.iter().rev() {
                         self.remove_and_reindex_prototype(pid);
                     }
-                    self.materials_dirty = true;
+                    self.nodes.materials_dirty = true;
                 }
 
                 // Always reload after deletion — Xform/display-flag changes
@@ -1514,15 +1541,20 @@ impl Renderer {
                 }
 
                 // If no loaded UsdRead nodes remain, clear USD stage state
-                let has_usd_read = self.node_graph_state.snarl.node_ids().any(|(_, node)| {
-                    matches!(
-                        node,
-                        SceneNode::UsdRead {
-                            is_loaded: true,
-                            ..
-                        }
-                    )
-                });
+                let has_usd_read = self
+                    .nodes
+                    .node_graph_state
+                    .snarl
+                    .node_ids()
+                    .any(|(_, node)| {
+                        matches!(
+                            node,
+                            SceneNode::UsdRead {
+                                is_loaded: true,
+                                ..
+                            }
+                        )
+                    });
                 if !has_usd_read {
                     self.usd_stage = None;
                     self.loaded_usd_path = None;
@@ -1551,8 +1583,8 @@ impl Renderer {
                     load_secs,
                 } => {
                     let compute_secs = self.environment.apply_ibl_result(
-                        &self.device,
-                        &self.queue,
+                        &self.gpu.device,
+                        &self.gpu.queue,
                         &hdr_pixels,
                         hdr_width,
                         hdr_height,
@@ -1560,10 +1592,10 @@ impl Renderer {
                         intensity,
                         show_background,
                     );
-                    self.ivar_state.environment = Some(ivar_env);
-                    self.ivar_state.hdri_rotation = rotation_rad;
-                    self.ivar_state.hdri_intensity = intensity;
-                    self.node_graph_state.mark_hdri_loaded(
+                    self.ivar.ivar_state.environment = Some(ivar_env);
+                    self.ivar.ivar_state.hdri_rotation = rotation_rad;
+                    self.ivar.ivar_state.hdri_intensity = intensity;
+                    self.nodes.node_graph_state.mark_hdri_loaded(
                         &source_path,
                         Some(load_secs),
                         Some(compute_secs),
@@ -1576,14 +1608,18 @@ impl Renderer {
                     message,
                 } => {
                     log::error!("Failed to load HDRI: {}", message);
-                    self.node_graph_state.mark_hdri_error(&source_path, message);
+                    self.nodes
+                        .node_graph_state
+                        .mark_hdri_error(&source_path, message);
                     log::error!("HDRI load failed: {}", load_path);
                 }
             }
         }
 
         if let Some(status) = self.environment.poll_tx_result() {
-            self.node_graph_state.mark_tx_conversion_complete(status);
+            self.nodes
+                .node_graph_state
+                .mark_tx_conversion_complete(status);
         }
     }
 
@@ -1598,7 +1634,7 @@ impl Renderer {
                         total_frames,
                         frame_progress,
                     } => {
-                        self.ivar_state.batch_status = BatchRenderStatus::Rendering {
+                        self.ivar.ivar_state.batch_status = BatchRenderStatus::Rendering {
                             current_frame,
                             total_frames,
                             frame_progress,
@@ -1612,18 +1648,18 @@ impl Renderer {
                     }
                     BatchMessage::Complete { total_elapsed_secs } => {
                         log::info!("Batch render complete in {:.1}s", total_elapsed_secs);
-                        self.ivar_state.batch_status =
+                        self.ivar.ivar_state.batch_status =
                             BatchRenderStatus::Complete { total_elapsed_secs };
                         clear_batch_state = true;
                     }
                     BatchMessage::Cancelled => {
                         log::info!("Batch render cancelled");
-                        self.ivar_state.batch_status = BatchRenderStatus::Cancelled;
+                        self.ivar.ivar_state.batch_status = BatchRenderStatus::Cancelled;
                         clear_batch_state = true;
                     }
                     BatchMessage::Error(e) => {
                         log::error!("Batch render error: {}", e);
-                        self.ivar_state.batch_status = BatchRenderStatus::Failed(e);
+                        self.ivar.ivar_state.batch_status = BatchRenderStatus::Failed(e);
                         clear_batch_state = true;
                     }
                 }
@@ -1642,7 +1678,7 @@ impl Renderer {
         window: &winit::window::Window,
         full_output: egui::FullOutput,
     ) -> Result<()> {
-        let output = self.surface.get_current_texture()?;
+        let output = self.gpu.surface.get_current_texture()?;
         let view = output
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
@@ -1660,6 +1696,7 @@ impl Renderer {
             .tessellate(full_output.shapes, full_output.pixels_per_point);
 
         let mut encoder = self
+            .gpu
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("Render Encoder"),
@@ -1668,13 +1705,13 @@ impl Renderer {
         // Upload egui textures
         for (id, image_delta) in &full_output.textures_delta.set {
             self.egui_renderer
-                .update_texture(&self.device, &self.queue, *id, image_delta);
+                .update_texture(&self.gpu.device, &self.gpu.queue, *id, image_delta);
         }
 
         // Prepare egui render pass
         self.egui_renderer.update_buffers(
-            &self.device,
-            &self.queue,
+            &self.gpu.device,
+            &self.gpu.queue,
             &mut encoder,
             &paint_jobs,
             &screen_descriptor,
@@ -1688,14 +1725,15 @@ impl Renderer {
             // f32 eq is safe: viewport dims derive from integer pixel sizes and
             // deterministic egui panel widths, not iterative floating-point math.
             if self.point_preview_params_dirty || vp_size != self.point_preview_last_vp {
-                self.point_preview.update_params(&self.queue, vp_w, vp_h);
+                self.point_preview
+                    .update_params(&self.gpu.queue, vp_w, vp_h);
                 self.point_preview_last_vp = vp_size;
                 self.point_preview_params_dirty = false;
             }
         }
 
         // Main render pass - dispatch based on render mode
-        match self.ivar_state.mode {
+        match self.ivar.ivar_state.mode {
             RenderMode::Vulkan => {
                 // Standard GPU viewport rendering
 
@@ -1727,7 +1765,7 @@ impl Renderer {
                     skybox_pass.set_viewport(vp_x, vp_y, vp_w, vp_h, 0.0, 1.0);
                     skybox_pass.set_scissor_rect(sx, sy, sw, sh);
                     self.environment
-                        .render_skybox(&mut skybox_pass, &self.camera_bind_group);
+                        .render_skybox(&mut skybox_pass, &self.cam.camera_bind_group);
                 }
 
                 // Geometry pass
@@ -1773,7 +1811,7 @@ impl Renderer {
 
                     // Set common pipeline state
                     render_pass.set_pipeline(&self.pipeline);
-                    render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
+                    render_pass.set_bind_group(0, &self.cam.camera_bind_group, &[]);
                     render_pass.set_bind_group(1, &self.material_bind_group, &[]);
                     render_pass.set_bind_group(2, &self.texture_bind_group, &[]);
                     render_pass.set_bind_group(3, self.environment.bind_group(), &[]);
@@ -1795,7 +1833,7 @@ impl Renderer {
                                 }
 
                                 // Write instances for this prototype to the instance buffer
-                                self.queue.write_buffer(
+                                self.gpu.queue.write_buffer(
                                     &self.instance_buffer,
                                     buffer_offset,
                                     bytemuck::cast_slice(instances),
@@ -1873,11 +1911,12 @@ impl Renderer {
 
                     // Render point preview after geometry (transparent, reads depth)
                     self.point_preview
-                        .render(&mut render_pass, &self.camera_bind_group);
+                        .render(&mut render_pass, &self.cam.camera_bind_group);
 
                     // Render ground grid after opaque geometry (transparent, reads depth)
                     if self.show_grid {
-                        self.grid.render(&mut render_pass, &self.camera_bind_group);
+                        self.grid
+                            .render(&mut render_pass, &self.cam.camera_bind_group);
                     }
                 }
 
@@ -1923,18 +1962,18 @@ impl Renderer {
             RenderMode::Ivar => {
                 // 1. Camera dirty → interaction mode at lowest scale
                 //    Throttle restarts to ~50ms so rayon can complete some buckets.
-                if self.ivar_state.check_camera_dirty(&self.camera) {
-                    let scale = self.ivar_state.interaction_scale();
-                    if self.ivar_state.should_restart() {
-                        if self.ivar_state.world.is_some() {
+                if self.ivar.ivar_state.check_camera_dirty(&self.cam.camera) {
+                    let scale = self.ivar.ivar_state.interaction_scale();
+                    if self.ivar.ivar_state.should_restart() {
+                        if self.ivar.ivar_state.world.is_some() {
                             self.restart_ivar_at_scale(scale);
                         } else {
                             // No BVH yet, record desired scale for when build completes
-                            self.ivar_state.current_scale = scale;
+                            self.ivar.ivar_state.current_scale = scale;
                             self.start_ivar_render();
                         }
                     }
-                    self.ivar_state.last_interaction_time = Some(std::time::Instant::now());
+                    self.ivar.ivar_state.last_interaction_time = Some(std::time::Instant::now());
                 }
 
                 // 2. Poll for scene build completion
@@ -1948,39 +1987,40 @@ impl Renderer {
                 self.poll_ivar_messages();
 
                 // 4. Settle timer → refine to next resolution level
-                if let Some(last_time) = self.ivar_state.last_interaction_time {
+                if let Some(last_time) = self.ivar.ivar_state.last_interaction_time {
                     let elapsed_ms = last_time.elapsed().as_millis() as u32;
                     // Use shorter timeout for coarse→medium refinement
-                    let threshold = if self.ivar_state.current_scale >= 4 {
-                        self.ivar_state.settle_timeout_ms / 2
+                    let threshold = if self.ivar.ivar_state.current_scale >= 4 {
+                        self.ivar.ivar_state.settle_timeout_ms / 2
                     } else {
-                        self.ivar_state.settle_timeout_ms
+                        self.ivar.ivar_state.settle_timeout_ms
                     };
                     if elapsed_ms >= threshold
-                        && self.ivar_state.current_scale > 1
-                        && !self.ivar_state.is_pass_in_flight()
+                        && self.ivar.ivar_state.current_scale > 1
+                        && !self.ivar.ivar_state.is_pass_in_flight()
                     {
-                        let next_scale = (self.ivar_state.current_scale / 2).max(1);
+                        let next_scale = (self.ivar.ivar_state.current_scale / 2).max(1);
                         self.restart_ivar_at_scale(next_scale);
-                        self.ivar_state.last_interaction_time = Some(std::time::Instant::now());
+                        self.ivar.ivar_state.last_interaction_time =
+                            Some(std::time::Instant::now());
                     }
                 }
 
                 // 5. Full-res progressive: start next pass only at scale==1
-                if self.ivar_state.current_scale == 1
-                    && self.ivar_state.world.is_some()
-                    && !self.ivar_state.is_pass_in_flight()
-                    && self.ivar_state.needs_more_passes()
+                if self.ivar.ivar_state.current_scale == 1
+                    && self.ivar.ivar_state.world.is_some()
+                    && !self.ivar.ivar_state.is_pass_in_flight()
+                    && self.ivar.ivar_state.needs_more_passes()
                 {
                     self.start_progressive_pass();
                 }
 
                 // 6. First-time scene build
-                if self.ivar_state.world.is_none()
-                    && self.ivar_state.build_status == BuildStatus::NotStarted
+                if self.ivar.ivar_state.world.is_none()
+                    && self.ivar.ivar_state.build_status == BuildStatus::NotStarted
                 {
-                    self.ivar_state.current_scale = 1;
-                    self.ivar_state.last_interaction_time = None;
+                    self.ivar.ivar_state.current_scale = 1;
+                    self.ivar.ivar_state.last_interaction_time = None;
                     self.start_ivar_render();
                 }
 
@@ -2008,8 +2048,8 @@ impl Renderer {
                     let (sx, sy, sw, sh) = self.viewport_scissor();
                     ivar_pass.set_viewport(vp_x, vp_y, vp_w, vp_h, 0.0, 1.0);
                     ivar_pass.set_scissor_rect(sx, sy, sw, sh);
-                    ivar_pass.set_pipeline(&self.ivar_pipeline);
-                    ivar_pass.set_bind_group(0, &self.ivar_bind_group, &[]);
+                    ivar_pass.set_pipeline(&self.ivar.ivar_pipeline);
+                    ivar_pass.set_bind_group(0, &self.ivar.ivar_bind_group, &[]);
                     ivar_pass.draw(0..3, 0..1); // Single fullscreen triangle
                 }
             }
@@ -2043,7 +2083,7 @@ impl Renderer {
             self.egui_renderer.free_texture(id);
         }
 
-        self.queue.submit(std::iter::once(encoder.finish()));
+        self.gpu.queue.submit(std::iter::once(encoder.finish()));
         output.present();
 
         Ok(())

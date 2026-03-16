@@ -2,9 +2,10 @@
 //!
 //! Renders the classic "Ray Tracing in One Weekend" scene.
 
+use bif_math::Vec3;
 use bif_renderer::{
     color_to_rgba, render, BvhNode, Camera, Color, Dielectric, Hittable, Lambertian, Metal,
-    RenderConfig, Sphere, Vec3,
+    RenderConfig, Sphere,
 };
 use rand::SeedableRng;
 

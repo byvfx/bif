@@ -24,12 +24,12 @@ impl Renderer {
 
         // Sync USD camera if selected (animates camera during playback)
         // Do this BEFORE checking for mesh animations - camera can animate alone
-        if let Some(camera_path) = self.selected_usd_camera.clone() {
+        if let Some(camera_path) = self.cam.selected_usd_camera.clone() {
             self.sync_viewport_to_usd_camera(&camera_path);
         }
 
         // Sync scene camera if selected (follows instance transform during playback)
-        if let crate::ivar_state::CameraSource::SceneCamera(idx) = self.viewport_camera_source {
+        if let crate::ivar_state::CameraSource::SceneCamera(idx) = self.cam.viewport_camera_source {
             self.sync_viewport_to_scene_camera(idx);
         }
 
@@ -58,7 +58,7 @@ impl Renderer {
         if has_vertex_animations {
             self.update_vertex_animation(eval_frame);
             // Only invalidate Ivar cache when in Ivar mode (avoid overhead during viewport playback)
-            if self.ivar_state.mode == RenderMode::Ivar {
+            if self.ivar.ivar_state.mode == RenderMode::Ivar {
                 self.invalidate_ivar_scene();
             }
         }
@@ -147,7 +147,7 @@ impl Renderer {
         if self.multi_draw.enabled {
             let vertex_animated = self.vertex_animated_meshes.clone();
             self.multi_draw.update_vertex_animation(
-                &self.queue,
+                &self.gpu.queue,
                 &vertex_animated,
                 |mesh_idx, f| stage.get_mesh_vertices_at_time(mesh_idx, f).ok(),
                 frame,
@@ -195,7 +195,7 @@ impl Renderer {
             }
 
             if updated_any {
-                self.queue.write_buffer(
+                self.gpu.queue.write_buffer(
                     &self.vertex_buffer,
                     0,
                     bytemuck::cast_slice(&self.mesh_data.vertices),
@@ -220,7 +220,7 @@ impl Renderer {
                 vertex.position = [positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2]];
             }
 
-            self.queue.write_buffer(
+            self.gpu.queue.write_buffer(
                 &self.vertex_buffer,
                 0,
                 bytemuck::cast_slice(&self.mesh_data.vertices),

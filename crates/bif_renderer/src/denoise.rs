@@ -12,39 +12,22 @@ pub struct DenoiseResult {
 }
 
 /// Errors that can occur during denoising.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum DenoiseError {
     /// OIDN feature not compiled in.
+    #[error("OIDN feature not enabled")]
     NotEnabled,
     /// Buffer dimension mismatch.
+    #[error("{buffer} buffer size mismatch: expected {expected}, got {actual}")]
     DimensionMismatch {
         expected: usize,
         actual: usize,
         buffer: &'static str,
     },
     /// OIDN filter execution error.
+    #[error("OIDN filter error: {0}")]
     FilterError(String),
 }
-
-impl std::fmt::Display for DenoiseError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            DenoiseError::NotEnabled => write!(f, "OIDN feature not enabled"),
-            DenoiseError::DimensionMismatch {
-                expected,
-                actual,
-                buffer,
-            } => write!(
-                f,
-                "{} buffer size mismatch: expected {}, got {}",
-                buffer, expected, actual
-            ),
-            DenoiseError::FilterError(msg) => write!(f, "OIDN filter error: {}", msg),
-        }
-    }
-}
-
-impl std::error::Error for DenoiseError {}
 
 /// Denoise a beauty image using Intel OIDN.
 ///

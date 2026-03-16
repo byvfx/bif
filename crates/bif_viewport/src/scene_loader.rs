@@ -61,8 +61,12 @@ impl Renderer {
         );
 
         // Refresh textures and material table
-        self.gpu_textures =
-            texture_loader::create_gpu_textures_for_scene(&self.device, &self.queue, scene, None);
+        self.gpu_textures = texture_loader::create_gpu_textures_for_scene(
+            &self.gpu.device,
+            &self.gpu.queue,
+            scene,
+            None,
+        );
 
         let mut material_table: Vec<MaterialGpu> = scene
             .materials
@@ -77,7 +81,8 @@ impl Renderer {
         ));
         self.material_table_len = material_table.len() as u32;
         self.material_table_buffer =
-            self.device
+            self.gpu
+                .device
                 .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some("Material Table Buffer"),
                     contents: bytemuck::cast_slice(&material_table),
@@ -87,7 +92,8 @@ impl Renderer {
         // Triangle material buffer
         if let Some(ref tri_mats) = mesh_data.triangle_material_ids {
             self.triangle_material_buffer =
-                self.device
+                self.gpu
+                    .device
                     .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                         label: Some("Triangle Material Buffer"),
                         contents: bytemuck::cast_slice(tri_mats),
@@ -96,7 +102,8 @@ impl Renderer {
             self.has_triangle_materials = true;
         } else {
             self.triangle_material_buffer =
-                self.device
+                self.gpu
+                    .device
                     .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                         label: Some("Triangle Material Buffer"),
                         contents: bytemuck::cast_slice(&[0xFFFFFFFFu32]),
@@ -106,51 +113,59 @@ impl Renderer {
         }
 
         // Rebuild material bind group
-        self.material_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Material Bind Group"),
-            layout: &self.material_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: self.material_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: self.material_table_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: self.triangle_material_buffer.as_entire_binding(),
-                },
-            ],
-        });
+        self.material_bind_group = self
+            .gpu
+            .device
+            .create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("Material Bind Group"),
+                layout: &self.material_bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: self.material_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: self.material_table_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: self.triangle_material_buffer.as_entire_binding(),
+                    },
+                ],
+            });
 
         // Rebuild texture bind group
         let texture_view_refs: Vec<&wgpu::TextureView> = self.gpu_textures.views.iter().collect();
-        self.texture_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Texture Bind Group"),
-            layout: &self.texture_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureViewArray(&texture_view_refs),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&self.texture_sampler),
-                },
-            ],
-        });
+        self.texture_bind_group = self
+            .gpu
+            .device
+            .create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("Texture Bind Group"),
+                layout: &self.texture_bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureViewArray(&texture_view_refs),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&self.texture_sampler),
+                    },
+                ],
+            });
 
         // Vertex and index buffers
-        self.vertex_buffer = self
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Vertex Buffer"),
-                contents: bytemuck::cast_slice(&mesh_data.vertices),
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            });
+        self.vertex_buffer =
+            self.gpu
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("Vertex Buffer"),
+                    contents: bytemuck::cast_slice(&mesh_data.vertices),
+                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                });
         self.index_buffer = self
+            .gpu
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("Index Buffer"),
@@ -224,7 +239,7 @@ impl Renderer {
             );
         }
         let write_count = instances.len().min(crate::MAX_INSTANCES as usize);
-        self.queue.write_buffer(
+        self.gpu.queue.write_buffer(
             &self.instance_buffer,
             0,
             bytemuck::cast_slice(&instances[..write_count]),
@@ -239,7 +254,7 @@ impl Renderer {
 
         let triangles_per_instance = mesh_data.indices.len() as u32 / 3;
         self.culling
-            .set_prototype_aabb(&self.device, prototype_aabb, triangles_per_instance);
+            .set_prototype_aabb(&self.gpu.device, prototype_aabb, triangles_per_instance);
         self.culling.instance_aabbs = instance_aabbs;
         self.culling.visible_count = write_count as u32;
 
@@ -281,35 +296,38 @@ impl Renderer {
         self.scene_materials = scene.materials.clone();
         self.scene_cameras = scene.cameras.clone();
         // Reset stale scene camera selection
-        if let crate::ivar_state::CameraSource::SceneCamera(idx) = self.viewport_camera_source {
+        if let crate::ivar_state::CameraSource::SceneCamera(idx) = self.cam.viewport_camera_source {
             if idx >= self.scene_cameras.len() {
-                self.viewport_camera_source = crate::ivar_state::CameraSource::Viewport;
-                self.camera_locked = false;
+                self.cam.viewport_camera_source = crate::ivar_state::CameraSource::Viewport;
+                self.cam.camera_locked = false;
             }
         }
 
         // Update material uniform
         self.material_uniform = MaterialUniform::from_material(&scene_material);
-        self.queue.write_buffer(
+        self.gpu.queue.write_buffer(
             &self.material_buffer,
             0,
             bytemuck::cast_slice(&[self.material_uniform]),
         );
 
         // Frame camera
-        self.camera.target = mesh_center;
-        self.camera.distance = camera_distance;
-        self.camera.near = camera_distance * 0.01;
-        self.camera.far = camera_distance * 20.0;
-        self.camera.update_position_from_angles();
+        self.cam.camera.target = mesh_center;
+        self.cam.camera.distance = camera_distance;
+        self.cam.camera.near = camera_distance * 0.01;
+        self.cam.camera.far = camera_distance * 20.0;
+        self.cam.camera.update_position_from_angles();
         self.update_camera();
 
         // Invalidate Ivar scene + materials (new scene = new materials)
         self.invalidate_ivar_materials();
-        self.ivar_state.world = None;
-        self.ivar_state.build_status = BuildStatus::NotStarted;
-        self.ivar_state.cancel_flag.store(true, Ordering::Relaxed);
-        self.ivar_state.render_complete = false;
+        self.ivar.ivar_state.world = None;
+        self.ivar.ivar_state.build_status = BuildStatus::NotStarted;
+        self.ivar
+            .ivar_state
+            .cancel_flag
+            .store(true, Ordering::Relaxed);
+        self.ivar.ivar_state.render_complete = false;
 
         // Update lights
         self.update_lights(&scene.lights);
@@ -332,6 +350,7 @@ impl Renderer {
     /// Generate a unique name for a primitive (e.g. "Cube", "Cube_2", "Cube_3").
     fn unique_primitive_name(&mut self, base: &str) -> String {
         let counter = self
+            .nodes
             .primitive_name_counters
             .entry(base.to_string())
             .or_insert(0);
@@ -353,7 +372,7 @@ impl Renderer {
             return false;
         }
         // Re-index node_proto_map (unified: single + multi-proto nodes)
-        for ids in self.node_proto_map.values_mut() {
+        for ids in self.nodes.node_proto_map.values_mut() {
             ids.retain(|id| *id != proto_id);
             for id in ids.iter_mut() {
                 if *id > proto_id {
@@ -362,11 +381,11 @@ impl Renderer {
             }
         }
         // Remove instancer results referencing deleted prototype
-        self.instancer_results.retain(|_node_id, instances| {
+        self.nodes.instancer_results.retain(|_node_id, instances| {
             !instances.iter().any(|inst| inst.prototype_id == proto_id)
         });
         // Re-index remaining instancer_results prototype IDs
-        for instances in self.instancer_results.values_mut() {
+        for instances in self.nodes.instancer_results.values_mut() {
             for inst in instances.iter_mut() {
                 if inst.prototype_id > proto_id {
                     inst.prototype_id -= 1;
@@ -467,7 +486,7 @@ impl Renderer {
     ///
     /// Called after adding/removing primitives or merging USD data.
     pub fn reload_working_scene(&mut self) -> Result<()> {
-        self.scene_graph_dirty = true;
+        self.nodes.scene_graph_dirty = true;
         let scene = &self.working_scene;
 
         if scene.prototypes.is_empty() {
@@ -498,32 +517,37 @@ impl Renderer {
                 mesh_ranges: None,
             };
             // Invalidate Ivar
-            self.ivar_state.world = None;
-            self.ivar_state.build_status = BuildStatus::NotStarted;
-            self.ivar_state.cancel_flag.store(true, Ordering::Relaxed);
-            self.ivar_state.render_complete = false;
+            self.ivar.ivar_state.world = None;
+            self.ivar.ivar_state.build_status = BuildStatus::NotStarted;
+            self.ivar
+                .ivar_state
+                .cancel_flag
+                .store(true, Ordering::Relaxed);
+            self.ivar.ivar_state.render_complete = false;
             return Ok(());
         }
 
         let use_multi_draw = scene.prototypes.len() > 1;
 
         // Compute active node set from display flag (None = everything active)
-        let active_nodes: Option<std::collections::HashSet<egui_snarl::NodeId>> = self
-            .node_graph_state
-            .display_node
-            .map(|dn| crate::node_graph::collect_upstream_nodes(dn, &self.node_graph_state.snarl));
+        let active_nodes: Option<std::collections::HashSet<egui_snarl::NodeId>> =
+            self.nodes.node_graph_state.display_node.map(|dn| {
+                crate::node_graph::collect_upstream_nodes(dn, &self.nodes.node_graph_state.snarl)
+            });
         let is_node_active = |node_id: &egui_snarl::NodeId| {
             active_nodes.as_ref().is_none_or(|s| s.contains(node_id))
         };
 
         // Prototypes consumed by instancers or scatter surfaces — hide from viewport
         let instanced_proto_ids: std::collections::HashSet<usize> = self
+            .nodes
             .instancer_results
             .iter()
             .filter(|(nid, _)| is_node_active(nid))
             .flat_map(|(_, insts)| insts.iter().map(|inst| inst.prototype_id))
             .collect();
         let scatter_surface_ids: std::collections::HashSet<usize> = self
+            .nodes
             .node_scatter_surface_map
             .iter()
             .filter(|(nid, _)| is_node_active(nid))
@@ -531,6 +555,7 @@ impl Renderer {
             .collect();
         // Also hide prototypes from inactive nodes (display flag gating)
         let display_hidden_proto_ids: std::collections::HashSet<usize> = self
+            .nodes
             .node_proto_map
             .iter()
             .filter(|(nid, _)| !is_node_active(nid))
@@ -560,24 +585,27 @@ impl Renderer {
             let md = MeshData::from_core_mesh(&proto.mesh);
             let num_triangles = md.indices.len() as u32 / 3;
 
-            let vertex_buffer = self
-                .device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some(&format!("WS Proto {} VB", proto_id)),
-                    contents: bytemuck::cast_slice(&md.vertices),
-                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                });
+            let vertex_buffer =
+                self.gpu
+                    .device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some(&format!("WS Proto {} VB", proto_id)),
+                        contents: bytemuck::cast_slice(&md.vertices),
+                        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                    });
 
-            let index_buffer = self
-                .device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some(&format!("WS Proto {} IB", proto_id)),
-                    contents: bytemuck::cast_slice(&md.indices),
-                    usage: wgpu::BufferUsages::INDEX,
-                });
+            let index_buffer =
+                self.gpu
+                    .device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some(&format!("WS Proto {} IB", proto_id)),
+                        contents: bytemuck::cast_slice(&md.indices),
+                        usage: wgpu::BufferUsages::INDEX,
+                    });
 
             let triangle_material_buffer = md.triangle_material_ids.as_ref().map(|tri_mats| {
-                self.device
+                self.gpu
+                    .device
                     .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                         label: Some(&format!("WS Proto {} TMB", proto_id)),
                         contents: bytemuck::cast_slice(tri_mats),
@@ -630,6 +658,7 @@ impl Renderer {
             // Bake active instancer instances so Ivar (identity transform) can render them
             let base_idx = meshes_with_transforms.len();
             for (i, inst) in self
+                .nodes
                 .instancer_results
                 .iter()
                 .filter(|(nid, _)| is_node_active(nid))
@@ -658,31 +687,36 @@ impl Renderer {
         // Only rebuild GPU textures when materials actually changed (not on every
         // Xform drag or display toggle). Texture loading is expensive — disk I/O,
         // decode, GPU upload.
-        if self.materials_dirty {
+        if self.nodes.materials_dirty {
             self.gpu_textures = texture_loader::create_gpu_textures_for_scene(
-                &self.device,
-                &self.queue,
+                &self.gpu.device,
+                &self.gpu.queue,
                 scene,
                 self.texture_base_dir.as_deref(),
             );
 
             let texture_view_refs: Vec<&wgpu::TextureView> =
                 self.gpu_textures.views.iter().collect();
-            self.texture_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("WS Texture Bind Group"),
-                layout: &self.texture_bind_group_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureViewArray(&texture_view_refs),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Sampler(&self.texture_sampler),
-                    },
-                ],
-            });
-            self.materials_dirty = false;
+            self.texture_bind_group =
+                self.gpu
+                    .device
+                    .create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("WS Texture Bind Group"),
+                        layout: &self.texture_bind_group_layout,
+                        entries: &[
+                            wgpu::BindGroupEntry {
+                                binding: 0,
+                                resource: wgpu::BindingResource::TextureViewArray(
+                                    &texture_view_refs,
+                                ),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 1,
+                                resource: wgpu::BindingResource::Sampler(&self.texture_sampler),
+                            },
+                        ],
+                    });
+            self.nodes.materials_dirty = false;
         }
 
         // Material table (use default for primitives)
@@ -700,7 +734,8 @@ impl Renderer {
         ));
         self.material_table_len = material_table.len() as u32;
         self.material_table_buffer =
-            self.device
+            self.gpu
+                .device
                 .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some("WS Material Table Buffer"),
                     contents: bytemuck::cast_slice(&material_table),
@@ -714,7 +749,8 @@ impl Renderer {
             compact_tri_mats.push(0xFFFFFFFFu32);
         }
         self.triangle_material_buffer =
-            self.device
+            self.gpu
+                .device
                 .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some("WS Triangle Material Buffer (compact)"),
                     contents: bytemuck::cast_slice(&compact_tri_mats),
@@ -722,34 +758,39 @@ impl Renderer {
                 });
 
         // Rebuild material bind group
-        self.material_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("WS Material Bind Group"),
-            layout: &self.material_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: self.material_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: self.material_table_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: self.triangle_material_buffer.as_entire_binding(),
-                },
-            ],
-        });
+        self.material_bind_group = self
+            .gpu
+            .device
+            .create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("WS Material Bind Group"),
+                layout: &self.material_bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: self.material_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: self.material_table_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: self.triangle_material_buffer.as_entire_binding(),
+                    },
+                ],
+            });
 
         // Vertex and index buffers (combined, for single-draw fallback)
-        self.vertex_buffer = self
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("WS Vertex Buffer"),
-                contents: bytemuck::cast_slice(&mesh_data.vertices),
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            });
+        self.vertex_buffer =
+            self.gpu
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("WS Vertex Buffer"),
+                    contents: bytemuck::cast_slice(&mesh_data.vertices),
+                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                });
         self.index_buffer = self
+            .gpu
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("WS Index Buffer"),
@@ -767,6 +808,7 @@ impl Renderer {
 
         // Generate instances (pre-allocate for scene + instancer instances)
         let instancer_count: usize = self
+            .nodes
             .instancer_results
             .iter()
             .filter(|(nid, _)| is_node_active(nid))
@@ -826,6 +868,7 @@ impl Renderer {
 
         // Append instancer-expanded instances (from active Point Instancer nodes)
         for inst in self
+            .nodes
             .instancer_results
             .iter()
             .filter(|(nid, _)| is_node_active(nid))
@@ -884,7 +927,7 @@ impl Renderer {
                 depth: usize,
             }
             let mut xform_entries: Vec<XformEntry> = Vec::new();
-            for (nid, node) in self.node_graph_state.snarl.node_ids() {
+            for (nid, node) in self.nodes.node_graph_state.snarl.node_ids() {
                 if !is_node_active(&nid) {
                     continue;
                 }
@@ -898,14 +941,14 @@ impl Renderer {
                     // Compute depth: count Xform nodes upstream of this one
                     let upstream = crate::node_graph::collect_upstream_nodes(
                         nid,
-                        &self.node_graph_state.snarl,
+                        &self.nodes.node_graph_state.snarl,
                     );
                     let depth = upstream
                         .iter()
                         .filter(|&&uid| uid != nid)
                         .filter(|uid| {
                             matches!(
-                                self.node_graph_state.snarl[**uid],
+                                self.nodes.node_graph_state.snarl[**uid],
                                 crate::node_graph::SceneNode::Xform { .. }
                             )
                         })
@@ -941,14 +984,14 @@ impl Renderer {
 
                 // Walk upstream from this Xform's scene input to find source nodes
                 let upstream = {
-                    let in_pin = self.node_graph_state.snarl.in_pin(InPinId {
+                    let in_pin = self.nodes.node_graph_state.snarl.in_pin(InPinId {
                         node: entry.node_id,
                         input: 0,
                     });
                     if let Some(remote) = in_pin.remotes.first() {
                         crate::node_graph::collect_upstream_nodes(
                             remote.node,
-                            &self.node_graph_state.snarl,
+                            &self.nodes.node_graph_state.snarl,
                         )
                     } else {
                         continue; // No input connected
@@ -957,6 +1000,7 @@ impl Renderer {
 
                 // Resolve which prototype IDs come from those upstream nodes
                 let affected_proto_ids: std::collections::HashSet<usize> = self
+                    .nodes
                     .node_proto_map
                     .iter()
                     .filter(|(nid, _)| upstream.contains(nid))
@@ -986,7 +1030,7 @@ impl Renderer {
             );
         }
         let write_count = instances.len().min(crate::MAX_INSTANCES as usize);
-        self.queue.write_buffer(
+        self.gpu.queue.write_buffer(
             &self.instance_buffer,
             0,
             bytemuck::cast_slice(&instances[..write_count]),
@@ -1004,7 +1048,7 @@ impl Renderer {
             mesh_data.indices.len() as u32 / 3
         };
         self.culling
-            .set_prototype_aabb(&self.device, prototype_aabb, triangles_per_instance);
+            .set_prototype_aabb(&self.gpu.device, prototype_aabb, triangles_per_instance);
         self.culling.instance_aabbs = instance_aabbs;
         self.culling.visible_count = write_count as u32;
 
@@ -1031,6 +1075,7 @@ impl Renderer {
         // Extend for instancer-expanded instances (parallel to instance_transforms)
         let scene_inst_count = prim_paths.len();
         for (i, inst) in self
+            .nodes
             .instancer_results
             .iter()
             .filter(|(nid, _)| is_node_active(nid))
@@ -1072,10 +1117,10 @@ impl Renderer {
         self.scene_cameras = scene.cameras.clone();
 
         // Reset stale scene camera selection
-        if let crate::ivar_state::CameraSource::SceneCamera(idx) = self.viewport_camera_source {
+        if let crate::ivar_state::CameraSource::SceneCamera(idx) = self.cam.viewport_camera_source {
             if idx >= self.scene_cameras.len() {
-                self.viewport_camera_source = crate::ivar_state::CameraSource::Viewport;
-                self.camera_locked = false;
+                self.cam.viewport_camera_source = crate::ivar_state::CameraSource::Viewport;
+                self.cam.camera_locked = false;
             }
         }
 
@@ -1090,20 +1135,23 @@ impl Renderer {
 
         // Material uniform
         self.material_uniform = MaterialUniform::from_material(&self.scene_material);
-        self.queue.write_buffer(
+        self.gpu.queue.write_buffer(
             &self.material_buffer,
             0,
             bytemuck::cast_slice(&[self.material_uniform]),
         );
 
         // Invalidate Ivar
-        self.ivar_state.world = None;
-        self.ivar_state.build_status = BuildStatus::NotStarted;
-        self.ivar_state.cancel_flag.store(true, Ordering::Relaxed);
-        self.ivar_state.render_complete = false;
+        self.ivar.ivar_state.world = None;
+        self.ivar.ivar_state.build_status = BuildStatus::NotStarted;
+        self.ivar
+            .ivar_state
+            .cancel_flag
+            .store(true, Ordering::Relaxed);
+        self.ivar.ivar_state.render_complete = false;
 
         // Invalidate material cache when materials changed; prewarm new ones
-        if self.materials_dirty {
+        if self.nodes.materials_dirty {
             self.invalidate_ivar_materials();
             self.prewarm_ivar_materials();
         }
@@ -1216,7 +1264,7 @@ impl Renderer {
             return;
         };
 
-        let max_dimension = self.device.limits().max_texture_dimension_2d;
+        let max_dimension = self.gpu.device.limits().max_texture_dimension_2d;
         let mut uploaded = 0u32;
         let mut has_udim = false;
 
@@ -1226,8 +1274,8 @@ impl Renderer {
                 Ok(msg) => {
                     let is_udim = msg.udim_grid_cols > 0;
                     if texture_loader::upload_streamed_texture(
-                        &self.device,
-                        &self.queue,
+                        &self.gpu.device,
+                        &self.gpu.queue,
                         &mut self.gpu_textures,
                         msg,
                         max_dimension,
@@ -1252,20 +1300,25 @@ impl Renderer {
         if uploaded > 0 {
             let texture_view_refs: Vec<&wgpu::TextureView> =
                 self.gpu_textures.views.iter().collect();
-            self.texture_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("Texture Bind Group (streamed)"),
-                layout: &self.texture_bind_group_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureViewArray(&texture_view_refs),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Sampler(&self.texture_sampler),
-                    },
-                ],
-            });
+            self.texture_bind_group =
+                self.gpu
+                    .device
+                    .create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("Texture Bind Group (streamed)"),
+                        layout: &self.texture_bind_group_layout,
+                        entries: &[
+                            wgpu::BindGroupEntry {
+                                binding: 0,
+                                resource: wgpu::BindingResource::TextureViewArray(
+                                    &texture_view_refs,
+                                ),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 1,
+                                resource: wgpu::BindingResource::Sampler(&self.texture_sampler),
+                            },
+                        ],
+                    });
             log::info!("Streamed {} textures to GPU", uploaded);
 
             // Rebuild material table if UDIM textures arrived — grid info wasn't
@@ -1280,7 +1333,7 @@ impl Renderer {
                     &bif_core::Material::default(),
                     &self.gpu_textures,
                 ));
-                self.queue.write_buffer(
+                self.gpu.queue.write_buffer(
                     &self.material_table_buffer,
                     0,
                     bytemuck::cast_slice(&material_table),
@@ -1369,25 +1422,28 @@ impl Renderer {
             let mesh_data = MeshData::from_core_mesh(&proto.mesh);
             let num_triangles = mesh_data.indices.len() as u32 / 3;
 
-            let vertex_buffer = self
-                .device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some(&format!("Prototype {} Vertex Buffer", proto_id)),
-                    contents: bytemuck::cast_slice(&mesh_data.vertices),
-                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                });
+            let vertex_buffer =
+                self.gpu
+                    .device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some(&format!("Prototype {} Vertex Buffer", proto_id)),
+                        contents: bytemuck::cast_slice(&mesh_data.vertices),
+                        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                    });
 
-            let index_buffer = self
-                .device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some(&format!("Prototype {} Index Buffer", proto_id)),
-                    contents: bytemuck::cast_slice(&mesh_data.indices),
-                    usage: wgpu::BufferUsages::INDEX,
-                });
+            let index_buffer =
+                self.gpu
+                    .device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some(&format!("Prototype {} Index Buffer", proto_id)),
+                        contents: bytemuck::cast_slice(&mesh_data.indices),
+                        usage: wgpu::BufferUsages::INDEX,
+                    });
 
             let triangle_material_buffer =
                 mesh_data.triangle_material_ids.as_ref().map(|tri_mats| {
-                    self.device
+                    self.gpu
+                        .device
                         .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                             label: Some(&format!(
                                 "Prototype {} Triangle Material Buffer",
@@ -1476,8 +1532,8 @@ impl Renderer {
         let texture_start = Instant::now();
         let base_dir = path.parent();
         self.gpu_textures = texture_loader::prepare_texture_placeholders(
-            &self.device,
-            &self.queue,
+            &self.gpu.device,
+            &self.gpu.queue,
             &scene,
             base_dir,
         );
@@ -1500,7 +1556,8 @@ impl Renderer {
         ));
         self.material_table_len = material_table.len() as u32;
         self.material_table_buffer =
-            self.device
+            self.gpu
+                .device
                 .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some("Material Table Buffer"),
                     contents: bytemuck::cast_slice(&material_table),
@@ -1515,50 +1572,58 @@ impl Renderer {
             compact_tri_mats.push(0xFFFFFFFFu32);
         }
         self.triangle_material_buffer =
-            self.device
+            self.gpu
+                .device
                 .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some("Triangle Material Buffer (compact)"),
                     contents: bytemuck::cast_slice(&compact_tri_mats),
                     usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                 });
 
-        self.material_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Material Bind Group"),
-            layout: &self.material_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: self.material_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: self.material_table_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: self.triangle_material_buffer.as_entire_binding(),
-                },
-            ],
-        });
+        self.material_bind_group = self
+            .gpu
+            .device
+            .create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("Material Bind Group"),
+                layout: &self.material_bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: self.material_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: self.material_table_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: self.triangle_material_buffer.as_entire_binding(),
+                    },
+                ],
+            });
 
         let texture_view_refs: Vec<&wgpu::TextureView> = self.gpu_textures.views.iter().collect();
-        self.texture_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Texture Bind Group"),
-            layout: &self.texture_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureViewArray(&texture_view_refs),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&self.texture_sampler),
-                },
-            ],
-        });
+        self.texture_bind_group = self
+            .gpu
+            .device
+            .create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("Texture Bind Group"),
+                layout: &self.texture_bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureViewArray(&texture_view_refs),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&self.texture_sampler),
+                    },
+                ],
+            });
 
         // Create new vertex buffer (COPY_DST needed for vertex animation updates)
         let vertex_buffer = self
+            .gpu
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("Vertex Buffer"),
@@ -1568,6 +1633,7 @@ impl Renderer {
 
         // Create new index buffer
         let index_buffer = self
+            .gpu
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("Index Buffer"),
@@ -1653,7 +1719,7 @@ impl Renderer {
 
         // Write instances to dynamic buffer (reuse existing preallocated buffer)
         let write_count = instances.len().min(MAX_INSTANCES as usize);
-        self.queue.write_buffer(
+        self.gpu.queue.write_buffer(
             &self.instance_buffer,
             0,
             bytemuck::cast_slice(&instances[..write_count]),
@@ -1768,10 +1834,10 @@ impl Renderer {
         self.scene_materials = scene.materials.clone();
         self.scene_cameras = scene.cameras.clone();
         // Reset stale scene camera selection
-        if let crate::ivar_state::CameraSource::SceneCamera(idx) = self.viewport_camera_source {
+        if let crate::ivar_state::CameraSource::SceneCamera(idx) = self.cam.viewport_camera_source {
             if idx >= self.scene_cameras.len() {
-                self.viewport_camera_source = crate::ivar_state::CameraSource::Viewport;
-                self.camera_locked = false;
+                self.cam.viewport_camera_source = crate::ivar_state::CameraSource::Viewport;
+                self.cam.camera_locked = false;
             }
         }
         self.texture_base_dir = path.parent().map(|p| p.to_path_buf());
@@ -1801,7 +1867,7 @@ impl Renderer {
 
         // Update material uniform buffer for viewport PBR
         self.material_uniform = MaterialUniform::from_material(&scene_material);
-        self.queue.write_buffer(
+        self.gpu.queue.write_buffer(
             &self.material_buffer,
             0,
             bytemuck::cast_slice(&[self.material_uniform]),
@@ -1810,7 +1876,7 @@ impl Renderer {
         // Update culling manager with new prototype and instance AABBs
         let triangles_per_instance = self.num_indices / 3;
         self.culling
-            .set_prototype_aabb(&self.device, prototype_aabb, triangles_per_instance);
+            .set_prototype_aabb(&self.gpu.device, prototype_aabb, triangles_per_instance);
         self.culling.instance_aabbs = instance_aabbs;
         self.culling.lod_box_count = 0;
         self.num_triangles = triangles_per_instance as u64 * self.num_instances as u64;
@@ -1854,19 +1920,22 @@ impl Renderer {
         self.selected_prim_properties = None;
 
         // Update camera to frame the scene
-        self.camera.target = mesh_center;
-        self.camera.distance = camera_distance;
-        self.camera.near = camera_distance * 0.01;
-        self.camera.far = camera_distance * 20.0;
-        self.camera.update_position_from_angles();
+        self.cam.camera.target = mesh_center;
+        self.cam.camera.distance = camera_distance;
+        self.cam.camera.near = camera_distance * 0.01;
+        self.cam.camera.far = camera_distance * 20.0;
+        self.cam.camera.update_position_from_angles();
         self.update_camera();
 
         // Invalidate Ivar scene + materials (new scene = new materials)
         self.invalidate_ivar_materials();
-        self.ivar_state.world = None;
-        self.ivar_state.build_status = BuildStatus::NotStarted;
-        self.ivar_state.cancel_flag.store(true, Ordering::Relaxed);
-        self.ivar_state.render_complete = false;
+        self.ivar.ivar_state.world = None;
+        self.ivar.ivar_state.build_status = BuildStatus::NotStarted;
+        self.ivar
+            .ivar_state
+            .cancel_flag
+            .store(true, Ordering::Relaxed);
+        self.ivar.ivar_state.render_complete = false;
 
         // Initialize timeline from scene data
         if let Some(ref timeline) = scene.timeline {
@@ -1991,8 +2060,8 @@ impl Renderer {
         // Merge point clouds and sync next_cloud_id to avoid ID collisions
         for cloud in &scene.point_clouds {
             let mut merged = cloud.clone();
-            merged.id = self.next_cloud_id;
-            self.next_cloud_id += 1;
+            merged.id = self.nodes.next_cloud_id;
+            self.nodes.next_cloud_id += 1;
             self.working_scene.add_point_cloud(merged);
         }
         // Remap camera instance indices by the instance offset

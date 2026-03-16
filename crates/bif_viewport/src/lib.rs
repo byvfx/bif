@@ -238,12 +238,56 @@ pub(crate) struct SceneInstances {
     pub prim_paths: Vec<String>,
 }
 
+/// GPU plumbing — surface, device, queue, config.
+pub(crate) struct GpuContext {
+    pub surface: Surface<'static>,
+    pub device: Device,
+    pub queue: Queue,
+    pub config: SurfaceConfiguration,
+}
+
+/// Camera state — camera, uniform, GPU buffer, bind group, viewport source.
+pub struct CameraState {
+    pub camera: Camera,
+    pub camera_uniform: CameraUniform,
+    pub camera_buffer: wgpu::Buffer,
+    pub camera_bind_group: wgpu::BindGroup,
+    pub viewport_camera_source: CameraSource,
+    pub camera_locked: bool,
+    pub selected_usd_camera: Option<String>,
+}
+
+/// Ivar CPU path tracer integration — state, GPU resources, materials.
+pub(crate) struct IvarContext {
+    pub ivar_state: IvarState,
+    pub ivar_texture: wgpu::Texture,
+    pub ivar_texture_view: wgpu::TextureView,
+    pub ivar_sampler: wgpu::Sampler,
+    pub ivar_bind_group: wgpu::BindGroup,
+    pub ivar_bind_group_layout: wgpu::BindGroupLayout,
+    pub ivar_pipeline: wgpu::RenderPipeline,
+    /// Cached DisneyBSDF materials (avoids re-loading textures on every Ivar build).
+    pub ivar_materials: Option<Vec<Arc<bif_renderer::DisneyBSDF>>>,
+}
+
+/// Node graph evaluation state — graph, mappings, caches.
+pub(crate) struct NodeGraphContext {
+    pub node_graph_state: NodeGraphState,
+    pub node_proto_map: std::collections::HashMap<egui_snarl::NodeId, Vec<usize>>,
+    pub node_cloud_map: std::collections::HashMap<egui_snarl::NodeId, usize>,
+    pub next_cloud_id: usize,
+    pub node_scatter_surface_map: std::collections::HashMap<egui_snarl::NodeId, usize>,
+    pub instancer_results: std::collections::BTreeMap<egui_snarl::NodeId, Vec<bif_core::Instance>>,
+    pub cached_scene_graph: scene_browser::CachedSceneGraph,
+    pub scene_graph_dirty: bool,
+    pub primitive_name_counters: std::collections::HashMap<String, usize>,
+    pub materials_dirty: bool,
+    pub xform_property_changed: Option<egui_snarl::NodeId>,
+}
+
 /// Core renderer managing wgpu state
 pub struct Renderer {
-    pub(crate) surface: Surface<'static>,
-    pub(crate) device: Device,
-    pub(crate) queue: Queue,
-    pub(crate) config: SurfaceConfiguration,
+    pub(crate) gpu: GpuContext,
     pub size: (u32, u32),
     pub(crate) pipeline: wgpu::RenderPipeline,
     pub(crate) vertex_buffer: wgpu::Buffer,
@@ -251,10 +295,7 @@ pub struct Renderer {
     pub(crate) num_indices: u32,
     pub(crate) instance_buffer: wgpu::Buffer,
     pub(crate) num_instances: u32,
-    pub camera: Camera,
-    pub(crate) camera_uniform: CameraUniform,
-    pub(crate) camera_buffer: wgpu::Buffer,
-    pub(crate) camera_bind_group: wgpu::BindGroup,
+    pub cam: CameraState,
     pub(crate) material_uniform: MaterialUniform,
     pub(crate) material_buffer: wgpu::Buffer,
     pub(crate) material_bind_group_layout: wgpu::BindGroupLayout,
@@ -297,14 +338,8 @@ pub struct Renderer {
     // UI layout metrics (for viewport-safe overlays)
     pub(crate) ui_layout: UiLayout,
 
-    // Ivar CPU path tracer state
-    pub ivar_state: IvarState,
-    pub(crate) ivar_texture: wgpu::Texture,
-    pub(crate) ivar_texture_view: wgpu::TextureView,
-    pub(crate) ivar_sampler: wgpu::Sampler,
-    pub(crate) ivar_bind_group: wgpu::BindGroup,
-    pub(crate) ivar_bind_group_layout: wgpu::BindGroupLayout,
-    pub(crate) ivar_pipeline: wgpu::RenderPipeline,
+    // Ivar CPU path tracer integration
+    pub(crate) ivar: IvarContext,
 
     // Cached mesh data for Ivar scene building
     pub(crate) mesh_data: MeshData,
@@ -331,9 +366,6 @@ pub struct Renderer {
     // Base directory for resolving texture paths
     pub(crate) texture_base_dir: Option<std::path::PathBuf>,
 
-    /// Cached DisneyBSDF materials (avoids re-loading textures on every Ivar build).
-    pub(crate) ivar_materials: Option<Vec<Arc<bif_renderer::DisneyBSDF>>>,
-
     // Multi-draw state for per-prototype rendering
     pub(crate) multi_draw: MultiDrawState,
 
@@ -359,8 +391,8 @@ pub struct Renderer {
     /// Path to the currently loaded USD file (for sublayer export)
     pub(crate) loaded_usd_path: Option<String>,
 
-    // Node graph state for scene assembly
-    pub node_graph_state: NodeGraphState,
+    // Node graph evaluation state
+    pub(crate) nodes: NodeGraphContext,
 
     // Timeline state for animation playback
     pub timeline_state: TimelineState,
@@ -370,14 +402,6 @@ pub struct Renderer {
 
     // Lights state (UsdLux)
     pub(crate) lights: LightsManager,
-
-    // Viewport camera selection state
-    /// Active camera source for viewport (separate from batch render settings)
-    pub(crate) viewport_camera_source: CameraSource,
-    /// Lock camera controls when USD camera active
-    pub(crate) camera_locked: bool,
-    /// Selected USD camera path (for animation during playback)
-    pub(crate) selected_usd_camera: Option<String>,
 
     // Viewport picking state
     /// Embree pick scene for click-to-select (rebuilt on scene load)
@@ -413,32 +437,6 @@ pub struct Renderer {
 
     /// Persistent working scene that accumulates all primitives and USD objects.
     pub(crate) working_scene: bif_core::Scene,
-    /// Counters for generating unique primitive names (e.g. "Cube", "Cube_2").
-    pub(crate) primitive_name_counters: std::collections::HashMap<String, usize>,
-    /// Mapping from node graph NodeId to working_scene prototype IDs.
-    /// Single-proto nodes (Primitive) get a Vec of length 1; multi-proto (UsdRead) get multiple.
-    pub(crate) node_proto_map: std::collections::HashMap<egui_snarl::NodeId, Vec<usize>>,
-    /// True when material set changed (new USD load, node delete) — triggers texture rebuild.
-    /// Transform-only changes (Xform drag, display toggle) skip the expensive texture path.
-    pub(crate) materials_dirty: bool,
-    /// Set by property inspector when Xform T/R/S is edited (consumed next frame).
-    pub(crate) xform_property_changed: Option<egui_snarl::NodeId>,
-    /// Mapping from scatter node NodeId to point cloud ID.
-    pub(crate) node_cloud_map: std::collections::HashMap<egui_snarl::NodeId, usize>,
-    /// Monotonically increasing counter for unique cloud IDs.
-    pub(crate) next_cloud_id: usize,
-    /// Scatter node → surface prototype ID (for cleanup on reconnect/delete).
-    /// Rebuilt into a `HashSet` in `reload_working_scene()` to avoid ref-counting bugs.
-    pub(crate) node_scatter_surface_map: std::collections::HashMap<egui_snarl::NodeId, usize>,
-    /// Cached instancer expansion results: NodeId -> expanded instances.
-    /// BTreeMap for deterministic iteration order (picking, culling, debug).
-    pub(crate) instancer_results:
-        std::collections::BTreeMap<egui_snarl::NodeId, Vec<bif_core::Instance>>,
-
-    /// Cached scene graph for scene browser (rebuilt when scene_graph_dirty).
-    pub(crate) cached_scene_graph: scene_browser::CachedSceneGraph,
-    /// True when working_scene changed and cached_scene_graph needs rebuild.
-    pub(crate) scene_graph_dirty: bool,
 
     /// Async channel receivers and status for background operations.
     pub(crate) async_channels: AsyncChannels,
@@ -914,10 +912,12 @@ impl Renderer {
         let mipmap_generator = texture_loader::MipmapGenerator::new(&device);
 
         Ok(Self {
-            surface,
-            device,
-            queue,
-            config,
+            gpu: GpuContext {
+                surface,
+                device,
+                queue,
+                config,
+            },
             size: (size.width, size.height),
             pipeline,
             vertex_buffer,
@@ -925,10 +925,15 @@ impl Renderer {
             num_indices: 0, // Empty scene - no indices
             instance_buffer,
             num_instances: 0, // Empty scene - no instances
-            camera,
-            camera_uniform,
-            camera_buffer,
-            camera_bind_group,
+            cam: CameraState {
+                camera,
+                camera_uniform,
+                camera_buffer,
+                camera_bind_group,
+                viewport_camera_source: CameraSource::Viewport,
+                camera_locked: false,
+                selected_usd_camera: None,
+            },
             material_uniform,
             material_buffer,
             material_bind_group_layout,
@@ -956,13 +961,16 @@ impl Renderer {
             fps_update_timer: 0.0,
             num_triangles,
             ui_layout: UiLayout::default(),
-            ivar_state: IvarState::default(),
-            ivar_texture,
-            ivar_texture_view,
-            ivar_sampler,
-            ivar_bind_group,
-            ivar_bind_group_layout,
-            ivar_pipeline,
+            ivar: IvarContext {
+                ivar_state: IvarState::default(),
+                ivar_texture,
+                ivar_texture_view,
+                ivar_sampler,
+                ivar_bind_group,
+                ivar_bind_group_layout,
+                ivar_pipeline,
+                ivar_materials: None,
+            },
             mesh_data,
             instances: SceneInstances::default(),
             instance_animations: vec![],
@@ -973,7 +981,6 @@ impl Renderer {
             scene_material: bif_core::Material::default(),
             scene_materials: vec![],
             texture_base_dir: None,
-            ivar_materials: None,
             multi_draw: MultiDrawState::new(),
             culling,
             scene_browser_state: SceneBrowserState::new(),
@@ -981,13 +988,22 @@ impl Renderer {
             selected_prim_properties: None,
             usd_stage: None,
             loaded_usd_path: None,
-            node_graph_state: NodeGraphState::new(),
+            nodes: NodeGraphContext {
+                node_graph_state: NodeGraphState::new(),
+                node_proto_map: std::collections::HashMap::new(),
+                node_cloud_map: std::collections::HashMap::new(),
+                next_cloud_id: 0,
+                node_scatter_surface_map: std::collections::HashMap::new(),
+                instancer_results: std::collections::BTreeMap::new(),
+                cached_scene_graph: scene_browser::CachedSceneGraph::default(),
+                scene_graph_dirty: true,
+                primitive_name_counters: std::collections::HashMap::new(),
+                materials_dirty: true,
+                xform_property_changed: None,
+            },
             timeline_state: TimelineState::default(),
             environment,
             lights,
-            viewport_camera_source: CameraSource::Viewport,
-            camera_locked: false,
-            selected_usd_camera: None,
             pick_scene: None,
             selected_instance_index: None,
             undo_stack: bif_core::UndoStack::new(),
@@ -1001,16 +1017,6 @@ impl Renderer {
             apply_axis_correction: false,
             apply_unit_scaling: false,
             working_scene: bif_core::Scene::new("Working"),
-            primitive_name_counters: std::collections::HashMap::new(),
-            node_proto_map: std::collections::HashMap::new(),
-            materials_dirty: true,
-            xform_property_changed: None,
-            node_cloud_map: std::collections::HashMap::new(),
-            next_cloud_id: 0,
-            node_scatter_surface_map: std::collections::HashMap::new(),
-            instancer_results: std::collections::BTreeMap::new(),
-            cached_scene_graph: scene_browser::CachedSceneGraph::default(),
-            scene_graph_dirty: true,
             async_channels: AsyncChannels::default(),
             mipmap_generator,
             display_settings: DisplaySettings::default(),
@@ -1019,15 +1025,15 @@ impl Renderer {
 
     /// Check if camera controls are locked (USD camera active).
     pub fn is_camera_locked(&self) -> bool {
-        self.camera_locked
+        self.cam.camera_locked
     }
 
     /// Whether the viewer needs another frame (animation, progressive render, gizmo drag).
     pub fn needs_redraw(&self) -> bool {
         self.timeline_state.is_playing
-            || self.ivar_state.batch_status.is_rendering()
-            || self.ivar_state.is_pass_in_flight()
-            || self.ivar_state.needs_more_passes()
+            || self.ivar.ivar_state.batch_status.is_rendering()
+            || self.ivar.ivar_state.is_pass_in_flight()
+            || self.ivar.ivar_state.needs_more_passes()
             || self.gizmo_state.is_dragging
     }
 
@@ -1035,51 +1041,56 @@ impl Renderer {
     pub fn resize(&mut self, new_size: (u32, u32)) {
         if new_size.0 > 0 && new_size.1 > 0 {
             self.size = new_size;
-            self.config.width = new_size.0;
-            self.config.height = new_size.1;
-            self.surface.configure(&self.device, &self.config);
+            self.gpu.config.width = new_size.0;
+            self.gpu.config.height = new_size.1;
+            self.gpu
+                .surface
+                .configure(&self.gpu.device, &self.gpu.config);
 
             // Recreate depth texture with new size
             let (depth_texture, depth_view) =
-                ivar_renderer::create_depth_texture(&self.device, new_size);
+                ivar_renderer::create_depth_texture(&self.gpu.device, new_size);
             self.depth_texture = depth_texture;
             self.depth_view = depth_view;
 
             // Recreate Ivar texture with new size
             let (ivar_texture, ivar_texture_view) =
-                ivar_renderer::create_ivar_texture(&self.device, new_size);
-            self.ivar_texture = ivar_texture;
-            self.ivar_texture_view = ivar_texture_view;
+                ivar_renderer::create_ivar_texture(&self.gpu.device, new_size);
+            self.ivar.ivar_texture = ivar_texture;
+            self.ivar.ivar_texture_view = ivar_texture_view;
 
             // Recreate Ivar bind group with new texture view (reuse existing layout)
-            self.ivar_bind_group = ivar_renderer::create_ivar_bind_group(
-                &self.device,
-                &self.ivar_bind_group_layout,
-                &self.ivar_texture_view,
-                &self.ivar_sampler,
+            self.ivar.ivar_bind_group = ivar_renderer::create_ivar_bind_group(
+                &self.gpu.device,
+                &self.ivar.ivar_bind_group_layout,
+                &self.ivar.ivar_texture_view,
+                &self.ivar.ivar_sampler,
             );
 
             // Full Ivar state reset on resize.
             // image_buffer = None because target dims are unknown until next
             // frame's viewport_rect(). One frame of black during resize is
             // acceptable (fundamentally different from orbit).
-            self.ivar_state.cancel_flag.store(true, Ordering::Relaxed);
-            self.ivar_state.cancel_flag = Arc::new(AtomicBool::new(false));
-            self.ivar_state.receiver = None;
-            self.ivar_state.image_buffer = None;
-            self.ivar_state.render_complete = false;
-            self.ivar_state.accumulated_samples = 0;
-            self.ivar_state.buckets_completed = 0;
-            self.ivar_state.current_scale = 1;
-            self.ivar_state.last_interaction_time = None;
-            self.ivar_state.last_camera_snapshot = None;
-            self.ivar_state.render_start_time = None;
-            self.ivar_state.final_render_secs = None;
+            self.ivar
+                .ivar_state
+                .cancel_flag
+                .store(true, Ordering::Relaxed);
+            self.ivar.ivar_state.cancel_flag = Arc::new(AtomicBool::new(false));
+            self.ivar.ivar_state.receiver = None;
+            self.ivar.ivar_state.image_buffer = None;
+            self.ivar.ivar_state.render_complete = false;
+            self.ivar.ivar_state.accumulated_samples = 0;
+            self.ivar.ivar_state.buckets_completed = 0;
+            self.ivar.ivar_state.current_scale = 1;
+            self.ivar.ivar_state.last_interaction_time = None;
+            self.ivar.ivar_state.last_camera_snapshot = None;
+            self.ivar.ivar_state.render_start_time = None;
+            self.ivar.ivar_state.final_render_secs = None;
 
             // Update camera aspect ratio from viewport (excludes UI panels)
             let (_, _, vp_w, vp_h) = self.viewport_rect();
             let aspect = vp_w / vp_h;
-            self.camera.set_aspect(aspect);
+            self.cam.camera.set_aspect(aspect);
             self.update_camera();
         }
     }
@@ -1111,20 +1122,21 @@ impl Renderer {
 
     /// Update camera uniform buffer (call after modifying camera)
     pub fn update_camera(&mut self) {
-        self.camera_uniform.update_view_proj(&self.camera);
+        self.cam.camera_uniform.update_view_proj(&self.cam.camera);
         // Sync selection state into uniform
-        self.camera_uniform.selected_instance_id = self
+        self.cam.camera_uniform.selected_instance_id = self
             .selected_instance_index
             .map(|i| i as u32)
             .unwrap_or(gpu_types::NO_SELECTION);
-        self.queue.write_buffer(
-            &self.camera_buffer,
+        self.gpu.queue.write_buffer(
+            &self.cam.camera_buffer,
             0,
-            bytemuck::cast_slice(&[self.camera_uniform]),
+            bytemuck::cast_slice(&[self.cam.camera_uniform]),
         );
 
         // Update gnomon uniform with camera rotation
-        self.gnomon.update_from_camera(&self.queue, &self.camera);
+        self.gnomon
+            .update_from_camera(&self.gpu.queue, &self.cam.camera);
     }
 
     /// Update environment parameters without regenerating maps.
@@ -1135,15 +1147,15 @@ impl Renderer {
         show_background: bool,
     ) {
         self.environment
-            .update_params(&self.queue, intensity, rotation, show_background);
+            .update_params(&self.gpu.queue, intensity, rotation, show_background);
         // Sync to Ivar state for live CPU path tracer updates
-        self.ivar_state.hdri_rotation = rotation;
-        self.ivar_state.hdri_intensity = intensity;
+        self.ivar.ivar_state.hdri_rotation = rotation;
+        self.ivar.ivar_state.hdri_intensity = intensity;
     }
 
     /// Update lights uniform buffer from scene lights.
     pub fn update_lights(&mut self, lights: &[bif_core::Light]) {
-        self.lights.update(&self.queue, lights);
+        self.lights.update(&self.gpu.queue, lights);
         if !lights.is_empty() {
             log::info!("Updated {} lights in viewport", lights.len());
         }
@@ -1162,9 +1174,9 @@ impl Renderer {
     pub fn update_visible_instances(&mut self) {
         let lod_enabled = self.display_settings.lod_enabled;
         self.culling.update_visible_instances(
-            &self.queue,
+            &self.gpu.queue,
             &self.instance_buffer,
-            &self.camera,
+            &self.cam.camera,
             &self.instances.current,
             &self.instances.material_ids,
             lod_enabled,
@@ -1178,9 +1190,9 @@ impl Renderer {
         let camera_distance = mesh_size * 1.5;
 
         // Position camera looking at mesh center from current yaw/pitch
-        self.camera.target = mesh_center;
-        self.camera.distance = camera_distance;
-        self.camera.update_position_from_angles();
+        self.cam.camera.target = mesh_center;
+        self.cam.camera.distance = camera_distance;
+        self.cam.camera.update_position_from_angles();
 
         self.update_camera();
         log::info!(
@@ -1218,22 +1230,22 @@ impl Renderer {
                     up
                 );
 
-                self.camera.position = position;
-                self.camera.target = target;
-                self.camera.up = up;
-                self.camera.distance = 10.0;
+                self.cam.camera.position = position;
+                self.cam.camera.target = target;
+                self.cam.camera.up = up;
+                self.cam.camera.distance = 10.0;
 
                 // Sync FOV/near/far from USD camera properties
                 if let Ok(props) = stage.get_camera_properties(camera_path, time) {
-                    self.camera.fov_y = props.fov_y();
-                    self.camera.near = props.clip_near.max(0.001);
-                    self.camera.far = props.clip_far.max(props.clip_near + 1.0);
+                    self.cam.camera.fov_y = props.fov_y();
+                    self.cam.camera.near = props.clip_near.max(0.001);
+                    self.cam.camera.far = props.clip_far.max(props.clip_near + 1.0);
                 }
 
                 // Yaw/pitch must match Camera::new / update_position_from_angles convention
                 let dir = (position - target).normalize();
-                self.camera.yaw = dir.z.atan2(dir.x);
-                self.camera.pitch = dir.y.asin();
+                self.cam.camera.yaw = dir.z.atan2(dir.x);
+                self.cam.camera.pitch = dir.y.asin();
 
                 self.update_camera();
             }
@@ -1268,16 +1280,16 @@ impl Renderer {
         let forward = transform.rotation * -Vec3::Z;
         let up = transform.rotation * Vec3::Y;
 
-        self.camera.position = transform.translation;
-        self.camera.target = transform.translation + forward * 10.0;
-        self.camera.up = up;
-        self.camera.distance = 10.0;
-        self.camera.fov_y = cam.fov_y;
+        self.cam.camera.position = transform.translation;
+        self.cam.camera.target = transform.translation + forward * 10.0;
+        self.cam.camera.up = up;
+        self.cam.camera.distance = 10.0;
+        self.cam.camera.fov_y = cam.fov_y;
 
         // Recalculate yaw/pitch
-        let dir = (self.camera.position - self.camera.target).normalize();
-        self.camera.yaw = dir.x.atan2(dir.z);
-        self.camera.pitch = (-dir.y).asin();
+        let dir = (self.cam.camera.position - self.cam.camera.target).normalize();
+        self.cam.camera.yaw = dir.x.atan2(dir.z);
+        self.cam.camera.pitch = (-dir.y).asin();
 
         self.update_camera();
 
@@ -1356,7 +1368,7 @@ impl Renderer {
         let ndc_y = 1.0 - (vp_rel_y / vp_h) * 2.0;
 
         // Unproject near and far points via inverse view-projection
-        let inv_vp = self.camera.view_projection_matrix().inverse();
+        let inv_vp = self.cam.camera.view_projection_matrix().inverse();
 
         let near_clip = bif_math::Vec4::new(ndc_x, ndc_y, 0.0, 1.0);
         let far_clip = bif_math::Vec4::new(ndc_x, ndc_y, 1.0, 1.0);
@@ -1455,7 +1467,7 @@ impl Renderer {
         self.apply_transform_override(instance_index);
 
         // Invalidate Ivar scene so transform change is reflected
-        if self.ivar_state.mode == ivar_state::RenderMode::Ivar {
+        if self.ivar.ivar_state.mode == ivar_state::RenderMode::Ivar {
             self.invalidate_ivar_scene();
         }
     }
@@ -1464,7 +1476,7 @@ impl Renderer {
     pub fn undo(&mut self) -> Option<String> {
         let desc = self.undo_stack.undo(&mut self.edit_state)?.to_string();
         self.apply_all_transform_overrides();
-        if self.ivar_state.mode == ivar_state::RenderMode::Ivar {
+        if self.ivar.ivar_state.mode == ivar_state::RenderMode::Ivar {
             self.invalidate_ivar_scene();
         }
         Some(desc)
@@ -1474,7 +1486,7 @@ impl Renderer {
     pub fn redo(&mut self) -> Option<String> {
         let desc = self.undo_stack.redo(&mut self.edit_state)?.to_string();
         self.apply_all_transform_overrides();
-        if self.ivar_state.mode == ivar_state::RenderMode::Ivar {
+        if self.ivar.ivar_state.mode == ivar_state::RenderMode::Ivar {
             self.invalidate_ivar_scene();
         }
         Some(desc)

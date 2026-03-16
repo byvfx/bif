@@ -19,18 +19,18 @@ use crate::Renderer;
 impl Renderer {
     /// Upload Ivar image buffer to GPU texture, using selected AOV channel.
     pub(crate) fn upload_ivar_pixels(&self) {
-        let Some(ref image) = self.ivar_state.image_buffer else {
+        let Some(ref image) = self.ivar.ivar_state.image_buffer else {
             return;
         };
         let width = image.width;
         let height = image.height;
 
         // Generate RGBA bytes based on selected AOV channel
-        let rgba = match self.ivar_state.preview_aov {
+        let rgba = match self.ivar.ivar_state.preview_aov {
             crate::ivar_state::AovChannel::Beauty => image.to_rgba(),
             crate::ivar_state::AovChannel::Alpha => {
                 // Alpha as grayscale
-                if let Some(ref alpha) = self.ivar_state.alpha_buffer {
+                if let Some(ref alpha) = self.ivar.ivar_state.alpha_buffer {
                     alpha
                         .iter()
                         .flat_map(|&a| {
@@ -44,9 +44,9 @@ impl Renderer {
             }
             crate::ivar_state::AovChannel::Depth => {
                 // Depth normalized to [0, 1] as grayscale
-                if let Some(ref depth) = self.ivar_state.depth_buffer {
-                    let depth_near = self.ivar_state.batch_settings.aov_settings.depth_near;
-                    let depth_far = self.ivar_state.batch_settings.aov_settings.depth_far;
+                if let Some(ref depth) = self.ivar.ivar_state.depth_buffer {
+                    let depth_near = self.ivar.ivar_state.batch_settings.aov_settings.depth_near;
+                    let depth_far = self.ivar.ivar_state.batch_settings.aov_settings.depth_far;
                     let range = depth_far - depth_near;
                     depth
                         .iter()
@@ -66,7 +66,7 @@ impl Renderer {
             }
             crate::ivar_state::AovChannel::Normal => {
                 // Normal mapped from [-1,1] to [0,1] as RGB
-                if let Some(ref normal) = self.ivar_state.normal_buffer {
+                if let Some(ref normal) = self.ivar.ivar_state.normal_buffer {
                     normal
                         .iter()
                         .flat_map(|n| {
@@ -83,7 +83,7 @@ impl Renderer {
             }
             crate::ivar_state::AovChannel::Albedo => {
                 // Albedo as RGB (linear, gamma-corrected for display)
-                if let Some(ref albedo) = self.ivar_state.albedo_buffer {
+                if let Some(ref albedo) = self.ivar.ivar_state.albedo_buffer {
                     albedo
                         .iter()
                         .flat_map(|a| {
@@ -99,7 +99,7 @@ impl Renderer {
             }
             crate::ivar_state::AovChannel::CacheHeatmap => {
                 // Cache heatmap: black → red → yellow → green
-                if let Some(ref heatmap) = self.ivar_state.cache_heatmap_buffer {
+                if let Some(ref heatmap) = self.ivar.ivar_state.cache_heatmap_buffer {
                     heatmap
                         .iter()
                         .flat_map(|&count| {
@@ -127,9 +127,9 @@ impl Renderer {
             }
         };
 
-        self.queue.write_texture(
+        self.gpu.queue.write_texture(
             wgpu::ImageCopyTexture {
-                texture: &self.ivar_texture,
+                texture: &self.ivar.ivar_texture,
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
@@ -157,7 +157,7 @@ impl Renderer {
     /// ASYNC: Runs on background thread to keep UI responsive during build.
     fn build_ivar_scene(&mut self) {
         // Check if already building or complete
-        match self.ivar_state.build_status {
+        match self.ivar.ivar_state.build_status {
             BuildStatus::Building => {
                 // Already building in background, skip
                 return;
@@ -176,7 +176,7 @@ impl Renderer {
         );
 
         // Mark as building
-        self.ivar_state.build_status = BuildStatus::Building;
+        self.ivar.ivar_state.build_status = BuildStatus::Building;
 
         // When using multi-draw (combined mesh), transforms are already baked into vertices
         // Use single identity transform to avoid double-transforming
@@ -226,14 +226,14 @@ impl Renderer {
 
         // Create channel for build completion (returns BVH + materials for caching)
         let (tx, rx) = mpsc::channel();
-        self.ivar_state.build_receiver = Some(rx);
+        self.ivar.ivar_state.build_receiver = Some(rx);
 
         let vert_count = positions.len();
         let tri_count = indices.len() / 3;
         let instance_count = transforms.len();
 
         // If prewarm is in-flight, try to grab its result before spawning a redundant load
-        if self.ivar_materials.is_none() {
+        if self.ivar.ivar_materials.is_none() {
             if let Some(ref rx) = self.async_channels.ivar_materials_receiver {
                 // Brief blocking wait — prewarm may be nearly done
                 use std::time::Duration;
@@ -242,14 +242,14 @@ impl Renderer {
                         "Grabbed pre-warmed materials ({}) before build",
                         materials.len()
                     );
-                    self.ivar_materials = Some(materials);
+                    self.ivar.ivar_materials = Some(materials);
                     self.async_channels.ivar_materials_receiver = None;
                 }
             }
         }
 
         // Check for cached materials (cheap Arc clones)
-        let cached_materials = self.ivar_materials.clone();
+        let cached_materials = self.ivar.ivar_materials.clone();
 
         // Spawn background thread to build scene
         std::thread::spawn(move || {
@@ -400,7 +400,7 @@ impl Renderer {
         let uvs_soa: Vec<[f32; 2]> = verts.iter().map(|v| v.uv).collect();
 
         // Use cached materials or build from scratch
-        let materials: Vec<Arc<DisneyBSDF>> = if let Some(ref cached) = self.ivar_materials {
+        let materials: Vec<Arc<DisneyBSDF>> = if let Some(ref cached) = self.ivar.ivar_materials {
             log::info!("Using cached materials ({} materials)", cached.len());
             cached.clone()
         } else {
@@ -409,7 +409,7 @@ impl Renderer {
                 &self.scene_material,
                 self.texture_base_dir.as_deref(),
             );
-            self.ivar_materials = Some(mats.clone());
+            self.ivar.ivar_materials = Some(mats.clone());
             mats
         };
 
@@ -462,18 +462,21 @@ impl Renderer {
         log::info!("Invalidating Ivar scene cache");
 
         // Clear cached scene
-        self.ivar_state.world = None;
-        self.ivar_state.build_status = BuildStatus::NotStarted;
-        self.ivar_state.build_receiver = None;
+        self.ivar.ivar_state.world = None;
+        self.ivar.ivar_state.build_status = BuildStatus::NotStarted;
+        self.ivar.ivar_state.build_receiver = None;
 
         // Cancel any active render
-        self.ivar_state.cancel_flag.store(true, Ordering::Relaxed);
-        self.ivar_state.cancel_flag = Arc::new(AtomicBool::new(false));
+        self.ivar
+            .ivar_state
+            .cancel_flag
+            .store(true, Ordering::Relaxed);
+        self.ivar.ivar_state.cancel_flag = Arc::new(AtomicBool::new(false));
 
         // Clear render state
-        self.ivar_state.render_complete = false;
-        self.ivar_state.buckets_completed = 0;
-        self.ivar_state.image_buffer = None;
+        self.ivar.ivar_state.render_complete = false;
+        self.ivar.ivar_state.buckets_completed = 0;
+        self.ivar.ivar_state.image_buffer = None;
 
         log::info!("Ivar scene cache cleared - will rebuild on next render");
     }
@@ -483,10 +486,10 @@ impl Renderer {
     /// Call when materials actually change (scene reload, material edit).
     /// Geometry-only changes (camera, transforms) should NOT call this.
     pub(crate) fn invalidate_ivar_materials(&mut self) {
-        if self.ivar_materials.is_some() {
+        if self.ivar.ivar_materials.is_some() {
             log::info!("Invalidating cached Ivar materials");
         }
-        self.ivar_materials = None;
+        self.ivar.ivar_materials = None;
         self.async_channels.ivar_materials_receiver = None;
     }
 
@@ -500,7 +503,9 @@ impl Renderer {
             return;
         }
         // Skip if already cached or already loading
-        if self.ivar_materials.is_some() || self.async_channels.ivar_materials_receiver.is_some() {
+        if self.ivar.ivar_materials.is_some()
+            || self.async_channels.ivar_materials_receiver.is_some()
+        {
             return;
         }
 
@@ -546,17 +551,17 @@ impl Renderer {
                     "Pre-warmed {} materials received on main thread",
                     materials.len()
                 );
-                self.ivar_materials = Some(materials);
+                self.ivar.ivar_materials = Some(materials);
                 self.async_channels.ivar_materials_receiver = None;
             }
         }
 
         // Only poll scene build if we're currently building
-        if self.ivar_state.build_status != BuildStatus::Building {
+        if self.ivar.ivar_state.build_status != BuildStatus::Building {
             return;
         }
 
-        let Some(ref receiver) = self.ivar_state.build_receiver else {
+        let Some(ref receiver) = self.ivar.ivar_state.build_receiver else {
             return;
         };
 
@@ -565,29 +570,29 @@ impl Renderer {
             log::info!("Scene build completed, received on main thread");
 
             // Cache materials for future builds
-            if self.ivar_materials.is_none() {
-                self.ivar_materials = Some(materials);
+            if self.ivar.ivar_materials.is_none() {
+                self.ivar.ivar_materials = Some(materials);
             }
 
             // Store completed scene
-            self.ivar_state.world = Some(world);
-            self.ivar_state.build_status = BuildStatus::Complete;
+            self.ivar.ivar_state.world = Some(world);
+            self.ivar.ivar_state.build_status = BuildStatus::Complete;
 
             // Create radiance cache if enabled
-            if self.ivar_state.radiance_cache_config.enabled {
+            if self.ivar.ivar_state.radiance_cache_config.enabled {
                 let cache = Arc::new(bif_renderer::RadianceCache::new(
-                    self.ivar_state.radiance_cache_config.clone(),
+                    self.ivar.ivar_state.radiance_cache_config.clone(),
                 ));
-                self.ivar_state.radiance_cache = Some(cache);
+                self.ivar.ivar_state.radiance_cache = Some(cache);
                 log::info!("SHARC radiance cache created");
             }
 
             // Clear receiver
-            self.ivar_state.build_receiver = None;
+            self.ivar.ivar_state.build_receiver = None;
 
             // Start render at current scale (respects interaction state during build)
             log::info!("Starting Ivar render with built scene");
-            self.restart_ivar_at_scale(self.ivar_state.current_scale);
+            self.restart_ivar_at_scale(self.ivar.ivar_state.current_scale);
         }
     }
 
@@ -595,13 +600,16 @@ impl Renderer {
     fn create_ivar_camera_at_resolution(&self, width: u32, height: u32) -> bif_renderer::Camera {
         let mut camera = bif_renderer::Camera::new()
             .with_resolution(width, height)
-            .with_position(self.camera.position, self.camera.target, Vec3::Y)
+            .with_position(self.cam.camera.position, self.cam.camera.target, Vec3::Y)
             .with_lens(
-                self.camera.fov_y.to_degrees(),
+                self.cam.camera.fov_y.to_degrees(),
                 0.0, // No DOF for preview
-                (self.camera.target - self.camera.position).length(),
+                (self.cam.camera.target - self.cam.camera.position).length(),
             )
-            .with_quality(self.ivar_state.samples_per_pixel, self.ivar_state.max_depth);
+            .with_quality(
+                self.ivar.ivar_state.samples_per_pixel,
+                self.ivar.ivar_state.max_depth,
+            );
 
         camera.initialize();
         camera
@@ -639,7 +647,7 @@ impl Renderer {
     pub(crate) fn start_ivar_render(&mut self) {
         self.build_ivar_scene();
 
-        let Some(_) = self.ivar_state.world.as_ref() else {
+        let Some(_) = self.ivar.ivar_state.world.as_ref() else {
             log::error!("Cannot start Ivar render: no scene");
             return;
         };
@@ -652,7 +660,7 @@ impl Renderer {
     /// Scale is a divisor: 1 = full res, 2 = half, 4 = quarter, 8 = eighth.
     /// Cancels any in-flight pass, recreates texture at scaled size, starts new pass.
     pub(crate) fn restart_ivar_at_scale(&mut self, scale: u32) {
-        let Some(_) = self.ivar_state.world.as_ref() else {
+        let Some(_) = self.ivar.ivar_state.world.as_ref() else {
             return;
         };
 
@@ -663,15 +671,16 @@ impl Renderer {
 
         // Check if GPU texture needs recreation before reset_accumulation replaces image_buffer
         let needs_texture = self
+            .ivar
             .ivar_state
             .image_buffer
             .as_ref()
             .is_none_or(|img| img.width != scaled_w || img.height != scaled_h);
 
         // Set scale before reset_accumulation so it can skip AOVs at reduced scale
-        self.ivar_state.current_scale = scale;
-        self.ivar_state.reset_accumulation(scaled_w, scaled_h);
-        self.ivar_state.buckets = Arc::new(bif_renderer::generate_buckets(
+        self.ivar.ivar_state.current_scale = scale;
+        self.ivar.ivar_state.reset_accumulation(scaled_w, scaled_h);
+        self.ivar.ivar_state.buckets = Arc::new(bif_renderer::generate_buckets(
             scaled_w,
             scaled_h,
             bif_renderer::DEFAULT_BUCKET_SIZE,
@@ -679,20 +688,21 @@ impl Renderer {
 
         if needs_texture {
             let (tex, view) =
-                crate::ivar_renderer::create_ivar_texture(&self.device, (scaled_w, scaled_h));
-            self.ivar_texture = tex;
-            self.ivar_texture_view = view;
-            self.ivar_bind_group = crate::ivar_renderer::create_ivar_bind_group(
-                &self.device,
-                &self.ivar_bind_group_layout,
-                &self.ivar_texture_view,
-                &self.ivar_sampler,
+                crate::ivar_renderer::create_ivar_texture(&self.gpu.device, (scaled_w, scaled_h));
+            self.ivar.ivar_texture = tex;
+            self.ivar.ivar_texture_view = view;
+            self.ivar.ivar_bind_group = crate::ivar_renderer::create_ivar_bind_group(
+                &self.gpu.device,
+                &self.ivar.ivar_bind_group_layout,
+                &self.ivar.ivar_texture_view,
+                &self.ivar.ivar_sampler,
             );
         }
 
         // Save camera snapshot
-        self.ivar_state.last_camera_snapshot =
-            Some(crate::ivar_state::CameraSnapshot::from_camera(&self.camera));
+        self.ivar.ivar_state.last_camera_snapshot = Some(
+            crate::ivar_state::CameraSnapshot::from_camera(&self.cam.camera),
+        );
 
         log::info!(
             "Restarting Ivar at 1/{} scale ({}x{})",
@@ -707,39 +717,39 @@ impl Renderer {
     ///
     /// Requires `ivar_state.world` already built.
     pub(crate) fn start_progressive_pass(&mut self) {
-        let Some(world) = self.ivar_state.world.clone() else {
+        let Some(world) = self.ivar.ivar_state.world.clone() else {
             return;
         };
 
-        let pass_number = self.ivar_state.accumulated_samples;
-        let buckets = Arc::clone(&self.ivar_state.buckets);
+        let pass_number = self.ivar.ivar_state.accumulated_samples;
+        let buckets = Arc::clone(&self.ivar.ivar_state.buckets);
 
         // Create fresh cancel flag + channel for this pass
-        self.ivar_state.cancel_flag = Arc::new(AtomicBool::new(false));
-        let cancel_flag = self.ivar_state.cancel_flag.clone();
+        self.ivar.ivar_state.cancel_flag = Arc::new(AtomicBool::new(false));
+        let cancel_flag = self.ivar.ivar_state.cancel_flag.clone();
         let (tx, rx) = mpsc::channel();
-        self.ivar_state.receiver = Some(rx);
-        self.ivar_state.buckets_completed = 0;
+        self.ivar.ivar_state.receiver = Some(rx);
+        self.ivar.ivar_state.buckets_completed = 0;
 
         // Use image buffer dimensions (may be scaled) for camera ray generation
-        let ivar_camera = if let Some(ref img) = self.ivar_state.image_buffer {
+        let ivar_camera = if let Some(ref img) = self.ivar.ivar_state.image_buffer {
             self.create_ivar_camera_at_resolution(img.width, img.height)
         } else {
             self.create_ivar_camera()
         };
         let config = RenderConfig {
             samples_per_pixel: 1, // 1 SPP per progressive pass
-            max_depth: self.ivar_state.max_depth,
+            max_depth: self.ivar.ivar_state.max_depth,
             background: Color::new(0.1, 0.1, 0.1),
             use_sky_gradient: true,
-            environment: self.ivar_state.environment.clone(),
+            environment: self.ivar.ivar_state.environment.clone(),
             lights: Arc::new(LightList::from(self.lights.scene_lights.as_slice())),
             pass_number,
-            hdri_rotation: Some(self.ivar_state.hdri_rotation),
-            hdri_intensity: Some(self.ivar_state.hdri_intensity),
-            radiance_cache: self.ivar_state.radiance_cache.clone(),
-            pixel_filter: self.ivar_state.pixel_filter,
-            sampler_mode: self.ivar_state.sampler_mode,
+            hdri_rotation: Some(self.ivar.ivar_state.hdri_rotation),
+            hdri_intensity: Some(self.ivar.ivar_state.hdri_intensity),
+            radiance_cache: self.ivar.ivar_state.radiance_cache.clone(),
+            pixel_filter: self.ivar.ivar_state.pixel_filter,
+            sampler_mode: self.ivar.ivar_state.sampler_mode,
         };
 
         log::trace!("Starting progressive pass {}", pass_number);
@@ -765,7 +775,7 @@ impl Renderer {
 
     /// Poll for Ivar bucket completion messages (progressive accumulation).
     pub(crate) fn poll_ivar_messages(&mut self) {
-        let Some(ref receiver) = self.ivar_state.receiver else {
+        let Some(ref receiver) = self.ivar.ivar_state.receiver else {
             return;
         };
 
@@ -779,11 +789,12 @@ impl Renderer {
             match msg {
                 IvarMessage::BucketComplete(result) => {
                     let image_width = self
+                        .ivar
                         .ivar_state
                         .image_buffer
                         .as_ref()
                         .map_or(0, |img| img.width);
-                    let current_pass = self.ivar_state.accumulated_samples;
+                    let current_pass = self.ivar.ivar_state.accumulated_samples;
 
                     for local_y in 0..result.bucket.height {
                         for local_x in 0..result.bucket.width {
@@ -794,7 +805,9 @@ impl Renderer {
 
                             // Accumulate beauty into running sum
                             if pixel_idx < result.pixels.len() {
-                                if let Some(ref mut accum) = self.ivar_state.accumulation_buffer {
+                                if let Some(ref mut accum) =
+                                    self.ivar.ivar_state.accumulation_buffer
+                                {
                                     if global_idx < accum.len() {
                                         // Weighted accumulation: pixels already contain
                                         // weight*color from render_pixel_with_aovs
@@ -808,7 +821,7 @@ impl Renderer {
 
                                         // Compute display average
                                         let avg = if let Some(ref mut wbuf) =
-                                            self.ivar_state.weight_buffer
+                                            self.ivar.ivar_state.weight_buffer
                                         {
                                             if global_idx < wbuf.len() {
                                                 wbuf[global_idx] += pixel_weight;
@@ -825,7 +838,9 @@ impl Renderer {
                                             accum[global_idx] / (current_pass + 1) as f32
                                         };
 
-                                        if let Some(ref mut image) = self.ivar_state.image_buffer {
+                                        if let Some(ref mut image) =
+                                            self.ivar.ivar_state.image_buffer
+                                        {
                                             image.set(global_x, global_y, avg);
                                         }
                                     }
@@ -834,29 +849,30 @@ impl Renderer {
 
                             // AOVs: only write from pass 0 (depth/normal don't benefit)
                             if current_pass == 0 {
-                                if let Some(ref mut alpha) = self.ivar_state.alpha_buffer {
+                                if let Some(ref mut alpha) = self.ivar.ivar_state.alpha_buffer {
                                     if pixel_idx < result.alphas.len() && global_idx < alpha.len() {
                                         alpha[global_idx] = result.alphas[pixel_idx];
                                     }
                                 }
-                                if let Some(ref mut depth) = self.ivar_state.depth_buffer {
+                                if let Some(ref mut depth) = self.ivar.ivar_state.depth_buffer {
                                     if pixel_idx < result.depths.len() && global_idx < depth.len() {
                                         depth[global_idx] = result.depths[pixel_idx];
                                     }
                                 }
-                                if let Some(ref mut normal) = self.ivar_state.normal_buffer {
+                                if let Some(ref mut normal) = self.ivar.ivar_state.normal_buffer {
                                     if pixel_idx < result.normals.len() && global_idx < normal.len()
                                     {
                                         normal[global_idx] = result.normals[pixel_idx];
                                     }
                                 }
-                                if let Some(ref mut albedo) = self.ivar_state.albedo_buffer {
+                                if let Some(ref mut albedo) = self.ivar.ivar_state.albedo_buffer {
                                     if pixel_idx < result.albedos.len() && global_idx < albedo.len()
                                     {
                                         albedo[global_idx] = result.albedos[pixel_idx];
                                     }
                                 }
-                                if let Some(ref mut heatmap) = self.ivar_state.cache_heatmap_buffer
+                                if let Some(ref mut heatmap) =
+                                    self.ivar.ivar_state.cache_heatmap_buffer
                                 {
                                     if pixel_idx < result.cache_samples.len()
                                         && global_idx < heatmap.len()
@@ -867,52 +883,52 @@ impl Renderer {
                             }
                         }
                     }
-                    self.ivar_state.buckets_completed += 1;
+                    self.ivar.ivar_state.buckets_completed += 1;
                 }
                 IvarMessage::PassComplete { pass_number } => {
-                    self.ivar_state.accumulated_samples = pass_number + 1;
+                    self.ivar.ivar_state.accumulated_samples = pass_number + 1;
                     // Advance radiance cache frame between passes
-                    if let Some(ref cache) = self.ivar_state.radiance_cache {
+                    if let Some(ref cache) = self.ivar.ivar_state.radiance_cache {
                         cache.advance_frame();
                     }
                     log::info!(
                         "Pass {} complete ({}/{} SPP)",
                         pass_number,
-                        self.ivar_state.accumulated_samples,
-                        self.ivar_state.target_spp
+                        self.ivar.ivar_state.accumulated_samples,
+                        self.ivar.ivar_state.target_spp
                     );
-                    if self.ivar_state.accumulated_samples >= self.ivar_state.target_spp {
-                        let elapsed = self.ivar_state.elapsed_secs();
-                        self.ivar_state.final_render_secs = Some(elapsed);
-                        self.ivar_state.render_complete = true;
-                        self.node_graph_state.mark_ivar_render_complete();
+                    if self.ivar.ivar_state.accumulated_samples >= self.ivar.ivar_state.target_spp {
+                        let elapsed = self.ivar.ivar_state.elapsed_secs();
+                        self.ivar.ivar_state.final_render_secs = Some(elapsed);
+                        self.ivar.ivar_state.render_complete = true;
+                        self.nodes.node_graph_state.mark_ivar_render_complete();
                         log::info!(
                             "Progressive render complete: {} SPP in {:.2}s",
-                            self.ivar_state.accumulated_samples,
+                            self.ivar.ivar_state.accumulated_samples,
                             elapsed
                         );
                         // Auto-denoise on completion
                         #[cfg(feature = "oidn")]
-                        if self.ivar_state.auto_denoise {
+                        if self.ivar.ivar_state.auto_denoise {
                             self.denoise_ivar_result();
                         }
                     }
                     // Clear receiver so main loop can detect "no pass in flight"
-                    self.ivar_state.receiver = None;
+                    self.ivar.ivar_state.receiver = None;
                 }
                 IvarMessage::RenderComplete { elapsed_secs } => {
-                    self.ivar_state.final_render_secs = Some(elapsed_secs);
-                    self.ivar_state.render_complete = true;
-                    self.node_graph_state.mark_ivar_render_complete();
+                    self.ivar.ivar_state.final_render_secs = Some(elapsed_secs);
+                    self.ivar.ivar_state.render_complete = true;
+                    self.nodes.node_graph_state.mark_ivar_render_complete();
                     log::info!("Ivar render complete in {:.2}s", elapsed_secs);
                     #[cfg(feature = "oidn")]
-                    if self.ivar_state.auto_denoise {
+                    if self.ivar.ivar_state.auto_denoise {
                         self.denoise_ivar_result();
                     }
                 }
                 IvarMessage::Cancelled => {
                     log::info!("Ivar render cancelled");
-                    self.ivar_state.receiver = None;
+                    self.ivar.ivar_state.receiver = None;
                 }
             }
         }
@@ -924,11 +940,11 @@ impl Renderer {
     /// stores receiver in `denoise.receiver`. Call `poll_denoise_result()` each
     /// frame to check for completion.
     pub(crate) fn denoise_ivar_result(&mut self) {
-        let Some(ref image) = self.ivar_state.image_buffer else {
+        let Some(ref image) = self.ivar.ivar_state.image_buffer else {
             log::warn!("No image buffer to denoise");
             return;
         };
-        if self.ivar_state.denoise.in_progress {
+        if self.ivar.ivar_state.denoise.in_progress {
             log::warn!("Denoise already in progress");
             return;
         }
@@ -936,12 +952,12 @@ impl Renderer {
         let width = image.width as usize;
         let height = image.height as usize;
         let beauty = image.pixels.clone();
-        let albedo = self.ivar_state.albedo_buffer.clone();
-        let normal = self.ivar_state.normal_buffer.clone();
+        let albedo = self.ivar.ivar_state.albedo_buffer.clone();
+        let normal = self.ivar.ivar_state.normal_buffer.clone();
 
         let (tx, rx) = mpsc::channel();
-        self.ivar_state.denoise.receiver = Some(rx);
-        self.ivar_state.denoise.in_progress = true;
+        self.ivar.ivar_state.denoise.receiver = Some(rx);
+        self.ivar.ivar_state.denoise.in_progress = true;
 
         log::info!("Denoising {}x{} image (async)...", width, height);
 
@@ -974,28 +990,28 @@ impl Renderer {
 
     /// Poll for async denoise completion (call each frame).
     pub(crate) fn poll_denoise_result(&mut self) {
-        if !self.ivar_state.denoise.in_progress {
+        if !self.ivar.ivar_state.denoise.in_progress {
             return;
         }
 
-        let Some(ref receiver) = self.ivar_state.denoise.receiver else {
+        let Some(ref receiver) = self.ivar.ivar_state.denoise.receiver else {
             return;
         };
 
         match receiver.try_recv() {
             Ok(result) => {
                 // Copy denoised pixels into image_buffer for display
-                if let Some(ref mut image) = self.ivar_state.image_buffer {
+                if let Some(ref mut image) = self.ivar.ivar_state.image_buffer {
                     for (i, &c) in result.beauty.iter().enumerate() {
                         if i < image.pixels.len() {
                             image.pixels[i] = c;
                         }
                     }
                 }
-                self.ivar_state.denoise.denoised_buffer = Some(result.beauty);
-                self.ivar_state.denoise.is_denoised = true;
-                self.ivar_state.denoise.in_progress = false;
-                self.ivar_state.denoise.receiver = None;
+                self.ivar.ivar_state.denoise.denoised_buffer = Some(result.beauty);
+                self.ivar.ivar_state.denoise.is_denoised = true;
+                self.ivar.ivar_state.denoise.in_progress = false;
+                self.ivar.ivar_state.denoise.receiver = None;
                 log::info!("Denoise result applied to display");
             }
             Err(mpsc::TryRecvError::Empty) => {
@@ -1003,8 +1019,8 @@ impl Renderer {
             }
             Err(mpsc::TryRecvError::Disconnected) => {
                 // Thread finished without sending (error case)
-                self.ivar_state.denoise.in_progress = false;
-                self.ivar_state.denoise.receiver = None;
+                self.ivar.ivar_state.denoise.in_progress = false;
+                self.ivar.ivar_state.denoise.receiver = None;
                 log::warn!("Denoise thread ended without result");
             }
         }
@@ -1013,23 +1029,24 @@ impl Renderer {
     /// Start a batch render to disk
     pub(crate) fn start_batch_render(&mut self) {
         // Build scene synchronously if not already built
-        if self.ivar_state.world.is_none() {
+        if self.ivar.ivar_state.world.is_none() {
             log::info!("Building scene for batch render...");
-            self.ivar_state.batch_status = BatchRenderStatus::Rendering {
+            self.ivar.ivar_state.batch_status = BatchRenderStatus::Rendering {
                 current_frame: 0,
-                total_frames: self.ivar_state.batch_settings.frame_count(),
+                total_frames: self.ivar.ivar_state.batch_settings.frame_count(),
                 frame_progress: 0.0,
             };
 
             // Build synchronously (same logic as async build_ivar_scene)
             let world = self.build_ivar_scene_sync();
-            self.ivar_state.world = Some(world.clone());
-            self.ivar_state.build_status = BuildStatus::Complete;
+            self.ivar.ivar_state.world = Some(world.clone());
+            self.ivar.ivar_state.build_status = BuildStatus::Complete;
         }
 
-        let Some(world) = self.ivar_state.world.clone() else {
+        let Some(world) = self.ivar.ivar_state.world.clone() else {
             log::error!("Cannot start batch render: no scene");
-            self.ivar_state.batch_status = BatchRenderStatus::Failed("No scene loaded".to_string());
+            self.ivar.ivar_state.batch_status =
+                BatchRenderStatus::Failed("No scene loaded".to_string());
             return;
         };
 
@@ -1064,7 +1081,7 @@ impl Renderer {
                 vertex_animated_meshes: self.vertex_animated_meshes.clone(),
                 stage: self.usd_stage.clone(),
                 mesh_ranges: self.mesh_data.mesh_ranges.clone(),
-                ivar_materials: self.ivar_materials.clone(),
+                ivar_materials: self.ivar.ivar_materials.clone(),
             };
             Some(Box::new(move |time: f64| {
                 builder_data.build_scene_at_time(time)
@@ -1076,18 +1093,18 @@ impl Renderer {
         // Create scene data for batch render
         let scene_data = BatchSceneData {
             world,
-            environment: self.ivar_state.environment.clone(),
+            environment: self.ivar.ivar_state.environment.clone(),
             stage: self.usd_stage.clone(),
-            viewport_camera: self.camera,
+            viewport_camera: self.cam.camera,
             has_animated_geometry,
             scene_builder,
             lights: Arc::new(LightList::from(self.lights.scene_lights.as_slice())),
-            hdri_rotation: Some(self.ivar_state.hdri_rotation),
-            hdri_intensity: Some(self.ivar_state.hdri_intensity),
+            hdri_rotation: Some(self.ivar.ivar_state.hdri_rotation),
+            hdri_intensity: Some(self.ivar.ivar_state.hdri_intensity),
         };
 
         // Clone settings and compute auto depth bounds if enabled
-        let mut settings = self.ivar_state.batch_settings.clone();
+        let mut settings = self.ivar.ivar_state.batch_settings.clone();
         if settings.aov_settings.auto_depth_bounds && settings.aov_settings.include_depth {
             // Compute scene diagonal length for depth far
             let scene_size = (self.mesh_bounds_max - self.mesh_bounds_min).length();
@@ -1117,9 +1134,9 @@ impl Renderer {
         let (rx, cancel_flag) = batch_render::start_batch_render(settings, scene_data);
         self.async_channels.batch_receiver = Some(rx);
         self.async_channels.batch_cancel_flag = Some(cancel_flag);
-        self.ivar_state.batch_status = BatchRenderStatus::Rendering {
+        self.ivar.ivar_state.batch_status = BatchRenderStatus::Rendering {
             current_frame: 1,
-            total_frames: self.ivar_state.batch_settings.frame_count(),
+            total_frames: self.ivar.ivar_state.batch_settings.frame_count(),
             frame_progress: 0.0,
         };
     }

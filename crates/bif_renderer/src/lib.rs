@@ -26,7 +26,7 @@ mod renderer;
 mod sphere;
 mod triangle;
 
-pub use bif_math::Ray;
+pub(crate) use bif_math::{Ray, Vec3};
 pub use blue_noise::SamplerMode;
 pub use bucket::{
     generate_buckets, render_bucket, render_bucket_with_aovs, Bucket, BucketResult,
@@ -56,6 +56,3 @@ pub use renderer::{
 };
 pub use sphere::Sphere;
 pub use triangle::Triangle;
-
-/// Re-export Vec3 and common math types from bif_math
-pub use bif_math::{Aabb, Interval, Vec3};

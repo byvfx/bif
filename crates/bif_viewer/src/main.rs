@@ -386,7 +386,7 @@ impl ApplicationHandler for App {
                                     let delta = bif_viewport::gizmo::compute_drag_delta(
                                         (position.x as f32, position.y as f32),
                                         renderer.gizmo_state.drag_start_screen,
-                                        &renderer.camera,
+                                        &renderer.cam.camera,
                                         renderer.gizmo_state.active_axis,
                                         renderer.gizmo_state.drag_start_world,
                                         vp_rect,
@@ -413,15 +413,15 @@ impl ApplicationHandler for App {
                                 }
                             } else if !renderer.is_camera_locked() {
                                 // Normal camera controls
-                                if self.left_mouse_pressed && !renderer.camera.is_ortho() {
-                                    renderer.camera.orbit(
+                                if self.left_mouse_pressed && !renderer.cam.camera.is_ortho() {
+                                    renderer.cam.camera.orbit(
                                         -delta_x as f32 * ORBIT_SENSITIVITY,
                                         -delta_y as f32 * ORBIT_SENSITIVITY,
                                     );
                                 } else if self.middle_mouse_pressed {
                                     let distance_scale =
-                                        renderer.camera.distance * PAN_DISTANCE_SCALE;
-                                    renderer.camera.pan(
+                                        renderer.cam.camera.distance * PAN_DISTANCE_SCALE;
+                                    renderer.cam.camera.pan(
                                         -delta_x as f32 * PAN_SENSITIVITY * distance_scale,
                                         delta_y as f32 * PAN_SENSITIVITY * distance_scale,
                                         0.0,
@@ -430,8 +430,8 @@ impl ApplicationHandler for App {
                                 } else if self.right_mouse_pressed {
                                     let dolly_amount = delta_y as f32
                                         * ORBIT_SENSITIVITY
-                                        * renderer.camera.distance;
-                                    renderer.camera.dolly(dolly_amount);
+                                        * renderer.cam.camera.distance;
+                                    renderer.cam.camera.dolly(dolly_amount);
                                 }
                                 renderer.update_camera();
                             }
@@ -453,8 +453,8 @@ impl ApplicationHandler for App {
                         };
                         // Scale dolly with distance for consistent feel
                         let dolly_amount =
-                            -scroll_lines * renderer.camera.distance * SCROLL_DOLLY_SCALE;
-                        renderer.camera.dolly(dolly_amount);
+                            -scroll_lines * renderer.cam.camera.distance * SCROLL_DOLLY_SCALE;
+                        renderer.cam.camera.dolly(dolly_amount);
                         renderer.update_camera();
                     }
                 }
@@ -525,7 +525,7 @@ impl ApplicationHandler for App {
                         let mut forward = 0.0;
 
                         // In ortho mode, only allow pan (A/D/E/Q), no forward/back
-                        let allow_forward = !renderer.camera.is_ortho();
+                        let allow_forward = !renderer.cam.camera.is_ortho();
                         if allow_forward && self.keys_pressed.contains(&KeyCode::KeyW) {
                             forward += 1.0;
                         }
@@ -546,7 +546,7 @@ impl ApplicationHandler for App {
                         }
 
                         if right != 0.0 || up != 0.0 || forward != 0.0 {
-                            renderer.camera.pan(right, up, forward, delta_time);
+                            renderer.cam.camera.pan(right, up, forward, delta_time);
                             renderer.update_camera();
                         }
                     }

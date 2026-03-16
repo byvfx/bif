@@ -11,10 +11,11 @@ use std::time::{Duration, Instant};
 
 use rayon::prelude::*;
 
+use bif_math::Vec3;
 use bif_renderer::{
     generate_buckets, radiance_cache::auto_cell_size, render_bucket, BvhNode, Camera, Color,
     DiffuseLight, Hittable, Lambertian, LightList, Material, RadianceCache, RadianceCacheConfig,
-    RenderConfig, Sphere, Triangle, Vec3,
+    RenderConfig, Sphere, Triangle,
 };
 
 const WIDTH: u32 = 256;

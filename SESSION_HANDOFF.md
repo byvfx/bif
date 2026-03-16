@@ -1,6 +1,6 @@
-# Session Handoff - March 15, 2026
+# Session Handoff - March 16, 2026
 
-**Last Updated:** Full codebase code review — 12 blockers fixed, 30+ warnings, 50 new tests
+**Last Updated:** Renderer decomposition — 4 sub-structs extracted (30 fields), quick wins
 **Next Milestone:** M29.5 egui upgrade
 **Project:** BIF - VFX Scene Assembler & Renderer
 
@@ -18,6 +18,18 @@
 ---
 
 ## Recent Work
+
+### Architecture Cleanup: Renderer Decomposition (Mar 16, 2026)
+
+Extracted 4 sub-structs from Renderer (was 99 fields, 3 already extracted):
+- **GpuContext** (4 fields): surface, device, queue, config
+- **CameraState** (7 fields): camera, uniform, buffer, bind_group, viewport source, lock state
+- **IvarContext** (8 fields): ivar_state, GPU texture/pipeline/materials
+- **NodeGraphContext** (11 fields): graph state, node maps, instancer results, caches
+
+Also: removed bif_math re-exports from bif_renderer, converted DenoiseError to thiserror.
+
+Phase 1 (remove UsdStage Send+Sync) was **skipped** — deep dive confirmed the unsafe impls are sound and required for batch_render's rayon parallelism.
 
 ### Full Codebase Code Review (Mar 15, 2026)
 
