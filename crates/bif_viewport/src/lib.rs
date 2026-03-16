@@ -320,6 +320,10 @@ pub struct Renderer {
     /// Mesh indices that have vertex animation (deformation)
     pub(crate) vertex_animated_meshes: Vec<usize>,
 
+    // Reusable buffers for animation evaluation (avoid per-frame allocation)
+    pub(crate) anim_instances_buf: Vec<InstanceData>,
+    pub(crate) anim_transforms_buf: Vec<Mat4>,
+
     // Material for Ivar rendering (from loaded USD scene)
     pub(crate) scene_material: bif_core::Material,
     // All scene materials for multi-material Ivar rendering
@@ -964,6 +968,8 @@ impl Renderer {
             instance_animations: vec![],
             last_evaluated_frame: 0.0,
             vertex_animated_meshes: vec![],
+            anim_instances_buf: Vec::new(),
+            anim_transforms_buf: Vec::new(),
             scene_material: bif_core::Material::default(),
             scene_materials: vec![],
             texture_base_dir: None,
@@ -1014,6 +1020,15 @@ impl Renderer {
     /// Check if camera controls are locked (USD camera active).
     pub fn is_camera_locked(&self) -> bool {
         self.camera_locked
+    }
+
+    /// Whether the viewer needs another frame (animation, progressive render, gizmo drag).
+    pub fn needs_redraw(&self) -> bool {
+        self.timeline_state.is_playing
+            || self.ivar_state.batch_status.is_rendering()
+            || self.ivar_state.is_pass_in_flight()
+            || self.ivar_state.needs_more_passes()
+            || self.gizmo_state.is_dragging
     }
 
     /// Handle window resize
@@ -1186,13 +1201,12 @@ impl Renderer {
 
         match stage.get_camera_xform_at_time(camera_path, time) {
             Ok(xform) => {
-                // C++ bridge outputs column-major (transposed from USD row-major).
-                // In this layout, USD basis rows become glam rows:
-                //   row(0) = local X axis in world,  row(1) = local Y (up),
-                //   row(2) = local Z axis in world,  row(3) = translation
-                let position = xform.row(3).truncate();
-                let forward = -xform.row(2).truncate().normalize(); // camera looks -Z
-                let up = xform.row(1).truncate().normalize();
+                // C++ bridge flat-copies USD row-major data; from_cols_array()
+                // implicitly transposes to glam column-vector convention:
+                //   col(0) = X axis, col(1) = Y (up), col(2) = Z, col(3) = translation
+                let position = xform.col(3).truncate();
+                let forward = -xform.col(2).truncate().normalize(); // camera looks -Z
+                let up = xform.col(1).truncate().normalize();
                 let target = position + forward * 10.0;
 
                 log::info!(

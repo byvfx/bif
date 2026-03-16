@@ -1,5 +1,5 @@
+/// A 1D interval `[min, max]` used for ray-AABB intersection and bounding.
 #[derive(Debug, Clone, Copy, PartialEq)]
-
 pub struct Interval {
     pub min: f32,
     pub max: f32,
@@ -7,7 +7,14 @@ pub struct Interval {
 
 impl Interval {
     /// Create a new interval given min and max values.
+    ///
+    /// # Panics (debug only)
+    /// Panics if `min > max` — use [`Interval::EMPTY`] for intentionally inverted intervals.
     pub fn new(min: f32, max: f32) -> Self {
+        debug_assert!(
+            min <= max,
+            "Interval::new called with min ({min}) > max ({max})"
+        );
         Self { min, max }
     }
 
@@ -181,5 +188,73 @@ mod tests {
         // Both should be usable
         assert_eq!(a.size(), b.size());
         assert_eq!(a.contains(3.0), b.contains(3.0));
+    }
+
+    #[test]
+    fn test_surrounding_overlapping() {
+        // Two overlapping intervals: [1, 5] and [3, 8]
+        let a = Interval::new(1.0, 5.0);
+        let b = Interval::new(3.0, 8.0);
+        let s = Interval::surrounding(&a, &b);
+
+        assert_eq!(s.min, 1.0);
+        assert_eq!(s.max, 8.0);
+    }
+
+    #[test]
+    fn test_surrounding_disjoint() {
+        // Two disjoint intervals: [1, 3] and [7, 10]
+        let a = Interval::new(1.0, 3.0);
+        let b = Interval::new(7.0, 10.0);
+        let s = Interval::surrounding(&a, &b);
+
+        assert_eq!(s.min, 1.0);
+        assert_eq!(s.max, 10.0);
+        // The gap [3, 7] is included in the surrounding interval
+        assert!(s.contains(5.0));
+    }
+
+    #[test]
+    fn test_surrounding_nested() {
+        // One interval entirely inside the other: [2, 4] inside [1, 8]
+        let outer = Interval::new(1.0, 8.0);
+        let inner = Interval::new(2.0, 4.0);
+        let s = Interval::surrounding(&outer, &inner);
+
+        assert_eq!(s.min, 1.0);
+        assert_eq!(s.max, 8.0);
+    }
+
+    #[test]
+    fn test_surrounding_identical() {
+        // Two identical intervals
+        let a = Interval::new(3.0, 7.0);
+        let b = Interval::new(3.0, 7.0);
+        let s = Interval::surrounding(&a, &b);
+
+        assert_eq!(s.min, 3.0);
+        assert_eq!(s.max, 7.0);
+    }
+
+    #[test]
+    fn test_surrounding_negative_ranges() {
+        // Intervals in negative space
+        let a = Interval::new(-10.0, -5.0);
+        let b = Interval::new(-3.0, 2.0);
+        let s = Interval::surrounding(&a, &b);
+
+        assert_eq!(s.min, -10.0);
+        assert_eq!(s.max, 2.0);
+    }
+
+    #[test]
+    fn test_surrounding_touching() {
+        // Intervals that share exactly one boundary point
+        let a = Interval::new(0.0, 5.0);
+        let b = Interval::new(5.0, 10.0);
+        let s = Interval::surrounding(&a, &b);
+
+        assert_eq!(s.min, 0.0);
+        assert_eq!(s.max, 10.0);
     }
 }

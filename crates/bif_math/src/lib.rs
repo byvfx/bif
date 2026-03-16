@@ -1,5 +1,5 @@
-// Re-export glam for convenience
-pub use glam::*;
+// Re-export only the glam types used by downstream crates
+pub use glam::{EulerRot, Mat3, Mat4, Quat, Vec3, Vec4};
 
 // BIF math types
 mod ray;

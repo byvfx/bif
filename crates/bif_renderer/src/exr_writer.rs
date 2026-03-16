@@ -286,7 +286,8 @@ pub fn format_frame_path(pattern: &str, frame: i32) -> String {
 
     if max_hashes > 0 {
         let hash_pattern = "#".repeat(max_hashes);
-        let padded = format!("{:0>width$}", frame.abs(), width = max_hashes);
+        let prefix = if frame < 0 { "neg" } else { "" };
+        let padded = format!("{prefix}{:0>width$}", frame.abs(), width = max_hashes);
         result = result.replace(&hash_pattern, &padded);
     }
 
@@ -359,5 +360,19 @@ mod tests {
 
         let result = write_exr(&output, Path::new("test.exr"), ExrCompression::Zip);
         assert!(matches!(result, Err(ExrError::BufferSizeMismatch { .. })));
+    }
+
+    #[test]
+    fn test_format_frame_path_negative_frame() {
+        assert_eq!(
+            format_frame_path("render.####.exr", -1),
+            "render.neg0001.exr"
+        );
+        assert_eq!(
+            format_frame_path("render.####.exr", -42),
+            "render.neg0042.exr"
+        );
+        // Positive frames unchanged
+        assert_eq!(format_frame_path("render.####.exr", 1), "render.0001.exr");
     }
 }

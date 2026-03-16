@@ -76,7 +76,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 );
 
                 if let Some(ref normals) = mesh.normals {
-                    if i0 < normals.len() {
+                    if i0 < normals.len() && i1 < normals.len() && i2 < normals.len() {
                         let n0 = &normals[i0];
                         println!(
                             "    Stored normal at v0: ({:.3}, {:.3}, {:.3})",
@@ -101,26 +101,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         // Show bounds
-        let mut min_x = f32::INFINITY;
-        let mut max_x = f32::NEG_INFINITY;
-        let mut min_y = f32::INFINITY;
-        let mut max_y = f32::NEG_INFINITY;
-        let mut min_z = f32::INFINITY;
-        let mut max_z = f32::NEG_INFINITY;
-
-        for v in &mesh.vertices {
-            min_x = min_x.min(v.x);
-            max_x = max_x.max(v.x);
-            min_y = min_y.min(v.y);
-            max_y = max_y.max(v.y);
-            min_z = min_z.min(v.z);
-            max_z = max_z.max(v.z);
-        }
+        let (min, max) = mesh.vertices.iter().fold(
+            ([f32::INFINITY; 3], [f32::NEG_INFINITY; 3]),
+            |(min, max), v| {
+                (
+                    [min[0].min(v.x), min[1].min(v.y), min[2].min(v.z)],
+                    [max[0].max(v.x), max[1].max(v.y), max[2].max(v.z)],
+                )
+            },
+        );
 
         println!("\nBounds:");
-        println!("  X: [{:.3}, {:.3}]", min_x, max_x);
-        println!("  Y: [{:.3}, {:.3}]", min_y, max_y);
-        println!("  Z: [{:.3}, {:.3}]", min_z, max_z);
+        println!("  X: [{:.3}, {:.3}]", min[0], max[0]);
+        println!("  Y: [{:.3}, {:.3}]", min[1], max[1]);
+        println!("  Z: [{:.3}, {:.3}]", min[2], max[2]);
     }
 
     Ok(())

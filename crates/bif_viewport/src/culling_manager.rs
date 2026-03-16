@@ -6,18 +6,10 @@ use wgpu::util::DeviceExt;
 
 use bif_math::{Aabb, Camera, Frustum, Mat4, Mat4Ext};
 
+use crate::frustum_culling::CullingResult;
 use crate::gpu_types::{CullingScratch, InstanceData};
 use crate::ivar_state::CameraSnapshot;
 use crate::mesh_data::MeshData;
-
-/// Result from culling update.
-#[derive(Clone)]
-pub struct CullingResult {
-    /// Number of instances rendered with full mesh (near)
-    pub near_count: u32,
-    /// Number of instances rendered with box proxy (far)
-    pub far_count: u32,
-}
 
 /// Manages frustum culling and LOD selection for viewport rendering.
 pub struct CullingManager {
@@ -62,7 +54,7 @@ pub struct CullingManager {
 impl CullingManager {
     /// Create a new CullingManager with default empty state.
     pub fn new(device: &wgpu::Device, camera: &Camera, max_instances: usize) -> Self {
-        let dummy_aabb = Aabb::empty();
+        let dummy_aabb = Aabb::EMPTY;
         let lod_box_mesh = MeshData::from_aabb(&dummy_aabb);
 
         let lod_box_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -80,7 +72,7 @@ impl CullingManager {
 
         Self {
             instance_aabbs: Vec::new(),
-            prototype_aabb: Aabb::empty(),
+            prototype_aabb: Aabb::EMPTY,
             visible_count: 0,
             scratch: CullingScratch::new(max_instances),
             cached_frustum: Frustum::from_view_projection(vp),
@@ -170,6 +162,17 @@ impl CullingManager {
         material_ids: &[u32],
         lod_enabled: bool,
     ) -> CullingResult {
+        // Guard: clamp to shorter length if AABBs/transforms diverge after partial update
+        if self.instance_aabbs.len() != transforms.len() {
+            log::warn!(
+                "Culling length mismatch: {} AABBs vs {} transforms, clamping",
+                self.instance_aabbs.len(),
+                transforms.len()
+            );
+            let safe_len = self.instance_aabbs.len().min(transforms.len());
+            self.instance_aabbs.truncate(safe_len);
+        }
+
         if self.instance_aabbs.is_empty() {
             self.visible_count = transforms.len() as u32;
             self.lod_box_count = 0;

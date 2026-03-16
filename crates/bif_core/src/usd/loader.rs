@@ -163,19 +163,32 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
             let mut hasher = DefaultHasher::new();
             vertices.len().hash(&mut hasher);
             indices.len().hash(&mut hasher);
-            // Sample first, middle, and last vertices
-            let sample_indices = [0, vertices.len() / 2, vertices.len().saturating_sub(1)];
-            for &idx in &sample_indices {
+            // Sample 10 vertices spread across the array for better collision resistance
+            let vlen = vertices.len();
+            let sample_count = vlen.min(10);
+            for i in 0..sample_count {
+                let idx = if sample_count <= 1 {
+                    0
+                } else {
+                    i * (vlen - 1) / (sample_count - 1)
+                };
                 if let Some(v) = vertices.get(idx) {
                     v.x.to_bits().hash(&mut hasher);
                     v.y.to_bits().hash(&mut hasher);
                     v.z.to_bits().hash(&mut hasher);
                 }
             }
-            // Also hash a few index values
-            for &idx in &sample_indices {
-                if let Some(&i) = indices.get(idx) {
-                    i.hash(&mut hasher);
+            // Sample index values at same spread positions
+            let ilen = indices.len();
+            let idx_sample_count = ilen.min(10);
+            for i in 0..idx_sample_count {
+                let idx = if idx_sample_count <= 1 {
+                    0
+                } else {
+                    i * (ilen - 1) / (idx_sample_count - 1)
+                };
+                if let Some(&val) = indices.get(idx) {
+                    val.hash(&mut hasher);
                 }
             }
             hasher.finish()
@@ -735,11 +748,16 @@ impl SceneBuilder {
             let proto_idx = instancer.proto_indices.get(i).copied().unwrap_or(0) as usize;
 
             // Get the prototype ID (from inline prototypes or fallback to first)
-            let proto_id = inline_prototypes
-                .get(proto_idx)
-                .copied()
-                .or_else(|| inline_prototypes.first().copied())
-                .unwrap_or(0);
+            let proto_id = if let Some(&id) = inline_prototypes.get(proto_idx) {
+                id
+            } else {
+                log::warn!(
+                    "Point instancer prototype index {} out of range ({} available), falling back to first",
+                    proto_idx,
+                    inline_prototypes.len()
+                );
+                inline_prototypes.first().copied().unwrap_or(0)
+            };
 
             // Build instance transform
             let instance_matrix = instancer.instance_matrix(i);
@@ -819,8 +837,14 @@ impl SceneBuilder {
             UsdPrim::Unknown(_) => return false,
         };
 
-        // Match full path or just the name part
-        prim_path == target_path || prim_path.ends_with(target_path)
+        // Match full path or path-component-aligned suffix
+        // e.g., target "/Mesh" matches "/World/Mesh" but not "/OtherWorldMesh"
+        prim_path == target_path
+            || (prim_path.ends_with(target_path)
+                && prim_path
+                    .as_bytes()
+                    .get(prim_path.len() - target_path.len() - 1)
+                    .is_some_and(|&b| b == b'/'))
     }
 
     /// Convert a USD mesh to a BIF mesh.

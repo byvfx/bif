@@ -7,6 +7,7 @@ use bif_math::{Aabb, Frustum, Mat4, Vec3};
 use crate::gpu_types::{CullingScratch, InstanceData};
 
 /// Result of frustum culling and LOD selection.
+#[derive(Clone)]
 pub struct CullingResult {
     /// Number of instances rendered with full mesh (near).
     pub near_count: u32,
@@ -58,8 +59,19 @@ pub fn update_visible_instances(
         };
     }
 
+    // Guard: clamp to shorter length if AABBs/transforms diverge after partial update
+    let safe_len = instance_aabbs.len().min(instance_transforms.len());
+    if safe_len != instance_aabbs.len() || safe_len != instance_transforms.len() {
+        log::warn!(
+            "Culling length mismatch: {} AABBs vs {} transforms, clamping to {}",
+            instance_aabbs.len(),
+            instance_transforms.len(),
+            safe_len
+        );
+    }
+
     // Collect visible instances with their distances
-    for (idx, aabb) in instance_aabbs.iter().enumerate() {
+    for (idx, aabb) in instance_aabbs[..safe_len].iter().enumerate() {
         // Frustum culling first
         if !frustum.intersects_aabb(aabb) {
             continue;

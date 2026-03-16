@@ -18,24 +18,6 @@ impl Aabb {
         aabb
     }
 
-    /// Create an empty AABB (contains nothing).
-    pub fn empty() -> Self {
-        Self {
-            x: Interval::EMPTY,
-            y: Interval::EMPTY,
-            z: Interval::EMPTY,
-        }
-    }
-
-    /// Create a universe AABB (contains everything).
-    pub fn universe() -> Self {
-        Self {
-            x: Interval::UNIVERSE,
-            y: Interval::UNIVERSE,
-            z: Interval::UNIVERSE,
-        }
-    }
-
     /// Create an AABB from two corner points.
     pub fn from_points(a: Vec3, b: Vec3) -> Self {
         let x = Interval::new(a.x.min(b.x), a.x.max(b.x));
@@ -74,43 +56,38 @@ impl Aabb {
         let ray_orig = r.origin;
         let ray_dir = r.direction;
 
-        // X axis
-        let adinv = 1.0 / ray_dir.x;
-        let mut t0 = (self.x.min - ray_orig.x) * adinv;
-        let mut t1 = (self.x.max - ray_orig.x) * adinv;
-        if adinv < 0.0 {
-            std::mem::swap(&mut t0, &mut t1);
-        }
-        ray_t.min = t0.max(ray_t.min);
-        ray_t.max = t1.min(ray_t.max);
-        if ray_t.max <= ray_t.min {
-            return false;
-        }
+        // Robust slab test: use f32::min/f32::max which propagate NaN,
+        // then check with finite-safe comparisons. When inv_d is +/-inf
+        // and the slab difference is 0, we get NaN — treat as a miss only
+        // if the ray is outside the slab.
+        for axis in 0..3 {
+            let (slab_min, slab_max, orig, dir) = match axis {
+                0 => (self.x.min, self.x.max, ray_orig.x, ray_dir.x),
+                1 => (self.y.min, self.y.max, ray_orig.y, ray_dir.y),
+                _ => (self.z.min, self.z.max, ray_orig.z, ray_dir.z),
+            };
 
-        // Y axis
-        let adinv = 1.0 / ray_dir.y;
-        let mut t0 = (self.y.min - ray_orig.y) * adinv;
-        let mut t1 = (self.y.max - ray_orig.y) * adinv;
-        if adinv < 0.0 {
-            std::mem::swap(&mut t0, &mut t1);
-        }
-        ray_t.min = t0.max(ray_t.min);
-        ray_t.max = t1.min(ray_t.max);
-        if ray_t.max <= ray_t.min {
-            return false;
-        }
+            let inv_d = 1.0 / dir;
+            let mut t0 = (slab_min - orig) * inv_d;
+            let mut t1 = (slab_max - orig) * inv_d;
 
-        // Z axis
-        let adinv = 1.0 / ray_dir.z;
-        let mut t0 = (self.z.min - ray_orig.z) * adinv;
-        let mut t1 = (self.z.max - ray_orig.z) * adinv;
-        if adinv < 0.0 {
-            std::mem::swap(&mut t0, &mut t1);
-        }
-        ray_t.min = t0.max(ray_t.min);
-        ray_t.max = t1.min(ray_t.max);
-        if ray_t.max <= ray_t.min {
-            return false;
+            if inv_d < 0.0 {
+                std::mem::swap(&mut t0, &mut t1);
+            }
+
+            // Handle NaN from 0 * inf: if ray is inside slab, treat as hit
+            if t0.is_nan() {
+                t0 = f32::NEG_INFINITY;
+            }
+            if t1.is_nan() {
+                t1 = f32::INFINITY;
+            }
+
+            ray_t.min = t0.max(ray_t.min);
+            ray_t.max = t1.min(ray_t.max);
+            if ray_t.max <= ray_t.min {
+                return false;
+            }
         }
 
         true
@@ -267,5 +244,88 @@ mod tests {
         assert_eq!(translated.x.max, 6.0);
         assert_eq!(translated.y.min, 0.0);
         assert_eq!(translated.z.min, 0.0);
+    }
+
+    #[test]
+    fn test_hit_axis_aligned_ray_along_x() {
+        // Ray along +X hitting a box centered at (5, 0, 0)
+        let aabb = Aabb::from_points(Vec3::new(4.0, -1.0, -1.0), Vec3::new(6.0, 1.0, 1.0));
+        let ray = Ray::new(Vec3::ZERO, Vec3::new(1.0, 0.0, 0.0), 0.0);
+        assert!(aabb.hit(&ray, Interval::new(0.0, 100.0)));
+    }
+
+    #[test]
+    fn test_hit_axis_aligned_ray_along_y() {
+        // Ray along +Y hitting a box centered at (0, 5, 0)
+        let aabb = Aabb::from_points(Vec3::new(-1.0, 4.0, -1.0), Vec3::new(1.0, 6.0, 1.0));
+        let ray = Ray::new(Vec3::ZERO, Vec3::new(0.0, 1.0, 0.0), 0.0);
+        assert!(aabb.hit(&ray, Interval::new(0.0, 100.0)));
+    }
+
+    #[test]
+    fn test_hit_axis_aligned_ray_along_z() {
+        // Ray along +Z hitting a box centered at (0, 0, 5)
+        let aabb = Aabb::from_points(Vec3::new(-1.0, -1.0, 4.0), Vec3::new(1.0, 1.0, 6.0));
+        let ray = Ray::new(Vec3::ZERO, Vec3::new(0.0, 0.0, 1.0), 0.0);
+        assert!(aabb.hit(&ray, Interval::new(0.0, 100.0)));
+    }
+
+    #[test]
+    fn test_hit_axis_aligned_ray_miss() {
+        // Ray along +X but box is offset on Y, should miss
+        let aabb = Aabb::from_points(Vec3::new(4.0, 4.0, -1.0), Vec3::new(6.0, 6.0, 1.0));
+        let ray = Ray::new(Vec3::ZERO, Vec3::new(1.0, 0.0, 0.0), 0.0);
+        assert!(!aabb.hit(&ray, Interval::new(0.0, 100.0)));
+    }
+
+    #[test]
+    fn test_hit_ray_origin_inside_aabb() {
+        // Ray starts inside the AABB — should still register a hit
+        let aabb = Aabb::from_points(Vec3::new(-5.0, -5.0, -5.0), Vec3::new(5.0, 5.0, 5.0));
+        let ray = Ray::new(Vec3::ZERO, Vec3::new(1.0, 0.0, 0.0), 0.0);
+        assert!(aabb.hit(&ray, Interval::new(0.0, 100.0)));
+    }
+
+    #[test]
+    fn test_hit_ray_origin_inside_any_direction() {
+        // Ray starts inside and points in any direction — always hits
+        let aabb = Aabb::from_points(Vec3::new(-5.0, -5.0, -5.0), Vec3::new(5.0, 5.0, 5.0));
+        let directions = [
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(-1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            Vec3::new(0.0, -1.0, 0.0),
+            Vec3::new(0.0, 0.0, 1.0),
+            Vec3::new(0.0, 0.0, -1.0),
+            Vec3::new(1.0, 1.0, 1.0).normalize(),
+        ];
+        for dir in &directions {
+            let ray = Ray::new(Vec3::ZERO, *dir, 0.0);
+            assert!(
+                aabb.hit(&ray, Interval::new(0.0, 100.0)),
+                "ray inside aabb with dir {:?} should hit",
+                dir
+            );
+        }
+    }
+
+    #[test]
+    fn test_hit_ray_origin_on_boundary() {
+        // Ray origin exactly on the AABB boundary face, pointing inward
+        let aabb = Aabb::from_points(Vec3::new(-1.0, -1.0, -1.0), Vec3::new(1.0, 1.0, 1.0));
+        let ray = Ray::new(Vec3::new(-1.0, 0.0, 0.0), Vec3::new(1.0, 0.0, 0.0), 0.0);
+        assert!(aabb.hit(&ray, Interval::new(0.0, 100.0)));
+    }
+
+    #[test]
+    fn test_hit_ray_origin_on_boundary_pointing_outward() {
+        // Ray origin on boundary, pointing outward — still hits (exits through far side)
+        // The slab intersection finds t_exit > 0 on the other axes
+        let aabb = Aabb::from_points(Vec3::new(-1.0, -1.0, -1.0), Vec3::new(1.0, 1.0, 1.0));
+        let ray = Ray::new(Vec3::new(1.0, 0.0, 0.0), Vec3::new(1.0, 0.0, 0.0), 0.0);
+        // This is on the boundary; t_enter ~ 0 for x-slab, t_exit ~ 0 for x-slab
+        // With the slab method, this is a degenerate case that may or may not hit
+        // depending on floating point. We just assert it doesn't panic.
+        let _ = aabb.hit(&ray, Interval::new(0.0, 100.0));
     }
 }

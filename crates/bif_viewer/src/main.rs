@@ -18,14 +18,17 @@ const SCROLL_PIXEL_TO_LINES: f32 = 50.0;
 const CLICK_THRESHOLD: f64 = 3.0;
 
 /// CLI options
-#[derive(Default)]
+#[derive(Debug, Default)]
 struct CliOptions {
     usda_path: Option<String>,
     usd_path: Option<String>, // Uses C++ bridge (USDC, references)
 }
 
-fn parse_args() -> CliOptions {
-    let args: Vec<String> = std::env::args().collect();
+/// Parse CLI arguments from a slice of strings (first element = program name).
+///
+/// Returns `Ok(CliOptions)` on success, `Err(message)` on parse errors.
+/// Help requests (`--help`/`-h`) return `Err` with the help text.
+fn parse_args_from(args: &[String]) -> Result<CliOptions, String> {
     let mut opts = CliOptions::default();
 
     let mut i = 1;
@@ -35,12 +38,16 @@ fn parse_args() -> CliOptions {
                 if i + 1 < args.len() {
                     opts.usda_path = Some(args[i + 1].clone());
                     i += 1;
+                } else {
+                    return Err(format!("Error: {} requires a file path", args[i]));
                 }
             }
             "--usd" => {
                 if i + 1 < args.len() {
                     opts.usd_path = Some(args[i + 1].clone());
                     i += 1;
+                } else {
+                    return Err("Error: --usd requires a file path".to_string());
                 }
             }
             arg if !arg.starts_with('-') && opts.usda_path.is_none() && opts.usd_path.is_none() => {
@@ -52,32 +59,58 @@ fn parse_args() -> CliOptions {
                 }
             }
             "--help" | "-h" => {
-                println!("BIF Viewer - VFX Renderer");
-                println!();
-                println!("Usage: bif_viewer [OPTIONS] [FILE]");
-                println!();
-                println!("Options:");
-                println!("  --usda, -u <FILE>  Load a USDA scene file (pure Rust parser)");
-                println!("  --usd <FILE>       Load USD/USDA/USDC file (C++ bridge, supports references)");
-                println!("  --help, -h         Show this help message");
-                println!();
-                println!("Note: --usd requires PXR_PLUGINPATH_NAME environment variable.");
-                println!("      Run: . .\\setup_usd_env.ps1");
-                println!();
-                println!("Controls:");
-                println!("  Left Mouse Drag    Orbit camera");
-                println!("  Middle Mouse Drag  Pan camera");
-                println!("  Scroll Wheel       Zoom in/out");
-                println!("  WASD               Move camera");
-                println!("  Tab                Toggle UI");
-                std::process::exit(0);
+                return Err("help".to_string());
+            }
+            unknown if unknown.starts_with('-') => {
+                eprintln!("Warning: unknown flag '{}' (use --help for usage)", unknown);
             }
             _ => {}
         }
         i += 1;
     }
 
-    opts
+    Ok(opts)
+}
+
+fn parse_args() -> CliOptions {
+    let args: Vec<String> = std::env::args().collect();
+    match parse_args_from(&args) {
+        Ok(opts) => opts,
+        Err(msg) if msg == "help" => {
+            println!("BIF Viewer - VFX Renderer");
+            println!();
+            println!("Usage: bif_viewer [OPTIONS] [FILE]");
+            println!();
+            println!("Options:");
+            println!("  --usda, -u <FILE>  Load a USDA scene file (pure Rust parser)");
+            println!(
+                "  --usd <FILE>       Load USD/USDA/USDC file (C++ bridge, supports references)"
+            );
+            println!("  --help, -h         Show this help message");
+            println!();
+            println!("Note: --usd requires PXR_PLUGINPATH_NAME environment variable.");
+            println!("      Run: . .\\setup_usd_env.ps1");
+            println!();
+            println!("Controls:");
+            println!("  Left Mouse Drag    Orbit camera");
+            println!("  Middle Mouse Drag  Pan camera");
+            println!("  Scroll Wheel       Zoom in/out");
+            println!("  WASD               Move camera");
+            println!("  Tab                Toggle UI");
+            std::process::exit(0);
+        }
+        Err(msg) => {
+            eprintln!("{}", msg);
+            std::process::exit(1);
+        }
+    }
+}
+
+/// Returns `true` if accumulated drag distance is below the click threshold.
+///
+/// Used to distinguish a click (selection) from a drag (orbit/pan).
+fn is_click(drag_distance: f64) -> bool {
+    drag_distance < CLICK_THRESHOLD
 }
 
 /// Application state
@@ -99,6 +132,9 @@ struct App {
     current_mouse_pos: (f64, f64),
     mouse_press_pos: Option<(f64, f64)>,
     mouse_drag_distance: f64,
+
+    // Redraw tracking — set when user interaction or state change needs a frame
+    needs_redraw: bool,
 }
 
 impl App {
@@ -117,6 +153,15 @@ impl App {
             current_mouse_pos: (0.0, 0.0),
             mouse_press_pos: None,
             mouse_drag_distance: 0.0,
+            needs_redraw: true,
+        }
+    }
+
+    /// Run a closure on the renderer if it exists.
+    /// Only use for simple cases that don't need other App fields.
+    fn with_renderer(&mut self, f: impl FnOnce(&mut Renderer)) {
+        if let Some(renderer) = &mut self.renderer {
+            f(renderer);
         }
     }
 }
@@ -128,18 +173,25 @@ impl ApplicationHandler for App {
                 .with_title("BIF Viewer")
                 .with_inner_size(winit::dpi::PhysicalSize::new(1280, 720));
 
-            let window = std::sync::Arc::new(
-                event_loop
-                    .create_window(window_attrs)
-                    .expect("Failed to create window"),
-            );
+            let window = match event_loop.create_window(window_attrs) {
+                Ok(w) => std::sync::Arc::new(w),
+                Err(e) => {
+                    eprintln!("Failed to create window: {}", e);
+                    std::process::exit(1);
+                }
+            };
 
             // Load scene based on CLI options
             let renderer = if let Some(usd_path) = &self.usd_path {
                 // Use C++ bridge for --usd flag (supports USDC and references)
                 log::info!("Loading USD scene via C++ bridge: {}", usd_path);
-                let mut r = pollster::block_on(Renderer::new(window.clone()))
-                    .expect("Failed to initialize renderer");
+                let mut r = match pollster::block_on(Renderer::new(window.clone())) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        eprintln!("Failed to initialize renderer: {}", e);
+                        std::process::exit(1);
+                    }
+                };
                 if let Err(e) = r.load_usd_scene(usd_path) {
                     log::error!("Failed to load USD file '{}': {:?}", usd_path, e);
                     log::error!(
@@ -148,18 +200,23 @@ impl ApplicationHandler for App {
                     log::info!("Continuing with empty viewport");
                 }
                 r
-            } else if let Some(usda_path) = self.usda_path.clone() {
+            } else if let Some(usda_path) = self.usda_path.as_deref() {
                 log::info!("Loading USDA scene: {}", usda_path);
-                let mut r = pollster::block_on(Renderer::new(window.clone()))
-                    .expect("Failed to initialize renderer");
+                let mut r = match pollster::block_on(Renderer::new(window.clone())) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        eprintln!("Failed to initialize renderer: {}", e);
+                        std::process::exit(1);
+                    }
+                };
                 // Try C++ bridge first to get scene browser support
-                if let Err(e) = r.load_usd_scene(&usda_path) {
+                if let Err(e) = r.load_usd_scene(usda_path) {
                     // Fall back to pure Rust parser (no scene browser)
                     log::warn!(
                         "C++ bridge failed ({}), using pure Rust parser (no scene browser)",
                         e
                     );
-                    match bif_core::load_usda(&usda_path) {
+                    match bif_core::load_usda(usda_path) {
                         Ok(scene) => {
                             log::info!(
                                 "Scene loaded: {} prototypes, {} instances",
@@ -180,8 +237,13 @@ impl ApplicationHandler for App {
             } else {
                 // No file specified - start with blank scene
                 log::info!("Starting with blank scene (load USD via node graph)");
-                pollster::block_on(Renderer::new(window.clone()))
-                    .expect("Failed to initialize renderer")
+                match pollster::block_on(Renderer::new(window.clone())) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        eprintln!("Failed to initialize renderer: {}", e);
+                        std::process::exit(1);
+                    }
+                }
             };
 
             self.window = Some(window);
@@ -197,6 +259,9 @@ impl ApplicationHandler for App {
         _window_id: WindowId,
         event: WindowEvent,
     ) {
+        // Any window event means we need at least one redraw
+        self.needs_redraw = true;
+
         // Let egui handle the event first
         if let Some(renderer) = &mut self.renderer {
             if let Some(window) = &self.window {
@@ -213,14 +278,14 @@ impl ApplicationHandler for App {
                 event_loop.exit();
             }
             WindowEvent::Resized(physical_size) => {
-                if let Some(renderer) = &mut self.renderer {
-                    renderer.resize((physical_size.width, physical_size.height));
+                self.with_renderer(|r| {
+                    r.resize((physical_size.width, physical_size.height));
                     log::info!(
                         "Resized to {}x{}",
                         physical_size.width,
                         physical_size.height
                     );
-                }
+                });
             }
             WindowEvent::MouseInput { button, state, .. } => match button {
                 MouseButton::Left => {
@@ -274,7 +339,7 @@ impl ApplicationHandler for App {
                                 renderer.gizmo_state.is_dragging = false;
                                 renderer.gizmo_state.active_axis =
                                     bif_viewport::gizmo::GizmoAxis::None;
-                            } else if self.mouse_drag_distance < CLICK_THRESHOLD {
+                            } else if is_click(self.mouse_drag_distance) {
                                 // Click detection: pick instance
                                 if let Some(pos) = self.mouse_press_pos {
                                     let picked =
@@ -414,30 +479,25 @@ impl ApplicationHandler for App {
                             || self.keys_pressed.contains(&KeyCode::ShiftRight);
 
                         if keycode == KeyCode::KeyF {
-                            if let Some(renderer) = &mut self.renderer {
-                                renderer.frame_mesh();
-                            }
+                            self.with_renderer(|r| r.frame_mesh());
                         } else if ctrl && shift && keycode == KeyCode::KeyZ {
-                            // Redo
-                            if let Some(renderer) = &mut self.renderer {
-                                if let Some(desc) = renderer.redo() {
+                            self.with_renderer(|r| {
+                                if let Some(desc) = r.redo() {
                                     log::info!("Redo: {}", desc);
                                 }
-                            }
+                            });
                         } else if ctrl && keycode == KeyCode::KeyZ {
-                            // Undo
-                            if let Some(renderer) = &mut self.renderer {
-                                if let Some(desc) = renderer.undo() {
+                            self.with_renderer(|r| {
+                                if let Some(desc) = r.undo() {
                                     log::info!("Undo: {}", desc);
                                 }
-                            }
+                            });
                         } else if keycode == KeyCode::KeyK {
-                            // Set keyframe on selected instance
-                            if let Some(renderer) = &mut self.renderer {
-                                if let Some(idx) = renderer.selected_instance_index {
-                                    renderer.set_keyframe(idx);
+                            self.with_renderer(|r| {
+                                if let Some(idx) = r.selected_instance_index {
+                                    r.set_keyframe(idx);
                                 }
-                            }
+                            });
                         }
                     }
                     ElementState::Released => {
@@ -452,10 +512,10 @@ impl ApplicationHandler for App {
                 self.last_frame_time = now;
 
                 // Update FPS counter and animation
-                if let Some(renderer) = &mut self.renderer {
-                    renderer.update_fps(delta_time);
-                    renderer.update_animation(delta_time);
-                }
+                self.with_renderer(|r| {
+                    r.update_fps(delta_time);
+                    r.update_animation(delta_time);
+                });
 
                 // Handle keyboard movement (skip if camera locked)
                 if let Some(renderer) = &mut self.renderer {
@@ -531,11 +591,155 @@ impl ApplicationHandler for App {
     }
 
     fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
-        // Always request redraw: progressive rendering, animation, async polling need it.
-        // TODO: Make conditional (skip when fully converged + idle) to save CPU
-        if let Some(window) = &self.window {
-            window.request_redraw();
+        // Only request redraw when something actually needs updating
+        let renderer_busy = self.renderer.as_ref().is_some_and(|r| r.needs_redraw());
+        let user_interacting = self.left_mouse_pressed
+            || self.middle_mouse_pressed
+            || self.right_mouse_pressed
+            || !self.keys_pressed.is_empty();
+
+        if self.needs_redraw || renderer_busy || user_interacting {
+            if let Some(window) = &self.window {
+                window.request_redraw();
+            }
+            self.needs_redraw = false;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Helper: build args vec from string slices (first element is program name).
+    fn args(strs: &[&str]) -> Vec<String> {
+        strs.iter().map(|s| s.to_string()).collect()
+    }
+
+    // ── parse_args_from ──────────────────────────────────────────
+
+    #[test]
+    fn parse_args_no_arguments_returns_defaults() {
+        let opts = parse_args_from(&args(&["bif_viewer"])).unwrap();
+        assert!(opts.usda_path.is_none());
+        assert!(opts.usd_path.is_none());
+    }
+
+    #[test]
+    fn parse_args_usda_long_flag() {
+        let opts = parse_args_from(&args(&["bif_viewer", "--usda", "scene.usda"])).unwrap();
+        assert_eq!(opts.usda_path.as_deref(), Some("scene.usda"));
+        assert!(opts.usd_path.is_none());
+    }
+
+    #[test]
+    fn parse_args_usda_short_flag() {
+        let opts = parse_args_from(&args(&["bif_viewer", "-u", "scene.usda"])).unwrap();
+        assert_eq!(opts.usda_path.as_deref(), Some("scene.usda"));
+    }
+
+    #[test]
+    fn parse_args_usd_flag() {
+        let opts = parse_args_from(&args(&["bif_viewer", "--usd", "scene.usdc"])).unwrap();
+        assert_eq!(opts.usd_path.as_deref(), Some("scene.usdc"));
+        assert!(opts.usda_path.is_none());
+    }
+
+    #[test]
+    fn parse_args_positional_usda() {
+        let opts = parse_args_from(&args(&["bif_viewer", "kitchen.usda"])).unwrap();
+        assert_eq!(opts.usda_path.as_deref(), Some("kitchen.usda"));
+        assert!(opts.usd_path.is_none());
+    }
+
+    #[test]
+    fn parse_args_positional_usdc() {
+        let opts = parse_args_from(&args(&["bif_viewer", "kitchen.usdc"])).unwrap();
+        assert!(opts.usda_path.is_none());
+        assert_eq!(opts.usd_path.as_deref(), Some("kitchen.usdc"));
+    }
+
+    #[test]
+    fn parse_args_positional_usd() {
+        let opts = parse_args_from(&args(&["bif_viewer", "kitchen.usd"])).unwrap();
+        assert_eq!(opts.usd_path.as_deref(), Some("kitchen.usd"));
+    }
+
+    #[test]
+    fn parse_args_missing_value_after_usda() {
+        let result = parse_args_from(&args(&["bif_viewer", "--usda"]));
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("requires a file path"));
+    }
+
+    #[test]
+    fn parse_args_missing_value_after_usd() {
+        let result = parse_args_from(&args(&["bif_viewer", "--usd"]));
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("requires a file path"));
+    }
+
+    #[test]
+    fn parse_args_missing_value_after_short_u() {
+        let result = parse_args_from(&args(&["bif_viewer", "-u"]));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_args_help_returns_err() {
+        let result = parse_args_from(&args(&["bif_viewer", "--help"]));
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "help");
+    }
+
+    #[test]
+    fn parse_args_short_help_returns_err() {
+        let result = parse_args_from(&args(&["bif_viewer", "-h"]));
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "help");
+    }
+
+    #[test]
+    fn parse_args_unknown_flag_still_succeeds() {
+        // Unknown flags print a warning but don't fail
+        let opts = parse_args_from(&args(&["bif_viewer", "--foo", "scene.usda"])).unwrap();
+        // "scene.usda" is a positional arg after unknown flag is skipped
+        assert_eq!(opts.usda_path.as_deref(), Some("scene.usda"));
+    }
+
+    #[test]
+    fn parse_args_unknown_flag_alone() {
+        let opts = parse_args_from(&args(&["bif_viewer", "--bogus"])).unwrap();
+        assert!(opts.usda_path.is_none());
+        assert!(opts.usd_path.is_none());
+    }
+
+    // ── is_click (click vs drag) ─────────────────────────────────
+
+    #[test]
+    fn is_click_zero_distance() {
+        assert!(is_click(0.0));
+    }
+
+    #[test]
+    fn is_click_small_movement() {
+        assert!(is_click(1.5));
+    }
+
+    #[test]
+    fn is_click_at_threshold_is_drag() {
+        // Exactly at threshold → not a click (uses strict <)
+        assert!(!is_click(CLICK_THRESHOLD));
+    }
+
+    #[test]
+    fn is_click_just_below_threshold() {
+        assert!(is_click(CLICK_THRESHOLD - 0.01));
+    }
+
+    #[test]
+    fn is_click_large_movement_is_drag() {
+        assert!(!is_click(50.0));
     }
 }
 

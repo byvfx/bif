@@ -244,7 +244,9 @@ static void triangulate_mesh(
     }
 }
 
-/// Convert GfMatrix4d to column-major float array
+/// Flat-copy GfMatrix4d (row-major) to float[16].
+/// Rust side calls from_cols_array() on this data, which implicitly transposes
+/// from USD's row-vector convention to glam's column-vector convention.
 static void matrix_to_float16(const GfMatrix4d& mat, float* out) {
     GfMatrix4f matf(mat);
     const double* data = mat.GetArray();
@@ -2171,12 +2173,9 @@ UsdBridgeError usd_bridge_get_camera_xform_at_time(
     // Evaluate transform at time
     GfMatrix4d localToWorld = xformable.ComputeLocalToWorldTransform(UsdTimeCode(time));
 
-    // Convert to column-major float array
-    for (int col = 0; col < 4; ++col) {
-        for (int row = 0; row < 4; ++row) {
-            out_transform[col * 4 + row] = static_cast<float>(localToWorld[row][col]);
-        }
-    }
+    // Flat copy of row-major USD data, matching matrix_to_float16 used for
+    // meshes, lights, and instances. Rust interprets via from_cols_array().
+    matrix_to_float16(localToWorld, out_transform);
 
     return USD_BRIDGE_SUCCESS;
 }

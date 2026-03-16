@@ -1002,16 +1002,23 @@ pub struct UsdStage {
 }
 
 // SAFETY: UsdStage is Send + Sync because:
-// 1. All USD data is pre-cached at load time in usd_bridge_open_stage()
-// 2. All getter functions read from immutable caches without mutation
+// 1. All USD data is pre-cached at load time in usd_bridge_open_stage().
+//    The C++ side populates caches (mesh vertices, normals, UVs, xforms)
+//    during open and all subsequent reads go through these immutable caches.
+// 2. All getter FFI functions take the stage pointer as const — no mutation
+//    occurs through &self methods on the Rust side.
 // 3. usd_bridge_get_mesh_vertices_at_time() uses thread_local storage for
-//    its return buffer - each thread gets its own buffer, avoiding races
-// 4. Rust immediately copies the data via to_vec() before the buffer can
-//    be reused by a subsequent call on the same thread
-// 5. The USD stage itself (UsdStageRefPtr) is read-only after caching
+//    its return buffer — each thread gets its own buffer, avoiding data races.
+// 4. Rust immediately copies the data via to_vec() before the thread_local
+//    buffer can be reused by a subsequent call on the same thread.
+// 5. The underlying UsdStageRefPtr is read-only after caching; no USD
+//    composition or layer mutations are performed through this type.
+// 6. Rust's type system enforces that &UsdStage (shared ref) is the only
+//    way to access the stage after construction — no &mut self methods exist.
 //
-// Pattern: Arc<UsdStage> is used in batch_render.rs for parallel bucket
-// rendering, where each thread reads mesh data at potentially different times.
+// Usage pattern: Arc<UsdStage> is shared across threads in batch_render.rs
+// for parallel bucket rendering, where each thread reads mesh data at
+// potentially different animation times.
 unsafe impl Send for UsdStage {}
 unsafe impl Sync for UsdStage {}
 
@@ -1186,7 +1193,8 @@ impl UsdStage {
             }
         };
 
-        // Convert transform (column-major f32[16] to Mat4)
+        // USD row-major f32[16] -> glam Mat4 via from_cols_array() (implicit transpose
+        // from row-vector to column-vector convention)
         let transform = Mat4::from_cols_array(&raw_data.transform);
 
         let purpose = match raw_data.purpose {
@@ -2159,7 +2167,16 @@ pub struct UsdEditLayer {
     raw: *mut UsdBridgeEditLayerRaw,
 }
 
-// SAFETY: The C++ edit layer is self-contained with no shared mutable state.
+// SAFETY: UsdEditLayer is Send because:
+// 1. The raw pointer is exclusively owned — only one UsdEditLayer instance
+//    holds each C++ edit layer pointer (no Clone impl, no pointer aliasing).
+// 2. All mutating FFI calls (define_prim, set_attribute, etc.) take &mut self,
+//    so Rust's borrow checker guarantees exclusive access at compile time.
+// 3. The C++ edit layer is self-contained — it does not reference shared
+//    global state or other stage data that could cause races when moved
+//    between threads.
+// 4. Not Sync: concurrent &UsdEditLayer access from multiple threads is not
+//    needed and not claimed safe.
 unsafe impl Send for UsdEditLayer {}
 
 impl UsdEditLayer {

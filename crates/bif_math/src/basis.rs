@@ -40,4 +40,33 @@ mod tests {
         assert!(b.dot(n).abs() < 1e-5);
         assert!(t.dot(b).abs() < 1e-5);
     }
+
+    #[test]
+    fn test_orthonormal_basis_right_handed() {
+        // Verify that (tangent, bitangent, normal) form a right-handed system.
+        // In a right-handed frame: tangent x bitangent == normal (approximately).
+        let normals = [
+            Vec3::new(0.0, 1.0, 0.0),
+            Vec3::new(0.0, 0.0, 1.0),
+            Vec3::new(0.0, 0.0, -1.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(-1.0, 0.0, 0.0),
+            Vec3::new(1.0, 1.0, 1.0).normalize(),
+            Vec3::new(-0.3, 0.7, 0.5).normalize(),
+        ];
+
+        for n in &normals {
+            let (t, b) = build_orthonormal_basis(*n);
+            let cross = t.cross(b);
+            let diff = (cross - *n).length();
+            assert!(
+                diff < 1e-4,
+                "basis for normal {:?} is not right-handed: t x b = {:?}, expected {:?}, diff = {}",
+                n,
+                cross,
+                n,
+                diff
+            );
+        }
+    }
 }

@@ -92,6 +92,7 @@ impl Material {
     }
 
     /// Check if this material uses any textures.
+    #[must_use]
     pub fn has_textures(&self) -> bool {
         self.diffuse_texture.is_some()
             || self.roughness_texture.is_some()
@@ -102,6 +103,7 @@ impl Material {
     }
 
     /// Check if this material is emissive.
+    #[must_use]
     pub fn is_emissive(&self) -> bool {
         self.emissive_color.length_squared() > 0.0 || self.emissive_texture.is_some()
     }
@@ -209,6 +211,7 @@ impl AnimatedTransform {
     }
 
     /// Check if this transform has animation.
+    #[must_use]
     pub fn is_animated(&self) -> bool {
         self.keyframes.as_ref().is_some_and(|k| !k.is_empty())
     }
@@ -217,6 +220,7 @@ impl AnimatedTransform {
     ///
     /// Returns the interpolated transform between keyframes, or the static
     /// transform if there are no keyframes.
+    #[must_use]
     pub fn evaluate(&self, time: f64) -> Transform {
         let keyframes = match &self.keyframes {
             Some(kf) if !kf.is_empty() => kf,
@@ -310,6 +314,7 @@ impl Transform {
     /// Convert to a 4x4 transformation matrix.
     ///
     /// Order: Scale -> Rotate -> Translate (SRT)
+    #[must_use]
     pub fn to_matrix(&self) -> Mat4 {
         Mat4::from_scale_rotation_translation(self.scale, self.rotation, self.translation)
     }
@@ -318,6 +323,7 @@ impl Transform {
     ///
     /// Translation and scale use linear interpolation.
     /// Rotation uses spherical linear interpolation (slerp).
+    #[must_use]
     pub fn lerp(a: &Transform, b: &Transform, t: f32) -> Transform {
         Transform {
             translation: a.translation.lerp(b.translation, t),
@@ -369,6 +375,7 @@ impl Instance {
     }
 
     /// Get the 4x4 model matrix for this instance.
+    #[must_use]
     pub fn model_matrix(&self) -> Mat4 {
         self.transform.to_matrix()
     }
@@ -614,6 +621,7 @@ impl Scene {
     }
 
     /// Get material count.
+    #[must_use]
     pub fn material_count(&self) -> usize {
         self.materials.len()
     }
@@ -647,6 +655,7 @@ impl Scene {
     }
 
     /// Get total triangle count across all instances.
+    #[must_use]
     pub fn total_triangle_count(&self) -> usize {
         let mut count = 0;
         for instance in &self.instances {
@@ -658,11 +667,13 @@ impl Scene {
     }
 
     /// Get total instance count.
+    #[must_use]
     pub fn instance_count(&self) -> usize {
         self.instances.len()
     }
 
     /// Get prototype count.
+    #[must_use]
     pub fn prototype_count(&self) -> usize {
         self.prototypes.len()
     }
@@ -705,6 +716,8 @@ impl Scene {
         self.cameras
             .retain(|cam| !removed_indices.contains(&cam.instance_index));
         // Re-index camera instance indices to account for removed instances
+        // TODO: O(cameras * removed_indices) — consider sorted removed_indices
+        //       with binary search if this becomes a bottleneck on large scenes.
         for cam in &mut self.cameras {
             let shift = removed_indices
                 .iter()
@@ -767,7 +780,7 @@ impl Scene {
         }
 
         if min.x.is_infinite() {
-            Aabb::empty()
+            Aabb::EMPTY
         } else {
             Aabb::from_points(min, max)
         }

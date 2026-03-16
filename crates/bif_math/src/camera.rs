@@ -98,8 +98,15 @@ pub const DEFAULT_FAR_PLANE: f32 = 10000.0;
 impl Camera {
     /// Create a new camera
     pub fn new(position: Vec3, target: Vec3, aspect: f32) -> Self {
-        let distance = (position - target).length();
-        let direction = (position - target).normalize();
+        let diff = position - target;
+        let distance = diff.length();
+
+        // Guard: if position == target, offset target slightly along -Z
+        let direction = if distance < 1e-6 {
+            Vec3::NEG_Z
+        } else {
+            diff / distance
+        };
 
         // Calculate initial yaw and pitch from position
         let yaw = direction.z.atan2(direction.x);
@@ -169,8 +176,24 @@ impl Camera {
         let speed = self.move_speed * self.distance * delta_time;
 
         // Get camera axes
-        let view_dir = (self.target - self.position).normalize();
-        let right_dir = view_dir.cross(self.up).normalize();
+        let diff = self.target - self.position;
+        let len = diff.length();
+        if len < 1e-6 {
+            return;
+        }
+        let view_dir = diff / len;
+        let right_cross = view_dir.cross(self.up);
+        // Guard: if view_dir is parallel to up, use world X as fallback
+        let right_dir = if right_cross.length_squared() < 1e-10 {
+            let fallback = view_dir.cross(Vec3::X);
+            if fallback.length_squared() < 1e-10 {
+                view_dir.cross(Vec3::Z).normalize()
+            } else {
+                fallback.normalize()
+            }
+        } else {
+            right_cross.normalize()
+        };
         let up_dir = right_dir.cross(view_dir).normalize();
 
         // Move camera and target together
@@ -242,12 +265,20 @@ impl Camera {
     /// - Translation gives camera position
     /// - -Z axis gives view direction (camera looks down -Z in its local space)
     pub fn set_from_matrix(&mut self, matrix: Mat4) {
+        // Validate basis vectors have non-zero length before normalizing
+        let z_basis = Vec3::new(matrix.z_axis.x, matrix.z_axis.y, matrix.z_axis.z);
+        let y_basis = Vec3::new(matrix.y_axis.x, matrix.y_axis.y, matrix.y_axis.z);
+        if z_basis.length_squared() < 1e-12 || y_basis.length_squared() < 1e-12 {
+            eprintln!("set_from_matrix: degenerate matrix (zero-scale basis), skipping update");
+            return;
+        }
+
         // Extract position from translation column
         self.position = Vec3::new(matrix.w_axis.x, matrix.w_axis.y, matrix.w_axis.z);
 
         // Camera looks down -Z in its local space
-        let forward = -Vec3::new(matrix.z_axis.x, matrix.z_axis.y, matrix.z_axis.z).normalize();
-        let up = Vec3::new(matrix.y_axis.x, matrix.y_axis.y, matrix.y_axis.z).normalize();
+        let forward = -z_basis.normalize();
+        let up = y_basis.normalize();
 
         // Set target along view direction
         self.target = self.position + forward * self.distance;
@@ -298,5 +329,205 @@ mod tests {
 
         camera.set_aspect(16.0 / 9.0);
         assert_eq!(camera.aspect, 16.0 / 9.0);
+    }
+
+    #[test]
+    fn test_set_from_matrix_identity() {
+        // Arrange: identity matrix means camera at origin, looking down -Z, up = Y
+        let mut camera = Camera::new(Vec3::new(0.0, 0.0, 5.0), Vec3::ZERO, 1.0);
+        let matrix = Mat4::IDENTITY;
+
+        // Act
+        camera.set_from_matrix(matrix);
+
+        // Assert: position at origin
+        assert!((camera.position - Vec3::ZERO).length() < 1e-5);
+        // Camera looks down -Z, so target is at (0, 0, -distance)
+        assert!((camera.target.z - (-camera.distance)).abs() < 1e-5);
+        // Up is Y
+        assert!((camera.up - Vec3::Y).length() < 1e-5);
+    }
+
+    #[test]
+    fn test_set_from_matrix_translated() {
+        // Arrange: camera translated to (10, 5, 3), still looking down -Z
+        let mut camera = Camera::new(Vec3::new(0.0, 0.0, 5.0), Vec3::ZERO, 1.0);
+        let matrix = Mat4::from_translation(Vec3::new(10.0, 5.0, 3.0));
+
+        // Act
+        camera.set_from_matrix(matrix);
+
+        // Assert: position extracted from translation column
+        assert!((camera.position - Vec3::new(10.0, 5.0, 3.0)).length() < 1e-5);
+        // Target should be along -Z from position
+        assert!((camera.target.x - 10.0).abs() < 1e-4);
+        assert!((camera.target.y - 5.0).abs() < 1e-4);
+        assert!(camera.target.z < camera.position.z);
+    }
+
+    #[test]
+    fn test_set_from_matrix_rotated() {
+        // Arrange: rotate 90 degrees around Y so camera looks down -X
+        let mut camera = Camera::new(Vec3::new(0.0, 0.0, 5.0), Vec3::ZERO, 1.0);
+        let matrix = Mat4::from_rotation_y(std::f32::consts::FRAC_PI_2);
+
+        // Act
+        camera.set_from_matrix(matrix);
+
+        // Assert: position at origin (no translation)
+        assert!((camera.position).length() < 1e-5);
+        // After 90-degree Y rotation, -Z becomes -X, so target.x < 0
+        assert!(camera.target.x < -0.1);
+        assert!((camera.target.y).abs() < 1e-4);
+    }
+
+    #[test]
+    fn test_set_from_matrix_degenerate_skipped() {
+        // Arrange: zero matrix (degenerate) should not update the camera
+        let mut camera = Camera::new(Vec3::new(0.0, 0.0, 5.0), Vec3::ZERO, 1.0);
+        let original_position = camera.position;
+        let matrix = Mat4::ZERO;
+
+        // Act
+        camera.set_from_matrix(matrix);
+
+        // Assert: camera unchanged because basis vectors are zero-length
+        assert_eq!(camera.position, original_position);
+    }
+
+    #[test]
+    fn test_dolly_perspective_zoom_in() {
+        // Arrange
+        let mut camera = Camera::new(Vec3::new(0.0, 0.0, 5.0), Vec3::ZERO, 1.0);
+        let original_distance = camera.distance;
+
+        // Act: negative delta = zoom in (closer)
+        camera.dolly(-1.0);
+
+        // Assert
+        assert!(camera.distance < original_distance);
+        assert!(camera.distance > 0.0);
+    }
+
+    #[test]
+    fn test_dolly_perspective_zoom_out() {
+        // Arrange
+        let mut camera = Camera::new(Vec3::new(0.0, 0.0, 5.0), Vec3::ZERO, 1.0);
+        let original_distance = camera.distance;
+
+        // Act: positive delta = zoom out (farther)
+        camera.dolly(2.0);
+
+        // Assert
+        assert!(camera.distance > original_distance);
+    }
+
+    #[test]
+    fn test_dolly_perspective_clamps_minimum() {
+        // Arrange
+        let mut camera = Camera::new(Vec3::new(0.0, 0.0, 5.0), Vec3::ZERO, 1.0);
+
+        // Act: try to zoom past the target
+        camera.dolly(-100.0);
+
+        // Assert: distance clamped to minimum 0.1
+        assert!((camera.distance - 0.1).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_dolly_orthographic() {
+        // Arrange
+        let mut camera = Camera::new(Vec3::new(0.0, 0.0, 5.0), Vec3::ZERO, 1.0);
+        camera.projection = ProjectionMode::Orthographic { ortho_size: 5.0 };
+
+        // Act: dolly adjusts ortho_size, not distance
+        camera.dolly(2.0);
+
+        // Assert
+        if let ProjectionMode::Orthographic { ortho_size } = camera.projection {
+            assert!((ortho_size - 6.0).abs() < 1e-5); // 5.0 + 2.0 * 0.5
+        } else {
+            panic!("expected orthographic projection");
+        }
+    }
+
+    #[test]
+    fn test_ortho_preset_creates_valid_camera() {
+        // Arrange
+        let mut camera = Camera::new(Vec3::new(0.0, 0.0, 5.0), Vec3::ZERO, 1.0);
+
+        // Act
+        camera.set_ortho_preset(OrthoPreset::Top);
+
+        // Assert: camera should be orthographic
+        assert!(camera.is_ortho());
+        // Position should be above the target
+        assert!(camera.position.y > camera.target.y);
+        // Up vector for Top is -Z
+        assert!((camera.up - Vec3::NEG_Z).length() < 1e-5);
+    }
+
+    #[test]
+    fn test_ortho_preset_front() {
+        let mut camera = Camera::new(Vec3::new(0.0, 0.0, 5.0), Vec3::ZERO, 1.0);
+
+        camera.set_ortho_preset(OrthoPreset::Front);
+
+        assert!(camera.is_ortho());
+        // Front looks from +Z toward origin
+        assert!(camera.position.z > camera.target.z);
+        assert!((camera.up - Vec3::Y).length() < 1e-5);
+    }
+
+    #[test]
+    fn test_ortho_preset_all_variants_valid() {
+        for preset in OrthoPreset::all() {
+            let mut camera = Camera::new(Vec3::new(0.0, 0.0, 5.0), Vec3::ZERO, 1.0);
+            camera.set_ortho_preset(*preset);
+
+            assert!(camera.is_ortho(), "preset {:?} should be ortho", preset);
+            // View matrix should not contain NaN
+            let view = camera.view_matrix();
+            assert!(
+                !view.x_axis.x.is_nan(),
+                "preset {:?} produced NaN view matrix",
+                preset
+            );
+        }
+    }
+
+    #[test]
+    fn test_position_equals_target_no_panic() {
+        // Edge case: position == target should not panic during construction
+        let camera = Camera::new(Vec3::ZERO, Vec3::ZERO, 1.0);
+
+        // Construction succeeds with the NaN guard: distance is 0 but
+        // direction defaults to -Z. The projection matrix should be valid.
+        let proj = camera.projection_matrix();
+        assert!(!proj.x_axis.x.is_nan());
+
+        // view_matrix uses look_at_rh which may produce NaN when
+        // position == target (glam limitation), but construction itself
+        // must not panic.
+        let _view = camera.view_matrix();
+    }
+
+    #[test]
+    fn test_pan_view_dir_parallel_to_up_no_panic() {
+        // Edge case: looking straight up, view_dir parallel to self.up
+        let mut camera = Camera::new(Vec3::new(0.0, -5.0, 0.0), Vec3::ZERO, 1.0);
+        // Force position directly below target so view_dir == +Y == self.up
+        camera.position = Vec3::new(0.0, -5.0, 0.0);
+        camera.target = Vec3::new(0.0, 0.0, 0.0);
+        camera.up = Vec3::Y;
+
+        // Act: should not panic due to the fallback guard
+        camera.pan(1.0, 0.0, 0.0, 1.0);
+
+        // Assert: position changed (moved somehow via fallback)
+        assert!(
+            (camera.position - Vec3::new(0.0, -5.0, 0.0)).length() > 1e-6,
+            "camera should have moved"
+        );
     }
 }

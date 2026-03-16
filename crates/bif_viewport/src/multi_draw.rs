@@ -21,6 +21,8 @@ pub struct MultiDrawState {
     pub instance_groups: HashMap<usize, Vec<InstanceData>>,
     /// Whether using multi-draw mode (multiple prototypes) vs single buffer
     pub enabled: bool,
+    /// Cached prototype_id -> tri_mat_offset for O(1) lookup during instance grouping
+    tri_mat_offset_map: HashMap<usize, u32>,
 }
 
 impl Default for MultiDrawState {
@@ -36,6 +38,7 @@ impl MultiDrawState {
             prototype_gpu_data: Vec::new(),
             instance_groups: HashMap::new(),
             enabled: false,
+            tri_mat_offset_map: HashMap::new(),
         }
     }
 
@@ -44,11 +47,24 @@ impl MultiDrawState {
         self.prototype_gpu_data.clear();
         self.instance_groups.clear();
         self.enabled = false;
+        self.tri_mat_offset_map.clear();
+    }
+
+    /// Rebuild the prototype_id -> tri_mat_offset lookup map.
+    ///
+    /// Call this whenever `prototype_gpu_data` changes (scene load, not per-frame).
+    pub fn rebuild_tri_mat_offset_map(&mut self) {
+        self.tri_mat_offset_map.clear();
+        for p in &self.prototype_gpu_data {
+            self.tri_mat_offset_map
+                .insert(p.prototype_id, p.tri_mat_offset);
+        }
     }
 
     /// Rebuild instance groups from transforms and prototype IDs.
     ///
     /// Called during animation to update instance transforms for each prototype.
+    /// Uses cached `tri_mat_offset_map` for O(1) lookup per instance.
     pub fn rebuild_instance_groups(
         &mut self,
         transforms: &[Mat4],
@@ -56,6 +72,11 @@ impl MultiDrawState {
         material_ids: &[u32],
     ) {
         self.instance_groups.clear();
+
+        // Rebuild offset map if stale (prototype_gpu_data changed without explicit rebuild)
+        if self.tri_mat_offset_map.len() != self.prototype_gpu_data.len() {
+            self.rebuild_tri_mat_offset_map();
+        }
 
         for (i, model_matrix) in transforms.iter().enumerate() {
             let prototype_id = prototype_ids.get(i).copied().unwrap_or(0);
@@ -68,10 +89,9 @@ impl MultiDrawState {
                     model_matrix: model_matrix.to_cols_array_2d(),
                     material_id,
                     tri_mat_offset: self
-                        .prototype_gpu_data
-                        .iter()
-                        .find(|p| p.prototype_id == prototype_id)
-                        .map(|p| p.tri_mat_offset)
+                        .tri_mat_offset_map
+                        .get(&prototype_id)
+                        .copied()
                         .unwrap_or(0),
                 });
         }

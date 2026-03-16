@@ -1,23 +1,25 @@
 //! USD validation — run usdchecker/usdcat/usdtree from the toolkit.
 //!
 //! Shells out to the USD toolkit `.bat` scripts to validate exported files.
+//! Requires the `USD_TOOLKIT_DIR` environment variable to point at the
+//! directory containing the USD toolkit scripts.
 
 use std::path::Path;
 use std::process::Command;
 
-/// Get USD toolkit scripts directory from env var or fallback.
-fn usd_toolkit_dir() -> String {
-    std::env::var("USD_TOOLKIT_DIR").unwrap_or_else(|_| {
-        // Dev-machine fallback
-        r"D:\__projects\_programming\usd_25_11\scripts".to_string()
-    })
+/// Get USD toolkit scripts directory from `USD_TOOLKIT_DIR` env var.
+fn usd_toolkit_dir() -> Option<String> {
+    std::env::var("USD_TOOLKIT_DIR").ok()
 }
 
 /// Run `usdchecker` on a USD file.
 ///
 /// Returns `(passed, output)` — `passed` is true if the file passes validation.
 pub fn run_usdchecker(path: &str) -> (bool, String) {
-    let script = Path::new(&usd_toolkit_dir()).join("usdchecker.bat");
+    let Some(dir) = usd_toolkit_dir() else {
+        return (false, "USD_TOOLKIT_DIR not set".to_string());
+    };
+    let script = Path::new(&dir).join("usdchecker.bat");
     match Command::new(&script).arg(path).output() {
         Ok(output) => {
             let stdout = String::from_utf8_lossy(&output.stdout).to_string();
@@ -35,7 +37,10 @@ pub fn run_usdchecker(path: &str) -> (bool, String) {
 
 /// Run `usdcat` on a USD file — returns the composed stage as text.
 pub fn run_usdcat(path: &str) -> String {
-    let script = Path::new(&usd_toolkit_dir()).join("usdcat.bat");
+    let Some(dir) = usd_toolkit_dir() else {
+        return "USD_TOOLKIT_DIR not set".to_string();
+    };
+    let script = Path::new(&dir).join("usdcat.bat");
     match Command::new(&script).arg(path).output() {
         Ok(output) => String::from_utf8_lossy(&output.stdout).to_string(),
         Err(e) => format!("Failed to run usdcat: {}", e),
@@ -44,7 +49,10 @@ pub fn run_usdcat(path: &str) -> String {
 
 /// Run `usdtree` on a USD file — returns the hierarchy tree.
 pub fn run_usdtree(path: &str) -> String {
-    let script = Path::new(&usd_toolkit_dir()).join("usdtree.bat");
+    let Some(dir) = usd_toolkit_dir() else {
+        return "USD_TOOLKIT_DIR not set".to_string();
+    };
+    let script = Path::new(&dir).join("usdtree.bat");
     match Command::new(&script).arg(path).output() {
         Ok(output) => String::from_utf8_lossy(&output.stdout).to_string(),
         Err(e) => format!("Failed to run usdtree: {}", e),

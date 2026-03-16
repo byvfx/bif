@@ -183,11 +183,14 @@ pub fn render_bucket_with_aovs(
     world: &dyn Hittable,
     config: &RenderConfig,
 ) -> BucketResultWithAovs {
-    let seed = (bucket.x as u64)
+    let mut seed = (bucket.x as u64)
         .wrapping_mul(0x517cc1b727220a95)
         .wrapping_add(bucket.y as u64)
         .wrapping_mul(0x6c62272e07bb0142)
         .wrapping_add(config.pass_number as u64);
+    // Finalize: spread pass_number bits to avoid correlated seeds between adjacent passes
+    seed ^= seed >> 33;
+    seed = seed.wrapping_mul(0xff51afd7ed558ccd);
     let mut rng = StdRng::seed_from_u64(seed);
 
     let capacity = (bucket.width * bucket.height) as usize;

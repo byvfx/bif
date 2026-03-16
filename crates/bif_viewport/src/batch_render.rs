@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
 
 use bif_core::usd::cpp_bridge::UsdStage;
-use bif_math::{Mat4, Vec3};
+use bif_math::Mat4;
 use bif_renderer::{
     format_frame_path, generate_buckets, render_bucket_with_aovs, write_exr, BvhNode, Camera,
     Color, DisneyBSDF, EmbreeScene, ExrOutput, HdriEnvironment, Hittable, LightList, RenderConfig,
@@ -550,19 +550,19 @@ fn build_camera_for_frame(
 }
 
 /// Create an Ivar camera from a USD transform matrix.
+///
+/// The C++ bridge flat-copies USD row-major data; `from_cols_array()` implicitly
+/// transposes to glam's column-vector convention, so col(n) = USD basis row n:
+///   col(0) = X axis, col(1) = Y (up), col(2) = Z, col(3) = translation.
 fn camera_from_usd_transform(xform: Mat4, width: u32, height: u32) -> Camera {
-    // USD stores translation in row 3, not column 3
-    let position = xform.row(3).truncate();
+    let position = xform.col(3).truncate();
 
-    // Extract forward direction (negative Z in camera space)
-    // USD row-major: row 2 is the Z axis
-    let forward = -Vec3::new(xform.row(0).z, xform.row(1).z, xform.row(2).z).normalize();
+    // Camera looks down -Z in its local space
+    let forward = -xform.col(2).truncate().normalize();
 
-    // Target is position + forward (scale forward to reasonable distance)
     let target = position + forward * 10.0;
 
-    // Extract up vector (Y axis) from rows
-    let up = Vec3::new(xform.row(0).y, xform.row(1).y, xform.row(2).y).normalize();
+    let up = xform.col(1).truncate().normalize();
 
     // Default FOV (USD cameras have focal length, but we use a reasonable default)
     let fov_y = 45.0_f32;
@@ -690,6 +690,7 @@ where
 mod tests {
     use super::*;
     use bif_core::{AnimatedTransform, Transform, TransformKeyframe};
+    use bif_math::Vec3;
 
     #[test]
     fn test_camera_from_usd_transform() {

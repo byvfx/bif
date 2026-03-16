@@ -209,4 +209,66 @@ mod tests {
             Aabb::from_points(Vec3::new(-50.0, -1.0, -1.0), Vec3::new(1.0, 1.0, 1.0));
         assert!(frustum.intersects_aabb(&straddling_aabb));
     }
+
+    #[test]
+    fn test_orthographic_frustum_construction() {
+        // Arrange: orthographic camera looking down -Z from (0,0,10)
+        let view = Mat4::look_at_rh(Vec3::new(0.0, 0.0, 10.0), Vec3::ZERO, Vec3::Y);
+        let half_w = 5.0;
+        let half_h = 5.0;
+        let proj = Mat4::orthographic_rh(-half_w, half_w, -half_h, half_h, 0.1, 100.0);
+        let vp = proj * view;
+
+        let frustum = Frustum::from_view_projection(vp);
+
+        // AABB at origin inside the ortho box
+        let inside = Aabb::from_points(Vec3::new(-1.0, -1.0, -1.0), Vec3::new(1.0, 1.0, 1.0));
+        assert!(frustum.intersects_aabb(&inside));
+
+        // Point at origin should be contained
+        assert!(frustum.contains_point(Vec3::ZERO));
+    }
+
+    #[test]
+    fn test_orthographic_frustum_rejects_outside() {
+        // Camera at z=10, looking toward origin (-Z direction).
+        // Near=0.1, far=20. Near plane at world z=9.9, far plane at world z=-10.
+        let view = Mat4::look_at_rh(Vec3::new(0.0, 0.0, 10.0), Vec3::ZERO, Vec3::Y);
+        let half = 5.0;
+        let proj = Mat4::orthographic_rh(-half, half, -half, half, 0.1, 20.0);
+        let vp = proj * view;
+
+        let frustum = Frustum::from_view_projection(vp);
+
+        // AABB far to the right, outside ortho box width
+        let outside = Aabb::from_points(Vec3::new(20.0, -1.0, -1.0), Vec3::new(25.0, 1.0, 1.0));
+        assert!(!frustum.intersects_aabb(&outside));
+
+        // AABB beyond the far plane (world z < -10)
+        let beyond_far =
+            Aabb::from_points(Vec3::new(-1.0, -1.0, -20.0), Vec3::new(1.0, 1.0, -15.0));
+        assert!(!frustum.intersects_aabb(&beyond_far));
+    }
+
+    #[test]
+    fn test_orthographic_frustum_containment() {
+        // Camera at z=10, looking toward origin (-Z direction).
+        // Near=0.1, far=20. Near plane at world z=9.9, far plane at world z=-10.
+        let view = Mat4::look_at_rh(Vec3::new(0.0, 0.0, 10.0), Vec3::ZERO, Vec3::Y);
+        let half = 5.0;
+        let proj = Mat4::orthographic_rh(-half, half, -half, half, 0.1, 20.0);
+        let vp = proj * view;
+
+        let frustum = Frustum::from_view_projection(vp);
+
+        // Points inside the ortho volume (origin is in front of camera)
+        assert!(frustum.contains_point(Vec3::new(4.0, 4.0, 0.0)));
+        assert!(frustum.contains_point(Vec3::new(-4.0, -4.0, 0.0)));
+
+        // Points outside: beyond ortho half-width
+        assert!(!frustum.contains_point(Vec3::new(10.0, 0.0, 0.0)));
+        assert!(!frustum.contains_point(Vec3::new(0.0, 10.0, 0.0)));
+        // Beyond far plane (world z < -10)
+        assert!(!frustum.contains_point(Vec3::new(0.0, 0.0, -15.0)));
+    }
 }

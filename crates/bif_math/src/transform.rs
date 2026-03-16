@@ -4,7 +4,7 @@
 // Note: glam::Mat4 already provides transform_point3() and inverse()
 
 use crate::Aabb;
-use glam::{Mat4, Vec3, Vec4};
+use glam::{Mat4, Vec3};
 
 /// Extension trait for Mat4 to provide additional transform utilities
 pub trait Mat4Ext {
@@ -12,45 +12,39 @@ pub trait Mat4Ext {
     /// Vectors have an implicit w=0 component.
     fn transform_vector3(&self, vector: Vec3) -> Vec3;
 
-    /// Transform an axis-aligned bounding box.
-    /// Computes the bounding box of all 8 transformed corners.
+    /// Transform an axis-aligned bounding box using Arvo's method.
+    /// Works directly with matrix columns instead of transforming 8 corners.
     fn transform_aabb(&self, aabb: &Aabb) -> Aabb;
 }
 
 impl Mat4Ext for Mat4 {
     fn transform_vector3(&self, vector: Vec3) -> Vec3 {
         // Transform as direction (w=0) - translation should not affect vectors
-        let v4 = Vec4::new(vector.x, vector.y, vector.z, 0.0);
-        let transformed = *self * v4;
-        Vec3::new(transformed.x, transformed.y, transformed.z)
+        self.col(0).truncate() * vector.x
+            + self.col(1).truncate() * vector.y
+            + self.col(2).truncate() * vector.z
     }
 
     fn transform_aabb(&self, aabb: &Aabb) -> Aabb {
-        // Transform all 8 corners and compute new AABB (no heap allocation)
-        let min_p = Vec3::new(aabb.x.min, aabb.y.min, aabb.z.min);
-        let max_p = Vec3::new(aabb.x.max, aabb.y.max, aabb.z.max);
+        // Arvo's method: work with matrix columns directly (~2x faster than
+        // transforming all 8 corners).
+        let aabb_min = Vec3::new(aabb.x.min, aabb.y.min, aabb.z.min);
+        let aabb_max = Vec3::new(aabb.x.max, aabb.y.max, aabb.z.max);
 
-        // Transform first corner to initialize min/max
-        let first = self.transform_point3(min_p);
-        let mut result_min = first;
-        let mut result_max = first;
+        // Start from translation column
+        let mut new_min = self.col(3).truncate();
+        let mut new_max = new_min;
 
-        // Transform remaining 7 corners, updating min/max inline
-        for corner in [
-            Vec3::new(max_p.x, min_p.y, min_p.z),
-            Vec3::new(min_p.x, max_p.y, min_p.z),
-            Vec3::new(max_p.x, max_p.y, min_p.z),
-            Vec3::new(min_p.x, min_p.y, max_p.z),
-            Vec3::new(max_p.x, min_p.y, max_p.z),
-            Vec3::new(min_p.x, max_p.y, max_p.z),
-            Vec3::new(max_p.x, max_p.y, max_p.z),
-        ] {
-            let t = self.transform_point3(corner);
-            result_min = result_min.min(t);
-            result_max = result_max.max(t);
+        // Accumulate each axis contribution
+        for i in 0..3 {
+            let col = self.col(i).truncate();
+            let a = col * aabb_min[i];
+            let b = col * aabb_max[i];
+            new_min += a.min(b);
+            new_max += a.max(b);
         }
 
-        Aabb::from_points(result_min, result_max)
+        Aabb::from_points(new_min, new_max)
     }
 }
 

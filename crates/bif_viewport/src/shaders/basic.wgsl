@@ -240,15 +240,17 @@ fn evaluate_direct_lights(
         // Cook-Torrance BRDF
         let half_vec = normalize(view_dir + light_dir);
         let n_dot_h = max(dot(normal, half_vec), 0.0);
-        let n_dot_v = max(dot(normal, view_dir), 0.0);
+        let n_dot_v = max(dot(normal, view_dir), 0.001);
         let h_dot_v = max(dot(half_vec, view_dir), 0.0);
 
-        // Specular
+        // Specular — clamp to avoid extreme values at grazing angles
+        let clamped_n_dot_v = max(n_dot_v, 0.001);
+        let clamped_n_dot_l = max(n_dot_l, 0.001);
         let d = distribution_ggx(n_dot_h, roughness);
-        let g = geometry_smith(n_dot_v, n_dot_l, roughness);
+        let g = geometry_smith(clamped_n_dot_v, clamped_n_dot_l, roughness);
         let f = fresnel_schlick(h_dot_v, f0);
 
-        let specular = (d * g * f) / (4.0 * n_dot_v * n_dot_l + 0.0001);
+        let specular = (d * g * f) / (4.0 * clamped_n_dot_v * clamped_n_dot_l + 0.0001);
 
         // Diffuse (energy conserving)
         let ks = f;

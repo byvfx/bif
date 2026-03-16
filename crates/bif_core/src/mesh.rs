@@ -90,7 +90,7 @@ impl Mesh {
     /// Compute axis-aligned bounding box from positions.
     fn compute_bounds(positions: &[Vec3]) -> Aabb {
         if positions.is_empty() {
-            return Aabb::empty();
+            return Aabb::EMPTY;
         }
 
         let mut min = Vec3::splat(f32::INFINITY);

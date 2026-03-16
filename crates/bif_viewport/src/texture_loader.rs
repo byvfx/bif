@@ -309,9 +309,15 @@ fn downscale_raw_nearest(
 /// Handles UDIM patterns by stitching tile atlases.
 #[cfg(feature = "oiio")]
 fn load_raw_texture(path: &str) -> Option<RawTexture> {
+    load_raw_texture_with_depth(path, 0)
+}
+
+/// Inner loader with UDIM recursion depth tracking (OIIO path).
+#[cfg(feature = "oiio")]
+fn load_raw_texture_with_depth(path: &str, udim_depth: u32) -> Option<RawTexture> {
     // Handle UDIM textures
     if is_udim_path(path) {
-        return load_udim_atlas(path);
+        return load_udim_atlas_inner(path, udim_depth);
     }
 
     let is_linear = is_linear_texture_path(path);
@@ -351,9 +357,15 @@ fn load_raw_texture(path: &str) -> Option<RawTexture> {
 /// Handles UDIM patterns by stitching tile atlases.
 #[cfg(not(feature = "oiio"))]
 fn load_raw_texture(path: &str) -> Option<RawTexture> {
+    load_raw_texture_with_depth(path, 0)
+}
+
+/// Inner loader with UDIM recursion depth tracking (non-OIIO path).
+#[cfg(not(feature = "oiio"))]
+fn load_raw_texture_with_depth(path: &str, udim_depth: u32) -> Option<RawTexture> {
     // Handle UDIM textures
     if is_udim_path(path) {
-        return load_udim_atlas(path);
+        return load_udim_atlas_inner(path, udim_depth);
     }
 
     use bif_core::texture::TextureCache;
@@ -726,9 +738,22 @@ fn find_udim_tiles(pattern: &str) -> Vec<(u32, String)> {
     tiles
 }
 
+/// Maximum recursion depth for UDIM atlas loading.
+/// Prevents infinite recursion if UDIM tile paths themselves contain `<UDIM>`.
+const MAX_UDIM_RECURSION_DEPTH: u32 = 2;
+
 /// Resolve UDIM texture: load all tiles and stitch into a single atlas.
 /// Returns the stitched atlas as raw RGBA bytes + grid dimensions.
-fn load_udim_atlas(pattern: &str) -> Option<RawTexture> {
+/// Includes recursion depth guard to prevent infinite recursion.
+fn load_udim_atlas_inner(pattern: &str, depth: u32) -> Option<RawTexture> {
+    if depth >= MAX_UDIM_RECURSION_DEPTH {
+        log::error!(
+            "UDIM atlas recursion depth exceeded (max {}) for: {}",
+            MAX_UDIM_RECURSION_DEPTH,
+            pattern
+        );
+        return None;
+    }
     let tiles = find_udim_tiles(pattern);
     if tiles.is_empty() {
         log::warn!("No UDIM tiles found for pattern: {}", pattern);
@@ -738,7 +763,7 @@ fn load_udim_atlas(pattern: &str) -> Option<RawTexture> {
     // Load all tiles
     let mut loaded_tiles: Vec<(u32, RawTexture)> = Vec::new();
     for (udim, tile_path) in &tiles {
-        if let Some(tex) = load_raw_texture(tile_path) {
+        if let Some(tex) = load_raw_texture_with_depth(tile_path, depth + 1) {
             loaded_tiles.push((*udim, tex));
         } else {
             log::warn!("Failed to load UDIM tile {}: {}", udim, tile_path);
@@ -1089,7 +1114,7 @@ pub fn upload_streamed_texture(
     device: &Device,
     queue: &Queue,
     texture_set: &mut GpuTextureSet,
-    msg: &TextureLoadMessage,
+    msg: TextureLoadMessage,
     max_dimension: u32,
     mipmap_gen: Option<&MipmapGenerator>,
 ) -> bool {
@@ -1098,19 +1123,18 @@ pub fn upload_streamed_texture(
         return false;
     };
 
+    let label = format!("Viewport Texture: {}", msg.path);
     let raw = RawTexture {
         width: msg.width,
         height: msg.height,
-        data: msg.data.clone(),
+        data: msg.data,
         is_linear: msg.is_linear,
-        path: msg.path.clone(),
+        path: msg.path,
         udim_grid_cols: msg.udim_grid_cols,
         udim_grid_rows: msg.udim_grid_rows,
         udim_min_col: msg.udim_min_col,
         udim_min_row: msg.udim_min_row,
     };
-
-    let label = format!("Viewport Texture: {}", msg.path);
     let (gpu_texture, view) = upload_raw_texture(
         device,
         queue,
@@ -1126,14 +1150,14 @@ pub fn upload_streamed_texture(
     texture_set.views[index as usize] = view;
 
     // Store UDIM grid info if this is a UDIM atlas
-    if msg.udim_grid_cols > 0 {
+    if raw.udim_grid_cols > 0 {
         texture_set.udim_grid.insert(
             index,
             [
-                msg.udim_grid_cols,
-                msg.udim_grid_rows,
-                msg.udim_min_col,
-                msg.udim_min_row,
+                raw.udim_grid_cols,
+                raw.udim_grid_rows,
+                raw.udim_min_col,
+                raw.udim_min_row,
             ],
         );
     }

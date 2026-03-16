@@ -136,17 +136,15 @@ impl Light for SphereLight {
 
             let sampled_dir = sample_cone(dir_to_center, cos_theta_max, rng);
 
-            // Compute actual distance to sphere surface
-            let actual_distance = distance - self.radius;
-
-            // Inverse square falloff
-            let falloff = 1.0 / (actual_distance * actual_distance + 0.01);
+            // Proper solid-angle falloff: sin²(θ_max) where θ_max = asin(radius/distance)
+            // For far-field (distance >> radius), reduces to (radius/distance)² ≈ inverse-square
+            let falloff = sin_theta_max * sin_theta_max;
 
             LightSample {
                 direction: sampled_dir,
                 emission: self.color * self.intensity * falloff,
                 pdf: 1.0 / (std::f32::consts::TAU * (1.0 - cos_theta_max)),
-                distance: actual_distance.max(0.001),
+                distance: distance.max(0.001),
             }
         } else {
             // Point light or inside sphere

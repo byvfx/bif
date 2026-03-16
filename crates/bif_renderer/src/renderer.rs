@@ -257,6 +257,16 @@ pub fn ray_color_with_aovs(
                 last_was_delta = is_delta;
                 current_ray = result.scattered;
                 throughput *= result.attenuation;
+                // NaN guard: degenerate geometry can produce NaN/inf throughput
+                if throughput.x.is_nan()
+                    || throughput.y.is_nan()
+                    || throughput.z.is_nan()
+                    || throughput.x.is_infinite()
+                    || throughput.y.is_infinite()
+                    || throughput.z.is_infinite()
+                {
+                    break;
+                }
                 if !result.pass_through {
                     remaining_depth -= 1;
                     bounce_count += 1;

@@ -1,5 +1,3 @@
-use bif_math::Mat4;
-
 use crate::gpu_types::InstanceData;
 use crate::ivar_state::RenderMode;
 use crate::Renderer;
@@ -70,9 +68,13 @@ impl Renderer {
 
     /// Evaluate all animated transforms at the given frame and update GPU buffer.
     fn evaluate_animation_frame(&mut self, frame: f64) {
-        // Build updated instances
-        let mut instances: Vec<InstanceData> = Vec::with_capacity(self.instances.transforms.len());
-        let mut updated_transforms: Vec<Mat4> = Vec::with_capacity(self.instances.transforms.len());
+        let num = self.instances.transforms.len();
+
+        // Reuse per-frame buffers to avoid allocation every frame
+        self.anim_instances_buf.clear();
+        self.anim_instances_buf.reserve(num);
+        self.anim_transforms_buf.clear();
+        self.anim_transforms_buf.reserve(num);
 
         for (i, (base_transform, anim)) in self
             .instances
@@ -102,10 +104,10 @@ impl Renderer {
                 *base_transform
             };
 
-            updated_transforms.push(model_matrix);
+            self.anim_transforms_buf.push(model_matrix);
 
             let material_id = self.instances.material_ids.get(i).copied().unwrap_or(0);
-            instances.push(InstanceData {
+            self.anim_instances_buf.push(InstanceData {
                 model_matrix: model_matrix.to_cols_array_2d(),
                 material_id,
                 tri_mat_offset: 0,
@@ -114,7 +116,7 @@ impl Renderer {
 
         // Store evaluated transforms for use by update_visible_instances
         // base transforms stay in instance_transforms for re-evaluation
-        self.instances.current = updated_transforms;
+        std::mem::swap(&mut self.instances.current, &mut self.anim_transforms_buf);
 
         // Recompute instance AABBs for frustum culling
         self.culling.update_instance_aabbs(&self.instances.current);

@@ -186,7 +186,13 @@ impl Texture {
     /// Sample the texture at UV coordinates (bilinear filtering).
     ///
     /// UV coordinates are in [0, 1] range, with (0, 0) at bottom-left.
+    #[must_use]
     pub fn sample(&self, u: f32, v: f32) -> Vec3 {
+        // Guard against 0-size textures to avoid modulo/index panics
+        if self.width == 0 || self.height == 0 {
+            return Vec3::new(1.0, 0.0, 1.0); // Magenta debug color
+        }
+
         let (u, v) = self.transform_uv(u, v);
 
         // Convert to pixel coordinates
@@ -223,6 +229,7 @@ impl Texture {
     }
 
     /// Sample a single channel with bilinear filtering (for roughness/metallic maps).
+    #[must_use]
     pub fn sample_channel(&self, u: f32, v: f32, channel: usize) -> f32 {
         let (u, v) = self.transform_uv(u, v);
         let ch = channel.min(3);
@@ -258,6 +265,7 @@ impl Texture {
     }
 
     /// Get total size in bytes (approximate).
+    #[must_use]
     pub fn size_bytes(&self) -> usize {
         let base_size = self.pixels.len() * std::mem::size_of::<[f32; 4]>();
         let mip_size: usize = self
@@ -269,6 +277,7 @@ impl Texture {
     }
 
     /// Get a specific mip level (0 = base).
+    #[must_use]
     pub fn get_mip_level(&self, level: u32) -> Option<(&Vec<[f32; 4]>, u32, u32)> {
         if level == 0 {
             Some((&self.pixels, self.width, self.height))
@@ -637,9 +646,9 @@ impl TextureCache {
         let atlas_w = num_cols * target_w;
         let atlas_h = num_rows * target_h;
 
-        // Guard against u32 overflow and cap at 256 MB (16M pixels * 16 bytes/pixel)
+        // Guard against u32 overflow and cap at MAX_IVAR_ATLAS_PIXELS
         let total_pixels = (atlas_w as u64) * (atlas_h as u64);
-        if total_pixels > 16_777_216 {
+        if total_pixels > MAX_IVAR_ATLAS_PIXELS {
             return Err(TextureError::LoadError(format!(
                 "UDIM atlas too large: {}x{} ({} MB)",
                 atlas_w,
@@ -955,6 +964,10 @@ const MAX_IVAR_UDIM_TILE_SIZE: u32 = 2048;
 /// Prevents multi-tile grids from creating huge f32 buffers.
 /// 8192x8192 * 16 bytes = 1 GB — the hard upper bound.
 const MAX_IVAR_ATLAS_SIZE: u32 = 8192;
+
+/// Maximum total pixel count for UDIM atlases (memory budget).
+/// 16M pixels * 16 bytes/pixel = 256 MB.
+const MAX_IVAR_ATLAS_PIXELS: u64 = 16_777_216;
 
 /// Check if a texture path contains a UDIM token (`<UDIM>`).
 pub fn is_udim_path(path: &str) -> bool {

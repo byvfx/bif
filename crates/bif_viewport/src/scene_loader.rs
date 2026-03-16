@@ -1224,16 +1224,17 @@ impl Renderer {
         loop {
             match receiver.try_recv() {
                 Ok(msg) => {
+                    let is_udim = msg.udim_grid_cols > 0;
                     if texture_loader::upload_streamed_texture(
                         &self.device,
                         &self.queue,
                         &mut self.gpu_textures,
-                        &msg,
+                        msg,
                         max_dimension,
                         Some(&self.mipmap_generator),
                     ) {
                         uploaded += 1;
-                        if msg.udim_grid_cols > 0 {
+                        if is_udim {
                             has_udim = true;
                         }
                     }
