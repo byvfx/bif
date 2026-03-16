@@ -161,6 +161,11 @@ impl Texture {
     /// For non-UDIM textures, wraps UVs to [0, 1].
     /// For UDIM atlases, maps tile-space UVs to atlas-space UVs
     /// using the same math as `basic.wgsl` lines 281-305.
+    ///
+    /// Note on V-axis: this function returns UVs in atlas pixel space where
+    /// row 0 is at image top (flipped_row + inverted sub_v). Then `sample()`
+    /// applies `1.0 - v` to convert back to bottom-left origin. The two
+    /// flips cancel correctly — this is intentional, not a bug.
     #[inline]
     fn transform_uv(&self, u: f32, v: f32) -> (f32, f32) {
         if !self.is_udim() {
@@ -632,6 +637,17 @@ impl TextureCache {
         let atlas_w = num_cols * target_w;
         let atlas_h = num_rows * target_h;
 
+        // Guard against u32 overflow and cap at 256 MB (16M pixels * 16 bytes/pixel)
+        let total_pixels = (atlas_w as u64) * (atlas_h as u64);
+        if total_pixels > 16_777_216 {
+            return Err(TextureError::LoadError(format!(
+                "UDIM atlas too large: {}x{} ({} MB)",
+                atlas_w,
+                atlas_h,
+                total_pixels * 16 / 1_048_576
+            )));
+        }
+
         let mut atlas_pixels = vec![[0.0f32; 4]; (atlas_w * atlas_h) as usize];
 
         // Phase 2: Load each tile, downscale, stitch, drop (one at a time)
@@ -657,7 +673,7 @@ impl TextureCache {
 
             // Downscale to target tile size if needed
             let tile_pixels = if tex.width != target_w || tex.height != target_h {
-                scale_pixels_nearest(&tex.pixels, tex.width, tex.height, target_w, target_h)
+                scale_pixels_box(&tex.pixels, tex.width, tex.height, target_w, target_h)
             } else {
                 tex.pixels
             };
@@ -949,18 +965,21 @@ pub fn is_udim_path(path: &str) -> bool {
 /// Returns a vec of (udim_id, path) sorted by UDIM ID.
 fn find_udim_tiles(pattern: &str) -> Vec<(u32, String)> {
     let mut tiles = Vec::new();
-    for udim in 1001..=1100 {
+    for udim in 1001..=1200 {
         let tile_path = pattern.replace("<UDIM>", &udim.to_string());
         if Path::new(&tile_path).exists() {
             tiles.push((udim, tile_path));
         }
     }
-    tiles.sort_by_key(|(id, _)| *id);
     tiles
 }
 
-/// Scale f32 pixel data to target dimensions using nearest-neighbor sampling.
-fn scale_pixels_nearest(
+/// Scale f32 pixel data to target dimensions using box filter (area average).
+///
+/// Averages all source pixels that map to each destination pixel.
+/// Prevents moire/aliasing on high-frequency textures (wood grain, fabric)
+/// that nearest-neighbor would produce when downscaling UDIM tiles.
+fn scale_pixels_box(
     src: &[[f32; 4]],
     src_w: u32,
     src_h: u32,
@@ -968,13 +987,32 @@ fn scale_pixels_nearest(
     dst_h: u32,
 ) -> Vec<[f32; 4]> {
     let mut out = vec![[0.0; 4]; (dst_w * dst_h) as usize];
+    let scale_x = src_w as f32 / dst_w as f32;
+    let scale_y = src_h as f32 / dst_h as f32;
     for y in 0..dst_h {
-        let src_y = ((y as f32 / dst_h as f32) * src_h as f32).floor() as u32;
-        let src_y = src_y.min(src_h - 1);
+        let sy0 = (y as f32 * scale_y) as u32;
+        let sy1 = (((y + 1) as f32 * scale_y).ceil() as u32).min(src_h);
         for x in 0..dst_w {
-            let src_x = ((x as f32 / dst_w as f32) * src_w as f32).floor() as u32;
-            let src_x = src_x.min(src_w - 1);
-            out[(y * dst_w + x) as usize] = src[(src_y * src_w + src_x) as usize];
+            let sx0 = (x as f32 * scale_x) as u32;
+            let sx1 = (((x + 1) as f32 * scale_x).ceil() as u32).min(src_w);
+            let mut acc = [0.0f32; 4];
+            let mut count = 0u32;
+            for sy in sy0..sy1 {
+                for sx in sx0..sx1 {
+                    let p = src[(sy * src_w + sx) as usize];
+                    for (a, &s) in acc.iter_mut().zip(p.iter()) {
+                        *a += s;
+                    }
+                    count += 1;
+                }
+            }
+            if count > 0 {
+                let inv = 1.0 / count as f32;
+                for a in &mut acc {
+                    *a *= inv;
+                }
+            }
+            out[(y * dst_w + x) as usize] = acc;
         }
     }
     out

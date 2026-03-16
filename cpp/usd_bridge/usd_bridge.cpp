@@ -2225,6 +2225,13 @@ UsdBridgeError usd_bridge_get_camera_properties(
         }
     }
 
+    // Defense in depth: clamp invalid values to sane defaults
+    // (Rust side also guards, but C++ bridge should not emit garbage)
+    if (focalLength <= 0.0f) focalLength = 50.0f;
+    if (verticalAperture <= 0.0f) verticalAperture = 24.89f;
+    if (clipNear <= 0.0f) clipNear = 0.1f;
+    if (clipFar <= clipNear) clipFar = clipNear + 10000.0f;
+
     out_props->focal_length = focalLength;
     out_props->vertical_aperture = verticalAperture;
     out_props->clip_near = clipNear;

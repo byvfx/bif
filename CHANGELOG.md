@@ -19,6 +19,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `MeshPurpose` enum (Default/Render/Proxy/Guide) from `UsdGeomImageable` purpose attribute
 - Native instance FFI: `usd_bridge_get_native_instance_count/get_native_instance`
 - UDIM texture atlas stitching — detects `<UDIM>` tokens, scans tiles 1001-1100, builds atlas
+- C++ bridge defense-in-depth clamping for camera properties
+- UDIM atlas size overflow guard (256MB cap)
 - `DisplaySettings` struct with `PurposeMode` toggle and `lod_enabled` flag
 - UI controls for purpose mode (Render/Proxy) and LOD enable checkbox
 
@@ -34,6 +36,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Purpose filtering — use `ComputePurpose()` for inherited purpose (was only reading directly-authored)
 - MAX_VIEWPORT_TEXTURES 128→512 — ALab's 272 textures were truncated at 127
 - UDIM shader UV underflow — signed math prevents garbage sampling on out-of-range UVs
+- Box filter replaces nearest-neighbor for UDIM tile downscaling (anti-moire)
+- UDIM tile scan range 1001–1100 → 1001–1200
 - Material table rebuild after UDIM texture streaming — grid info unavailable at initial build
 - Backface culling winding order — `FrontFace::Cw` → `FrontFace::Ccw` (USD rightHanded = CCW front faces)
 - Camera direction extraction in `sync_viewport_to_usd_camera` — use row-based forward/up vectors
