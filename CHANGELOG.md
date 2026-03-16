@@ -17,6 +17,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 
 - Renderer decomposed: 4 sub-structs (GpuContext, CameraState, IvarContext, NodeGraphContext) extract 30 fields
+- CameraState GPU fields tightened to `pub(crate)` (only `camera` remains `pub`)
+- `IvarState::invalidate_scene()` and `reset_on_resize()` deduplicate 6 reset blocks
 - bif_math re-exports removed from bif_renderer public API (now `pub(crate)`)
 - DenoiseError converted to thiserror derive
 - Explicit glam re-exports (was `pub use glam::*` re-exporting 200+ items)
