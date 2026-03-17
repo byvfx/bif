@@ -618,6 +618,15 @@ typedef struct UsdBridgePrimInfo {
 
     /// Computed visibility: 1=visible, 0=invisible (considers inherited visibility)
     int visibility;
+
+    /// 1 if prim has a payload arc
+    int has_payload;
+
+    /// 1 if prim's payload is currently loaded
+    int is_loaded;
+
+    /// Number of variant sets on this prim
+    size_t variant_set_count;
 } UsdBridgePrimInfo;
 
 /// Get the total number of prims in the stage (including all types).
@@ -701,6 +710,76 @@ UsdBridgeError usd_bridge_get_prim_info_by_path(
     const UsdBridgeStage* stage,
     const char* path,
     UsdBridgePrimInfo* out_info
+);
+
+// ============================================================================
+// Payload Load/Unload
+// ============================================================================
+
+/// Load a prim's payload (makes payload content available).
+UsdBridgeError usd_bridge_load_payload(
+    UsdBridgeStage* stage,
+    const char* prim_path
+);
+
+/// Unload a prim's payload (frees memory, content no longer traversable).
+UsdBridgeError usd_bridge_unload_payload(
+    UsdBridgeStage* stage,
+    const char* prim_path
+);
+
+// (usd_bridge_edit_layer_add_payload declared below, after UsdBridgeEditLayer)
+
+// ============================================================================
+// Variant Query / Selection
+// ============================================================================
+
+/// Get the number of variant sets on a prim.
+UsdBridgeError usd_bridge_get_variant_set_count(
+    const UsdBridgeStage* stage,
+    const char* prim_path,
+    size_t* out_count
+);
+
+/// Get a variant set name by index.
+UsdBridgeError usd_bridge_get_variant_set_name(
+    const UsdBridgeStage* stage,
+    const char* prim_path,
+    size_t index,
+    const char** out_name
+);
+
+/// Get the number of variants in a variant set.
+UsdBridgeError usd_bridge_get_variant_count(
+    const UsdBridgeStage* stage,
+    const char* prim_path,
+    const char* variant_set_name,
+    size_t* out_count
+);
+
+/// Get a variant name by index within a variant set.
+UsdBridgeError usd_bridge_get_variant_name(
+    const UsdBridgeStage* stage,
+    const char* prim_path,
+    const char* variant_set_name,
+    size_t index,
+    const char** out_name
+);
+
+/// Get the current variant selection for a variant set.
+UsdBridgeError usd_bridge_get_variant_selection(
+    const UsdBridgeStage* stage,
+    const char* prim_path,
+    const char* variant_set_name,
+    const char** out_selection
+);
+
+/// Set the variant selection for a variant set (triggers re-composition).
+UsdBridgeError usd_bridge_set_variant_selection(
+    UsdBridgeStage* stage,
+    const char* prim_path,
+    const char* variant_set_name,
+    const char* variant_name
 );
 
 // ============================================================================
@@ -1064,6 +1143,14 @@ UsdBridgeError usd_bridge_set_prim_kind(
     UsdBridgeEditLayer* layer,
     const char* prim_path,
     UsdBridgeKind kind
+);
+
+/// Add a payload arc on an edit layer prim.
+UsdBridgeError usd_bridge_edit_layer_add_payload(
+    UsdBridgeEditLayer* layer,
+    const char* prim_path,
+    const char* asset_path,
+    const char* target_path
 );
 
 // ============================================================================

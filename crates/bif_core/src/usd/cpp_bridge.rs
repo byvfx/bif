@@ -133,6 +133,9 @@ struct UsdBridgePrimInfoRaw {
     has_children: i32,
     child_count: usize,
     visibility: i32,
+    has_payload: i32,
+    is_loaded: i32,
+    variant_set_count: usize,
 }
 
 /// Timeline data from C API
@@ -693,6 +696,67 @@ extern "C" {
         camera_path: *const std::ffi::c_char,
         pixel_aspect_ratio: f32,
     ) -> UsdBridgeErrorCode;
+
+    // Payload
+    fn usd_bridge_load_payload(
+        stage: *mut UsdBridgeStageRaw,
+        prim_path: *const std::ffi::c_char,
+    ) -> UsdBridgeErrorCode;
+
+    fn usd_bridge_unload_payload(
+        stage: *mut UsdBridgeStageRaw,
+        prim_path: *const std::ffi::c_char,
+    ) -> UsdBridgeErrorCode;
+
+    fn usd_bridge_edit_layer_add_payload(
+        layer: *mut UsdBridgeEditLayerRaw,
+        prim_path: *const std::ffi::c_char,
+        asset_path: *const std::ffi::c_char,
+        target_path: *const std::ffi::c_char,
+    ) -> UsdBridgeErrorCode;
+
+    // Variant query/selection
+    fn usd_bridge_get_variant_set_count(
+        stage: *const UsdBridgeStageRaw,
+        prim_path: *const std::ffi::c_char,
+        out_count: *mut usize,
+    ) -> UsdBridgeErrorCode;
+
+    fn usd_bridge_get_variant_set_name(
+        stage: *const UsdBridgeStageRaw,
+        prim_path: *const std::ffi::c_char,
+        index: usize,
+        out_name: *mut *const std::ffi::c_char,
+    ) -> UsdBridgeErrorCode;
+
+    fn usd_bridge_get_variant_count(
+        stage: *const UsdBridgeStageRaw,
+        prim_path: *const std::ffi::c_char,
+        variant_set_name: *const std::ffi::c_char,
+        out_count: *mut usize,
+    ) -> UsdBridgeErrorCode;
+
+    fn usd_bridge_get_variant_name(
+        stage: *const UsdBridgeStageRaw,
+        prim_path: *const std::ffi::c_char,
+        variant_set_name: *const std::ffi::c_char,
+        index: usize,
+        out_name: *mut *const std::ffi::c_char,
+    ) -> UsdBridgeErrorCode;
+
+    fn usd_bridge_get_variant_selection(
+        stage: *const UsdBridgeStageRaw,
+        prim_path: *const std::ffi::c_char,
+        variant_set_name: *const std::ffi::c_char,
+        out_selection: *mut *const std::ffi::c_char,
+    ) -> UsdBridgeErrorCode;
+
+    fn usd_bridge_set_variant_selection(
+        stage: *mut UsdBridgeStageRaw,
+        prim_path: *const std::ffi::c_char,
+        variant_set_name: *const std::ffi::c_char,
+        variant_name: *const std::ffi::c_char,
+    ) -> UsdBridgeErrorCode;
 }
 
 // ============================================================================
@@ -916,6 +980,15 @@ pub struct UsdPrimInfo {
 
     /// Computed visibility (considering inherited visibility)
     pub visible: bool,
+
+    /// Whether prim has a payload arc
+    pub has_payload: bool,
+
+    /// Whether payload is currently loaded
+    pub is_loaded: bool,
+
+    /// Number of variant sets
+    pub variant_set_count: usize,
 }
 
 /// Material data extracted from USD (UsdPreviewSurface or MaterialX).
@@ -2345,6 +2418,148 @@ impl UsdStage {
         Ok(primvars)
     }
 
+    // ========================================================================
+    // Payload Load/Unload
+    // ========================================================================
+
+    /// Load a prim's payload content.
+    pub fn load_payload(&self, prim_path: &str) -> UsdBridgeResult<()> {
+        let c_path = CString::new(prim_path).map_err(|_| UsdBridgeError::InvalidPath)?;
+        // Safety: load_payload invalidates caches in C++ (mutable through const pointer is ok
+        // because the C++ side handles internal mutability via non-const stage member)
+        let code = unsafe { usd_bridge_load_payload(self.raw as *mut _, c_path.as_ptr()) };
+        if code != UsdBridgeErrorCode::Success {
+            return Err(code.into());
+        }
+        Ok(())
+    }
+
+    /// Unload a prim's payload to free memory.
+    pub fn unload_payload(&self, prim_path: &str) -> UsdBridgeResult<()> {
+        let c_path = CString::new(prim_path).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let code = unsafe { usd_bridge_unload_payload(self.raw as *mut _, c_path.as_ptr()) };
+        if code != UsdBridgeErrorCode::Success {
+            return Err(code.into());
+        }
+        Ok(())
+    }
+
+    // ========================================================================
+    // Variant Query / Selection
+    // ========================================================================
+
+    /// Get variant set names for a prim.
+    pub fn get_variant_set_names(&self, prim_path: &str) -> UsdBridgeResult<Vec<String>> {
+        let c_path = CString::new(prim_path).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let mut count: usize = 0;
+        let code =
+            unsafe { usd_bridge_get_variant_set_count(self.raw, c_path.as_ptr(), &mut count) };
+        if code != UsdBridgeErrorCode::Success {
+            return Err(code.into());
+        }
+        let mut names = Vec::with_capacity(count);
+        for i in 0..count {
+            let mut name_ptr: *const std::ffi::c_char = ptr::null();
+            let code = unsafe {
+                usd_bridge_get_variant_set_name(self.raw, c_path.as_ptr(), i, &mut name_ptr)
+            };
+            if code != UsdBridgeErrorCode::Success {
+                continue;
+            }
+            if !name_ptr.is_null() {
+                names.push(unsafe { CStr::from_ptr(name_ptr).to_string_lossy().into_owned() });
+            }
+        }
+        Ok(names)
+    }
+
+    /// Get variant names within a variant set.
+    pub fn get_variant_names(
+        &self,
+        prim_path: &str,
+        variant_set: &str,
+    ) -> UsdBridgeResult<Vec<String>> {
+        let c_path = CString::new(prim_path).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_set = CString::new(variant_set).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let mut count: usize = 0;
+        let code = unsafe {
+            usd_bridge_get_variant_count(self.raw, c_path.as_ptr(), c_set.as_ptr(), &mut count)
+        };
+        if code != UsdBridgeErrorCode::Success {
+            return Err(code.into());
+        }
+        let mut names = Vec::with_capacity(count);
+        for i in 0..count {
+            let mut name_ptr: *const std::ffi::c_char = ptr::null();
+            let code = unsafe {
+                usd_bridge_get_variant_name(
+                    self.raw,
+                    c_path.as_ptr(),
+                    c_set.as_ptr(),
+                    i,
+                    &mut name_ptr,
+                )
+            };
+            if code != UsdBridgeErrorCode::Success {
+                continue;
+            }
+            if !name_ptr.is_null() {
+                names.push(unsafe { CStr::from_ptr(name_ptr).to_string_lossy().into_owned() });
+            }
+        }
+        Ok(names)
+    }
+
+    /// Get current variant selection for a variant set.
+    pub fn get_variant_selection(
+        &self,
+        prim_path: &str,
+        variant_set: &str,
+    ) -> UsdBridgeResult<String> {
+        let c_path = CString::new(prim_path).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_set = CString::new(variant_set).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let mut sel_ptr: *const std::ffi::c_char = ptr::null();
+        let code = unsafe {
+            usd_bridge_get_variant_selection(
+                self.raw,
+                c_path.as_ptr(),
+                c_set.as_ptr(),
+                &mut sel_ptr,
+            )
+        };
+        if code != UsdBridgeErrorCode::Success {
+            return Err(code.into());
+        }
+        if sel_ptr.is_null() {
+            return Ok(String::new());
+        }
+        Ok(unsafe { CStr::from_ptr(sel_ptr).to_string_lossy().into_owned() })
+    }
+
+    /// Set variant selection (triggers re-composition, invalidates caches).
+    pub fn set_variant_selection(
+        &self,
+        prim_path: &str,
+        variant_set: &str,
+        variant_name: &str,
+    ) -> UsdBridgeResult<()> {
+        let c_path = CString::new(prim_path).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_set = CString::new(variant_set).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_name = CString::new(variant_name).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let code = unsafe {
+            usd_bridge_set_variant_selection(
+                self.raw as *mut _,
+                c_path.as_ptr(),
+                c_set.as_ptr(),
+                c_name.as_ptr(),
+            )
+        };
+        if code != UsdBridgeErrorCode::Success {
+            return Err(code.into());
+        }
+        Ok(())
+    }
+
     /// Export the stage to a file.
     ///
     /// Format is determined by file extension: `.usda`, `.usdc`, or `.usd`.
@@ -2753,6 +2968,9 @@ impl UsdStage {
             has_children: 0,
             child_count: 0,
             visibility: 1,
+            has_payload: 0,
+            is_loaded: 1,
+            variant_set_count: 0,
         };
 
         let result = unsafe { usd_bridge_get_prim_info(self.raw, index, &mut raw_info) };
@@ -2779,6 +2997,9 @@ impl UsdStage {
             has_children: 0,
             child_count: 0,
             visibility: 1,
+            has_payload: 0,
+            is_loaded: 1,
+            variant_set_count: 0,
         };
 
         let result =
@@ -2904,6 +3125,9 @@ impl UsdStage {
             has_children: raw.has_children != 0,
             child_count: raw.child_count,
             visible: raw.visibility != 0,
+            has_payload: raw.has_payload != 0,
+            is_loaded: raw.is_loaded != 0,
+            variant_set_count: raw.variant_set_count,
         })
     }
 }
@@ -3217,6 +3441,30 @@ impl UsdEditLayer {
 
     /// Write a material (UsdPreviewSurface + OpenPBR MaterialX).
     #[allow(clippy::too_many_arguments)]
+    /// Add a payload arc on a prim.
+    pub fn add_payload(
+        &mut self,
+        prim_path: &str,
+        asset_path: &str,
+        target_path: Option<&str>,
+    ) -> UsdBridgeResult<()> {
+        let c_prim = CString::new(prim_path).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_asset = CString::new(asset_path).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_target = target_path.and_then(|s| CString::new(s).ok());
+        let code = unsafe {
+            usd_bridge_edit_layer_add_payload(
+                self.raw,
+                c_prim.as_ptr(),
+                c_asset.as_ptr(),
+                c_target.as_ref().map_or(ptr::null(), |s| s.as_ptr()),
+            )
+        };
+        if code != UsdBridgeErrorCode::Success {
+            return Err(code.into());
+        }
+        Ok(())
+    }
+
     pub fn write_material(
         &mut self,
         mat_path: &str,

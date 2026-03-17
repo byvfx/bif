@@ -33,6 +33,8 @@
 #include <pxr/base/tf/diagnostic.h>
 #include <pxr/usd/sdf/layer.h>
 #include <pxr/usd/usd/references.h>
+#include <pxr/usd/usd/payloads.h>
+#include <pxr/usd/usd/variantSets.h>
 #include <pxr/usd/usdGeom/metrics.h>
 #include <pxr/usd/ar/resolver.h>
 #include <pxr/usd/ar/resolverContextBinder.h>
@@ -143,6 +145,10 @@ struct CachedPrimInfo {
     std::vector<std::string> child_paths;
     std::vector<const char*> child_path_ptrs;  // For C API
     bool visible = true;  // Computed inherited visibility
+    bool has_payload = false;
+    bool is_loaded = true;
+    size_t variant_set_count = 0;
+    std::vector<std::string> variant_set_names;
 };
 
 /// Cached animation sample for a single time
@@ -366,6 +372,16 @@ static void cache_prim_data(UsdBridgeStage* bridge) {
         if (imageable) {
             info.visible = (imageable.ComputeVisibility() != UsdGeomTokens->invisible);
         }
+
+        // Payload info
+        info.has_payload = prim.HasPayload();
+        info.is_loaded = prim.IsLoaded();
+
+        // Variant sets
+        UsdVariantSets variantSets = prim.GetVariantSets();
+        std::vector<std::string> setNames = variantSets.GetNames();
+        info.variant_set_count = setNames.size();
+        info.variant_set_names = std::move(setNames);
 
         bridge->all_prims.push_back(std::move(info));
     }
@@ -2107,6 +2123,9 @@ UsdBridgeError usd_bridge_get_prim_info(
     out_info->has_children = info.has_children ? 1 : 0;
     out_info->child_count = info.child_count;
     out_info->visibility = info.visible ? 1 : 0;
+    out_info->has_payload = info.has_payload ? 1 : 0;
+    out_info->is_loaded = info.is_loaded ? 1 : 0;
+    out_info->variant_set_count = info.variant_set_count;
 
     return USD_BRIDGE_SUCCESS;
 }
@@ -2229,6 +2248,9 @@ UsdBridgeError usd_bridge_get_prim_info_by_path(
             out_info->has_children = info.has_children ? 1 : 0;
             out_info->child_count = info.child_count;
             out_info->visibility = info.visible ? 1 : 0;
+            out_info->has_payload = info.has_payload ? 1 : 0;
+            out_info->is_loaded = info.is_loaded ? 1 : 0;
+            out_info->variant_set_count = info.variant_set_count;
             return USD_BRIDGE_SUCCESS;
         }
     }
@@ -3897,4 +3919,156 @@ UsdBridgeError usd_bridge_write_render_settings(
         TF_WARN("usd_bridge_write_render_settings: %s", e.what());
         return USD_BRIDGE_ERROR_UNKNOWN;
     }
+}
+
+// ============================================================================
+// Payload Load/Unload
+// ============================================================================
+
+UsdBridgeError usd_bridge_load_payload(UsdBridgeStage* stage, const char* prim_path) {
+    if (!stage || !prim_path) return USD_BRIDGE_ERROR_NULL_POINTER;
+    UsdPrim prim = stage->stage->GetPrimAtPath(SdfPath(prim_path));
+    if (!prim) return USD_BRIDGE_ERROR_INVALID_PRIM;
+    prim.Load();
+    // Invalidate caches so re-traversal picks up loaded content
+    stage->cached = false;
+    stage->prims_cached = false;
+    stage->materials_cached = false;
+    stage->lights_cached = false;
+    stage->animation_cached = false;
+    stage->vertex_animation_cached = false;
+    stage->points_cached = false;
+    return USD_BRIDGE_SUCCESS;
+}
+
+UsdBridgeError usd_bridge_unload_payload(UsdBridgeStage* stage, const char* prim_path) {
+    if (!stage || !prim_path) return USD_BRIDGE_ERROR_NULL_POINTER;
+    UsdPrim prim = stage->stage->GetPrimAtPath(SdfPath(prim_path));
+    if (!prim) return USD_BRIDGE_ERROR_INVALID_PRIM;
+    prim.Unload();
+    stage->cached = false;
+    stage->prims_cached = false;
+    stage->materials_cached = false;
+    stage->lights_cached = false;
+    stage->animation_cached = false;
+    stage->vertex_animation_cached = false;
+    stage->points_cached = false;
+    return USD_BRIDGE_SUCCESS;
+}
+
+UsdBridgeError usd_bridge_edit_layer_add_payload(
+    UsdBridgeEditLayer* layer,
+    const char* prim_path,
+    const char* asset_path,
+    const char* target_path
+) {
+    if (!layer || !prim_path || !asset_path) return USD_BRIDGE_ERROR_NULL_POINTER;
+    try {
+        UsdPrim prim = layer->stage->GetPrimAtPath(SdfPath(prim_path));
+        if (!prim) {
+            prim = layer->stage->DefinePrim(SdfPath(prim_path));
+        }
+        SdfPayload payload(
+            asset_path,
+            (target_path && strlen(target_path) > 0) ? SdfPath(target_path) : SdfPath()
+        );
+        prim.GetPayloads().AddPayload(payload);
+        return USD_BRIDGE_SUCCESS;
+    } catch (const std::exception& e) {
+        TF_WARN("usd_bridge_edit_layer_add_payload: %s", e.what());
+        return USD_BRIDGE_ERROR_UNKNOWN;
+    }
+}
+
+// ============================================================================
+// Variant Query / Selection
+// ============================================================================
+
+// Thread-local string storage for variant query results
+static thread_local std::vector<std::string> tl_variant_names;
+static thread_local std::string tl_variant_selection;
+
+UsdBridgeError usd_bridge_get_variant_set_count(
+    const UsdBridgeStage* stage, const char* prim_path, size_t* out_count
+) {
+    if (!stage || !prim_path || !out_count) return USD_BRIDGE_ERROR_NULL_POINTER;
+    UsdPrim prim = stage->stage->GetPrimAtPath(SdfPath(prim_path));
+    if (!prim) return USD_BRIDGE_ERROR_INVALID_PRIM;
+    *out_count = prim.GetVariantSets().GetNames().size();
+    return USD_BRIDGE_SUCCESS;
+}
+
+UsdBridgeError usd_bridge_get_variant_set_name(
+    const UsdBridgeStage* stage, const char* prim_path, size_t index, const char** out_name
+) {
+    if (!stage || !prim_path || !out_name) return USD_BRIDGE_ERROR_NULL_POINTER;
+    UsdPrim prim = stage->stage->GetPrimAtPath(SdfPath(prim_path));
+    if (!prim) return USD_BRIDGE_ERROR_INVALID_PRIM;
+    auto names = prim.GetVariantSets().GetNames();
+    if (index >= names.size()) return USD_BRIDGE_ERROR_INVALID_PRIM;
+    tl_variant_names = std::move(names);
+    *out_name = tl_variant_names[index].c_str();
+    return USD_BRIDGE_SUCCESS;
+}
+
+UsdBridgeError usd_bridge_get_variant_count(
+    const UsdBridgeStage* stage, const char* prim_path, const char* variant_set_name, size_t* out_count
+) {
+    if (!stage || !prim_path || !variant_set_name || !out_count) return USD_BRIDGE_ERROR_NULL_POINTER;
+    UsdPrim prim = stage->stage->GetPrimAtPath(SdfPath(prim_path));
+    if (!prim) return USD_BRIDGE_ERROR_INVALID_PRIM;
+    if (!prim.GetVariantSets().HasVariantSet(variant_set_name)) {
+        *out_count = 0;
+        return USD_BRIDGE_SUCCESS;
+    }
+    UsdVariantSet vs = prim.GetVariantSets().GetVariantSet(variant_set_name);
+    *out_count = vs.GetVariantNames().size();
+    return USD_BRIDGE_SUCCESS;
+}
+
+UsdBridgeError usd_bridge_get_variant_name(
+    const UsdBridgeStage* stage, const char* prim_path,
+    const char* variant_set_name, size_t index, const char** out_name
+) {
+    if (!stage || !prim_path || !variant_set_name || !out_name) return USD_BRIDGE_ERROR_NULL_POINTER;
+    UsdPrim prim = stage->stage->GetPrimAtPath(SdfPath(prim_path));
+    if (!prim) return USD_BRIDGE_ERROR_INVALID_PRIM;
+    UsdVariantSet vs = prim.GetVariantSets().GetVariantSet(variant_set_name);
+    tl_variant_names = vs.GetVariantNames();
+    if (index >= tl_variant_names.size()) return USD_BRIDGE_ERROR_INVALID_PRIM;
+    *out_name = tl_variant_names[index].c_str();
+    return USD_BRIDGE_SUCCESS;
+}
+
+UsdBridgeError usd_bridge_get_variant_selection(
+    const UsdBridgeStage* stage, const char* prim_path,
+    const char* variant_set_name, const char** out_selection
+) {
+    if (!stage || !prim_path || !variant_set_name || !out_selection) return USD_BRIDGE_ERROR_NULL_POINTER;
+    UsdPrim prim = stage->stage->GetPrimAtPath(SdfPath(prim_path));
+    if (!prim) return USD_BRIDGE_ERROR_INVALID_PRIM;
+    UsdVariantSet vs = prim.GetVariantSets().GetVariantSet(variant_set_name);
+    tl_variant_selection = vs.GetVariantSelection();
+    *out_selection = tl_variant_selection.c_str();
+    return USD_BRIDGE_SUCCESS;
+}
+
+UsdBridgeError usd_bridge_set_variant_selection(
+    UsdBridgeStage* stage, const char* prim_path,
+    const char* variant_set_name, const char* variant_name
+) {
+    if (!stage || !prim_path || !variant_set_name || !variant_name) return USD_BRIDGE_ERROR_NULL_POINTER;
+    UsdPrim prim = stage->stage->GetPrimAtPath(SdfPath(prim_path));
+    if (!prim) return USD_BRIDGE_ERROR_INVALID_PRIM;
+    UsdVariantSet vs = prim.GetVariantSets().GetVariantSet(variant_set_name);
+    if (!vs.SetVariantSelection(variant_name)) return USD_BRIDGE_ERROR_UNKNOWN;
+    // Invalidate caches — composition changed
+    stage->cached = false;
+    stage->prims_cached = false;
+    stage->materials_cached = false;
+    stage->lights_cached = false;
+    stage->animation_cached = false;
+    stage->vertex_animation_cached = false;
+    stage->points_cached = false;
+    return USD_BRIDGE_SUCCESS;
 }
