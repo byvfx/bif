@@ -317,8 +317,9 @@ impl Renderer {
         self.cam.camera.update_position_from_angles();
         self.update_camera();
 
-        // Invalidate Ivar scene + materials (new scene = new materials)
+        // Invalidate Ivar scene + materials (new scene = new textures)
         self.invalidate_ivar_materials();
+        self.ivar.ivar_texture_cache = None;
         self.ivar.ivar_state.invalidate_scene();
 
         // Update lights
@@ -1907,8 +1908,9 @@ impl Renderer {
         self.cam.camera.update_position_from_angles();
         self.update_camera();
 
-        // Invalidate Ivar scene + materials (new scene = new materials)
+        // Invalidate Ivar scene + materials (new scene = new textures)
         self.invalidate_ivar_materials();
+        self.ivar.ivar_texture_cache = None;
         self.ivar.ivar_state.invalidate_scene();
 
         // Initialize timeline from scene data

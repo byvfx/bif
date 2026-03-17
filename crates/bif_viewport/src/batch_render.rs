@@ -40,20 +40,17 @@ pub enum BatchMessage {
 
 /// Build DisneyBSDF materials from scene materials, loading textures from disk.
 ///
-/// Shared helper to avoid duplicating material construction logic.
+/// Caller provides a persistent `TextureCache` — unchanged textures reuse
+/// existing `Arc<Texture>` across rebuilds instead of reloading from disk.
 pub fn build_materials(
     scene_materials: &[Arc<bif_core::Material>],
     fallback: &bif_core::Material,
-    texture_base_dir: Option<&Path>,
+    texture_cache: &mut bif_core::texture::TextureCache,
 ) -> Vec<Arc<DisneyBSDF>> {
-    let mut texture_cache = match texture_base_dir {
-        Some(dir) => bif_core::texture::TextureCache::with_base_dir(dir.to_path_buf()),
-        None => bif_core::texture::TextureCache::new(),
-    };
     let materials = if scene_materials.is_empty() {
         vec![Arc::new(DisneyBSDF::from_material_with_textures(
             fallback,
-            &mut texture_cache,
+            texture_cache,
         ))]
     } else {
         scene_materials
@@ -61,7 +58,7 @@ pub fn build_materials(
             .map(|mat| {
                 Arc::new(DisneyBSDF::from_material_with_textures(
                     mat.as_ref(),
-                    &mut texture_cache,
+                    texture_cache,
                 ))
             })
             .collect()
@@ -109,6 +106,9 @@ pub struct SceneBuilderData {
     pub mesh_ranges: Option<Vec<MeshRange>>,
     /// Cached DisneyBSDF materials (avoids re-loading textures per frame).
     pub ivar_materials: Option<Vec<Arc<DisneyBSDF>>>,
+    /// Persistent texture cache — survives across frame rebuilds so unchanged
+    /// textures are not reloaded from disk.
+    pub texture_cache: Option<bif_core::texture::TextureCache>,
 }
 
 impl SceneBuilderData {
@@ -195,11 +195,15 @@ impl SceneBuilderData {
         let materials: Vec<Arc<DisneyBSDF>> = if let Some(ref cached) = self.ivar_materials {
             cached.clone()
         } else {
-            let mats = build_materials(
-                &self.scene_materials,
-                &self.scene_material,
-                self.texture_base_dir.as_deref(),
-            );
+            let mut cache = self.texture_cache.take().unwrap_or_else(|| {
+                match self.texture_base_dir.as_deref() {
+                    Some(dir) => bif_core::texture::TextureCache::with_base_dir(dir),
+                    None => bif_core::texture::TextureCache::new(),
+                }
+            });
+            let mats = build_materials(&self.scene_materials, &self.scene_material, &mut cache);
+            cache.sweep_unreferenced();
+            self.texture_cache = Some(cache);
             self.ivar_materials = Some(mats.clone());
             mats
         };
@@ -719,6 +723,7 @@ mod tests {
             stage: None,
             mesh_ranges: None,
             ivar_materials: None,
+            texture_cache: None,
         }
     }
 

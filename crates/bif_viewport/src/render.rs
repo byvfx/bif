@@ -987,6 +987,8 @@ impl Renderer {
                     for &pid in old_ids.iter().rev() {
                         self.remove_and_reindex_prototype(pid);
                     }
+                    // GC orphaned materials so new load starts with clean offsets
+                    self.working_scene.compact_materials();
                 }
 
                 self.nodes.materials_dirty = true;
@@ -1531,6 +1533,8 @@ impl Renderer {
                     for &pid in proto_ids.iter().rev() {
                         self.remove_and_reindex_prototype(pid);
                     }
+                    // GC orphaned materials left behind by removed prototypes
+                    self.working_scene.compact_materials();
                     self.nodes.materials_dirty = true;
                 }
 

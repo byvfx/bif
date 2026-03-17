@@ -237,12 +237,13 @@ impl Renderer {
             if let Some(ref rx) = self.async_channels.ivar_materials_receiver {
                 // Brief blocking wait — prewarm may be nearly done
                 use std::time::Duration;
-                if let Ok(materials) = rx.recv_timeout(Duration::from_millis(50)) {
+                if let Ok((materials, texture_cache)) = rx.recv_timeout(Duration::from_millis(50)) {
                     log::info!(
                         "Grabbed pre-warmed materials ({}) before build",
                         materials.len()
                     );
                     self.ivar.ivar_materials = Some(materials);
+                    self.ivar.ivar_texture_cache = Some(texture_cache);
                     self.async_channels.ivar_materials_receiver = None;
                 }
             }
@@ -250,6 +251,13 @@ impl Renderer {
 
         // Check for cached materials (cheap Arc clones)
         let cached_materials = self.ivar.ivar_materials.clone();
+
+        // Take texture cache for the build thread if we need to build materials
+        let thread_texture_cache = if cached_materials.is_none() {
+            self.ivar.ivar_texture_cache.take()
+        } else {
+            None
+        };
 
         // Spawn background thread to build scene
         std::thread::spawn(move || {
@@ -263,15 +271,22 @@ impl Renderer {
             );
 
             // Use cached materials or build from scratch
-            let materials: Vec<Arc<DisneyBSDF>> = if let Some(cached) = cached_materials {
+            let (materials, ret_cache): (
+                Vec<Arc<DisneyBSDF>>,
+                Option<bif_core::texture::TextureCache>,
+            ) = if let Some(cached) = cached_materials {
                 log::info!("Using cached materials ({} materials)", cached.len());
-                cached
+                (cached, None)
             } else {
-                batch_render::build_materials(
-                    &scene_materials,
-                    &fallback_material,
-                    texture_base_dir.as_deref(),
-                )
+                let mut cache =
+                    thread_texture_cache.unwrap_or_else(|| match texture_base_dir.as_deref() {
+                        Some(dir) => bif_core::texture::TextureCache::with_base_dir(dir),
+                        None => bif_core::texture::TextureCache::new(),
+                    });
+                let mats =
+                    batch_render::build_materials(&scene_materials, &fallback_material, &mut cache);
+                cache.sweep_unreferenced();
+                (mats, Some(cache))
             };
 
             // Clone materials for cache return (cheap Arc bumps)
@@ -303,7 +318,7 @@ impl Renderer {
                 elapsed.as_secs_f64() * 1000.0
             );
 
-            let _ = tx.send((world, materials_for_cache));
+            let _ = tx.send((world, materials_for_cache, ret_cache));
         });
     }
 
@@ -405,11 +420,19 @@ impl Renderer {
             log::info!("Using cached materials ({} materials)", cached.len());
             cached.clone()
         } else {
+            let mut cache = self.ivar.ivar_texture_cache.take().unwrap_or_else(|| {
+                match self.texture_base_dir.as_deref() {
+                    Some(dir) => bif_core::texture::TextureCache::with_base_dir(dir),
+                    None => bif_core::texture::TextureCache::new(),
+                }
+            });
             let mats = batch_render::build_materials(
                 &self.scene_materials,
                 &self.scene_material,
-                self.texture_base_dir.as_deref(),
+                &mut cache,
             );
+            cache.sweep_unreferenced();
+            self.ivar.ivar_texture_cache = Some(cache);
             self.ivar.ivar_materials = Some(mats.clone());
             mats
         };
@@ -477,6 +500,8 @@ impl Renderer {
     ///
     /// Call when materials actually change (scene reload, material edit).
     /// Geometry-only changes (camera, transforms) should NOT call this.
+    /// Intentionally keeps `ivar_texture_cache` alive — unchanged textures
+    /// reuse existing Arc refs on next build, sweep_unreferenced() frees orphans.
     pub(crate) fn invalidate_ivar_materials(&mut self) {
         if self.ivar.ivar_materials.is_some() {
             log::info!("Invalidating cached Ivar materials");
@@ -489,6 +514,7 @@ impl Renderer {
     ///
     /// Spawns a thread to load textures and build materials so the first
     /// Ivar scene build can skip the expensive texture-loading step.
+    /// Takes the persistent texture cache so unchanged textures aren't reloaded.
     pub(crate) fn prewarm_ivar_materials(&mut self) {
         // Skip if no materials to build
         if self.scene_materials.is_empty() {
@@ -505,22 +531,27 @@ impl Renderer {
         let fallback_material = self.scene_material.clone();
         let texture_base_dir = self.texture_base_dir.clone();
 
+        // Take existing texture cache so unchanged textures reuse Arc refs
+        let existing_cache = self.ivar.ivar_texture_cache.take();
+
         let (tx, rx) = mpsc::channel();
         self.async_channels.ivar_materials_receiver = Some(rx);
 
         std::thread::spawn(move || {
             let start = Instant::now();
-            let materials = batch_render::build_materials(
-                &scene_materials,
-                &fallback_material,
-                texture_base_dir.as_deref(),
-            );
+            let mut cache = existing_cache.unwrap_or_else(|| match texture_base_dir.as_deref() {
+                Some(dir) => bif_core::texture::TextureCache::with_base_dir(dir),
+                None => bif_core::texture::TextureCache::new(),
+            });
+            let materials =
+                batch_render::build_materials(&scene_materials, &fallback_material, &mut cache);
+            cache.sweep_unreferenced();
             log::info!(
                 "Pre-warmed {} materials in {:.2}ms",
                 materials.len(),
                 start.elapsed().as_secs_f64() * 1000.0
             );
-            let _ = tx.send(materials);
+            let _ = tx.send((materials, cache));
         });
 
         log::info!(
@@ -538,12 +569,13 @@ impl Renderer {
     pub(crate) fn poll_scene_build(&mut self) {
         // Poll for pre-warmed materials (from prewarm_ivar_materials)
         if let Some(ref rx) = self.async_channels.ivar_materials_receiver {
-            if let Ok(materials) = rx.try_recv() {
+            if let Ok((materials, texture_cache)) = rx.try_recv() {
                 log::info!(
                     "Pre-warmed {} materials received on main thread",
                     materials.len()
                 );
                 self.ivar.ivar_materials = Some(materials);
+                self.ivar.ivar_texture_cache = Some(texture_cache);
                 self.async_channels.ivar_materials_receiver = None;
             }
         }
@@ -558,12 +590,17 @@ impl Renderer {
         };
 
         // Non-blocking check for completion
-        if let Ok((world, materials)) = receiver.try_recv() {
+        if let Ok((world, materials, texture_cache)) = receiver.try_recv() {
             log::info!("Scene build completed, received on main thread");
 
             // Cache materials for future builds
             if self.ivar.ivar_materials.is_none() {
                 self.ivar.ivar_materials = Some(materials);
+            }
+
+            // Restore texture cache from build thread
+            if let Some(cache) = texture_cache {
+                self.ivar.ivar_texture_cache = Some(cache);
             }
 
             // Store completed scene
@@ -1074,6 +1111,7 @@ impl Renderer {
                 stage: self.usd_stage.clone(),
                 mesh_ranges: self.mesh_data.mesh_ranges.clone(),
                 ivar_materials: self.ivar.ivar_materials.clone(),
+                texture_cache: self.ivar.ivar_texture_cache.clone(),
             };
             Some(Box::new(move |time: f64| {
                 builder_data.build_scene_at_time(time)

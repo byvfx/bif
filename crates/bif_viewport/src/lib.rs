@@ -192,9 +192,13 @@ pub(crate) struct AsyncChannels {
     pub batch_receiver: Option<std::sync::mpsc::Receiver<batch_render::BatchMessage>>,
     /// Cancel flag for batch render.
     pub batch_cancel_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
-    /// Receiver for background material pre-warm thread.
-    pub ivar_materials_receiver:
-        Option<std::sync::mpsc::Receiver<Vec<std::sync::Arc<bif_renderer::DisneyBSDF>>>>,
+    /// Receiver for background material pre-warm thread (materials + texture cache).
+    pub ivar_materials_receiver: Option<
+        std::sync::mpsc::Receiver<(
+            Vec<std::sync::Arc<bif_renderer::DisneyBSDF>>,
+            bif_core::texture::TextureCache,
+        )>,
+    >,
 }
 
 impl Default for AsyncChannels {
@@ -265,6 +269,9 @@ pub(crate) struct IvarContext {
     pub ivar_pipeline: wgpu::RenderPipeline,
     /// Cached DisneyBSDF materials (avoids re-loading textures on every Ivar build).
     pub ivar_materials: Option<Vec<Arc<bif_renderer::DisneyBSDF>>>,
+    /// Persistent texture cache — survives material rebuilds so unchanged
+    /// textures reuse existing `Arc<Texture>` instead of reloading from disk.
+    pub ivar_texture_cache: Option<bif_core::texture::TextureCache>,
 }
 
 /// Node graph evaluation state — graph, mappings, caches.
@@ -967,6 +974,7 @@ impl Renderer {
                 ivar_bind_group_layout,
                 ivar_pipeline,
                 ivar_materials: None,
+                ivar_texture_cache: None,
             },
             mesh_data,
             instances: SceneInstances::default(),
