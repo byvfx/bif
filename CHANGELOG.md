@@ -23,6 +23,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Material binding export via UsdShadeMaterialBindingAPI
 - Visibility export (inherited/invisible)
 - Stage metadata export (metersPerUnit, upAxis, timeCodesPerSecond)
+- Camera export (UsdGeomCamera with animated xform support)
+- Light export (all 6 UsdLux types + ShapingAPI)
+- UsdRenderSettings export (resolution, camera, pixel aspect ratio)
 - Mesh struct: subdivision_scheme, face_vertex_counts, polygon_indices, crease data fields
 - 50 new tests: bif_math camera/aabb/basis/frustum/interval (31), bif_renderer EXR negative frames (1), bif_viewer CLI parsing + click detection (19)
 - `Renderer::needs_redraw()` for conditional redraw in viewer

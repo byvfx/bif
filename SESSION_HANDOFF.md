@@ -1,7 +1,7 @@
 # Session Handoff - March 16, 2026
 
-**Last Updated:** USD spec compliance sessions 1-5 (read-side + Embree subd + material/visibility/metadata export)
-**Next Milestone:** USD spec compliance sessions 6-8 (camera/light/composition export), then M29.5 egui upgrade
+**Last Updated:** USD spec compliance sessions 1-6 (read-side + Embree subd + full export: material/camera/light/render settings)
+**Next Milestone:** USD spec compliance sessions 7-8 (payloads/variants/advanced), then M29.5 egui upgrade
 **Project:** BIF - VFX Scene Assembler & Renderer
 
 ---
