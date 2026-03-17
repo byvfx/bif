@@ -28,6 +28,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - UsdRenderSettings export (resolution, camera, pixel aspect ratio)
 - Payload read (has_payload, is_loaded on PrimInfo) + load/unload + payload write
 - Variant query (set names, variant names, selection) + set_variant_selection (re-composes stage)
+- BasisCurves read (points, widths, curveVertexCounts, type/basis/wrap)
 - Mesh struct: subdivision_scheme, face_vertex_counts, polygon_indices, crease data fields
 - 50 new tests: bif_math camera/aabb/basis/frustum/interval (31), bif_renderer EXR negative frames (1), bif_viewer CLI parsing + click detection (19)
 - `Renderer::needs_redraw()` for conditional redraw in viewer
