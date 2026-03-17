@@ -4,7 +4,17 @@
       "WebFetch(domain:github.com)",
       "Bash(git add:*)",
       "Bash(cargo build:*)",
-      "Bash(cargo clippy:*)"
+      "Bash(cargo clippy:*)",
+      "Bash(cd:*)",
+      "mcp__plugin_context-mode_context-mode__ctx_batch_execute",
+      "mcp__plugin_context-mode_context-mode__ctx_search",
+      "mcp__plugin_context-mode_context-mode__ctx_execute_file",
+      "mcp__plugin_context-mode_context-mode__ctx_execute",
+      "Bash(cargo test:*)",
+      "Bash(cargo fmt:*)",
+      "Skill(bif-commit)",
+      "mcp__plugin_context-mode_context-mode__ctx_fetch_and_index",
+      "Bash(find:*)"
     ]
   }
 }
