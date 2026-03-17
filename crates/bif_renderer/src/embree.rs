@@ -131,6 +131,7 @@ pub struct EmbreeScene {
 
     // Keep subdivision data alive (Embree holds pointers)
     _face_data: Vec<u32>,
+    _subd_index_data: Vec<u32>,
     _crease_index_data: Vec<u32>,
     _crease_weight_data: Vec<f32>,
 
@@ -457,6 +458,7 @@ impl EmbreeScene {
                 _index_data: index_data,
                 _transform_data: transform_data,
                 _face_data: vec![],
+                _subd_index_data: vec![],
                 _crease_index_data: vec![],
                 _crease_weight_data: vec![],
                 uv_data,
@@ -562,6 +564,7 @@ impl EmbreeScene {
             let t0 = Instant::now();
             // Subdivision data kept alive for Embree pointers
             let mut _face_data: Vec<u32> = Vec::new();
+            let mut _subd_index_data: Vec<u32> = Vec::new();
             let mut _crease_index_data: Vec<u32> = Vec::new();
             let mut _crease_weight_data: Vec<f32> = Vec::new();
 
@@ -600,20 +603,17 @@ impl EmbreeScene {
                 );
 
                 // Index buffer (polygon vertex indices, NOT triangulated)
-                let subd_index_data: Vec<u32> =
-                    sd.polygon_indices.iter().map(|&i| i as u32).collect();
-                // Store in _index_data so it stays alive (we'll overwrite the triangle indices)
-                // Actually we need to keep both — triangle indices for hit() lookups
-                // Use a separate buffer for subd indices
+                // Stored in _subd_index_data to keep alive for Embree pointer
+                _subd_index_data = sd.polygon_indices.iter().map(|&i| i as u32).collect();
                 rtcSetSharedGeometryBuffer(
                     geom,
                     RTCBufferType::Index as u32,
                     0,
                     RTCFormat::UInt as u32,
-                    subd_index_data.as_ptr() as *const std::ffi::c_void,
+                    _subd_index_data.as_ptr() as *const std::ffi::c_void,
                     0,
                     4,
-                    subd_index_data.len(),
+                    _subd_index_data.len(),
                 );
 
                 // Crease edges (optional)
@@ -646,12 +646,6 @@ impl EmbreeScene {
 
                 // Set Catmull-Clark mode with pin-corners boundary
                 rtcSetGeometrySubdivisionMode(geom, 0, RTCSubdivisionMode::PinCorners);
-
-                // Keep subd index data alive
-                // (vertex_data is already kept; _face_data and _crease_* stored above)
-                // We store the subd indices in _index_data for pointer lifetime
-                // but hit() will use triangle indices for UV/normal lookup
-                let _ = subd_index_data; // Dropped — pointer held by Embree via _face_data lifetime
 
                 log::info!(
                     "Embree: subdivision geometry with {} faces, {} polygon indices, {} creases",
@@ -868,6 +862,7 @@ impl EmbreeScene {
                 _index_data: index_data,
                 _transform_data: transform_data,
                 _face_data,
+                _subd_index_data,
                 _crease_index_data,
                 _crease_weight_data,
                 uv_data: vec![],

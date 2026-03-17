@@ -1829,13 +1829,10 @@ static void cache_light_data(UsdBridgeStage* bridge) {
         }
 
         // Light linking (UsdCollectionAPI named "lightLink")
-        if (UsdCollectionAPI::CanContainPropertyName(TfToken("collection:lightLink:includeRoot"))) {
+        {
             UsdCollectionAPI lightLink = UsdCollectionAPI::Get(prim, TfToken("lightLink"));
             if (lightLink) {
                 SdfPathVector includes, excludes;
-                UsdCollectionAPI::MembershipQuery query = lightLink.ComputeMembershipQuery();
-                // Get the include/exclude rules from the collection
-                SdfPathExpression pathExpr;
                 if (lightLink.GetIncludesRel().GetForwardedTargets(&includes)) {
                     for (const auto& p : includes) {
                         light.light_link_includes.push_back(p.GetString());

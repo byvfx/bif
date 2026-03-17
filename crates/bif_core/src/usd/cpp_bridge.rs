@@ -3021,6 +3021,10 @@ impl UsdStage {
     // ========================================================================
 
     /// Get variant set names for a prim.
+    ///
+    /// # Safety note
+    /// C++ returns pointers to thread-local strings — we copy immediately via
+    /// `to_string_lossy().into_owned()`. Never store the raw pointer across calls.
     pub fn get_variant_set_names(&self, prim_path: &str) -> UsdBridgeResult<Vec<String>> {
         let c_path = CString::new(prim_path).map_err(|_| UsdBridgeError::InvalidPath)?;
         let mut count: usize = 0;
