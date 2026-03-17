@@ -387,6 +387,28 @@ typedef struct UsdBridgeMeshData {
 
     /// 1 if xformOpOrder contains !resetXformStack! (ignore parent transforms)
     int resets_xform_stack;
+
+    /// Original face vertex counts (polygon topology, for subdivision surfaces)
+    /// NULL if subdivisionScheme is "none" or "bilinear"
+    const int32_t* face_vertex_counts;
+    size_t face_count;
+
+    /// Original face vertex indices (polygon topology, for subdivision surfaces)
+    /// NULL if subdivisionScheme is "none" or "bilinear"
+    const int32_t* face_vertex_indices;
+    size_t face_vertex_index_count;
+
+    /// Crease edge indices (pairs of vertex indices)
+    const int32_t* crease_indices;
+    size_t crease_index_count;
+
+    /// Crease lengths (vertices per crease chain)
+    const int32_t* crease_lengths;
+    size_t crease_length_count;
+
+    /// Crease sharpnesses (one per crease chain)
+    const float* crease_sharpnesses;
+    size_t crease_sharpness_count;
 } UsdBridgeMeshData;
 
 /// Get mesh data by index.

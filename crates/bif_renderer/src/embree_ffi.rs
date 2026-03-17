@@ -22,6 +22,7 @@ pub type RTCBuffer = *mut std::ffi::c_void;
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum RTCGeometryType {
     Triangle = 0,
+    Subdivision = 8,
     Instance = 121,
 }
 
@@ -31,15 +32,30 @@ pub enum RTCBufferType {
     Index = 0,
     Vertex = 1,
     VertexAttribute = 2,
+    Face = 7,
+    EdgeCreaseIndex = 8,
+    EdgeCreaseWeight = 9,
 }
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum RTCFormat {
     Undefined = 0,
+    UInt = 0x5001,
     UInt3 = 0x5003,
+    Float = 0x9001,
     Float3 = 0x9003,
     Float4x4ColumnMajor = 0x9244,
+}
+
+#[repr(C)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum RTCSubdivisionMode {
+    NoBoundary = 0,
+    SmoothBoundary = 1,
+    PinCorners = 2,
+    PinBoundary = 3,
+    PinAll = 4,
 }
 
 #[repr(C)]
@@ -164,6 +180,11 @@ extern "C" {
     pub fn rtcSetGeometryInstancedScene(geom: RTCGeometry, scene: RTCScene);
     pub fn rtcSetGeometryTransform(geom: RTCGeometry, time_step: u32, format: u32, xfm: *const f32);
     pub fn rtcSetGeometryVertexAttributeCount(geom: RTCGeometry, vertex_attribute_count: u32);
+    pub fn rtcSetGeometrySubdivisionMode(
+        geom: RTCGeometry,
+        topology_id: u32,
+        mode: RTCSubdivisionMode,
+    );
 
     pub fn rtcIntersect1(scene: RTCScene, rayhit: *mut RTCRayHit, args: *const std::ffi::c_void);
 }

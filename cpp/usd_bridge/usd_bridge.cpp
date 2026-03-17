@@ -75,6 +75,15 @@ struct CachedMesh {
     // Purpose attribute (default/render/proxy/guide)
     int purpose = 0;  // 0=default, 1=render, 2=proxy, 3=guide
 
+    // Original polygon topology (for subdivision surfaces)
+    std::vector<int32_t> face_vertex_counts_orig;
+    std::vector<int32_t> face_vertex_indices_orig;
+
+    // Crease data (for subdivision surfaces)
+    std::vector<int32_t> crease_indices;
+    std::vector<int32_t> crease_lengths;
+    std::vector<float> crease_sharpnesses;
+
     // True if this mesh came from a native instance proxy
     bool is_instance_proxy = false;
 
@@ -468,12 +477,39 @@ static void cache_stage_data(UsdBridgeStage* bridge) {
             time_vertices += duration_cast<milliseconds>(high_resolution_clock::now() - vert_start).count();
             total_verts += points.size();
 
+            // Read subdivision scheme early (needed to decide whether to store polygon topology)
+            {
+                TfToken subdivScheme;
+                if (mesh.GetSubdivisionSchemeAttr().Get(&subdivScheme)) {
+                    cached.subdivision_scheme = subdivScheme.GetString();
+                }
+            }
+
             // Get face topology and triangulate (use same timeCode as points)
             auto tri_start = high_resolution_clock::now();
             VtArray<int> face_vertex_counts;
             VtArray<int> face_vertex_indices;
             mesh.GetFaceVertexCountsAttr().Get(&face_vertex_counts, timeCode);
             mesh.GetFaceVertexIndicesAttr().Get(&face_vertex_indices, timeCode);
+
+            // Store original polygon topology for subdivision surfaces
+            bool is_subd = (cached.subdivision_scheme == "catmullClark" || cached.subdivision_scheme == "loop");
+            if (is_subd) {
+                cached.face_vertex_counts_orig.assign(face_vertex_counts.begin(), face_vertex_counts.end());
+                cached.face_vertex_indices_orig.assign(face_vertex_indices.begin(), face_vertex_indices.end());
+
+                // Read crease data
+                VtArray<int> creaseIndices, creaseLengths;
+                VtArray<float> creaseSharpnesses;
+                mesh.GetCreaseIndicesAttr().Get(&creaseIndices);
+                mesh.GetCreaseLengthsAttr().Get(&creaseLengths);
+                mesh.GetCreaseSharpnessesAttr().Get(&creaseSharpnesses);
+                if (!creaseIndices.empty()) {
+                    cached.crease_indices.assign(creaseIndices.begin(), creaseIndices.end());
+                    cached.crease_lengths.assign(creaseLengths.begin(), creaseLengths.end());
+                    cached.crease_sharpnesses.assign(creaseSharpnesses.begin(), creaseSharpnesses.end());
+                }
+            }
 
             std::vector<uint32_t> triangle_face_indices;
             triangulate_mesh(face_vertex_counts, face_vertex_indices, cached.indices, triangle_face_indices);
@@ -718,13 +754,7 @@ static void cache_stage_data(UsdBridgeStage* bridge) {
                 }
             }
 
-            // Subdivision scheme
-            {
-                TfToken subdivScheme;
-                if (mesh.GetSubdivisionSchemeAttr().Get(&subdivScheme)) {
-                    cached.subdivision_scheme = subdivScheme.GetString();
-                }
-            }
+            // (subdivision scheme already read above, before face topology)
 
             // Display color (primvars:displayColor — fallback when no material)
             {
@@ -1867,6 +1897,20 @@ UsdBridgeError usd_bridge_get_mesh(
     out_data->display_color_count = mesh.display_color.size() / 3;
     out_data->display_opacity = mesh.display_opacity;
     out_data->resets_xform_stack = mesh.resets_xform_stack ? 1 : 0;
+
+    // Polygon topology for subdivision surfaces
+    out_data->face_vertex_counts = mesh.face_vertex_counts_orig.empty() ? nullptr : mesh.face_vertex_counts_orig.data();
+    out_data->face_count = mesh.face_vertex_counts_orig.size();
+    out_data->face_vertex_indices = mesh.face_vertex_indices_orig.empty() ? nullptr : mesh.face_vertex_indices_orig.data();
+    out_data->face_vertex_index_count = mesh.face_vertex_indices_orig.size();
+
+    // Crease data
+    out_data->crease_indices = mesh.crease_indices.empty() ? nullptr : mesh.crease_indices.data();
+    out_data->crease_index_count = mesh.crease_indices.size();
+    out_data->crease_lengths = mesh.crease_lengths.empty() ? nullptr : mesh.crease_lengths.data();
+    out_data->crease_length_count = mesh.crease_lengths.size();
+    out_data->crease_sharpnesses = mesh.crease_sharpnesses.empty() ? nullptr : mesh.crease_sharpnesses.data();
+    out_data->crease_sharpness_count = mesh.crease_sharpnesses.size();
 
     return USD_BRIDGE_SUCCESS;
 }

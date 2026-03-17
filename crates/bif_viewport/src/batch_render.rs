@@ -224,6 +224,7 @@ impl SceneBuilderData {
             ivar_transforms,
             materials,
             &tri_mat_ids,
+            None,
         ) {
             let objects: Vec<Box<dyn Hittable + Send + Sync>> = vec![Box::new(embree_scene)];
             Arc::new(BvhNode::new(objects))

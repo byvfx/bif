@@ -87,6 +87,16 @@ struct UsdBridgeMeshDataRaw {
     display_color_count: usize,
     display_opacity: f32,
     resets_xform_stack: i32,
+    face_vertex_counts: *const i32,
+    face_count: usize,
+    face_vertex_indices: *const i32,
+    face_vertex_index_count: usize,
+    crease_indices: *const i32,
+    crease_index_count: usize,
+    crease_lengths: *const i32,
+    crease_length_count: usize,
+    crease_sharpnesses: *const f32,
+    crease_sharpness_count: usize,
 }
 
 /// Native instance data from C API
@@ -754,6 +764,21 @@ pub struct UsdMeshData {
 
     /// True if xformOpOrder contains !resetXformStack! (ignore parent transforms)
     pub resets_xform_stack: bool,
+
+    /// Original face vertex counts (polygon topology, for subdivision surfaces)
+    pub face_vertex_counts: Option<Vec<i32>>,
+
+    /// Original face vertex indices (polygon topology, for subdivision surfaces)
+    pub face_vertex_indices: Option<Vec<i32>>,
+
+    /// Crease edge vertex indices (pairs)
+    pub crease_indices: Option<Vec<i32>>,
+
+    /// Crease chain lengths
+    pub crease_lengths: Option<Vec<i32>>,
+
+    /// Crease sharpnesses (one per chain)
+    pub crease_sharpnesses: Option<Vec<f32>>,
 }
 
 /// Native instance data — references a prototype mesh with a unique transform.
@@ -1367,6 +1392,16 @@ impl UsdStage {
             display_color_count: 0,
             display_opacity: 1.0,
             resets_xform_stack: 0,
+            face_vertex_counts: ptr::null(),
+            face_count: 0,
+            face_vertex_indices: ptr::null(),
+            face_vertex_index_count: 0,
+            crease_indices: ptr::null(),
+            crease_index_count: 0,
+            crease_lengths: ptr::null(),
+            crease_length_count: 0,
+            crease_sharpnesses: ptr::null(),
+            crease_sharpness_count: 0,
         };
 
         let result = unsafe { usd_bridge_get_mesh(self.raw, index, &mut raw_data) };
@@ -1520,6 +1555,71 @@ impl UsdStage {
             },
             display_opacity: raw_data.display_opacity,
             resets_xform_stack: raw_data.resets_xform_stack != 0,
+            face_vertex_counts: unsafe {
+                if raw_data.face_vertex_counts.is_null() || raw_data.face_count == 0 {
+                    None
+                } else {
+                    Some(
+                        std::slice::from_raw_parts(
+                            raw_data.face_vertex_counts,
+                            raw_data.face_count,
+                        )
+                        .to_vec(),
+                    )
+                }
+            },
+            face_vertex_indices: unsafe {
+                if raw_data.face_vertex_indices.is_null() || raw_data.face_vertex_index_count == 0 {
+                    None
+                } else {
+                    Some(
+                        std::slice::from_raw_parts(
+                            raw_data.face_vertex_indices,
+                            raw_data.face_vertex_index_count,
+                        )
+                        .to_vec(),
+                    )
+                }
+            },
+            crease_indices: unsafe {
+                if raw_data.crease_indices.is_null() || raw_data.crease_index_count == 0 {
+                    None
+                } else {
+                    Some(
+                        std::slice::from_raw_parts(
+                            raw_data.crease_indices,
+                            raw_data.crease_index_count,
+                        )
+                        .to_vec(),
+                    )
+                }
+            },
+            crease_lengths: unsafe {
+                if raw_data.crease_lengths.is_null() || raw_data.crease_length_count == 0 {
+                    None
+                } else {
+                    Some(
+                        std::slice::from_raw_parts(
+                            raw_data.crease_lengths,
+                            raw_data.crease_length_count,
+                        )
+                        .to_vec(),
+                    )
+                }
+            },
+            crease_sharpnesses: unsafe {
+                if raw_data.crease_sharpnesses.is_null() || raw_data.crease_sharpness_count == 0 {
+                    None
+                } else {
+                    Some(
+                        std::slice::from_raw_parts(
+                            raw_data.crease_sharpnesses,
+                            raw_data.crease_sharpness_count,
+                        )
+                        .to_vec(),
+                    )
+                }
+            },
         })
     }
 

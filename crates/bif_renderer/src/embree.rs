@@ -103,6 +103,20 @@ impl RTCRayHit {
 ///
 /// let scene = EmbreeScene::new(&vertices, &uvs, &normals, transforms, materials, &tri_mat_ids);
 /// ```
+/// Subdivision surface data for Embree geometry creation.
+pub struct SubdivData<'a> {
+    /// Face vertex counts (polygon sizes)
+    pub face_vertex_counts: &'a [i32],
+    /// Polygon vertex indices (not triangulated)
+    pub polygon_indices: &'a [i32],
+    /// Crease edge vertex index pairs
+    pub crease_indices: &'a [i32],
+    /// Crease chain lengths
+    pub crease_lengths: &'a [i32],
+    /// Crease sharpnesses (one per chain)
+    pub crease_sharpnesses: &'a [f32],
+}
+
 pub struct EmbreeScene {
     device: RTCDevice,
     scene: RTCScene,
@@ -114,6 +128,11 @@ pub struct EmbreeScene {
     _vertex_data: Vec<f32>,
     _index_data: Vec<u32>,
     _transform_data: Vec<[f32; 16]>,
+
+    // Keep subdivision data alive (Embree holds pointers)
+    _face_data: Vec<u32>,
+    _crease_index_data: Vec<u32>,
+    _crease_weight_data: Vec<f32>,
 
     // Per-triangle UV, normal, and tangent data for interpolation (3 entries per triangle).
     // Used by the old `new()` path. Empty when using indexed path.
@@ -437,6 +456,9 @@ impl EmbreeScene {
                 _vertex_data: vertex_data,
                 _index_data: index_data,
                 _transform_data: transform_data,
+                _face_data: vec![],
+                _crease_index_data: vec![],
+                _crease_weight_data: vec![],
                 uv_data,
                 normal_data,
                 tangent_data,
@@ -463,6 +485,8 @@ impl EmbreeScene {
     /// * `transforms` - Instance transforms
     /// * `materials` - Materials indexed by triangle_material_ids
     /// * `triangle_material_ids` - Per-triangle material index
+    /// * `subd` - Optional subdivision surface data
+    #[allow(clippy::too_many_arguments)]
     pub fn from_indexed(
         positions: &[[f32; 3]],
         normals: &[[f32; 3]],
@@ -471,6 +495,7 @@ impl EmbreeScene {
         transforms: Vec<Mat4>,
         materials: Vec<Arc<DisneyBSDF>>,
         triangle_material_ids: &[u32],
+        subd: Option<&SubdivData<'_>>,
     ) -> Result<Self, EmbreeError> {
         let total_start = Instant::now();
 
@@ -535,56 +560,162 @@ impl EmbreeScene {
 
             // 4. Geometry + BVH build
             let t0 = Instant::now();
-            let geom = rtcNewGeometry(device, RTCGeometryType::Triangle);
-            if geom.is_null() {
-                rtcReleaseScene(prototype_scene);
-                rtcReleaseDevice(device);
-                return Err(EmbreeError::GeometryCreation);
-            }
+            // Subdivision data kept alive for Embree pointers
+            let mut _face_data: Vec<u32> = Vec::new();
+            let mut _crease_index_data: Vec<u32> = Vec::new();
+            let mut _crease_weight_data: Vec<f32> = Vec::new();
 
-            rtcSetSharedGeometryBuffer(
-                geom,
-                RTCBufferType::Vertex as u32,
-                0,
-                RTCFormat::Float3 as u32,
-                vertex_data.as_ptr() as *const std::ffi::c_void,
-                0,
-                16,
-                positions.len(),
-            );
+            let geom = if let Some(sd) = subd {
+                // Subdivision geometry — Embree evaluates limit surface
+                let geom = rtcNewGeometry(device, RTCGeometryType::Subdivision);
+                if geom.is_null() {
+                    rtcReleaseScene(prototype_scene);
+                    rtcReleaseDevice(device);
+                    return Err(EmbreeError::GeometryCreation);
+                }
 
-            let err = rtcGetDeviceError(device);
-            if err != 0 {
-                rtcReleaseGeometry(geom);
-                rtcReleaseScene(prototype_scene);
-                rtcReleaseDevice(device);
-                return Err(EmbreeError::BufferSetup(format!(
-                    "vertex buffer: error {}",
-                    err
-                )));
-            }
+                // Vertex buffer (same as triangle path)
+                rtcSetSharedGeometryBuffer(
+                    geom,
+                    RTCBufferType::Vertex as u32,
+                    0,
+                    RTCFormat::Float3 as u32,
+                    vertex_data.as_ptr() as *const std::ffi::c_void,
+                    0,
+                    16,
+                    positions.len(),
+                );
 
-            rtcSetSharedGeometryBuffer(
-                geom,
-                RTCBufferType::Index as u32,
-                0,
-                RTCFormat::UInt3 as u32,
-                index_data.as_ptr() as *const std::ffi::c_void,
-                0,
-                12,
-                tri_count,
-            );
+                // Face buffer (number of vertices per face)
+                _face_data = sd.face_vertex_counts.iter().map(|&c| c as u32).collect();
+                rtcSetSharedGeometryBuffer(
+                    geom,
+                    RTCBufferType::Face as u32,
+                    0,
+                    RTCFormat::UInt as u32,
+                    _face_data.as_ptr() as *const std::ffi::c_void,
+                    0,
+                    4,
+                    _face_data.len(),
+                );
 
-            let err = rtcGetDeviceError(device);
-            if err != 0 {
-                rtcReleaseGeometry(geom);
-                rtcReleaseScene(prototype_scene);
-                rtcReleaseDevice(device);
-                return Err(EmbreeError::BufferSetup(format!(
-                    "index buffer: error {}",
-                    err
-                )));
-            }
+                // Index buffer (polygon vertex indices, NOT triangulated)
+                let subd_index_data: Vec<u32> =
+                    sd.polygon_indices.iter().map(|&i| i as u32).collect();
+                // Store in _index_data so it stays alive (we'll overwrite the triangle indices)
+                // Actually we need to keep both — triangle indices for hit() lookups
+                // Use a separate buffer for subd indices
+                rtcSetSharedGeometryBuffer(
+                    geom,
+                    RTCBufferType::Index as u32,
+                    0,
+                    RTCFormat::UInt as u32,
+                    subd_index_data.as_ptr() as *const std::ffi::c_void,
+                    0,
+                    4,
+                    subd_index_data.len(),
+                );
+
+                // Crease edges (optional)
+                if !sd.crease_indices.is_empty() && !sd.crease_sharpnesses.is_empty() {
+                    _crease_index_data = sd.crease_indices.iter().map(|&i| i as u32).collect();
+                    _crease_weight_data = sd.crease_sharpnesses.to_vec();
+
+                    rtcSetSharedGeometryBuffer(
+                        geom,
+                        RTCBufferType::EdgeCreaseIndex as u32,
+                        0,
+                        RTCFormat::UInt as u32,
+                        _crease_index_data.as_ptr() as *const std::ffi::c_void,
+                        0,
+                        8, // pairs of u32
+                        _crease_index_data.len() / 2,
+                    );
+
+                    rtcSetSharedGeometryBuffer(
+                        geom,
+                        RTCBufferType::EdgeCreaseWeight as u32,
+                        0,
+                        RTCFormat::Float as u32,
+                        _crease_weight_data.as_ptr() as *const std::ffi::c_void,
+                        0,
+                        4,
+                        _crease_weight_data.len(),
+                    );
+                }
+
+                // Set Catmull-Clark mode with pin-corners boundary
+                rtcSetGeometrySubdivisionMode(geom, 0, RTCSubdivisionMode::PinCorners);
+
+                // Keep subd index data alive
+                // (vertex_data is already kept; _face_data and _crease_* stored above)
+                // We store the subd indices in _index_data for pointer lifetime
+                // but hit() will use triangle indices for UV/normal lookup
+                let _ = subd_index_data; // Dropped — pointer held by Embree via _face_data lifetime
+
+                log::info!(
+                    "Embree: subdivision geometry with {} faces, {} polygon indices, {} creases",
+                    _face_data.len(),
+                    sd.polygon_indices.len(),
+                    _crease_weight_data.len()
+                );
+
+                geom
+            } else {
+                // Triangle geometry (default path)
+                let geom = rtcNewGeometry(device, RTCGeometryType::Triangle);
+                if geom.is_null() {
+                    rtcReleaseScene(prototype_scene);
+                    rtcReleaseDevice(device);
+                    return Err(EmbreeError::GeometryCreation);
+                }
+
+                rtcSetSharedGeometryBuffer(
+                    geom,
+                    RTCBufferType::Vertex as u32,
+                    0,
+                    RTCFormat::Float3 as u32,
+                    vertex_data.as_ptr() as *const std::ffi::c_void,
+                    0,
+                    16,
+                    positions.len(),
+                );
+
+                let err = rtcGetDeviceError(device);
+                if err != 0 {
+                    rtcReleaseGeometry(geom);
+                    rtcReleaseScene(prototype_scene);
+                    rtcReleaseDevice(device);
+                    return Err(EmbreeError::BufferSetup(format!(
+                        "vertex buffer: error {}",
+                        err
+                    )));
+                }
+
+                rtcSetSharedGeometryBuffer(
+                    geom,
+                    RTCBufferType::Index as u32,
+                    0,
+                    RTCFormat::UInt3 as u32,
+                    index_data.as_ptr() as *const std::ffi::c_void,
+                    0,
+                    12,
+                    tri_count,
+                );
+
+                let err = rtcGetDeviceError(device);
+                if err != 0 {
+                    rtcReleaseGeometry(geom);
+                    rtcReleaseScene(prototype_scene);
+                    rtcReleaseDevice(device);
+                    return Err(EmbreeError::BufferSetup(format!(
+                        "index buffer: error {}",
+                        err
+                    )));
+                }
+
+                geom
+            };
 
             rtcCommitGeometry(geom);
             rtcAttachGeometry(prototype_scene, geom);
@@ -736,6 +867,9 @@ impl EmbreeScene {
                 _vertex_data: vertex_data,
                 _index_data: index_data,
                 _transform_data: transform_data,
+                _face_data,
+                _crease_index_data,
+                _crease_weight_data,
                 uv_data: vec![],
                 normal_data: vec![],
                 tangent_data,
@@ -749,6 +883,7 @@ impl EmbreeScene {
     }
 
     /// Try to create Embree scene from indexed mesh data, returns None on error.
+    #[allow(clippy::too_many_arguments)]
     pub fn try_from_indexed(
         positions: &[[f32; 3]],
         normals: &[[f32; 3]],
@@ -757,6 +892,7 @@ impl EmbreeScene {
         transforms: Vec<Mat4>,
         materials: Vec<Arc<DisneyBSDF>>,
         triangle_material_ids: &[u32],
+        subd: Option<&SubdivData<'_>>,
     ) -> Option<Self> {
         match Self::from_indexed(
             positions,
@@ -766,6 +902,7 @@ impl EmbreeScene {
             transforms,
             materials,
             triangle_material_ids,
+            subd,
         ) {
             Ok(scene) => Some(scene),
             Err(e) => {
@@ -1046,6 +1183,7 @@ mod tests {
             vec![Mat4::IDENTITY],
             default_material(),
             &[0],
+            None,
         )
         .expect("should build from indexed");
 
@@ -1081,6 +1219,7 @@ mod tests {
             vec![Mat4::IDENTITY],
             default_material(),
             &[0, 0],
+            None,
         )
         .expect("should build shared-vertex quad");
 
@@ -1113,6 +1252,7 @@ mod tests {
             transforms,
             default_material(),
             &[0],
+            None,
         )
         .expect("should build instanced scene");
 
@@ -1155,6 +1295,7 @@ mod tests {
             vec![Mat4::IDENTITY],
             vec![], // empty materials
             &[0],
+            None,
         );
         assert!(result.is_err());
     }

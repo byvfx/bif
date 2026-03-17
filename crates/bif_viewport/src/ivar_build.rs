@@ -286,6 +286,7 @@ impl Renderer {
                 transforms,
                 materials,
                 &tri_mat_ids,
+                None,
             ) {
                 log::info!("Using Embree (indexed) for hardware-accelerated ray tracing");
                 let objects: Vec<Box<dyn Hittable + Send + Sync>> = vec![Box::new(embree_scene)];
@@ -434,6 +435,7 @@ impl Renderer {
             ivar_transforms,
             materials,
             &tri_mat_ids,
+            None,
         ) {
             log::info!("Using Embree (indexed) for batch render");
             let objects: Vec<Box<dyn Hittable + Send + Sync>> = vec![Box::new(embree_scene)];

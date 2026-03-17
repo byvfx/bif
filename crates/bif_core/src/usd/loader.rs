@@ -209,6 +209,14 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
                 Mesh::new_with_materials(vertices, indices, normals, uvs, face_material_ids);
             mesh.ensure_normals();
 
+            // Store subdivision data for Embree subd geometry
+            mesh.subdivision_scheme = mesh_data.subdivision_scheme;
+            mesh.face_vertex_counts = mesh_data.face_vertex_counts.clone();
+            mesh.polygon_indices = mesh_data.face_vertex_indices.clone();
+            mesh.crease_indices = mesh_data.crease_indices.clone();
+            mesh.crease_lengths = mesh_data.crease_lengths.clone();
+            mesh.crease_sharpnesses = mesh_data.crease_sharpnesses.clone();
+
             let mesh_arc = Arc::new(mesh);
             let proto_id = scene.add_prototype(mesh_arc, mesh_data.path.clone());
             mesh_dedup.insert(dedup_key, proto_id);

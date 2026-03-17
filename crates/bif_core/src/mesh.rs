@@ -6,6 +6,8 @@
 
 use bif_math::{Aabb, Vec3};
 
+use crate::usd::SubdivisionScheme;
+
 /// A mesh consisting of vertex positions, optional normals, and triangle indices.
 ///
 /// This is the core geometry type used throughout BIF. It is intentionally
@@ -31,6 +33,24 @@ pub struct Mesh {
 
     /// Axis-aligned bounding box
     pub bounds: Aabb,
+
+    /// Subdivision scheme (None = polygonal mesh)
+    pub subdivision_scheme: SubdivisionScheme,
+
+    /// Original face vertex counts (polygon topology, for subdivision surfaces)
+    pub face_vertex_counts: Option<Vec<i32>>,
+
+    /// Original face vertex indices (polygon topology, for subdivision surfaces)
+    pub polygon_indices: Option<Vec<i32>>,
+
+    /// Crease edge vertex indices (pairs)
+    pub crease_indices: Option<Vec<i32>>,
+
+    /// Crease chain lengths
+    pub crease_lengths: Option<Vec<i32>>,
+
+    /// Crease sharpnesses (one per chain)
+    pub crease_sharpnesses: Option<Vec<f32>>,
 }
 
 impl Mesh {
@@ -47,6 +67,12 @@ impl Mesh {
             indices,
             face_material_ids: None,
             bounds,
+            subdivision_scheme: SubdivisionScheme::None,
+            face_vertex_counts: None,
+            polygon_indices: None,
+            crease_indices: None,
+            crease_lengths: None,
+            crease_sharpnesses: None,
         }
     }
 
@@ -65,6 +91,12 @@ impl Mesh {
             indices,
             face_material_ids: None,
             bounds,
+            subdivision_scheme: SubdivisionScheme::None,
+            face_vertex_counts: None,
+            polygon_indices: None,
+            crease_indices: None,
+            crease_lengths: None,
+            crease_sharpnesses: None,
         }
     }
 
@@ -84,6 +116,12 @@ impl Mesh {
             indices,
             face_material_ids,
             bounds,
+            subdivision_scheme: SubdivisionScheme::None,
+            face_vertex_counts: None,
+            polygon_indices: None,
+            crease_indices: None,
+            crease_lengths: None,
+            crease_sharpnesses: None,
         }
     }
 
