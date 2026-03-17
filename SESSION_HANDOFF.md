@@ -1,7 +1,7 @@
 # Session Handoff - March 16, 2026
 
-**Last Updated:** USD spec compliance sessions 1-8 complete (26 gaps addressed)
-**Next Milestone:** M29.5 egui upgrade. Deferred: UsdSkel, UsdVol, light linking (own milestones)
+**Last Updated:** USD spec compliance fully complete — all 26 gaps addressed
+**Next Milestone:** M29.5 egui upgrade
 **Project:** BIF - VFX Scene Assembler & Renderer
 
 ---

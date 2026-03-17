@@ -29,6 +29,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Payload read (has_payload, is_loaded on PrimInfo) + load/unload + payload write
 - Variant query (set names, variant names, selection) + set_variant_selection (re-composes stage)
 - BasisCurves read (points, widths, curveVertexCounts, type/basis/wrap)
+- Light linking: UsdCollectionAPI include/exclude paths per light
+- PrimInfo: has_inherits, has_specializes composition arc flags
+- UsdSkel read: skeleton topology, bind/rest transforms, skin binding (joint indices/weights)
+- UsdVol read: OpenVDB asset paths, field names, transforms
 - Mesh struct: subdivision_scheme, face_vertex_counts, polygon_indices, crease data fields
 - 50 new tests: bif_math camera/aabb/basis/frustum/interval (31), bif_renderer EXR negative frames (1), bif_viewer CLI parsing + click detection (19)
 - `Renderer::needs_redraw()` for conditional redraw in viewer
