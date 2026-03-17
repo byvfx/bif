@@ -272,6 +272,51 @@ struct UsdBridgePrimvarDataRaw {
     element_count: usize,
 }
 
+/// Curve type from C API
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
+enum UsdBridgeCurveTypeRaw {
+    Linear = 0,
+    Cubic = 1,
+}
+
+/// Curve basis from C API
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
+enum UsdBridgeCurveBasisRaw {
+    Bezier = 0,
+    Bspline = 1,
+    CatmullRom = 2,
+}
+
+/// Curve wrap from C API
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
+enum UsdBridgeCurveWrapRaw {
+    Nonperiodic = 0,
+    Periodic = 1,
+    Pinned = 2,
+}
+
+/// BasisCurves data from C API
+#[repr(C)]
+struct UsdBridgeCurvesDataRaw {
+    path: *const std::ffi::c_char,
+    points: *const f32,
+    point_count: usize,
+    widths: *const f32,
+    width_count: usize,
+    curve_vertex_counts: *const i32,
+    curve_count: usize,
+    curve_type: UsdBridgeCurveTypeRaw,
+    basis: UsdBridgeCurveBasisRaw,
+    wrap: UsdBridgeCurveWrapRaw,
+    transform: [f32; 16],
+}
+
 /// Up axis value from C API (populated by FFI)
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -757,6 +802,18 @@ extern "C" {
         variant_set_name: *const std::ffi::c_char,
         variant_name: *const std::ffi::c_char,
     ) -> UsdBridgeErrorCode;
+
+    // BasisCurves
+    fn usd_bridge_get_curves_count(
+        stage: *const UsdBridgeStageRaw,
+        out_count: *mut usize,
+    ) -> UsdBridgeErrorCode;
+
+    fn usd_bridge_get_curves(
+        stage: *const UsdBridgeStageRaw,
+        index: usize,
+        out_data: *mut UsdBridgeCurvesDataRaw,
+    ) -> UsdBridgeErrorCode;
 }
 
 // ============================================================================
@@ -1125,6 +1182,50 @@ pub struct UsdPointsData {
     pub normals: Option<Vec<Vec3>>,
     /// Per-point IDs (optional)
     pub ids: Option<Vec<i64>>,
+    /// World transform
+    pub transform: Mat4,
+}
+
+/// Curve type from USD BasisCurves.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CurveType {
+    Linear,
+    Cubic,
+}
+
+/// Curve basis from USD BasisCurves.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CurveBasis {
+    Bezier,
+    Bspline,
+    CatmullRom,
+}
+
+/// Curve wrap mode from USD BasisCurves.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CurveWrap {
+    Nonperiodic,
+    Periodic,
+    Pinned,
+}
+
+/// BasisCurves data extracted from USD.
+#[derive(Clone, Debug)]
+pub struct UsdCurvesData {
+    /// Prim path
+    pub path: String,
+    /// Control point positions
+    pub points: Vec<Vec3>,
+    /// Per-vertex or per-curve widths
+    pub widths: Option<Vec<f32>>,
+    /// Vertex counts per curve
+    pub curve_vertex_counts: Vec<i32>,
+    /// Curve type
+    pub curve_type: CurveType,
+    /// Curve basis (only meaningful for cubic)
+    pub basis: CurveBasis,
+    /// Wrap mode
+    pub wrap: CurveWrap,
     /// World transform
     pub transform: Mat4,
 }
@@ -2328,6 +2429,109 @@ impl UsdStage {
             pts.push(self.get_points(i)?);
         }
         Ok(pts)
+    }
+
+    // ========================================================================
+    // BasisCurves
+    // ========================================================================
+
+    /// Get the number of BasisCurves prims.
+    pub fn curves_count(&self) -> UsdBridgeResult<usize> {
+        let mut count: usize = 0;
+        let result = unsafe { usd_bridge_get_curves_count(self.raw, &mut count) };
+        if result != UsdBridgeErrorCode::Success {
+            return Err(result.into());
+        }
+        Ok(count)
+    }
+
+    /// Get curves data by index.
+    pub fn get_curves(&self, index: usize) -> UsdBridgeResult<UsdCurvesData> {
+        let mut raw = UsdBridgeCurvesDataRaw {
+            path: ptr::null(),
+            points: ptr::null(),
+            point_count: 0,
+            widths: ptr::null(),
+            width_count: 0,
+            curve_vertex_counts: ptr::null(),
+            curve_count: 0,
+            curve_type: UsdBridgeCurveTypeRaw::Linear,
+            basis: UsdBridgeCurveBasisRaw::Bezier,
+            wrap: UsdBridgeCurveWrapRaw::Nonperiodic,
+            transform: [0.0; 16],
+        };
+
+        let result = unsafe { usd_bridge_get_curves(self.raw, index, &mut raw) };
+        if result != UsdBridgeErrorCode::Success {
+            return Err(result.into());
+        }
+
+        let path = unsafe {
+            if raw.path.is_null() {
+                String::new()
+            } else {
+                CStr::from_ptr(raw.path).to_string_lossy().into_owned()
+            }
+        };
+
+        let points = unsafe {
+            if raw.points.is_null() || raw.point_count == 0 {
+                Vec::new()
+            } else {
+                let s = std::slice::from_raw_parts(raw.points, raw.point_count * 3);
+                s.chunks_exact(3)
+                    .map(|c| Vec3::new(c[0], c[1], c[2]))
+                    .collect()
+            }
+        };
+
+        let widths = unsafe {
+            if raw.widths.is_null() || raw.width_count == 0 {
+                None
+            } else {
+                Some(std::slice::from_raw_parts(raw.widths, raw.width_count).to_vec())
+            }
+        };
+
+        let curve_vertex_counts = unsafe {
+            if raw.curve_vertex_counts.is_null() || raw.curve_count == 0 {
+                Vec::new()
+            } else {
+                std::slice::from_raw_parts(raw.curve_vertex_counts, raw.curve_count).to_vec()
+            }
+        };
+
+        Ok(UsdCurvesData {
+            path,
+            points,
+            widths,
+            curve_vertex_counts,
+            curve_type: match raw.curve_type {
+                UsdBridgeCurveTypeRaw::Cubic => CurveType::Cubic,
+                _ => CurveType::Linear,
+            },
+            basis: match raw.basis {
+                UsdBridgeCurveBasisRaw::Bspline => CurveBasis::Bspline,
+                UsdBridgeCurveBasisRaw::CatmullRom => CurveBasis::CatmullRom,
+                _ => CurveBasis::Bezier,
+            },
+            wrap: match raw.wrap {
+                UsdBridgeCurveWrapRaw::Periodic => CurveWrap::Periodic,
+                UsdBridgeCurveWrapRaw::Pinned => CurveWrap::Pinned,
+                _ => CurveWrap::Nonperiodic,
+            },
+            transform: Mat4::from_cols_array(&raw.transform),
+        })
+    }
+
+    /// Get all BasisCurves prims.
+    pub fn curves(&self) -> UsdBridgeResult<Vec<UsdCurvesData>> {
+        let count = self.curves_count()?;
+        let mut curves = Vec::with_capacity(count);
+        for i in 0..count {
+            curves.push(self.get_curves(i)?);
+        }
+        Ok(curves)
     }
 
     // ========================================================================

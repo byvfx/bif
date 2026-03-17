@@ -23,6 +23,7 @@
 #include <pxr/usd/usdLux/diskLight.h>
 #include <pxr/usd/usdLux/shapingAPI.h>
 #include <pxr/usd/usdGeom/points.h>
+#include <pxr/usd/usdGeom/basisCurves.h>
 #include <pxr/usd/usdRender/settings.h>
 #include <pxr/base/gf/matrix4f.h>
 #include <pxr/base/gf/vec2f.h>
@@ -231,6 +232,18 @@ struct CachedPoints {
     float transform[16];
 };
 
+/// Cached BasisCurves data for FFI transfer
+struct CachedCurves {
+    std::string path;
+    std::vector<float> points;     // xyz triplets
+    std::vector<float> widths;
+    std::vector<int32_t> curve_vertex_counts;
+    UsdBridgeCurveType type = USD_CURVE_LINEAR;
+    UsdBridgeCurveBasis basis = USD_CURVE_BASIS_BEZIER;
+    UsdBridgeCurveWrap wrap = USD_CURVE_WRAP_NONPERIODIC;
+    float transform[16];
+};
+
 /// Cached primvar data for a mesh
 struct CachedPrimvar {
     std::string name;
@@ -254,12 +267,14 @@ struct UsdBridgeStage {
     std::vector<std::string> root_paths;    // Direct children of pseudo-root
     std::vector<const char*> root_path_ptrs;
     std::vector<CachedPoints> points_prims;
+    std::vector<CachedCurves> curves_prims;
     std::vector<std::vector<CachedPrimvar>> mesh_primvars;  // Per-mesh primvars
     bool cached;
     bool prims_cached;
     bool materials_cached;
     bool lights_cached;
     bool points_cached;
+    bool curves_cached;
     bool animation_cached;
 
     // Animation caches
@@ -269,7 +284,7 @@ struct UsdBridgeStage {
     std::vector<CachedVertexAnimation> vertex_animations;
     bool vertex_animation_cached;
 
-    UsdBridgeStage() : cached(false), prims_cached(false), materials_cached(false), lights_cached(false), points_cached(false), animation_cached(false), vertex_animation_cached(false) {}
+    UsdBridgeStage() : cached(false), prims_cached(false), materials_cached(false), lights_cached(false), points_cached(false), curves_cached(false), animation_cached(false), vertex_animation_cached(false) {}
 
     ~UsdBridgeStage() {
         // Clear cached data to ensure proper cleanup
@@ -1392,6 +1407,77 @@ static void cache_material_data(UsdBridgeStage* bridge) {
 }
 
 /// Cache all light data from the stage (UsdLux)
+/// Cache UsdGeomBasisCurves prims
+static void cache_curves_data(UsdBridgeStage* bridge) {
+    if (bridge->curves_cached) return;
+
+    bridge->curves_prims.clear();
+    UsdGeomXformCache xform_cache;
+
+    for (const UsdPrim& prim : bridge->stage->Traverse(
+            UsdTraverseInstanceProxies(UsdPrimDefaultPredicate))) {
+        if (!prim.IsA<UsdGeomBasisCurves>()) continue;
+
+        UsdGeomBasisCurves curvesPrim(prim);
+        CachedCurves cached;
+        cached.path = prim.GetPath().GetString();
+
+        // Points
+        VtArray<GfVec3f> points;
+        if (curvesPrim.GetPointsAttr().Get(&points)) {
+            cached.points.reserve(points.size() * 3);
+            for (const auto& p : points) {
+                cached.points.push_back(p[0]);
+                cached.points.push_back(p[1]);
+                cached.points.push_back(p[2]);
+            }
+        }
+
+        // Widths
+        VtArray<float> widths;
+        if (curvesPrim.GetWidthsAttr().Get(&widths)) {
+            cached.widths.assign(widths.begin(), widths.end());
+        }
+
+        // Curve vertex counts
+        VtArray<int> vertexCounts;
+        if (curvesPrim.GetCurveVertexCountsAttr().Get(&vertexCounts)) {
+            cached.curve_vertex_counts.assign(vertexCounts.begin(), vertexCounts.end());
+        }
+
+        // Type
+        TfToken typeToken;
+        if (curvesPrim.GetTypeAttr().Get(&typeToken)) {
+            if (typeToken == UsdGeomTokens->cubic) cached.type = USD_CURVE_CUBIC;
+            else cached.type = USD_CURVE_LINEAR;
+        }
+
+        // Basis
+        TfToken basisToken;
+        if (curvesPrim.GetBasisAttr().Get(&basisToken)) {
+            if (basisToken == UsdGeomTokens->bspline) cached.basis = USD_CURVE_BASIS_BSPLINE;
+            else if (basisToken == UsdGeomTokens->catmullRom) cached.basis = USD_CURVE_BASIS_CATMULL_ROM;
+            else cached.basis = USD_CURVE_BASIS_BEZIER;
+        }
+
+        // Wrap
+        TfToken wrapToken;
+        if (curvesPrim.GetWrapAttr().Get(&wrapToken)) {
+            if (wrapToken == UsdGeomTokens->periodic) cached.wrap = USD_CURVE_WRAP_PERIODIC;
+            else if (wrapToken == UsdGeomTokens->pinned) cached.wrap = USD_CURVE_WRAP_PINNED;
+            else cached.wrap = USD_CURVE_WRAP_NONPERIODIC;
+        }
+
+        // Transform
+        GfMatrix4d world_xform = xform_cache.GetLocalToWorldTransform(prim);
+        matrix_to_float16(world_xform, cached.transform);
+
+        bridge->curves_prims.push_back(std::move(cached));
+    }
+
+    bridge->curves_cached = true;
+}
+
 /// Cache UsdGeomPoints prims
 static void cache_points_data(UsdBridgeStage* bridge) {
     if (bridge->points_cached) return;
@@ -2927,6 +3013,46 @@ UsdBridgeError usd_bridge_get_points(
     out_data->ids = pts.ids.empty() ? nullptr : pts.ids.data();
     out_data->id_count = pts.ids.size();
     for (int i = 0; i < 16; ++i) out_data->transform[i] = pts.transform[i];
+
+    return USD_BRIDGE_SUCCESS;
+}
+
+// ============================================================================
+// BasisCurves API
+// ============================================================================
+
+UsdBridgeError usd_bridge_get_curves_count(
+    const UsdBridgeStage* stage,
+    size_t* out_count
+) {
+    if (!stage || !out_count) return USD_BRIDGE_ERROR_NULL_POINTER;
+    const_cast<UsdBridgeStage*>(stage)->curves_cached || (cache_curves_data(const_cast<UsdBridgeStage*>(stage)), true);
+    *out_count = stage->curves_prims.size();
+    return USD_BRIDGE_SUCCESS;
+}
+
+UsdBridgeError usd_bridge_get_curves(
+    const UsdBridgeStage* stage,
+    size_t index,
+    UsdBridgeCurvesData* out_data
+) {
+    if (!stage || !out_data) return USD_BRIDGE_ERROR_NULL_POINTER;
+    const_cast<UsdBridgeStage*>(stage)->curves_cached || (cache_curves_data(const_cast<UsdBridgeStage*>(stage)), true);
+
+    if (index >= stage->curves_prims.size()) return USD_BRIDGE_ERROR_INVALID_PRIM;
+
+    const CachedCurves& c = stage->curves_prims[index];
+    out_data->path = c.path.c_str();
+    out_data->points = c.points.empty() ? nullptr : c.points.data();
+    out_data->point_count = c.points.size() / 3;
+    out_data->widths = c.widths.empty() ? nullptr : c.widths.data();
+    out_data->width_count = c.widths.size();
+    out_data->curve_vertex_counts = c.curve_vertex_counts.empty() ? nullptr : c.curve_vertex_counts.data();
+    out_data->curve_count = c.curve_vertex_counts.size();
+    out_data->type = c.type;
+    out_data->basis = c.basis;
+    out_data->wrap = c.wrap;
+    for (int i = 0; i < 16; ++i) out_data->transform[i] = c.transform[i];
 
     return USD_BRIDGE_SUCCESS;
 }

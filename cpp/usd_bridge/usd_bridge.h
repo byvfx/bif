@@ -913,6 +913,73 @@ UsdBridgeError usd_bridge_get_points(
 );
 
 // ============================================================================
+// UsdGeomBasisCurves Data Extraction
+// ============================================================================
+
+/// Curve type enumeration
+typedef enum UsdBridgeCurveType {
+    USD_CURVE_LINEAR = 0,
+    USD_CURVE_CUBIC = 1,
+} UsdBridgeCurveType;
+
+/// Curve basis enumeration
+typedef enum UsdBridgeCurveBasis {
+    USD_CURVE_BASIS_BEZIER = 0,
+    USD_CURVE_BASIS_BSPLINE = 1,
+    USD_CURVE_BASIS_CATMULL_ROM = 2,
+} UsdBridgeCurveBasis;
+
+/// Curve wrap enumeration
+typedef enum UsdBridgeCurveWrap {
+    USD_CURVE_WRAP_NONPERIODIC = 0,
+    USD_CURVE_WRAP_PERIODIC = 1,
+    USD_CURVE_WRAP_PINNED = 2,
+} UsdBridgeCurveWrap;
+
+/// BasisCurves data structure for FFI transfer
+typedef struct UsdBridgeCurvesData {
+    /// Prim path
+    const char* path;
+
+    /// Control point positions (x, y, z triplets)
+    const float* points;
+    size_t point_count;
+
+    /// Per-vertex or per-curve widths (optional)
+    const float* widths;
+    size_t width_count;
+
+    /// Vertex counts per curve
+    const int32_t* curve_vertex_counts;
+    size_t curve_count;
+
+    /// Curve type (linear or cubic)
+    UsdBridgeCurveType type;
+
+    /// Curve basis (bezier, bspline, catmull-rom) — only meaningful for cubic
+    UsdBridgeCurveBasis basis;
+
+    /// Wrap mode (nonperiodic, periodic, pinned)
+    UsdBridgeCurveWrap wrap;
+
+    /// World transform (4x4 column-major matrix)
+    float transform[16];
+} UsdBridgeCurvesData;
+
+/// Get the number of UsdGeomBasisCurves prims in the stage.
+UsdBridgeError usd_bridge_get_curves_count(
+    const UsdBridgeStage* stage,
+    size_t* out_count
+);
+
+/// Get curves data by index.
+UsdBridgeError usd_bridge_get_curves(
+    const UsdBridgeStage* stage,
+    size_t index,
+    UsdBridgeCurvesData* out_data
+);
+
+// ============================================================================
 // Arbitrary Primvar Query API
 // ============================================================================
 
