@@ -723,6 +723,20 @@ pub fn is_udim_path(path: &str) -> bool {
     bif_core::texture::is_udim_path(path)
 }
 
+/// Normalize path for OS filesystem access.
+/// On Windows, converts forward-slash UNC paths (`//server/share/...`)
+/// to backslash UNC paths (`\\server\share\...`) that Windows APIs expect.
+fn normalize_path(path: &str) -> String {
+    #[cfg(target_os = "windows")]
+    {
+        path.replace('/', "\\")
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        path.to_string()
+    }
+}
+
 /// Scan filesystem for existing UDIM tiles matching the pattern.
 /// Returns a vec of (udim_id, path) sorted by UDIM ID.
 fn find_udim_tiles(pattern: &str) -> Vec<(u32, String)> {
@@ -730,11 +744,17 @@ fn find_udim_tiles(pattern: &str) -> Vec<(u32, String)> {
     // UDIM range: 1001..=1100 (10 columns x 10 rows)
     for udim in 1001..=1100 {
         let tile_path = pattern.replace("<UDIM>", &udim.to_string());
-        if Path::new(&tile_path).exists() {
-            tiles.push((udim, tile_path));
+        let normalized = normalize_path(&tile_path);
+        if Path::new(&normalized).exists() {
+            tiles.push((udim, normalized));
         }
     }
     tiles.sort_by_key(|(id, _)| *id);
+    log::debug!(
+        "UDIM tile scan (viewport): pattern={}, found {} tiles",
+        pattern,
+        tiles.len()
+    );
     tiles
 }
 
@@ -875,7 +895,8 @@ fn resolve_texture_path(
     fallback_base: Option<&std::path::Path>,
 ) -> String {
     let p = Path::new(tex_path);
-    if p.is_absolute() {
+    // UNC paths with forward slashes aren't recognized as absolute on Windows
+    if p.is_absolute() || tex_path.starts_with("//") {
         return tex_path.to_string();
     }
     // Resolve against material-level dir first, then fallback.

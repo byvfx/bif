@@ -297,6 +297,7 @@ impl Texture {
 /// Textures are loaded on-demand and cached for reuse.
 /// When the `oiio` feature is enabled, textures can be loaded with mipmaps
 /// and automatically converted to .tx format.
+#[derive(Clone)]
 pub struct TextureCache {
     /// Cached textures by file path
     textures: HashMap<String, Arc<Texture>>,
@@ -753,14 +754,32 @@ impl TextureCache {
         self.textures.clear();
     }
 
+    /// Remove textures only held by the cache (strong_count == 1).
+    /// Call after rebuilding materials to free orphaned texture RAM.
+    pub fn sweep_unreferenced(&mut self) -> usize {
+        let before = self.textures.len();
+        self.textures.retain(|_, arc| Arc::strong_count(arc) > 1);
+        let freed = before - self.textures.len();
+        if freed > 0 {
+            log::info!(
+                "TextureCache: swept {} unreferenced textures ({} remain)",
+                freed,
+                self.textures.len()
+            );
+        }
+        freed
+    }
+
     /// Get total memory usage of cached textures.
     pub fn total_size_bytes(&self) -> usize {
         self.textures.values().map(|t| t.size_bytes()).sum()
     }
 
     /// Resolve a path relative to the base directory.
+    /// Normalizes forward-slash UNC paths on Windows before checking.
     fn resolve_path(&self, path: &str) -> PathBuf {
-        let path = Path::new(path);
+        let normalized = normalize_path(path);
+        let path = Path::new(&normalized);
 
         if path.is_absolute() {
             path.to_path_buf()
@@ -972,6 +991,20 @@ const MAX_IVAR_ATLAS_SIZE: u32 = 8192;
 /// 16M pixels * 16 bytes/pixel = 256 MB.
 const MAX_IVAR_ATLAS_PIXELS: u64 = 16_777_216;
 
+/// Normalize path for OS filesystem access.
+/// On Windows, converts forward-slash UNC paths (`//server/share/...`)
+/// to backslash UNC paths (`\\server\share\...`) that Windows APIs expect.
+fn normalize_path(path: &str) -> String {
+    #[cfg(target_os = "windows")]
+    {
+        path.replace('/', "\\")
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        path.to_string()
+    }
+}
+
 /// Check if a texture path contains a UDIM token (`<UDIM>`).
 pub fn is_udim_path(path: &str) -> bool {
     path.contains("<UDIM>")
@@ -983,10 +1016,16 @@ fn find_udim_tiles(pattern: &str) -> Vec<(u32, String)> {
     let mut tiles = Vec::new();
     for udim in 1001..=1200 {
         let tile_path = pattern.replace("<UDIM>", &udim.to_string());
-        if Path::new(&tile_path).exists() {
-            tiles.push((udim, tile_path));
+        let normalized = normalize_path(&tile_path);
+        if Path::new(&normalized).exists() {
+            tiles.push((udim, normalized));
         }
     }
+    log::debug!(
+        "UDIM tile scan: pattern={}, found {} tiles",
+        pattern,
+        tiles.len()
+    );
     tiles
 }
 
@@ -1140,6 +1179,62 @@ mod tests {
             "expected blue, got {:?}",
             color
         );
+    }
+
+    #[test]
+    fn test_sweep_unreferenced() {
+        let mut cache = TextureCache::new();
+
+        // Insert two textures
+        let tex_a = Arc::new(Texture::solid_color(Vec3::new(1.0, 0.0, 0.0)));
+        let tex_b = Arc::new(Texture::solid_color(Vec3::new(0.0, 1.0, 0.0)));
+
+        cache.textures.insert("a".to_string(), tex_a.clone());
+        cache.textures.insert("b".to_string(), tex_b.clone());
+        assert_eq!(cache.len(), 2);
+
+        // Both have external refs (strong_count > 1) — sweep should free nothing
+        assert_eq!(cache.sweep_unreferenced(), 0);
+        assert_eq!(cache.len(), 2);
+
+        // Drop external ref to tex_b — now only cache holds it (strong_count == 1)
+        drop(tex_b);
+        assert_eq!(cache.sweep_unreferenced(), 1);
+        assert_eq!(cache.len(), 1);
+        assert!(cache.is_cached("a"));
+        assert!(!cache.is_cached("b"));
+
+        // Drop external ref to tex_a — sweep should free it too
+        drop(tex_a);
+        assert_eq!(cache.sweep_unreferenced(), 1);
+        assert!(cache.is_empty());
+    }
+
+    #[test]
+    fn test_normalize_path_unc() {
+        let result = normalize_path("//server/share/textures/diffuse.png");
+        #[cfg(target_os = "windows")]
+        assert_eq!(result, r"\\server\share\textures\diffuse.png");
+        #[cfg(not(target_os = "windows"))]
+        assert_eq!(result, "//server/share/textures/diffuse.png");
+    }
+
+    #[test]
+    fn test_normalize_path_regular() {
+        let result = normalize_path("textures/diffuse.png");
+        #[cfg(target_os = "windows")]
+        assert_eq!(result, r"textures\diffuse.png");
+        #[cfg(not(target_os = "windows"))]
+        assert_eq!(result, "textures/diffuse.png");
+    }
+
+    #[test]
+    fn test_normalize_path_already_backslash() {
+        let result = normalize_path(r"\\server\share\diffuse.png");
+        #[cfg(target_os = "windows")]
+        assert_eq!(result, r"\\server\share\diffuse.png");
+        #[cfg(not(target_os = "windows"))]
+        assert_eq!(result, r"\\server\share\diffuse.png");
     }
 
     #[test]
