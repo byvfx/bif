@@ -136,6 +136,8 @@ struct UsdBridgePrimInfoRaw {
     has_payload: i32,
     is_loaded: i32,
     variant_set_count: usize,
+    has_inherits: i32,
+    has_specializes: i32,
 }
 
 /// Timeline data from C API
@@ -222,6 +224,42 @@ struct UsdBridgeLightDataRaw {
     shaping_cone_softness: f32,
     shaping_focus: f32,
     shaping_ies_file: *const std::ffi::c_char,
+    light_link_includes: *const *const std::ffi::c_char,
+    light_link_include_count: usize,
+    light_link_excludes: *const *const std::ffi::c_char,
+    light_link_exclude_count: usize,
+}
+
+/// Skeleton data from C API
+#[repr(C)]
+struct UsdBridgeSkeletonDataRaw {
+    path: *const std::ffi::c_char,
+    joint_paths: *const *const std::ffi::c_char,
+    joint_count: usize,
+    bind_transforms: *const f32,
+    rest_transforms: *const f32,
+}
+
+/// Skin binding data from C API
+#[repr(C)]
+struct UsdBridgeSkinBindingDataRaw {
+    mesh_path: *const std::ffi::c_char,
+    skeleton_path: *const std::ffi::c_char,
+    joint_indices: *const i32,
+    joint_indices_count: usize,
+    joint_weights: *const f32,
+    joint_weights_count: usize,
+    joint_indices_element_size: usize,
+    geom_bind_transform: [f32; 16],
+}
+
+/// Volume data from C API
+#[repr(C)]
+struct UsdBridgeVolumeDataRaw {
+    path: *const std::ffi::c_char,
+    vdb_file_path: *const std::ffi::c_char,
+    field_name: *const std::ffi::c_char,
+    transform: [f32; 16],
 }
 
 /// Points data from C API (UsdGeomPoints)
@@ -814,6 +852,39 @@ extern "C" {
         index: usize,
         out_data: *mut UsdBridgeCurvesDataRaw,
     ) -> UsdBridgeErrorCode;
+
+    // Skeleton
+    fn usd_bridge_get_skeleton_count(
+        stage: *const UsdBridgeStageRaw,
+        out_count: *mut usize,
+    ) -> UsdBridgeErrorCode;
+
+    fn usd_bridge_get_skeleton(
+        stage: *const UsdBridgeStageRaw,
+        index: usize,
+        out_data: *mut UsdBridgeSkeletonDataRaw,
+    ) -> UsdBridgeErrorCode;
+
+    fn usd_bridge_get_skin_binding(
+        stage: *const UsdBridgeStageRaw,
+        mesh_index: usize,
+        out_data: *mut UsdBridgeSkinBindingDataRaw,
+    ) -> UsdBridgeErrorCode;
+
+    // Volumes
+    fn usd_bridge_get_volume_count(
+        stage: *const UsdBridgeStageRaw,
+        out_count: *mut usize,
+    ) -> UsdBridgeErrorCode;
+
+    fn usd_bridge_get_volume(
+        stage: *const UsdBridgeStageRaw,
+        index: usize,
+        out_data: *mut UsdBridgeVolumeDataRaw,
+    ) -> UsdBridgeErrorCode;
+
+    // Collection material binding handled by existing get_mesh_material_path
+    // (ComputeBoundMaterial resolves both direct and collection-based bindings)
 }
 
 // ============================================================================
@@ -1046,6 +1117,12 @@ pub struct UsdPrimInfo {
 
     /// Number of variant sets
     pub variant_set_count: usize,
+
+    /// Whether prim has inherit arcs
+    pub has_inherits: bool,
+
+    /// Whether prim has specializes arcs
+    pub has_specializes: bool,
 }
 
 /// Material data extracted from USD (UsdPreviewSurface or MaterialX).
@@ -1230,6 +1307,49 @@ pub struct UsdCurvesData {
     pub transform: Mat4,
 }
 
+/// Skeleton data extracted from USD (UsdSkelSkeleton).
+#[derive(Clone, Debug)]
+pub struct UsdSkeletonData {
+    /// Prim path
+    pub path: String,
+    /// Joint paths (topology)
+    pub joint_paths: Vec<String>,
+    /// Bind transforms (one Mat4 per joint)
+    pub bind_transforms: Vec<Mat4>,
+    /// Rest transforms (one Mat4 per joint)
+    pub rest_transforms: Vec<Mat4>,
+}
+
+/// Skin binding data for a skinned mesh.
+#[derive(Clone, Debug)]
+pub struct UsdSkinBindingData {
+    /// Mesh prim path
+    pub mesh_path: String,
+    /// Skeleton prim path
+    pub skeleton_path: String,
+    /// Joint indices per vertex (flat, element_size per vertex)
+    pub joint_indices: Vec<i32>,
+    /// Joint weights per vertex (flat, same layout as indices)
+    pub joint_weights: Vec<f32>,
+    /// Number of influences per vertex
+    pub element_size: usize,
+    /// Geom bind transform
+    pub geom_bind_transform: Mat4,
+}
+
+/// Volume data extracted from USD (UsdVol).
+#[derive(Clone, Debug)]
+pub struct UsdVolumeData {
+    /// Prim path
+    pub path: String,
+    /// OpenVDB file path
+    pub vdb_file_path: Option<String>,
+    /// Field name within VDB (e.g., "density")
+    pub field_name: Option<String>,
+    /// World transform
+    pub transform: Mat4,
+}
+
 /// USD prim specifier — how the prim opinion is authored.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum UsdSpecifier {
@@ -1401,6 +1521,12 @@ pub struct UsdLightData {
 
     /// ShapingAPI data (spotlight cone, IES)
     pub shaping: UsdLightShaping,
+
+    /// Light linking: include paths
+    pub light_link_includes: Vec<String>,
+
+    /// Light linking: exclude paths
+    pub light_link_excludes: Vec<String>,
 }
 
 /// Timeline metadata extracted from USD stage.
@@ -2244,6 +2370,10 @@ impl UsdStage {
             shaping_cone_softness: 0.0,
             shaping_focus: 0.0,
             shaping_ies_file: ptr::null(),
+            light_link_includes: ptr::null(),
+            light_link_include_count: 0,
+            light_link_excludes: ptr::null(),
+            light_link_exclude_count: 0,
         };
 
         let result = unsafe { usd_bridge_get_light(self.raw, index, &mut raw_data) };
@@ -2315,6 +2445,36 @@ impl UsdStage {
                         Some(s)
                     }
                 },
+            },
+            light_link_includes: unsafe {
+                if raw_data.light_link_includes.is_null() || raw_data.light_link_include_count == 0
+                {
+                    Vec::new()
+                } else {
+                    let ptrs = std::slice::from_raw_parts(
+                        raw_data.light_link_includes,
+                        raw_data.light_link_include_count,
+                    );
+                    ptrs.iter()
+                        .filter(|&&p| !p.is_null())
+                        .map(|&p| CStr::from_ptr(p).to_string_lossy().into_owned())
+                        .collect()
+                }
+            },
+            light_link_excludes: unsafe {
+                if raw_data.light_link_excludes.is_null() || raw_data.light_link_exclude_count == 0
+                {
+                    Vec::new()
+                } else {
+                    let ptrs = std::slice::from_raw_parts(
+                        raw_data.light_link_excludes,
+                        raw_data.light_link_exclude_count,
+                    );
+                    ptrs.iter()
+                        .filter(|&&p| !p.is_null())
+                        .map(|&p| CStr::from_ptr(p).to_string_lossy().into_owned())
+                        .collect()
+                }
             },
         })
     }
@@ -2532,6 +2692,214 @@ impl UsdStage {
             curves.push(self.get_curves(i)?);
         }
         Ok(curves)
+    }
+
+    // ========================================================================
+    // Skeleton
+    // ========================================================================
+
+    /// Get skeleton count.
+    pub fn skeleton_count(&self) -> UsdBridgeResult<usize> {
+        let mut count: usize = 0;
+        let result = unsafe { usd_bridge_get_skeleton_count(self.raw, &mut count) };
+        if result != UsdBridgeErrorCode::Success {
+            return Err(result.into());
+        }
+        Ok(count)
+    }
+
+    /// Get skeleton data by index.
+    pub fn get_skeleton(&self, index: usize) -> UsdBridgeResult<UsdSkeletonData> {
+        let mut raw = UsdBridgeSkeletonDataRaw {
+            path: ptr::null(),
+            joint_paths: ptr::null(),
+            joint_count: 0,
+            bind_transforms: ptr::null(),
+            rest_transforms: ptr::null(),
+        };
+        let result = unsafe { usd_bridge_get_skeleton(self.raw, index, &mut raw) };
+        if result != UsdBridgeErrorCode::Success {
+            return Err(result.into());
+        }
+
+        let path = unsafe {
+            if raw.path.is_null() {
+                String::new()
+            } else {
+                CStr::from_ptr(raw.path).to_string_lossy().into_owned()
+            }
+        };
+
+        let joint_paths = unsafe {
+            if raw.joint_paths.is_null() || raw.joint_count == 0 {
+                Vec::new()
+            } else {
+                let ptrs = std::slice::from_raw_parts(raw.joint_paths, raw.joint_count);
+                ptrs.iter()
+                    .map(|&p| {
+                        if p.is_null() {
+                            String::new()
+                        } else {
+                            CStr::from_ptr(p).to_string_lossy().into_owned()
+                        }
+                    })
+                    .collect()
+            }
+        };
+
+        let bind_transforms = unsafe {
+            if raw.bind_transforms.is_null() || raw.joint_count == 0 {
+                Vec::new()
+            } else {
+                let s = std::slice::from_raw_parts(raw.bind_transforms, raw.joint_count * 16);
+                s.chunks_exact(16)
+                    .map(|c| {
+                        let mut arr = [0.0f32; 16];
+                        arr.copy_from_slice(c);
+                        Mat4::from_cols_array(&arr)
+                    })
+                    .collect()
+            }
+        };
+
+        let rest_transforms = unsafe {
+            if raw.rest_transforms.is_null() || raw.joint_count == 0 {
+                Vec::new()
+            } else {
+                let s = std::slice::from_raw_parts(raw.rest_transforms, raw.joint_count * 16);
+                s.chunks_exact(16)
+                    .map(|c| {
+                        let mut arr = [0.0f32; 16];
+                        arr.copy_from_slice(c);
+                        Mat4::from_cols_array(&arr)
+                    })
+                    .collect()
+            }
+        };
+
+        Ok(UsdSkeletonData {
+            path,
+            joint_paths,
+            bind_transforms,
+            rest_transforms,
+        })
+    }
+
+    /// Get skin binding for a mesh (if it has UsdSkelBindingAPI).
+    pub fn get_skin_binding(&self, mesh_index: usize) -> UsdBridgeResult<UsdSkinBindingData> {
+        let mut raw = UsdBridgeSkinBindingDataRaw {
+            mesh_path: ptr::null(),
+            skeleton_path: ptr::null(),
+            joint_indices: ptr::null(),
+            joint_indices_count: 0,
+            joint_weights: ptr::null(),
+            joint_weights_count: 0,
+            joint_indices_element_size: 0,
+            geom_bind_transform: [0.0; 16],
+        };
+        let result = unsafe { usd_bridge_get_skin_binding(self.raw, mesh_index, &mut raw) };
+        if result != UsdBridgeErrorCode::Success {
+            return Err(result.into());
+        }
+
+        Ok(UsdSkinBindingData {
+            mesh_path: unsafe {
+                if raw.mesh_path.is_null() {
+                    String::new()
+                } else {
+                    CStr::from_ptr(raw.mesh_path).to_string_lossy().into_owned()
+                }
+            },
+            skeleton_path: unsafe {
+                if raw.skeleton_path.is_null() {
+                    String::new()
+                } else {
+                    CStr::from_ptr(raw.skeleton_path)
+                        .to_string_lossy()
+                        .into_owned()
+                }
+            },
+            joint_indices: unsafe {
+                if raw.joint_indices.is_null() || raw.joint_indices_count == 0 {
+                    Vec::new()
+                } else {
+                    std::slice::from_raw_parts(raw.joint_indices, raw.joint_indices_count).to_vec()
+                }
+            },
+            joint_weights: unsafe {
+                if raw.joint_weights.is_null() || raw.joint_weights_count == 0 {
+                    Vec::new()
+                } else {
+                    std::slice::from_raw_parts(raw.joint_weights, raw.joint_weights_count).to_vec()
+                }
+            },
+            element_size: raw.joint_indices_element_size,
+            geom_bind_transform: Mat4::from_cols_array(&raw.geom_bind_transform),
+        })
+    }
+
+    // ========================================================================
+    // Volumes
+    // ========================================================================
+
+    /// Get volume count.
+    pub fn volume_count(&self) -> UsdBridgeResult<usize> {
+        let mut count: usize = 0;
+        let result = unsafe { usd_bridge_get_volume_count(self.raw, &mut count) };
+        if result != UsdBridgeErrorCode::Success {
+            return Err(result.into());
+        }
+        Ok(count)
+    }
+
+    /// Get volume data by index.
+    pub fn get_volume(&self, index: usize) -> UsdBridgeResult<UsdVolumeData> {
+        let mut raw = UsdBridgeVolumeDataRaw {
+            path: ptr::null(),
+            vdb_file_path: ptr::null(),
+            field_name: ptr::null(),
+            transform: [0.0; 16],
+        };
+        let result = unsafe { usd_bridge_get_volume(self.raw, index, &mut raw) };
+        if result != UsdBridgeErrorCode::Success {
+            return Err(result.into());
+        }
+
+        let to_opt_string = |p: *const std::ffi::c_char| -> Option<String> {
+            if p.is_null() {
+                None
+            } else {
+                let s = unsafe { CStr::from_ptr(p).to_string_lossy().into_owned() };
+                if s.is_empty() {
+                    None
+                } else {
+                    Some(s)
+                }
+            }
+        };
+
+        Ok(UsdVolumeData {
+            path: unsafe {
+                if raw.path.is_null() {
+                    String::new()
+                } else {
+                    CStr::from_ptr(raw.path).to_string_lossy().into_owned()
+                }
+            },
+            vdb_file_path: to_opt_string(raw.vdb_file_path),
+            field_name: to_opt_string(raw.field_name),
+            transform: Mat4::from_cols_array(&raw.transform),
+        })
+    }
+
+    /// Get all volumes.
+    pub fn volumes(&self) -> UsdBridgeResult<Vec<UsdVolumeData>> {
+        let count = self.volume_count()?;
+        let mut vols = Vec::with_capacity(count);
+        for i in 0..count {
+            vols.push(self.get_volume(i)?);
+        }
+        Ok(vols)
     }
 
     // ========================================================================
@@ -3175,6 +3543,8 @@ impl UsdStage {
             has_payload: 0,
             is_loaded: 1,
             variant_set_count: 0,
+            has_inherits: 0,
+            has_specializes: 0,
         };
 
         let result = unsafe { usd_bridge_get_prim_info(self.raw, index, &mut raw_info) };
@@ -3204,6 +3574,8 @@ impl UsdStage {
             has_payload: 0,
             is_loaded: 1,
             variant_set_count: 0,
+            has_inherits: 0,
+            has_specializes: 0,
         };
 
         let result =
@@ -3332,6 +3704,8 @@ impl UsdStage {
             has_payload: raw.has_payload != 0,
             is_loaded: raw.is_loaded != 0,
             variant_set_count: raw.variant_set_count,
+            has_inherits: raw.has_inherits != 0,
+            has_specializes: raw.has_specializes != 0,
         })
     }
 }

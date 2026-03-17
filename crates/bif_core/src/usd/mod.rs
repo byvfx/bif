@@ -44,8 +44,8 @@ pub use cpp_bridge::{
     PrimvarInterpolation, PrimvarType, SubdivisionScheme, TransformSample,
     UsdAnimatedInstancerData, UsdAnimatedMeshData, UsdBridgeError, UsdCurvesData, UsdEditLayer,
     UsdInstancerData, UsdKind, UsdLightData, UsdLightShaping, UsdLightType, UsdMeshData,
-    UsdNativeInstance, UsdPointsData, UsdPrimType, UsdPrimvarData, UsdSpecifier, UsdStage,
-    UsdTimelineData,
+    UsdNativeInstance, UsdPointsData, UsdPrimType, UsdPrimvarData, UsdSkeletonData,
+    UsdSkinBindingData, UsdSpecifier, UsdStage, UsdTimelineData, UsdVolumeData,
 };
 pub use export::{AuthoredPrim, ExportConfig, ExportResult};
 pub use loader::{

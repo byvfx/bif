@@ -627,6 +627,12 @@ typedef struct UsdBridgePrimInfo {
 
     /// Number of variant sets on this prim
     size_t variant_set_count;
+
+    /// 1 if prim has inherit arcs
+    int has_inherits;
+
+    /// 1 if prim has specializes arcs
+    int has_specializes;
 } UsdBridgePrimInfo;
 
 /// Get the total number of prims in the stage (including all types).
@@ -845,6 +851,14 @@ typedef struct UsdBridgeLightData {
 
     /// ShapingAPI: IES profile path (NULL if none)
     const char* shaping_ies_file;
+
+    /// Light linking: include paths (array of strings, NULL if no light linking)
+    const char* const* light_link_includes;
+    size_t light_link_include_count;
+
+    /// Light linking: exclude paths (array of strings, NULL if none)
+    const char* const* light_link_excludes;
+    size_t light_link_exclude_count;
 } UsdBridgeLightData;
 
 /// Get the number of lights in the stage.
@@ -1033,6 +1047,115 @@ UsdBridgeError usd_bridge_get_mesh_primvar(
     size_t mesh_index,
     size_t primvar_index,
     UsdBridgePrimvarData* out_data
+);
+
+// ============================================================================
+// Collection Material Binding
+// ============================================================================
+
+/// Get the material path bound to a mesh via collection-based binding.
+/// Falls back to direct binding if no collection binding found.
+/// Returns empty string if no material is bound.
+UsdBridgeError usd_bridge_get_mesh_collection_material_path(
+    const UsdBridgeStage* stage,
+    size_t mesh_index,
+    const char** out_path
+);
+
+// ============================================================================
+// UsdSkel Data Extraction
+// ============================================================================
+
+/// Skeleton data for FFI transfer
+typedef struct UsdBridgeSkeletonData {
+    /// Prim path
+    const char* path;
+
+    /// Joint paths (array of token strings, e.g., "Hips/Spine/Chest")
+    const char* const* joint_paths;
+    size_t joint_count;
+
+    /// Bind transforms (4x4 column-major per joint, joint_count * 16 floats)
+    const float* bind_transforms;
+
+    /// Rest transforms (4x4 column-major per joint, joint_count * 16 floats)
+    const float* rest_transforms;
+} UsdBridgeSkeletonData;
+
+/// Skin binding data for a skinned mesh
+typedef struct UsdBridgeSkinBindingData {
+    /// Mesh prim path
+    const char* mesh_path;
+
+    /// Skeleton prim path this mesh is bound to
+    const char* skeleton_path;
+
+    /// Joint indices per vertex (joint_indices_element_size per vertex)
+    const int32_t* joint_indices;
+    size_t joint_indices_count;
+
+    /// Joint weights per vertex (same layout as joint_indices)
+    const float* joint_weights;
+    size_t joint_weights_count;
+
+    /// Number of influences per vertex
+    size_t joint_indices_element_size;
+
+    /// Geom bind transform (4x4 column-major)
+    float geom_bind_transform[16];
+} UsdBridgeSkinBindingData;
+
+/// Get the number of UsdSkelSkeleton prims.
+UsdBridgeError usd_bridge_get_skeleton_count(
+    const UsdBridgeStage* stage,
+    size_t* out_count
+);
+
+/// Get skeleton data by index.
+UsdBridgeError usd_bridge_get_skeleton(
+    const UsdBridgeStage* stage,
+    size_t index,
+    UsdBridgeSkeletonData* out_data
+);
+
+/// Get skin binding data for a mesh (if it has UsdSkelBindingAPI).
+/// Returns USD_BRIDGE_ERROR_INVALID_PRIM if mesh has no skin binding.
+UsdBridgeError usd_bridge_get_skin_binding(
+    const UsdBridgeStage* stage,
+    size_t mesh_index,
+    UsdBridgeSkinBindingData* out_data
+);
+
+// ============================================================================
+// UsdVol Data Extraction
+// ============================================================================
+
+/// Volume data for FFI transfer
+typedef struct UsdBridgeVolumeData {
+    /// Prim path
+    const char* path;
+
+    /// OpenVDB file path (resolved)
+    const char* vdb_file_path;
+
+    /// Field name within the VDB file (e.g., "density", "temperature")
+    const char* field_name;
+
+    /// World transform (4x4 column-major matrix)
+    float transform[16];
+} UsdBridgeVolumeData;
+
+/// Get the number of volume prims in the stage.
+UsdBridgeError usd_bridge_get_volume_count(
+    const UsdBridgeStage* stage,
+    size_t* out_count
+);
+
+/// Get volume data by index.
+UsdBridgeError usd_bridge_get_volume(
+    const UsdBridgeStage* stage,
+    size_t index,
+    UsdBridgeVolumeData* out_data
 );
 
 // ============================================================================

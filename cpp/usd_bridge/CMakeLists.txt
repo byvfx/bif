@@ -32,6 +32,8 @@ target_link_libraries(usd_bridge PUBLIC
     usdShade
     usdLux
     usdRender
+    usdSkel
+    usdVol
     kind
     sdf
     tf

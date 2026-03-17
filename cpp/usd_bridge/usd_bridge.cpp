@@ -36,6 +36,14 @@
 #include <pxr/usd/usd/references.h>
 #include <pxr/usd/usd/payloads.h>
 #include <pxr/usd/usd/variantSets.h>
+#include <pxr/usd/usd/inherits.h>
+#include <pxr/usd/usd/specializes.h>
+#include <pxr/usd/usd/collectionAPI.h>
+#include <pxr/usd/usdSkel/skeleton.h>
+#include <pxr/usd/usdSkel/bindingAPI.h>
+#include <pxr/usd/usdSkel/cache.h>
+#include <pxr/usd/usdVol/volume.h>
+#include <pxr/usd/usdVol/openVDBAsset.h>
 #include <pxr/usd/usdGeom/metrics.h>
 #include <pxr/usd/ar/resolver.h>
 #include <pxr/usd/ar/resolverContextBinder.h>
@@ -150,6 +158,8 @@ struct CachedPrimInfo {
     bool is_loaded = true;
     size_t variant_set_count = 0;
     std::vector<std::string> variant_set_names;
+    bool has_inherits = false;
+    bool has_specializes = false;
 };
 
 /// Cached animation sample for a single time
@@ -220,6 +230,12 @@ struct CachedLight {
     float shaping_cone_softness = 0.0f;
     float shaping_focus = 0.0f;
     std::string shaping_ies_file;
+
+    // Light linking
+    std::vector<std::string> light_link_includes;
+    std::vector<const char*> light_link_include_ptrs;
+    std::vector<std::string> light_link_excludes;
+    std::vector<const char*> light_link_exclude_ptrs;
 };
 
 /// Cached UsdGeomPoints data for FFI transfer
@@ -241,6 +257,34 @@ struct CachedCurves {
     UsdBridgeCurveType type = USD_CURVE_LINEAR;
     UsdBridgeCurveBasis basis = USD_CURVE_BASIS_BEZIER;
     UsdBridgeCurveWrap wrap = USD_CURVE_WRAP_NONPERIODIC;
+    float transform[16];
+};
+
+/// Cached skeleton data
+struct CachedSkeleton {
+    std::string path;
+    std::vector<std::string> joint_paths;
+    std::vector<const char*> joint_path_ptrs;
+    std::vector<float> bind_transforms;  // joint_count * 16
+    std::vector<float> rest_transforms;  // joint_count * 16
+};
+
+/// Cached skin binding for a mesh
+struct CachedSkinBinding {
+    std::string mesh_path;
+    std::string skeleton_path;
+    std::vector<int32_t> joint_indices;
+    std::vector<float> joint_weights;
+    size_t element_size = 0;
+    float geom_bind_transform[16];
+    bool valid = false;
+};
+
+/// Cached volume data
+struct CachedVolume {
+    std::string path;
+    std::string vdb_file_path;
+    std::string field_name;
     float transform[16];
 };
 
@@ -268,6 +312,9 @@ struct UsdBridgeStage {
     std::vector<const char*> root_path_ptrs;
     std::vector<CachedPoints> points_prims;
     std::vector<CachedCurves> curves_prims;
+    std::vector<CachedSkeleton> skeletons;
+    std::vector<CachedSkinBinding> skin_bindings;  // Per-mesh
+    std::vector<CachedVolume> volumes;
     std::vector<std::vector<CachedPrimvar>> mesh_primvars;  // Per-mesh primvars
     bool cached;
     bool prims_cached;
@@ -275,6 +322,8 @@ struct UsdBridgeStage {
     bool lights_cached;
     bool points_cached;
     bool curves_cached;
+    bool skeletons_cached;
+    bool volumes_cached;
     bool animation_cached;
 
     // Animation caches
@@ -284,7 +333,7 @@ struct UsdBridgeStage {
     std::vector<CachedVertexAnimation> vertex_animations;
     bool vertex_animation_cached;
 
-    UsdBridgeStage() : cached(false), prims_cached(false), materials_cached(false), lights_cached(false), points_cached(false), curves_cached(false), animation_cached(false), vertex_animation_cached(false) {}
+    UsdBridgeStage() : cached(false), prims_cached(false), materials_cached(false), lights_cached(false), points_cached(false), curves_cached(false), skeletons_cached(false), volumes_cached(false), animation_cached(false), vertex_animation_cached(false) {}
 
     ~UsdBridgeStage() {
         // Clear cached data to ensure proper cleanup
@@ -397,6 +446,10 @@ static void cache_prim_data(UsdBridgeStage* bridge) {
         std::vector<std::string> setNames = variantSets.GetNames();
         info.variant_set_count = setNames.size();
         info.variant_set_names = std::move(setNames);
+
+        // Composition arcs
+        info.has_inherits = prim.HasAuthoredInherits();
+        info.has_specializes = prim.HasAuthoredSpecializes();
 
         bridge->all_prims.push_back(std::move(info));
     }
@@ -1775,6 +1828,33 @@ static void cache_light_data(UsdBridgeStage* bridge) {
             }
         }
 
+        // Light linking (UsdCollectionAPI named "lightLink")
+        if (UsdCollectionAPI::CanContainPropertyName(TfToken("collection:lightLink:includeRoot"))) {
+            UsdCollectionAPI lightLink = UsdCollectionAPI::Get(prim, TfToken("lightLink"));
+            if (lightLink) {
+                SdfPathVector includes, excludes;
+                UsdCollectionAPI::MembershipQuery query = lightLink.ComputeMembershipQuery();
+                // Get the include/exclude rules from the collection
+                SdfPathExpression pathExpr;
+                if (lightLink.GetIncludesRel().GetForwardedTargets(&includes)) {
+                    for (const auto& p : includes) {
+                        light.light_link_includes.push_back(p.GetString());
+                    }
+                }
+                if (lightLink.GetExcludesRel().GetForwardedTargets(&excludes)) {
+                    for (const auto& p : excludes) {
+                        light.light_link_excludes.push_back(p.GetString());
+                    }
+                }
+                for (const auto& s : light.light_link_includes) {
+                    light.light_link_include_ptrs.push_back(s.c_str());
+                }
+                for (const auto& s : light.light_link_excludes) {
+                    light.light_link_exclude_ptrs.push_back(s.c_str());
+                }
+            }
+        }
+
         bridge->lights.push_back(std::move(light));
     }
 
@@ -2212,6 +2292,8 @@ UsdBridgeError usd_bridge_get_prim_info(
     out_info->has_payload = info.has_payload ? 1 : 0;
     out_info->is_loaded = info.is_loaded ? 1 : 0;
     out_info->variant_set_count = info.variant_set_count;
+    out_info->has_inherits = info.has_inherits ? 1 : 0;
+    out_info->has_specializes = info.has_specializes ? 1 : 0;
 
     return USD_BRIDGE_SUCCESS;
 }
@@ -2337,6 +2419,8 @@ UsdBridgeError usd_bridge_get_prim_info_by_path(
             out_info->has_payload = info.has_payload ? 1 : 0;
             out_info->is_loaded = info.is_loaded ? 1 : 0;
             out_info->variant_set_count = info.variant_set_count;
+            out_info->has_inherits = info.has_inherits ? 1 : 0;
+            out_info->has_specializes = info.has_specializes ? 1 : 0;
             return USD_BRIDGE_SUCCESS;
         }
     }
@@ -2970,6 +3054,10 @@ UsdBridgeError usd_bridge_get_light(
     out_data->shaping_cone_softness = light.shaping_cone_softness;
     out_data->shaping_focus = light.shaping_focus;
     out_data->shaping_ies_file = light.shaping_ies_file.empty() ? nullptr : light.shaping_ies_file.c_str();
+    out_data->light_link_includes = light.light_link_include_ptrs.empty() ? nullptr : light.light_link_include_ptrs.data();
+    out_data->light_link_include_count = light.light_link_includes.size();
+    out_data->light_link_excludes = light.light_link_exclude_ptrs.empty() ? nullptr : light.light_link_exclude_ptrs.data();
+    out_data->light_link_exclude_count = light.light_link_excludes.size();
 
     return USD_BRIDGE_SUCCESS;
 }
@@ -4064,6 +4152,9 @@ UsdBridgeError usd_bridge_load_payload(UsdBridgeStage* stage, const char* prim_p
     stage->animation_cached = false;
     stage->vertex_animation_cached = false;
     stage->points_cached = false;
+    stage->curves_cached = false;
+    stage->skeletons_cached = false;
+    stage->volumes_cached = false;
     return USD_BRIDGE_SUCCESS;
 }
 
@@ -4079,6 +4170,9 @@ UsdBridgeError usd_bridge_unload_payload(UsdBridgeStage* stage, const char* prim
     stage->animation_cached = false;
     stage->vertex_animation_cached = false;
     stage->points_cached = false;
+    stage->curves_cached = false;
+    stage->skeletons_cached = false;
+    stage->volumes_cached = false;
     return USD_BRIDGE_SUCCESS;
 }
 
@@ -4196,5 +4290,223 @@ UsdBridgeError usd_bridge_set_variant_selection(
     stage->animation_cached = false;
     stage->vertex_animation_cached = false;
     stage->points_cached = false;
+    stage->curves_cached = false;
+    stage->skeletons_cached = false;
+    stage->volumes_cached = false;
+    return USD_BRIDGE_SUCCESS;
+}
+
+// ============================================================================
+// Collection Material Binding
+// ============================================================================
+
+UsdBridgeError usd_bridge_get_mesh_collection_material_path(
+    const UsdBridgeStage* stage,
+    size_t mesh_index,
+    const char** out_path
+) {
+    if (!stage || !out_path) return USD_BRIDGE_ERROR_NULL_POINTER;
+    // ComputeBoundMaterial already handles both direct and collection-based bindings
+    return usd_bridge_get_mesh_material_path(stage, mesh_index, out_path);
+}
+
+// ============================================================================
+// UsdSkel
+// ============================================================================
+
+static void cache_skeleton_data(UsdBridgeStage* bridge) {
+    if (bridge->skeletons_cached) return;
+    cache_stage_data(bridge);
+
+    bridge->skeletons.clear();
+    bridge->skin_bindings.clear();
+    bridge->skin_bindings.resize(bridge->meshes.size());
+
+    for (const UsdPrim& prim : bridge->stage->Traverse(
+            UsdTraverseInstanceProxies(UsdPrimDefaultPredicate))) {
+        if (prim.IsA<UsdSkelSkeleton>()) {
+            UsdSkelSkeleton skel(prim);
+            CachedSkeleton cached;
+            cached.path = prim.GetPath().GetString();
+
+            VtArray<TfToken> joints;
+            skel.GetJointsAttr().Get(&joints);
+            for (const auto& j : joints) {
+                cached.joint_paths.push_back(j.GetString());
+            }
+            for (const auto& s : cached.joint_paths) {
+                cached.joint_path_ptrs.push_back(s.c_str());
+            }
+
+            VtArray<GfMatrix4d> bindXforms;
+            skel.GetBindTransformsAttr().Get(&bindXforms);
+            cached.bind_transforms.reserve(bindXforms.size() * 16);
+            for (const auto& m : bindXforms) {
+                float data[16];
+                matrix_to_float16(m, data);
+                for (int i = 0; i < 16; ++i) cached.bind_transforms.push_back(data[i]);
+            }
+
+            VtArray<GfMatrix4d> restXforms;
+            skel.GetRestTransformsAttr().Get(&restXforms);
+            cached.rest_transforms.reserve(restXforms.size() * 16);
+            for (const auto& m : restXforms) {
+                float data[16];
+                matrix_to_float16(m, data);
+                for (int i = 0; i < 16; ++i) cached.rest_transforms.push_back(data[i]);
+            }
+
+            bridge->skeletons.push_back(std::move(cached));
+        }
+    }
+
+    for (size_t i = 0; i < bridge->meshes.size(); ++i) {
+        UsdPrim prim = bridge->stage->GetPrimAtPath(SdfPath(bridge->meshes[i].path));
+        if (!prim) continue;
+
+        UsdSkelBindingAPI binding(prim);
+        if (!binding) continue;
+
+        UsdRelationship skelRel = binding.GetSkeletonRel();
+        SdfPathVector targets;
+        if (!skelRel.GetForwardedTargets(&targets) || targets.empty()) continue;
+
+        CachedSkinBinding skin;
+        skin.valid = true;
+        skin.mesh_path = bridge->meshes[i].path;
+        skin.skeleton_path = targets[0].GetString();
+
+        UsdGeomPrimvar jiPv = binding.GetJointIndicesPrimvar();
+        if (jiPv) {
+            VtArray<int> ji;
+            jiPv.Get(&ji);
+            skin.joint_indices.assign(ji.begin(), ji.end());
+            skin.element_size = jiPv.GetElementSize();
+        }
+
+        UsdGeomPrimvar jwPv = binding.GetJointWeightsPrimvar();
+        if (jwPv) {
+            VtArray<float> jw;
+            jwPv.Get(&jw);
+            skin.joint_weights.assign(jw.begin(), jw.end());
+        }
+
+        GfMatrix4d geomBind;
+        if (binding.GetGeomBindTransformAttr().Get(&geomBind)) {
+            matrix_to_float16(geomBind, skin.geom_bind_transform);
+        } else {
+            GfMatrix4d identity(1.0);
+            matrix_to_float16(identity, skin.geom_bind_transform);
+        }
+
+        bridge->skin_bindings[i] = std::move(skin);
+    }
+
+    bridge->skeletons_cached = true;
+}
+
+UsdBridgeError usd_bridge_get_skeleton_count(const UsdBridgeStage* stage, size_t* out_count) {
+    if (!stage || !out_count) return USD_BRIDGE_ERROR_NULL_POINTER;
+    const_cast<UsdBridgeStage*>(stage)->skeletons_cached || (cache_skeleton_data(const_cast<UsdBridgeStage*>(stage)), true);
+    *out_count = stage->skeletons.size();
+    return USD_BRIDGE_SUCCESS;
+}
+
+UsdBridgeError usd_bridge_get_skeleton(const UsdBridgeStage* stage, size_t index, UsdBridgeSkeletonData* out_data) {
+    if (!stage || !out_data) return USD_BRIDGE_ERROR_NULL_POINTER;
+    const_cast<UsdBridgeStage*>(stage)->skeletons_cached || (cache_skeleton_data(const_cast<UsdBridgeStage*>(stage)), true);
+    if (index >= stage->skeletons.size()) return USD_BRIDGE_ERROR_INVALID_PRIM;
+
+    const CachedSkeleton& s = stage->skeletons[index];
+    out_data->path = s.path.c_str();
+    out_data->joint_paths = s.joint_path_ptrs.empty() ? nullptr : s.joint_path_ptrs.data();
+    out_data->joint_count = s.joint_paths.size();
+    out_data->bind_transforms = s.bind_transforms.empty() ? nullptr : s.bind_transforms.data();
+    out_data->rest_transforms = s.rest_transforms.empty() ? nullptr : s.rest_transforms.data();
+    return USD_BRIDGE_SUCCESS;
+}
+
+UsdBridgeError usd_bridge_get_skin_binding(const UsdBridgeStage* stage, size_t mesh_index, UsdBridgeSkinBindingData* out_data) {
+    if (!stage || !out_data) return USD_BRIDGE_ERROR_NULL_POINTER;
+    const_cast<UsdBridgeStage*>(stage)->skeletons_cached || (cache_skeleton_data(const_cast<UsdBridgeStage*>(stage)), true);
+    if (mesh_index >= stage->skin_bindings.size()) return USD_BRIDGE_ERROR_INVALID_PRIM;
+
+    const CachedSkinBinding& b = stage->skin_bindings[mesh_index];
+    if (!b.valid) return USD_BRIDGE_ERROR_INVALID_PRIM;
+
+    out_data->mesh_path = b.mesh_path.c_str();
+    out_data->skeleton_path = b.skeleton_path.c_str();
+    out_data->joint_indices = b.joint_indices.empty() ? nullptr : b.joint_indices.data();
+    out_data->joint_indices_count = b.joint_indices.size();
+    out_data->joint_weights = b.joint_weights.empty() ? nullptr : b.joint_weights.data();
+    out_data->joint_weights_count = b.joint_weights.size();
+    out_data->joint_indices_element_size = b.element_size;
+    for (int i = 0; i < 16; ++i) out_data->geom_bind_transform[i] = b.geom_bind_transform[i];
+    return USD_BRIDGE_SUCCESS;
+}
+
+// ============================================================================
+// UsdVol
+// ============================================================================
+
+static void cache_volume_data(UsdBridgeStage* bridge) {
+    if (bridge->volumes_cached) return;
+
+    bridge->volumes.clear();
+    UsdGeomXformCache xform_cache;
+
+    for (const UsdPrim& prim : bridge->stage->Traverse(
+            UsdTraverseInstanceProxies(UsdPrimDefaultPredicate))) {
+        if (!prim.IsA<UsdVolVolume>()) continue;
+
+        UsdVolVolume vol(prim);
+        std::map<TfToken, SdfPath> fieldMap = vol.GetFieldPaths();
+        for (const auto& entry : fieldMap) {
+            UsdPrim fieldPrim = bridge->stage->GetPrimAtPath(entry.second);
+            if (!fieldPrim || !fieldPrim.IsA<UsdVolOpenVDBAsset>()) continue;
+
+            UsdVolOpenVDBAsset vdbAsset(fieldPrim);
+            CachedVolume cached;
+            cached.path = prim.GetPath().GetString();
+
+            SdfAssetPath filePath;
+            if (vdbAsset.GetFilePathAttr().Get(&filePath)) {
+                cached.vdb_file_path = filePath.GetResolvedPath().empty()
+                    ? filePath.GetAssetPath()
+                    : filePath.GetResolvedPath();
+            }
+
+            TfToken fieldTok;
+            if (vdbAsset.GetFieldNameAttr().Get(&fieldTok)) {
+                cached.field_name = fieldTok.GetString();
+            }
+
+            GfMatrix4d world_xform = xform_cache.GetLocalToWorldTransform(prim);
+            matrix_to_float16(world_xform, cached.transform);
+
+            bridge->volumes.push_back(std::move(cached));
+        }
+    }
+
+    bridge->volumes_cached = true;
+}
+
+UsdBridgeError usd_bridge_get_volume_count(const UsdBridgeStage* stage, size_t* out_count) {
+    if (!stage || !out_count) return USD_BRIDGE_ERROR_NULL_POINTER;
+    const_cast<UsdBridgeStage*>(stage)->volumes_cached || (cache_volume_data(const_cast<UsdBridgeStage*>(stage)), true);
+    *out_count = stage->volumes.size();
+    return USD_BRIDGE_SUCCESS;
+}
+
+UsdBridgeError usd_bridge_get_volume(const UsdBridgeStage* stage, size_t index, UsdBridgeVolumeData* out_data) {
+    if (!stage || !out_data) return USD_BRIDGE_ERROR_NULL_POINTER;
+    const_cast<UsdBridgeStage*>(stage)->volumes_cached || (cache_volume_data(const_cast<UsdBridgeStage*>(stage)), true);
+    if (index >= stage->volumes.size()) return USD_BRIDGE_ERROR_INVALID_PRIM;
+
+    const CachedVolume& v = stage->volumes[index];
+    out_data->path = v.path.c_str();
+    out_data->vdb_file_path = v.vdb_file_path.empty() ? nullptr : v.vdb_file_path.c_str();
+    out_data->field_name = v.field_name.empty() ? nullptr : v.field_name.c_str();
+    for (int i = 0; i < 16; ++i) out_data->transform[i] = v.transform[i];
     return USD_BRIDGE_SUCCESS;
 }
