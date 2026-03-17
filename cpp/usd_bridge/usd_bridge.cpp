@@ -74,7 +74,8 @@ struct CachedMesh {
     std::vector<float> vertices;
     std::vector<uint32_t> indices;
     std::vector<float> normals;
-    std::vector<float> uvs;  // u,v pairs from primvars:st
+    std::vector<float> uvs;  // u,v pairs from UV primvar
+    std::string uv_primvar_name;  // Which primvar was used for UVs
     std::vector<uint32_t> face_material_ids;  // Material index per triangle (for GeomSubsets)
     GfMatrix4d transform;
 
@@ -206,6 +207,7 @@ struct CachedMaterial {
     std::string metallic_texture;
     std::string normal_texture;
     std::string emissive_texture;
+    std::string opacity_texture;
     std::string material_path_for_mesh;  // Per-mesh material binding
     bool is_materialx;  // True if material is from MaterialX, false for UsdPreviewSurface
 };
@@ -681,10 +683,35 @@ static void cache_stage_data(UsdBridgeStage* bridge) {
             }
             time_normals += duration_cast<milliseconds>(high_resolution_clock::now() - normal_start).count();
 
-            // Get UV coordinates from primvars:st (optional)
+            // Get UV coordinates (try common primvar names, then type-based fallback)
             auto uv_start = high_resolution_clock::now();
             UsdGeomPrimvarsAPI primvarsAPI(mesh);
-            UsdGeomPrimvar stPrimvar = primvarsAPI.GetPrimvar(TfToken("st"));
+            UsdGeomPrimvar stPrimvar;
+            std::string foundUvName;
+            {
+                static const char* uvCandidates[] = {"st", "uv", "UVMap", "st0", "map1"};
+                for (const char* name : uvCandidates) {
+                    UsdGeomPrimvar pv = primvarsAPI.GetPrimvar(TfToken(name));
+                    if (pv && pv.HasValue()) {
+                        stPrimvar = pv;
+                        foundUvName = name;
+                        break;
+                    }
+                }
+                // Type-based fallback: first TexCoord2fArray primvar not in candidates
+                if (!stPrimvar) {
+                    std::set<std::string> tried(std::begin(uvCandidates), std::end(uvCandidates));
+                    for (const auto& pv : primvarsAPI.GetPrimvars()) {
+                        std::string pvName = pv.GetPrimvarName().GetString();
+                        if (tried.count(pvName)) continue;
+                        if (pv.HasValue() && pv.GetTypeName() == SdfValueTypeNames->TexCoord2fArray) {
+                            stPrimvar = pv;
+                            foundUvName = pvName;
+                            break;
+                        }
+                    }
+                }
+            }
             if (stPrimvar) {
                 TfToken interpolation = stPrimvar.GetInterpolation();
                 VtArray<GfVec2f> uvs;
@@ -733,6 +760,14 @@ static void cache_stage_data(UsdBridgeStage* bridge) {
                                         }
                                     } else if (fvIdx < uvs.size()) {
                                         uv = uvs[fvIdx];
+                                    } else {
+                                        static bool warned = false;
+                                        if (!warned) {
+                                            std::cout << "[USD_BRIDGE] WARNING: faceVarying UV index " << fvIdx
+                                                      << " >= uvs.size() " << uvs.size()
+                                                      << " on " << prim.GetPath() << std::endl;
+                                            warned = true;
+                                        }
                                     }
 
                                     // Quantize UV to detect "same" UVs (avoid float comparison issues)
@@ -803,14 +838,31 @@ static void cache_stage_data(UsdBridgeStage* bridge) {
                         // (triangulate_mesh output is no longer valid, but we re-triangulated above)
                         // The triangle order matches, so face_material_ids should still be correct
                     } else {
-                        // vertex or constant interpolation: direct mapping
-                        cached.uvs.reserve(uvs.size() * 2);
-                        for (const auto& uv : uvs) {
-                            cached.uvs.push_back(uv[0]);
-                            cached.uvs.push_back(uv[1]);
+                        // vertex or constant interpolation
+                        if (hasIndices && !uvIndices.empty()) {
+                            // Indexed vertex UVs: expand via indices
+                            cached.uvs.reserve(uvIndices.size() * 2);
+                            for (size_t i = 0; i < uvIndices.size(); ++i) {
+                                int idx = uvIndices[i];
+                                if (idx >= 0 && static_cast<size_t>(idx) < uvs.size()) {
+                                    cached.uvs.push_back(uvs[idx][0]);
+                                    cached.uvs.push_back(uvs[idx][1]);
+                                } else {
+                                    cached.uvs.push_back(0.0f);
+                                    cached.uvs.push_back(0.0f);
+                                }
+                            }
+                        } else {
+                            // Direct mapping
+                            cached.uvs.reserve(uvs.size() * 2);
+                            for (const auto& uv : uvs) {
+                                cached.uvs.push_back(uv[0]);
+                                cached.uvs.push_back(uv[1]);
+                            }
                         }
                     }
                 }
+                cached.uv_primvar_name = foundUvName;
             }
             time_uvs += duration_cast<milliseconds>(high_resolution_clock::now() - uv_start).count();
 
@@ -1002,11 +1054,16 @@ static std::string resolve_asset_path(const SdfAssetPath& asset_path,
                                        const UsdPrim& shader_prim) {
     // Prefer the pre-resolved absolute path (works for non-UDIM textures)
     if (!asset_path.GetResolvedPath().empty()) {
+        std::cout << "[BIF_TEX] resolve raw=" << asset_path.GetAssetPath()
+                  << " resolved=" << asset_path.GetResolvedPath() << std::endl;
         return asset_path.GetResolvedPath();
     }
 
     std::string raw = asset_path.GetAssetPath();
-    if (raw.empty()) return "";
+    if (raw.empty()) {
+        std::cout << "[BIF_TEX] resolve raw=(empty)" << std::endl;
+        return "";
+    }
 
     // For relative paths (including UDIM templates), anchor against the
     // USD layer that defines this shader prim.
@@ -1018,10 +1075,15 @@ static std::string resolve_asset_path(const SdfAssetPath& asset_path,
     if (!prim_stack.empty()) {
         SdfLayerHandle source_layer = prim_stack[0]->GetLayer();
         if (source_layer) {
-            return SdfComputeAssetPathRelativeToLayer(source_layer, raw);
+            std::string result = SdfComputeAssetPathRelativeToLayer(source_layer, raw);
+            std::cout << "[BIF_TEX] resolve raw=" << raw
+                      << " layer=" << source_layer->GetIdentifier()
+                      << " resolved=" << result << std::endl;
+            return result;
         }
     }
 
+    std::cout << "[BIF_TEX] resolve raw=" << raw << " (unresolved, no layer)" << std::endl;
     return raw;
 }
 
@@ -1029,16 +1091,28 @@ static std::string resolve_asset_path(const SdfAssetPath& asset_path,
 static std::string get_texture_path(const UsdShadeInput& input) {
     if (!input) return "";
 
+    std::string input_name = input.GetBaseName().GetString();
+
     // Check for a connection to a texture reader
     SdfPathVector connections;
     input.GetRawConnectedSourcePaths(&connections);
+
+    if (connections.empty()) {
+        std::cout << "[BIF_TEX] PreviewSurface input=" << input_name
+                  << " connections=0" << std::endl;
+    }
 
     for (const auto& conn_path : connections) {
         // The connection target is usually something like /Material/Shader.outputs:rgb
         // We need to find the shader prim and get its file attribute
         SdfPath prim_path = conn_path.GetPrimPath();
         UsdPrim shader_prim = input.GetPrim().GetStage()->GetPrimAtPath(prim_path);
-        if (!shader_prim) continue;
+        if (!shader_prim) {
+            std::cout << "[BIF_TEX] PreviewSurface input=" << input_name
+                      << " conn=" << conn_path.GetString()
+                      << " prim=NOT_FOUND" << std::endl;
+            continue;
+        }
 
         UsdShadeShader shader(shader_prim);
         if (!shader) continue;
@@ -1046,6 +1120,9 @@ static std::string get_texture_path(const UsdShadeInput& input) {
         // Check if this is a UsdUVTexture
         TfToken shader_id;
         shader.GetIdAttr().Get(&shader_id);
+        std::cout << "[BIF_TEX] PreviewSurface input=" << input_name
+                  << " conn=" << conn_path.GetString()
+                  << " shader_id=" << shader_id.GetString() << std::endl;
         if (shader_id == TfToken("UsdUVTexture")) {
             // Get the file input
             UsdShadeInput file_input = shader.GetInput(TfToken("file"));
@@ -1070,34 +1147,122 @@ static bool is_materialx_standard_surface(const TfToken& shader_id) {
            id_str.find("standard_surface") != std::string::npos;
 }
 
-/// Helper to extract texture path from MaterialX ND_image_* nodes
+/// Try to extract a texture file path from a prim that is an ND_image_* node.
+/// Returns empty string if not an image node or no file attribute found.
+static std::string try_extract_image_file(const UsdPrim& prim) {
+    UsdShadeShader shader(prim);
+    if (!shader) return "";
+
+    TfToken shader_id;
+    shader.GetIdAttr().Get(&shader_id);
+    std::string id_str = shader_id.GetString();
+
+    if (id_str.find("ND_image") != std::string::npos ||
+        id_str.find("image") != std::string::npos) {
+        UsdShadeInput file_input = shader.GetInput(TfToken("file"));
+        if (file_input) {
+            SdfAssetPath asset_path;
+            if (file_input.Get(&asset_path)) {
+                return resolve_asset_path(asset_path, prim);
+            }
+        }
+    }
+    return "";
+}
+
+/// Helper to extract texture path from MaterialX ND_image_* nodes.
+/// Handles both direct connections and deeper NodeGraph traversal (up to 3 levels).
 static std::string get_materialx_texture_path(const UsdShadeInput& input) {
     if (!input) return "";
+
+    std::string input_name = input.GetBaseName().GetString();
 
     SdfPathVector connections;
     input.GetRawConnectedSourcePaths(&connections);
 
+    if (connections.empty()) {
+        std::cout << "[BIF_TEX] MaterialX input=" << input_name
+                  << " connections=0" << std::endl;
+    }
+
     for (const auto& conn_path : connections) {
         SdfPath prim_path = conn_path.GetPrimPath();
-        UsdPrim shader_prim = input.GetPrim().GetStage()->GetPrimAtPath(prim_path);
-        if (!shader_prim) continue;
+        UsdPrim connected_prim = input.GetPrim().GetStage()->GetPrimAtPath(prim_path);
+        if (!connected_prim) {
+            std::cout << "[BIF_TEX] MaterialX input=" << input_name
+                      << " conn=" << conn_path.GetString()
+                      << " prim=NOT_FOUND" << std::endl;
+            continue;
+        }
 
-        UsdShadeShader shader(shader_prim);
-        if (!shader) continue;
+        std::string type_name = connected_prim.GetTypeName().GetString();
+        std::cout << "[BIF_TEX] MaterialX input=" << input_name
+                  << " conn=" << conn_path.GetString()
+                  << " type=" << type_name << std::endl;
 
-        TfToken shader_id;
-        shader.GetIdAttr().Get(&shader_id);
-        std::string id_str = shader_id.GetString();
+        // Direct image node — try extracting file path
+        std::string result = try_extract_image_file(connected_prim);
+        if (!result.empty()) return result;
 
-        // Check for MaterialX image nodes: ND_image_color3, ND_image_float, etc.
-        if (id_str.find("ND_image") != std::string::npos ||
-            id_str.find("image") != std::string::npos) {
-            // MaterialX uses "file" attribute for texture path
-            UsdShadeInput file_input = shader.GetInput(TfToken("file"));
-            if (file_input) {
-                SdfAssetPath asset_path;
-                if (file_input.Get(&asset_path)) {
-                    return resolve_asset_path(asset_path, shader_prim);
+        // If connected prim is a NodeGraph, recurse into it to find image nodes
+        if (connected_prim.IsA<UsdShadeNodeGraph>()) {
+            std::cout << "[BIF_TEX]   -> traversing NodeGraph "
+                      << connected_prim.GetPath().GetString() << std::endl;
+
+            // First try: follow the NodeGraph's output connections
+            UsdShadeNodeGraph ng(connected_prim);
+            std::string output_name = conn_path.GetName();
+            UsdShadeOutput ng_output = ng.GetOutput(TfToken(output_name));
+            if (ng_output) {
+                SdfPathVector ng_connections;
+                ng_output.GetRawConnectedSourcePaths(&ng_connections);
+                for (const auto& ng_conn : ng_connections) {
+                    UsdPrim ng_prim = input.GetPrim().GetStage()->GetPrimAtPath(
+                        ng_conn.GetPrimPath());
+                    if (!ng_prim) continue;
+
+                    std::string ng_type = ng_prim.GetTypeName().GetString();
+                    std::cout << "[BIF_TEX]     ng_output conn="
+                              << ng_conn.GetString()
+                              << " type=" << ng_type << std::endl;
+
+                    result = try_extract_image_file(ng_prim);
+                    if (!result.empty()) return result;
+
+                    // One more level: if this is also a NodeGraph or intermediate node
+                    if (ng_prim.IsA<UsdShadeNodeGraph>()) {
+                        for (const auto& desc : ng_prim.GetDescendants()) {
+                            result = try_extract_image_file(desc);
+                            if (!result.empty()) return result;
+                        }
+                    }
+                }
+            }
+
+            // Fallback: brute-force search descendants for image nodes
+            for (const auto& desc : connected_prim.GetDescendants()) {
+                result = try_extract_image_file(desc);
+                if (!result.empty()) {
+                    std::cout << "[BIF_TEX]     found image in descendant "
+                              << desc.GetPath().GetString() << std::endl;
+                    return result;
+                }
+            }
+        }
+
+        // Also check if connected prim is a Shader with connections (intermediate node)
+        UsdShadeShader intermediate(connected_prim);
+        if (intermediate) {
+            // Follow the shader's output connections (e.g., ND_normalmap -> ND_image)
+            for (const auto& child_input : intermediate.GetInputs()) {
+                SdfPathVector child_connections;
+                child_input.GetRawConnectedSourcePaths(&child_connections);
+                for (const auto& child_conn : child_connections) {
+                    UsdPrim child_prim = input.GetPrim().GetStage()->GetPrimAtPath(
+                        child_conn.GetPrimPath());
+                    if (!child_prim) continue;
+                    result = try_extract_image_file(child_prim);
+                    if (!result.empty()) return result;
                 }
             }
         }
@@ -1202,6 +1367,8 @@ static void cache_material_data(UsdBridgeStage* bridge) {
         // If we found a MaterialX shader, use it
         if (mtlx_shader) {
             cached.is_materialx = true;
+            std::cout << "[BIF_TEX] material=" << mat_path
+                      << " type=MaterialX(mtlx:surface)" << std::endl;
             UsdShadeInput input;
 
             // MaterialX standard_surface parameter names
@@ -1244,6 +1411,7 @@ static void cache_material_data(UsdBridgeStage* bridge) {
                         cached.opacity = opacity_scalar;
                     }
                 }
+                cached.opacity_texture = get_materialx_texture_path(input);
             }
 
             input = mtlx_shader.GetInput(TfToken("emission_color"));
@@ -1306,6 +1474,9 @@ static void cache_material_data(UsdBridgeStage* bridge) {
         // Check for MaterialX standard_surface first
         if (is_materialx_standard_surface(shader_id)) {
             cached.is_materialx = true;
+            std::cout << "[BIF_TEX] material=" << mat_path
+                      << " type=MaterialX(surface) shader_id=" << shader_id.GetString()
+                      << std::endl;
             UsdShadeInput input;
 
             // MaterialX standard_surface uses different parameter names:
@@ -1354,6 +1525,7 @@ static void cache_material_data(UsdBridgeStage* bridge) {
                         cached.opacity = opacity_scalar;
                     }
                 }
+                cached.opacity_texture = get_materialx_texture_path(input);
             }
 
             // emission_color + emission (multiply for intensity)
@@ -1386,9 +1558,15 @@ static void cache_material_data(UsdBridgeStage* bridge) {
 
         // Fall back to UsdPreviewSurface
         if (shader_id != TfToken("UsdPreviewSurface")) {
+            std::cout << "[BIF_TEX] material=" << mat_path
+                      << " type=UNKNOWN shader_id=" << shader_id.GetString()
+                      << std::endl;
             bridge->materials.push_back(std::move(cached));
             continue;
         }
+
+        std::cout << "[BIF_TEX] material=" << mat_path
+                  << " type=UsdPreviewSurface" << std::endl;
 
         // Extract UsdPreviewSurface parameters
         UsdShadeInput input;
@@ -1432,6 +1610,7 @@ static void cache_material_data(UsdBridgeStage* bridge) {
         input = shader.GetInput(TfToken("opacity"));
         if (input) {
             input.Get(&cached.opacity);
+            cached.opacity_texture = get_texture_path(input);
         }
 
         // Emissive color
@@ -1598,7 +1777,8 @@ static void cache_mesh_primvars(UsdBridgeStage* bridge) {
     bridge->mesh_primvars.resize(bridge->meshes.size());
 
     static const std::set<std::string> built_in = {
-        "st", "normals", "displayColor", "displayOpacity"
+        "st", "uv", "UVMap", "st0", "map1",
+        "normals", "displayColor", "displayOpacity"
     };
 
     for (size_t mesh_idx = 0; mesh_idx < bridge->meshes.size(); ++mesh_idx) {
@@ -1921,6 +2101,51 @@ UsdBridgeError usd_bridge_open_stage(const char* path, UsdBridgeStage** out_stag
         auto* bridge = new UsdBridgeStage();
         bridge->stage = stage;
 
+        // Auto-select "render" material variant on prims that have a "material"
+        // or "look" variant set. Nvidia Distributable assets use variants like
+        // {render, renderLow, off} — default may be empty or "off" which hides textures.
+        {
+            auto variant_start = high_resolution_clock::now();
+            int variants_set = 0;
+            for (const auto& prim : stage->Traverse()) {
+                auto vsets = prim.GetVariantSets();
+                // Check common variant set names for material quality
+                for (const auto& vs_name : {"material", "look", "Material", "Look"}) {
+                    if (!vsets.HasVariantSet(vs_name)) continue;
+
+                    auto vs = vsets.GetVariantSet(vs_name);
+                    auto sel = vs.GetVariantSelection();
+                    // Only override if empty or "off" — respect explicit user selections
+                    if (!sel.empty() && sel != "off") continue;
+
+                    // Prefer "render", fallback to first non-off variant
+                    auto variants = vs.GetVariantNames();
+                    std::string chosen;
+                    for (const auto& v : variants) {
+                        if (v == "render") { chosen = v; break; }
+                    }
+                    if (chosen.empty()) {
+                        for (const auto& v : variants) {
+                            if (v != "off") { chosen = v; break; }
+                        }
+                    }
+                    if (!chosen.empty()) {
+                        vs.SetVariantSelection(chosen);
+                        std::cout << "[BIF_TEX] variant prim=" << prim.GetPath().GetString()
+                                  << " set=" << vs_name
+                                  << " was=" << (sel.empty() ? "(empty)" : sel)
+                                  << " now=" << chosen << std::endl;
+                        ++variants_set;
+                    }
+                }
+            }
+            auto variant_time = duration_cast<milliseconds>(high_resolution_clock::now() - variant_start).count();
+            if (variants_set > 0) {
+                std::cout << "[USD_BRIDGE]   Variant selection: " << variant_time << "ms"
+                          << " (" << variants_set << " variants set to render)" << std::endl;
+            }
+        }
+
         // Pre-cache all data at load time for thread safety.
         // All getter functions will read from these caches without mutation.
         // Note: The resolver context binder is still active during caching,
@@ -2206,6 +2431,7 @@ UsdBridgeError usd_bridge_get_material(
     out_data->metallic_texture = mat.metallic_texture.empty() ? nullptr : mat.metallic_texture.c_str();
     out_data->normal_texture = mat.normal_texture.empty() ? nullptr : mat.normal_texture.c_str();
     out_data->emissive_texture = mat.emissive_texture.empty() ? nullptr : mat.emissive_texture.c_str();
+    out_data->opacity_texture = mat.opacity_texture.empty() ? nullptr : mat.opacity_texture.c_str();
     out_data->is_materialx = mat.is_materialx ? 1 : 0;
 
     return USD_BRIDGE_SUCCESS;

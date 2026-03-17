@@ -338,7 +338,7 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
             metallic_texture: mat_data.metallic_texture.as_deref().map(Arc::from),
             normal_texture: mat_data.normal_texture.as_deref().map(Arc::from),
             emissive_texture: mat_data.emissive_texture.as_deref().map(Arc::from),
-            opacity_texture: None, // TODO: extract from USD when available
+            opacity_texture: mat_data.opacity_texture.as_deref().map(Arc::from),
             source_dir: path.parent().map(|p| p.to_path_buf()),
             double_sided: false, // Set per-mesh via UsdGeomMesh::GetDoubleSidedAttr
         };

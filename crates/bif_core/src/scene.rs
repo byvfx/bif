@@ -3,6 +3,7 @@
 //! This module defines the core scene representation that maps closely
 //! to USD concepts while remaining renderer-agnostic.
 
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -753,6 +754,59 @@ impl Scene {
         true
     }
 
+    /// Remove materials not referenced by any prototype and remap face_material_ids.
+    pub fn compact_materials(&mut self) {
+        // 1. Collect all referenced material indices
+        let mut used: HashSet<u32> = HashSet::new();
+        for proto in &self.prototypes {
+            if let Some(ref mat) = proto.material {
+                if let Some(idx) = self.materials.iter().position(|m| Arc::ptr_eq(m, mat)) {
+                    used.insert(idx as u32);
+                }
+            }
+            if let Some(ref ids) = proto.mesh.face_material_ids {
+                used.extend(ids.iter().copied());
+            }
+        }
+
+        // Skip if nothing to compact
+        if used.len() == self.materials.len() {
+            return;
+        }
+
+        // 2. Build remap: old_idx → new_idx
+        let mut remap: HashMap<u32, u32> = HashMap::new();
+        let mut new_materials = Vec::new();
+        for (old_idx, mat) in self.materials.iter().enumerate() {
+            if used.contains(&(old_idx as u32)) {
+                remap.insert(old_idx as u32, new_materials.len() as u32);
+                new_materials.push(mat.clone());
+            }
+        }
+
+        let removed = self.materials.len() - new_materials.len();
+
+        // 3. Remap face_material_ids on all remaining prototypes
+        for proto in &mut self.prototypes {
+            let proto_mut = Arc::make_mut(proto);
+            if let Some(ref mut ids) = Arc::make_mut(&mut proto_mut.mesh).face_material_ids {
+                for id in ids.iter_mut() {
+                    if let Some(&new_id) = remap.get(id) {
+                        *id = new_id;
+                    }
+                }
+            }
+        }
+
+        // 4. Replace materials vec
+        self.materials = new_materials;
+        log::info!(
+            "Compacted materials: removed {} orphans, {} remain",
+            removed,
+            self.materials.len()
+        );
+    }
+
     /// Compute the world-space bounding box of all instances.
     pub fn world_bounds(&self) -> Aabb {
         let mut min = Vec3::splat(f32::INFINITY);
@@ -927,5 +981,48 @@ mod tests {
 
         let mid = Transform::lerp(&a, &b, 0.5);
         assert!((mid.translation - Vec3::new(5.0, 10.0, 15.0)).length() < 0.001);
+    }
+
+    #[test]
+    fn test_compact_materials() {
+        let mut scene = Scene::new("test");
+
+        // Add 3 materials: mat0, mat1, mat2
+        let mat0 = Arc::new(Material::new("mat0", Vec3::new(1.0, 0.0, 0.0)));
+        let mat1 = Arc::new(Material::new("mat1", Vec3::new(0.0, 1.0, 0.0)));
+        let mat2 = Arc::new(Material::new("mat2", Vec3::new(0.0, 0.0, 1.0)));
+        scene.materials.push(mat0);
+        scene.materials.push(mat1.clone());
+        scene.materials.push(mat2);
+
+        // Proto A references mat1 via material binding + face_material_ids=[1,1,2]
+        let mesh_a = Arc::new(Mesh::new_with_materials(
+            vec![
+                Vec3::ZERO,
+                Vec3::X,
+                Vec3::Y,
+                Vec3::Z,
+                Vec3::ONE,
+                Vec3::NEG_ONE,
+            ],
+            vec![0, 1, 2, 3, 4, 5],
+            None,
+            None,
+            Some(vec![1, 1, 2]),
+        ));
+        let proto_a = Arc::new(Prototype::new(0, "proto_a".into(), mesh_a).with_material(mat1));
+        scene.prototypes.push(proto_a);
+
+        // mat0 is now orphaned (no prototype references it)
+        scene.compact_materials();
+
+        // mat0 removed → 2 materials remain (old mat1→new 0, old mat2→new 1)
+        assert_eq!(scene.materials.len(), 2);
+        assert_eq!(&*scene.materials[0].name, "mat1");
+        assert_eq!(&*scene.materials[1].name, "mat2");
+
+        // face_material_ids remapped: [1,1,2] → [0,0,1]
+        let ids = scene.prototypes[0].mesh.face_material_ids.as_ref().unwrap();
+        assert_eq!(ids, &[0, 0, 1]);
     }
 }

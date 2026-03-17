@@ -387,6 +387,7 @@ struct UsdBridgeMaterialDataRaw {
     metallic_texture: *const std::ffi::c_char,
     normal_texture: *const std::ffi::c_char,
     emissive_texture: *const std::ffi::c_char,
+    opacity_texture: *const std::ffi::c_char,
     is_materialx: i32,
 }
 
@@ -1163,6 +1164,9 @@ pub struct UsdMaterialData {
 
     /// Path to emissive texture (if any)
     pub emissive_texture: Option<String>,
+
+    /// Path to opacity texture (if any)
+    pub opacity_texture: Option<String>,
 
     /// True if material is from MaterialX, false for UsdPreviewSurface
     pub is_materialx: bool,
@@ -2236,6 +2240,7 @@ impl UsdStage {
             metallic_texture: ptr::null(),
             normal_texture: ptr::null(),
             emissive_texture: ptr::null(),
+            opacity_texture: ptr::null(),
             is_materialx: 0,
         };
 
@@ -2294,6 +2299,7 @@ impl UsdStage {
             metallic_texture: texture_path(raw_data.metallic_texture),
             normal_texture: texture_path(raw_data.normal_texture),
             emissive_texture: texture_path(raw_data.emissive_texture),
+            opacity_texture: texture_path(raw_data.opacity_texture),
             is_materialx: raw_data.is_materialx != 0,
         })
     }
@@ -4291,6 +4297,7 @@ mod tests {
             vertical_aperture: 24.89,
             clip_near: 0.1,
             clip_far: 10000.0,
+            horizontal_aperture: 36.0,
         };
         let fov_deg = props.fov_y().to_degrees();
         assert!(
@@ -4307,6 +4314,7 @@ mod tests {
             vertical_aperture: 24.89,
             clip_near: 1.0,
             clip_far: 100000.0,
+            horizontal_aperture: 36.0,
         };
         let fov_deg = props.fov_y().to_degrees();
         assert!(
