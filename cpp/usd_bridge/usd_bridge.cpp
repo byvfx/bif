@@ -3763,7 +3763,7 @@ UsdBridgeError usd_bridge_write_material(
             .Set(metallic);
         shader.CreateInput(TfToken("roughness"), SdfValueTypeNames->Float)
             .Set(roughness);
-        shader.CreateInput(TfToken("specularLevel"), SdfValueTypeNames->Float)
+        shader.CreateInput(TfToken("specular"), SdfValueTypeNames->Float)
             .Set(specular);
         shader.CreateInput(TfToken("opacity"), SdfValueTypeNames->Float)
             .Set(opacity);
@@ -3817,6 +3817,10 @@ UsdBridgeError usd_bridge_write_material(
             shader.ConnectableAPI(), TfToken("surface"));
 
         // --- OpenPBR MaterialX network (under "materialx" render context) ---
+        // NOTE: Currently scalar values only — texture connections not yet wired
+        // for the OpenPBR network. The UsdPreviewSurface network above has full
+        // texture support. OpenPBR texture nodes (MaterialX image nodes) to be
+        // added in a future pass.
         SdfPath openpbrPath = materialPath.AppendChild(TfToken("OpenPBR"));
         UsdShadeShader openpbr = UsdShadeShader::Define(layer->stage, openpbrPath);
         openpbr.CreateIdAttr(VtValue(TfToken("ND_open_pbr_surface_surfaceshader")));
@@ -3834,11 +3838,15 @@ UsdBridgeError usd_bridge_write_material(
         openpbr.CreateInput(TfToken("geometry_opacity"), SdfValueTypeNames->Float)
             .Set(opacity);
 
-        // Emission: OpenPBR uses luminance (nits), approximate from emissive color magnitude
+        // Emission: OpenPBR emission_luminance is in nits (cd/m^2).
+        // BIF stores emissive as linear RGB [0,1]. We approximate luminance via
+        // Rec.709 coefficients and scale by 1000 nits (a reasonable indoor emitter).
+        // This is an approximation — proper scene-referred emission would need
+        // artist-authored luminance values or a tone-mapping-aware pipeline.
         float emissive_lum = emissive_color[0] * 0.2126f + emissive_color[1] * 0.7152f + emissive_color[2] * 0.0722f;
         if (emissive_lum > 0.0f) {
             openpbr.CreateInput(TfToken("emission_luminance"), SdfValueTypeNames->Float)
-                .Set(emissive_lum * 1000.0f); // Scale to nits
+                .Set(emissive_lum * 1000.0f);
             openpbr.CreateInput(TfToken("emission_color"), SdfValueTypeNames->Color3f)
                 .Set(GfVec3f(emissive_color[0], emissive_color[1], emissive_color[2]));
         }
@@ -4136,12 +4144,8 @@ UsdBridgeError usd_bridge_write_render_settings(
 // Payload Load/Unload
 // ============================================================================
 
-UsdBridgeError usd_bridge_load_payload(UsdBridgeStage* stage, const char* prim_path) {
-    if (!stage || !prim_path) return USD_BRIDGE_ERROR_NULL_POINTER;
-    UsdPrim prim = stage->stage->GetPrimAtPath(SdfPath(prim_path));
-    if (!prim) return USD_BRIDGE_ERROR_INVALID_PRIM;
-    prim.Load();
-    // Invalidate caches so re-traversal picks up loaded content
+/// Invalidate all cached data (call after composition changes like payload load/unload, variant switch)
+static void invalidate_all_caches(UsdBridgeStage* stage) {
     stage->cached = false;
     stage->prims_cached = false;
     stage->materials_cached = false;
@@ -4152,6 +4156,14 @@ UsdBridgeError usd_bridge_load_payload(UsdBridgeStage* stage, const char* prim_p
     stage->curves_cached = false;
     stage->skeletons_cached = false;
     stage->volumes_cached = false;
+}
+
+UsdBridgeError usd_bridge_load_payload(UsdBridgeStage* stage, const char* prim_path) {
+    if (!stage || !prim_path) return USD_BRIDGE_ERROR_NULL_POINTER;
+    UsdPrim prim = stage->stage->GetPrimAtPath(SdfPath(prim_path));
+    if (!prim) return USD_BRIDGE_ERROR_INVALID_PRIM;
+    prim.Load();
+    invalidate_all_caches(stage);
     return USD_BRIDGE_SUCCESS;
 }
 
@@ -4160,16 +4172,7 @@ UsdBridgeError usd_bridge_unload_payload(UsdBridgeStage* stage, const char* prim
     UsdPrim prim = stage->stage->GetPrimAtPath(SdfPath(prim_path));
     if (!prim) return USD_BRIDGE_ERROR_INVALID_PRIM;
     prim.Unload();
-    stage->cached = false;
-    stage->prims_cached = false;
-    stage->materials_cached = false;
-    stage->lights_cached = false;
-    stage->animation_cached = false;
-    stage->vertex_animation_cached = false;
-    stage->points_cached = false;
-    stage->curves_cached = false;
-    stage->skeletons_cached = false;
-    stage->volumes_cached = false;
+    invalidate_all_caches(stage);
     return USD_BRIDGE_SUCCESS;
 }
 
@@ -4279,17 +4282,7 @@ UsdBridgeError usd_bridge_set_variant_selection(
     if (!prim) return USD_BRIDGE_ERROR_INVALID_PRIM;
     UsdVariantSet vs = prim.GetVariantSets().GetVariantSet(variant_set_name);
     if (!vs.SetVariantSelection(variant_name)) return USD_BRIDGE_ERROR_UNKNOWN;
-    // Invalidate caches — composition changed
-    stage->cached = false;
-    stage->prims_cached = false;
-    stage->materials_cached = false;
-    stage->lights_cached = false;
-    stage->animation_cached = false;
-    stage->vertex_animation_cached = false;
-    stage->points_cached = false;
-    stage->curves_cached = false;
-    stage->skeletons_cached = false;
-    stage->volumes_cached = false;
+    invalidate_all_caches(stage);
     return USD_BRIDGE_SUCCESS;
 }
 
