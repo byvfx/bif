@@ -650,6 +650,49 @@ extern "C" {
         up_axis: i32,
         time_codes_per_second: f64,
     ) -> UsdBridgeErrorCode;
+
+    // Camera export
+    fn usd_bridge_write_camera(
+        layer: *mut UsdBridgeEditLayerRaw,
+        path: *const std::ffi::c_char,
+        focal_length: f32,
+        h_aperture: f32,
+        v_aperture: f32,
+        clip_near: f32,
+        clip_far: f32,
+        time: f64,
+        transform: *const f32,
+    ) -> UsdBridgeErrorCode;
+
+    // Light export
+    fn usd_bridge_write_light(
+        layer: *mut UsdBridgeEditLayerRaw,
+        path: *const std::ffi::c_char,
+        light_type: UsdBridgeLightType,
+        color: *const f32,
+        intensity: f32,
+        exposure: f32,
+        transform: *const f32,
+        angle: f32,
+        radius: f32,
+        width: f32,
+        height: f32,
+        length: f32,
+        texture_path: *const std::ffi::c_char,
+        shaping_cone_angle: f32,
+        shaping_cone_softness: f32,
+        shaping_focus: f32,
+    ) -> UsdBridgeErrorCode;
+
+    // Render settings export
+    fn usd_bridge_write_render_settings(
+        layer: *mut UsdBridgeEditLayerRaw,
+        path: *const std::ffi::c_char,
+        resolution_x: i32,
+        resolution_y: i32,
+        camera_path: *const std::ffi::c_char,
+        pixel_aspect_ratio: f32,
+    ) -> UsdBridgeErrorCode;
 }
 
 // ============================================================================
@@ -3270,6 +3313,107 @@ impl UsdEditLayer {
                 metadata.meters_per_unit,
                 up_axis,
                 metadata.time_codes_per_second,
+            )
+        };
+        if code != UsdBridgeErrorCode::Success {
+            return Err(code.into());
+        }
+        Ok(())
+    }
+
+    /// Write a UsdGeomCamera prim. Call multiple times at different `time` for animation.
+    #[allow(clippy::too_many_arguments)]
+    pub fn write_camera(
+        &mut self,
+        path: &str,
+        props: &CameraProperties,
+        time: f64,
+        transform: &Mat4,
+    ) -> UsdBridgeResult<()> {
+        let c_path = CString::new(path).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let xform = transform.to_cols_array();
+        let code = unsafe {
+            usd_bridge_write_camera(
+                self.raw,
+                c_path.as_ptr(),
+                props.focal_length,
+                props.horizontal_aperture,
+                props.vertical_aperture,
+                props.clip_near,
+                props.clip_far,
+                time,
+                xform.as_ptr(),
+            )
+        };
+        if code != UsdBridgeErrorCode::Success {
+            return Err(code.into());
+        }
+        Ok(())
+    }
+
+    /// Write a UsdLux light prim with type-specific properties.
+    #[allow(clippy::too_many_arguments)]
+    pub fn write_light(&mut self, light: &UsdLightData) -> UsdBridgeResult<()> {
+        let c_path = CString::new(light.path.as_str()).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let color = [light.color.x, light.color.y, light.color.z];
+        let xform = light.transform.to_cols_array();
+        let light_type = match light.light_type {
+            UsdLightType::Distant => UsdBridgeLightType::Distant,
+            UsdLightType::Sphere => UsdBridgeLightType::Sphere,
+            UsdLightType::Rect => UsdBridgeLightType::Rect,
+            UsdLightType::Dome => UsdBridgeLightType::Dome,
+            UsdLightType::Cylinder => UsdBridgeLightType::Cylinder,
+            UsdLightType::Disk => UsdBridgeLightType::Disk,
+        };
+        let tex_path = light
+            .texture_path
+            .as_deref()
+            .and_then(|s| CString::new(s.as_bytes()).ok());
+
+        let code = unsafe {
+            usd_bridge_write_light(
+                self.raw,
+                c_path.as_ptr(),
+                light_type,
+                color.as_ptr(),
+                light.intensity,
+                0.0, // exposure already baked into intensity on read
+                xform.as_ptr(),
+                light.angle,
+                light.radius,
+                light.width,
+                light.height,
+                light.length,
+                tex_path.as_ref().map_or(ptr::null(), |s| s.as_ptr()),
+                light.shaping.cone_angle,
+                light.shaping.cone_softness,
+                light.shaping.focus,
+            )
+        };
+        if code != UsdBridgeErrorCode::Success {
+            return Err(code.into());
+        }
+        Ok(())
+    }
+
+    /// Write UsdRenderSettings prim.
+    pub fn write_render_settings(
+        &mut self,
+        path: &str,
+        resolution: (u32, u32),
+        camera_path: Option<&str>,
+        pixel_aspect_ratio: f32,
+    ) -> UsdBridgeResult<()> {
+        let c_path = CString::new(path).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_cam = camera_path.and_then(|s| CString::new(s).ok());
+        let code = unsafe {
+            usd_bridge_write_render_settings(
+                self.raw,
+                c_path.as_ptr(),
+                resolution.0 as i32,
+                resolution.1 as i32,
+                c_cam.as_ref().map_or(ptr::null(), |s| s.as_ptr()),
+                pixel_aspect_ratio,
             )
         };
         if code != UsdBridgeErrorCode::Success {

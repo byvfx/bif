@@ -1142,6 +1142,99 @@ UsdBridgeError usd_bridge_set_stage_metadata(
     double time_codes_per_second
 );
 
+// ============================================================================
+// Camera Export
+// ============================================================================
+
+/// Write a UsdGeomCamera prim with lens properties and transform.
+/// Call multiple times at different time values for animated cameras.
+///
+/// @param layer Edit layer handle
+/// @param path Camera prim path (e.g., "/World/Camera")
+/// @param focal_length Focal length in mm
+/// @param h_aperture Horizontal aperture in mm
+/// @param v_aperture Vertical aperture in mm
+/// @param clip_near Near clip plane in scene units
+/// @param clip_far Far clip plane in scene units
+/// @param time Time code (-1 for default/static)
+/// @param transform Column-major 4x4 world transform (16 floats)
+/// @return USD_BRIDGE_SUCCESS on success
+UsdBridgeError usd_bridge_write_camera(
+    UsdBridgeEditLayer* layer,
+    const char* path,
+    float focal_length,
+    float h_aperture,
+    float v_aperture,
+    float clip_near,
+    float clip_far,
+    double time,
+    const float* transform
+);
+
+// ============================================================================
+// Light Export
+// ============================================================================
+
+/// Write a UsdLux light prim with type-specific properties and transform.
+///
+/// @param layer Edit layer handle
+/// @param path Light prim path (e.g., "/World/Lights/Key")
+/// @param light_type Light type (0=Distant, 1=Sphere, 2=Rect, 3=Dome, 4=Cylinder, 5=Disk)
+/// @param color RGB color (3 floats)
+/// @param intensity Light intensity
+/// @param exposure Exposure (power of 2 multiplier)
+/// @param transform Column-major 4x4 world transform (16 floats)
+/// @param angle Distant light angle in degrees
+/// @param radius Sphere/Cylinder/Disk light radius
+/// @param width Rect light width
+/// @param height Rect light height
+/// @param length Cylinder light length
+/// @param texture_path Dome light texture (NULL to skip)
+/// @param shaping_cone_angle ShapingAPI cone angle (0 to skip)
+/// @param shaping_cone_softness ShapingAPI cone softness
+/// @param shaping_focus ShapingAPI focus
+/// @return USD_BRIDGE_SUCCESS on success
+UsdBridgeError usd_bridge_write_light(
+    UsdBridgeEditLayer* layer,
+    const char* path,
+    UsdBridgeLightType light_type,
+    const float* color,
+    float intensity,
+    float exposure,
+    const float* transform,
+    float angle,
+    float radius,
+    float width,
+    float height,
+    float length,
+    const char* texture_path,
+    float shaping_cone_angle,
+    float shaping_cone_softness,
+    float shaping_focus
+);
+
+// ============================================================================
+// Render Settings Export
+// ============================================================================
+
+/// Write a UsdRenderSettings prim.
+///
+/// @param layer Edit layer handle
+/// @param path RenderSettings prim path (e.g., "/Render/Settings")
+/// @param resolution_x Horizontal resolution in pixels
+/// @param resolution_y Vertical resolution in pixels
+/// @param camera_path Path to the render camera (NULL to skip)
+/// @param pixel_aspect_ratio Pixel aspect ratio (1.0 for square pixels)
+/// @return USD_BRIDGE_SUCCESS on success
+UsdBridgeError usd_bridge_write_render_settings(
+    UsdBridgeEditLayer* layer,
+    const char* path,
+    int resolution_x,
+    int resolution_y,
+    const char* camera_path,
+    float pixel_aspect_ratio
+);
+
 #ifdef __cplusplus
 }
 #endif

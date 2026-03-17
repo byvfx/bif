@@ -113,8 +113,9 @@ fn main() {
 
     // USD core libraries (order matters for linking)
     let usd_libs = [
-        "usd_usdLux",   // For lights
-        "usd_usdShade", // For materials/shaders
+        "usd_usdRender", // For render settings
+        "usd_usdLux",    // For lights
+        "usd_usdShade",  // For materials/shaders
         "usd_usdGeom",
         "usd_usd",
         "usd_kind", // For UsdModelAPI kind tokens

@@ -23,6 +23,7 @@
 #include <pxr/usd/usdLux/diskLight.h>
 #include <pxr/usd/usdLux/shapingAPI.h>
 #include <pxr/usd/usdGeom/points.h>
+#include <pxr/usd/usdRender/settings.h>
 #include <pxr/base/gf/matrix4f.h>
 #include <pxr/base/gf/vec2f.h>
 #include <pxr/base/gf/vec3f.h>
@@ -3703,6 +3704,197 @@ UsdBridgeError usd_bridge_set_stage_metadata(
         return USD_BRIDGE_SUCCESS;
     } catch (const std::exception& e) {
         TF_WARN("usd_bridge_set_stage_metadata: %s", e.what());
+        return USD_BRIDGE_ERROR_UNKNOWN;
+    }
+}
+
+// ============================================================================
+// Camera Export
+// ============================================================================
+
+UsdBridgeError usd_bridge_write_camera(
+    UsdBridgeEditLayer* layer,
+    const char* path,
+    float focal_length,
+    float h_aperture,
+    float v_aperture,
+    float clip_near,
+    float clip_far,
+    double time,
+    const float* transform
+) {
+    if (!layer || !path || !transform) return USD_BRIDGE_ERROR_NULL_POINTER;
+
+    try {
+        SdfPath camPath(path);
+        UsdGeomCamera camera = UsdGeomCamera::Define(layer->stage, camPath);
+
+        UsdTimeCode tc = (time < 0.0) ? UsdTimeCode::Default() : UsdTimeCode(time);
+
+        camera.GetFocalLengthAttr().Set(focal_length, tc);
+        camera.GetHorizontalApertureAttr().Set(h_aperture, tc);
+        camera.GetVerticalApertureAttr().Set(v_aperture, tc);
+        camera.GetClippingRangeAttr().Set(GfVec2f(clip_near, clip_far), tc);
+
+        // Set transform via xformOp:transform
+        UsdGeomXformable xformable(camera.GetPrim());
+        // Clear existing ops and set single transform
+        bool resetStack = false;
+        auto ops = xformable.GetOrderedXformOps(&resetStack);
+        if (ops.empty()) {
+            xformable.AddTransformOp();
+        }
+        ops = xformable.GetOrderedXformOps(&resetStack);
+        if (!ops.empty()) {
+            // Convert float[16] to GfMatrix4d
+            GfMatrix4d mat;
+            double* data = mat.GetArray();
+            for (int i = 0; i < 16; ++i) data[i] = static_cast<double>(transform[i]);
+            ops[0].Set(mat, tc);
+        }
+
+        return USD_BRIDGE_SUCCESS;
+    } catch (const std::exception& e) {
+        TF_WARN("usd_bridge_write_camera: %s", e.what());
+        return USD_BRIDGE_ERROR_UNKNOWN;
+    }
+}
+
+// ============================================================================
+// Light Export
+// ============================================================================
+
+UsdBridgeError usd_bridge_write_light(
+    UsdBridgeEditLayer* layer,
+    const char* path,
+    UsdBridgeLightType light_type,
+    const float* color,
+    float intensity,
+    float exposure,
+    const float* transform,
+    float angle,
+    float radius,
+    float width,
+    float height,
+    float length,
+    const char* texture_path,
+    float shaping_cone_angle,
+    float shaping_cone_softness,
+    float shaping_focus
+) {
+    if (!layer || !path || !color || !transform) return USD_BRIDGE_ERROR_NULL_POINTER;
+
+    try {
+        SdfPath lightPath(path);
+        UsdPrim prim;
+
+        switch (light_type) {
+            case USD_LIGHT_DISTANT: {
+                auto light = UsdLuxDistantLight::Define(layer->stage, lightPath);
+                light.GetAngleAttr().Set(angle);
+                prim = light.GetPrim();
+                break;
+            }
+            case USD_LIGHT_SPHERE: {
+                auto light = UsdLuxSphereLight::Define(layer->stage, lightPath);
+                light.GetRadiusAttr().Set(radius);
+                prim = light.GetPrim();
+                break;
+            }
+            case USD_LIGHT_RECT: {
+                auto light = UsdLuxRectLight::Define(layer->stage, lightPath);
+                light.GetWidthAttr().Set(width);
+                light.GetHeightAttr().Set(height);
+                prim = light.GetPrim();
+                break;
+            }
+            case USD_LIGHT_DOME: {
+                auto light = UsdLuxDomeLight::Define(layer->stage, lightPath);
+                if (texture_path && strlen(texture_path) > 0) {
+                    light.GetTextureFileAttr().Set(SdfAssetPath(texture_path));
+                }
+                prim = light.GetPrim();
+                break;
+            }
+            case USD_LIGHT_CYLINDER: {
+                auto light = UsdLuxCylinderLight::Define(layer->stage, lightPath);
+                light.GetRadiusAttr().Set(radius);
+                light.GetLengthAttr().Set(length);
+                prim = light.GetPrim();
+                break;
+            }
+            case USD_LIGHT_DISK: {
+                auto light = UsdLuxDiskLight::Define(layer->stage, lightPath);
+                light.GetRadiusAttr().Set(radius);
+                prim = light.GetPrim();
+                break;
+            }
+            default:
+                return USD_BRIDGE_ERROR_INVALID_PRIM;
+        }
+
+        if (!prim) return USD_BRIDGE_ERROR_INVALID_PRIM;
+
+        // Common light attributes
+        prim.GetAttribute(TfToken("inputs:color")).Set(GfVec3f(color[0], color[1], color[2]));
+        prim.GetAttribute(TfToken("inputs:intensity")).Set(intensity);
+        prim.GetAttribute(TfToken("inputs:exposure")).Set(exposure);
+
+        // Transform
+        UsdGeomXformable xformable(prim);
+        auto ops = xformable.GetOrderedXformOps(nullptr);
+        if (ops.empty()) xformable.AddTransformOp();
+        ops = xformable.GetOrderedXformOps(nullptr);
+        if (!ops.empty()) {
+            GfMatrix4d mat;
+            double* data = mat.GetArray();
+            for (int i = 0; i < 16; ++i) data[i] = static_cast<double>(transform[i]);
+            ops[0].Set(mat);
+        }
+
+        // ShapingAPI (if cone angle > 0)
+        if (shaping_cone_angle > 0.0f) {
+            UsdLuxShapingAPI shaping = UsdLuxShapingAPI::Apply(prim);
+            shaping.GetShapingConeAngleAttr().Set(shaping_cone_angle);
+            shaping.GetShapingConeSoftnessAttr().Set(shaping_cone_softness);
+            shaping.GetShapingFocusAttr().Set(shaping_focus);
+        }
+
+        return USD_BRIDGE_SUCCESS;
+    } catch (const std::exception& e) {
+        TF_WARN("usd_bridge_write_light: %s", e.what());
+        return USD_BRIDGE_ERROR_UNKNOWN;
+    }
+}
+
+// ============================================================================
+// Render Settings Export
+// ============================================================================
+
+UsdBridgeError usd_bridge_write_render_settings(
+    UsdBridgeEditLayer* layer,
+    const char* path,
+    int resolution_x,
+    int resolution_y,
+    const char* camera_path,
+    float pixel_aspect_ratio
+) {
+    if (!layer || !path) return USD_BRIDGE_ERROR_NULL_POINTER;
+
+    try {
+        SdfPath settingsPath(path);
+        UsdRenderSettings settings = UsdRenderSettings::Define(layer->stage, settingsPath);
+
+        settings.GetResolutionAttr().Set(GfVec2i(resolution_x, resolution_y));
+        settings.GetPixelAspectRatioAttr().Set(pixel_aspect_ratio);
+
+        if (camera_path && strlen(camera_path) > 0) {
+            settings.GetCameraRel().SetTargets({SdfPath(camera_path)});
+        }
+
+        return USD_BRIDGE_SUCCESS;
+    } catch (const std::exception& e) {
+        TF_WARN("usd_bridge_write_render_settings: %s", e.what());
         return USD_BRIDGE_ERROR_UNKNOWN;
     }
 }
