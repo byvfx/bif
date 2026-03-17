@@ -1,6 +1,6 @@
-# Session Handoff - March 16, 2026
+# Session Handoff - March 17, 2026
 
-**Last Updated:** USD spec compliance fully complete — all 26 gaps addressed
+**Last Updated:** UDIM UNC path fix + material export/cache commits landed
 **Next Milestone:** M29.5 egui upgrade
 **Project:** BIF - VFX Scene Assembler & Renderer
 
@@ -18,6 +18,13 @@
 ---
 
 ## Recent Work
+
+### UDIM UNC Path Fix + Catch-up Commits (Mar 17, 2026)
+
+Fixed UDIM texture loading regression for UNC network paths (`//server/share/...`):
+- v1 attempt normalized paths at API boundaries, broke viewport index_map lookups
+- v2 fix: normalize only at filesystem boundaries (`Path::exists()`, `image::open()`), add `starts_with("//")` for UNC absolute detection
+- Also committed prior uncommitted work: material export C++ bridge, Rust FFI, scene material GC, Ivar material cache invalidation/prewarm
 
 ### USD Spec Compliance Sessions 1-4 (Mar 16, 2026)
 

@@ -38,6 +38,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `Renderer::needs_redraw()` for conditional redraw in viewer
 - `#[must_use]` on pure functions in texture.rs and scene.rs
 - Interval doc comment, debug_assert on inverted intervals
+- Ivar material cache invalidation + prewarm (background texture/material loading before batch render)
+- `normalize_path()` helpers in bif_core and bif_viewport for UNC path handling at filesystem boundaries
+
+### Fixed
+
+- UDIM texture loading for UNC network paths (forward-slash `//server/...` now treated as absolute)
+- Viewport texture regression: normalize only at filesystem boundaries, not in cache/index_map keys
 - UDIM atlas pixel budget constant `MAX_IVAR_ATLAS_PIXELS`
 
 ### Changed
