@@ -3449,3 +3449,260 @@ UsdBridgeError usd_bridge_set_prim_kind(
         return USD_BRIDGE_ERROR_UNKNOWN;
     }
 }
+
+// ============================================================================
+// Material Export
+// ============================================================================
+
+/// Helper to create a UsdUVTexture reader shader connected to a material input
+static void create_texture_reader(
+    UsdStageRefPtr stage,
+    const SdfPath& shader_path,
+    const std::string& texture_file,
+    const TfToken& output_type,  // "rgb" or "r"
+    UsdShadeShader& out_shader
+) {
+    out_shader = UsdShadeShader::Define(stage, shader_path);
+    out_shader.CreateIdAttr(VtValue(TfToken("UsdUVTexture")));
+    out_shader.CreateInput(TfToken("file"), SdfValueTypeNames->Asset)
+        .Set(SdfAssetPath(texture_file));
+    out_shader.CreateInput(TfToken("wrapS"), SdfValueTypeNames->Token)
+        .Set(TfToken("repeat"));
+    out_shader.CreateInput(TfToken("wrapT"), SdfValueTypeNames->Token)
+        .Set(TfToken("repeat"));
+
+    // Create ST reader for UV coordinates
+    SdfPath st_path = shader_path.GetParentPath().AppendChild(TfToken("st_reader"));
+    UsdPrim st_prim = stage->GetPrimAtPath(st_path);
+    if (!st_prim) {
+        UsdShadeShader st_shader = UsdShadeShader::Define(stage, st_path);
+        st_shader.CreateIdAttr(VtValue(TfToken("UsdPrimvarReader_float2")));
+        st_shader.CreateInput(TfToken("varname"), SdfValueTypeNames->Token)
+            .Set(TfToken("st"));
+        st_shader.CreateOutput(TfToken("result"), SdfValueTypeNames->Float2);
+    }
+    UsdShadeShader st_shader(stage->GetPrimAtPath(st_path));
+    out_shader.CreateInput(TfToken("st"), SdfValueTypeNames->Float2)
+        .ConnectToSource(st_shader.ConnectableAPI(), TfToken("result"));
+
+    if (output_type == "rgb") {
+        out_shader.CreateOutput(TfToken("rgb"), SdfValueTypeNames->Float3);
+    } else {
+        out_shader.CreateOutput(TfToken("r"), SdfValueTypeNames->Float);
+    }
+}
+
+UsdBridgeError usd_bridge_write_material(
+    UsdBridgeEditLayer* layer,
+    const char* mat_path,
+    const float* diffuse_color,
+    float metallic,
+    float roughness,
+    float specular,
+    float opacity,
+    const float* emissive_color,
+    const char* diffuse_tex,
+    const char* roughness_tex,
+    const char* metallic_tex,
+    const char* normal_tex,
+    const char* emissive_tex
+) {
+    if (!layer || !mat_path || !diffuse_color || !emissive_color) {
+        return USD_BRIDGE_ERROR_NULL_POINTER;
+    }
+
+    try {
+        SdfPath materialPath(mat_path);
+
+        // Create Material prim
+        UsdShadeMaterial material = UsdShadeMaterial::Define(layer->stage, materialPath);
+
+        // Create UsdPreviewSurface shader
+        SdfPath shaderPath = materialPath.AppendChild(TfToken("PreviewSurface"));
+        UsdShadeShader shader = UsdShadeShader::Define(layer->stage, shaderPath);
+        shader.CreateIdAttr(VtValue(TfToken("UsdPreviewSurface")));
+
+        // Set scalar inputs
+        shader.CreateInput(TfToken("diffuseColor"), SdfValueTypeNames->Color3f)
+            .Set(GfVec3f(diffuse_color[0], diffuse_color[1], diffuse_color[2]));
+        shader.CreateInput(TfToken("metallic"), SdfValueTypeNames->Float)
+            .Set(metallic);
+        shader.CreateInput(TfToken("roughness"), SdfValueTypeNames->Float)
+            .Set(roughness);
+        shader.CreateInput(TfToken("specularLevel"), SdfValueTypeNames->Float)
+            .Set(specular);
+        shader.CreateInput(TfToken("opacity"), SdfValueTypeNames->Float)
+            .Set(opacity);
+        shader.CreateInput(TfToken("emissiveColor"), SdfValueTypeNames->Color3f)
+            .Set(GfVec3f(emissive_color[0], emissive_color[1], emissive_color[2]));
+
+        // Connect textures if provided
+        if (diffuse_tex && strlen(diffuse_tex) > 0) {
+            SdfPath texPath = materialPath.AppendChild(TfToken("DiffuseTexture"));
+            UsdShadeShader texShader;
+            create_texture_reader(layer->stage, texPath, diffuse_tex, TfToken("rgb"), texShader);
+            shader.CreateInput(TfToken("diffuseColor"), SdfValueTypeNames->Color3f)
+                .ConnectToSource(texShader.ConnectableAPI(), TfToken("rgb"));
+        }
+
+        if (roughness_tex && strlen(roughness_tex) > 0) {
+            SdfPath texPath = materialPath.AppendChild(TfToken("RoughnessTexture"));
+            UsdShadeShader texShader;
+            create_texture_reader(layer->stage, texPath, roughness_tex, TfToken("r"), texShader);
+            shader.CreateInput(TfToken("roughness"), SdfValueTypeNames->Float)
+                .ConnectToSource(texShader.ConnectableAPI(), TfToken("r"));
+        }
+
+        if (metallic_tex && strlen(metallic_tex) > 0) {
+            SdfPath texPath = materialPath.AppendChild(TfToken("MetallicTexture"));
+            UsdShadeShader texShader;
+            create_texture_reader(layer->stage, texPath, metallic_tex, TfToken("r"), texShader);
+            shader.CreateInput(TfToken("metallic"), SdfValueTypeNames->Float)
+                .ConnectToSource(texShader.ConnectableAPI(), TfToken("r"));
+        }
+
+        if (normal_tex && strlen(normal_tex) > 0) {
+            SdfPath texPath = materialPath.AppendChild(TfToken("NormalTexture"));
+            UsdShadeShader texShader;
+            create_texture_reader(layer->stage, texPath, normal_tex, TfToken("rgb"), texShader);
+            shader.CreateInput(TfToken("normal"), SdfValueTypeNames->Normal3f)
+                .ConnectToSource(texShader.ConnectableAPI(), TfToken("rgb"));
+        }
+
+        if (emissive_tex && strlen(emissive_tex) > 0) {
+            SdfPath texPath = materialPath.AppendChild(TfToken("EmissiveTexture"));
+            UsdShadeShader texShader;
+            create_texture_reader(layer->stage, texPath, emissive_tex, TfToken("rgb"), texShader);
+            shader.CreateInput(TfToken("emissiveColor"), SdfValueTypeNames->Color3f)
+                .ConnectToSource(texShader.ConnectableAPI(), TfToken("rgb"));
+        }
+
+        // Create surface output and connect to material
+        shader.CreateOutput(TfToken("surface"), SdfValueTypeNames->Token);
+        material.CreateSurfaceOutput().ConnectToSource(
+            shader.ConnectableAPI(), TfToken("surface"));
+
+        // --- OpenPBR MaterialX network (under "materialx" render context) ---
+        SdfPath openpbrPath = materialPath.AppendChild(TfToken("OpenPBR"));
+        UsdShadeShader openpbr = UsdShadeShader::Define(layer->stage, openpbrPath);
+        openpbr.CreateIdAttr(VtValue(TfToken("ND_open_pbr_surface_surfaceshader")));
+
+        openpbr.CreateInput(TfToken("base_weight"), SdfValueTypeNames->Float)
+            .Set(1.0f);
+        openpbr.CreateInput(TfToken("base_color"), SdfValueTypeNames->Color3f)
+            .Set(GfVec3f(diffuse_color[0], diffuse_color[1], diffuse_color[2]));
+        openpbr.CreateInput(TfToken("base_metalness"), SdfValueTypeNames->Float)
+            .Set(metallic);
+        openpbr.CreateInput(TfToken("specular_weight"), SdfValueTypeNames->Float)
+            .Set(specular);
+        openpbr.CreateInput(TfToken("specular_roughness"), SdfValueTypeNames->Float)
+            .Set(roughness);
+        openpbr.CreateInput(TfToken("geometry_opacity"), SdfValueTypeNames->Float)
+            .Set(opacity);
+
+        // Emission: OpenPBR uses luminance (nits), approximate from emissive color magnitude
+        float emissive_lum = emissive_color[0] * 0.2126f + emissive_color[1] * 0.7152f + emissive_color[2] * 0.0722f;
+        if (emissive_lum > 0.0f) {
+            openpbr.CreateInput(TfToken("emission_luminance"), SdfValueTypeNames->Float)
+                .Set(emissive_lum * 1000.0f); // Scale to nits
+            openpbr.CreateInput(TfToken("emission_color"), SdfValueTypeNames->Color3f)
+                .Set(GfVec3f(emissive_color[0], emissive_color[1], emissive_color[2]));
+        }
+
+        openpbr.CreateOutput(TfToken("out"), SdfValueTypeNames->Token);
+        material.CreateOutput(TfToken("mtlx:surface"), SdfValueTypeNames->Token)
+            .ConnectToSource(openpbr.ConnectableAPI(), TfToken("out"));
+
+        return USD_BRIDGE_SUCCESS;
+    } catch (const std::exception& e) {
+        TF_WARN("usd_bridge_write_material: %s", e.what());
+        return USD_BRIDGE_ERROR_UNKNOWN;
+    }
+}
+
+UsdBridgeError usd_bridge_bind_material(
+    UsdBridgeEditLayer* layer,
+    const char* prim_path,
+    const char* material_path
+) {
+    if (!layer || !prim_path || !material_path) {
+        return USD_BRIDGE_ERROR_NULL_POINTER;
+    }
+
+    try {
+        SdfPath primPath(prim_path);
+        SdfPath matPath(material_path);
+
+        UsdPrim prim = layer->stage->GetPrimAtPath(primPath);
+        if (!prim) {
+            return USD_BRIDGE_ERROR_INVALID_PRIM;
+        }
+
+        UsdShadeMaterial material(layer->stage->GetPrimAtPath(matPath));
+        if (!material) {
+            return USD_BRIDGE_ERROR_INVALID_PRIM;
+        }
+
+        UsdShadeMaterialBindingAPI bindingAPI = UsdShadeMaterialBindingAPI::Apply(prim);
+        bindingAPI.Bind(material);
+
+        return USD_BRIDGE_SUCCESS;
+    } catch (const std::exception& e) {
+        TF_WARN("usd_bridge_bind_material: %s", e.what());
+        return USD_BRIDGE_ERROR_UNKNOWN;
+    }
+}
+
+UsdBridgeError usd_bridge_write_visibility(
+    UsdBridgeEditLayer* layer,
+    const char* prim_path,
+    int visible
+) {
+    if (!layer || !prim_path) {
+        return USD_BRIDGE_ERROR_NULL_POINTER;
+    }
+
+    try {
+        SdfPath path(prim_path);
+        UsdPrim prim = layer->stage->GetPrimAtPath(path);
+        if (!prim) {
+            // Define as Xform if prim doesn't exist yet
+            prim = layer->stage->DefinePrim(path);
+        }
+
+        UsdGeomImageable imageable(prim);
+        if (imageable) {
+            imageable.GetVisibilityAttr().Set(
+                visible ? UsdGeomTokens->inherited : UsdGeomTokens->invisible
+            );
+        }
+
+        return USD_BRIDGE_SUCCESS;
+    } catch (const std::exception& e) {
+        TF_WARN("usd_bridge_write_visibility: %s", e.what());
+        return USD_BRIDGE_ERROR_UNKNOWN;
+    }
+}
+
+UsdBridgeError usd_bridge_set_stage_metadata(
+    UsdBridgeEditLayer* layer,
+    double meters_per_unit,
+    int up_axis,
+    double time_codes_per_second
+) {
+    if (!layer) {
+        return USD_BRIDGE_ERROR_NULL_POINTER;
+    }
+
+    try {
+        UsdGeomSetStageMetersPerUnit(layer->stage, meters_per_unit);
+        UsdGeomSetStageUpAxis(layer->stage,
+            up_axis == 1 ? UsdGeomTokens->z : UsdGeomTokens->y);
+        layer->stage->SetTimeCodesPerSecond(time_codes_per_second);
+
+        return USD_BRIDGE_SUCCESS;
+    } catch (const std::exception& e) {
+        TF_WARN("usd_bridge_set_stage_metadata: %s", e.what());
+        return USD_BRIDGE_ERROR_UNKNOWN;
+    }
+}

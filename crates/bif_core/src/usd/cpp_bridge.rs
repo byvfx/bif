@@ -614,6 +614,42 @@ extern "C" {
         prim_path: *const std::ffi::c_char,
         kind: UsdBridgeKindRaw,
     ) -> UsdBridgeErrorCode;
+
+    // Material export
+    fn usd_bridge_write_material(
+        layer: *mut UsdBridgeEditLayerRaw,
+        mat_path: *const std::ffi::c_char,
+        diffuse_color: *const f32,
+        metallic: f32,
+        roughness: f32,
+        specular: f32,
+        opacity: f32,
+        emissive_color: *const f32,
+        diffuse_tex: *const std::ffi::c_char,
+        roughness_tex: *const std::ffi::c_char,
+        metallic_tex: *const std::ffi::c_char,
+        normal_tex: *const std::ffi::c_char,
+        emissive_tex: *const std::ffi::c_char,
+    ) -> UsdBridgeErrorCode;
+
+    fn usd_bridge_bind_material(
+        layer: *mut UsdBridgeEditLayerRaw,
+        prim_path: *const std::ffi::c_char,
+        material_path: *const std::ffi::c_char,
+    ) -> UsdBridgeErrorCode;
+
+    fn usd_bridge_write_visibility(
+        layer: *mut UsdBridgeEditLayerRaw,
+        prim_path: *const std::ffi::c_char,
+        visible: i32,
+    ) -> UsdBridgeErrorCode;
+
+    fn usd_bridge_set_stage_metadata(
+        layer: *mut UsdBridgeEditLayerRaw,
+        meters_per_unit: f64,
+        up_axis: i32,
+        time_codes_per_second: f64,
+    ) -> UsdBridgeErrorCode;
 }
 
 // ============================================================================
@@ -3130,6 +3166,112 @@ impl UsdEditLayer {
             UsdKind::Subcomponent => UsdBridgeKindRaw::Subcomponent,
         };
         let code = unsafe { usd_bridge_set_prim_kind(self.raw, c_path.as_ptr(), kind_raw) };
+        if code != UsdBridgeErrorCode::Success {
+            return Err(code.into());
+        }
+        Ok(())
+    }
+
+    /// Write a material (UsdPreviewSurface + OpenPBR MaterialX).
+    #[allow(clippy::too_many_arguments)]
+    pub fn write_material(
+        &mut self,
+        mat_path: &str,
+        material: &crate::scene::Material,
+    ) -> UsdBridgeResult<()> {
+        let c_path = CString::new(mat_path).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let diffuse = [
+            material.diffuse_color.x,
+            material.diffuse_color.y,
+            material.diffuse_color.z,
+        ];
+        let emissive = [
+            material.emissive_color.x,
+            material.emissive_color.y,
+            material.emissive_color.z,
+        ];
+
+        let diffuse_tex = material
+            .diffuse_texture
+            .as_deref()
+            .and_then(|s| CString::new(s.as_bytes()).ok());
+        let roughness_tex = material
+            .roughness_texture
+            .as_deref()
+            .and_then(|s| CString::new(s.as_bytes()).ok());
+        let metallic_tex = material
+            .metallic_texture
+            .as_deref()
+            .and_then(|s| CString::new(s.as_bytes()).ok());
+        let normal_tex = material
+            .normal_texture
+            .as_deref()
+            .and_then(|s| CString::new(s.as_bytes()).ok());
+        let emissive_tex = material
+            .emissive_texture
+            .as_deref()
+            .and_then(|s| CString::new(s.as_bytes()).ok());
+
+        let code = unsafe {
+            usd_bridge_write_material(
+                self.raw,
+                c_path.as_ptr(),
+                diffuse.as_ptr(),
+                material.metallic,
+                material.roughness,
+                material.specular,
+                material.opacity,
+                emissive.as_ptr(),
+                diffuse_tex.as_ref().map_or(ptr::null(), |s| s.as_ptr()),
+                roughness_tex.as_ref().map_or(ptr::null(), |s| s.as_ptr()),
+                metallic_tex.as_ref().map_or(ptr::null(), |s| s.as_ptr()),
+                normal_tex.as_ref().map_or(ptr::null(), |s| s.as_ptr()),
+                emissive_tex.as_ref().map_or(ptr::null(), |s| s.as_ptr()),
+            )
+        };
+        if code != UsdBridgeErrorCode::Success {
+            return Err(code.into());
+        }
+        Ok(())
+    }
+
+    /// Bind a material to a prim.
+    pub fn bind_material(&mut self, prim_path: &str, material_path: &str) -> UsdBridgeResult<()> {
+        let c_prim = CString::new(prim_path).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_mat = CString::new(material_path).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let code = unsafe { usd_bridge_bind_material(self.raw, c_prim.as_ptr(), c_mat.as_ptr()) };
+        if code != UsdBridgeErrorCode::Success {
+            return Err(code.into());
+        }
+        Ok(())
+    }
+
+    /// Write visibility attribute on a prim.
+    pub fn write_visibility(&mut self, prim_path: &str, visible: bool) -> UsdBridgeResult<()> {
+        let c_path = CString::new(prim_path).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let code = unsafe {
+            usd_bridge_write_visibility(self.raw, c_path.as_ptr(), if visible { 1 } else { 0 })
+        };
+        if code != UsdBridgeErrorCode::Success {
+            return Err(code.into());
+        }
+        Ok(())
+    }
+
+    /// Set stage metadata (metersPerUnit, upAxis, timeCodesPerSecond).
+    pub fn set_stage_metadata(&mut self, metadata: &UsdStageMetadata) -> UsdBridgeResult<()> {
+        let up_axis = match metadata.up_axis {
+            UpAxis::Z => 1,
+            UpAxis::Y => 0,
+        };
+        let code = unsafe {
+            usd_bridge_set_stage_metadata(
+                self.raw,
+                metadata.meters_per_unit,
+                up_axis,
+                metadata.time_codes_per_second,
+            )
+        };
         if code != UsdBridgeErrorCode::Success {
             return Err(code.into());
         }

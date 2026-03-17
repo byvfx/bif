@@ -1066,6 +1066,82 @@ UsdBridgeError usd_bridge_set_prim_kind(
     UsdBridgeKind kind
 );
 
+// ============================================================================
+// Material Export
+// ============================================================================
+
+/// Write a UsdPreviewSurface material with optional texture connections.
+/// Creates Material -> Shader (UsdPreviewSurface) network.
+/// Texture paths may be NULL to skip texture connections.
+///
+/// @param layer Edit layer handle
+/// @param mat_path Material prim path (e.g., "/World/Looks/Mat_0")
+/// @param diffuse_color RGB diffuse color (3 floats)
+/// @param metallic Metallic factor (0-1)
+/// @param roughness Roughness factor (0-1)
+/// @param specular Specular factor (0-1)
+/// @param opacity Opacity (0-1)
+/// @param emissive_color RGB emissive color (3 floats)
+/// @param diffuse_tex Diffuse texture path (NULL to skip)
+/// @param roughness_tex Roughness texture path (NULL to skip)
+/// @param metallic_tex Metallic texture path (NULL to skip)
+/// @param normal_tex Normal map texture path (NULL to skip)
+/// @param emissive_tex Emissive texture path (NULL to skip)
+/// @return USD_BRIDGE_SUCCESS on success
+UsdBridgeError usd_bridge_write_material(
+    UsdBridgeEditLayer* layer,
+    const char* mat_path,
+    const float* diffuse_color,
+    float metallic,
+    float roughness,
+    float specular,
+    float opacity,
+    const float* emissive_color,
+    const char* diffuse_tex,
+    const char* roughness_tex,
+    const char* metallic_tex,
+    const char* normal_tex,
+    const char* emissive_tex
+);
+
+/// Bind a material to a prim via UsdShadeMaterialBindingAPI.
+///
+/// @param layer Edit layer handle
+/// @param prim_path Target prim path
+/// @param material_path Material prim path to bind
+/// @return USD_BRIDGE_SUCCESS on success
+UsdBridgeError usd_bridge_bind_material(
+    UsdBridgeEditLayer* layer,
+    const char* prim_path,
+    const char* material_path
+);
+
+/// Write visibility attribute on a prim.
+///
+/// @param layer Edit layer handle
+/// @param prim_path Target prim path
+/// @param visible 1 for "inherited" (visible), 0 for "invisible"
+/// @return USD_BRIDGE_SUCCESS on success
+UsdBridgeError usd_bridge_write_visibility(
+    UsdBridgeEditLayer* layer,
+    const char* prim_path,
+    int visible
+);
+
+/// Set stage metadata (metersPerUnit, upAxis, timeCodesPerSecond).
+///
+/// @param layer Edit layer handle
+/// @param meters_per_unit Scene scale (e.g., 0.01 for cm)
+/// @param up_axis Up axis (0=Y, 1=Z)
+/// @param time_codes_per_second TCPS (e.g., 24.0)
+/// @return USD_BRIDGE_SUCCESS on success
+UsdBridgeError usd_bridge_set_stage_metadata(
+    UsdBridgeEditLayer* layer,
+    double meters_per_unit,
+    int up_axis,
+    double time_codes_per_second
+);
+
 #ifdef __cplusplus
 }
 #endif
