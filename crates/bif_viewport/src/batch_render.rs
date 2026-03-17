@@ -47,7 +47,7 @@ pub fn build_materials(
     fallback: &bif_core::Material,
     texture_cache: &mut bif_core::texture::TextureCache,
 ) -> Vec<Arc<DisneyBSDF>> {
-    let materials = if scene_materials.is_empty() {
+    let mut materials: Vec<Arc<DisneyBSDF>> = if scene_materials.is_empty() {
         vec![Arc::new(DisneyBSDF::from_material_with_textures(
             fallback,
             texture_cache,
@@ -63,9 +63,19 @@ pub fn build_materials(
             })
             .collect()
     };
+    // Append default material at index N so triangle_material_ids that reference
+    // default_mat_index (= scene_materials.len()) resolve correctly in Ivar,
+    // matching the viewport's material_table convention.
+    if !scene_materials.is_empty() {
+        materials.push(Arc::new(DisneyBSDF::from_material_with_textures(
+            fallback,
+            texture_cache,
+        )));
+    }
     log::info!(
-        "Built {} materials (textures cached: {})",
+        "Built {} materials ({} scene + default, textures cached: {})",
         materials.len(),
+        scene_materials.len(),
         texture_cache.len()
     );
     materials

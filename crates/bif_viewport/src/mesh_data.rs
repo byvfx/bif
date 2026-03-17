@@ -481,7 +481,7 @@ impl MeshData {
     /// to be rendered together. Each mesh is transformed by its instance transform
     /// before being combined. The mesh_idx is stored for vertex animation lookup.
     pub fn combine_with_transforms(
-        meshes: &[(&bif_core::Mesh, bif_math::Mat4, usize)], // (mesh, transform, mesh_idx)
+        meshes: &[(&bif_core::Mesh, bif_math::Mat4, usize, u32)], // (mesh, transform, mesh_idx, instance_material_id)
     ) -> Self {
         let default_normal = Vec3::Y;
         let default_uv = [0.0f32, 0.0f32];
@@ -493,7 +493,7 @@ impl MeshData {
         let mut bounds_min = Vec3::splat(f32::INFINITY);
         let mut bounds_max = Vec3::splat(f32::NEG_INFINITY);
 
-        for (mesh, transform, mesh_idx) in meshes {
+        for (mesh, transform, mesh_idx, instance_mat_id) in meshes {
             let vertex_offset = all_vertices.len() as u32;
 
             // Track mesh range for vertex animation
@@ -559,13 +559,14 @@ impl MeshData {
             if let Some(ref face_mat_ids) = mesh.face_material_ids {
                 all_triangle_material_ids.extend(face_mat_ids.iter().copied());
             } else {
-                // No face materials - fill with default
+                // No GeomSubsets — use instance-level material binding as fallback
                 let triangle_count = mesh.indices.len() / 3;
-                all_triangle_material_ids.extend(std::iter::repeat_n(0u32, triangle_count));
+                all_triangle_material_ids
+                    .extend(std::iter::repeat_n(*instance_mat_id, triangle_count));
             }
         }
 
-        let triangle_material_ids = if all_triangle_material_ids.iter().all(|&id| id == 0) {
+        let triangle_material_ids = if all_triangle_material_ids.is_empty() {
             None
         } else {
             Some(all_triangle_material_ids)

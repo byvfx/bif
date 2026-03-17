@@ -623,23 +623,48 @@ impl Renderer {
             });
         }
 
+        // Build material index lookup early so combine_with_transforms can use it
+        let material_index_by_name: HashMap<Arc<str>, u32> = scene
+            .materials
+            .iter()
+            .enumerate()
+            .map(|(idx, mat)| (mat.name.clone(), idx as u32))
+            .collect();
+        let default_mat_index = scene.materials.len() as u32;
+
         // Combined mesh_data for single-draw fallback and Ivar.
         // Single prototype: raw mesh (Ivar applies per-instance transforms).
         // Multi prototype: bake scene + instancer transforms into vertices
         // so Ivar can use a single identity transform.
         let mesh_data = if scene.prototypes.len() == 1 {
-            MeshData::from_core_mesh(&scene.prototypes[0].mesh)
+            let mut md = MeshData::from_core_mesh(&scene.prototypes[0].mesh);
+            // from_core_mesh sets triangle_material_ids=None when no GeomSubsets.
+            // Fill with prototype's material index so Ivar uses correct material.
+            if md.triangle_material_ids.is_none() {
+                let mat_id = scene.prototypes[0]
+                    .material
+                    .as_ref()
+                    .and_then(|mat| material_index_by_name.get(&mat.name).copied())
+                    .unwrap_or(default_mat_index);
+                let tri_count = md.indices.len() / 3;
+                md.triangle_material_ids = Some(vec![mat_id; tri_count]);
+            }
+            md
         } else if !scene.instances().is_empty() {
-            let mut meshes_with_transforms: Vec<(&bif_core::Mesh, Mat4, usize)> = scene
+            let mut meshes_with_transforms: Vec<(&bif_core::Mesh, Mat4, usize, u32)> = scene
                 .instances()
                 .iter()
                 .enumerate()
                 .filter(|(_idx, inst)| !hidden_proto_ids.contains(&inst.prototype_id))
                 .filter_map(|(mesh_idx, inst)| {
-                    scene
-                        .prototypes
-                        .get(inst.prototype_id)
-                        .map(|proto| (proto.mesh.as_ref(), inst.model_matrix(), mesh_idx))
+                    scene.prototypes.get(inst.prototype_id).map(|proto| {
+                        let mat_id = proto
+                            .material
+                            .as_ref()
+                            .and_then(|mat| material_index_by_name.get(&mat.name).copied())
+                            .unwrap_or(default_mat_index);
+                        (proto.mesh.as_ref(), inst.model_matrix(), mesh_idx, mat_id)
+                    })
                 })
                 .collect();
             // Bake active instancer instances so Ivar (identity transform) can render them
@@ -653,20 +678,33 @@ impl Renderer {
                 .enumerate()
             {
                 if let Some(proto) = scene.prototypes.get(inst.prototype_id) {
+                    let mat_id = proto
+                        .material
+                        .as_ref()
+                        .and_then(|mat| material_index_by_name.get(&mat.name).copied())
+                        .unwrap_or(default_mat_index);
                     meshes_with_transforms.push((
                         proto.mesh.as_ref(),
                         inst.model_matrix(),
                         base_idx + i,
+                        mat_id,
                     ));
                 }
             }
             MeshData::combine_with_transforms(&meshes_with_transforms)
         } else {
-            let meshes_with_transforms: Vec<(&bif_core::Mesh, Mat4, usize)> = scene
+            let meshes_with_transforms: Vec<(&bif_core::Mesh, Mat4, usize, u32)> = scene
                 .prototypes
                 .iter()
                 .enumerate()
-                .map(|(idx, proto)| (proto.mesh.as_ref(), Mat4::IDENTITY, idx))
+                .map(|(idx, proto)| {
+                    let mat_id = proto
+                        .material
+                        .as_ref()
+                        .and_then(|mat| material_index_by_name.get(&mat.name).copied())
+                        .unwrap_or(default_mat_index);
+                    (proto.mesh.as_ref(), Mat4::IDENTITY, idx, mat_id)
+                })
                 .collect();
             MeshData::combine_with_transforms(&meshes_with_transforms)
         };
@@ -784,14 +822,6 @@ impl Renderer {
                 contents: bytemuck::cast_slice(&mesh_data.indices),
                 usage: wgpu::BufferUsages::INDEX,
             });
-
-        // Build material index lookup
-        let material_index_by_name: HashMap<Arc<str>, u32> = scene
-            .materials
-            .iter()
-            .enumerate()
-            .map(|(idx, mat)| (mat.name.clone(), idx as u32))
-            .collect();
 
         // Generate instances (pre-allocate for scene + instancer instances)
         let instancer_count: usize = self
@@ -1464,26 +1494,64 @@ impl Renderer {
             });
         }
 
+        // Build material index lookup early for combine_with_transforms
+        let material_index_by_name: HashMap<Arc<str>, u32> = scene
+            .materials
+            .iter()
+            .enumerate()
+            .map(|(idx, mat)| (mat.name.clone(), idx as u32))
+            .collect();
+        let default_mat_index = scene.materials.len() as u32;
+
         // For backwards compatibility, also create a combined mesh_data for single-draw fallback
         // and for Ivar rendering (which expects a single mesh)
-        let mut mesh_data = if scene.prototypes.len() == 1 {
-            MeshData::from_core_mesh(&scene.prototypes[0].mesh)
+        let mesh_data = if scene.prototypes.len() == 1 {
+            let mut md = MeshData::from_core_mesh(&scene.prototypes[0].mesh);
+            // from_core_mesh sets triangle_material_ids=None when no GeomSubsets.
+            // Fill with prototype's material index so Ivar uses correct material.
+            if md.triangle_material_ids.is_none() {
+                let mat_id = scene.prototypes[0]
+                    .material
+                    .as_ref()
+                    .and_then(|mat| material_index_by_name.get(&mat.name).copied())
+                    .unwrap_or(default_mat_index);
+                let tri_count = md.indices.len() / 3;
+                md.triangle_material_ids = Some(vec![mat_id; tri_count]);
+            }
+            md
         } else if !scene.instances().is_empty() {
             // Instanced scene: combine prototypes with instance transforms
-            let mut meshes_with_transforms: Vec<(&bif_core::Mesh, Mat4, usize)> = Vec::new();
+            let mut meshes_with_transforms: Vec<(&bif_core::Mesh, Mat4, usize, u32)> = Vec::new();
             for (mesh_idx, inst) in scene.instances().iter().enumerate() {
                 if let Some(proto) = scene.prototypes.get(inst.prototype_id) {
-                    meshes_with_transforms.push((&proto.mesh, inst.model_matrix(), mesh_idx));
+                    let mat_id = proto
+                        .material
+                        .as_ref()
+                        .and_then(|mat| material_index_by_name.get(&mat.name).copied())
+                        .unwrap_or(default_mat_index);
+                    meshes_with_transforms.push((
+                        &proto.mesh,
+                        inst.model_matrix(),
+                        mesh_idx,
+                        mat_id,
+                    ));
                 }
             }
             MeshData::combine_with_transforms(&meshes_with_transforms)
         } else {
             // Direct meshes (no instancers): combine prototypes with identity transforms
-            let meshes_with_transforms: Vec<(&bif_core::Mesh, Mat4, usize)> = scene
+            let meshes_with_transforms: Vec<(&bif_core::Mesh, Mat4, usize, u32)> = scene
                 .prototypes
                 .iter()
                 .enumerate()
-                .map(|(idx, proto)| (proto.mesh.as_ref(), Mat4::IDENTITY, idx))
+                .map(|(idx, proto)| {
+                    let mat_id = proto
+                        .material
+                        .as_ref()
+                        .and_then(|mat| material_index_by_name.get(&mat.name).copied())
+                        .unwrap_or(default_mat_index);
+                    (proto.mesh.as_ref(), Mat4::IDENTITY, idx, mat_id)
+                })
                 .collect();
             MeshData::combine_with_transforms(&meshes_with_transforms)
         };
@@ -1622,13 +1690,6 @@ impl Renderer {
                 usage: wgpu::BufferUsages::INDEX,
             });
 
-        let material_index_by_name: HashMap<Arc<str>, u32> = scene
-            .materials
-            .iter()
-            .enumerate()
-            .map(|(idx, mat)| (mat.name.clone(), idx as u32))
-            .collect();
-
         // Generate instances from scene
         // Multi-draw (wgpu viewport) uses per-instance transforms
         // For Ivar (ray tracing): if multi-prototype, transforms are baked into combined mesh_data
@@ -1714,34 +1775,6 @@ impl Renderer {
 
         self.instances.material_ids = instance_material_ids;
         self.instances.prototype_ids = instance_prototype_ids;
-
-        // Post-fill per-triangle material IDs for Ivar combined mesh.
-        // combine_with_transforms() returns None when meshes lack GeomSubsets (all zeros).
-        // Ivar needs per-tri mat IDs to render distinct materials per instance.
-        if mesh_data.triangle_material_ids.is_none()
-            && scene.prototypes.len() > 1
-            && !scene.instances().is_empty()
-        {
-            let mut tri_mat_ids = Vec::new();
-            for (inst_idx, inst) in scene.instances().iter().enumerate() {
-                if let Some(proto) = scene.prototypes.get(inst.prototype_id) {
-                    let num_tris = proto.mesh.indices.len() / 3;
-                    let mat_id = self
-                        .instances
-                        .material_ids
-                        .get(inst_idx)
-                        .copied()
-                        .unwrap_or(default_mat_index);
-                    tri_mat_ids.extend(std::iter::repeat_n(mat_id, num_tris));
-                }
-            }
-            log::info!(
-                "Post-filled {} tri_mat_ids for Ivar ({} instances)",
-                tri_mat_ids.len(),
-                scene.instances().len(),
-            );
-            mesh_data.triangle_material_ids = Some(tri_mat_ids);
-        }
 
         // Build prim path mapping for USD export
         self.instances.prim_paths = scene

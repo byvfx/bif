@@ -6,6 +6,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Ivar texture loading: resolve relative paths via material.source_dir (was black objects)
+- Ivar default material: append fallback at index N in build_materials (was wrong textures/OOB)
+- Ivar per-instance material binding: combine_with_transforms uses instance_material_id fallback
+- Ivar texture load failures now logged instead of silently dropped
+- Embree material index clamp uses saturating_sub for safety
+
 ### Added
 
 - USD spec compliance (sessions 1-3): 15 new FFI fields for read-side mesh/instancer/camera/stage

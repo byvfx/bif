@@ -1099,7 +1099,7 @@ impl Hittable for EmbreeScene {
                 "materials should never be empty"
             );
             let mat_id = self.triangle_material_ids[prim_id] as usize;
-            let mat_id = mat_id.min(self.materials.len() - 1);
+            let mat_id = mat_id.min(self.materials.len().saturating_sub(1));
             rec.material = &*self.materials[mat_id];
 
             // Set front face

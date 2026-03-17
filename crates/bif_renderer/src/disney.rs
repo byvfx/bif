@@ -11,6 +11,7 @@ use bif_core::texture::Texture;
 use bif_math::{build_orthonormal_basis, Vec3};
 use rand::RngCore;
 use std::f32::consts::PI;
+use std::path::Path;
 use std::sync::Arc;
 
 /// Disney Principled BSDF material.
@@ -207,36 +208,41 @@ impl DisneyBSDF {
     ///
     /// This is the preferred method when you have access to a TextureCache,
     /// as it will load and bind texture maps for proper rendering.
+    ///
+    /// Resolves relative texture paths against `material.source_dir` (the USD
+    /// layer directory), matching the viewport's `resolve_texture_path` behavior.
     pub fn from_material_with_textures(
         mat: &bif_core::Material,
         cache: &mut bif_core::texture::TextureCache,
     ) -> Self {
+        let src = mat.source_dir.as_deref();
+
         // Load textures via cache (returns Arc<Texture>)
         // Diffuse uses sRGB→linear; data textures (normal/roughness/metallic/opacity) use linear
         let diffuse_texture = mat
             .diffuse_texture
             .as_ref()
-            .and_then(|p| cache.load(p).ok());
+            .and_then(|p| load_texture_logged(p, src, |r| cache.load(r)));
 
         let roughness_texture = mat
             .roughness_texture
             .as_ref()
-            .and_then(|p| cache.load_linear(p).ok());
+            .and_then(|p| load_texture_logged(p, src, |r| cache.load_linear(r)));
 
         let metallic_texture = mat
             .metallic_texture
             .as_ref()
-            .and_then(|p| cache.load_linear(p).ok());
+            .and_then(|p| load_texture_logged(p, src, |r| cache.load_linear(r)));
 
         let normal_texture = mat
             .normal_texture
             .as_ref()
-            .and_then(|p| cache.load_linear(p).ok());
+            .and_then(|p| load_texture_logged(p, src, |r| cache.load_linear(r)));
 
         let opacity_texture = mat
             .opacity_texture
             .as_ref()
-            .and_then(|p| cache.load_linear(p).ok());
+            .and_then(|p| load_texture_logged(p, src, |r| cache.load_linear(r)));
 
         Self {
             base_color: mat.diffuse_color,
@@ -751,6 +757,45 @@ impl DisneyBSDF {
 }
 
 // =============================================================================
+// Texture path resolution
+// =============================================================================
+
+/// Resolve a texture path against the material's source directory.
+///
+/// Matches the viewport's `texture_loader.rs::resolve_texture_path` behavior:
+/// absolute paths and UNC paths pass through unchanged; relative paths are
+/// joined with `source_dir` (the USD layer directory).
+fn resolve_texture_path(path: &str, source_dir: Option<&Path>) -> String {
+    let p = Path::new(path);
+    if p.is_absolute() || path.starts_with("//") || path.starts_with("\\\\") {
+        return path.to_string();
+    }
+    if let Some(dir) = source_dir {
+        return dir.join(p).to_string_lossy().into_owned();
+    }
+    path.to_string()
+}
+
+/// Resolve a texture path, load via the provided loader, and log failures.
+fn load_texture_logged<F>(
+    raw_path: &str,
+    source_dir: Option<&Path>,
+    loader: F,
+) -> Option<Arc<Texture>>
+where
+    F: FnOnce(&str) -> Result<Arc<Texture>, bif_core::texture::TextureError>,
+{
+    let resolved = resolve_texture_path(raw_path, source_dir);
+    match loader(&resolved) {
+        Ok(tex) => Some(tex),
+        Err(e) => {
+            log::warn!("Ivar: texture load failed '{}': {}", resolved, e);
+            None
+        }
+    }
+}
+
+// =============================================================================
 // Helper functions
 // =============================================================================
 
@@ -879,5 +924,43 @@ mod tests {
         assert!((albedo.x - 0.9).abs() < 0.001);
         assert!((albedo.y - 0.1).abs() < 0.001);
         assert!((albedo.z - 0.3).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_resolve_texture_path_absolute() {
+        // Absolute paths pass through unchanged
+        let abs = if cfg!(windows) {
+            "C:\\textures\\diffuse.png"
+        } else {
+            "/textures/diffuse.png"
+        };
+        assert_eq!(resolve_texture_path(abs, None), abs);
+        assert_eq!(resolve_texture_path(abs, Some(Path::new("/other"))), abs);
+    }
+
+    #[test]
+    fn test_resolve_texture_path_unc() {
+        // UNC paths pass through unchanged
+        let unc = "\\\\server\\share\\tex.png";
+        assert_eq!(resolve_texture_path(unc, None), unc);
+        assert_eq!(resolve_texture_path(unc, Some(Path::new("/other"))), unc);
+    }
+
+    #[test]
+    fn test_resolve_texture_path_relative_with_source_dir() {
+        let resolved =
+            resolve_texture_path("textures/diffuse.png", Some(Path::new("/scenes/alab")));
+        // Should join source_dir + relative path
+        assert!(resolved.contains("scenes"));
+        assert!(resolved.contains("diffuse.png"));
+    }
+
+    #[test]
+    fn test_resolve_texture_path_relative_no_source_dir() {
+        // No source_dir → return as-is
+        assert_eq!(
+            resolve_texture_path("textures/diffuse.png", None),
+            "textures/diffuse.png"
+        );
     }
 }

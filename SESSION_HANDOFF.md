@@ -1,6 +1,6 @@
 # Session Handoff - March 17, 2026
 
-**Last Updated:** UDIM UNC path fix + material export/cache commits landed
+**Last Updated:** Ivar texture loading + per-material assignment fix
 **Next Milestone:** M29.5 egui upgrade
 **Project:** BIF - VFX Scene Assembler & Renderer
 
@@ -12,12 +12,20 @@
 |--------|---------|
 | Complete | Milestones 0-23, M26 (OIDN), M26.1 (Ivar material cache), M19.6 (viewport cleanup) |
 | Current | USD spec compliance sessions 1-4 done (read-side complete + Embree subd) |
-| Tests | 85 renderer (+1), 72 math (+31), 19 viewer (+19), 79 viewport, 93 bif_core |
+| Tests | 89 renderer (+4), 72 math, 19 viewer, 79 viewport, 93 bif_core |
 | Performance | 60 FPS viewport, 100K instances with LOD, Ivar build ~185ms (2.5M tri combined mesh) |
 
 ---
 
 ## Recent Work
+
+### Ivar Texture Loading Fix (Mar 17, 2026)
+
+Fixed 3 bugs causing black objects + wrong textures in Ivar renders:
+- **Default material OOB:** build_materials() now appends fallback at index N, matching viewport convention
+- **Relative path resolution:** DisneyBSDF::from_material_with_textures() resolves paths via material.source_dir
+- **Per-instance material binding:** combine_with_transforms() uses instance_material_id fallback for meshes without GeomSubsets
+- Added texture load failure logging, saturating_sub safety in Embree, 4 new path resolution tests
 
 ### UDIM UNC Path Fix + Catch-up Commits (Mar 17, 2026)
 
