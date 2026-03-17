@@ -1,7 +1,7 @@
 # Session Handoff - March 16, 2026
 
-**Last Updated:** USD spec compliance sessions 1-3 (read-side mesh, instancer, lights, points, primvars)
-**Next Milestone:** USD spec compliance sessions 4-8, then M29.5 egui upgrade
+**Last Updated:** USD spec compliance sessions 1-4 (read-side + Embree subdivision)
+**Next Milestone:** USD spec compliance sessions 5-8 (export), then M29.5 egui upgrade
 **Project:** BIF - VFX Scene Assembler & Renderer
 
 ---
@@ -11,7 +11,7 @@
 | Status | Details |
 |--------|---------|
 | Complete | Milestones 0-23, M26 (OIDN), M26.1 (Ivar material cache), M19.6 (viewport cleanup) |
-| Current | USD spec compliance sessions 1-3 done (15 new FFI fields, 2 new schemas) |
+| Current | USD spec compliance sessions 1-4 done (read-side complete + Embree subd) |
 | Tests | 85 renderer (+1), 72 math (+31), 19 viewer (+19), 79 viewport, 93 bif_core |
 | Performance | 60 FPS viewport, 100K instances with LOD, Ivar build ~185ms (2.5M tri combined mesh) |
 
@@ -19,16 +19,17 @@
 
 ## Recent Work
 
-### USD Spec Compliance Sessions 1-3 (Mar 16, 2026)
+### USD Spec Compliance Sessions 1-4 (Mar 16, 2026)
 
 Read-side remediation across C++ bridge, Rust FFI, and loader:
 - **Session 1 (Mesh):** visibility, doubleSided, subdivisionScheme, normalsInterpolation, horizontalAperture
 - **Session 2 (Instancer+Stage):** PI velocities/angularVelocities/invisibleIds, timeCodesPerSecond, displayColor/Opacity, resetXformStack
 - **Session 3 (Lights+Schemas):** CylinderLight, DiskLight, ShapingAPI, UsdGeomPoints, arbitrary primvar query API
+- **Session 4 (Embree Subd):** Catmull-Clark via RTC_GEOMETRY_TYPE_SUBDIVISION, polygon topology + crease data from USD
 
-Loader now skips invisible meshes and filters invisible instancer IDs. Scene browser shows real inherited visibility.
+Loader skips invisible meshes, filters invisible instancer IDs. Scene browser shows real inherited visibility.
 
-Next: Session 4 (Embree subdivision), Session 5 (export materials+bindings), Sessions 6-8.
+Next: Session 5 (export materials+bindings), Sessions 6-8. Use OpenPBR for MaterialX export.
 
 ### Architecture Cleanup: Renderer Decomposition (Mar 16, 2026)
 

@@ -18,6 +18,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Arbitrary primvar query API (float/float2/float3/int, per-mesh)
 - Material.double_sided field
 - Scene browser shows real USD inherited visibility
+- Embree Catmull-Clark subdivision: original polygon topology + crease data from USD, RTC_GEOMETRY_TYPE_SUBDIVISION
+- Mesh struct: subdivision_scheme, face_vertex_counts, polygon_indices, crease data fields
 - 50 new tests: bif_math camera/aabb/basis/frustum/interval (31), bif_renderer EXR negative frames (1), bif_viewer CLI parsing + click detection (19)
 - `Renderer::needs_redraw()` for conditional redraw in viewer
 - `#[must_use]` on pure functions in texture.rs and scene.rs
