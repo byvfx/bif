@@ -26,6 +26,7 @@ You Create a new DCC that is inspired by Clarisse / Houdini, focused on VFX scen
 - **Node graph:** egui-snarl, 10 node types (UsdRead, Primitive, Scatter, PointInstancer, Xform, UsdExport, UsdPrim, GraftBranches, HdriEnvironment, IvarRender)
 - **Scene browser:** CompositeProvider merges USD stage + procedural prims via CachedSceneGraph
 - **Export:** `export_scene()` in `bif_core/src/usd/export.rs`
+- **Materials:** OpenPBR Surface v1.1 (`OpenPbrSurface` in bif_renderer, IOR-based Fresnel)
 - **Renderer:** `Renderer` struct (~75 fields, God object — cleanup deferred)
 - **160+ tests** across crates (95+ without USD env, full suite needs `setup_usd_env.ps1`)
 

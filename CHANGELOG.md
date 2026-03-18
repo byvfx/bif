@@ -6,6 +6,17 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking: Disney → OpenPBR material migration** — full removal of Disney Principled BSDF, replaced with OpenPBR Surface v1.1 parameters, IOR-based Fresnel, and ASWF-standard naming across all 6 crates
+  - `DisneyBSDF` → `OpenPbrSurface` (bif_renderer)
+  - `bif_core::Material` fields renamed: `diffuse_color`→`base_color`, `metallic`→`base_metalness`, `roughness`→`specular_roughness`, `specular`→`specular_weight`, `emissive_color`→`emission_color`, `opacity`→`geometry_opacity`, texture fields follow suit
+  - Added `specular_ior` (default 1.5) — IOR-based F0 replaces Disney's abstract `specular*0.08`
+  - GPU structs (`MaterialUniform`, `MaterialGpu`) repacked: `base_color[r,g,b,metalness]`, `specular_params[roughness,ior,weight,pad]`, new `emission` + `extra_params` fields (64→96 bytes)
+  - WGSL shader uses IOR-based F0: `((ior-1)/(ior+1))^2 * weight`
+  - Default roughness 0.5→0.3, default specular_weight 0.5→1.0, default base_color (0.5,0.5,0.5)→(0.8,0.8,0.8)
+  - Stub fields for coat, fuzz, subsurface, emission_luminance, specular_color (stored, not evaluated)
+
 ### Fixed
 
 - Ivar texture loading: resolve relative paths via material.source_dir (was black objects)
@@ -16,6 +27,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Glass/transmission rendering** — extract `transmission` + `specular_IOR` from MaterialX and UsdPreviewSurface in C++ bridge, wire through Rust FFI → `Material.transmission_weight` → `OpenPbrSurface.scatter_transmission()` with Snell's law refraction, TIR, and Schlick Fresnel
+  - UsdPreviewSurface heuristic: `opacity < 1` on dielectric → `transmission = 1 - opacity`
+  - `OpenPbrSurface::glass(ior)` constructor, `is_delta()` updated for smooth glass
 - USD spec compliance (sessions 1-3): 15 new FFI fields for read-side mesh/instancer/camera/stage
 - Mesh read: visibility, doubleSided, subdivisionScheme, normalsInterpolation, displayColor/Opacity, resetXformStack
 - Instancer read: velocities, angularVelocities, invisibleIds (filtered in loader)

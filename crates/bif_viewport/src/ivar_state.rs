@@ -374,7 +374,7 @@ pub struct IvarState {
     pub build_receiver: Option<
         mpsc::Receiver<(
             Arc<BvhNode>,
-            Vec<Arc<bif_renderer::DisneyBSDF>>,
+            Vec<Arc<bif_renderer::OpenPbrSurface>>,
             Option<bif_core::texture::TextureCache>,
         )>,
     >,

@@ -1178,7 +1178,7 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 |---|-----------|-------|--------|
 | 0-13b | Foundation | Math, viewport, USD, Embree, UI | ✅ Complete |
 | 14 | GPU Instancing | 10K+ instances + frustum culling + LOD | ✅ Complete |
-| 15 | Materials | UsdPreviewSurface + Disney BSDF | ✅ Complete |
+| 15 | Materials | UsdPreviewSurface + OpenPBR Surface (was Disney BSDF) | ✅ Complete |
 | 16 | MaterialX | MaterialX standard_surface support | ✅ Complete |
 | 17 | Viewport PBR | Textured PBR in Vulkan viewport | ✅ Complete |
 | 17.1 | OIIO/.tx | OpenImageIO texture pipeline (feature-gated) | ✅ Complete |
@@ -1187,7 +1187,7 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 | 19-21.2 | Frame Rendering + Interactivity | Batch render, animation, picking, scatter | ✅ Complete |
 | 23 | SHARC Radiance Cache | idTech 8 cache + Russian Roulette + heatmap AOV | ✅ Complete |
 | 26 | OIDN Denoising | Intel OIDN + albedo AOV pipeline | ✅ Complete |
-| 26.1 | Ivar Material Cache | Pre-warm + persist DisneyBSDF materials | ✅ Complete |
+| 26.1 | Ivar Material Cache | Pre-warm + persist OpenPbrSurface materials | ✅ Complete |
 
 ### Active & Planned
 
@@ -1245,7 +1245,7 @@ Key papers (cherry-pick into relevant milestones as needed):
 |----------|--------|
 | [PBR Book](https://pbr-book.org/) | Comprehensive rendering theory |
 | [Ray Tracing Gems 1 & 2](https://www.realtimerendering.com/raytracinggems/) | Practical GPU techniques |
-| Disney Principled BSDF | Industry-standard material model |
+| [OpenPBR Surface](https://academysoftwarefoundation.github.io/OpenPBR/) | ASWF standard material model (replaced Disney BSDF) |
 | [howtovulkan.com](https://howtovulkan.com) | Modern Vulkan 1.3 patterns |
 | Intel OIDN | Production denoising |
 | NVIDIA ReSTIR | Real-time path tracing |

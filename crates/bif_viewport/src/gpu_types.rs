@@ -261,27 +261,32 @@ impl Default for CameraUniform {
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct MaterialUniform {
-    pub diffuse_color: [f32; 4],      // RGB + padding
-    pub metallic_roughness: [f32; 4], // metallic, roughness, specular, padding
+    pub base_color: [f32; 4],      // [r, g, b, metalness]
+    pub specular_params: [f32; 4], // [roughness, ior, weight, pad]
 }
 
 impl MaterialUniform {
     pub fn new() -> Self {
         Self {
-            diffuse_color: [0.5, 0.5, 0.5, 1.0],      // Grey default
-            metallic_roughness: [0.0, 0.5, 0.5, 0.0], // dielectric, medium rough
+            base_color: [0.8, 0.8, 0.8, 0.0], // OpenPBR default, metalness=0
+            specular_params: [0.3, 1.5, 1.0, 0.0], // roughness=0.3, ior=1.5, weight=1.0
         }
     }
 
     pub fn from_material(mat: &bif_core::Material) -> Self {
         Self {
-            diffuse_color: [
-                mat.diffuse_color.x,
-                mat.diffuse_color.y,
-                mat.diffuse_color.z,
-                1.0,
+            base_color: [
+                mat.base_color.x,
+                mat.base_color.y,
+                mat.base_color.z,
+                mat.base_metalness,
             ],
-            metallic_roughness: [mat.metallic, mat.roughness, mat.specular, 0.0],
+            specular_params: [
+                mat.specular_roughness,
+                mat.specular_ior,
+                mat.specular_weight,
+                0.0,
+            ],
         }
     }
 }
@@ -296,9 +301,11 @@ impl Default for MaterialUniform {
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct MaterialGpu {
-    pub diffuse_color: [f32; 4],      // RGB + padding
-    pub metallic_roughness: [f32; 4], // metallic, roughness, specular, padding
-    pub texture_indices: [u32; 4],    // diffuse, roughness, metallic, emissive
+    pub base_color: [f32; 4],      // [r, g, b, metalness]
+    pub specular_params: [f32; 4], // [roughness, ior, weight, pad]
+    pub emission: [f32; 4],        // [r, g, b, luminance]
+    pub extra_params: [f32; 4],    // [opacity, coat_weight, coat_roughness, pad]
+    pub texture_indices: [u32; 4], // [base_color, roughness, metalness, emission]
     /// [0]=normal, [1]=udim_grid(cols<<16|rows), [2]=udim_offset(min_col<<16|min_row), [3]=reserved
     pub extra_indices: [u32; 4],
 }
@@ -309,17 +316,13 @@ impl MaterialGpu {
         let resolve_index = |path: &Option<Arc<str>>| -> u32 {
             path.as_ref()
                 .and_then(|p| {
-                    // Normalize to forward slashes for consistent lookup
-                    // (C++ USD returns backslashes on Windows, Rust paths use forward)
                     let normalized = p.replace('\\', "/");
                     if let Some(&idx) = textures.index_map.get(&normalized) {
                         return Some(idx);
                     }
-                    // Try raw path as-is (backwards compat)
                     if let Some(&idx) = textures.index_map.get(&**p) {
                         return Some(idx);
                     }
-                    // Try resolved path (multi-USD: index_map has absolute paths)
                     if let Some(dir) = src_dir {
                         let resolved = dir.join(&**p);
                         let resolved_str = resolved.to_string_lossy().replace('\\', "/");
@@ -332,37 +335,48 @@ impl MaterialGpu {
                 .unwrap_or(0)
         };
 
-        let diffuse_idx = resolve_index(&material.diffuse_texture);
-        let rough_idx = resolve_index(&material.roughness_texture);
-        let metal_idx = resolve_index(&material.metallic_texture);
-        let emissive_idx = resolve_index(&material.emissive_texture);
+        let base_color_idx = resolve_index(&material.base_color_texture);
+        let rough_idx = resolve_index(&material.specular_roughness_texture);
+        let metal_idx = resolve_index(&material.base_metalness_texture);
+        let emissive_idx = resolve_index(&material.emission_texture);
         let normal_idx = resolve_index(&material.normal_texture);
 
-        // Pack UDIM grid info from any texture on this material.
-        // All channels in a material typically share the same UDIM layout.
-        let udim_info = [diffuse_idx, rough_idx, metal_idx, normal_idx, emissive_idx]
-            .iter()
-            .filter(|&&idx| idx != 0) // skip default white texture
-            .find_map(|&idx| textures.udim_grid.get(&idx))
-            .copied();
+        let udim_info = [
+            base_color_idx,
+            rough_idx,
+            metal_idx,
+            normal_idx,
+            emissive_idx,
+        ]
+        .iter()
+        .filter(|&&idx| idx != 0)
+        .find_map(|&idx| textures.udim_grid.get(&idx))
+        .copied();
         let (grid_packed, offset_packed) = udim_info
             .map(|g| ((g[0] << 16) | g[1], (g[2] << 16) | g[3]))
             .unwrap_or((0, 0));
 
         Self {
-            diffuse_color: [
-                material.diffuse_color.x,
-                material.diffuse_color.y,
-                material.diffuse_color.z,
-                1.0,
+            base_color: [
+                material.base_color.x,
+                material.base_color.y,
+                material.base_color.z,
+                material.base_metalness,
             ],
-            metallic_roughness: [
-                material.metallic,
-                material.roughness,
-                material.specular,
+            specular_params: [
+                material.specular_roughness,
+                material.specular_ior,
+                material.specular_weight,
                 0.0,
             ],
-            texture_indices: [diffuse_idx, rough_idx, metal_idx, emissive_idx],
+            emission: [
+                material.emission_color.x,
+                material.emission_color.y,
+                material.emission_color.z,
+                material.emission_luminance,
+            ],
+            extra_params: [material.geometry_opacity, 0.0, 0.0, 0.0],
+            texture_indices: [base_color_idx, rough_idx, metal_idx, emissive_idx],
             extra_indices: [normal_idx, grid_packed, offset_packed, 0],
         }
     }
@@ -602,9 +616,11 @@ mod tests {
     #[test]
     fn test_material_uniform_default() {
         let mat = MaterialUniform::new();
-        assert_eq!(mat.diffuse_color[0], 0.5);
-        assert_eq!(mat.metallic_roughness[0], 0.0); // metallic
-        assert_eq!(mat.metallic_roughness[1], 0.5); // roughness
+        assert_eq!(mat.base_color[0], 0.8); // OpenPBR default
+        assert_eq!(mat.base_color[3], 0.0); // metalness
+        assert_eq!(mat.specular_params[0], 0.3); // roughness
+        assert_eq!(mat.specular_params[1], 1.5); // ior
+        assert_eq!(mat.specular_params[2], 1.0); // weight
     }
 
     #[test]

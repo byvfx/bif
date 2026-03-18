@@ -13,13 +13,15 @@ struct CameraUniform {
 }
 
 struct MaterialUniform {
-    diffuse_color: vec4<f32>,
-    metallic_roughness: vec4<f32>,
+    base_color: vec4<f32>,         // [r, g, b, metalness]
+    specular_params: vec4<f32>,    // [roughness, ior, weight, pad]
 }
 
 struct MaterialGpu {
-    diffuse_color: vec4<f32>,
-    metallic_roughness: vec4<f32>,
+    base_color: vec4<f32>,         // [r, g, b, metalness]
+    specular_params: vec4<f32>,    // [roughness, ior, weight, pad]
+    emission: vec4<f32>,           // [r, g, b, luminance]
+    extra_params: vec4<f32>,       // [opacity, coat_weight, coat_roughness, pad]
     texture_indices: vec4<u32>,
     extra_indices: vec4<u32>,
 }
@@ -277,8 +279,10 @@ fn fs_main(
     }
 
     let mat = material_table[material_id];
-    let metallic = mat.metallic_roughness.x;
-    let roughness = mat.metallic_roughness.y;
+    let metalness = mat.base_color.w;
+    let roughness = mat.specular_params.x;
+    let ior = mat.specular_params.y;
+    let spec_weight = mat.specular_params.z;
 
     // Compute sample UV — apply UDIM atlas transform if present
     var sample_uv = vec2<f32>(in.uv.x, 1.0 - in.uv.y);
@@ -307,7 +311,7 @@ fn fs_main(
         );
     }
 
-    var base_color = mat.diffuse_color.rgb;
+    var base_color = mat.base_color.rgb;
     let diffuse_tex_index = mat.texture_indices.x;
     if (diffuse_tex_index != 0u) {
         let tex_sample = textureSample(textures[diffuse_tex_index], texture_sampler, sample_uv);
@@ -318,8 +322,10 @@ fn fs_main(
     let view_dir = normalize(camera.camera_position.xyz - in.world_pos);
     let n_dot_v = max(dot(normal, view_dir), 0.0);
 
-    // F0: 0.04 for dielectrics, base_color for metals
-    let f0 = mix(vec3<f32>(0.04), base_color, metallic);
+    // IOR-based F0: ((ior-1)/(ior+1))^2 for dielectrics, base_color for metals
+    let ior_ratio = (ior - 1.0) / (ior + 1.0);
+    let f0_dielectric = ior_ratio * ior_ratio * spec_weight;
+    let f0 = mix(vec3<f32>(f0_dielectric), base_color, metalness);
 
     // Evaluate direct lighting from explicit lights (USD lights)
     let direct_light = evaluate_direct_lights(
@@ -327,7 +333,7 @@ fn fs_main(
         normal,
         view_dir,
         base_color,
-        metallic,
+        metalness,
         roughness,
         f0,
     );
@@ -339,7 +345,7 @@ fn fs_main(
     if (env_params.has_environment != 0u) {
         let fresnel = fresnel_schlick_roughness(n_dot_v, f0, roughness);
         let ks = fresnel;
-        let kd = (1.0 - ks) * (1.0 - metallic);
+        let kd = (1.0 - ks) * (1.0 - metalness);
 
         // Diffuse IBL: sample irradiance cubemap
         let irr_dir = rotate_y(normal, env_params.rotation);
@@ -372,12 +378,12 @@ fn fs_main(
 
         let n_dot_h = max(dot(normal_vs, half_vec), 0.0);
         let shininess = mix(8.0, 256.0, 1.0 - roughness);
-        let spec_intensity = pow(n_dot_h, shininess) * mat.metallic_roughness.z;
+        let spec_intensity = pow(n_dot_h, shininess) * spec_weight;
         let fresnel_hl = f0 + (1.0 - f0) * pow(1.0 - max(dot(view_dir_vs, half_vec), 0.0), 5.0);
         let specular_color = fresnel_hl * spec_intensity;
 
-        let dielectric_contrib = diffuse * (1.0 - metallic);
-        let metal_contrib = specular_color * metallic;
+        let dielectric_contrib = diffuse * (1.0 - metalness);
+        let metal_contrib = specular_color * metalness;
         let ambient = base_color * 0.15;
         lit_color = ambient + dielectric_contrib * 0.7 + metal_contrib * 0.5;
     }

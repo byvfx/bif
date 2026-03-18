@@ -530,6 +530,12 @@ typedef struct UsdBridgeMaterialData {
     /// Opacity (0=transparent, 1=opaque)
     float opacity;
 
+    /// Transmission weight (0=opaque, 1=fully transmissive glass)
+    float transmission;
+
+    /// Specular index of refraction (default 1.5 = glass/plastic)
+    float specular_ior;
+
     /// Emissive color (RGB)
     float emissive_color[3];
 

@@ -12,50 +12,65 @@ use bif_math::{Aabb, Mat4, Quat, Vec3};
 use crate::mesh::Mesh;
 use crate::point_cloud::PointCloud;
 
-/// A PBR material definition based on UsdPreviewSurface.
+/// A PBR material definition using OpenPBR Surface naming.
 ///
-/// Maps to the UsdPreviewSurface shader specification with support
-/// for both constant values and texture paths.
+/// Maps UsdPreviewSurface inputs to OpenPBR parameters on load.
+/// Supports both constant values and texture paths.
 #[derive(Clone, Debug)]
 pub struct Material {
     /// Material name (from USD prim path)
     pub name: Arc<str>,
 
-    /// Diffuse/albedo color (RGB, 0-1)
-    pub diffuse_color: Vec3,
+    // === Base ===
+    /// Base color / albedo (RGB, 0-1)
+    pub base_color: Vec3,
 
-    /// Metallic factor (0=dielectric, 1=metal)
-    pub metallic: f32,
+    /// Metalness factor (0=dielectric, 1=metal)
+    pub base_metalness: f32,
 
-    /// Roughness factor (0=smooth, 1=rough)
-    pub roughness: f32,
+    // === Specular ===
+    /// Specular roughness (0=smooth, 1=rough)
+    pub specular_roughness: f32,
 
-    /// Emissive color (RGB, for light-emitting surfaces)
-    pub emissive_color: Vec3,
+    /// Specular weight (scales dielectric reflection)
+    pub specular_weight: f32,
 
+    /// Specular index of refraction (1.5 = glass/plastic)
+    pub specular_ior: f32,
+
+    // === Emission ===
+    /// Emission color (RGB, for light-emitting surfaces)
+    pub emission_color: Vec3,
+
+    /// Emission luminance in nits
+    pub emission_luminance: f32,
+
+    // === Transmission ===
+    /// Transmission weight (0=opaque, 1=fully transmissive glass)
+    pub transmission_weight: f32,
+
+    // === Geometry ===
     /// Opacity (0=transparent, 1=opaque)
-    pub opacity: f32,
+    pub geometry_opacity: f32,
 
-    /// Specular factor (for non-metallic surfaces)
-    pub specular: f32,
+    // === Textures ===
+    /// Path to base color texture
+    pub base_color_texture: Option<Arc<str>>,
 
-    /// Path to diffuse/albedo texture
-    pub diffuse_texture: Option<Arc<str>>,
+    /// Path to specular roughness texture
+    pub specular_roughness_texture: Option<Arc<str>>,
 
-    /// Path to roughness texture
-    pub roughness_texture: Option<Arc<str>>,
-
-    /// Path to metallic texture
-    pub metallic_texture: Option<Arc<str>>,
+    /// Path to base metalness texture
+    pub base_metalness_texture: Option<Arc<str>>,
 
     /// Path to normal map texture
     pub normal_texture: Option<Arc<str>>,
 
-    /// Path to emissive texture
-    pub emissive_texture: Option<Arc<str>>,
+    /// Path to emission texture
+    pub emission_texture: Option<Arc<str>>,
 
-    /// Path to opacity texture
-    pub opacity_texture: Option<Arc<str>>,
+    /// Path to geometry opacity texture
+    pub geometry_opacity_texture: Option<Arc<str>>,
 
     /// Directory of the USD file this material was loaded from (for relative texture paths)
     pub source_dir: Option<PathBuf>,
@@ -68,18 +83,21 @@ impl Default for Material {
     fn default() -> Self {
         Self {
             name: Arc::from(""),
-            diffuse_color: Vec3::new(0.5, 0.5, 0.5), // Grey default
-            metallic: 0.0,
-            roughness: 0.5,
-            emissive_color: Vec3::ZERO,
-            opacity: 1.0,
-            specular: 0.5,
-            diffuse_texture: None,
-            roughness_texture: None,
-            metallic_texture: None,
+            base_color: Vec3::new(0.8, 0.8, 0.8),
+            base_metalness: 0.0,
+            specular_roughness: 0.3,
+            specular_weight: 1.0,
+            specular_ior: 1.5,
+            emission_color: Vec3::ZERO,
+            emission_luminance: 0.0,
+            transmission_weight: 0.0,
+            geometry_opacity: 1.0,
+            base_color_texture: None,
+            specular_roughness_texture: None,
+            base_metalness_texture: None,
             normal_texture: None,
-            emissive_texture: None,
-            opacity_texture: None,
+            emission_texture: None,
+            geometry_opacity_texture: None,
             source_dir: None,
             double_sided: false,
         }
@@ -87,11 +105,11 @@ impl Default for Material {
 }
 
 impl Material {
-    /// Create a new material with just a name and diffuse color.
-    pub fn new(name: impl Into<Arc<str>>, diffuse_color: Vec3) -> Self {
+    /// Create a new material with just a name and base color.
+    pub fn new(name: impl Into<Arc<str>>, base_color: Vec3) -> Self {
         Self {
             name: name.into(),
-            diffuse_color,
+            base_color,
             ..Default::default()
         }
     }
@@ -99,18 +117,18 @@ impl Material {
     /// Check if this material uses any textures.
     #[must_use]
     pub fn has_textures(&self) -> bool {
-        self.diffuse_texture.is_some()
-            || self.roughness_texture.is_some()
-            || self.metallic_texture.is_some()
+        self.base_color_texture.is_some()
+            || self.specular_roughness_texture.is_some()
+            || self.base_metalness_texture.is_some()
             || self.normal_texture.is_some()
-            || self.emissive_texture.is_some()
-            || self.opacity_texture.is_some()
+            || self.emission_texture.is_some()
+            || self.geometry_opacity_texture.is_some()
     }
 
     /// Check if this material is emissive.
     #[must_use]
     pub fn is_emissive(&self) -> bool {
-        self.emissive_color.length_squared() > 0.0 || self.emissive_texture.is_some()
+        self.emission_color.length_squared() > 0.0 || self.emission_texture.is_some()
     }
 }
 

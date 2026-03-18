@@ -8,7 +8,7 @@ use std::time::Instant;
 use bif_math::{Mat4, Vec3};
 
 use bif_renderer::{
-    render_bucket_with_aovs, BvhNode, Color, DisneyBSDF, EmbreeScene, Hittable, LightList,
+    render_bucket_with_aovs, BvhNode, Color, EmbreeScene, Hittable, LightList, OpenPbrSurface,
     RenderConfig,
 };
 
@@ -272,7 +272,7 @@ impl Renderer {
 
             // Use cached materials or build from scratch
             let (materials, ret_cache): (
-                Vec<Arc<DisneyBSDF>>,
+                Vec<Arc<OpenPbrSurface>>,
                 Option<bif_core::texture::TextureCache>,
             ) = if let Some(cached) = cached_materials {
                 log::info!("Using cached materials ({} materials)", cached.len());
@@ -416,7 +416,8 @@ impl Renderer {
         let uvs_soa: Vec<[f32; 2]> = verts.iter().map(|v| v.uv).collect();
 
         // Use cached materials or build from scratch
-        let materials: Vec<Arc<DisneyBSDF>> = if let Some(ref cached) = self.ivar.ivar_materials {
+        let materials: Vec<Arc<OpenPbrSurface>> = if let Some(ref cached) = self.ivar.ivar_materials
+        {
             log::info!("Using cached materials ({} materials)", cached.len());
             cached.clone()
         } else {
@@ -496,7 +497,7 @@ impl Renderer {
         log::info!("Ivar scene cache cleared - will rebuild on next render");
     }
 
-    /// Invalidate cached DisneyBSDF materials.
+    /// Invalidate cached OpenPbrSurface materials.
     ///
     /// Call when materials actually change (scene reload, material edit).
     /// Geometry-only changes (camera, transforms) should NOT call this.
@@ -510,7 +511,7 @@ impl Renderer {
         self.async_channels.ivar_materials_receiver = None;
     }
 
-    /// Pre-warm DisneyBSDF materials on a background thread.
+    /// Pre-warm OpenPbrSurface materials on a background thread.
     ///
     /// Spawns a thread to load textures and build materials so the first
     /// Ivar scene build can skip the expensive texture-loading step.
@@ -657,11 +658,11 @@ impl Renderer {
         let mut seen = std::collections::HashSet::new();
         for mat in &self.scene_materials {
             let candidates = [
-                mat.diffuse_texture.as_deref(),
-                mat.roughness_texture.as_deref(),
-                mat.metallic_texture.as_deref(),
+                mat.base_color_texture.as_deref(),
+                mat.specular_roughness_texture.as_deref(),
+                mat.base_metalness_texture.as_deref(),
                 mat.normal_texture.as_deref(),
-                mat.emissive_texture.as_deref(),
+                mat.emission_texture.as_deref(),
             ];
             for path in candidates.into_iter().flatten() {
                 if seen.insert(path.to_string()) {

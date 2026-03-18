@@ -381,6 +381,8 @@ struct UsdBridgeMaterialDataRaw {
     roughness: f32,
     specular: f32,
     opacity: f32,
+    transmission: f32,
+    specular_ior: f32,
     emissive_color: [f32; 3],
     diffuse_texture: *const std::ffi::c_char,
     roughness_texture: *const std::ffi::c_char,
@@ -1126,47 +1128,53 @@ pub struct UsdPrimInfo {
     pub has_specializes: bool,
 }
 
-/// Material data extracted from USD (UsdPreviewSurface or MaterialX).
+/// Material data extracted from USD, using OpenPBR naming.
 #[derive(Clone, Debug)]
 pub struct UsdMaterialData {
     /// Material prim path (e.g., "/World/Looks/Material_0")
     pub path: String,
 
-    /// Diffuse/albedo color (RGB, 0-1)
-    pub diffuse_color: Vec3,
+    /// Base color / albedo (RGB, 0-1)
+    pub base_color: Vec3,
 
-    /// Metallic factor (0=dielectric, 1=metal)
-    pub metallic: f32,
+    /// Metalness (0=dielectric, 1=metal)
+    pub base_metalness: f32,
 
-    /// Roughness factor (0=smooth, 1=rough)
-    pub roughness: f32,
+    /// Specular roughness (0=smooth, 1=rough)
+    pub specular_roughness: f32,
 
-    /// Specular factor
-    pub specular: f32,
+    /// Specular weight (scales dielectric reflection)
+    pub specular_weight: f32,
 
-    /// Opacity (0=transparent, 1=opaque)
-    pub opacity: f32,
+    /// Specular IOR (default 1.5)
+    pub specular_ior: f32,
 
-    /// Emissive color (RGB)
-    pub emissive_color: Vec3,
+    /// Transmission weight (0=opaque, 1=fully transmissive glass)
+    pub transmission_weight: f32,
 
-    /// Path to diffuse texture (if any)
-    pub diffuse_texture: Option<String>,
+    /// Geometry opacity (0=transparent, 1=opaque)
+    pub geometry_opacity: f32,
 
-    /// Path to roughness texture (if any)
-    pub roughness_texture: Option<String>,
+    /// Emission color (RGB)
+    pub emission_color: Vec3,
 
-    /// Path to metallic texture (if any)
-    pub metallic_texture: Option<String>,
+    /// Path to base color texture (if any)
+    pub base_color_texture: Option<String>,
+
+    /// Path to specular roughness texture (if any)
+    pub specular_roughness_texture: Option<String>,
+
+    /// Path to base metalness texture (if any)
+    pub base_metalness_texture: Option<String>,
 
     /// Path to normal map texture (if any)
     pub normal_texture: Option<String>,
 
-    /// Path to emissive texture (if any)
-    pub emissive_texture: Option<String>,
+    /// Path to emission texture (if any)
+    pub emission_texture: Option<String>,
 
-    /// Path to opacity texture (if any)
-    pub opacity_texture: Option<String>,
+    /// Path to geometry opacity texture (if any)
+    pub geometry_opacity_texture: Option<String>,
 
     /// True if material is from MaterialX, false for UsdPreviewSurface
     pub is_materialx: bool,
@@ -2234,6 +2242,8 @@ impl UsdStage {
             roughness: 0.5,
             specular: 0.5,
             opacity: 1.0,
+            transmission: 0.0,
+            specular_ior: 1.5,
             emissive_color: [0.0, 0.0, 0.0],
             diffuse_texture: ptr::null(),
             roughness_texture: ptr::null(),
@@ -2280,26 +2290,28 @@ impl UsdStage {
 
         Ok(UsdMaterialData {
             path,
-            diffuse_color: Vec3::new(
+            base_color: Vec3::new(
                 raw_data.diffuse_color[0],
                 raw_data.diffuse_color[1],
                 raw_data.diffuse_color[2],
             ),
-            metallic: raw_data.metallic,
-            roughness: raw_data.roughness,
-            specular: raw_data.specular,
-            opacity: raw_data.opacity,
-            emissive_color: Vec3::new(
+            base_metalness: raw_data.metallic,
+            specular_roughness: raw_data.roughness,
+            specular_weight: raw_data.specular,
+            specular_ior: raw_data.specular_ior,
+            transmission_weight: raw_data.transmission,
+            geometry_opacity: raw_data.opacity,
+            emission_color: Vec3::new(
                 raw_data.emissive_color[0],
                 raw_data.emissive_color[1],
                 raw_data.emissive_color[2],
             ),
-            diffuse_texture: texture_path(raw_data.diffuse_texture),
-            roughness_texture: texture_path(raw_data.roughness_texture),
-            metallic_texture: texture_path(raw_data.metallic_texture),
+            base_color_texture: texture_path(raw_data.diffuse_texture),
+            specular_roughness_texture: texture_path(raw_data.roughness_texture),
+            base_metalness_texture: texture_path(raw_data.metallic_texture),
             normal_texture: texture_path(raw_data.normal_texture),
-            emissive_texture: texture_path(raw_data.emissive_texture),
-            opacity_texture: texture_path(raw_data.opacity_texture),
+            emission_texture: texture_path(raw_data.emissive_texture),
+            geometry_opacity_texture: texture_path(raw_data.opacity_texture),
             is_materialx: raw_data.is_materialx != 0,
         })
     }
@@ -4060,26 +4072,26 @@ impl UsdEditLayer {
     ) -> UsdBridgeResult<()> {
         let c_path = CString::new(mat_path).map_err(|_| UsdBridgeError::InvalidPath)?;
         let diffuse = [
-            material.diffuse_color.x,
-            material.diffuse_color.y,
-            material.diffuse_color.z,
+            material.base_color.x,
+            material.base_color.y,
+            material.base_color.z,
         ];
         let emissive = [
-            material.emissive_color.x,
-            material.emissive_color.y,
-            material.emissive_color.z,
+            material.emission_color.x,
+            material.emission_color.y,
+            material.emission_color.z,
         ];
 
         let diffuse_tex = material
-            .diffuse_texture
+            .base_color_texture
             .as_deref()
             .and_then(|s| CString::new(s.as_bytes()).ok());
         let roughness_tex = material
-            .roughness_texture
+            .specular_roughness_texture
             .as_deref()
             .and_then(|s| CString::new(s.as_bytes()).ok());
         let metallic_tex = material
-            .metallic_texture
+            .base_metalness_texture
             .as_deref()
             .and_then(|s| CString::new(s.as_bytes()).ok());
         let normal_tex = material
@@ -4087,7 +4099,7 @@ impl UsdEditLayer {
             .as_deref()
             .and_then(|s| CString::new(s.as_bytes()).ok());
         let emissive_tex = material
-            .emissive_texture
+            .emission_texture
             .as_deref()
             .and_then(|s| CString::new(s.as_bytes()).ok());
 
@@ -4096,10 +4108,10 @@ impl UsdEditLayer {
                 self.raw,
                 c_path.as_ptr(),
                 diffuse.as_ptr(),
-                material.metallic,
-                material.roughness,
-                material.specular,
-                material.opacity,
+                material.base_metalness,
+                material.specular_roughness,
+                material.specular_weight,
+                material.geometry_opacity,
                 emissive.as_ptr(),
                 diffuse_tex.as_ref().map_or(ptr::null(), |s| s.as_ptr()),
                 roughness_tex.as_ref().map_or(ptr::null(), |s| s.as_ptr()),

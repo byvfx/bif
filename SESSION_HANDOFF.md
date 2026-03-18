@@ -1,6 +1,6 @@
 # Session Handoff - March 17, 2026
 
-**Last Updated:** Ivar texture loading + per-material assignment fix
+**Last Updated:** Glass/transmission rendering + OpenPBR migration
 **Next Milestone:** M29.5 egui upgrade
 **Project:** BIF - VFX Scene Assembler & Renderer
 
@@ -12,18 +12,37 @@
 |--------|---------|
 | Complete | Milestones 0-23, M26 (OIDN), M26.1 (Ivar material cache), M19.6 (viewport cleanup) |
 | Current | USD spec compliance sessions 1-4 done (read-side complete + Embree subd) |
-| Tests | 89 renderer (+4), 72 math, 19 viewer, 79 viewport, 93 bif_core |
+| Tests | 93 renderer (+4 glass), 72 math, 19 viewer, 79 viewport, 93 bif_core |
 | Performance | 60 FPS viewport, 100K instances with LOD, Ivar build ~185ms (2.5M tri combined mesh) |
 
 ---
 
 ## Recent Work
 
+### Glass/Transmission Rendering (Mar 17, 2026)
+
+Implemented glass material support end-to-end:
+- C++ bridge extracts `transmission` + `specular_IOR` from MaterialX and `ior` from UsdPreviewSurface
+- UsdPreviewSurface heuristic: `opacity < 1` on dielectric → `transmission = 1 - opacity`
+- `OpenPbrSurface::scatter_transmission()` — Snell's law refraction + TIR + Schlick Fresnel
+- `glass(ior)` constructor, `is_delta()` updated for smooth glass
+- 3 new tests, visually verified with test_balls.usd (chrome/glass/rough_metal)
+
+### Disney → OpenPBR Migration (Mar 17, 2026)
+
+Full removal of Disney Principled BSDF, replaced with OpenPBR Surface v1.1:
+- `DisneyBSDF` → `OpenPbrSurface`, `disney.rs` → `openpbr.rs`
+- All `bif_core::Material` fields renamed to OpenPBR naming
+- IOR-based Fresnel: `F0 = ((ior-1)/(ior+1))^2` replaces `specular * 0.08`
+- GPU structs repacked with emission + extra_params (64→96 bytes)
+- WGSL shader updated with IOR-based F0
+- 14 files modified across all 6 crates, all tests pass
+
 ### Ivar Texture Loading Fix (Mar 17, 2026)
 
 Fixed 3 bugs causing black objects + wrong textures in Ivar renders:
 - **Default material OOB:** build_materials() now appends fallback at index N, matching viewport convention
-- **Relative path resolution:** DisneyBSDF::from_material_with_textures() resolves paths via material.source_dir
+- **Relative path resolution:** OpenPbrSurface::from_material_with_textures() resolves paths via material.source_dir
 - **Per-instance material binding:** combine_with_transforms() uses instance_material_id fallback for meshes without GeomSubsets
 - Added texture load failure logging, saturating_sub safety in Embree, 4 new path resolution tests
 

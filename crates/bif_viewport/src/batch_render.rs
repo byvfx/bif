@@ -10,8 +10,8 @@ use bif_core::usd::cpp_bridge::UsdStage;
 use bif_math::Mat4;
 use bif_renderer::{
     format_frame_path, generate_buckets, render_bucket_with_aovs, write_exr, BvhNode, Camera,
-    Color, DisneyBSDF, EmbreeScene, ExrOutput, HdriEnvironment, Hittable, LightList, RenderConfig,
-    DEFAULT_BUCKET_SIZE,
+    Color, EmbreeScene, ExrOutput, HdriEnvironment, Hittable, LightList, OpenPbrSurface,
+    RenderConfig, DEFAULT_BUCKET_SIZE,
 };
 use rayon::prelude::*;
 
@@ -38,7 +38,7 @@ pub enum BatchMessage {
     Error(String),
 }
 
-/// Build DisneyBSDF materials from scene materials, loading textures from disk.
+/// Build OpenPbrSurface materials from scene materials, loading textures from disk.
 ///
 /// Caller provides a persistent `TextureCache` — unchanged textures reuse
 /// existing `Arc<Texture>` across rebuilds instead of reloading from disk.
@@ -46,9 +46,9 @@ pub fn build_materials(
     scene_materials: &[Arc<bif_core::Material>],
     fallback: &bif_core::Material,
     texture_cache: &mut bif_core::texture::TextureCache,
-) -> Vec<Arc<DisneyBSDF>> {
-    let mut materials: Vec<Arc<DisneyBSDF>> = if scene_materials.is_empty() {
-        vec![Arc::new(DisneyBSDF::from_material_with_textures(
+) -> Vec<Arc<OpenPbrSurface>> {
+    let mut materials: Vec<Arc<OpenPbrSurface>> = if scene_materials.is_empty() {
+        vec![Arc::new(OpenPbrSurface::from_material_with_textures(
             fallback,
             texture_cache,
         ))]
@@ -56,7 +56,7 @@ pub fn build_materials(
         scene_materials
             .iter()
             .map(|mat| {
-                Arc::new(DisneyBSDF::from_material_with_textures(
+                Arc::new(OpenPbrSurface::from_material_with_textures(
                     mat.as_ref(),
                     texture_cache,
                 ))
@@ -67,7 +67,7 @@ pub fn build_materials(
     // default_mat_index (= scene_materials.len()) resolve correctly in Ivar,
     // matching the viewport's material_table convention.
     if !scene_materials.is_empty() {
-        materials.push(Arc::new(DisneyBSDF::from_material_with_textures(
+        materials.push(Arc::new(OpenPbrSurface::from_material_with_textures(
             fallback,
             texture_cache,
         )));
@@ -114,8 +114,8 @@ pub struct SceneBuilderData {
     pub stage: Option<Arc<UsdStage>>,
     /// Mesh ranges for multi-mesh scenes (vertex offset/count per mesh).
     pub mesh_ranges: Option<Vec<MeshRange>>,
-    /// Cached DisneyBSDF materials (avoids re-loading textures per frame).
-    pub ivar_materials: Option<Vec<Arc<DisneyBSDF>>>,
+    /// Cached OpenPbrSurface materials (avoids re-loading textures per frame).
+    pub ivar_materials: Option<Vec<Arc<OpenPbrSurface>>>,
     /// Persistent texture cache — survives across frame rebuilds so unchanged
     /// textures are not reloaded from disk.
     pub texture_cache: Option<bif_core::texture::TextureCache>,
@@ -202,7 +202,7 @@ impl SceneBuilderData {
         let uvs_soa: Vec<[f32; 2]> = verts.iter().map(|v| v.uv).collect();
 
         // Use cached materials or build from scratch
-        let materials: Vec<Arc<DisneyBSDF>> = if let Some(ref cached) = self.ivar_materials {
+        let materials: Vec<Arc<OpenPbrSurface>> = if let Some(ref cached) = self.ivar_materials {
             cached.clone()
         } else {
             let mut cache = self.texture_cache.take().unwrap_or_else(|| {

@@ -923,11 +923,11 @@ pub fn collect_scene_texture_paths(
         let mat = material.as_ref();
         let src_dir = mat.source_dir.as_deref();
         let candidate_paths = [
-            mat.diffuse_texture.as_deref(),
-            mat.roughness_texture.as_deref(),
-            mat.metallic_texture.as_deref(),
+            mat.base_color_texture.as_deref(),
+            mat.specular_roughness_texture.as_deref(),
+            mat.base_metalness_texture.as_deref(),
             mat.normal_texture.as_deref(),
-            mat.emissive_texture.as_deref(),
+            mat.emission_texture.as_deref(),
         ];
 
         for raw_path in candidate_paths.into_iter().flatten() {

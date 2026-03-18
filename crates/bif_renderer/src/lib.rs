@@ -10,7 +10,6 @@ mod bucket;
 mod bvh;
 mod camera;
 pub mod denoise;
-pub mod disney;
 mod embree;
 pub mod embree_ffi;
 pub mod exr_writer;
@@ -20,6 +19,7 @@ mod hittable;
 mod instanced_geometry;
 pub mod light;
 mod material;
+pub mod openpbr;
 pub mod pick_scene;
 pub mod radiance_cache;
 mod renderer;
@@ -35,7 +35,6 @@ pub use bucket::{
 pub use bvh::BvhNode;
 pub use camera::Camera;
 pub use denoise::{denoise_beauty, DenoiseError, DenoiseResult};
-pub use disney::DisneyBSDF;
 pub use embree::EmbreeScene;
 pub use exr_writer::{format_frame_path, write_exr, ExrCompression, ExrError, ExrOutput};
 pub use filter::{PixelFilter, PixelFilterConfig};
@@ -48,6 +47,7 @@ pub use material::{
     random_unit_vector, Color, Dielectric, DiffuseLight, Lambertian, Material, Metal,
     ScatterResult,
 };
+pub use openpbr::OpenPbrSurface;
 pub use pick_scene::{EmbreePickScene, PickError, PickResult};
 pub use radiance_cache::{RadianceCache, RadianceCacheConfig};
 pub use renderer::{

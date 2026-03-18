@@ -46,10 +46,10 @@ impl Renderer {
             .map(|m| (**m).clone())
             .unwrap_or_default();
         log::info!(
-            "Material: {} (metallic={:.2}, roughness={:.2})",
+            "Material: {} (metalness={:.2}, roughness={:.2})",
             scene_material.name,
-            scene_material.metallic,
-            scene_material.roughness
+            scene_material.base_metalness,
+            scene_material.specular_roughness
         );
 
         log::info!(
@@ -1564,10 +1564,10 @@ impl Renderer {
             .map(|m| (**m).clone())
             .unwrap_or_default();
         log::info!(
-            "Material: {} (metallic={:.2}, roughness={:.2})",
+            "Material: {} (metalness={:.2}, roughness={:.2})",
             scene_material.name,
-            scene_material.metallic,
-            scene_material.roughness
+            scene_material.base_metalness,
+            scene_material.specular_roughness
         );
 
         log::info!(

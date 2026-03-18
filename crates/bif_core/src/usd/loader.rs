@@ -318,29 +318,35 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
         if mat_data.is_materialx {
             materialx_count += 1;
             log::debug!(
-                "MaterialX material: {} (diffuse={:?}, metallic={:.2}, roughness={:.2})",
+                "MaterialX material: {} (base_color={:?}, metalness={:.2}, roughness={:.2})",
                 mat_data.path,
-                mat_data.diffuse_color,
-                mat_data.metallic,
-                mat_data.roughness
+                mat_data.base_color,
+                mat_data.base_metalness,
+                mat_data.specular_roughness
             );
         }
         let material = crate::scene::Material {
             name: mat_data.path.clone().into(),
-            diffuse_color: mat_data.diffuse_color,
-            metallic: mat_data.metallic,
-            roughness: mat_data.roughness,
-            emissive_color: mat_data.emissive_color,
-            opacity: mat_data.opacity,
-            specular: mat_data.specular,
-            diffuse_texture: mat_data.diffuse_texture.as_deref().map(Arc::from),
-            roughness_texture: mat_data.roughness_texture.as_deref().map(Arc::from),
-            metallic_texture: mat_data.metallic_texture.as_deref().map(Arc::from),
+            base_color: mat_data.base_color,
+            base_metalness: mat_data.base_metalness,
+            specular_roughness: mat_data.specular_roughness,
+            emission_color: mat_data.emission_color,
+            emission_luminance: 0.0,
+            transmission_weight: mat_data.transmission_weight,
+            geometry_opacity: mat_data.geometry_opacity,
+            specular_weight: mat_data.specular_weight,
+            specular_ior: mat_data.specular_ior,
+            base_color_texture: mat_data.base_color_texture.as_deref().map(Arc::from),
+            specular_roughness_texture: mat_data
+                .specular_roughness_texture
+                .as_deref()
+                .map(Arc::from),
+            base_metalness_texture: mat_data.base_metalness_texture.as_deref().map(Arc::from),
             normal_texture: mat_data.normal_texture.as_deref().map(Arc::from),
-            emissive_texture: mat_data.emissive_texture.as_deref().map(Arc::from),
-            opacity_texture: mat_data.opacity_texture.as_deref().map(Arc::from),
+            emission_texture: mat_data.emission_texture.as_deref().map(Arc::from),
+            geometry_opacity_texture: mat_data.geometry_opacity_texture.as_deref().map(Arc::from),
             source_dir: path.parent().map(|p| p.to_path_buf()),
-            double_sided: false, // Set per-mesh via UsdGeomMesh::GetDoubleSidedAttr
+            double_sided: false,
         };
         let mat_id = scene.add_material(material);
         material_map.insert(mat_data.path.clone(), mat_id);

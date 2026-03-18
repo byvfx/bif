@@ -195,7 +195,7 @@ pub(crate) struct AsyncChannels {
     /// Receiver for background material pre-warm thread (materials + texture cache).
     pub ivar_materials_receiver: Option<
         std::sync::mpsc::Receiver<(
-            Vec<std::sync::Arc<bif_renderer::DisneyBSDF>>,
+            Vec<std::sync::Arc<bif_renderer::OpenPbrSurface>>,
             bif_core::texture::TextureCache,
         )>,
     >,
@@ -267,8 +267,8 @@ pub(crate) struct IvarContext {
     pub ivar_bind_group: wgpu::BindGroup,
     pub ivar_bind_group_layout: wgpu::BindGroupLayout,
     pub ivar_pipeline: wgpu::RenderPipeline,
-    /// Cached DisneyBSDF materials (avoids re-loading textures on every Ivar build).
-    pub ivar_materials: Option<Vec<Arc<bif_renderer::DisneyBSDF>>>,
+    /// Cached OpenPBR materials (avoids re-loading textures on every Ivar build).
+    pub ivar_materials: Option<Vec<Arc<bif_renderer::OpenPbrSurface>>>,
     /// Persistent texture cache — survives material rebuilds so unchanged
     /// textures reuse existing `Arc<Texture>` instead of reloading from disk.
     pub ivar_texture_cache: Option<bif_core::texture::TextureCache>,

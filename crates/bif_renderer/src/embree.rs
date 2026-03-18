@@ -4,8 +4,8 @@
 //! Only includes the minimal API needed for instanced geometry rendering.
 
 use crate::{
-    disney::DisneyBSDF,
     hittable::{HitRecord, Hittable},
+    openpbr::OpenPbrSurface,
     Ray,
 };
 use bif_math::{Aabb, Interval, Mat3, Mat4, Vec3};
@@ -98,7 +98,7 @@ impl RTCRayHit {
 /// let uvs = mesh.extract_triangle_uvs();
 /// let normals = mesh.extract_triangle_normals();
 /// let transforms = vec![Mat4::IDENTITY; 1000];
-/// let materials = vec![Arc::new(DisneyBSDF::default())];
+/// let materials = vec![Arc::new(OpenPbrSurface::default())];
 /// let tri_mat_ids = vec![0u32; vertices.len()];
 ///
 /// let scene = EmbreeScene::new(&vertices, &uvs, &normals, transforms, materials, &tri_mat_ids);
@@ -121,7 +121,7 @@ pub struct EmbreeScene {
     device: RTCDevice,
     scene: RTCScene,
     prototype_scene: RTCScene, // Must stay alive while instances reference it!
-    materials: Vec<Arc<DisneyBSDF>>,
+    materials: Vec<Arc<OpenPbrSurface>>,
     triangle_material_ids: Vec<u32>,
 
     // Keep vertex, index, and transform data alive (Embree holds pointers to this)
@@ -163,7 +163,7 @@ impl EmbreeScene {
         uvs: &[[[f32; 2]; 3]],
         normals: &[[[f32; 3]; 3]],
         transforms: Vec<Mat4>,
-        materials: Vec<Arc<DisneyBSDF>>,
+        materials: Vec<Arc<OpenPbrSurface>>,
         triangle_material_ids: &[u32],
     ) -> Option<Self> {
         match Self::new(
@@ -201,7 +201,7 @@ impl EmbreeScene {
         uvs: &[[[f32; 2]; 3]],
         normals: &[[[f32; 3]; 3]],
         transforms: Vec<Mat4>,
-        materials: Vec<Arc<DisneyBSDF>>,
+        materials: Vec<Arc<OpenPbrSurface>>,
         triangle_material_ids: &[u32],
     ) -> Result<Self, EmbreeError> {
         let total_start = Instant::now();
@@ -495,7 +495,7 @@ impl EmbreeScene {
         uvs: &[[f32; 2]],
         indices: &[u32],
         transforms: Vec<Mat4>,
-        materials: Vec<Arc<DisneyBSDF>>,
+        materials: Vec<Arc<OpenPbrSurface>>,
         triangle_material_ids: &[u32],
         subd: Option<&SubdivData<'_>>,
     ) -> Result<Self, EmbreeError> {
@@ -885,7 +885,7 @@ impl EmbreeScene {
         uvs: &[[f32; 2]],
         indices: &[u32],
         transforms: Vec<Mat4>,
-        materials: Vec<Arc<DisneyBSDF>>,
+        materials: Vec<Arc<OpenPbrSurface>>,
         triangle_material_ids: &[u32],
         subd: Option<&SubdivData<'_>>,
     ) -> Option<Self> {
@@ -1156,10 +1156,10 @@ unsafe impl Sync for EmbreeScene {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::disney::DisneyBSDF;
+    use crate::openpbr::OpenPbrSurface;
 
-    fn default_material() -> Vec<Arc<DisneyBSDF>> {
-        vec![Arc::new(DisneyBSDF::default())]
+    fn default_material() -> Vec<Arc<OpenPbrSurface>> {
+        vec![Arc::new(OpenPbrSurface::default())]
     }
 
     #[test]

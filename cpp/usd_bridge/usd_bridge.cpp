@@ -201,6 +201,8 @@ struct CachedMaterial {
     float roughness;
     float specular;
     float opacity;
+    float transmission;
+    float specular_ior;
     float emissive_color[3];
     std::string diffuse_texture;
     std::string roughness_texture;
@@ -1311,6 +1313,8 @@ static void cache_material_data(UsdBridgeStage* bridge) {
         cached.roughness = 0.5f;
         cached.specular = 0.5f;
         cached.opacity = 1.0f;
+        cached.transmission = 0.0f;
+        cached.specular_ior = 1.5f;
         cached.emissive_color[0] = 0.0f;
         cached.emissive_color[1] = 0.0f;
         cached.emissive_color[2] = 0.0f;
@@ -1398,6 +1402,16 @@ static void cache_material_data(UsdBridgeStage* bridge) {
             input = mtlx_shader.GetInput(TfToken("specular"));
             if (input) {
                 input.Get(&cached.specular);
+            }
+
+            input = mtlx_shader.GetInput(TfToken("transmission"));
+            if (input) {
+                input.Get(&cached.transmission);
+            }
+
+            input = mtlx_shader.GetInput(TfToken("specular_IOR"));
+            if (input) {
+                input.Get(&cached.specular_ior);
             }
 
             input = mtlx_shader.GetInput(TfToken("opacity"));
@@ -1512,6 +1526,18 @@ static void cache_material_data(UsdBridgeStage* bridge) {
                 input.Get(&cached.specular);
             }
 
+            // transmission
+            input = shader.GetInput(TfToken("transmission"));
+            if (input) {
+                input.Get(&cached.transmission);
+            }
+
+            // specular_IOR
+            input = shader.GetInput(TfToken("specular_IOR"));
+            if (input) {
+                input.Get(&cached.specular_ior);
+            }
+
             // opacity
             input = shader.GetInput(TfToken("opacity"));
             if (input) {
@@ -1623,6 +1649,17 @@ static void cache_material_data(UsdBridgeStage* bridge) {
                 cached.emissive_color[2] = emissive[2];
             }
             cached.emissive_texture = get_texture_path(input);
+        }
+
+        // IOR
+        input = shader.GetInput(TfToken("ior"));
+        if (input) {
+            input.Get(&cached.specular_ior);
+        }
+
+        // Heuristic: UsdPreviewSurface opacity < 1 on dielectric → transmission
+        if (cached.opacity < 1.0f && cached.metallic == 0.0f) {
+            cached.transmission = 1.0f - cached.opacity;
         }
 
         // Normal map
@@ -2423,6 +2460,8 @@ UsdBridgeError usd_bridge_get_material(
     out_data->roughness = mat.roughness;
     out_data->specular = mat.specular;
     out_data->opacity = mat.opacity;
+    out_data->transmission = mat.transmission;
+    out_data->specular_ior = mat.specular_ior;
     out_data->emissive_color[0] = mat.emissive_color[0];
     out_data->emissive_color[1] = mat.emissive_color[1];
     out_data->emissive_color[2] = mat.emissive_color[2];
