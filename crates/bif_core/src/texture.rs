@@ -319,7 +319,7 @@ impl TextureCache {
             textures: HashMap::new(),
             base_dir: None,
             #[cfg(feature = "oiio")]
-            prefer_tx: false,
+            prefer_tx: true,
             #[cfg(feature = "oiio")]
             generate_mipmaps: true,
         }
@@ -331,7 +331,7 @@ impl TextureCache {
             textures: HashMap::new(),
             base_dir: Some(base_dir.into()),
             #[cfg(feature = "oiio")]
-            prefer_tx: false,
+            prefer_tx: true,
             #[cfg(feature = "oiio")]
             generate_mipmaps: true,
         }
@@ -503,9 +503,10 @@ impl TextureCache {
         let load_path = if self.prefer_tx {
             let tx_path = oiio::get_tx_path(full_path);
             if oiio::tx_is_valid(full_path, &tx_path) {
-                log::debug!("Using .tx: {}", tx_path.display());
+                log::info!("Loading .tx: {}", tx_path.display());
                 tx_path
             } else {
+                log::debug!("No .tx found: {}", full_path.display());
                 full_path.to_path_buf()
             }
         } else {

@@ -391,10 +391,10 @@ OiioBridgeError oiio_load_texture_with_mips(const char* path, OiioTextureData** 
         if (ldr && nchannels >= 3) {
             // LDR fast path for mip levels
             if (nchannels >= 4) {
-                if (!inp->read_image(0, 0, 0, 4, TypeDesc::UINT8, mip_rgba)) break;
+                if (!inp->read_image(0, mip, 0, 4, TypeDesc::UINT8, mip_rgba)) break;
             } else {
                 std::vector<uint8_t> rgb(mip_width * mip_height * 3);
-                if (!inp->read_image(0, 0, 0, 3, TypeDesc::UINT8, rgb.data())) {
+                if (!inp->read_image(0, mip, 0, 3, TypeDesc::UINT8, rgb.data())) {
                     delete[] mip_rgba;
                     break;
                 }
@@ -408,7 +408,7 @@ OiioBridgeError oiio_load_texture_with_mips(const char* path, OiioTextureData** 
         } else {
             // HDR/float path for mip levels
             std::vector<float> mip_pixels(mip_width * mip_height * nchannels);
-            if (!inp->read_image(0, 0, 0, nchannels, TypeDesc::FLOAT, mip_pixels.data())) {
+            if (!inp->read_image(0, mip, 0, nchannels, TypeDesc::FLOAT, mip_pixels.data())) {
                 delete[] mip_rgba;
                 break;
             }
