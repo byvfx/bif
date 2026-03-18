@@ -4,8 +4,17 @@
 //! When Qt replaces egui, the same `AppEvent` variants are emitted — zero
 //! coupling to any UI framework.
 
+use std::path::PathBuf;
+
 use crate::node_graph::NodeGraphEvent;
 use crate::property_inspector::TransformEdit;
+
+/// Camera projection mode — typed replacement for string matching.
+#[derive(Debug, Clone)]
+pub enum CameraProjection {
+    Perspective,
+    Ortho(String),
+}
 
 /// Typed event emitted by UI code, consumed by the render loop each frame.
 #[derive(Debug)]
@@ -22,10 +31,8 @@ pub enum AppEvent {
     StartBatchRender,
     /// Cancel in-progress batch render.
     CancelBatchRender,
-    /// Sync viewport camera to a USD camera by path.
-    SyncViewportToUsdCamera(String),
-    /// Sync viewport to a USD camera from timeline dropdown.
-    SyncViewportCamera(String),
+    /// Sync viewport camera to a USD camera by path (batch panel or timeline).
+    SyncUsdCamera(String),
     /// Sync viewport to a scene camera by index.
     SyncSceneCamera(u64),
     /// Prim selected in scene browser.
@@ -36,10 +43,10 @@ pub enum AppEvent {
     StageCorrectionsChanged,
     /// Set animation keyframe at instance index.
     SetKeyframe(u64),
-    /// Camera projection changed (perspective or ortho preset).
-    CameraProjectionChange(String),
+    /// Camera projection changed.
+    CameraProjectionChange(CameraProjection),
     /// Export edit layer to USD file.
-    ExportEditLayer(String),
+    ExportEditLayer(PathBuf),
     /// One or more node graph events.
     NodeGraph(Vec<NodeGraphEvent>),
 }
@@ -56,9 +63,11 @@ impl EventBus {
         self.pending.push(event);
     }
 
-    /// Drain all pending events. Returns owned vec, leaves bus empty.
+    /// Drain all pending events. Preserves vec capacity for next frame.
     pub fn drain(&mut self) -> Vec<AppEvent> {
-        std::mem::take(&mut self.pending)
+        let mut events = Vec::with_capacity(self.pending.len());
+        std::mem::swap(&mut events, &mut self.pending);
+        events
     }
 
     /// Check if any events are pending.

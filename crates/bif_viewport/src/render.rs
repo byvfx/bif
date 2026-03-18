@@ -397,11 +397,7 @@ impl Renderer {
                                     self.cam.viewport_camera_source = CameraSource::Viewport;
                                     self.cam.camera_locked = false;
                                     self.cam.selected_usd_camera = None;
-                                    event_bus.emit(
-                                        crate::app_event::AppEvent::CameraProjectionChange(
-                                            "perspective".to_string(),
-                                        ),
-                                    );
+                                    event_bus.emit(crate::app_event::AppEvent::CameraProjectionChange(crate::app_event::CameraProjection::Perspective));
                                 }
                                 // USD cameras from stage
                                 if let Some(ref stage) = self.scene.usd_stage {
@@ -416,11 +412,7 @@ impl Renderer {
                                                     CameraSource::UsdCamera(path.clone());
                                                 self.cam.selected_usd_camera = Some(path.clone());
                                                 self.cam.camera_locked = true;
-                                                event_bus.emit(
-                                                    crate::app_event::AppEvent::SyncViewportCamera(
-                                                        path,
-                                                    ),
-                                                );
+                                                event_bus.emit(crate::app_event::AppEvent::SyncUsdCamera(path));
                                             }
                                         }
                                     }
@@ -440,11 +432,7 @@ impl Renderer {
                                             CameraSource::OrthoView(*preset);
                                         self.cam.camera_locked = false;
                                         self.cam.selected_usd_camera = None;
-                                        event_bus.emit(
-                                            crate::app_event::AppEvent::CameraProjectionChange(
-                                                format!("ortho:{}", preset.display_name()),
-                                            ),
-                                        );
+                                        event_bus.emit(crate::app_event::AppEvent::CameraProjectionChange(crate::app_event::CameraProjection::Ortho(preset.display_name().to_string())));
                                     }
                                 }
                                 // Scene cameras (from Camera primitives)
@@ -722,10 +710,7 @@ impl Renderer {
                         flag.store(true, Ordering::Relaxed);
                     }
                 }
-                AppEvent::SyncViewportToUsdCamera(camera_path) => {
-                    self.sync_viewport_to_usd_camera(&camera_path);
-                }
-                AppEvent::SyncViewportCamera(camera_path) => {
+                AppEvent::SyncUsdCamera(camera_path) => {
                     self.sync_viewport_to_usd_camera(&camera_path);
                 }
                 AppEvent::SyncSceneCamera(cam_idx) => {
@@ -813,23 +798,29 @@ impl Renderer {
                 AppEvent::SetKeyframe(instance_index) => {
                     self.set_keyframe(instance_index as usize);
                 }
-                AppEvent::CameraProjectionChange(change) => {
-                    if change == "perspective" {
-                        self.cam.camera.set_perspective();
-                    } else if let Some(preset_name) = change.strip_prefix("ortho:") {
-                        for preset in bif_math::OrthoPreset::all() {
-                            if preset.display_name() == preset_name {
-                                self.cam.camera.set_ortho_preset(*preset);
-                                break;
+                AppEvent::CameraProjectionChange(proj) => {
+                    match proj {
+                        crate::app_event::CameraProjection::Perspective => {
+                            self.cam.camera.set_perspective();
+                        }
+                        crate::app_event::CameraProjection::Ortho(preset_name) => {
+                            for preset in bif_math::OrthoPreset::all() {
+                                if preset.display_name() == preset_name {
+                                    self.cam.camera.set_ortho_preset(*preset);
+                                    break;
+                                }
                             }
                         }
                     }
                     self.update_camera();
                 }
-                AppEvent::ExportEditLayer(path) => match self.export_edit_layer(&path) {
-                    Ok(()) => log::info!("Edit layer exported to {}", path),
-                    Err(e) => log::error!("Failed to export edit layer: {}", e),
-                },
+                AppEvent::ExportEditLayer(path) => {
+                    let path_str = path.display().to_string();
+                    match self.export_edit_layer(&path_str) {
+                        Ok(()) => log::info!("Edit layer exported to {}", path_str),
+                        Err(e) => log::error!("Failed to export edit layer: {}", e),
+                    }
+                }
                 AppEvent::NodeGraph(node_events) => {
                     for event in node_events {
                         self.handle_node_graph_event(event);

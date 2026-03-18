@@ -667,7 +667,7 @@ pub(crate) fn render_stats_panel(
         // Sync viewport to USD camera button
         if let ivar_state::CameraSource::UsdCamera(ref cam_path) = settings.camera_source {
             if ui.button("Sync Viewport to Camera").clicked() {
-                event_bus.emit(AppEvent::SyncViewportToUsdCamera(cam_path.clone()));
+                event_bus.emit(AppEvent::SyncUsdCamera(cam_path.clone()));
             }
         }
 
@@ -742,7 +742,7 @@ pub(crate) fn render_stats_panel(
                     .set_file_name("edits.usda")
                     .save_file()
                 {
-                    event_bus.emit(AppEvent::ExportEditLayer(path.display().to_string()));
+                    event_bus.emit(AppEvent::ExportEditLayer(path));
                 }
             }
         });
