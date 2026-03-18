@@ -1,7 +1,7 @@
-# Session Handoff - March 17, 2026
+# Session Handoff - March 18, 2026
 
-**Last Updated:** Architecture decomposition (EventBus + SelectionManager + SceneManager)
-**Next Milestone:** Continue architecture phases 5-7, then M29.5 egui upgrade
+**Last Updated:** Fix UDIM double V-flip bug in Ivar CPU sampling
+**Next Milestone:** Manual test PaperScroll.usd UDIM tiles, then M29.5 egui upgrade
 **Project:** BIF - VFX Scene Assembler & Renderer
 
 ---

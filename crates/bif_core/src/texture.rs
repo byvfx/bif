@@ -160,12 +160,10 @@ impl Texture {
     ///
     /// For non-UDIM textures, wraps UVs to [0, 1].
     /// For UDIM atlases, maps tile-space UVs to atlas-space UVs
-    /// using the same math as `basic.wgsl` lines 281-305.
+    /// using the same math as `basic.wgsl` lines 287-310.
     ///
-    /// Note on V-axis: this function returns UVs in atlas pixel space where
-    /// row 0 is at image top (flipped_row + inverted sub_v). Then `sample()`
-    /// applies `1.0 - v` to convert back to bottom-left origin. The two
-    /// flips cancel correctly — this is intentional, not a bug.
+    /// Note on V-axis: returns UVs in standard UV space (0=bottom) so that
+    /// `sample()`'s single `1.0 - v` flip produces the correct pixel row.
     #[inline]
     fn transform_uv(&self, u: f32, v: f32) -> (f32, f32) {
         if !self.is_udim() {
@@ -177,9 +175,8 @@ impl Texture {
         let row = raw_row.clamp(0, self.udim_grid_rows as i32 - 1) as u32;
         let sub_u = u.fract().rem_euclid(1.0);
         let sub_v = v.fract().rem_euclid(1.0);
-        let flipped_row = self.udim_grid_rows - 1 - row;
         let atlas_u = (col as f32 + sub_u) / self.udim_grid_cols as f32;
-        let atlas_v = (flipped_row as f32 + (1.0 - sub_v)) / self.udim_grid_rows as f32;
+        let atlas_v = (row as f32 + sub_v) / self.udim_grid_rows as f32;
         (atlas_u, atlas_v)
     }
 
@@ -635,30 +632,30 @@ impl TextureCache {
             target_h = ((target_h as f32 * scale) as u32).max(1);
         }
 
+        // Guard 3: Cap total pixel count to MAX_IVAR_ATLAS_PIXELS
+        let mut atlas_w = num_cols * target_w;
+        let mut atlas_h = num_rows * target_h;
+        let total_pixels = (atlas_w as u64) * (atlas_h as u64);
+        if total_pixels > MAX_IVAR_ATLAS_PIXELS {
+            let scale = (MAX_IVAR_ATLAS_PIXELS as f64 / total_pixels as f64).sqrt();
+            target_w = ((target_w as f64 * scale) as u32).max(1);
+            target_h = ((target_h as f64 * scale) as u32).max(1);
+            atlas_w = num_cols * target_w;
+            atlas_h = num_rows * target_h;
+        }
+
         if target_w != raw_max_w || target_h != raw_max_h {
             log::info!(
-                "UDIM tiles capped {}x{} -> {}x{} for Ivar ({}x{} grid)",
+                "UDIM tiles capped {}x{} -> {}x{} for Ivar ({}x{} grid, atlas {}x{})",
                 raw_max_w,
                 raw_max_h,
                 target_w,
                 target_h,
                 num_cols,
-                num_rows
-            );
-        }
-
-        let atlas_w = num_cols * target_w;
-        let atlas_h = num_rows * target_h;
-
-        // Guard against u32 overflow and cap at MAX_IVAR_ATLAS_PIXELS
-        let total_pixels = (atlas_w as u64) * (atlas_h as u64);
-        if total_pixels > MAX_IVAR_ATLAS_PIXELS {
-            return Err(TextureError::LoadError(format!(
-                "UDIM atlas too large: {}x{} ({} MB)",
+                num_rows,
                 atlas_w,
-                atlas_h,
-                total_pixels * 16 / 1_048_576
-            )));
+                atlas_h
+            );
         }
 
         let mut atlas_pixels = vec![[0.0f32; 4]; (atlas_w * atlas_h) as usize];
@@ -682,6 +679,9 @@ impl TextureCache {
 
             let col = (info.udim - 1001) % 10 - min_col;
             let row = (info.udim - 1001) / 10 - min_row;
+            // Row flip: atlas pixel buffer stores row-0 tiles at bottom (high pixel-y).
+            // transform_uv() returns UV-space (0=bottom), sample() applies 1.0-v to
+            // convert to pixel-y, landing on the correct flipped region.
             let flipped_row = (num_rows - 1) - row;
 
             // Downscale to target tile size if needed
@@ -980,7 +980,7 @@ fn convert_u8_to_f32_pixels(data: &[u8], is_linear: bool) -> Vec<[f32; 4]> {
 
 /// Maximum per-tile dimension for Ivar UDIM atlases.
 /// Tiles larger than this are downscaled before stitching to limit memory.
-const MAX_IVAR_UDIM_TILE_SIZE: u32 = 2048;
+const MAX_IVAR_UDIM_TILE_SIZE: u32 = 4096;
 
 /// Maximum atlas dimension (either axis) for Ivar UDIM atlases.
 /// Prevents multi-tile grids from creating huge f32 buffers.
@@ -988,8 +988,8 @@ const MAX_IVAR_UDIM_TILE_SIZE: u32 = 2048;
 const MAX_IVAR_ATLAS_SIZE: u32 = 8192;
 
 /// Maximum total pixel count for UDIM atlases (memory budget).
-/// 16M pixels * 16 bytes/pixel = 256 MB.
-const MAX_IVAR_ATLAS_PIXELS: u64 = 16_777_216;
+/// 64M pixels * 16 bytes/pixel = 1 GB.
+const MAX_IVAR_ATLAS_PIXELS: u64 = 67_108_864;
 
 /// Normalize path for OS filesystem access.
 /// On Windows, converts forward-slash UNC paths (`//server/share/...`)
@@ -1124,26 +1124,25 @@ mod tests {
 
         // Tile 1001 (col=0, row=0): UV (0.5, 0.5) → atlas bottom-left
         let (au, av) = tex.transform_uv(0.5, 0.5);
-        // col=0, row=0, flipped_row=1
         // atlas_u = (0 + 0.5) / 2 = 0.25
-        // atlas_v = (1 + 0.5) / 2 = 0.75
+        // atlas_v = (0 + 0.5) / 2 = 0.25
         assert!((au - 0.25).abs() < 1e-5, "tile 1001 u: got {}", au);
-        assert!((av - 0.75).abs() < 1e-5, "tile 1001 v: got {}", av);
+        assert!((av - 0.25).abs() < 1e-5, "tile 1001 v: got {}", av);
 
         // Tile 1002 (col=1, row=0): UV (1.5, 0.5) → atlas bottom-right
         let (au, av) = tex.transform_uv(1.5, 0.5);
         assert!((au - 0.75).abs() < 1e-5, "tile 1002 u: got {}", au);
-        assert!((av - 0.75).abs() < 1e-5, "tile 1002 v: got {}", av);
+        assert!((av - 0.25).abs() < 1e-5, "tile 1002 v: got {}", av);
 
         // Tile 1011 (col=0, row=1): UV (0.5, 1.5) → atlas top-left
         let (au, av) = tex.transform_uv(0.5, 1.5);
         assert!((au - 0.25).abs() < 1e-5, "tile 1011 u: got {}", au);
-        assert!((av - 0.25).abs() < 1e-5, "tile 1011 v: got {}", av);
+        assert!((av - 0.75).abs() < 1e-5, "tile 1011 v: got {}", av);
 
         // Tile 1012 (col=1, row=1): UV (1.5, 1.5) → atlas top-right
         let (au, av) = tex.transform_uv(1.5, 1.5);
         assert!((au - 0.75).abs() < 1e-5, "tile 1012 u: got {}", au);
-        assert!((av - 0.25).abs() < 1e-5, "tile 1012 v: got {}", av);
+        assert!((av - 0.75).abs() < 1e-5, "tile 1012 v: got {}", av);
     }
 
     #[test]
@@ -1178,6 +1177,65 @@ mod tests {
             (color.z - 1.0).abs() < 0.01,
             "expected blue, got {:?}",
             color
+        );
+    }
+
+    #[test]
+    fn test_udim_sample_2x2_grid() {
+        // 2x2 atlas (4x4 px): each tile is 2x2 px, distinct colors.
+        // build_udim_atlas uses flipped_row: row-1 tiles at top, row-0 at bottom.
+        //
+        // Pixel layout (row-major, top to bottom):
+        //   rows 0-1: tile 1011 (blue)      | tile 1012 (white)
+        //   rows 2-3: tile 1001 (red)       | tile 1002 (green)
+        let mut pixels = vec![[0.0f32; 4]; 16];
+        // Row-1 tiles at top (pixel rows 0-1): 1011=blue, 1012=white
+        pixels[0] = [0.0, 0.0, 1.0, 1.0];
+        pixels[1] = [0.0, 0.0, 1.0, 1.0];
+        pixels[2] = [1.0, 1.0, 1.0, 1.0];
+        pixels[3] = [1.0, 1.0, 1.0, 1.0];
+        pixels[4] = [0.0, 0.0, 1.0, 1.0];
+        pixels[5] = [0.0, 0.0, 1.0, 1.0];
+        pixels[6] = [1.0, 1.0, 1.0, 1.0];
+        pixels[7] = [1.0, 1.0, 1.0, 1.0];
+        // Row-0 tiles at bottom (pixel rows 2-3): 1001=red, 1002=green
+        pixels[8] = [1.0, 0.0, 0.0, 1.0];
+        pixels[9] = [1.0, 0.0, 0.0, 1.0];
+        pixels[10] = [0.0, 1.0, 0.0, 1.0];
+        pixels[11] = [0.0, 1.0, 0.0, 1.0];
+        pixels[12] = [1.0, 0.0, 0.0, 1.0];
+        pixels[13] = [1.0, 0.0, 0.0, 1.0];
+        pixels[14] = [0.0, 1.0, 0.0, 1.0];
+        pixels[15] = [0.0, 1.0, 0.0, 1.0];
+
+        let mut tex = Texture::new(4, 4, pixels, "<udim_2x2>");
+        tex.udim_grid_cols = 2;
+        tex.udim_grid_rows = 2;
+        tex.udim_min_col = 0;
+        tex.udim_min_row = 0;
+
+        // Tile 1001 center (u=0.5, v=0.5) → red
+        let c = tex.sample(0.5, 0.5);
+        assert!((c.x - 1.0).abs() < 0.1, "1001 should be red, got {:?}", c);
+        assert!(c.y < 0.1, "1001 red: no green, got {:?}", c);
+        assert!(c.z < 0.1, "1001 red: no blue, got {:?}", c);
+
+        // Tile 1002 center (u=1.5, v=0.5) → green
+        let c = tex.sample(1.5, 0.5);
+        assert!((c.y - 1.0).abs() < 0.1, "1002 should be green, got {:?}", c);
+        assert!(c.x < 0.1, "1002 green: no red, got {:?}", c);
+
+        // Tile 1011 center (u=0.5, v=1.5) → blue
+        let c = tex.sample(0.5, 1.5);
+        assert!((c.z - 1.0).abs() < 0.1, "1011 should be blue, got {:?}", c);
+        assert!(c.x < 0.1, "1011 blue: no red, got {:?}", c);
+
+        // Tile 1012 center (u=1.5, v=1.5) → white
+        let c = tex.sample(1.5, 1.5);
+        assert!(
+            (c.x - 1.0).abs() < 0.1 && (c.y - 1.0).abs() < 0.1 && (c.z - 1.0).abs() < 0.1,
+            "1012 should be white, got {:?}",
+            c
         );
     }
 

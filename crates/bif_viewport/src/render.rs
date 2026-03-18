@@ -397,7 +397,11 @@ impl Renderer {
                                     self.cam.viewport_camera_source = CameraSource::Viewport;
                                     self.cam.camera_locked = false;
                                     self.cam.selected_usd_camera = None;
-                                    event_bus.emit(crate::app_event::AppEvent::CameraProjectionChange(crate::app_event::CameraProjection::Perspective));
+                                    event_bus.emit(
+                                        crate::app_event::AppEvent::CameraProjectionChange(
+                                            crate::app_event::CameraProjection::Perspective,
+                                        ),
+                                    );
                                 }
                                 // USD cameras from stage
                                 if let Some(ref stage) = self.scene.usd_stage {
@@ -412,7 +416,9 @@ impl Renderer {
                                                     CameraSource::UsdCamera(path.clone());
                                                 self.cam.selected_usd_camera = Some(path.clone());
                                                 self.cam.camera_locked = true;
-                                                event_bus.emit(crate::app_event::AppEvent::SyncUsdCamera(path));
+                                                event_bus.emit(
+                                                    crate::app_event::AppEvent::SyncUsdCamera(path),
+                                                );
                                             }
                                         }
                                     }
@@ -432,7 +438,13 @@ impl Renderer {
                                             CameraSource::OrthoView(*preset);
                                         self.cam.camera_locked = false;
                                         self.cam.selected_usd_camera = None;
-                                        event_bus.emit(crate::app_event::AppEvent::CameraProjectionChange(crate::app_event::CameraProjection::Ortho(preset.display_name().to_string())));
+                                        event_bus.emit(
+                                            crate::app_event::AppEvent::CameraProjectionChange(
+                                                crate::app_event::CameraProjection::Ortho(
+                                                    preset.display_name().to_string(),
+                                                ),
+                                            ),
+                                        );
                                     }
                                 }
                                 // Scene cameras (from Camera primitives)

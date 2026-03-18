@@ -14,8 +14,18 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `MeshData::Default` impl for subsystem initialization
 - `CameraProjection` enum (Perspective/Ortho) for typed camera projection events
 
+### Fixed
+
+- **UDIM double V-flip** — `transform_uv()` returned pixel-space coords causing `sample()` to apply a second V-flip; now returns UV-space so CPU Ivar sampling matches GPU path
+- UDIM atlas pixel cap now downscales tiles instead of erroring (prior commit, included in this changeset)
+
+### Added
+
+- `test_udim_sample_2x2_grid` — end-to-end 2x2 UDIM sample test exercising full `sample()` → `1.0-v` → pixel pipeline with 4 distinct tile colors
+
 ### Changed
 
+- UDIM tile size cap raised 2048→4096, atlas pixel budget 16M→64M (1 GB) for production textures
 - Renderer struct reduced from ~50 fields to ~25 fields via 3 new subsystems
 - `dispatch_deferred_events()` (280 lines of untyped temp-data polling) → `dispatch_events()` (~120 lines of typed match)
 - `SceneInstances` visibility changed from `pub(crate)` to `pub` for SceneManager access
