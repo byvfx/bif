@@ -12,12 +12,16 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **SelectionManager** — unified selection state (prim path, properties, instance index, scene browser, gizmo) extracted from Renderer
 - **SceneManager** — consolidated 16 scene-related fields (geometry, instances, materials, USD stage, undo/redo) into single subsystem
 - `MeshData::Default` impl for subsystem initialization
+- `CameraProjection` enum (Perspective/Ortho) for typed camera projection events
 
 ### Changed
 
 - Renderer struct reduced from ~50 fields to ~25 fields via 3 new subsystems
 - `dispatch_deferred_events()` (280 lines of untyped temp-data polling) → `dispatch_events()` (~120 lines of typed match)
 - `SceneInstances` visibility changed from `pub(crate)` to `pub` for SceneManager access
+- Merged duplicate `SyncViewportToUsdCamera`/`SyncViewportCamera` into single `SyncUsdCamera` event
+- `ExportEditLayer` event uses `PathBuf` instead of `String`
+- `EventBus::drain()` preserves vec capacity across frames
 
 ### Changed
 
