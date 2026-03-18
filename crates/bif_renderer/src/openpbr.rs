@@ -683,6 +683,9 @@ impl OpenPbrSurface {
     ///
     /// Uses Snell's law with total internal reflection and Schlick Fresnel,
     /// matching the existing `Dielectric` material logic.
+    ///
+    /// Note: no explicit ray origin bias needed — the renderer uses `tnear = 0.001`
+    /// globally which prevents self-intersection for both reflected and refracted rays.
     fn scatter_transmission(
         &self,
         ray_in: &Ray,

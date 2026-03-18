@@ -1404,7 +1404,11 @@ static void cache_material_data(UsdBridgeStage* bridge) {
                 input.Get(&cached.specular);
             }
 
-            input = mtlx_shader.GetInput(TfToken("transmission"));
+            // OpenPBR uses "transmission_weight", standard_surface uses "transmission"
+            input = mtlx_shader.GetInput(TfToken("transmission_weight"));
+            if (!input) {
+                input = mtlx_shader.GetInput(TfToken("transmission"));
+            }
             if (input) {
                 input.Get(&cached.transmission);
             }
@@ -1526,8 +1530,11 @@ static void cache_material_data(UsdBridgeStage* bridge) {
                 input.Get(&cached.specular);
             }
 
-            // transmission
-            input = shader.GetInput(TfToken("transmission"));
+            // OpenPBR uses "transmission_weight", standard_surface uses "transmission"
+            input = shader.GetInput(TfToken("transmission_weight"));
+            if (!input) {
+                input = shader.GetInput(TfToken("transmission"));
+            }
             if (input) {
                 input.Get(&cached.transmission);
             }
@@ -1657,8 +1664,11 @@ static void cache_material_data(UsdBridgeStage* bridge) {
             input.Get(&cached.specular_ior);
         }
 
-        // Heuristic: UsdPreviewSurface opacity < 1 on dielectric → transmission
-        if (cached.opacity < 1.0f && cached.metallic == 0.0f) {
+        // Heuristic: UsdPreviewSurface opacity < 1 on smooth dielectric → glass.
+        // Only apply when: low opacity, no opacity texture (not alpha-cutout), smooth surface.
+        // This avoids treating alpha-cutout materials (leaves, billboards) as glass.
+        if (cached.opacity < 0.5f && cached.metallic == 0.0f
+            && cached.roughness < 0.1f && cached.opacity_texture.empty()) {
             cached.transmission = 1.0f - cached.opacity;
         }
 
