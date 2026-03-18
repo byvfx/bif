@@ -1,7 +1,7 @@
 # Session Handoff - March 17, 2026
 
-**Last Updated:** Glass/transmission rendering + OpenPBR migration
-**Next Milestone:** M29.5 egui upgrade
+**Last Updated:** Architecture decomposition (EventBus + SelectionManager + SceneManager)
+**Next Milestone:** Continue architecture phases 5-7, then M29.5 egui upgrade
 **Project:** BIF - VFX Scene Assembler & Renderer
 
 ---
@@ -18,6 +18,15 @@
 ---
 
 ## Recent Work
+
+### Architecture Decomposition (Mar 17, 2026 - session d)
+
+Renderer God object (~50 fields) decomposed into 3 subsystems:
+- **EventBus** — `AppEvent` enum (17 variants) replaces 23 egui temp-data string-keyed slots
+- **SelectionManager** — consolidates 5 selection fields + gizmo_state
+- **SceneManager** — consolidates 16 scene fields (geometry, materials, USD, undo/redo)
+- Renderer now ~25 fields. Phases 5-7 (NodeGraphEvaluator, GpuBackend, EguiAdapter) remain.
+- **Needs manual test:** load USD, Vulkan/Ivar switch, pick, undo/redo, batch render
 
 ### Glass/Transmission Rendering (Mar 17, 2026)
 

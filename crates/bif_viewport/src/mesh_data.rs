@@ -31,6 +31,19 @@ pub struct MeshData {
     pub mesh_ranges: Option<Vec<MeshRange>>,
 }
 
+impl Default for MeshData {
+    fn default() -> Self {
+        Self {
+            vertices: vec![],
+            indices: vec![],
+            bounds_min: Vec3::ZERO,
+            bounds_max: Vec3::ZERO,
+            triangle_material_ids: None,
+            mesh_ranges: None,
+        }
+    }
+}
+
 impl MeshData {
     /// Get mesh center.
     pub fn center(&self) -> Vec3 {

@@ -1,3 +1,4 @@
+use crate::app_event::{AppEvent, EventBus};
 use crate::ivar_state::{self, BuildStatus, RenderMode};
 use crate::scene_browser::{self, CompositeProvider, PrimDataProvider};
 use crate::{DisplaySettings, PurposeMode};
@@ -51,7 +52,7 @@ pub(crate) struct StatsPanelParams<'a> {
 /// Renders the left stats/settings panel body.
 pub(crate) fn render_stats_panel(
     ui: &mut egui::Ui,
-    ctx: &egui::Context,
+    event_bus: &mut EventBus,
     p: &mut StatsPanelParams<'_>,
 ) {
     ui.heading("BIF Viewer");
@@ -159,9 +160,7 @@ pub(crate) fn render_stats_panel(
                                 {
                                     p.ivar_state.pixel_filter.radius = f.default_radius();
                                     // Signal restart: mixing different filter weights is wrong
-                                    ctx.data_mut(|d| {
-                                        d.insert_temp(egui::Id::new("filter_changed"), true)
-                                    });
+                                    event_bus.emit(AppEvent::FilterChanged);
                                 }
                             }
                         });
@@ -183,9 +182,7 @@ pub(crate) fn render_stats_panel(
                                     )
                                     .changed()
                                 {
-                                    ctx.data_mut(|d| {
-                                        d.insert_temp(egui::Id::new("filter_changed"), true)
-                                    });
+                                    event_bus.emit(AppEvent::FilterChanged);
                                 }
                             }
                         });
@@ -220,9 +217,7 @@ pub(crate) fn render_stats_panel(
                         } else if !p.ivar_state.auto_denoise
                             && ui.button("Denoise (OIDN)").clicked()
                         {
-                            ctx.data_mut(|d| {
-                                d.insert_temp(egui::Id::new("denoise_requested"), true)
-                            });
+                            event_bus.emit(AppEvent::DenoiseRequested);
                         }
                     }
                     #[cfg(not(feature = "oidn"))]
@@ -340,10 +335,8 @@ pub(crate) fn render_stats_panel(
 
         // Rebuild Scene button
         ui.separator();
-        // Note: Can't call self.invalidate_ivar_scene() here due to borrow rules
-        // Using ctx.data_mut() to store the request
         if ui.button("Rebuild Scene").clicked() {
-            ctx.data_mut(|d| d.insert_temp(egui::Id::new("rebuild_scene_requested"), true));
+            event_bus.emit(AppEvent::RebuildScene);
         }
         ui.label("↻ Rebuild if geometry changes");
     }
@@ -674,12 +667,7 @@ pub(crate) fn render_stats_panel(
         // Sync viewport to USD camera button
         if let ivar_state::CameraSource::UsdCamera(ref cam_path) = settings.camera_source {
             if ui.button("Sync Viewport to Camera").clicked() {
-                ctx.data_mut(|d| {
-                    d.insert_temp(
-                        egui::Id::new("sync_viewport_to_usd_camera"),
-                        cam_path.clone(),
-                    )
-                });
+                event_bus.emit(AppEvent::SyncViewportToUsdCamera(cam_path.clone()));
             }
         }
 
@@ -695,7 +683,7 @@ pub(crate) fn render_stats_panel(
                 .add_enabled(can_render, egui::Button::new("Render"))
                 .clicked()
             {
-                ctx.data_mut(|d| d.insert_temp(egui::Id::new("start_batch_render"), true));
+                event_bus.emit(AppEvent::StartBatchRender);
             }
 
             // Show status next to button
@@ -734,7 +722,7 @@ pub(crate) fn render_stats_panel(
                     .text(format!("Frame {}/{}", current_frame, total_frames)),
             );
             if ui.button("Cancel").clicked() {
-                ctx.data_mut(|d| d.insert_temp(egui::Id::new("cancel_batch_render"), true));
+                event_bus.emit(AppEvent::CancelBatchRender);
             }
         }
     });
@@ -754,12 +742,7 @@ pub(crate) fn render_stats_panel(
                     .set_file_name("edits.usda")
                     .save_file()
                 {
-                    ctx.data_mut(|d| {
-                        d.insert_temp(
-                            egui::Id::new("export_edit_layer"),
-                            path.display().to_string(),
-                        );
-                    });
+                    event_bus.emit(AppEvent::ExportEditLayer(path.display().to_string()));
                 }
             }
         });
@@ -778,13 +761,10 @@ pub(crate) fn render_stats_panel(
         );
         let provider: &dyn PrimDataProvider = &composite;
 
-        // Store selection change request in temp data for processing after egui run
         if let Some(new_selection) =
             scene_browser::render_scene_browser(ui, p.scene_browser_state, provider)
         {
-            ctx.data_mut(|d| {
-                d.insert_temp(egui::Id::new("prim_selection_changed"), new_selection);
-            });
+            event_bus.emit(AppEvent::PrimSelected(new_selection));
         }
     });
 }

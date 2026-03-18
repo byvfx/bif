@@ -4,6 +4,7 @@
 //! When a viewport instance is selected, provides editable DragValue fields
 //! for translation, rotation (Euler degrees), and scale.
 
+use crate::app_event::{AppEvent, EventBus};
 use crate::scene_browser::PrimDisplayInfo;
 use bif_math::Mat4;
 
@@ -85,6 +86,7 @@ impl PrimProperties {
 /// instance is selected and its transform can be edited.
 pub fn render_property_inspector(
     ui: &mut egui::Ui,
+    event_bus: &mut EventBus,
     properties: Option<&PrimProperties>,
     editable_transform: Option<(usize, &bif_core::Transform)>,
 ) {
@@ -171,13 +173,11 @@ pub fn render_property_inspector(
     // Editable transform section (when viewport instance is selected)
     if let Some((instance_index, transform)) = editable_transform {
         ui.separator();
-        render_editable_transform(ui, instance_index, transform);
+        render_editable_transform(ui, event_bus, instance_index, transform);
 
         ui.add_space(8.0);
         if ui.button("Set Key (K)").clicked() {
-            ui.data_mut(|d| {
-                d.insert_temp(egui::Id::new("set_keyframe_request"), instance_index as u64);
-            });
+            event_bus.emit(AppEvent::SetKeyframe(instance_index as u64));
         }
     }
 }
@@ -187,6 +187,7 @@ pub fn render_property_inspector(
 /// Uses egui temporary data to pass `TransformEdit` events back to the renderer.
 fn render_editable_transform(
     ui: &mut egui::Ui,
+    event_bus: &mut EventBus,
     instance_index: usize,
     transform: &bif_core::Transform,
 ) {
@@ -262,13 +263,12 @@ fn render_editable_transform(
         let new_transform = values_to_transform(&values);
 
         // Emit live preview edit (not committed yet)
-        let edit = TransformEdit {
+        event_bus.emit(AppEvent::TransformEdit(TransformEdit {
             instance_index,
             old_transform: transform.clone(),
             new_transform,
             committed: false,
-        };
-        ui.data_mut(|d| d.insert_temp(egui::Id::new("transform_edit_event"), edit));
+        }));
     }
 
     if any_released {
@@ -276,13 +276,12 @@ fn render_editable_transform(
         let drag_start: Option<bif_core::Transform> = ui.data(|d| d.get_temp(drag_start_id));
         if let Some(old_transform) = drag_start {
             let new_transform = values_to_transform(&values);
-            let edit = TransformEdit {
+            event_bus.emit(AppEvent::TransformEdit(TransformEdit {
                 instance_index,
                 old_transform,
                 new_transform,
                 committed: true,
-            };
-            ui.data_mut(|d| d.insert_temp(egui::Id::new("transform_edit_event"), edit));
+            }));
             // Clear drag start
             ui.data_mut(|d| d.remove::<bif_core::Transform>(drag_start_id));
         }

@@ -296,21 +296,21 @@ impl ApplicationHandler for App {
 
                         // Check if gizmo should start dragging
                         if let Some(renderer) = &mut self.renderer {
-                            let hovered = renderer.gizmo_state.hovered_axis;
+                            let hovered = renderer.selection.gizmo_state.hovered_axis;
                             if hovered != bif_viewport::gizmo::GizmoAxis::None {
-                                if let Some(sel_idx) = renderer.selected_instance_index {
+                                if let Some(sel_idx) = renderer.selection.selected_instance_index {
                                     if let Some(transform) =
                                         renderer.get_instance_transform(sel_idx)
                                     {
-                                        renderer.gizmo_state.active_axis = hovered;
-                                        renderer.gizmo_state.is_dragging = true;
-                                        renderer.gizmo_state.drag_start_screen = (
+                                        renderer.selection.gizmo_state.active_axis = hovered;
+                                        renderer.selection.gizmo_state.is_dragging = true;
+                                        renderer.selection.gizmo_state.drag_start_screen = (
                                             self.current_mouse_pos.0 as f32,
                                             self.current_mouse_pos.1 as f32,
                                         );
-                                        renderer.gizmo_state.drag_start_world =
+                                        renderer.selection.gizmo_state.drag_start_world =
                                             transform.translation;
-                                        renderer.gizmo_state.drag_world_delta = 0.0;
+                                        renderer.selection.gizmo_state.drag_world_delta = 0.0;
                                     }
                                 }
                             }
@@ -320,14 +320,14 @@ impl ApplicationHandler for App {
 
                         // Finalize gizmo drag
                         if let Some(renderer) = &mut self.renderer {
-                            if renderer.gizmo_state.is_dragging {
-                                if let Some(sel_idx) = renderer.selected_instance_index {
+                            if renderer.selection.gizmo_state.is_dragging {
+                                if let Some(sel_idx) = renderer.selection.selected_instance_index {
                                     if let Some(current) = renderer.get_instance_transform(sel_idx)
                                     {
                                         // Build old_transform from drag_start_world
                                         let mut old_transform = current.clone();
                                         old_transform.translation =
-                                            renderer.gizmo_state.drag_start_world;
+                                            renderer.selection.gizmo_state.drag_start_world;
 
                                         renderer.push_transform_command(
                                             sel_idx,
@@ -336,16 +336,16 @@ impl ApplicationHandler for App {
                                         );
                                     }
                                 }
-                                renderer.gizmo_state.is_dragging = false;
-                                renderer.gizmo_state.active_axis =
+                                renderer.selection.gizmo_state.is_dragging = false;
+                                renderer.selection.gizmo_state.active_axis =
                                     bif_viewport::gizmo::GizmoAxis::None;
                             } else if is_click(self.mouse_drag_distance) {
                                 // Click detection: pick instance
                                 if let Some(pos) = self.mouse_press_pos {
                                     let picked =
                                         renderer.pick_instance_at(pos.0 as f32, pos.1 as f32);
-                                    renderer.selected_instance_index = picked;
-                                    renderer.gizmo_state.reset();
+                                    renderer.selection.selected_instance_index = picked;
+                                    renderer.selection.gizmo_state.reset();
                                 }
                             }
                         }
@@ -380,27 +380,29 @@ impl ApplicationHandler for App {
 
                         if let Some(renderer) = &mut self.renderer {
                             // Gizmo drag takes priority over camera orbit
-                            if renderer.gizmo_state.is_dragging && self.left_mouse_pressed {
-                                if let Some(sel_idx) = renderer.selected_instance_index {
+                            if renderer.selection.gizmo_state.is_dragging && self.left_mouse_pressed
+                            {
+                                if let Some(sel_idx) = renderer.selection.selected_instance_index {
                                     let vp_rect = renderer.viewport_rect();
                                     let delta = bif_viewport::gizmo::compute_drag_delta(
                                         (position.x as f32, position.y as f32),
-                                        renderer.gizmo_state.drag_start_screen,
+                                        renderer.selection.gizmo_state.drag_start_screen,
                                         &renderer.cam.camera,
-                                        renderer.gizmo_state.active_axis,
-                                        renderer.gizmo_state.drag_start_world,
+                                        renderer.selection.gizmo_state.active_axis,
+                                        renderer.selection.gizmo_state.drag_start_world,
                                         vp_rect,
                                     );
 
-                                    let axis_dir = match renderer.gizmo_state.active_axis {
+                                    let axis_dir = match renderer.selection.gizmo_state.active_axis
+                                    {
                                         bif_viewport::gizmo::GizmoAxis::X => bif_math::Vec3::X,
                                         bif_viewport::gizmo::GizmoAxis::Y => bif_math::Vec3::Y,
                                         bif_viewport::gizmo::GizmoAxis::Z => bif_math::Vec3::Z,
                                         _ => bif_math::Vec3::ZERO,
                                     };
 
-                                    let new_pos =
-                                        renderer.gizmo_state.drag_start_world + axis_dir * delta;
+                                    let new_pos = renderer.selection.gizmo_state.drag_start_world
+                                        + axis_dir * delta;
 
                                     // Build live transform and update GPU
                                     if let Some(mut live_transform) =
@@ -494,7 +496,7 @@ impl ApplicationHandler for App {
                             });
                         } else if keycode == KeyCode::KeyK {
                             self.with_renderer(|r| {
-                                if let Some(idx) = r.selected_instance_index {
+                                if let Some(idx) = r.selection.selected_instance_index {
                                     r.set_keyframe(idx);
                                 }
                             });

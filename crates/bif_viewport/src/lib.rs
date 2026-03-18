@@ -5,8 +5,8 @@ use wgpu::{util::DeviceExt, Device, Instance, Queue, Surface, SurfaceConfigurati
 
 use bif_math::{Camera, Mat4, Vec3};
 
-// USD stage for scene browser
-use bif_core::usd::UsdStage;
+// Typed event bus (replaces egui temp-data ad-hoc event passing)
+pub mod app_event;
 
 // New modular architecture
 pub mod batch_render;
@@ -36,10 +36,13 @@ mod render;
 mod render_ui;
 pub mod scene_browser;
 mod scene_loader;
+pub mod scene_manager;
+pub mod selection;
 pub mod skybox;
 pub mod timeline;
 
 // Re-exports from new modules
+pub use app_event::{AppEvent, EventBus};
 pub use culling_manager::CullingManager;
 pub use environment::GpuEnvironment;
 pub use environment_manager::EnvironmentManager;
@@ -61,6 +64,8 @@ pub use ivar_state::{
 pub use lights::LightsManager;
 pub use mesh_data::MeshData;
 pub use multi_draw::MultiDrawState;
+pub use scene_manager::SceneManager;
+pub use selection::SelectionManager;
 pub use texture_loader::{
     collect_scene_texture_paths, create_default_gpu_textures, create_gpu_texture,
     create_gpu_textures_for_scene, MipmapGenerator, TextureLoadMessage,
@@ -226,7 +231,7 @@ pub(crate) struct UiLayout {
 /// Parallel arrays of per-instance data (transforms, materials, prototype IDs, prim paths).
 /// Named `SceneInstances` to avoid confusion with `gpu_types::InstanceData`.
 #[derive(Default)]
-pub(crate) struct SceneInstances {
+pub struct SceneInstances {
     /// Base transforms (from scene load) — used for re-evaluation.
     pub transforms: Vec<Mat4>,
     /// Current transforms (after animation evaluation) — used for rendering.
@@ -345,30 +350,8 @@ pub struct Renderer {
     // Ivar CPU path tracer integration
     pub(crate) ivar: IvarContext,
 
-    // Cached mesh data for Ivar scene building
-    pub(crate) mesh_data: MeshData,
-
-    /// Per-instance parallel arrays (transforms, materials, prototype IDs, prim paths).
-    pub(crate) instances: SceneInstances,
-
-    // Animation data for viewport playback
-    /// Animated transforms for instances (parallel to instances)
-    pub(crate) instance_animations: Vec<Option<bif_core::AnimatedTransform>>,
-    /// Last evaluated frame (for change detection)
-    pub(crate) last_evaluated_frame: f64,
-    /// Mesh indices that have vertex animation (deformation)
-    pub(crate) vertex_animated_meshes: Vec<usize>,
-
-    // Reusable buffers for animation evaluation (avoid per-frame allocation)
-    pub(crate) anim_instances_buf: Vec<InstanceData>,
-    pub(crate) anim_transforms_buf: Vec<Mat4>,
-
-    // Material for Ivar rendering (from loaded USD scene)
-    pub(crate) scene_material: bif_core::Material,
-    // All scene materials for multi-material Ivar rendering
-    pub(crate) scene_materials: Vec<std::sync::Arc<bif_core::Material>>,
-    // Base directory for resolving texture paths
-    pub(crate) texture_base_dir: Option<std::path::PathBuf>,
+    // Scene data (geometry, instances, materials, USD stage, undo/redo)
+    pub scene: SceneManager,
 
     // Multi-draw state for per-prototype rendering
     pub(crate) multi_draw: MultiDrawState,
@@ -379,24 +362,14 @@ pub struct Renderer {
     /// Display settings (purpose toggle, LOD enable)
     pub display_settings: DisplaySettings,
 
-    // Scene browser state
-    pub scene_browser_state: SceneBrowserState,
-
-    // Currently selected prim path (synced with scene browser)
-    pub selected_prim_path: Option<String>,
-
-    // Properties for the selected prim (computed when selection changes)
-    pub selected_prim_properties: Option<PrimProperties>,
-
-    // USD stage for scene browser hierarchy (None if loaded via pure Rust parser)
-    // Wrapped in Arc for sharing with batch render thread
-    pub(crate) usd_stage: Option<Arc<UsdStage>>,
-
-    /// Path to the currently loaded USD file (for sublayer export)
-    pub(crate) loaded_usd_path: Option<String>,
-
     // Node graph evaluation state
     pub(crate) nodes: NodeGraphContext,
+
+    // Typed event bus (replaces egui temp-data ad-hoc event passing)
+    pub(crate) event_bus: EventBus,
+
+    // Unified selection state (prim path, properties, instance, scene browser, gizmo)
+    pub selection: SelectionManager,
 
     // Timeline state for animation playback
     pub timeline_state: TimelineState,
@@ -410,20 +383,6 @@ pub struct Renderer {
     // Viewport picking state
     /// Embree pick scene for click-to-select (rebuilt on scene load)
     pub(crate) pick_scene: Option<bif_renderer::EmbreePickScene>,
-    /// Currently selected instance index (from viewport pick or scene browser)
-    pub selected_instance_index: Option<usize>,
-
-    // Undo/redo state
-    /// Undo stack for reversible editing commands
-    pub undo_stack: bif_core::UndoStack,
-    /// Edit state with transform overrides
-    pub edit_state: bif_core::EditState,
-
-    // Scene cameras (from Camera primitives)
-    pub(crate) scene_cameras: Vec<bif_core::SceneCamera>,
-
-    // Translate gizmo state
-    pub gizmo_state: gizmo::GizmoState,
 
     // Point preview renderer for scatter visualization
     pub(crate) point_preview: point_preview::PointPreviewRenderer,
@@ -438,9 +397,6 @@ pub struct Renderer {
     pub apply_axis_correction: bool,
     /// Apply metersPerUnit scaling to match viewport (assumed meters).
     pub apply_unit_scaling: bool,
-
-    /// Persistent working scene that accumulates all primitives and USD objects.
-    pub(crate) working_scene: bif_core::Scene,
 
     /// Async channel receivers and status for background operations.
     pub(crate) async_channels: AsyncChannels,
@@ -976,23 +932,13 @@ impl Renderer {
                 ivar_materials: None,
                 ivar_texture_cache: None,
             },
-            mesh_data,
-            instances: SceneInstances::default(),
-            instance_animations: vec![],
-            last_evaluated_frame: 0.0,
-            vertex_animated_meshes: vec![],
-            anim_instances_buf: Vec::new(),
-            anim_transforms_buf: Vec::new(),
-            scene_material: bif_core::Material::default(),
-            scene_materials: vec![],
-            texture_base_dir: None,
+            scene: SceneManager {
+                mesh_data,
+                ..SceneManager::new()
+            },
             multi_draw: MultiDrawState::new(),
             culling,
-            scene_browser_state: SceneBrowserState::new(),
-            selected_prim_path: None,
-            selected_prim_properties: None,
-            usd_stage: None,
-            loaded_usd_path: None,
+            selection: SelectionManager::new(),
             nodes: NodeGraphContext {
                 node_graph_state: NodeGraphState::new(),
                 node_proto_map: std::collections::HashMap::new(),
@@ -1010,18 +956,13 @@ impl Renderer {
             environment,
             lights,
             pick_scene: None,
-            selected_instance_index: None,
-            undo_stack: bif_core::UndoStack::new(),
-            edit_state: bif_core::EditState::default(),
-            scene_cameras: vec![],
-            gizmo_state: gizmo::GizmoState::new(),
             point_preview,
             point_preview_last_vp: (0.0, 0.0),
             point_preview_params_dirty: true,
             show_grid: true,
             apply_axis_correction: false,
             apply_unit_scaling: false,
-            working_scene: bif_core::Scene::new("Working"),
+            event_bus: EventBus::default(),
             async_channels: AsyncChannels::default(),
             mipmap_generator,
             display_settings: DisplaySettings::default(),
@@ -1039,7 +980,7 @@ impl Renderer {
             || self.ivar.ivar_state.batch_status.is_rendering()
             || self.ivar.ivar_state.is_pass_in_flight()
             || self.ivar.ivar_state.needs_more_passes()
-            || self.gizmo_state.is_dragging
+            || self.selection.gizmo_state.is_dragging
     }
 
     /// Handle window resize
@@ -1115,10 +1056,7 @@ impl Renderer {
     pub fn update_camera(&mut self) {
         self.cam.camera_uniform.update_view_proj(&self.cam.camera);
         // Sync selection state into uniform
-        self.cam.camera_uniform.selected_instance_id = self
-            .selected_instance_index
-            .map(|i| i as u32)
-            .unwrap_or(gpu_types::NO_SELECTION);
+        self.cam.camera_uniform.selected_instance_id = self.selection.gpu_highlight_id();
         self.gpu.queue.write_buffer(
             &self.cam.camera_buffer,
             0,
@@ -1168,8 +1106,8 @@ impl Renderer {
             &self.gpu.queue,
             &self.instance_buffer,
             &self.cam.camera,
-            &self.instances.current,
-            &self.instances.material_ids,
+            &self.scene.instances.current,
+            &self.scene.instances.material_ids,
             lod_enabled,
         );
     }
@@ -1195,7 +1133,7 @@ impl Renderer {
 
     /// Sync viewport camera to a USD camera at the current timeline frame
     pub fn sync_viewport_to_usd_camera(&mut self, camera_path: &str) {
-        let Some(ref stage) = self.usd_stage else {
+        let Some(ref stage) = self.scene.usd_stage else {
             log::warn!("No USD stage loaded");
             return;
         };
@@ -1250,7 +1188,7 @@ impl Renderer {
     ///
     /// Reads the instance transform and applies the camera's FOV.
     pub fn sync_viewport_to_scene_camera(&mut self, cam_idx: usize) {
-        let cam = match self.scene_cameras.get(cam_idx) {
+        let cam = match self.scene.scene_cameras.get(cam_idx) {
             Some(c) => c.clone(),
             None => {
                 log::warn!("Scene camera index {} out of range", cam_idx);
@@ -1259,12 +1197,12 @@ impl Renderer {
         };
 
         let inst_idx = cam.instance_index;
-        if inst_idx >= self.instances.current.len() {
+        if inst_idx >= self.scene.instances.current.len() {
             log::warn!("Scene camera instance {} out of range", inst_idx);
             return;
         }
 
-        let mat = self.instances.current[inst_idx];
+        let mat = self.scene.instances.current[inst_idx];
         let transform = bif_core::Transform::from_matrix(mat);
 
         // Camera looks down -Z in its local space
@@ -1306,25 +1244,25 @@ impl Renderer {
     /// Call after scene load or when geometry changes. Uses the first prototype's
     /// triangles (single-draw) or combined mesh triangles.
     pub fn rebuild_pick_scene(&mut self) {
-        if self.mesh_data.indices.is_empty() || self.instances.current.is_empty() {
+        if self.scene.mesh_data.indices.is_empty() || self.scene.instances.current.is_empty() {
             self.pick_scene = None;
             return;
         }
 
         // Use indexed path — pass shared positions + indices directly
-        let positions = self.mesh_data.extract_positions();
+        let positions = self.scene.mesh_data.extract_positions();
 
         match bif_renderer::EmbreePickScene::from_indexed(
             &positions,
-            &self.mesh_data.indices,
-            &self.instances.current,
+            &self.scene.mesh_data.indices,
+            &self.scene.instances.current,
         ) {
             Ok(scene) => {
                 log::info!(
                     "Pick scene rebuilt (indexed): {} tris, {} shared verts, {} instances",
-                    self.mesh_data.indices.len() / 3,
+                    self.scene.mesh_data.indices.len() / 3,
                     positions.len(),
-                    self.instances.current.len()
+                    self.scene.instances.current.len()
                 );
                 self.pick_scene = Some(scene);
             }
@@ -1402,10 +1340,10 @@ impl Renderer {
     ///
     /// Reads the override for `idx` and updates `current_transforms` + GPU.
     pub fn apply_transform_override(&mut self, idx: usize) {
-        if let Some(transform) = self.edit_state.transform_overrides.get(&idx) {
+        if let Some(transform) = self.scene.edit_state.transform_overrides.get(&idx) {
             let mat = transform.to_matrix();
-            if idx < self.instances.current.len() {
-                self.instances.current[idx] = mat;
+            if idx < self.scene.instances.current.len() {
+                self.scene.instances.current[idx] = mat;
                 self.culling.mark_dirty();
                 self.update_visible_instances();
                 // Keep Embree pick scene in sync
@@ -1419,15 +1357,16 @@ impl Renderer {
     /// Apply all transform overrides from edit_state to GPU.
     pub fn apply_all_transform_overrides(&mut self) {
         let overrides: Vec<(usize, Mat4)> = self
+            .scene
             .edit_state
             .transform_overrides
             .iter()
-            .filter(|(idx, _)| **idx < self.instances.current.len())
+            .filter(|(idx, _)| **idx < self.scene.instances.current.len())
             .map(|(idx, t)| (*idx, t.to_matrix()))
             .collect();
 
         for (idx, mat) in &overrides {
-            self.instances.current[*idx] = *mat;
+            self.scene.instances.current[*idx] = *mat;
         }
 
         if !overrides.is_empty() {
@@ -1454,7 +1393,9 @@ impl Renderer {
             old_transform,
             new_transform,
         };
-        self.undo_stack.push(Box::new(cmd), &mut self.edit_state);
+        self.scene
+            .undo_stack
+            .push(Box::new(cmd), &mut self.scene.edit_state);
         self.apply_transform_override(instance_index);
 
         // Invalidate Ivar scene so transform change is reflected
@@ -1465,7 +1406,11 @@ impl Renderer {
 
     /// Undo the last command. Returns description if successful.
     pub fn undo(&mut self) -> Option<String> {
-        let desc = self.undo_stack.undo(&mut self.edit_state)?.to_string();
+        let desc = self
+            .scene
+            .undo_stack
+            .undo(&mut self.scene.edit_state)?
+            .to_string();
         self.apply_all_transform_overrides();
         if self.ivar.ivar_state.mode == ivar_state::RenderMode::Ivar {
             self.invalidate_ivar_scene();
@@ -1475,7 +1420,11 @@ impl Renderer {
 
     /// Redo the next command. Returns description if successful.
     pub fn redo(&mut self) -> Option<String> {
-        let desc = self.undo_stack.redo(&mut self.edit_state)?.to_string();
+        let desc = self
+            .scene
+            .undo_stack
+            .redo(&mut self.scene.edit_state)?
+            .to_string();
         self.apply_all_transform_overrides();
         if self.ivar.ivar_state.mode == ivar_state::RenderMode::Ivar {
             self.invalidate_ivar_scene();
@@ -1485,12 +1434,12 @@ impl Renderer {
 
     /// Get the current transform for an instance, preferring edit overrides.
     pub fn get_instance_transform(&self, idx: usize) -> Option<bif_core::Transform> {
-        if let Some(t) = self.edit_state.transform_overrides.get(&idx) {
+        if let Some(t) = self.scene.edit_state.transform_overrides.get(&idx) {
             return Some(t.clone());
         }
-        if idx < self.instances.current.len() {
+        if idx < self.scene.instances.current.len() {
             return Some(bif_core::Transform::from_matrix(
-                self.instances.current[idx],
+                self.scene.instances.current[idx],
             ));
         }
         None
@@ -1499,9 +1448,12 @@ impl Renderer {
     /// Set a live transform override and update GPU (without undo).
     pub fn set_live_transform(&mut self, idx: usize, transform: bif_core::Transform) {
         let mat = transform.to_matrix();
-        if idx < self.instances.current.len() {
-            self.instances.current[idx] = mat;
-            self.edit_state.transform_overrides.insert(idx, transform);
+        if idx < self.scene.instances.current.len() {
+            self.scene.instances.current[idx] = mat;
+            self.scene
+                .edit_state
+                .transform_overrides
+                .insert(idx, transform);
             self.culling.mark_dirty();
             self.update_visible_instances();
             // Keep Embree pick scene in sync
@@ -1524,12 +1476,14 @@ impl Renderer {
 
         // Get existing keyframes (from edit overrides or scene animations)
         let old_keyframes = self
+            .scene
             .edit_state
             .keyframe_overrides
             .get(&instance_index)
             .and_then(|a| a.keyframes.clone())
             .or_else(|| {
-                self.instance_animations
+                self.scene
+                    .instance_animations
                     .get(instance_index)
                     .and_then(|opt| opt.as_ref())
                     .and_then(|a| a.keyframes.clone())
@@ -1559,15 +1513,19 @@ impl Renderer {
             old_keyframes,
             new_keyframes: Some(new_keyframes.clone()),
         };
-        self.undo_stack.push(Box::new(cmd), &mut self.edit_state);
+        self.scene
+            .undo_stack
+            .push(Box::new(cmd), &mut self.scene.edit_state);
 
         // Also update the live animation data for playback
         let anim = self
+            .scene
             .edit_state
             .keyframe_overrides
             .entry(instance_index)
             .or_insert_with(|| {
-                self.instance_animations
+                self.scene
+                    .instance_animations
                     .get(instance_index)
                     .and_then(|opt| opt.clone())
                     .unwrap_or_else(|| {
@@ -1577,8 +1535,8 @@ impl Renderer {
         anim.keyframes = Some(new_keyframes);
 
         // Sync to instance_animations for playback
-        if instance_index < self.instance_animations.len() {
-            self.instance_animations[instance_index] = Some(anim.clone());
+        if instance_index < self.scene.instance_animations.len() {
+            self.scene.instance_animations[instance_index] = Some(anim.clone());
         }
 
         // Ensure timeline has a range if it didn't before
@@ -1601,13 +1559,19 @@ impl Renderer {
     /// Update timeline keyframe_times from the selected instance's animation.
     pub fn update_keyframe_times(&mut self) {
         let times = self
+            .selection
             .selected_instance_index
             .and_then(|idx| {
-                self.edit_state.keyframe_overrides.get(&idx).or_else(|| {
-                    self.instance_animations
-                        .get(idx)
-                        .and_then(|opt| opt.as_ref())
-                })
+                self.scene
+                    .edit_state
+                    .keyframe_overrides
+                    .get(&idx)
+                    .or_else(|| {
+                        self.scene
+                            .instance_animations
+                            .get(idx)
+                            .and_then(|opt| opt.as_ref())
+                    })
             })
             .and_then(|anim| anim.keyframes.as_ref())
             .map(|kfs| kfs.iter().map(|k| k.time).collect::<Vec<_>>())
@@ -1625,17 +1589,17 @@ impl Renderer {
     pub fn export_edit_layer(&self, output_path: &str) -> anyhow::Result<()> {
         let config = bif_core::ExportConfig {
             output_path: output_path.to_string(),
-            source_usd_path: self.loaded_usd_path.clone(),
-            as_sublayer: self.loaded_usd_path.is_some(),
+            source_usd_path: self.scene.loaded_usd_path.clone(),
+            as_sublayer: self.scene.loaded_usd_path.is_some(),
             export_root: "/BIF".to_string(),
             authored_prims: Vec::new(),
             graft_prefix: None,
         };
 
         let result = bif_core::usd::export::export_scene(
-            &self.working_scene,
-            &self.edit_state,
-            &self.instances.prim_paths,
+            &self.scene.working_scene,
+            &self.scene.edit_state,
+            &self.scene.instances.prim_paths,
             &config,
         )
         .map_err(|e| anyhow::anyhow!("Export failed: {}", e))?;
@@ -1650,9 +1614,9 @@ impl Renderer {
         config: &bif_core::ExportConfig,
     ) -> anyhow::Result<bif_core::ExportResult> {
         bif_core::usd::export::export_scene(
-            &self.working_scene,
-            &self.edit_state,
-            &self.instances.prim_paths,
+            &self.scene.working_scene,
+            &self.scene.edit_state,
+            &self.scene.instances.prim_paths,
             config,
         )
         .map_err(|e| anyhow::anyhow!("Export failed: {}", e))

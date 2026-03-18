@@ -6,6 +6,19 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **EventBus** — typed `AppEvent` enum + `EventBus` replacing 23 egui temp-data string-keyed slots; compile-time checked, framework-agnostic
+- **SelectionManager** — unified selection state (prim path, properties, instance index, scene browser, gizmo) extracted from Renderer
+- **SceneManager** — consolidated 16 scene-related fields (geometry, instances, materials, USD stage, undo/redo) into single subsystem
+- `MeshData::Default` impl for subsystem initialization
+
+### Changed
+
+- Renderer struct reduced from ~50 fields to ~25 fields via 3 new subsystems
+- `dispatch_deferred_events()` (280 lines of untyped temp-data polling) → `dispatch_events()` (~120 lines of typed match)
+- `SceneInstances` visibility changed from `pub(crate)` to `pub` for SceneManager access
+
 ### Changed
 
 - **Breaking: Disney → OpenPBR material migration** — full removal of Disney Principled BSDF, replaced with OpenPBR Surface v1.1 parameters, IOR-based Fresnel, and ASWF-standard naming across all 6 crates

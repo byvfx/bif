@@ -7,7 +7,7 @@ use crate::gpu_types::InstanceData;
 use crate::ivar_state::{BatchRenderStatus, BuildStatus, CameraSource, RenderMode};
 use crate::node_graph::{render_node_graph, NodeGraphEvent, SceneNode};
 use crate::property_inspector::{
-    render_property_inspector, reset_transform_edit_cache, PrimProperties, TransformEdit,
+    render_property_inspector, reset_transform_edit_cache, PrimProperties,
 };
 use crate::scene_browser::{self, CompositeProvider, PrimDataProvider, ProceduralPrimKind};
 use crate::Renderer;
@@ -22,7 +22,7 @@ impl Renderer {
         self.poll_async_work();
         self.poll_environment();
         let full_output = self.run_egui_frame(window);
-        self.dispatch_deferred_events();
+        self.dispatch_events();
         self.submit_gpu_frame(clear_color, window, full_output)?;
         Ok(())
     }
@@ -38,13 +38,13 @@ impl Renderer {
         // Rebuild cached scene graph if dirty
         if self.nodes.scene_graph_dirty {
             self.nodes.cached_scene_graph =
-                scene_browser::build_scene_graph_cache(&self.working_scene);
+                scene_browser::build_scene_graph_cache(&self.scene.working_scene);
             self.nodes.scene_graph_dirty = false;
         }
 
         // Process pending scene operations from undo/redo
-        if !self.edit_state.pending_scene_ops.is_empty() {
-            let ops: Vec<_> = self.edit_state.pending_scene_ops.drain(..).collect();
+        if !self.scene.edit_state.pending_scene_ops.is_empty() {
+            let ops: Vec<_> = self.scene.edit_state.pending_scene_ops.drain(..).collect();
             let mut needs_reload = false;
             for op in ops {
                 match op {
@@ -56,15 +56,16 @@ impl Renderer {
                         }
                     }
                     bif_core::SceneOp::RemovePrimitive { proto_id } => {
-                        if self.working_scene.remove_prototype(proto_id) {
+                        if self.scene.working_scene.remove_prototype(proto_id) {
                             needs_reload = true;
                         }
                     }
                     bif_core::SceneOp::AddPointCloud { cloud } => {
-                        self.working_scene.add_point_cloud(*cloud);
+                        self.scene.working_scene.add_point_cloud(*cloud);
 
                         // Update point preview
                         let all_positions: Vec<bif_math::Vec3> = self
+                            .scene
                             .working_scene
                             .point_clouds
                             .iter()
@@ -79,9 +80,10 @@ impl Renderer {
                         self.point_preview.visible = true;
                     }
                     bif_core::SceneOp::RemovePointCloud { cloud_id } => {
-                        if self.working_scene.remove_point_cloud(cloud_id) {
+                        if self.scene.working_scene.remove_point_cloud(cloud_id) {
                             // Update point preview
                             let all_positions: Vec<bif_math::Vec3> = self
+                                .scene
                                 .working_scene
                                 .point_clouds
                                 .iter()
@@ -111,10 +113,7 @@ impl Renderer {
         self.poll_batch_messages();
 
         // Sync selection highlight to GPU camera uniform
-        let sel_id = self
-            .selected_instance_index
-            .map(|i| i as u32)
-            .unwrap_or(crate::gpu_types::NO_SELECTION);
+        let sel_id = self.selection.gpu_highlight_id();
         if self.cam.camera_uniform.selected_instance_id != sel_id {
             self.cam.camera_uniform.selected_instance_id = sel_id;
             self.gpu.queue.write_buffer(
@@ -167,6 +166,11 @@ impl Renderer {
         let mut ivar_nav_quality = self.ivar.ivar_state.interaction_quality;
         let mut display_settings = self.display_settings.clone();
 
+        // Take event bus out of self so it can be passed into the closure
+        // without conflicting with `self` borrows. Restored after the closure.
+        let mut event_bus = std::mem::take(&mut self.event_bus);
+        let mut gizmo_hovered: u8 = 0;
+
         let full_output = self.egui_ctx.run(raw_input, |ctx| {
             if !show_ui {
                 left_panel_width = 0.0;
@@ -200,7 +204,7 @@ impl Renderer {
                         }
 
                         // Show stage metadata (metersPerUnit, upAxis) if available
-                        if let Some(ref meta) = self.working_scene.stage_metadata {
+                        if let Some(ref meta) = self.scene.working_scene.stage_metadata {
                             ui.separator();
                             ui.colored_label(
                                 egui::Color32::from_rgb(160, 160, 160),
@@ -217,9 +221,7 @@ impl Renderer {
                                     .on_hover_text("Rotate scene from Z-up to Y-up")
                                     .changed()
                             {
-                                ctx.data_mut(|d| {
-                                    d.insert_temp(egui::Id::new("stage_correction_changed"), true);
-                                });
+                                event_bus.emit(crate::app_event::AppEvent::StageCorrectionsChanged);
                             }
                             if needs_scale
                                 && ui
@@ -230,9 +232,7 @@ impl Renderer {
                                     ))
                                     .changed()
                             {
-                                ctx.data_mut(|d| {
-                                    d.insert_temp(egui::Id::new("stage_correction_changed"), true);
-                                });
+                                event_bus.emit(crate::app_event::AppEvent::StageCorrectionsChanged);
                             }
                         }
                     });
@@ -244,11 +244,11 @@ impl Renderer {
                 .show(ctx, |ui| {
                     crate::render_ui::render_stats_panel(
                         ui,
-                        ctx,
+                        &mut event_bus,
                         &mut crate::render_ui::StatsPanelParams {
                             ivar_state: &mut self.ivar.ivar_state,
-                            scene_browser_state: &mut self.scene_browser_state,
-                            usd_stage: &self.usd_stage,
+                            scene_browser_state: &mut self.selection.scene_browser_state,
+                            usd_stage: &self.scene.usd_stage,
                             timeline_state: &self.timeline_state,
                             cached_scene_graph: &self.nodes.cached_scene_graph,
                             fps,
@@ -260,10 +260,10 @@ impl Renderer {
                             mesh_bounds_min,
                             mesh_bounds_max,
                             size,
-                            instance_count: self.instances.transforms.len(),
-                            mesh_triangle_count: self.mesh_data.indices.len() / 3,
-                            edit_override_count: self.edit_state.transform_overrides.len(),
-                            edit_keyframe_count: self.edit_state.keyframe_overrides.len(),
+                            instance_count: self.scene.instances.transforms.len(),
+                            mesh_triangle_count: self.scene.mesh_data.indices.len() / 3,
+                            edit_override_count: self.scene.edit_state.transform_overrides.len(),
+                            edit_keyframe_count: self.scene.edit_state.keyframe_overrides.len(),
                             ivar_buckets_completed,
                             ivar_total_buckets,
                             ivar_elapsed,
@@ -284,15 +284,16 @@ impl Renderer {
             // Property Inspector (right panel)
             // Build editable transform for selected viewport instance
             let editable_transform: Option<(usize, bif_core::Transform)> =
-                self.selected_instance_index.and_then(|idx| {
+                self.selection.selected_instance_index.and_then(|idx| {
                     // Use edit override if present, otherwise decompose from current_transforms
-                    let transform = if let Some(t) = self.edit_state.transform_overrides.get(&idx) {
-                        t.clone()
-                    } else if idx < self.instances.current.len() {
-                        bif_core::Transform::from_matrix(self.instances.current[idx])
-                    } else {
-                        return None;
-                    };
+                    let transform =
+                        if let Some(t) = self.scene.edit_state.transform_overrides.get(&idx) {
+                            t.clone()
+                        } else if idx < self.scene.instances.current.len() {
+                            bif_core::Transform::from_matrix(self.scene.instances.current[idx])
+                        } else {
+                            return None;
+                        };
                     Some((idx, transform))
                 });
 
@@ -331,13 +332,19 @@ impl Renderer {
                     }
 
                     let et_ref = editable_transform.as_ref().map(|(idx, t)| (*idx, t));
-                    render_property_inspector(ui, self.selected_prim_properties.as_ref(), et_ref);
+                    render_property_inspector(
+                        ui,
+                        &mut event_bus,
+                        self.selection.selected_prim_properties.as_ref(),
+                        et_ref,
+                    );
 
                     // Point cloud summary
-                    if !self.working_scene.point_clouds.is_empty() {
+                    if !self.scene.working_scene.point_clouds.is_empty() {
                         ui.separator();
                         ui.heading("Point Clouds");
                         let total_points: usize = self
+                            .scene
                             .working_scene
                             .point_clouds
                             .iter()
@@ -345,10 +352,10 @@ impl Renderer {
                             .sum();
                         ui.label(format!(
                             "{} clouds, {} total points",
-                            self.working_scene.point_clouds.len(),
+                            self.scene.working_scene.point_clouds.len(),
                             total_points
                         ));
-                        for cloud in &self.working_scene.point_clouds {
+                        for cloud in &self.scene.working_scene.point_clouds {
                             ui.label(format!("  {} - {} pts", cloud.name, cloud.point_count()));
                         }
                     }
@@ -365,6 +372,7 @@ impl Renderer {
                         // Camera dropdown
                         let cam_display = match &self.cam.viewport_camera_source {
                             CameraSource::SceneCamera(idx) => self
+                                .scene
                                 .scene_cameras
                                 .get(*idx)
                                 .map(|c| c.name.as_str())
@@ -389,15 +397,14 @@ impl Renderer {
                                     self.cam.viewport_camera_source = CameraSource::Viewport;
                                     self.cam.camera_locked = false;
                                     self.cam.selected_usd_camera = None;
-                                    ctx.data_mut(|d| {
-                                        d.insert_temp(
-                                            egui::Id::new("camera_projection_change"),
+                                    event_bus.emit(
+                                        crate::app_event::AppEvent::CameraProjectionChange(
                                             "perspective".to_string(),
-                                        );
-                                    });
+                                        ),
+                                    );
                                 }
                                 // USD cameras from stage
-                                if let Some(ref stage) = self.usd_stage {
+                                if let Some(ref stage) = self.scene.usd_stage {
                                     if let Ok(paths) = stage.camera_paths() {
                                         for path in paths {
                                             let is_selected = matches!(
@@ -409,13 +416,11 @@ impl Renderer {
                                                     CameraSource::UsdCamera(path.clone());
                                                 self.cam.selected_usd_camera = Some(path.clone());
                                                 self.cam.camera_locked = true;
-                                                // Sync to camera immediately (via egui temp data)
-                                                ctx.data_mut(|d| {
-                                                    d.insert_temp(
-                                                        egui::Id::new("sync_viewport_camera"),
+                                                event_bus.emit(
+                                                    crate::app_event::AppEvent::SyncViewportCamera(
                                                         path,
-                                                    )
-                                                });
+                                                    ),
+                                                );
                                             }
                                         }
                                     }
@@ -435,18 +440,17 @@ impl Renderer {
                                             CameraSource::OrthoView(*preset);
                                         self.cam.camera_locked = false;
                                         self.cam.selected_usd_camera = None;
-                                        ctx.data_mut(|d| {
-                                            d.insert_temp(
-                                                egui::Id::new("camera_projection_change"),
+                                        event_bus.emit(
+                                            crate::app_event::AppEvent::CameraProjectionChange(
                                                 format!("ortho:{}", preset.display_name()),
-                                            );
-                                        });
+                                            ),
+                                        );
                                     }
                                 }
                                 // Scene cameras (from Camera primitives)
-                                if !self.scene_cameras.is_empty() {
+                                if !self.scene.scene_cameras.is_empty() {
                                     ui.separator();
-                                    for (idx, cam) in self.scene_cameras.iter().enumerate() {
+                                    for (idx, cam) in self.scene.scene_cameras.iter().enumerate() {
                                         let is_selected = matches!(
                                             &self.cam.viewport_camera_source,
                                             CameraSource::SceneCamera(i) if *i == idx
@@ -456,12 +460,11 @@ impl Renderer {
                                                 CameraSource::SceneCamera(idx);
                                             self.cam.camera_locked = true;
                                             self.cam.selected_usd_camera = None;
-                                            ctx.data_mut(|d| {
-                                                d.insert_temp(
-                                                    egui::Id::new("sync_scene_camera"),
+                                            event_bus.emit(
+                                                crate::app_event::AppEvent::SyncSceneCamera(
                                                     idx as u64,
-                                                );
-                                            });
+                                                ),
+                                            );
                                         }
                                     }
                                 }
@@ -590,27 +593,20 @@ impl Renderer {
                 .resizable(true)
                 .show(ctx, |ui| {
                     let events = render_node_graph(ui, &mut self.nodes.node_graph_state);
-                    // Store events for processing after egui frame ends
-                    for event in events {
-                        ctx.data_mut(|d| {
-                            let mut pending: Vec<NodeGraphEvent> = d
-                                .get_temp(egui::Id::new("node_graph_events"))
-                                .unwrap_or_default();
-                            pending.push(event);
-                            d.insert_temp(egui::Id::new("node_graph_events"), pending);
-                        });
+                    if !events.is_empty() {
+                        event_bus.emit(crate::app_event::AppEvent::NodeGraph(events));
                     }
                 });
             bottom_panel_height = node_graph_panel.response.rect.height() + timeline_height;
 
             // Draw translate gizmo overlay (after all panels, on foreground layer)
-            if let Some(sel_idx) = self.selected_instance_index {
-                if sel_idx < self.instances.current.len() {
+            if let Some(sel_idx) = self.selection.selected_instance_index {
+                if sel_idx < self.scene.instances.current.len() {
                     let transform =
-                        if let Some(t) = self.edit_state.transform_overrides.get(&sel_idx) {
+                        if let Some(t) = self.scene.edit_state.transform_overrides.get(&sel_idx) {
                             t.clone()
                         } else {
-                            bif_core::Transform::from_matrix(self.instances.current[sel_idx])
+                            bif_core::Transform::from_matrix(self.scene.instances.current[sel_idx])
                         };
                     let world_pos = transform.translation;
                     let vp_rect = (
@@ -632,24 +628,20 @@ impl Renderer {
                         &self.cam.camera,
                         world_pos,
                         vp_rect,
-                        &self.gizmo_state,
+                        &self.selection.gizmo_state,
                         mouse_screen,
                     );
 
-                    // Store hovered axis for next frame (can't mutate gizmo_state here)
-                    ctx.data_mut(|d| {
-                        d.insert_temp(egui::Id::new("gizmo_hovered_axis"), hovered as u8);
-                    });
+                    // Store hovered axis — read back after egui closure ends
+                    gizmo_hovered = hovered as u8;
                 }
             }
         });
 
         // Update gizmo hovered axis from egui frame
-        let hovered_axis_raw: u8 = self
-            .egui_ctx
-            .data(|d| d.get_temp(egui::Id::new("gizmo_hovered_axis")).unwrap_or(0));
-        if !self.gizmo_state.is_dragging {
-            self.gizmo_state.hovered_axis = crate::gizmo::GizmoAxis::from_u8(hovered_axis_raw);
+        if !self.selection.gizmo_state.is_dragging {
+            self.selection.gizmo_state.hovered_axis =
+                crate::gizmo::GizmoAxis::from_u8(gizmo_hovered);
         }
 
         // Update gnomon size from UI
@@ -680,300 +672,181 @@ impl Renderer {
         self.culling.lod_max_polys = lod_max_polys;
         self.display_settings = display_settings;
 
-        // Write render mode back; detect mode change via egui temp data
+        // Write render mode back; detect mode change via event bus
         let mode_changed = self.ivar.ivar_state.mode != render_mode;
         self.ivar.ivar_state.mode = render_mode;
         if mode_changed {
-            self.egui_ctx.data_mut(|d| {
-                d.insert_temp(egui::Id::new("_render_mode_changed"), true);
-            });
+            event_bus.emit(crate::app_event::AppEvent::RenderModeChanged);
         }
+
+        // Restore event bus to self
+        self.event_bus = event_bus;
 
         full_output
     }
 
-    /// Phase 4: Dispatch deferred events from egui temp data.
-    fn dispatch_deferred_events(&mut self) {
-        let render_mode = self.ivar.ivar_state.mode;
+    /// Phase 4: Dispatch typed events from the EventBus.
+    fn dispatch_events(&mut self) {
+        use crate::app_event::AppEvent;
 
-        // Detect mode change (set by run_egui_frame)
-        let mode_changed = self.egui_ctx.data(|d| {
-            d.get_temp::<bool>(egui::Id::new("_render_mode_changed"))
-                .unwrap_or(false)
-        });
-        if mode_changed {
-            self.egui_ctx
-                .data_mut(|d| d.remove::<bool>(egui::Id::new("_render_mode_changed")));
-        }
-
-        // Handle mode switch to Ivar - start render if needed
-        if mode_changed && render_mode == RenderMode::Ivar {
-            log::info!("Switched to Ivar mode - starting render");
-            self.ivar.ivar_state.current_scale = 1;
-            self.ivar.ivar_state.last_interaction_time = None;
-            self.start_ivar_render();
-        }
-
-        // Handle rebuild scene request (stored in egui temp data)
-        let rebuild_requested = self.egui_ctx.data(|d| {
-            d.get_temp::<bool>(egui::Id::new("rebuild_scene_requested"))
-                .unwrap_or(false)
-        });
-        if rebuild_requested {
-            log::info!("Manual scene rebuild requested");
-            self.invalidate_ivar_scene();
-            // Clear the flag
-            self.egui_ctx
-                .data_mut(|d| d.remove::<bool>(egui::Id::new("rebuild_scene_requested")));
-        }
-
-        // Handle denoise request
-        let denoise_requested = self.egui_ctx.data(|d| {
-            d.get_temp::<bool>(egui::Id::new("denoise_requested"))
-                .unwrap_or(false)
-        });
-        if denoise_requested {
-            self.egui_ctx
-                .data_mut(|d| d.remove::<bool>(egui::Id::new("denoise_requested")));
-            self.denoise_ivar_result();
-        }
-
-        // Handle filter change — restart progressive render
-        let filter_changed = self.egui_ctx.data(|d| {
-            d.get_temp::<bool>(egui::Id::new("filter_changed"))
-                .unwrap_or(false)
-        });
-        if filter_changed {
-            self.egui_ctx
-                .data_mut(|d| d.remove::<bool>(egui::Id::new("filter_changed")));
-            if self.ivar.ivar_state.mode == RenderMode::Ivar {
-                self.ivar.ivar_state.current_scale = 1;
-                self.ivar.ivar_state.last_interaction_time = None;
-                self.start_ivar_render();
-            }
-        }
-
-        // Handle batch render start request
-        let start_batch = self.egui_ctx.data(|d| {
-            d.get_temp::<bool>(egui::Id::new("start_batch_render"))
-                .unwrap_or(false)
-        });
-        if start_batch {
-            self.egui_ctx
-                .data_mut(|d| d.remove::<bool>(egui::Id::new("start_batch_render")));
-            self.start_batch_render();
-        }
-
-        // Handle batch render cancel request
-        let cancel_batch = self.egui_ctx.data(|d| {
-            d.get_temp::<bool>(egui::Id::new("cancel_batch_render"))
-                .unwrap_or(false)
-        });
-        if cancel_batch {
-            self.egui_ctx
-                .data_mut(|d| d.remove::<bool>(egui::Id::new("cancel_batch_render")));
-            if let Some(ref flag) = self.async_channels.batch_cancel_flag {
-                flag.store(true, Ordering::Relaxed);
-            }
-        }
-
-        // Handle sync viewport to USD camera request (from batch render panel)
-        let sync_camera: Option<String> = self
-            .egui_ctx
-            .data(|d| d.get_temp(egui::Id::new("sync_viewport_to_usd_camera")));
-        if let Some(camera_path) = sync_camera {
-            self.egui_ctx
-                .data_mut(|d| d.remove::<String>(egui::Id::new("sync_viewport_to_usd_camera")));
-            self.sync_viewport_to_usd_camera(&camera_path);
-        }
-
-        // Handle viewport camera selection from timeline dropdown
-        let sync_viewport_cam: Option<String> = self
-            .egui_ctx
-            .data(|d| d.get_temp(egui::Id::new("sync_viewport_camera")));
-        if let Some(camera_path) = sync_viewport_cam {
-            self.egui_ctx
-                .data_mut(|d| d.remove::<String>(egui::Id::new("sync_viewport_camera")));
-            self.sync_viewport_to_usd_camera(&camera_path);
-        }
-
-        // Handle scene camera selection from timeline dropdown
-        let sync_scene_cam: Option<u64> = self
-            .egui_ctx
-            .data(|d| d.get_temp(egui::Id::new("sync_scene_camera")));
-        if let Some(cam_idx) = sync_scene_cam {
-            self.egui_ctx
-                .data_mut(|d| d.remove::<u64>(egui::Id::new("sync_scene_camera")));
-            self.sync_viewport_to_scene_camera(cam_idx as usize);
-        }
-
-        // Handle prim selection from scene browser
-        let selected_prim: Option<String> = self
-            .egui_ctx
-            .data(|d| d.get_temp(egui::Id::new("prim_selection_changed")));
-        if let Some(prim_path) = selected_prim {
-            self.egui_ctx
-                .data_mut(|d| d.remove::<String>(egui::Id::new("prim_selection_changed")));
-            self.selected_prim_path = Some(prim_path.clone());
-            reset_transform_edit_cache(&self.egui_ctx);
-            let composite = CompositeProvider::new(
-                self.usd_stage
-                    .as_ref()
-                    .map(|s| s.as_ref() as &dyn PrimDataProvider),
-                &self.nodes.cached_scene_graph,
-            );
-            if let Some(info) = composite.get_prim_info(&prim_path) {
-                let mut props = PrimProperties::from_display_info(&info);
-                // Enrich with procedural data if available
-                if let Some(proc_data) = composite.get_procedural_data(&prim_path) {
-                    match &proc_data.kind {
-                        ProceduralPrimKind::Mesh {
-                            vertex_count,
-                            triangle_count,
-                        } => {
-                            props = props
-                                .with_attribute("Vertices", &vertex_count.to_string())
-                                .with_attribute("Triangles", &triangle_count.to_string());
-                        }
-                        ProceduralPrimKind::PointInstancer {
-                            point_count,
-                            prototype_refs,
-                        } => {
-                            props = props.with_attribute("Points", &point_count.to_string());
-                            if !prototype_refs.is_empty() {
-                                props =
-                                    props.with_attribute("Prototypes", &prototype_refs.join(", "));
+        let events = self.event_bus.drain();
+        for event in events {
+            match event {
+                AppEvent::RenderModeChanged => {
+                    if self.ivar.ivar_state.mode == RenderMode::Ivar {
+                        log::info!("Switched to Ivar mode - starting render");
+                        self.ivar.ivar_state.current_scale = 1;
+                        self.ivar.ivar_state.last_interaction_time = None;
+                        self.start_ivar_render();
+                    }
+                }
+                AppEvent::RebuildScene => {
+                    log::info!("Manual scene rebuild requested");
+                    self.invalidate_ivar_scene();
+                }
+                AppEvent::DenoiseRequested => {
+                    self.denoise_ivar_result();
+                }
+                AppEvent::FilterChanged => {
+                    if self.ivar.ivar_state.mode == RenderMode::Ivar {
+                        self.ivar.ivar_state.current_scale = 1;
+                        self.ivar.ivar_state.last_interaction_time = None;
+                        self.start_ivar_render();
+                    }
+                }
+                AppEvent::StartBatchRender => {
+                    self.start_batch_render();
+                }
+                AppEvent::CancelBatchRender => {
+                    if let Some(ref flag) = self.async_channels.batch_cancel_flag {
+                        flag.store(true, Ordering::Relaxed);
+                    }
+                }
+                AppEvent::SyncViewportToUsdCamera(camera_path) => {
+                    self.sync_viewport_to_usd_camera(&camera_path);
+                }
+                AppEvent::SyncViewportCamera(camera_path) => {
+                    self.sync_viewport_to_usd_camera(&camera_path);
+                }
+                AppEvent::SyncSceneCamera(cam_idx) => {
+                    self.sync_viewport_to_scene_camera(cam_idx as usize);
+                }
+                AppEvent::PrimSelected(prim_path) => {
+                    self.selection.selected_prim_path = Some(prim_path.clone());
+                    reset_transform_edit_cache(&self.egui_ctx);
+                    let composite = CompositeProvider::new(
+                        self.scene
+                            .usd_stage
+                            .as_ref()
+                            .map(|s| s.as_ref() as &dyn PrimDataProvider),
+                        &self.nodes.cached_scene_graph,
+                    );
+                    if let Some(info) = composite.get_prim_info(&prim_path) {
+                        let mut props = PrimProperties::from_display_info(&info);
+                        if let Some(proc_data) = composite.get_procedural_data(&prim_path) {
+                            match &proc_data.kind {
+                                ProceduralPrimKind::Mesh {
+                                    vertex_count,
+                                    triangle_count,
+                                } => {
+                                    props = props
+                                        .with_attribute("Vertices", &vertex_count.to_string())
+                                        .with_attribute("Triangles", &triangle_count.to_string());
+                                }
+                                ProceduralPrimKind::PointInstancer {
+                                    point_count,
+                                    prototype_refs,
+                                } => {
+                                    props =
+                                        props.with_attribute("Points", &point_count.to_string());
+                                    if !prototype_refs.is_empty() {
+                                        props = props.with_attribute(
+                                            "Prototypes",
+                                            &prototype_refs.join(", "),
+                                        );
+                                    }
+                                }
+                                ProceduralPrimKind::Scope => {}
                             }
                         }
-                        ProceduralPrimKind::Scope => {}
+                        self.selection.selected_prim_properties = Some(props);
+                    } else {
+                        self.selection.selected_prim_properties = Some(PrimProperties {
+                            path: prim_path,
+                            ..Default::default()
+                        });
                     }
                 }
-                self.selected_prim_properties = Some(props);
-            } else {
-                self.selected_prim_properties = Some(PrimProperties {
-                    path: prim_path,
-                    ..Default::default()
-                });
-            }
-        }
-
-        // Handle transform edit events from property inspector
-        let transform_edit: Option<TransformEdit> = self
-            .egui_ctx
-            .data(|d| d.get_temp(egui::Id::new("transform_edit_event")));
-        if let Some(edit) = transform_edit {
-            self.egui_ctx
-                .data_mut(|d| d.remove::<TransformEdit>(egui::Id::new("transform_edit_event")));
-
-            if edit.committed {
-                // Finalize: push undo command
-                self.push_transform_command(
-                    edit.instance_index,
-                    edit.old_transform,
-                    edit.new_transform,
-                );
-            } else {
-                // Live preview: update GPU directly without undo
-                let idx = edit.instance_index;
-                let mat = edit.new_transform.to_matrix();
-                if idx < self.instances.current.len() {
-                    self.instances.current[idx] = mat;
-                    self.culling.mark_dirty();
-                    self.update_visible_instances();
-                    // Restart Ivar at interaction scale during drag (throttled)
-                    if self.ivar.ivar_state.mode == RenderMode::Ivar {
-                        if self.ivar.ivar_state.should_restart()
-                            && self.ivar.ivar_state.world.is_some()
-                        {
-                            self.restart_ivar_at_scale(self.ivar.ivar_state.interaction_scale());
+                AppEvent::TransformEdit(edit) => {
+                    if edit.committed {
+                        self.push_transform_command(
+                            edit.instance_index,
+                            edit.old_transform,
+                            edit.new_transform,
+                        );
+                    } else {
+                        let idx = edit.instance_index;
+                        let mat = edit.new_transform.to_matrix();
+                        if idx < self.scene.instances.current.len() {
+                            self.scene.instances.current[idx] = mat;
+                            self.culling.mark_dirty();
+                            self.update_visible_instances();
+                            if self.ivar.ivar_state.mode == RenderMode::Ivar {
+                                if self.ivar.ivar_state.should_restart()
+                                    && self.ivar.ivar_state.world.is_some()
+                                {
+                                    self.restart_ivar_at_scale(
+                                        self.ivar.ivar_state.interaction_scale(),
+                                    );
+                                }
+                                self.ivar.ivar_state.last_interaction_time =
+                                    Some(std::time::Instant::now());
+                            }
                         }
-                        self.ivar.ivar_state.last_interaction_time =
-                            Some(std::time::Instant::now());
+                    }
+                }
+                AppEvent::StageCorrectionsChanged => {
+                    if let Err(e) = self.reload_working_scene() {
+                        log::error!("Failed to reload after stage correction toggle: {}", e);
+                    }
+                }
+                AppEvent::SetKeyframe(instance_index) => {
+                    self.set_keyframe(instance_index as usize);
+                }
+                AppEvent::CameraProjectionChange(change) => {
+                    if change == "perspective" {
+                        self.cam.camera.set_perspective();
+                    } else if let Some(preset_name) = change.strip_prefix("ortho:") {
+                        for preset in bif_math::OrthoPreset::all() {
+                            if preset.display_name() == preset_name {
+                                self.cam.camera.set_ortho_preset(*preset);
+                                break;
+                            }
+                        }
+                    }
+                    self.update_camera();
+                }
+                AppEvent::ExportEditLayer(path) => match self.export_edit_layer(&path) {
+                    Ok(()) => log::info!("Edit layer exported to {}", path),
+                    Err(e) => log::error!("Failed to export edit layer: {}", e),
+                },
+                AppEvent::NodeGraph(node_events) => {
+                    for event in node_events {
+                        self.handle_node_graph_event(event);
                     }
                 }
             }
         }
 
-        // Handle Xform property changes from the property inspector panel
+        // Handle Xform property changes (not from event bus — direct field flag)
         if let Some(_xform_nid) = self.nodes.xform_property_changed.take() {
             if let Err(e) = self.reload_working_scene() {
                 log::error!("Failed to reload after xform property change: {}", e);
             }
         }
 
-        // Handle stage correction toggle (axis/unit) from top panel
-        let stage_correction_changed: Option<bool> = self
-            .egui_ctx
-            .data(|d| d.get_temp(egui::Id::new("stage_correction_changed")));
-        if stage_correction_changed == Some(true) {
-            self.egui_ctx.data_mut(|d| {
-                d.remove::<bool>(egui::Id::new("stage_correction_changed"));
-            });
-            if let Err(e) = self.reload_working_scene() {
-                log::error!("Failed to reload after stage correction toggle: {}", e);
-            }
-        }
-
-        // Handle set keyframe request from property inspector
-        let keyframe_request: Option<u64> = self
-            .egui_ctx
-            .data(|d| d.get_temp(egui::Id::new("set_keyframe_request")));
-        if let Some(instance_index) = keyframe_request {
-            self.egui_ctx
-                .data_mut(|d| d.remove::<u64>(egui::Id::new("set_keyframe_request")));
-            self.set_keyframe(instance_index as usize);
-        }
-
         // Update keyframe times for timeline markers
         self.update_keyframe_times();
-
-        // Handle deferred camera projection change
-        let projection_change: Option<String> = self
-            .egui_ctx
-            .data(|d| d.get_temp(egui::Id::new("camera_projection_change")));
-        if let Some(change) = projection_change {
-            self.egui_ctx
-                .data_mut(|d| d.remove::<String>(egui::Id::new("camera_projection_change")));
-            if change == "perspective" {
-                self.cam.camera.set_perspective();
-            } else if let Some(preset_name) = change.strip_prefix("ortho:") {
-                for preset in bif_math::OrthoPreset::all() {
-                    if preset.display_name() == preset_name {
-                        self.cam.camera.set_ortho_preset(*preset);
-                        break;
-                    }
-                }
-            }
-            self.update_camera();
-        }
-
-        // Handle edit layer export request
-        let export_path: Option<String> = self
-            .egui_ctx
-            .data(|d| d.get_temp(egui::Id::new("export_edit_layer")));
-        if let Some(path) = export_path {
-            self.egui_ctx
-                .data_mut(|d| d.remove::<String>(egui::Id::new("export_edit_layer")));
-            match self.export_edit_layer(&path) {
-                Ok(()) => log::info!("Edit layer exported to {}", path),
-                Err(e) => log::error!("Failed to export edit layer: {}", e),
-            }
-        }
-
-        // Handle node graph events (USD loading, render start, etc.)
-        let node_graph_events: Vec<NodeGraphEvent> = self.egui_ctx.data(|d| {
-            d.get_temp(egui::Id::new("node_graph_events"))
-                .unwrap_or_default()
-        });
-        if !node_graph_events.is_empty() {
-            // Clear the events
-            self.egui_ctx
-                .data_mut(|d| d.remove::<Vec<NodeGraphEvent>>(egui::Id::new("node_graph_events")));
-
-            for event in node_graph_events {
-                self.handle_node_graph_event(event);
-            }
-        }
     }
 
     /// Handle a single node graph event (USD loading, render start, export, etc.).
@@ -988,15 +861,15 @@ impl Renderer {
                         self.remove_and_reindex_prototype(pid);
                     }
                     // GC orphaned materials so new load starts with clean offsets
-                    self.working_scene.compact_materials();
+                    self.scene.working_scene.compact_materials();
                 }
 
                 self.nodes.materials_dirty = true;
-                let proto_offset = self.working_scene.prototype_count();
+                let proto_offset = self.scene.working_scene.prototype_count();
                 match self.load_usd_scene(&path) {
                     Ok(()) => {
                         // Track which prototypes this UsdRead node owns
-                        let new_proto_count = self.working_scene.prototype_count();
+                        let new_proto_count = self.scene.working_scene.prototype_count();
                         let proto_ids: Vec<usize> = (proto_offset..new_proto_count).collect();
                         if !proto_ids.is_empty() {
                             log::info!("UsdRead {:?} owns protos {:?}", node_id, proto_ids);
@@ -1032,7 +905,7 @@ impl Renderer {
                     } else {
                         log::info!("Converting {} textures to .tx", paths.len());
                         self.environment
-                            .start_tx_conversion(paths, self.texture_base_dir.clone());
+                            .start_tx_conversion(paths, self.scene.texture_base_dir.clone());
                     }
                 }
                 #[cfg(not(feature = "oiio"))]
@@ -1101,7 +974,9 @@ impl Renderer {
                     Ok(proto_id) => {
                         // Update prototype name from node's prim_path (used during export)
                         if let Some(ref pp) = prim_path {
-                            if let Some(proto) = self.working_scene.prototypes.get_mut(proto_id) {
+                            if let Some(proto) =
+                                self.scene.working_scene.prototypes.get_mut(proto_id)
+                            {
                                 std::sync::Arc::make_mut(proto).name = pp.as_str().into();
                             }
                         }
@@ -1132,7 +1007,7 @@ impl Renderer {
 
                 // Remove previous cloud for this node (if regenerating)
                 if let Some(old_cloud_id) = self.nodes.node_cloud_map.remove(&node_id) {
-                    self.working_scene.remove_point_cloud(old_cloud_id);
+                    self.scene.working_scene.remove_point_cloud(old_cloud_id);
                 }
                 // Clear old surface mapping (rebuilt in reload_working_scene)
                 self.nodes.node_scatter_surface_map.remove(&node_id);
@@ -1140,9 +1015,12 @@ impl Renderer {
                 let cloud = match params.source {
                     bif_core::PointSource::Surface => {
                         let scatter_mesh_idx = params.target_proto_id.unwrap_or(0);
-                        if let Some(proto) = self.working_scene.prototypes.get(scatter_mesh_idx) {
+                        if let Some(proto) =
+                            self.scene.working_scene.prototypes.get(scatter_mesh_idx)
+                        {
                             let mesh = proto.mesh.clone();
                             let mesh_transform = self
+                                .scene
                                 .working_scene
                                 .instances()
                                 .iter()
@@ -1249,10 +1127,11 @@ impl Renderer {
                     self.nodes.node_cloud_map.insert(node_id, cloud_id);
 
                     let pt_count = cloud.positions.len();
-                    self.working_scene.add_point_cloud(cloud);
+                    self.scene.working_scene.add_point_cloud(cloud);
 
                     // Upload point positions for preview
                     let all_positions: Vec<bif_math::Vec3> = self
+                        .scene
                         .working_scene
                         .point_clouds
                         .iter()
@@ -1336,6 +1215,7 @@ impl Renderer {
                         // Update cloud name from PointInstancer prim_path (used during export)
                         if let Some(ref prim_path) = instancer_prim_path {
                             if let Some(cloud) = self
+                                .scene
                                 .working_scene
                                 .point_clouds
                                 .iter_mut()
@@ -1350,7 +1230,12 @@ impl Renderer {
                         }
 
                         // Find cloud in working scene by ID
-                        let cloud = self.working_scene.point_clouds.iter().find(|c| c.id == cid);
+                        let cloud = self
+                            .scene
+                            .working_scene
+                            .point_clouds
+                            .iter()
+                            .find(|c| c.id == cid);
 
                         if let Some(cloud) = cloud {
                             let pt_count = cloud.positions.len();
@@ -1443,7 +1328,7 @@ impl Renderer {
                 let effective_as_sublayer = as_sublayer || upstream_usd_path.is_some();
                 let config = bif_core::ExportConfig {
                     output_path: output_path.clone(),
-                    source_usd_path: upstream_usd_path.or(self.loaded_usd_path.clone()),
+                    source_usd_path: upstream_usd_path.or(self.scene.loaded_usd_path.clone()),
                     as_sublayer: effective_as_sublayer,
                     export_root,
                     authored_prims,
@@ -1501,8 +1386,9 @@ impl Renderer {
             NodeGraphEvent::DeleteNode(node_id) => {
                 // Clean up scatter cloud
                 if let Some(cloud_id) = self.nodes.node_cloud_map.remove(&node_id) {
-                    self.working_scene.remove_point_cloud(cloud_id);
+                    self.scene.working_scene.remove_point_cloud(cloud_id);
                     let all_positions: Vec<bif_math::Vec3> = self
+                        .scene
                         .working_scene
                         .point_clouds
                         .iter()
@@ -1534,7 +1420,7 @@ impl Renderer {
                         self.remove_and_reindex_prototype(pid);
                     }
                     // GC orphaned materials left behind by removed prototypes
-                    self.working_scene.compact_materials();
+                    self.scene.working_scene.compact_materials();
                     self.nodes.materials_dirty = true;
                 }
 
@@ -1560,11 +1446,12 @@ impl Renderer {
                         )
                     });
                 if !has_usd_read {
-                    self.usd_stage = None;
-                    self.loaded_usd_path = None;
-                    self.scene_browser_state = crate::scene_browser::SceneBrowserState::new();
-                    self.selected_prim_path = None;
-                    self.selected_prim_properties = None;
+                    self.scene.usd_stage = None;
+                    self.scene.loaded_usd_path = None;
+                    self.selection.scene_browser_state =
+                        crate::scene_browser::SceneBrowserState::new();
+                    self.selection.selected_prim_path = None;
+                    self.selection.selected_prim_properties = None;
                 }
             }
         }

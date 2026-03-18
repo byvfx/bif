@@ -276,26 +276,26 @@ impl Renderer {
         self.mesh_bounds_min = mesh_data.bounds_min;
         self.mesh_bounds_max = mesh_data.bounds_max;
         self.num_triangles = triangles_per_instance as u64 * write_count as u64;
-        self.mesh_data = mesh_data;
-        self.instances.current = instance_transforms.clone();
-        self.instances.transforms = instance_transforms;
-        self.instances.material_ids = instance_material_ids;
-        self.instances.prototype_ids = instance_prototype_ids;
+        self.scene.mesh_data = mesh_data;
+        self.scene.instances.current = instance_transforms.clone();
+        self.scene.instances.transforms = instance_transforms;
+        self.scene.instances.material_ids = instance_material_ids;
+        self.scene.instances.prototype_ids = instance_prototype_ids;
         // Build prim path mapping for USD export
-        self.instances.prim_paths = scene
+        self.scene.instances.prim_paths = scene
             .instances()
             .iter()
             .enumerate()
             .map(|(idx, inst)| resolve_prim_path(inst, scene, idx))
             .collect();
-        self.instance_animations = scene.instance_animations().to_vec();
-        self.last_evaluated_frame = 0.0;
-        self.scene_material = scene_material.clone();
-        self.scene_materials = scene.materials.clone();
-        self.scene_cameras = scene.cameras.clone();
+        self.scene.instance_animations = scene.instance_animations().to_vec();
+        self.scene.last_evaluated_frame = 0.0;
+        self.scene.scene_material = scene_material.clone();
+        self.scene.scene_materials = scene.materials.clone();
+        self.scene.scene_cameras = scene.cameras.clone();
         // Reset stale scene camera selection
         if let crate::ivar_state::CameraSource::SceneCamera(idx) = self.cam.viewport_camera_source {
-            if idx >= self.scene_cameras.len() {
+            if idx >= self.scene.scene_cameras.len() {
                 self.cam.viewport_camera_source = crate::ivar_state::CameraSource::Viewport;
                 self.cam.camera_locked = false;
             }
@@ -360,7 +360,7 @@ impl Renderer {
     /// Updates `node_proto_map` and `instancer_results` to account for the
     /// index shift after removal. Returns `true` if the prototype existed.
     pub fn remove_and_reindex_prototype(&mut self, proto_id: usize) -> bool {
-        if !self.working_scene.remove_prototype(proto_id) {
+        if !self.scene.working_scene.remove_prototype(proto_id) {
             log::error!("Prototype {} not found for removal", proto_id);
             return false;
         }
@@ -402,21 +402,26 @@ impl Renderer {
 
         let unique_name = self.unique_primitive_name(base_name);
         let proto_id = self
+            .scene
             .working_scene
             .add_prototype(Arc::new(mesh), unique_name.clone());
-        self.working_scene
+        self.scene
+            .working_scene
             .add_instance(proto_id, bif_core::Transform::default());
 
         // Register camera primitive as a scene camera
         if kind == bif_core::PrimitiveKind::Camera {
-            let instance_index = self.working_scene.instance_count() - 1;
-            self.working_scene.cameras.push(bif_core::SceneCamera {
-                name: unique_name.clone(),
-                instance_index,
-                fov_y: 45.0_f32.to_radians(),
-                near: 0.1,
-                far: 1000.0,
-            });
+            let instance_index = self.scene.working_scene.instance_count() - 1;
+            self.scene
+                .working_scene
+                .cameras
+                .push(bif_core::SceneCamera {
+                    name: unique_name.clone(),
+                    instance_index,
+                    fov_y: 45.0_f32.to_radians(),
+                    near: 0.1,
+                    far: 1000.0,
+                });
         }
 
         self.reload_working_scene()?;
@@ -445,20 +450,25 @@ impl Renderer {
         };
 
         let proto_id = self
+            .scene
             .working_scene
             .add_prototype(Arc::new(mesh), name.to_string());
-        self.working_scene
+        self.scene
+            .working_scene
             .add_instance(proto_id, bif_core::Transform::default());
 
         if kind == bif_core::PrimitiveKind::Camera {
-            let instance_index = self.working_scene.instance_count() - 1;
-            self.working_scene.cameras.push(bif_core::SceneCamera {
-                name: name.to_string(),
-                instance_index,
-                fov_y: 45.0_f32.to_radians(),
-                near: 0.1,
-                far: 1000.0,
-            });
+            let instance_index = self.scene.working_scene.instance_count() - 1;
+            self.scene
+                .working_scene
+                .cameras
+                .push(bif_core::SceneCamera {
+                    name: name.to_string(),
+                    instance_index,
+                    fov_y: 45.0_f32.to_radians(),
+                    near: 0.1,
+                    far: 1000.0,
+                });
         }
 
         self.reload_working_scene()?;
@@ -467,7 +477,7 @@ impl Renderer {
 
     /// Remove a prototype from the working scene and rebuild GPU state.
     pub fn remove_primitive(&mut self, proto_id: usize) -> Result<()> {
-        if !self.working_scene.remove_prototype(proto_id) {
+        if !self.scene.working_scene.remove_prototype(proto_id) {
             anyhow::bail!("Prototype {} not found in working scene", proto_id);
         }
         self.reload_working_scene()?;
@@ -480,7 +490,7 @@ impl Renderer {
     /// Called after adding/removing primitives or merging USD data.
     pub fn reload_working_scene(&mut self) -> Result<()> {
         self.nodes.scene_graph_dirty = true;
-        let scene = &self.working_scene;
+        let scene = &self.scene.working_scene;
 
         if scene.prototypes.is_empty() {
             // Empty scene — reset to blank
@@ -490,18 +500,18 @@ impl Renderer {
             self.multi_draw.enabled = false;
             self.multi_draw.prototype_gpu_data.clear();
             self.multi_draw.instance_groups.clear();
-            self.instances.transforms.clear();
-            self.instances.current.clear();
-            self.instances.material_ids.clear();
-            self.instances.prototype_ids.clear();
-            self.instances.prim_paths.clear();
-            self.instance_animations = scene.instance_animations().to_vec();
-            self.scene_cameras = scene.cameras.clone();
+            self.scene.instances.transforms.clear();
+            self.scene.instances.current.clear();
+            self.scene.instances.material_ids.clear();
+            self.scene.instances.prototype_ids.clear();
+            self.scene.instances.prim_paths.clear();
+            self.scene.instance_animations = scene.instance_animations().to_vec();
+            self.scene.scene_cameras = scene.cameras.clone();
             self.culling.instance_aabbs.clear();
             self.culling.visible_count = 0;
             self.culling.mark_dirty();
             self.pick_scene = None;
-            self.mesh_data = MeshData {
+            self.scene.mesh_data = MeshData {
                 vertices: vec![],
                 indices: vec![],
                 bounds_min: Vec3::ZERO,
@@ -717,7 +727,7 @@ impl Renderer {
                 &self.gpu.device,
                 &self.gpu.queue,
                 scene,
-                self.texture_base_dir.as_deref(),
+                self.scene.texture_base_dir.as_deref(),
             );
 
             let texture_view_refs: Vec<&wgpu::TextureView> =
@@ -1075,11 +1085,11 @@ impl Renderer {
         self.mesh_bounds_min = mesh_data.bounds_min;
         self.mesh_bounds_max = mesh_data.bounds_max;
         self.num_triangles = triangles_per_instance as u64 * write_count as u64;
-        self.mesh_data = mesh_data;
-        self.instances.current = instance_transforms.clone();
-        self.instances.transforms = instance_transforms;
-        self.instances.material_ids = instance_material_ids;
-        self.instances.prototype_ids = instance_prototype_ids;
+        self.scene.mesh_data = mesh_data;
+        self.scene.instances.current = instance_transforms.clone();
+        self.scene.instances.transforms = instance_transforms;
+        self.scene.instances.material_ids = instance_material_ids;
+        self.scene.instances.prototype_ids = instance_prototype_ids;
 
         // Build prim paths for scene instances (skip instanced prototypes)
         let mut prim_paths: Vec<String> = scene
@@ -1110,7 +1120,7 @@ impl Renderer {
                 scene_inst_count + i
             ));
         }
-        self.instances.prim_paths = prim_paths;
+        self.scene.instances.prim_paths = prim_paths;
 
         // Animations: filtered scene instances + None entries for instancer instances
         let mut animations: Vec<_> = scene
@@ -1121,21 +1131,21 @@ impl Renderer {
             .map(|(anim, _)| anim.clone())
             .collect();
         animations.extend(std::iter::repeat_n(None, instancer_count));
-        self.instance_animations = animations;
+        self.scene.instance_animations = animations;
 
-        self.last_evaluated_frame = 0.0;
-        self.scene_material = scene
+        self.scene.last_evaluated_frame = 0.0;
+        self.scene.scene_material = scene
             .prototypes
             .first()
             .and_then(|p| p.material.as_ref())
             .map(|m| (**m).clone())
             .unwrap_or_default();
-        self.scene_materials = scene.materials.clone();
-        self.scene_cameras = scene.cameras.clone();
+        self.scene.scene_materials = scene.materials.clone();
+        self.scene.scene_cameras = scene.cameras.clone();
 
         // Reset stale scene camera selection
         if let crate::ivar_state::CameraSource::SceneCamera(idx) = self.cam.viewport_camera_source {
-            if idx >= self.scene_cameras.len() {
+            if idx >= self.scene.scene_cameras.len() {
                 self.cam.viewport_camera_source = crate::ivar_state::CameraSource::Viewport;
                 self.cam.camera_locked = false;
             }
@@ -1145,13 +1155,13 @@ impl Renderer {
         self.multi_draw.prototype_gpu_data = prototype_gpu_data;
         self.multi_draw.enabled = use_multi_draw;
         self.multi_draw.rebuild_instance_groups(
-            &self.instances.transforms,
-            &self.instances.prototype_ids,
-            &self.instances.material_ids,
+            &self.scene.instances.transforms,
+            &self.scene.instances.prototype_ids,
+            &self.scene.instances.material_ids,
         );
 
         // Material uniform
-        self.material_uniform = MaterialUniform::from_material(&self.scene_material);
+        self.material_uniform = MaterialUniform::from_material(&self.scene.scene_material);
         self.gpu.queue.write_buffer(
             &self.material_buffer,
             0,
@@ -1172,7 +1182,7 @@ impl Renderer {
 
         log::info!(
             "Working scene reloaded: {} protos, {} instances, {} tris",
-            self.working_scene.prototype_count(),
+            self.scene.working_scene.prototype_count(),
             self.num_instances,
             self.num_triangles
         );
@@ -1336,6 +1346,7 @@ impl Renderer {
             // available at initial material build time, so extra_indices need updating.
             if has_udim {
                 let mut material_table: Vec<MaterialGpu> = self
+                    .scene
                     .scene_materials
                     .iter()
                     .map(|mat| MaterialGpu::from_material(mat.as_ref(), &self.gpu_textures))
@@ -1773,11 +1784,11 @@ impl Renderer {
             write_count
         );
 
-        self.instances.material_ids = instance_material_ids;
-        self.instances.prototype_ids = instance_prototype_ids;
+        self.scene.instances.material_ids = instance_material_ids;
+        self.scene.instances.prototype_ids = instance_prototype_ids;
 
         // Build prim path mapping for USD export
-        self.instances.prim_paths = scene
+        self.scene.instances.prim_paths = scene
             .instances()
             .iter()
             .enumerate()
@@ -1785,10 +1796,11 @@ impl Renderer {
             .collect();
 
         // Store animation data for viewport playback
-        self.instance_animations = scene.instance_animations().to_vec();
-        self.last_evaluated_frame = 0.0;
+        self.scene.instance_animations = scene.instance_animations().to_vec();
+        self.scene.last_evaluated_frame = 0.0;
 
         let animated_count = self
+            .scene
             .instance_animations
             .iter()
             .filter(|opt| opt.as_ref().is_some_and(|anim| anim.is_animated()))
@@ -1802,7 +1814,7 @@ impl Renderer {
         }
 
         // Detect meshes with vertex animation (deformation)
-        self.vertex_animated_meshes.clear();
+        self.scene.vertex_animated_meshes.clear();
         let mesh_count = stage.mesh_count().unwrap_or(0);
         for mesh_idx in 0..mesh_count {
             if let Ok(times) = stage.get_mesh_vertex_animation_times(mesh_idx) {
@@ -1812,7 +1824,7 @@ impl Renderer {
                         mesh_idx,
                         times.len()
                     );
-                    self.vertex_animated_meshes.push(mesh_idx);
+                    self.scene.vertex_animated_meshes.push(mesh_idx);
                 }
             }
         }
@@ -1841,20 +1853,20 @@ impl Renderer {
         self.culling.visible_count = write_count as u32;
         self.mesh_bounds_min = mesh_data.bounds_min;
         self.mesh_bounds_max = mesh_data.bounds_max;
-        self.mesh_data = mesh_data;
-        self.instances.current = instance_transforms.clone();
-        self.instances.transforms = instance_transforms;
-        self.scene_material = scene_material.clone();
-        self.scene_materials = scene.materials.clone();
-        self.scene_cameras = scene.cameras.clone();
+        self.scene.mesh_data = mesh_data;
+        self.scene.instances.current = instance_transforms.clone();
+        self.scene.instances.transforms = instance_transforms;
+        self.scene.scene_material = scene_material.clone();
+        self.scene.scene_materials = scene.materials.clone();
+        self.scene.scene_cameras = scene.cameras.clone();
         // Reset stale scene camera selection
         if let crate::ivar_state::CameraSource::SceneCamera(idx) = self.cam.viewport_camera_source {
-            if idx >= self.scene_cameras.len() {
+            if idx >= self.scene.scene_cameras.len() {
                 self.cam.viewport_camera_source = crate::ivar_state::CameraSource::Viewport;
                 self.cam.camera_locked = false;
             }
         }
-        self.texture_base_dir = path.parent().map(|p| p.to_path_buf());
+        self.scene.texture_base_dir = path.parent().map(|p| p.to_path_buf());
 
         // Store multi-draw state
         self.multi_draw.prototype_gpu_data = prototype_gpu_data;
@@ -1862,9 +1874,9 @@ impl Renderer {
 
         // Group instances by prototype for multi-draw rendering
         self.multi_draw.rebuild_instance_groups(
-            &self.instances.transforms,
-            &self.instances.prototype_ids,
-            &self.instances.material_ids,
+            &self.scene.instances.transforms,
+            &self.scene.instances.prototype_ids,
+            &self.scene.instances.material_ids,
         );
 
         if use_multi_draw {
@@ -1916,13 +1928,13 @@ impl Renderer {
             }
         }
 
-        self.usd_stage = Some(stage);
+        self.scene.usd_stage = Some(stage);
         // Canonicalize and strip Windows UNC \\?\ prefix (USD can't resolve it)
         let canonical = std::fs::canonicalize(path)
             .unwrap_or_else(|_| path.to_path_buf())
             .display()
             .to_string();
-        self.loaded_usd_path = Some(
+        self.scene.loaded_usd_path = Some(
             canonical
                 .strip_prefix(r"\\?\")
                 .unwrap_or(&canonical)
@@ -1930,8 +1942,8 @@ impl Renderer {
         );
 
         // Reset scene browser selection
-        self.selected_prim_path = None;
-        self.selected_prim_properties = None;
+        self.selection.selected_prim_path = None;
+        self.selection.selected_prim_properties = None;
 
         // Update camera to frame the scene
         self.cam.camera.target = mesh_center;
@@ -1959,13 +1971,13 @@ impl Renderer {
                 timeline.end_frame,
                 timeline.fps
             );
-        } else if !self.vertex_animated_meshes.is_empty() {
+        } else if !self.scene.vertex_animated_meshes.is_empty() {
             // No scene timeline, but we have vertex animation - detect time range from vertex animation
             let mut min_time = f64::MAX;
             let mut max_time = f64::MIN;
 
-            if let Some(ref usd_stage) = self.usd_stage {
-                for &mesh_idx in &self.vertex_animated_meshes {
+            if let Some(ref usd_stage) = self.scene.usd_stage {
+                for &mesh_idx in &self.scene.vertex_animated_meshes {
                     if let Ok(times) = usd_stage.get_mesh_vertex_animation_times(mesh_idx) {
                         for &t in &times {
                             min_time = min_time.min(t);
@@ -1992,7 +2004,7 @@ impl Renderer {
             let mut min_time = f64::MAX;
             let mut max_time = f64::MIN;
 
-            for anim in self.instance_animations.iter().flatten() {
+            for anim in self.scene.instance_animations.iter().flatten() {
                 if let Some(keyframes) = &anim.keyframes {
                     for kf in keyframes {
                         min_time = min_time.min(kf.time);
@@ -2022,18 +2034,18 @@ impl Renderer {
         );
 
         // Propagate stage metadata from the first USD scene loaded
-        if self.working_scene.stage_metadata.is_none() {
-            self.working_scene.stage_metadata = scene.stage_metadata.clone();
+        if self.scene.working_scene.stage_metadata.is_none() {
+            self.scene.working_scene.stage_metadata = scene.stage_metadata.clone();
         }
 
         // Merge USD scene into working_scene so primitives added later coexist.
         // Track offsets for remapping IDs from the loaded scene to the working scene.
-        let proto_offset = self.working_scene.prototype_count();
-        let instance_offset = self.working_scene.instance_count();
+        let proto_offset = self.scene.working_scene.prototype_count();
+        let instance_offset = self.scene.working_scene.instance_count();
         // Material offset: face_material_ids in the loaded scene are 0-based,
         // but after merge they must index into working_scene.materials which
         // already contains materials from prior scenes.
-        let mat_offset = self.working_scene.materials.len() as u32;
+        let mat_offset = self.scene.working_scene.materials.len() as u32;
         for proto in &scene.prototypes {
             let mut remapped = (**proto).clone();
             // Remap per-face material IDs to account for existing materials
@@ -2044,19 +2056,20 @@ impl Renderer {
                     }
                 }
             }
-            remapped.id = self.working_scene.prototype_count();
-            self.working_scene.prototypes.push(Arc::new(remapped));
+            remapped.id = self.scene.working_scene.prototype_count();
+            self.scene.working_scene.prototypes.push(Arc::new(remapped));
         }
         for (inst, anim) in scene.instances_with_animations() {
             let remapped_proto_id = inst.prototype_id + proto_offset;
             if let Some(anim) = anim {
-                self.working_scene.add_animated_instance(
+                self.scene.working_scene.add_animated_instance(
                     remapped_proto_id,
                     inst.transform.clone(),
                     anim.clone(),
                 );
             } else {
-                self.working_scene
+                self.scene
+                    .working_scene
                     .add_instance(remapped_proto_id, inst.transform.clone());
             }
         }
@@ -2064,20 +2077,20 @@ impl Renderer {
         for mat in &scene.materials {
             let mut with_dir = (**mat).clone();
             with_dir.source_dir = mat_source_dir.clone();
-            self.working_scene.add_material(with_dir);
+            self.scene.working_scene.add_material(with_dir);
         }
         // Merge point clouds and sync next_cloud_id to avoid ID collisions
         for cloud in &scene.point_clouds {
             let mut merged = cloud.clone();
             merged.id = self.nodes.next_cloud_id;
             self.nodes.next_cloud_id += 1;
-            self.working_scene.add_point_cloud(merged);
+            self.scene.working_scene.add_point_cloud(merged);
         }
         // Remap camera instance indices by the instance offset
         for cam in &scene.cameras {
             let mut remapped = cam.clone();
             remapped.instance_index += instance_offset;
-            self.working_scene.cameras.push(remapped);
+            self.scene.working_scene.cameras.push(remapped);
         }
 
         // Update lights from scene

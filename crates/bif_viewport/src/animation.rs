@@ -14,7 +14,7 @@ impl Renderer {
         // Use larger tolerance (0.5 frame) to avoid excessive updates from rapid redraws
         let current_frame = self.timeline_state.current_frame;
         let frame_tolerance = 0.5;
-        let frame_diff = (current_frame - self.last_evaluated_frame).abs();
+        let frame_diff = (current_frame - self.scene.last_evaluated_frame).abs();
         if frame_diff < frame_tolerance {
             return; // Not enough change yet
         }
@@ -35,16 +35,17 @@ impl Renderer {
 
         // Check if we have any mesh animations (transform or vertex)
         let animated_count = self
+            .scene
             .instance_animations
             .iter()
             .filter(|opt| opt.as_ref().is_some_and(|anim| anim.is_animated()))
             .count();
         let has_transform_animations = animated_count > 0;
-        let has_vertex_animations = !self.vertex_animated_meshes.is_empty();
+        let has_vertex_animations = !self.scene.vertex_animated_meshes.is_empty();
         let has_mesh_animations = has_transform_animations || has_vertex_animations;
 
         if !has_mesh_animations {
-            self.last_evaluated_frame = current_frame;
+            self.scene.last_evaluated_frame = current_frame;
             return;
         }
 
@@ -63,24 +64,25 @@ impl Renderer {
             }
         }
 
-        self.last_evaluated_frame = current_frame;
+        self.scene.last_evaluated_frame = current_frame;
     }
 
     /// Evaluate all animated transforms at the given frame and update GPU buffer.
     fn evaluate_animation_frame(&mut self, frame: f64) {
-        let num = self.instances.transforms.len();
+        let num = self.scene.instances.transforms.len();
 
         // Reuse per-frame buffers to avoid allocation every frame
-        self.anim_instances_buf.clear();
-        self.anim_instances_buf.reserve(num);
-        self.anim_transforms_buf.clear();
-        self.anim_transforms_buf.reserve(num);
+        self.scene.anim_instances_buf.clear();
+        self.scene.anim_instances_buf.reserve(num);
+        self.scene.anim_transforms_buf.clear();
+        self.scene.anim_transforms_buf.reserve(num);
 
         for (i, (base_transform, anim)) in self
+            .scene
             .instances
             .transforms
             .iter()
-            .zip(self.instance_animations.iter())
+            .zip(self.scene.instance_animations.iter())
             .enumerate()
         {
             let model_matrix = if let Some(anim) = anim {
@@ -104,10 +106,16 @@ impl Renderer {
                 *base_transform
             };
 
-            self.anim_transforms_buf.push(model_matrix);
+            self.scene.anim_transforms_buf.push(model_matrix);
 
-            let material_id = self.instances.material_ids.get(i).copied().unwrap_or(0);
-            self.anim_instances_buf.push(InstanceData {
+            let material_id = self
+                .scene
+                .instances
+                .material_ids
+                .get(i)
+                .copied()
+                .unwrap_or(0);
+            self.scene.anim_instances_buf.push(InstanceData {
                 model_matrix: model_matrix.to_cols_array_2d(),
                 material_id,
                 tri_mat_offset: 0,
@@ -116,10 +124,14 @@ impl Renderer {
 
         // Store evaluated transforms for use by update_visible_instances
         // base transforms stay in instance_transforms for re-evaluation
-        std::mem::swap(&mut self.instances.current, &mut self.anim_transforms_buf);
+        std::mem::swap(
+            &mut self.scene.instances.current,
+            &mut self.scene.anim_transforms_buf,
+        );
 
         // Recompute instance AABBs for frustum culling
-        self.culling.update_instance_aabbs(&self.instances.current);
+        self.culling
+            .update_instance_aabbs(&self.scene.instances.current);
 
         // Invalidate frustum cache
         self.culling.invalidate_frustum();
@@ -127,16 +139,16 @@ impl Renderer {
         // Rebuild instance_groups with animated transforms for multi-draw rendering
         if self.multi_draw.enabled {
             self.multi_draw.rebuild_instance_groups(
-                &self.instances.current,
-                &self.instances.prototype_ids,
-                &self.instances.material_ids,
+                &self.scene.instances.current,
+                &self.scene.instances.prototype_ids,
+                &self.scene.instances.material_ids,
             );
         }
     }
 
     /// Update vertex buffer for meshes with vertex animation (deformation).
     fn update_vertex_animation(&mut self, frame: f64) {
-        let stage = match &self.usd_stage {
+        let stage = match &self.scene.usd_stage {
             Some(s) => s.clone(),
             None => return,
         };
@@ -145,7 +157,7 @@ impl Renderer {
         // This must come BEFORE mesh_ranges check because multi-draw renders from
         // prototype_gpu_data buffers, not the combined self.vertex_buffer
         if self.multi_draw.enabled {
-            let vertex_animated = self.vertex_animated_meshes.clone();
+            let vertex_animated = self.scene.vertex_animated_meshes.clone();
             self.multi_draw.update_vertex_animation(
                 &self.gpu.queue,
                 &vertex_animated,
@@ -157,10 +169,10 @@ impl Renderer {
 
         // Multi-mesh combined buffer: use mesh_ranges to update correct vertex range
         // (only used when NOT in multi-draw mode)
-        if let Some(ref ranges) = self.mesh_data.mesh_ranges {
+        if let Some(ref ranges) = self.scene.mesh_data.mesh_ranges {
             let mut updated_any = false;
 
-            for &mesh_idx in &self.vertex_animated_meshes {
+            for &mesh_idx in &self.scene.vertex_animated_meshes {
                 let range = match ranges.iter().find(|r| r.usd_mesh_index == mesh_idx) {
                     Some(r) => r,
                     None => continue,
@@ -184,7 +196,7 @@ impl Renderer {
 
                 // Update only this mesh's range
                 let start = range.vertex_offset as usize;
-                for (i, vertex) in self.mesh_data.vertices[start..start + vertex_count]
+                for (i, vertex) in self.scene.mesh_data.vertices[start..start + vertex_count]
                     .iter_mut()
                     .enumerate()
                 {
@@ -198,32 +210,32 @@ impl Renderer {
                 self.gpu.queue.write_buffer(
                     &self.vertex_buffer,
                     0,
-                    bytemuck::cast_slice(&self.mesh_data.vertices),
+                    bytemuck::cast_slice(&self.scene.mesh_data.vertices),
                 );
             }
             return;
         }
 
         // Single-mesh fallback (original logic)
-        if self.vertex_animated_meshes.len() != 1 {
+        if self.scene.vertex_animated_meshes.len() != 1 {
             return;
         }
 
-        let mesh_idx = self.vertex_animated_meshes[0];
+        let mesh_idx = self.scene.vertex_animated_meshes[0];
         if let Ok(positions) = stage.get_mesh_vertices_at_time(mesh_idx, frame) {
             let vertex_count = positions.len() / 3;
-            if vertex_count == 0 || vertex_count != self.mesh_data.vertices.len() {
+            if vertex_count == 0 || vertex_count != self.scene.mesh_data.vertices.len() {
                 return;
             }
 
-            for (i, vertex) in self.mesh_data.vertices.iter_mut().enumerate() {
+            for (i, vertex) in self.scene.mesh_data.vertices.iter_mut().enumerate() {
                 vertex.position = [positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2]];
             }
 
             self.gpu.queue.write_buffer(
                 &self.vertex_buffer,
                 0,
-                bytemuck::cast_slice(&self.mesh_data.vertices),
+                bytemuck::cast_slice(&self.scene.mesh_data.vertices),
             );
         }
     }
