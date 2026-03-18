@@ -16,6 +16,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **OIIO mip read_image buffer overflow** — `read_image()` in mip loop always passed `miplevel=0`, reading full-res data into smaller mip buffers; caused crash when loading .tx files with embedded mipmaps
 - **UDIM double V-flip** — `transform_uv()` returned pixel-space coords causing `sample()` to apply a second V-flip; now returns UV-space so CPU Ivar sampling matches GPU path
 - UDIM atlas pixel cap now downscales tiles instead of erroring (prior commit, included in this changeset)
 
@@ -25,6 +26,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- `TextureCache::prefer_tx` now defaults to `true` — .tx files loaded automatically when OIIO feature active
+- .tx loading logs at `info` level for visibility
 - UDIM tile size cap raised 2048→4096, atlas pixel budget 16M→64M (1 GB) for production textures
 - Renderer struct reduced from ~50 fields to ~25 fields via 3 new subsystems
 - `dispatch_deferred_events()` (280 lines of untyped temp-data polling) → `dispatch_events()` (~120 lines of typed match)

@@ -1,7 +1,7 @@
 # Session Handoff - March 18, 2026
 
-**Last Updated:** Fix UDIM double V-flip bug in Ivar CPU sampling
-**Next Milestone:** Manual test PaperScroll.usd UDIM tiles, then M29.5 egui upgrade
+**Last Updated:** Enable .tx loading + fix OIIO mip buffer overflow
+**Next Milestone:** M29.5 egui upgrade
 **Project:** BIF - VFX Scene Assembler & Renderer
 
 ---
@@ -18,6 +18,12 @@
 ---
 
 ## Recent Work
+
+### Enable .tx Loading + Fix OIIO Mip Crash (Mar 18, 2026)
+
+- `prefer_tx` defaults to `true` — TextureCache loads .tx files when available
+- Fixed buffer overflow in `oiio_load_texture_with_mips`: mip loop passed `miplevel=0` to `read_image()` instead of the actual mip index, reading full-res into smaller buffers. Latent bug — never triggered before because PNGs have 1 mip.
+- .tx files must be pre-generated via `bif_maketx` (no auto-convert at load time)
 
 ### Architecture Decomposition (Mar 17, 2026 - session d)
 
