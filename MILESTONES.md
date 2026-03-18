@@ -962,6 +962,97 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 
 ---
 
+### Milestone 28.1: Integrated Asset Browser (File Browser) 📂
+
+- **Goal:** Dockable panel for browsing project directories, previewing assets, and drag-and-drop into BIF
+- **Prerequisites:** M28 (Qt 6 UI) complete
+- **Estimated Time:** 20-25 hours
+- **Architecture:**
+  - `bif_core::asset_browser` — UI-agnostic core: directory scanning, format registry trait, thumbnail generation, asset metadata
+  - `AssetFormat` trait — extensible format registration (ships with USD, image textures, HDRI, OBJ)
+  - `AssetThumbnail` — decode first mip for textures/HDRIs, type icons for USD/unknown
+  - Qt panel: directory tree (left) + file grid with thumbnails (right)
+- **Key Tasks:**
+
+  **Format Registry**
+  - `AssetFormat` trait: `extensions()`, `icon()`, `can_thumbnail()`, `generate_thumbnail()`, `node_type()`
+  - Ships with: USD (.usd/.usda/.usdc), textures (.exr/.tx/.png/.jpg), HDRI (.hdr/.exr), OBJ (.obj)
+  - New formats added without touching browser code
+
+  **Directory Scanner**
+  - Async recursive scan with background thread
+  - File watcher for live updates (notify crate)
+  - Respect `.bifignore` for excluding paths
+
+  **Thumbnail Pipeline**
+  - Background thread pool for thumbnail generation
+  - Thumbnail cache on disk (`.bif_thumbs/`)
+  - Texture/HDRI decode via existing image crate / OIIO
+  - Type icons for USD and unknown formats
+
+  **Drag-and-Drop — Node Graph**
+  - Drop creates appropriate node (UsdRead, HdriEnvironment, etc.) at cursor position
+  - Format registry maps file type → node type
+
+  **Drag-and-Drop — Viewport**
+  - Drop USD at raycast hit point (reuse Embree pick infrastructure from M20)
+  - Creates UsdRead + Xform positioned at hit location
+
+  **Drag-and-Drop — Panels**
+  - Drop texture onto material slot in property inspector
+  - Drop HDRI onto environment panel
+
+  **Panel UI**
+  - Path breadcrumb bar with navigation
+  - Grid/list view toggle
+  - Sort by name/date/size/type
+  - Filter by format
+
+- **Reference:** Clarisse iFX browser, Houdini file chooser, Blender asset browser
+
+---
+
+### Milestone 28.2: Asset Library + Catalog 📚
+
+- **Goal:** SQLite-backed asset catalog with tagging, search, favorites, and collections
+- **Prerequisites:** M28.1 (Asset Browser) complete
+- **Estimated Time:** 15-20 hours
+- **Architecture:**
+  - `bif_core::asset_library` — SQLite via `rusqlite`, FTS5 for full-text search
+  - Assets registered from browser (right-click → "Add to Library") or bulk import
+  - Schema: assets, tags (many-to-many), collections, smart collections (saved searches)
+- **Key Tasks:**
+
+  **SQLite Schema + CRUD**
+  - Assets table: path, format, tags, metadata, thumbnail_hash, created, modified
+  - Tags with many-to-many junction table
+  - Collections and smart collections (saved filter queries)
+
+  **Asset Registration**
+  - Scan directory → register all discovered assets
+  - File watcher integration (from M28.1) for auto-registration
+  - Bulk import with progress
+
+  **Search + Filtering**
+  - FTS5 full-text search on name + tags
+  - Filter by format, collection, date range
+  - Search bar with tag autocomplete
+
+  **Collections**
+  - User-created collections (manual grouping)
+  - Smart collections (saved search queries, auto-populate)
+  - Drag assets between collections
+  - Favorites (starred assets, quick access)
+
+  **UI Integration**
+  - Toggle between file browser / library view in same panel
+  - Tag editor (inline tag chips, add/remove)
+  - Search bar with autocomplete in panel header
+
+- **Reference:** Blender asset browser (SQLite), Substance Source, Megascans plugin
+
+---
+
 ### Milestone 29.5: egui 0.30 Upgrade + Vertical Node Layout 📐
 
 - **Goal:** Upgrade egui ecosystem to 0.30, enable top-to-bottom node layout
@@ -1210,6 +1301,8 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 | — | 22 | Viewport perf | Handle production scenes |
 | — | 27 | GPU path tracing | Near-realtime quality |
 | — | 28 | Qt 6 UI | Professional interface |
+| — | 28.1 | Asset browser (file browser) | Browse directories, thumbnails, drag-and-drop into graph/viewport/panels |
+| — | 28.2 | Asset library + catalog | SQLite catalog, tags, search, collections |
 
 ### Dissolved / Cut
 
