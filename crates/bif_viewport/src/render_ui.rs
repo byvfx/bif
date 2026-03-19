@@ -188,6 +188,14 @@ pub(crate) fn render_stats_panel(
                         });
                 });
 
+                // Default sky toggle
+                if ui
+                    .checkbox(&mut p.ivar_state.use_sky_gradient, "Default Sky")
+                    .changed()
+                {
+                    event_bus.emit(AppEvent::FilterChanged);
+                }
+
                 // Show current preview scale when not at full res
                 if p.ivar_current_scale > 1 {
                     ui.colored_label(

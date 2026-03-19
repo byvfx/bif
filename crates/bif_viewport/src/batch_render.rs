@@ -353,8 +353,8 @@ fn batch_render_loop(
     let render_config = RenderConfig {
         samples_per_pixel: settings.samples_per_pixel,
         max_depth: settings.max_depth,
-        background: Color::new(0.1, 0.1, 0.1),
-        use_sky_gradient: true, // Fallback lighting if no HDRI
+        background: Color::ZERO,
+        use_sky_gradient: settings.use_sky_gradient,
         environment: scene.environment.clone(),
         lights: scene.lights.clone(),
         pass_number: 0,

@@ -325,6 +325,32 @@ impl Renderer {
         // Update lights
         self.update_lights(&scene.lights);
 
+        // Auto-connect first DomeLight with texture to HdriEnvironment
+        // (skip if user already loaded an HDRI via the node graph)
+        if !self.environment.hdri_loaded {
+            if let Some(bif_core::Light::Dome {
+                rotation,
+                intensity,
+                texture_path: Some(path),
+            }) = scene.lights.iter().find(|l| {
+                matches!(
+                    l,
+                    bif_core::Light::Dome {
+                        texture_path: Some(_),
+                        ..
+                    }
+                )
+            }) {
+                log::info!("Auto-loading DomeLight HDRI: {}", path);
+                self.environment.start_hdri_load(
+                    std::path::Path::new(path.as_ref()),
+                    rotation.to_degrees(),
+                    *intensity,
+                    true,
+                );
+            }
+        }
+
         log::info!(
             "Scene data loaded: {} triangles x {} instances",
             self.num_indices / 3,
@@ -2095,6 +2121,32 @@ impl Renderer {
 
         // Update lights from scene
         self.update_lights(&scene.lights);
+
+        // Auto-connect first DomeLight with texture to HdriEnvironment
+        // (skip if user already loaded an HDRI via the node graph)
+        if !self.environment.hdri_loaded {
+            if let Some(bif_core::Light::Dome {
+                rotation,
+                intensity,
+                texture_path: Some(path),
+            }) = scene.lights.iter().find(|l| {
+                matches!(
+                    l,
+                    bif_core::Light::Dome {
+                        texture_path: Some(_),
+                        ..
+                    }
+                )
+            }) {
+                log::info!("Auto-loading DomeLight HDRI: {}", path);
+                self.environment.start_hdri_load(
+                    std::path::Path::new(path.as_ref()),
+                    rotation.to_degrees(),
+                    *intensity,
+                    true,
+                );
+            }
+        }
 
         // Build pick scene for viewport selection
         self.rebuild_pick_scene();

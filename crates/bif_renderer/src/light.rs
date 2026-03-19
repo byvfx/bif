@@ -215,6 +215,7 @@ impl RectLight {
     }
 
     /// Create from a transform matrix and dimensions.
+    /// USD lights emit along local -Z, so normal uses -z_axis from the transform.
     pub fn from_transform(
         transform: bif_math::Mat4,
         width: f32,
@@ -223,9 +224,18 @@ impl RectLight {
         intensity: f32,
     ) -> Self {
         let center = transform.w_axis.truncate();
-        let u_axis = transform.x_axis.truncate().normalize() * (width * 0.5);
-        let v_axis = transform.y_axis.truncate().normalize() * (height * 0.5);
-        Self::new(center, u_axis, v_axis, color, intensity)
+        let u_axis = transform.x_axis.truncate() * (width * 0.5);
+        let v_axis = transform.y_axis.truncate() * (height * 0.5);
+        let normal = (-transform.z_axis.truncate()).normalize();
+
+        Self {
+            center,
+            u_axis,
+            v_axis,
+            normal,
+            color,
+            intensity,
+        }
     }
 }
 
@@ -253,12 +263,16 @@ impl Light for RectLight {
             0.0
         };
 
-        // Falloff based on distance
-        let falloff = 1.0 / (distance * distance + 0.01);
+        // Emission = radiance L_e (no distance falloff — PDF handles it)
+        let emission = if cos_light > 0.0 {
+            self.color * self.intensity
+        } else {
+            Vec3::ZERO
+        };
 
         LightSample {
             direction,
-            emission: self.color * self.intensity * falloff * cos_light,
+            emission,
             pdf,
             distance,
         }

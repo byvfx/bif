@@ -184,6 +184,8 @@ pub struct BatchRenderSettings {
     pub pixel_filter: PixelFilterConfig,
     /// Camera jitter sampler mode for batch rendering.
     pub sampler_mode: SamplerMode,
+    /// Whether to use procedural sky gradient as fallback when no HDRI is loaded.
+    pub use_sky_gradient: bool,
 }
 
 impl Default for BatchRenderSettings {
@@ -204,6 +206,7 @@ impl Default for BatchRenderSettings {
             radiance_cache_config: bif_renderer::RadianceCacheConfig::default(),
             pixel_filter: PixelFilterConfig::new(PixelFilter::Mitchell),
             sampler_mode: SamplerMode::default(),
+            use_sky_gradient: true,
         }
     }
 }
@@ -435,6 +438,8 @@ pub struct IvarState {
     pub weight_buffer: Option<Vec<f32>>,
     /// Camera jitter sampler mode.
     pub sampler_mode: SamplerMode,
+    /// Whether to use procedural sky gradient as fallback when no HDRI is loaded.
+    pub use_sky_gradient: bool,
 }
 
 impl Default for IvarState {
@@ -480,6 +485,7 @@ impl Default for IvarState {
             pixel_filter: PixelFilterConfig::default(),
             weight_buffer: None,
             sampler_mode: SamplerMode::default(),
+            use_sky_gradient: true,
         }
     }
 }

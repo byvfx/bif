@@ -286,27 +286,8 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
     let mesh_time = mesh_start.elapsed();
     let total_verts: usize = meshes.iter().map(|m| m.vertices.len()).sum();
 
-    // Load native instances (from USD instanceable=true prims)
-    let native_start = Instant::now();
+    // Fetch native instances early (processed after material binding below)
     let native_instances = stage.native_instances().unwrap_or_default();
-    for native_inst in &native_instances {
-        // Map native instance's mesh index to BIF prototype
-        if let Some(mesh_data) = meshes.get(native_inst.proto_mesh_idx) {
-            if let Some(&proto_id) = prototype_map.get(&mesh_data.path) {
-                let transform = Transform::from_matrix(native_inst.transform);
-                let prim_path = format!("{}/native_{}", mesh_data.path, scene.instance_count());
-                scene.add_instance_with_path(proto_id, transform, prim_path);
-            }
-        }
-    }
-    let native_time = native_start.elapsed();
-    if !native_instances.is_empty() {
-        log::info!(
-            "Native instances: {} ({:.1}ms)",
-            native_instances.len(),
-            native_time.as_secs_f64() * 1000.0
-        );
-    }
 
     // Load materials
     let material_start = Instant::now();
@@ -379,6 +360,72 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
         meshes.len()
     );
 
+    // Build bridge-material-index → scene-material-index lookup
+    let bridge_mat_to_scene: Vec<Option<usize>> = usd_materials
+        .iter()
+        .map(|m| material_map.get(&m.path).copied())
+        .collect();
+
+    // Process native instances now that materials are bound
+    let native_start = Instant::now();
+    let mut override_proto_cache: HashMap<(usize, usize), usize> = HashMap::new();
+
+    for native_inst in &native_instances {
+        if let Some(mesh_data) = meshes.get(native_inst.proto_mesh_idx) {
+            if let Some(&proto_id) = prototype_map.get(&mesh_data.path) {
+                let transform = Transform::from_matrix(native_inst.transform);
+                let prim_path = format!("{}/native_{}", mesh_data.path, scene.instance_count());
+
+                let target_proto = if native_inst.material_override_idx >= 0 {
+                    let bridge_idx = native_inst.material_override_idx as usize;
+                    if let Some(Some(scene_mat_idx)) = bridge_mat_to_scene.get(bridge_idx) {
+                        let override_mat = &scene.materials[*scene_mat_idx];
+                        let needs_override = match &scene.prototypes[proto_id].material {
+                            Some(proto_mat) => !Arc::ptr_eq(proto_mat, override_mat),
+                            None => true,
+                        };
+                        if needs_override {
+                            let key = (proto_id, bridge_idx);
+                            if let Some(&cached) = override_proto_cache.get(&key) {
+                                cached
+                            } else {
+                                let mut cloned = (*scene.prototypes[proto_id]).clone();
+                                cloned.material = Some(override_mat.clone());
+                                cloned.name = format!(
+                                    "{}/mat_{}",
+                                    cloned.name, scene.materials[*scene_mat_idx].name
+                                )
+                                .into();
+                                let new_id = scene.prototypes.len();
+                                cloned.id = new_id;
+                                scene.prototypes.push(Arc::new(cloned));
+                                override_proto_cache.insert(key, new_id);
+                                new_id
+                            }
+                        } else {
+                            proto_id
+                        }
+                    } else {
+                        proto_id
+                    }
+                } else {
+                    proto_id
+                };
+
+                scene.add_instance_with_path(target_proto, transform, prim_path);
+            }
+        }
+    }
+    let native_time = native_start.elapsed();
+    if !native_instances.is_empty() {
+        log::info!(
+            "Native instances: {} ({} overrides, {:.1}ms)",
+            native_instances.len(),
+            override_proto_cache.len(),
+            native_time.as_secs_f64() * 1000.0
+        );
+    }
+
     let material_time = material_start.elapsed();
 
     // Load lights (UsdLux)
@@ -425,10 +472,11 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
                 height: light_data.height,
             },
             UsdLightType::Dome => {
-                // Extract Y rotation from transform (if any)
-                // For now, just use 0 rotation - could decompose transform later
+                // Extract Y-axis rotation from transform's Z basis vector
+                let z_basis = bif_math::Vec3::new(transform.col(2).x, 0.0, transform.col(2).z);
+                let rotation = z_basis.x.atan2(z_basis.z); // radians
                 Light::Dome {
-                    rotation: 0.0,
+                    rotation,
                     intensity: light_data.intensity,
                     texture_path: light_data.texture_path.as_deref().map(Arc::from),
                 }

@@ -51,6 +51,8 @@ pub struct EnvironmentManager {
     ibl_receiver: Option<mpsc::Receiver<IblResult>>,
     /// Async .tx conversion result receiver
     tx_receiver: Option<mpsc::Receiver<String>>,
+    /// Whether an HDRI has been loaded (user or auto from DomeLight)
+    pub hdri_loaded: bool,
 }
 
 impl EnvironmentManager {
@@ -88,6 +90,7 @@ impl EnvironmentManager {
             compute_ibl,
             ibl_receiver: None,
             tx_receiver: None,
+            hdri_loaded: false,
         }
     }
 
@@ -103,6 +106,7 @@ impl EnvironmentManager {
 
     /// Start async HDRI load in background thread.
     pub fn start_hdri_load(&mut self, path: &Path, rotation: f32, intensity: f32, show_bg: bool) {
+        self.hdri_loaded = true;
         let (tx, rx) = mpsc::channel();
         self.ibl_receiver = Some(rx);
         let rotation_rad = rotation.to_radians();

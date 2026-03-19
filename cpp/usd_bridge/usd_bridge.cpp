@@ -22,6 +22,8 @@
 #include <pxr/usd/usdLux/cylinderLight.h>
 #include <pxr/usd/usdLux/diskLight.h>
 #include <pxr/usd/usdLux/shapingAPI.h>
+#include <pxr/usd/usdGeom/sphere.h>
+#include <pxr/usd/usdGeom/cube.h>
 #include <pxr/usd/usdGeom/points.h>
 #include <pxr/usd/usdGeom/basisCurves.h>
 #include <pxr/usd/usdRender/settings.h>
@@ -461,6 +463,142 @@ static void cache_prim_data(UsdBridgeStage* bridge) {
     bridge->prims_cached = true;
 }
 
+// ============================================================================
+// Implicit Geometry Tessellation
+// ============================================================================
+
+static const int IMPLICIT_SPHERE_SEGMENTS = 32;
+
+/// Tessellate a UV sphere into a CachedMesh (port of bif_core primitives.rs)
+static void tessellate_sphere(CachedMesh& mesh, double radius, int segments) {
+    const int rings = segments;
+    const int sectors = segments;
+    const float r = static_cast<float>(radius);
+    const float PI = 3.14159265358979323846f;
+
+    int vert_count = (rings + 1) * (sectors + 1);
+    mesh.vertices.reserve(vert_count * 3);
+    mesh.normals.reserve(vert_count * 3);
+    mesh.uvs.reserve(vert_count * 2);
+
+    for (int ring = 0; ring <= rings; ++ring) {
+        float phi = PI * static_cast<float>(ring) / static_cast<float>(rings);
+        float y = cosf(phi) * r;
+        float ring_radius = sinf(phi) * r;
+
+        for (int sector = 0; sector <= sectors; ++sector) {
+            float theta = 2.0f * PI * static_cast<float>(sector) / static_cast<float>(sectors);
+            float x = ring_radius * cosf(theta);
+            float z = ring_radius * sinf(theta);
+
+            mesh.vertices.push_back(x);
+            mesh.vertices.push_back(y);
+            mesh.vertices.push_back(z);
+
+            // Normal = normalized position (sphere centered at origin)
+            float len = sqrtf(x * x + y * y + z * z);
+            if (len > 0.0f) {
+                mesh.normals.push_back(x / len);
+                mesh.normals.push_back(y / len);
+                mesh.normals.push_back(z / len);
+            } else {
+                mesh.normals.push_back(0.0f);
+                mesh.normals.push_back(1.0f);
+                mesh.normals.push_back(0.0f);
+            }
+
+            mesh.uvs.push_back(static_cast<float>(sector) / static_cast<float>(sectors));
+            mesh.uvs.push_back(static_cast<float>(ring) / static_cast<float>(rings));
+        }
+    }
+
+    // Indices: triangle fans at poles, quad strips in middle
+    int stride = sectors + 1;
+    for (int ring = 0; ring < rings; ++ring) {
+        for (int sector = 0; sector < sectors; ++sector) {
+            uint32_t a = static_cast<uint32_t>(ring * stride + sector);
+            uint32_t b = a + static_cast<uint32_t>(stride);
+            uint32_t c = b + 1;
+            uint32_t d = a + 1;
+
+            if (ring == 0) {
+                // North pole fan (CCW winding)
+                mesh.indices.push_back(a);
+                mesh.indices.push_back(c);
+                mesh.indices.push_back(b);
+            } else if (ring == rings - 1) {
+                // South pole fan (CCW winding)
+                mesh.indices.push_back(a);
+                mesh.indices.push_back(d);
+                mesh.indices.push_back(b);
+            } else {
+                // Quad -> two triangles (CCW winding)
+                mesh.indices.push_back(a);
+                mesh.indices.push_back(c);
+                mesh.indices.push_back(b);
+                mesh.indices.push_back(a);
+                mesh.indices.push_back(d);
+                mesh.indices.push_back(c);
+            }
+        }
+    }
+}
+
+/// Tessellate a cube into a CachedMesh (port of bif_core primitives.rs)
+static void tessellate_cube(CachedMesh& mesh, double size) {
+    const float h = static_cast<float>(size) * 0.5f;
+
+    // 6 faces x 4 verts = 24 vertices (unique normals per face)
+    // clang-format off
+    float positions[] = {
+        // +X face
+         h, -h, -h,   h,  h, -h,   h,  h,  h,   h, -h,  h,
+        // -X face
+        -h, -h,  h,  -h,  h,  h,  -h,  h, -h,  -h, -h, -h,
+        // +Y face
+        -h,  h, -h,  -h,  h,  h,   h,  h,  h,   h,  h, -h,
+        // -Y face
+        -h, -h,  h,  -h, -h, -h,   h, -h, -h,   h, -h,  h,
+        // +Z face
+        -h, -h,  h,   h, -h,  h,   h,  h,  h,  -h,  h,  h,
+        // -Z face
+         h, -h, -h,  -h, -h, -h,  -h,  h, -h,   h,  h, -h,
+    };
+    float norms[] = {
+         1, 0, 0,   1, 0, 0,   1, 0, 0,   1, 0, 0,
+        -1, 0, 0,  -1, 0, 0,  -1, 0, 0,  -1, 0, 0,
+         0, 1, 0,   0, 1, 0,   0, 1, 0,   0, 1, 0,
+         0,-1, 0,   0,-1, 0,   0,-1, 0,   0,-1, 0,
+         0, 0, 1,   0, 0, 1,   0, 0, 1,   0, 0, 1,
+         0, 0,-1,   0, 0,-1,   0, 0,-1,   0, 0,-1,
+    };
+    float tex[] = {
+        0,0, 1,0, 1,1, 0,1,
+        0,0, 1,0, 1,1, 0,1,
+        0,0, 1,0, 1,1, 0,1,
+        0,0, 1,0, 1,1, 0,1,
+        0,0, 1,0, 1,1, 0,1,
+        0,0, 1,0, 1,1, 0,1,
+    };
+    // clang-format on
+
+    mesh.vertices.assign(positions, positions + 72);
+    mesh.normals.assign(norms, norms + 72);
+    mesh.uvs.assign(tex, tex + 48);
+
+    // Two triangles per face (CCW winding from outside)
+    mesh.indices.reserve(36);
+    for (uint32_t face = 0; face < 6; ++face) {
+        uint32_t base = face * 4;
+        mesh.indices.push_back(base);
+        mesh.indices.push_back(base + 1);
+        mesh.indices.push_back(base + 2);
+        mesh.indices.push_back(base);
+        mesh.indices.push_back(base + 2);
+        mesh.indices.push_back(base + 3);
+    }
+}
+
 /// Cache all mesh and instancer data from the stage
 static void cache_stage_data(UsdBridgeStage* bridge) {
     if (bridge->cached) return;
@@ -477,6 +615,7 @@ static void cache_stage_data(UsdBridgeStage* bridge) {
     long long time_vertices = 0, time_triangulate = 0, time_subsets = 0;
     long long time_normals = 0, time_uvs = 0, time_transform = 0;
     size_t total_verts = 0, total_tris = 0;
+    int sphere_count = 0, cube_count = 0;
 
     UsdGeomXformCache xform_cache;
 
@@ -604,6 +743,15 @@ static void cache_stage_data(UsdBridgeStage* bridge) {
             triangulate_mesh(face_vertex_counts, face_vertex_indices, cached.indices, triangle_face_indices);
             time_triangulate += duration_cast<milliseconds>(high_resolution_clock::now() - tri_start).count();
             total_tris += cached.indices.size() / 3;
+
+            // Check orientation — left-handed meshes need winding reversal
+            TfToken orientation;
+            if (mesh.GetOrientationAttr().Get(&orientation) &&
+                orientation == UsdGeomTokens->leftHanded) {
+                for (size_t i = 0; i < cached.indices.size(); i += 3) {
+                    std::swap(cached.indices[i + 1], cached.indices[i + 2]);
+                }
+            }
 
             // Extract GeomSubsets for per-face material assignment
             auto subset_start = high_resolution_clock::now();
@@ -947,6 +1095,132 @@ static void cache_stage_data(UsdBridgeStage* bridge) {
             bridge->meshes.push_back(std::move(cached));
         }
 
+        // Check for UsdGeomSphere (implicit geometry → tessellate as mesh)
+        else if (prim.IsA<UsdGeomSphere>()) {
+            std::string prim_path = prim.GetPath().GetString();
+
+            double radius = 1.0;
+            UsdGeomSphere sphere_geom(prim);
+            sphere_geom.GetRadiusAttr().Get(&radius);
+
+            // Dedup: instance proxies by prototype path, standalone spheres by radius
+            std::string dedup_path;
+            bool is_proxy = prim.IsInstanceProxy();
+            if (is_proxy) {
+                UsdPrim proto_prim = prim.GetPrimInPrototype();
+                dedup_path = proto_prim ? proto_prim.GetPath().GetString() : prim_path;
+            } else {
+                dedup_path = "__implicit_sphere_" + std::to_string(radius);
+            }
+
+            auto proto_it = prototype_mesh_index.find(dedup_path);
+            if (proto_it != prototype_mesh_index.end()) {
+                CachedNativeInstance inst;
+                inst.prototype_mesh_index = proto_it->second;
+                inst.world_transform = xform_cache.GetLocalToWorldTransform(prim);
+                inst.material_override_index = -1;
+
+                UsdShadeMaterialBindingAPI binding_api(prim);
+                UsdShadeMaterial bound_material = binding_api.ComputeBoundMaterial();
+                if (bound_material) {
+                    std::string mat_path = bound_material.GetPath().GetString();
+                    for (size_t mi = 0; mi < bridge->materials.size(); ++mi) {
+                        if (bridge->materials[mi].path == mat_path) {
+                            inst.material_override_index = static_cast<int>(mi);
+                            break;
+                        }
+                    }
+                }
+
+                bridge->native_instances.push_back(inst);
+                ++sphere_count;
+                continue;
+            }
+
+            CachedMesh cached;
+            cached.path = prim_path;
+            cached.is_instance_proxy = is_proxy;
+            tessellate_sphere(cached, radius, IMPLICIT_SPHERE_SEGMENTS);
+
+            cached.transform = xform_cache.GetLocalToWorldTransform(prim);
+
+            {
+                UsdShadeMaterialBindingAPI binding_api(prim);
+                UsdShadeMaterial bound_material = binding_api.ComputeBoundMaterial();
+                if (bound_material) {
+                    cached.bound_material_path = bound_material.GetPath().GetString();
+                }
+            }
+
+            int mesh_idx = static_cast<int>(bridge->meshes.size());
+            prototype_mesh_index[dedup_path] = mesh_idx;
+            bridge->meshes.push_back(std::move(cached));
+            ++sphere_count;
+        }
+
+        // Check for UsdGeomCube (implicit geometry → tessellate as mesh)
+        else if (prim.IsA<UsdGeomCube>()) {
+            std::string prim_path = prim.GetPath().GetString();
+
+            double size = 2.0;
+            UsdGeomCube cube_geom(prim);
+            cube_geom.GetSizeAttr().Get(&size);
+
+            // Dedup: instance proxies by prototype path, standalone cubes by size
+            std::string dedup_path;
+            bool is_proxy = prim.IsInstanceProxy();
+            if (is_proxy) {
+                UsdPrim proto_prim = prim.GetPrimInPrototype();
+                dedup_path = proto_prim ? proto_prim.GetPath().GetString() : prim_path;
+            } else {
+                dedup_path = "__implicit_cube_" + std::to_string(size);
+            }
+
+            auto proto_it = prototype_mesh_index.find(dedup_path);
+            if (proto_it != prototype_mesh_index.end()) {
+                CachedNativeInstance inst;
+                inst.prototype_mesh_index = proto_it->second;
+                inst.world_transform = xform_cache.GetLocalToWorldTransform(prim);
+                inst.material_override_index = -1;
+
+                UsdShadeMaterialBindingAPI binding_api(prim);
+                UsdShadeMaterial bound_material = binding_api.ComputeBoundMaterial();
+                if (bound_material) {
+                    std::string mat_path = bound_material.GetPath().GetString();
+                    for (size_t mi = 0; mi < bridge->materials.size(); ++mi) {
+                        if (bridge->materials[mi].path == mat_path) {
+                            inst.material_override_index = static_cast<int>(mi);
+                            break;
+                        }
+                    }
+                }
+
+                bridge->native_instances.push_back(inst);
+                ++cube_count;
+                continue;
+            }
+
+            CachedMesh cached;
+            cached.path = prim_path;
+            cached.is_instance_proxy = is_proxy;
+            tessellate_cube(cached, size);
+
+            cached.transform = xform_cache.GetLocalToWorldTransform(prim);
+
+            {
+                UsdShadeMaterialBindingAPI binding_api(prim);
+                UsdShadeMaterial bound_material = binding_api.ComputeBoundMaterial();
+                if (bound_material) {
+                    cached.bound_material_path = bound_material.GetPath().GetString();
+                }
+            }
+
+            int mesh_idx = static_cast<int>(bridge->meshes.size());
+            prototype_mesh_index[dedup_path] = mesh_idx;
+            bridge->meshes.push_back(std::move(cached));
+            ++cube_count;
+        }
+
         // Check for UsdGeomPointInstancer (skip instance proxies — they reference prototype instancers)
         if (prim.IsA<UsdGeomPointInstancer>() && !prim.IsInstanceProxy()) {
             UsdGeomPointInstancer instancer(prim);
@@ -1044,6 +1318,7 @@ static void cache_stage_data(UsdBridgeStage* bridge) {
     std::cout << "[USD_BRIDGE]   UVs:          " << time_uvs << "ms" << std::endl;
     std::cout << "[USD_BRIDGE]   Transforms:   " << time_transform << "ms" << std::endl;
     std::cout << "[USD_BRIDGE]   Native inst:  " << bridge->native_instances.size() << std::endl;
+    std::cout << "[USD_BRIDGE]   Implicits:    " << sphere_count << " spheres, " << cube_count << " cubes" << std::endl;
     std::cout << "[USD_BRIDGE]   SUBTOTAL:     " << total_time << "ms" << std::endl;
 
     bridge->cached = true;
@@ -1904,6 +2179,20 @@ static void cache_mesh_primvars(UsdBridgeStage* bridge) {
     }
 }
 
+// Helper: get light attribute, trying non-prefixed name first (old USD schema),
+// then inputs:-prefixed (new schema). Returns true if value was read.
+template<typename T>
+static bool get_light_attr(const UsdPrim& prim, const char* name, T& value) {
+    // Try non-prefixed first (old schema, e.g. ALab)
+    UsdAttribute attr = prim.GetAttribute(TfToken(name));
+    if (attr && attr.IsAuthored() && attr.Get(&value)) return true;
+    // Fall back to inputs: prefix (new schema)
+    std::string inputsName = std::string("inputs:") + name;
+    attr = prim.GetAttribute(TfToken(inputsName));
+    if (attr && attr.Get(&value)) return true;
+    return false;
+}
+
 static void cache_light_data(UsdBridgeStage* bridge) {
     if (bridge->lights_cached) return;
 
@@ -1918,53 +2207,49 @@ static void cache_light_data(UsdBridgeStage* bridge) {
         bool is_light = false;
 
         if (prim.IsA<UsdLuxDistantLight>()) {
-            UsdLuxDistantLight distant(prim);
             light.type = USD_LIGHT_DISTANT;
             is_light = true;
 
-            // Get angle (angular diameter in degrees)
-            float angle = 0.53f;  // Default: ~0.53 degrees (sun's angular diameter)
-            distant.GetAngleAttr().Get(&angle);
+            float angle = 0.53f;
+            get_light_attr(prim, "angle", angle);
             light.angle = angle;
             light.radius = 0.0f;
             light.width = 0.0f;
             light.height = 0.0f;
         }
         else if (prim.IsA<UsdLuxSphereLight>()) {
-            UsdLuxSphereLight sphere(prim);
             light.type = USD_LIGHT_SPHERE;
             is_light = true;
 
-            // Get radius
             float radius = 0.5f;
-            sphere.GetRadiusAttr().Get(&radius);
+            get_light_attr(prim, "radius", radius);
             light.radius = radius;
             light.angle = 0.0f;
             light.width = 0.0f;
             light.height = 0.0f;
         }
         else if (prim.IsA<UsdLuxRectLight>()) {
-            UsdLuxRectLight rect(prim);
             light.type = USD_LIGHT_RECT;
             is_light = true;
 
-            // Get width and height
             float width = 1.0f, height = 1.0f;
-            rect.GetWidthAttr().Get(&width);
-            rect.GetHeightAttr().Get(&height);
+            get_light_attr(prim, "width", width);
+            get_light_attr(prim, "height", height);
             light.width = width;
             light.height = height;
             light.angle = 0.0f;
             light.radius = 0.0f;
         }
         else if (prim.IsA<UsdLuxDomeLight>()) {
-            UsdLuxDomeLight dome(prim);
             light.type = USD_LIGHT_DOME;
             is_light = true;
 
-            // Get texture file path
+            // Get texture file — try both old and new schema
             SdfAssetPath texture_path;
-            if (dome.GetTextureFileAttr().Get(&texture_path)) {
+            UsdAttribute texAttr = prim.GetAttribute(TfToken("texture:file"));
+            if (!texAttr || !texAttr.IsAuthored())
+                texAttr = prim.GetAttribute(TfToken("inputs:texture:file"));
+            if (texAttr && texAttr.Get(&texture_path)) {
                 light.texture_path = texture_path.GetResolvedPath().empty()
                     ? texture_path.GetAssetPath()
                     : texture_path.GetResolvedPath();
@@ -1975,13 +2260,12 @@ static void cache_light_data(UsdBridgeStage* bridge) {
             light.height = 0.0f;
         }
         else if (prim.IsA<UsdLuxCylinderLight>()) {
-            UsdLuxCylinderLight cylinder(prim);
             light.type = USD_LIGHT_CYLINDER;
             is_light = true;
 
             float radius = 0.5f, length = 1.0f;
-            cylinder.GetRadiusAttr().Get(&radius);
-            cylinder.GetLengthAttr().Get(&length);
+            get_light_attr(prim, "radius", radius);
+            get_light_attr(prim, "length", length);
             light.radius = radius;
             light.length = length;
             light.angle = 0.0f;
@@ -1989,12 +2273,11 @@ static void cache_light_data(UsdBridgeStage* bridge) {
             light.height = 0.0f;
         }
         else if (prim.IsA<UsdLuxDiskLight>()) {
-            UsdLuxDiskLight disk(prim);
             light.type = USD_LIGHT_DISK;
             is_light = true;
 
             float radius = 0.5f;
-            disk.GetRadiusAttr().Get(&radius);
+            get_light_attr(prim, "radius", radius);
             light.radius = radius;
             light.angle = 0.0f;
             light.length = 0.0f;
@@ -2012,22 +2295,46 @@ static void cache_light_data(UsdBridgeStage* bridge) {
 
         // Color (default white)
         GfVec3f color(1.0f, 1.0f, 1.0f);
-        UsdAttribute colorAttr = prim.GetAttribute(TfToken("inputs:color"));
-        if (colorAttr) colorAttr.Get(&color);
+        get_light_attr(prim, "color", color);
         light.color[0] = color[0];
         light.color[1] = color[1];
         light.color[2] = color[2];
 
+        // Color temperature (Tanner Helland approximation)
+        bool enableColorTemp = false;
+        get_light_attr(prim, "enableColorTemperature", enableColorTemp);
+        if (enableColorTemp) {
+            float colorTemp = 6500.0f;
+            get_light_attr(prim, "colorTemperature", colorTemp);
+
+            float t = colorTemp / 100.0f;
+            float r, g, b;
+            if (t <= 66.0f) {
+                r = 1.0f;
+                g = 0.3900816f * logf(t) - 0.6318414f;
+                b = (t <= 19.0f) ? 0.0f : 0.5432068f * logf(t - 10.0f) - 1.1962541f;
+            } else {
+                r = 1.2929362f * powf(t - 60.0f, -0.1332047f);
+                g = 1.1298909f * powf(t - 60.0f, -0.0755148f);
+                b = 1.0f;
+            }
+            r = fmaxf(0.0f, fminf(1.0f, r));
+            g = fmaxf(0.0f, fminf(1.0f, g));
+            b = fmaxf(0.0f, fminf(1.0f, b));
+
+            light.color[0] *= r;
+            light.color[1] *= g;
+            light.color[2] *= b;
+        }
+
         // Intensity (default 1.0)
         float intensity = 1.0f;
-        UsdAttribute intensityAttr = prim.GetAttribute(TfToken("inputs:intensity"));
-        if (intensityAttr) intensityAttr.Get(&intensity);
+        get_light_attr(prim, "intensity", intensity);
         light.intensity = intensity;
 
         // Exposure (default 0.0, multiplier is 2^exposure)
         float exposure = 0.0f;
-        UsdAttribute exposureAttr = prim.GetAttribute(TfToken("inputs:exposure"));
-        if (exposureAttr) exposureAttr.Get(&exposure);
+        get_light_attr(prim, "exposure", exposure);
         light.exposure = exposure;
 
         // Get world transform

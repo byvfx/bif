@@ -772,8 +772,8 @@ impl Renderer {
         let config = RenderConfig {
             samples_per_pixel: 1, // 1 SPP per progressive pass
             max_depth: self.ivar.ivar_state.max_depth,
-            background: Color::new(0.1, 0.1, 0.1),
-            use_sky_gradient: true,
+            background: Color::ZERO,
+            use_sky_gradient: self.ivar.ivar_state.use_sky_gradient,
             environment: self.ivar.ivar_state.environment.clone(),
             lights: Arc::new(LightList::from(self.lights.scene_lights.as_slice())),
             pass_number,

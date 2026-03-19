@@ -62,11 +62,11 @@ pub fn create_cube(size: f32) -> Mesh {
         [0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0],
     ];
 
-    // Two triangles per face (CW winding when viewed from outside)
+    // Two triangles per face (CCW winding when viewed from outside)
     let mut indices = Vec::with_capacity(36);
     for face in 0..6u32 {
         let base = face * 4;
-        indices.extend_from_slice(&[base, base + 2, base + 1, base, base + 3, base + 2]);
+        indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
     }
 
     Mesh::new_with_uvs(positions, indices, Some(normals), Some(uvs))
@@ -100,7 +100,7 @@ pub fn create_sphere(radius: f32, segments: u32) -> Mesh {
         }
     }
 
-    // Generate indices (CW winding) with triangle fans at poles
+    // Generate indices (CCW winding) with triangle fans at poles
     let mut indices = Vec::new();
     let stride = sectors + 1;
     for ring in 0..rings {
@@ -111,14 +111,14 @@ pub fn create_sphere(radius: f32, segments: u32) -> Mesh {
             let d = a + 1;
 
             if ring == 0 {
-                // North pole: single triangle fan (a==d at pole)
-                indices.extend_from_slice(&[a, b, c]);
+                // North pole: single triangle fan (CCW)
+                indices.extend_from_slice(&[a, c, b]);
             } else if ring == rings - 1 {
-                // South pole: single triangle fan (b==c at pole)
-                indices.extend_from_slice(&[a, b, d]);
+                // South pole: single triangle fan (CCW)
+                indices.extend_from_slice(&[a, d, b]);
             } else {
-                // Normal quad: two triangles
-                indices.extend_from_slice(&[a, b, c, a, c, d]);
+                // Normal quad: two triangles (CCW)
+                indices.extend_from_slice(&[a, c, b, a, d, c]);
             }
         }
     }

@@ -8,6 +8,24 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Implicit geometry** — C++ bridge tessellates UsdGeomSphere/UsdGeomCube with dedup by radius/size, producing native instances with material overrides
+- **Native instance material overrides** — Rust loader clones prototypes for instances with different materials (e.g. 3 spheres, 3 materials)
+- **DomeLight auto-HDRI** — auto-connect first DomeLight texture to HdriEnvironment on USD load
+- **DomeLight rotation** — extract Y-axis rotation from transform's Z basis vector
+- **Color temperature** — C++ bridge converts UsdLux `colorTemperature` via Tanner Helland approximation
+- **Light schema compat** — `get_light_attr()` helper tries non-prefixed then `inputs:` prefixed attribute names (old/new USD schema)
+- **Default Sky toggle** — `use_sky_gradient` checkbox in Ivar render settings UI
+- **Mesh orientation** — C++ bridge reverses winding for leftHanded meshes
+
+### Changed
+
+- Winding convention switched from CW to CCW throughout (primitives, mesh normals, C++ tessellation)
+- RectLight emits along local -Z axis, uses radiance-based emission (no distance falloff — PDF handles it)
+- Default render background changed from gray (0.1) to black
+- Batch render respects `use_sky_gradient` setting
+
+### Fixed
+
 - **EventBus** — typed `AppEvent` enum + `EventBus` replacing 23 egui temp-data string-keyed slots; compile-time checked, framework-agnostic
 - **SelectionManager** — unified selection state (prim path, properties, instance index, scene browser, gizmo) extracted from Renderer
 - **SceneManager** — consolidated 16 scene-related fields (geometry, instances, materials, USD stage, undo/redo) into single subsystem

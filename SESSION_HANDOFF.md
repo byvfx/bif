@@ -1,6 +1,6 @@
-# Session Handoff - March 18, 2026
+# Session Handoff - March 19, 2026
 
-**Last Updated:** Enable .tx loading + fix OIIO mip buffer overflow
+**Last Updated:** Implicit geometry, native instance material overrides, lighting fixes
 **Next Milestone:** M29.5 egui upgrade
 **Project:** BIF - VFX Scene Assembler & Renderer
 
@@ -18,6 +18,15 @@
 ---
 
 ## Recent Work
+
+### Implicit Geometry + Lighting Overhaul (Mar 19, 2026)
+
+- C++ bridge tessellates UsdGeomSphere/UsdGeomCube, dedup by radius/size → native instances with material overrides
+- Rust loader processes native instances after material binding, clones prototypes for material overrides
+- Switched winding from CW→CCW (primitives, normals, C++ tessellation, leftHanded orientation fix)
+- DomeLight auto-HDRI, rotation extraction, color temperature, old/new schema compat
+- RectLight radiance-based emission (no distance falloff), default sky toggle, black background
+- **Known issue:** rough metal sphere may render differently from Karma — needs investigation (could be Ivar sample count or shading model differences)
 
 ### Enable .tx Loading + Fix OIIO Mip Crash (Mar 18, 2026)
 
