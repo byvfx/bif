@@ -781,7 +781,7 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 
 ---
 
-### Milestone 29: USD Export + Non-Destructive Layers 💾 (In Progress)
+### Milestone 29: USD Import and Export + Non-Destructive Layers 💾 (In Progress)
 
 - **Goal:** Close the pipeline loop: import → modify → render → **export**
 - **Estimated Time:** 20-25 hours
@@ -815,7 +815,10 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
   - Documentation for USD export workflow
   - Xform prim_filter (V1 placeholder — always all upstream)
   - Ivar CPU renderer doesn't reflect Xform transforms yet
-  - look in to usd asset authoring like houidinis component builder.  get some screen shots to help port it over. 
+  - look in to usd asset authoring like houidinis component builder.  get some screen shots to help port it over.
+  - Add "Edit Layer" concept in node graph (blue display flag) that gates export and allows non-destructive modifications on top of reference layer
+  - Export validation with real-world USD scenes (beyond simple test cases)
+  -  
 - **Architecture:**
   - Separate "edit layer" authored on top of reference layer
   - User modifications stored as opinions, not destructive edits
@@ -959,7 +962,6 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
   - Professional node editor (QGraphicsScene)
   - QMenuBar, QToolBar, QShortcut - standard DCC conventions
   - QUndoStack integration (replace simple undo stack from M20)
-
 ---
 
 ### Milestone 28.1: Integrated Asset Browser (File Browser) 📂
@@ -1050,7 +1052,6 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
   - Search bar with autocomplete in panel header
 
 - **Reference:** Blender asset browser (SQLite), Substance Source, Megascans plugin
-
 ---
 
 ### Milestone 29.5: egui 0.30 Upgrade + Vertical Node Layout 📐
@@ -1136,7 +1137,6 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 
 ---
 
-### Milestone 33: USD Debugging Tools 🛠️
 
 - **Goal:** usdview-parity debugging: variants, layers, metadata, namespace editing
 - **Estimated Time:** 10-15 hours
@@ -1269,7 +1269,7 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 |---|-----------|-------|--------|
 | 0-13b | Foundation | Math, viewport, USD, Embree, UI | ✅ Complete |
 | 14 | GPU Instancing | 10K+ instances + frustum culling + LOD | ✅ Complete |
-| 15 | Materials | UsdPreviewSurface + OpenPBR Surface (was Disney BSDF) | ✅ Complete |
+| 15 | Materials | UsdPreviewSurface + Disney BSDF | ✅ Complete |
 | 16 | MaterialX | MaterialX standard_surface support | ✅ Complete |
 | 17 | Viewport PBR | Textured PBR in Vulkan viewport | ✅ Complete |
 | 17.1 | OIIO/.tx | OpenImageIO texture pipeline (feature-gated) | ✅ Complete |
@@ -1278,7 +1278,7 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 | 19-21.2 | Frame Rendering + Interactivity | Batch render, animation, picking, scatter | ✅ Complete |
 | 23 | SHARC Radiance Cache | idTech 8 cache + Russian Roulette + heatmap AOV | ✅ Complete |
 | 26 | OIDN Denoising | Intel OIDN + albedo AOV pipeline | ✅ Complete |
-| 26.1 | Ivar Material Cache | Pre-warm + persist OpenPbrSurface materials | ✅ Complete |
+| 26.1 | Ivar Material Cache | Pre-warm + persist DisneyBSDF materials | ✅ Complete |
 
 ### Active & Planned
 
@@ -1301,8 +1301,6 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 | — | 22 | Viewport perf | Handle production scenes |
 | — | 27 | GPU path tracing | Near-realtime quality |
 | — | 28 | Qt 6 UI | Professional interface |
-| — | 28.1 | Asset browser (file browser) | Browse directories, thumbnails, drag-and-drop into graph/viewport/panels |
-| — | 28.2 | Asset library + catalog | SQLite catalog, tags, search, collections |
 
 ### Dissolved / Cut
 
@@ -1338,7 +1336,7 @@ Key papers (cherry-pick into relevant milestones as needed):
 |----------|--------|
 | [PBR Book](https://pbr-book.org/) | Comprehensive rendering theory |
 | [Ray Tracing Gems 1 & 2](https://www.realtimerendering.com/raytracinggems/) | Practical GPU techniques |
-| [OpenPBR Surface](https://academysoftwarefoundation.github.io/OpenPBR/) | ASWF standard material model (replaced Disney BSDF) |
+| Disney Principled BSDF | Industry-standard material model |
 | [howtovulkan.com](https://howtovulkan.com) | Modern Vulkan 1.3 patterns |
 | Intel OIDN | Production denoising |
 | NVIDIA ReSTIR | Real-time path tracing |
