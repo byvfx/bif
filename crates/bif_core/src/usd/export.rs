@@ -229,7 +229,6 @@ pub fn export_scene(
         .collect();
 
     // Write PointInstancers from point clouds
-    // TODO Phase 9: write cloud.invisible_ids via write_invisible_ids FFI
     let mut instancer_count = 0;
     for (cloud, proto_paths) in &cloud_proto_paths {
         let instancer_path = if cloud.name.starts_with('/') {
@@ -257,6 +256,10 @@ pub fn export_scene(
                 );
                 e
             })?;
+        // Write invisibleIds if any (Phase 9)
+        if !cloud.invisible_ids.is_empty() {
+            layer.write_invisible_ids(&instancer_path, &cloud.invisible_ids)?;
+        }
         instancer_count += 1;
     }
 
@@ -278,6 +281,14 @@ pub fn export_scene(
                             layer.bind_material(&path, mat_path)?;
                         }
                     }
+                    // GeomSubsets for per-face materials (Phase 6)
+                    export_geom_subsets(
+                        &mut layer,
+                        &path,
+                        &proto.mesh,
+                        &material_paths,
+                        &scene.materials,
+                    )?;
                     written_protos.insert(proto_path.clone());
                     mesh_count += 1;
                 }
@@ -301,6 +312,14 @@ pub fn export_scene(
                 layer.bind_material(&path, mat_path)?;
             }
         }
+        // GeomSubsets for per-face materials (Phase 6)
+        export_geom_subsets(
+            &mut layer,
+            &path,
+            &proto.mesh,
+            &material_paths,
+            &scene.materials,
+        )?;
         written_protos.insert(proto_path);
         mesh_count += 1;
     }
@@ -569,8 +588,50 @@ fn scene_light_to_usd(light: &Light, index: usize, export_root: &str) -> UsdLigh
     }
 }
 
-// TODO Phase 6: export_geom_subsets — write GeomSubset child prims for per-face
-// material assignments. Needs C++ bridge function for UsdGeomSubset::CreateGeomSubset.
+/// Write GeomSubset child prims for per-face material assignments (Phase 6).
+///
+/// Groups faces by material ID and creates a GeomSubset for each group,
+/// binding the corresponding material.
+fn export_geom_subsets(
+    layer: &mut UsdEditLayer,
+    mesh_path: &str,
+    mesh: &crate::mesh::Mesh,
+    material_paths: &HashMap<String, String>,
+    scene_materials: &[std::sync::Arc<crate::scene::Material>],
+) -> Result<usize, UsdBridgeError> {
+    let face_ids = match &mesh.face_material_ids {
+        Some(ids) if ids.len() > 1 => ids,
+        _ => return Ok(0),
+    };
+
+    // Group face indices by material ID
+    let mut groups: HashMap<u32, Vec<i32>> = HashMap::new();
+    for (face_idx, &mat_id) in face_ids.iter().enumerate() {
+        groups.entry(mat_id).or_default().push(face_idx as i32);
+    }
+
+    // Skip if only one group (whole-mesh binding suffices)
+    if groups.len() <= 1 {
+        return Ok(0);
+    }
+
+    let mut count = 0;
+    for (mat_id, indices) in &groups {
+        let subset_name = format!("mat_{}", mat_id);
+        let mat_path = scene_materials
+            .get(*mat_id as usize)
+            .and_then(|m| material_paths.get(m.name.as_ref()));
+
+        layer.write_geom_subset(
+            mesh_path,
+            &subset_name,
+            indices,
+            mat_path.map(|s| s.as_str()),
+        )?;
+        count += 1;
+    }
+    Ok(count)
+}
 
 #[cfg(test)]
 mod tests {

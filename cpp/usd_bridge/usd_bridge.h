@@ -1519,6 +1519,46 @@ UsdBridgeError usd_bridge_write_render_settings(
     float pixel_aspect_ratio
 );
 
+// ============================================================================
+// GeomSubset Export
+// ============================================================================
+
+/// Write a UsdGeomSubset child prim for per-face material assignment.
+///
+/// @param layer Edit layer handle
+/// @param mesh_path Parent mesh prim path
+/// @param subset_name Name for the subset prim (e.g., "mat_0")
+/// @param face_indices Array of face indices belonging to this subset
+/// @param face_count Number of face indices
+/// @param material_path Material to bind to this subset (NULL to skip binding)
+/// @return USD_BRIDGE_SUCCESS on success
+UsdBridgeError usd_bridge_write_geom_subset(
+    UsdBridgeEditLayer* layer,
+    const char* mesh_path,
+    const char* subset_name,
+    const int* face_indices,
+    size_t face_count,
+    const char* material_path
+);
+
+// ============================================================================
+// PointInstancer InvisibleIds Export
+// ============================================================================
+
+/// Write invisibleIds attribute on a UsdGeomPointInstancer.
+///
+/// @param layer Edit layer handle
+/// @param instancer_path PointInstancer prim path
+/// @param ids Array of instance IDs to hide
+/// @param count Number of IDs
+/// @return USD_BRIDGE_SUCCESS on success
+UsdBridgeError usd_bridge_write_invisible_ids(
+    UsdBridgeEditLayer* layer,
+    const char* instancer_path,
+    const int64_t* ids,
+    size_t count
+);
+
 #ifdef __cplusplus
 }
 #endif

@@ -7,6 +7,7 @@
 #include <pxr/usd/usd/stage.h>
 #include <pxr/usd/usd/primRange.h>
 #include <pxr/usd/usdGeom/mesh.h>
+#include <pxr/usd/usdGeom/subset.h>
 #include <pxr/usd/usdGeom/pointInstancer.h>
 #include <pxr/usd/usdGeom/xformCache.h>
 #include <pxr/usd/usdGeom/camera.h>
@@ -5085,4 +5086,102 @@ UsdBridgeError usd_bridge_get_volume(const UsdBridgeStage* stage, size_t index, 
     out_data->field_name = v.field_name.empty() ? nullptr : v.field_name.c_str();
     for (int i = 0; i < 16; ++i) out_data->transform[i] = v.transform[i];
     return USD_BRIDGE_SUCCESS;
+}
+
+// ============================================================================
+// GeomSubset Export
+// ============================================================================
+
+UsdBridgeError usd_bridge_write_geom_subset(
+    UsdBridgeEditLayer* layer,
+    const char* mesh_path,
+    const char* subset_name,
+    const int* face_indices,
+    size_t face_count,
+    const char* material_path
+) {
+    if (!layer || !mesh_path || !subset_name || !face_indices) {
+        return USD_BRIDGE_ERROR_NULL_POINTER;
+    }
+
+    try {
+        pxr::SdfPath parentPath(mesh_path);
+        pxr::SdfPath subsetPath = parentPath.AppendChild(pxr::TfToken(subset_name));
+
+        auto subset = pxr::UsdGeomSubset::Define(layer->stage, subsetPath);
+        if (!subset) {
+            return USD_BRIDGE_ERROR_INVALID_PRIM;
+        }
+
+        // Set element type to "face"
+        subset.GetElementTypeAttr().Set(pxr::TfToken("face"));
+
+        // Set family name for material binding
+        subset.GetFamilyNameAttr().Set(pxr::TfToken("materialBind"));
+
+        // Set face indices
+        pxr::VtIntArray indices(face_count);
+        for (size_t i = 0; i < face_count; ++i) {
+            indices[i] = face_indices[i];
+        }
+        subset.GetIndicesAttr().Set(indices);
+
+        // Bind material if path provided
+        if (material_path && material_path[0] != '\0') {
+            pxr::SdfPath matPath(material_path);
+            pxr::UsdPrim matPrim = layer->stage->GetPrimAtPath(matPath);
+            if (matPrim) {
+                pxr::UsdShadeMaterial material(matPrim);
+                if (material) {
+                    pxr::UsdShadeMaterialBindingAPI bindingAPI =
+                        pxr::UsdShadeMaterialBindingAPI::Apply(subset.GetPrim());
+                    bindingAPI.Bind(material);
+                }
+            }
+        }
+
+        return USD_BRIDGE_SUCCESS;
+    } catch (const std::exception& e) {
+        TF_WARN("usd_bridge_write_geom_subset: %s", e.what());
+        return USD_BRIDGE_ERROR_UNKNOWN;
+    }
+}
+
+// ============================================================================
+// PointInstancer InvisibleIds Export
+// ============================================================================
+
+UsdBridgeError usd_bridge_write_invisible_ids(
+    UsdBridgeEditLayer* layer,
+    const char* instancer_path,
+    const int64_t* ids,
+    size_t count
+) {
+    if (!layer || !instancer_path) return USD_BRIDGE_ERROR_NULL_POINTER;
+    if (count == 0) return USD_BRIDGE_SUCCESS;
+    if (!ids) return USD_BRIDGE_ERROR_NULL_POINTER;
+
+    try {
+        pxr::SdfPath path(instancer_path);
+        pxr::UsdPrim prim = layer->stage->GetPrimAtPath(path);
+        if (!prim) {
+            return USD_BRIDGE_ERROR_INVALID_PRIM;
+        }
+
+        pxr::UsdGeomPointInstancer instancer(prim);
+        if (!instancer) {
+            return USD_BRIDGE_ERROR_INVALID_PRIM;
+        }
+
+        pxr::VtArray<int64_t> idArray(count);
+        for (size_t i = 0; i < count; ++i) {
+            idArray[i] = ids[i];
+        }
+        instancer.GetInvisibleIdsAttr().Set(idArray);
+
+        return USD_BRIDGE_SUCCESS;
+    } catch (const std::exception& e) {
+        TF_WARN("usd_bridge_write_invisible_ids: %s", e.what());
+        return USD_BRIDGE_ERROR_UNKNOWN;
+    }
 }

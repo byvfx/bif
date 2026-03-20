@@ -888,6 +888,24 @@ extern "C" {
 
     // Collection material binding handled by existing get_mesh_material_path
     // (ComputeBoundMaterial resolves both direct and collection-based bindings)
+
+    // GeomSubset export
+    fn usd_bridge_write_geom_subset(
+        layer: *mut UsdBridgeEditLayerRaw,
+        mesh_path: *const std::ffi::c_char,
+        subset_name: *const std::ffi::c_char,
+        face_indices: *const i32,
+        face_count: usize,
+        material_path: *const std::ffi::c_char,
+    ) -> UsdBridgeErrorCode;
+
+    // PointInstancer invisibleIds export
+    fn usd_bridge_write_invisible_ids(
+        layer: *mut UsdBridgeEditLayerRaw,
+        instancer_path: *const std::ffi::c_char,
+        ids: *const i64,
+        count: usize,
+    ) -> UsdBridgeErrorCode;
 }
 
 // ============================================================================
@@ -4263,6 +4281,52 @@ impl UsdEditLayer {
                 c_cam.as_ref().map_or(ptr::null(), |s| s.as_ptr()),
                 pixel_aspect_ratio,
             )
+        };
+        if code != UsdBridgeErrorCode::Success {
+            return Err(code.into());
+        }
+        Ok(())
+    }
+
+    /// Write a GeomSubset child prim for per-face material assignment.
+    pub fn write_geom_subset(
+        &mut self,
+        mesh_path: &str,
+        subset_name: &str,
+        face_indices: &[i32],
+        material_path: Option<&str>,
+    ) -> UsdBridgeResult<()> {
+        let c_mesh = CString::new(mesh_path).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_name = CString::new(subset_name).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_mat = material_path.and_then(|s| CString::new(s).ok());
+        let code = unsafe {
+            usd_bridge_write_geom_subset(
+                self.raw,
+                c_mesh.as_ptr(),
+                c_name.as_ptr(),
+                face_indices.as_ptr(),
+                face_indices.len(),
+                c_mat.as_ref().map_or(ptr::null(), |s| s.as_ptr()),
+            )
+        };
+        if code != UsdBridgeErrorCode::Success {
+            return Err(code.into());
+        }
+        Ok(())
+    }
+
+    /// Write invisibleIds attribute on a PointInstancer prim.
+    pub fn write_invisible_ids(
+        &mut self,
+        instancer_path: &str,
+        ids: &[i64],
+    ) -> UsdBridgeResult<()> {
+        if ids.is_empty() {
+            return Ok(());
+        }
+        let c_path = CString::new(instancer_path).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let code = unsafe {
+            usd_bridge_write_invisible_ids(self.raw, c_path.as_ptr(), ids.as_ptr(), ids.len())
         };
         if code != UsdBridgeErrorCode::Success {
             return Err(code.into());
