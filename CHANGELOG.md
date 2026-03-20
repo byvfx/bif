@@ -8,6 +8,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Bound Material inspector** — property inspector shows OpenPBR params (color swatches, scalars, textures, double-sided) for selected prim's material
 - **Implicit geometry** — C++ bridge tessellates UsdGeomSphere/UsdGeomCube with dedup by radius/size, producing native instances with material overrides
 - **Native instance material overrides** — Rust loader clones prototypes for instances with different materials (e.g. 3 spheres, 3 materials)
 - **DomeLight auto-HDRI** — auto-connect first DomeLight texture to HdriEnvironment on USD load

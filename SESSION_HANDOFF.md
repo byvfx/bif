@@ -19,6 +19,13 @@
 
 ## Recent Work
 
+### Bound Material Inspector (Mar 19, 2026)
+
+- Property inspector shows "Bound Material" section for selected mesh prims
+- Displays all OpenPBR params: base color swatch+RGB, metalness, roughness, specular weight/IOR, transmission, opacity, emission (conditional), double-sided, texture paths
+- Lookup: prim_path → instance → prototype → material
+- User wants Houdini-style layout in future iteration
+
 ### Implicit Geometry + Lighting Overhaul (Mar 19, 2026)
 
 - C++ bridge tessellates UsdGeomSphere/UsdGeomCube, dedup by radius/size → native instances with material overrides
