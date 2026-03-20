@@ -8,6 +8,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **USD export: stage metadata** — export writes upAxis, metersPerUnit, timeCodesPerSecond, defaultPrim
+- **USD export: materials** — export writes UsdPreviewSurface materials + bind_material per mesh
+- **USD export: lights** — export writes all 4 light types (Distant, Sphere, Rect, Dome) as UsdLux prims
+- **USD export: cameras** — export writes UsdGeomCamera with FOV-to-focal-length conversion
+- **USD export: visibility** — hidden_prim_paths on ExportConfig writes visibility:invisible
+- **Curves/Points import** — loader reads UsdGeomBasisCurves and UsdGeomPoints via C++ bridge
+- **CurvesPrim/PointsPrim** — new scene graph types for curves and points primitives
+- **PointCloud.invisible_ids** — stores instancer invisibleIds for roundtrip
 - **Bound Material inspector** — property inspector shows OpenPBR params (color swatches, scalars, textures, double-sided) for selected prim's material
 - **Implicit geometry** — C++ bridge tessellates UsdGeomSphere/UsdGeomCube with dedup by radius/size, producing native instances with material overrides
 - **Native instance material overrides** — Rust loader clones prototypes for instances with different materials (e.g. 3 spheres, 3 materials)
@@ -24,6 +32,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - **Point light specular ring artifact** — MIS power heuristic crushed specular peak for delta lights; now skips MIS when `is_delta=true`
 - **Shadow ray self-intersection** — shadow ray origin offset along surface normal prevents acne on curved geometry
+
+### Removed
+
+- **Rust USDA parser** — deleted parser.rs + SceneBuilder; all USD loading routes through C++ bridge
 
 ### Changed
 

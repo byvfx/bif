@@ -1,7 +1,7 @@
-# Session Handoff - March 19, 2026
+# Session Handoff - March 20, 2026
 
-**Last Updated:** Implicit geometry, native instance material overrides, lighting fixes
-**Next Milestone:** M29.5 egui upgrade
+**Last Updated:** USD export gap closure (10-phase plan, phases 1-4, 7-10 done)
+**Next Milestone:** C++ bridge extensions (GeomSubset, invisibleIds, OpenPBR MaterialX), then M29.5 egui upgrade
 **Project:** BIF - VFX Scene Assembler & Renderer
 
 ---
@@ -18,6 +18,15 @@
 ---
 
 ## Recent Work
+
+### USD Export Gap Closure (Mar 20, 2026)
+
+- Wired existing C++ bridge FFI into export_scene: stage metadata, materials w/ bindings, lights (4 types), cameras, visibility
+- Added CurvesPrim/PointsPrim scene types, loader calls stage.curves()/points()
+- Deleted Rust USDA parser (parser.rs + SceneBuilder), all loading via C++ bridge
+- Added invisible_ids to PointCloud for instancer visibility roundtrip
+- **Remaining C++ work:** GeomSubset export (Phase 6), invisibleIds export (Phase 9), OpenPBR MaterialX dual export (Phase 5)
+- Net -955 lines (parser deletion outweighs new export code)
 
 ### Bound Material Inspector (Mar 19, 2026)
 
