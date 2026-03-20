@@ -15,7 +15,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **USD export: visibility** — hidden_prim_paths on ExportConfig writes visibility:invisible
 - **Curves/Points import** — loader reads UsdGeomBasisCurves and UsdGeomPoints via C++ bridge
 - **CurvesPrim/PointsPrim** — new scene graph types for curves and points primitives
-- **PointCloud.invisible_ids** — stores instancer invisibleIds for roundtrip
+- **PointCloud.invisible_ids** — stores instancer invisibleIds for roundtrip export
+- **GeomSubset export** — per-face material assignments via UsdGeomSubset child prims
+- **C++ bridge: write_geom_subset** — creates GeomSubset with face indices + material binding
+- **C++ bridge: write_invisible_ids** — sets invisibleIds on PointInstancer for visibility masking
 - **Bound Material inspector** — property inspector shows OpenPBR params (color swatches, scalars, textures, double-sided) for selected prim's material
 - **Implicit geometry** — C++ bridge tessellates UsdGeomSphere/UsdGeomCube with dedup by radius/size, producing native instances with material overrides
 - **Native instance material overrides** — Rust loader clones prototypes for instances with different materials (e.g. 3 spheres, 3 materials)

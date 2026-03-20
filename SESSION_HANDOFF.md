@@ -1,7 +1,7 @@
 # Session Handoff - March 20, 2026
 
 **Last Updated:** USD export gap closure (10-phase plan, phases 1-4, 7-10 done)
-**Next Milestone:** C++ bridge extensions (GeomSubset, invisibleIds, OpenPBR MaterialX), then M29.5 egui upgrade
+**Next Milestone:** OpenPBR MaterialX dual export (Phase 5), then M29.5 egui upgrade
 **Project:** BIF - VFX Scene Assembler & Renderer
 
 ---
@@ -25,7 +25,8 @@
 - Added CurvesPrim/PointsPrim scene types, loader calls stage.curves()/points()
 - Deleted Rust USDA parser (parser.rs + SceneBuilder), all loading via C++ bridge
 - Added invisible_ids to PointCloud for instancer visibility roundtrip
-- **Remaining C++ work:** GeomSubset export (Phase 6), invisibleIds export (Phase 9), OpenPBR MaterialX dual export (Phase 5)
+- C++ bridge extended: write_geom_subset (Phase 6), write_invisible_ids (Phase 9) — fully wired
+- **Remaining:** OpenPBR MaterialX dual export (Phase 5) needs C++ bridge for MaterialX authoring
 - Net -955 lines (parser deletion outweighs new export code)
 
 ### Bound Material Inspector (Mar 19, 2026)
