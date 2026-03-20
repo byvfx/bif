@@ -16,6 +16,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Light schema compat** — `get_light_attr()` helper tries non-prefixed then `inputs:` prefixed attribute names (old/new USD schema)
 - **Default Sky toggle** — `use_sky_gradient` checkbox in Ivar render settings UI
 - **Mesh orientation** — C++ bridge reverses winding for leftHanded meshes
+- **`treatAsPoint`** — C++ bridge reads USD SphereLight `treatAsPoint` attribute, sets radius=0 for point light behavior
+- **`LightSample.is_delta`** — delta light flag enables correct NEE without MIS weighting
+
+### Fixed
+
+- **Point light specular ring artifact** — MIS power heuristic crushed specular peak for delta lights; now skips MIS when `is_delta=true`
+- **Shadow ray self-intersection** — shadow ray origin offset along surface normal prevents acne on curved geometry
 
 ### Changed
 

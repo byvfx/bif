@@ -18,6 +18,8 @@ pub struct LightSample {
     pub pdf: f32,
     /// Distance to light (f32::INFINITY for distant lights)
     pub distance: f32,
+    /// Whether this light is a delta distribution (point/distant with zero extent)
+    pub is_delta: bool,
 }
 
 /// Trait for light sources that can be sampled for NEE.
@@ -78,6 +80,7 @@ impl Light for DistantLight {
                 1.0 // Delta PDF
             },
             distance: f32::INFINITY,
+            is_delta: self.angle <= 0.0,
         }
     }
 
@@ -145,6 +148,7 @@ impl Light for SphereLight {
                 emission: self.color * self.intensity * falloff,
                 pdf: 1.0 / (std::f32::consts::TAU * (1.0 - cos_theta_max)),
                 distance: distance.max(0.001),
+                is_delta: false,
             }
         } else {
             // Point light or inside sphere
@@ -156,6 +160,7 @@ impl Light for SphereLight {
                 emission: self.color * self.intensity * falloff,
                 pdf: 1.0, // Delta PDF
                 distance,
+                is_delta: true,
             }
         }
     }
@@ -275,6 +280,7 @@ impl Light for RectLight {
             emission,
             pdf,
             distance,
+            is_delta: false,
         }
     }
 

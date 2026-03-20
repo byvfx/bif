@@ -2223,7 +2223,11 @@ static void cache_light_data(UsdBridgeStage* bridge) {
 
             float radius = 0.5f;
             get_light_attr(prim, "radius", radius);
-            light.radius = radius;
+
+            // treatAsPoint → point light (radius=0), ignoring physical sphere extent
+            bool treat_as_point = false;
+            get_light_attr(prim, "treatAsPoint", treat_as_point);
+            light.radius = treat_as_point ? 0.0f : radius;
             light.angle = 0.0f;
             light.width = 0.0f;
             light.height = 0.0f;

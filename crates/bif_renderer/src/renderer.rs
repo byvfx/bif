@@ -195,11 +195,14 @@ pub fn ray_color_with_aovs(
 
         // NEE: sample lights directly (non-delta materials only)
         if !is_delta {
+            // Offset shadow ray origin along normal to avoid self-intersection
+            let shadow_origin = rec.p + rec.normal * 0.001;
+
             // Sample HDRI environment
             if let Some((env, rotation, intensity)) = env_params.as_ref() {
                 let (light_dir, light_emission, light_pdf) =
                     env.sample_direction_with_params(rng, *rotation, *intensity);
-                let shadow_ray = Ray::new(rec.p, light_dir, current_ray.time());
+                let shadow_ray = Ray::new(shadow_origin, light_dir, current_ray.time());
                 let mut shadow_rec = HitRecord::default();
                 if !world.hit(
                     &shadow_ray,
@@ -220,7 +223,8 @@ pub fn ray_color_with_aovs(
             // Sample explicit lights (USD lights)
             if let Some((light_sample, _idx)) = config.lights.sample_one(rec.p, rng) {
                 if light_sample.pdf > 0.0 {
-                    let shadow_ray = Ray::new(rec.p, light_sample.direction, current_ray.time());
+                    let shadow_ray =
+                        Ray::new(shadow_origin, light_sample.direction, current_ray.time());
                     let mut shadow_rec = HitRecord::default();
                     let max_t = if light_sample.distance < f32::INFINITY {
                         light_sample.distance - 0.001
@@ -229,9 +233,14 @@ pub fn ray_color_with_aovs(
                     };
                     if !world.hit(&shadow_ray, Interval::new(0.001, max_t), &mut shadow_rec) {
                         let bsdf_val = rec.material.bsdf(&current_ray, &rec, &shadow_ray);
-                        let bsdf_pdf = rec.material.pdf(&current_ray, &rec, &shadow_ray);
-                        let mis_w = power_heuristic(light_sample.pdf, bsdf_pdf);
                         let cos_theta = rec.normal.dot(light_sample.direction).max(0.0);
+                        // Delta lights can only be hit via NEE — skip MIS
+                        let mis_w = if light_sample.is_delta {
+                            1.0
+                        } else {
+                            let bsdf_pdf = rec.material.pdf(&current_ray, &rec, &shadow_ray);
+                            power_heuristic(light_sample.pdf, bsdf_pdf)
+                        };
                         let nee_contrib = bsdf_val * light_sample.emission * cos_theta * mis_w
                             / light_sample.pdf.max(1e-10);
                         accumulated += throughput * nee_contrib;
