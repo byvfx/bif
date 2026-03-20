@@ -4,6 +4,8 @@
 //! When a viewport instance is selected, provides editable DragValue fields
 //! for translation, rotation (Euler degrees), and scale.
 
+use std::sync::Arc;
+
 use crate::app_event::{AppEvent, EventBus};
 use crate::scene_browser::PrimDisplayInfo;
 use bif_math::Mat4;
@@ -31,6 +33,9 @@ pub struct PrimProperties {
 
     /// Additional key-value properties
     pub attributes: Vec<(String, String)>,
+
+    /// Bound material (if available)
+    pub bound_material: Option<Arc<bif_core::Material>>,
 }
 
 /// Event emitted when user edits a transform in the property inspector.
@@ -57,6 +62,7 @@ impl PrimProperties {
             bounds_min: None,
             bounds_max: None,
             attributes: vec![("Children".to_string(), info.child_count.to_string())],
+            bound_material: None,
         }
     }
 
@@ -76,6 +82,12 @@ impl PrimProperties {
     /// Add an attribute.
     pub fn with_attribute(mut self, name: &str, value: &str) -> Self {
         self.attributes.push((name.to_string(), value.to_string()));
+        self
+    }
+
+    /// Set the bound material.
+    pub fn with_material(mut self, material: Arc<bif_core::Material>) -> Self {
+        self.bound_material = Some(material);
         self
     }
 }
@@ -165,6 +177,14 @@ pub fn render_property_inspector(
                                 ui.end_row();
                             }
                         });
+                });
+            }
+
+            // Bound Material
+            if let Some(mat) = &props.bound_material {
+                ui.separator();
+                ui.collapsing("Bound Material", |ui| {
+                    render_material_properties(ui, mat);
                 });
             }
         }
@@ -345,6 +365,134 @@ fn values_to_transform(values: &[f32; 9]) -> bif_core::Transform {
         rotation,
         scale,
     }
+}
+
+/// Render material properties in a grid layout.
+fn render_material_properties(ui: &mut egui::Ui, mat: &bif_core::Material) {
+    // Material name
+    ui.horizontal(|ui| {
+        ui.label("Name:");
+        ui.label(egui::RichText::new(mat.name.as_ref()).monospace());
+    });
+    ui.add_space(4.0);
+
+    egui::Grid::new("material_props_grid")
+        .num_columns(2)
+        .striped(true)
+        .spacing([8.0, 4.0])
+        .show(ui, |ui| {
+            // Base color with swatch
+            ui.label("Base Color");
+            ui.horizontal(|ui| {
+                let c = mat.base_color;
+                let color = egui::Color32::from_rgb(
+                    (c.x.clamp(0.0, 1.0) * 255.0) as u8,
+                    (c.y.clamp(0.0, 1.0) * 255.0) as u8,
+                    (c.z.clamp(0.0, 1.0) * 255.0) as u8,
+                );
+                show_color_swatch(ui, color);
+                ui.label(
+                    egui::RichText::new(format!("({:.3}, {:.3}, {:.3})", c.x, c.y, c.z))
+                        .monospace(),
+                );
+            });
+            ui.end_row();
+
+            // Metalness
+            ui.label("Metalness");
+            ui.label(egui::RichText::new(format!("{:.3}", mat.base_metalness)).monospace());
+            ui.end_row();
+
+            // Roughness
+            ui.label("Roughness");
+            ui.label(egui::RichText::new(format!("{:.3}", mat.specular_roughness)).monospace());
+            ui.end_row();
+
+            // Specular Weight
+            ui.label("Specular Weight");
+            ui.label(egui::RichText::new(format!("{:.3}", mat.specular_weight)).monospace());
+            ui.end_row();
+
+            // Specular IOR
+            ui.label("Specular IOR");
+            ui.label(egui::RichText::new(format!("{:.3}", mat.specular_ior)).monospace());
+            ui.end_row();
+
+            // Transmission
+            ui.label("Transmission");
+            ui.label(egui::RichText::new(format!("{:.3}", mat.transmission_weight)).monospace());
+            ui.end_row();
+
+            // Opacity
+            ui.label("Opacity");
+            ui.label(egui::RichText::new(format!("{:.3}", mat.geometry_opacity)).monospace());
+            ui.end_row();
+
+            // Emission (only if luminance > 0)
+            if mat.emission_luminance > 0.0 {
+                ui.label("Emission Color");
+                ui.horizontal(|ui| {
+                    let c = mat.emission_color;
+                    let color = egui::Color32::from_rgb(
+                        (c.x.clamp(0.0, 1.0) * 255.0) as u8,
+                        (c.y.clamp(0.0, 1.0) * 255.0) as u8,
+                        (c.z.clamp(0.0, 1.0) * 255.0) as u8,
+                    );
+                    show_color_swatch(ui, color);
+                    ui.label(
+                        egui::RichText::new(format!("({:.3}, {:.3}, {:.3})", c.x, c.y, c.z))
+                            .monospace(),
+                    );
+                });
+                ui.end_row();
+
+                ui.label("Emission Luminance");
+                ui.label(
+                    egui::RichText::new(format!("{:.1} nits", mat.emission_luminance)).monospace(),
+                );
+                ui.end_row();
+            }
+
+            // Double-sided
+            ui.label("Double-Sided");
+            ui.label(if mat.double_sided { "Yes" } else { "No" });
+            ui.end_row();
+        });
+
+    // Textures (only show non-None)
+    let textures = [
+        ("Base Color", &mat.base_color_texture),
+        ("Roughness", &mat.specular_roughness_texture),
+        ("Metalness", &mat.base_metalness_texture),
+        ("Normal", &mat.normal_texture),
+        ("Emission", &mat.emission_texture),
+        ("Opacity", &mat.geometry_opacity_texture),
+    ];
+    let has_textures = textures.iter().any(|(_, t)| t.is_some());
+
+    if has_textures {
+        ui.add_space(4.0);
+        ui.label(egui::RichText::new("Textures").strong());
+        egui::Grid::new("material_textures_grid")
+            .num_columns(2)
+            .striped(true)
+            .spacing([8.0, 4.0])
+            .show(ui, |ui| {
+                for (name, tex) in &textures {
+                    if let Some(path) = tex {
+                        ui.label(*name);
+                        ui.label(egui::RichText::new(path.as_ref()).monospace().small());
+                        ui.end_row();
+                    }
+                }
+            });
+    }
+}
+
+/// Draw a small color swatch.
+fn show_color_swatch(ui: &mut egui::Ui, color: egui::Color32) {
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(14.0, 14.0), egui::Sense::hover());
+    ui.painter().rect_filled(rect, 2.0, color);
 }
 
 /// Render a 4x4 matrix in a collapsible grid.

@@ -766,6 +766,22 @@ impl Renderer {
                                 ProceduralPrimKind::Scope => {}
                             }
                         }
+                        // Look up bound material: prim_path → instance → prototype
+                        if let Some(inst) = self
+                            .scene
+                            .working_scene
+                            .instances()
+                            .iter()
+                            .find(|i| i.prim_path.as_ref() == prim_path.as_str())
+                        {
+                            if let Some(proto) =
+                                self.scene.working_scene.prototypes.get(inst.prototype_id)
+                            {
+                                if let Some(mat) = &proto.material {
+                                    props = props.with_material(mat.clone());
+                                }
+                            }
+                        }
                         self.selection.selected_prim_properties = Some(props);
                     } else {
                         self.selection.selected_prim_properties = Some(PrimProperties {
