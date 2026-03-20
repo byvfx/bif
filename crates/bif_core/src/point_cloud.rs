@@ -57,6 +57,9 @@ pub struct PointCloud {
     pub transform: Transform,
     /// How the points were generated.
     pub distribution: DistributionMethod,
+    /// Instance IDs to hide (from UsdGeomPointInstancer invisibleIds).
+    /// Stored for roundtrip; loader already filters these on expand.
+    pub invisible_ids: Vec<i64>,
 }
 
 impl PointCloud {
@@ -134,6 +137,7 @@ mod tests {
             id: 0,
             name: "test".into(),
             positions,
+            invisible_ids: Vec::new(),
             attributes: PointAttributes {
                 proto_indices,
                 ..Default::default()

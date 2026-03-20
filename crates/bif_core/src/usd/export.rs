@@ -3,12 +3,17 @@
 //! All export logic lives in `bif_core` (no egui dependency) so it can be
 //! reused from any UI framework (egui, Qt, CLI).
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+
+use bif_math::{Mat4, Quat, Vec3};
 
 use crate::point_cloud::PointCloud;
-use crate::scene::Scene;
+use crate::scene::{Light, Scene};
 use crate::undo::EditState;
-use crate::usd::cpp_bridge::{UsdBridgeError, UsdEditLayer, UsdKind, UsdPrimType, UsdSpecifier};
+use crate::usd::cpp_bridge::{
+    CameraProperties, UpAxis, UsdBridgeError, UsdEditLayer, UsdKind, UsdLightData, UsdLightShaping,
+    UsdLightType, UsdPrimType, UsdSpecifier, UsdStageMetadata,
+};
 
 /// A prim authored by a UsdPrim node, to be written during export.
 #[derive(Clone, Debug)]
@@ -38,6 +43,11 @@ pub struct ExportConfig {
     pub authored_prims: Vec<AuthoredPrim>,
     /// Graft prefix: prepend to all prim paths (from GraftBranches node)
     pub graft_prefix: Option<String>,
+    /// Stage metadata (upAxis, metersPerUnit, timeCodesPerSecond).
+    /// If None, writes defaults (Y-up, 0.01 m/unit, 24 fps).
+    pub stage_metadata: Option<UsdStageMetadata>,
+    /// Prim paths to mark as invisible
+    pub hidden_prim_paths: Vec<String>,
 }
 
 impl Default for ExportConfig {
@@ -49,6 +59,8 @@ impl Default for ExportConfig {
             export_root: "/BIF".to_string(),
             authored_prims: Vec::new(),
             graft_prefix: None,
+            stage_metadata: None,
+            hidden_prim_paths: Vec::new(),
         }
     }
 }
@@ -66,6 +78,14 @@ pub struct ExportResult {
     pub prim_count: usize,
     /// Number of prototype meshes written
     pub mesh_count: usize,
+    /// Number of materials written
+    pub material_count: usize,
+    /// Number of lights written
+    pub light_count: usize,
+    /// Number of cameras written
+    pub camera_count: usize,
+    /// Number of visibility opinions written
+    pub visibility_count: usize,
     /// Output file path
     pub output_path: String,
 }
@@ -74,9 +94,12 @@ impl std::fmt::Display for ExportResult {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "{} prims + {} meshes + {} xforms + {} keyframes + {} instancers -> {}",
+            "{} prims + {} meshes + {} mats + {} lights + {} cams + {} xforms + {} kf + {} inst -> {}",
             self.prim_count,
             self.mesh_count,
+            self.material_count,
+            self.light_count,
+            self.camera_count,
             self.xform_count,
             self.keyframe_count,
             self.instancer_count,
@@ -113,6 +136,20 @@ pub fn export_scene(
         }
     }
 
+    // Stage metadata (upAxis, metersPerUnit, timeCodesPerSecond)
+    let metadata = config.stage_metadata.clone().unwrap_or(UsdStageMetadata {
+        meters_per_unit: 0.01,
+        up_axis: UpAxis::Y,
+        time_codes_per_second: 24.0,
+    });
+    layer.set_stage_metadata(&metadata)?;
+
+    // Default prim
+    let default_prim = apply_graft_prefix(&config.export_root, &config.graft_prefix);
+    if let Err(e) = layer.set_default_prim(&default_prim) {
+        log::warn!("set_default_prim failed for {:?}: {}", default_prim, e);
+    }
+
     // Write authored prims (from UsdPrim nodes) — before xforms so parent prims exist
     let mut prim_count = 0;
     for authored in &config.authored_prims {
@@ -137,6 +174,10 @@ pub fn export_scene(
         }
         prim_count += 1;
     }
+
+    // Export materials (Phase 2)
+    let material_paths = export_materials(&mut layer, scene, config)?;
+    let material_count = material_paths.len();
 
     let mut xform_count = 0;
     let mut keyframe_count = 0;
@@ -188,6 +229,7 @@ pub fn export_scene(
         .collect();
 
     // Write PointInstancers from point clouds
+    // TODO Phase 9: write cloud.invisible_ids via write_invisible_ids FFI
     let mut instancer_count = 0;
     for (cloud, proto_paths) in &cloud_proto_paths {
         let instancer_path = if cloud.name.starts_with('/') {
@@ -230,6 +272,12 @@ pub fn export_scene(
                 if let Some(proto) = scene.prototypes.get(proto_id) {
                     let path = apply_graft_prefix(proto_path, &config.graft_prefix);
                     layer.write_mesh(&path, &proto.mesh)?;
+                    // Bind material
+                    if let Some(ref mat) = proto.material {
+                        if let Some(mat_path) = material_paths.get(mat.name.as_ref()) {
+                            layer.bind_material(&path, mat_path)?;
+                        }
+                    }
                     written_protos.insert(proto_path.clone());
                     mesh_count += 1;
                 }
@@ -247,9 +295,24 @@ pub fn export_scene(
         }
         let path = apply_graft_prefix(&proto_path, &config.graft_prefix);
         layer.write_mesh(&path, &proto.mesh)?;
+        // Bind material
+        if let Some(ref mat) = proto.material {
+            if let Some(mat_path) = material_paths.get(mat.name.as_ref()) {
+                layer.bind_material(&path, mat_path)?;
+            }
+        }
         written_protos.insert(proto_path);
         mesh_count += 1;
     }
+
+    // Export lights (Phase 3)
+    let light_count = export_lights(&mut layer, scene, config)?;
+
+    // Export cameras (Phase 3)
+    let camera_count = export_cameras(&mut layer, scene, config)?;
+
+    // Export visibility (Phase 4)
+    let visibility_count = export_visibility(&mut layer, config)?;
 
     layer.save()?;
 
@@ -259,6 +322,10 @@ pub fn export_scene(
         instancer_count,
         prim_count,
         mesh_count,
+        material_count,
+        light_count,
+        camera_count,
+        visibility_count,
         output_path: config.output_path.clone(),
     })
 }
@@ -302,6 +369,208 @@ fn resolve_proto_paths(scene: &Scene, cloud: &PointCloud, config: &ExportConfig)
         })
         .collect()
 }
+
+/// Export scene materials as UsdShadeMaterial + UsdPreviewSurface prims.
+///
+/// Returns a map of material name → exported prim path (for binding).
+fn export_materials(
+    layer: &mut UsdEditLayer,
+    scene: &Scene,
+    config: &ExportConfig,
+) -> Result<HashMap<String, String>, UsdBridgeError> {
+    let mut material_paths = HashMap::new();
+    for mat in &scene.materials {
+        let mat_path = if mat.name.starts_with('/') {
+            mat.name.to_string()
+        } else {
+            format!("{}/Looks/{}", config.export_root, mat.name)
+        };
+        let path = apply_graft_prefix(&mat_path, &config.graft_prefix);
+        layer.write_material(&path, mat)?;
+        material_paths.insert(mat.name.to_string(), path);
+    }
+    // TODO Phase 5: write OpenPBR MaterialX network alongside UsdPreviewSurface
+    // for each material (needs C++ bridge extension for MaterialX authoring)
+    Ok(material_paths)
+}
+
+/// Export scene lights as UsdLux prims.
+fn export_lights(
+    layer: &mut UsdEditLayer,
+    scene: &Scene,
+    config: &ExportConfig,
+) -> Result<usize, UsdBridgeError> {
+    let mut count = 0;
+    for (i, light) in scene.lights.iter().enumerate() {
+        let mut data = scene_light_to_usd(light, i, &config.export_root);
+        data.path = apply_graft_prefix(&data.path, &config.graft_prefix);
+        layer.write_light(&data)?;
+        count += 1;
+    }
+    Ok(count)
+}
+
+/// Export scene cameras as UsdGeomCamera prims.
+fn export_cameras(
+    layer: &mut UsdEditLayer,
+    scene: &Scene,
+    config: &ExportConfig,
+) -> Result<usize, UsdBridgeError> {
+    let mut count = 0;
+    for cam in &scene.cameras {
+        let cam_path = if cam.name.starts_with('/') {
+            cam.name.clone()
+        } else {
+            format!("{}/Cameras/{}", config.export_root, cam.name)
+        };
+        let path = apply_graft_prefix(&cam_path, &config.graft_prefix);
+
+        // Get camera transform from the instance it's attached to
+        let transform = scene
+            .instances()
+            .get(cam.instance_index)
+            .map(|inst| inst.transform.to_matrix())
+            .unwrap_or(Mat4::IDENTITY);
+
+        // Convert FOV to focal length (standard full-frame sensor)
+        let vertical_aperture = 24.0_f32; // mm
+        let horizontal_aperture = 36.0_f32; // mm
+        let focal_length = vertical_aperture / (2.0 * (cam.fov_y / 2.0).tan());
+
+        let props = CameraProperties {
+            focal_length,
+            vertical_aperture,
+            horizontal_aperture,
+            clip_near: cam.near,
+            clip_far: cam.far,
+        };
+
+        layer.write_camera(&path, &props, -1.0, &transform)?;
+        count += 1;
+    }
+    Ok(count)
+}
+
+/// Export visibility overrides for hidden prims.
+fn export_visibility(
+    layer: &mut UsdEditLayer,
+    config: &ExportConfig,
+) -> Result<usize, UsdBridgeError> {
+    let mut count = 0;
+    for prim_path in &config.hidden_prim_paths {
+        let path = apply_graft_prefix(prim_path, &config.graft_prefix);
+        layer.write_visibility(&path, false)?;
+        count += 1;
+    }
+    Ok(count)
+}
+
+/// Convert a BIF scene Light to USD light data for export.
+fn scene_light_to_usd(light: &Light, index: usize, export_root: &str) -> UsdLightData {
+    let no_shaping = UsdLightShaping {
+        cone_angle: 180.0,
+        cone_softness: 0.0,
+        focus: 0.0,
+        ies_file: None,
+    };
+
+    match light {
+        Light::Distant {
+            direction,
+            color,
+            intensity,
+            angle,
+        } => {
+            // USD distant light points down -Z; rotate to match direction
+            let forward = direction.normalize();
+            let rotation = Quat::from_rotation_arc(Vec3::NEG_Z, forward);
+            let transform = Mat4::from_rotation_translation(rotation, Vec3::ZERO);
+
+            UsdLightData {
+                path: format!("{}/Lights/distant_{}", export_root, index),
+                light_type: UsdLightType::Distant,
+                color: *color,
+                intensity: *intensity,
+                transform,
+                angle: *angle,
+                radius: 0.0,
+                width: 0.0,
+                height: 0.0,
+                texture_path: None,
+                length: 0.0,
+                shaping: no_shaping,
+                light_link_includes: Vec::new(),
+                light_link_excludes: Vec::new(),
+            }
+        }
+        Light::Point {
+            position,
+            color,
+            intensity,
+            radius,
+        } => UsdLightData {
+            path: format!("{}/Lights/point_{}", export_root, index),
+            light_type: UsdLightType::Sphere,
+            color: *color,
+            intensity: *intensity,
+            transform: Mat4::from_translation(*position),
+            angle: 0.0,
+            radius: *radius,
+            width: 0.0,
+            height: 0.0,
+            texture_path: None,
+            length: 0.0,
+            shaping: no_shaping,
+            light_link_includes: Vec::new(),
+            light_link_excludes: Vec::new(),
+        },
+        Light::Rect {
+            transform,
+            color,
+            intensity,
+            width,
+            height,
+        } => UsdLightData {
+            path: format!("{}/Lights/rect_{}", export_root, index),
+            light_type: UsdLightType::Rect,
+            color: *color,
+            intensity: *intensity,
+            transform: *transform,
+            angle: 0.0,
+            radius: 0.0,
+            width: *width,
+            height: *height,
+            texture_path: None,
+            length: 0.0,
+            shaping: no_shaping,
+            light_link_includes: Vec::new(),
+            light_link_excludes: Vec::new(),
+        },
+        Light::Dome {
+            rotation,
+            intensity,
+            texture_path,
+        } => UsdLightData {
+            path: format!("{}/Lights/dome_{}", export_root, index),
+            light_type: UsdLightType::Dome,
+            color: Vec3::ONE,
+            intensity: *intensity,
+            transform: Mat4::from_rotation_y(*rotation),
+            angle: 0.0,
+            radius: 0.0,
+            width: 0.0,
+            height: 0.0,
+            texture_path: texture_path.as_deref().map(|s| s.to_string()),
+            length: 0.0,
+            shaping: no_shaping,
+            light_link_includes: Vec::new(),
+            light_link_excludes: Vec::new(),
+        },
+    }
+}
+
+// TODO Phase 6: export_geom_subsets — write GeomSubset child prims for per-face
+// material assignments. Needs C++ bridge function for UsdGeomSubset::CreateGeomSubset.
 
 #[cfg(test)]
 mod tests {
@@ -523,6 +792,7 @@ mod tests {
             prototype_ids: vec![proto_id],
             transform: Transform::default(),
             distribution: DistributionMethod::Manual,
+            invisible_ids: Vec::new(),
         };
         scene.point_clouds.push(cloud);
 
@@ -705,6 +975,7 @@ mod tests {
                 },
             ],
             graft_prefix: None,
+            ..Default::default()
         };
 
         let result = export_scene(&scene, &edit_state, &[], &config).expect("export");
@@ -799,6 +1070,173 @@ mod tests {
         let stage = UsdStage::open(&out).expect("reopen");
         let prim_count = stage.prim_count().expect("prim_count");
         assert!(prim_count >= 1, "Should have at least 1 prim");
+
+        cleanup(&out);
+    }
+
+    #[test]
+    fn test_export_stage_metadata() {
+        let out = temp_usda_path("metadata");
+
+        if try_create_layer(&out).is_none() {
+            return;
+        }
+        cleanup(&out);
+
+        let scene = Scene::new("test");
+        let edit_state = EditState::default();
+
+        let config = ExportConfig {
+            output_path: out.clone(),
+            source_usd_path: None,
+            as_sublayer: false,
+            export_root: "/BIF".to_string(),
+            stage_metadata: Some(crate::usd::cpp_bridge::UsdStageMetadata {
+                meters_per_unit: 0.01,
+                up_axis: crate::usd::cpp_bridge::UpAxis::Y,
+                time_codes_per_second: 24.0,
+            }),
+            ..Default::default()
+        };
+
+        let _result = export_scene(&scene, &edit_state, &[], &config).expect("export");
+
+        // Reopen and verify metadata roundtrips
+        let stage = UsdStage::open(&out).expect("reopen");
+        let meta = stage.get_stage_metadata().expect("metadata");
+        assert!(
+            (meta.meters_per_unit - 0.01).abs() < 1e-6,
+            "metersPerUnit should be 0.01, got {}",
+            meta.meters_per_unit
+        );
+
+        cleanup(&out);
+    }
+
+    #[test]
+    fn test_export_materials() {
+        let out = temp_usda_path("materials");
+
+        if try_create_layer(&out).is_none() {
+            return;
+        }
+        cleanup(&out);
+
+        let mut scene = Scene::new("test");
+        let mat = crate::scene::Material::new("/Looks/Red", Vec3::new(1.0, 0.0, 0.0));
+        let mat_id = scene.add_material(mat);
+
+        // Create a prototype with the material bound
+        let mesh = empty_mesh();
+        let proto_id = scene.add_prototype(mesh, "/World/box".to_string());
+        let mat_arc = scene.materials[mat_id].clone();
+        let mut proto = (*scene.prototypes[proto_id]).clone();
+        proto.material = Some(mat_arc);
+        scene.prototypes[proto_id] = Arc::new(proto);
+
+        let edit_state = EditState::default();
+        let config = ExportConfig {
+            output_path: out.clone(),
+            source_usd_path: None,
+            as_sublayer: false,
+            export_root: "/BIF".to_string(),
+            ..Default::default()
+        };
+
+        let result = export_scene(&scene, &edit_state, &[], &config).expect("export");
+        assert_eq!(result.material_count, 1, "Should export 1 material");
+
+        // Verify file is valid
+        let stage = UsdStage::open(&out).expect("reopen");
+        let mats = stage.materials().unwrap_or_default();
+        assert!(
+            !mats.is_empty(),
+            "Should have at least 1 material in exported file"
+        );
+
+        cleanup(&out);
+    }
+
+    #[test]
+    fn test_export_lights() {
+        let out = temp_usda_path("lights");
+
+        if try_create_layer(&out).is_none() {
+            return;
+        }
+        cleanup(&out);
+
+        let mut scene = Scene::new("test");
+        // Add a distant light and a dome light
+        scene.lights.push(crate::scene::Light::Distant {
+            direction: Vec3::new(0.0, -1.0, 0.0),
+            color: Vec3::ONE,
+            intensity: 1.0,
+            angle: 0.53,
+        });
+        scene.lights.push(crate::scene::Light::Dome {
+            rotation: 0.0,
+            intensity: 1.0,
+            texture_path: None,
+        });
+
+        let edit_state = EditState::default();
+        let config = ExportConfig {
+            output_path: out.clone(),
+            source_usd_path: None,
+            as_sublayer: false,
+            export_root: "/BIF".to_string(),
+            ..Default::default()
+        };
+
+        let result = export_scene(&scene, &edit_state, &[], &config).expect("export");
+        assert_eq!(result.light_count, 2, "Should export 2 lights");
+
+        // Verify roundtrip
+        let stage = UsdStage::open(&out).expect("reopen");
+        let lights = stage.lights().unwrap_or_default();
+        assert_eq!(lights.len(), 2, "Should have 2 lights in exported file");
+
+        cleanup(&out);
+    }
+
+    #[test]
+    fn test_export_visibility() {
+        let out = temp_usda_path("visibility");
+
+        if try_create_layer(&out).is_none() {
+            return;
+        }
+        cleanup(&out);
+
+        let mut scene = Scene::new("test");
+        let mesh = empty_mesh();
+        let proto_id = scene.add_prototype(mesh, "/World/hidden_box".to_string());
+        scene.add_instance_with_path(
+            proto_id,
+            Transform::default(),
+            "/World/hidden_box".to_string(),
+        );
+
+        let edit_state = EditState::default();
+        let config = ExportConfig {
+            output_path: out.clone(),
+            source_usd_path: None,
+            as_sublayer: false,
+            export_root: "/BIF".to_string(),
+            hidden_prim_paths: vec!["/World/hidden_box".to_string()],
+            ..Default::default()
+        };
+
+        let result = export_scene(&scene, &edit_state, &[], &config).expect("export");
+        assert_eq!(
+            result.visibility_count, 1,
+            "Should write 1 visibility opinion"
+        );
+
+        // File should be valid
+        let stage = UsdStage::open(&out).expect("reopen");
+        assert!(stage.prim_count().is_ok());
 
         cleanup(&out);
     }

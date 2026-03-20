@@ -75,7 +75,7 @@ pub use timeline::TimelineState;
 
 pub use node_graph::{render_node_graph, NodeGraphEvent, NodeGraphState, SceneNode};
 pub use property_inspector::{
-    render_property_inspector, reset_transform_edit_cache, PrimProperties, TransformEdit,
+    render_property_inspector, reset_property_inspector_cache, PrimProperties, TransformEdit,
 };
 pub use scene_browser::{
     build_scene_graph_cache, CachedSceneGraph, CompositeProvider, EmptyPrimProvider,
@@ -1580,9 +1580,9 @@ impl Renderer {
         self.timeline_state.keyframe_times = times;
     }
 
-    /// Reset cached transform edit values in the egui data store.
-    pub fn reset_transform_edit_cache(&self) {
-        reset_transform_edit_cache(&self.egui_ctx);
+    /// Reset cached property inspector state in the egui data store.
+    pub fn reset_property_inspector_cache(&self) {
+        reset_property_inspector_cache(&self.egui_ctx);
     }
 
     /// Export transform overrides, keyframes, and point clouds as a USD layer.
@@ -1594,6 +1594,8 @@ impl Renderer {
             export_root: "/BIF".to_string(),
             authored_prims: Vec::new(),
             graft_prefix: None,
+            stage_metadata: self.scene.working_scene.stage_metadata.clone(),
+            hidden_prim_paths: Vec::new(),
         };
 
         let result = bif_core::usd::export::export_scene(

@@ -453,6 +453,44 @@ pub enum Light {
     },
 }
 
+/// A curves primitive (from UsdGeomBasisCurves).
+#[derive(Clone, Debug)]
+pub struct CurvesPrim {
+    /// USD prim path
+    pub path: String,
+    /// Control points
+    pub points: Vec<Vec3>,
+    /// Per-vertex or per-curve widths
+    pub widths: Option<Vec<f32>>,
+    /// Number of vertices per curve
+    pub curve_vertex_counts: Vec<i32>,
+    /// Curve type (linear, cubic)
+    pub curve_type: crate::usd::cpp_bridge::CurveType,
+    /// Basis (bezier, bspline, catmull-rom)
+    pub basis: crate::usd::cpp_bridge::CurveBasis,
+    /// Wrap mode (nonperiodic, periodic)
+    pub wrap: crate::usd::cpp_bridge::CurveWrap,
+    /// World transform
+    pub transform: Mat4,
+}
+
+/// A points primitive (from UsdGeomPoints).
+#[derive(Clone, Debug)]
+pub struct PointsPrim {
+    /// USD prim path
+    pub path: String,
+    /// World-space positions
+    pub positions: Vec<Vec3>,
+    /// Per-point widths
+    pub widths: Option<Vec<f32>>,
+    /// Per-point normals
+    pub normals: Option<Vec<Vec3>>,
+    /// Per-point IDs
+    pub ids: Option<Vec<i64>>,
+    /// World transform
+    pub transform: Mat4,
+}
+
 /// A camera defined in the scene graph (from a Camera primitive).
 #[derive(Clone, Debug)]
 pub struct SceneCamera {
@@ -504,6 +542,12 @@ pub struct Scene {
 
     /// Point clouds that expand to instances.
     pub point_clouds: Vec<PointCloud>,
+
+    /// Curves primitives (from UsdGeomBasisCurves)
+    pub curves: Vec<CurvesPrim>,
+
+    /// Points primitives (from UsdGeomPoints)
+    pub points_prims: Vec<PointsPrim>,
 }
 
 impl Scene {
@@ -915,6 +959,7 @@ mod tests {
             prototype_ids: vec![proto_id],
             transform: Transform::default(),
             distribution: DistributionMethod::Manual,
+            invisible_ids: Vec::new(),
         };
 
         let cloud_id = scene.add_point_cloud(cloud);

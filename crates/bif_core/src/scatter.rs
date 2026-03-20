@@ -256,6 +256,7 @@ pub fn scatter_on_surface(
         prototype_ids,
         transform: Transform::default(),
         distribution,
+        invisible_ids: Vec::new(),
     }
 }
 
@@ -359,6 +360,7 @@ pub fn generate_grid_points(
         prototype_ids: vec![],
         transform: Transform::default(),
         distribution: DistributionMethod::Grid { spacing },
+        invisible_ids: Vec::new(),
     }
 }
 
@@ -440,6 +442,7 @@ pub fn generate_sphere_points(
             seed: config.seed,
             on_surface,
         },
+        invisible_ids: Vec::new(),
     }
 }
 

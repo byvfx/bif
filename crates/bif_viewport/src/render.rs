@@ -7,7 +7,7 @@ use crate::gpu_types::InstanceData;
 use crate::ivar_state::{BatchRenderStatus, BuildStatus, CameraSource, RenderMode};
 use crate::node_graph::{render_node_graph, NodeGraphEvent, SceneNode};
 use crate::property_inspector::{
-    render_property_inspector, reset_transform_edit_cache, PrimProperties,
+    render_property_inspector, reset_property_inspector_cache, PrimProperties,
 };
 use crate::scene_browser::{self, CompositeProvider, PrimDataProvider, ProceduralPrimKind};
 use crate::Renderer;
@@ -122,7 +122,7 @@ impl Renderer {
                 bytemuck::cast_slice(&[self.cam.camera_uniform]),
             );
             // Reset transform edit cache when selection changes
-            reset_transform_edit_cache(&self.egui_ctx);
+            reset_property_inspector_cache(&self.egui_ctx);
         }
 
         // Update frustum culling before rendering (in Vulkan mode)
@@ -730,7 +730,7 @@ impl Renderer {
                 }
                 AppEvent::PrimSelected(prim_path) => {
                     self.selection.selected_prim_path = Some(prim_path.clone());
-                    reset_transform_edit_cache(&self.egui_ctx);
+                    reset_property_inspector_cache(&self.egui_ctx);
                     let composite = CompositeProvider::new(
                         self.scene
                             .usd_stage
@@ -1352,6 +1352,8 @@ impl Renderer {
                     export_root,
                     authored_prims,
                     graft_prefix,
+                    stage_metadata: self.scene.working_scene.stage_metadata.clone(),
+                    hidden_prim_paths: Vec::new(),
                 };
                 match self.export_with_config(&config) {
                     Ok(result) => {

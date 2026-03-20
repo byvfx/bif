@@ -35,7 +35,6 @@
 pub mod cpp_bridge;
 pub mod export;
 mod loader;
-mod parser;
 mod types;
 pub mod validate;
 
@@ -51,7 +50,6 @@ pub use export::{AuthoredPrim, ExportConfig, ExportResult};
 pub use loader::{
     load_usd, load_usd_with_stage, load_usda, load_usda_from_string, LoadError, LoadResult,
 };
-pub use parser::{parse_usda, ParseError, ParseResult, UsdaParser};
 pub use types::{
     compose_xform_ops, UsdMesh, UsdPointInstancer, UsdPrim, UsdReference, UsdXform, XformOp,
 };
