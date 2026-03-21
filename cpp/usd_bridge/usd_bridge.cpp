@@ -4326,7 +4326,9 @@ UsdBridgeError usd_bridge_write_material(
     const char* roughness_tex,
     const char* metallic_tex,
     const char* normal_tex,
-    const char* emissive_tex
+    const char* emissive_tex,
+    float specular_ior,
+    float transmission_weight
 ) {
     if (!layer || !mat_path || !diffuse_color || !emissive_color) {
         return USD_BRIDGE_ERROR_NULL_POINTER;
@@ -4356,6 +4358,8 @@ UsdBridgeError usd_bridge_write_material(
             .Set(opacity);
         shader.CreateInput(TfToken("emissiveColor"), SdfValueTypeNames->Color3f)
             .Set(GfVec3f(emissive_color[0], emissive_color[1], emissive_color[2]));
+        shader.CreateInput(TfToken("ior"), SdfValueTypeNames->Float)
+            .Set(specular_ior);
 
         // Connect textures if provided
         if (diffuse_tex && strlen(diffuse_tex) > 0) {
@@ -4422,8 +4426,12 @@ UsdBridgeError usd_bridge_write_material(
             .Set(specular);
         openpbr.CreateInput(TfToken("specular_roughness"), SdfValueTypeNames->Float)
             .Set(roughness);
+        openpbr.CreateInput(TfToken("specular_ior"), SdfValueTypeNames->Float)
+            .Set(specular_ior);
         openpbr.CreateInput(TfToken("geometry_opacity"), SdfValueTypeNames->Float)
             .Set(opacity);
+        openpbr.CreateInput(TfToken("transmission_weight"), SdfValueTypeNames->Float)
+            .Set(transmission_weight);
 
         // Emission: OpenPBR emission_luminance is in nits (cd/m^2).
         // BIF stores emissive as linear RGB [0,1]. We approximate luminance via

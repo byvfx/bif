@@ -2148,6 +2148,24 @@ impl Renderer {
             }
         }
 
+        // Upload curves/points prims to preview renderer
+        if !self.scene.working_scene.curves.is_empty()
+            || !self.scene.working_scene.points_prims.is_empty()
+        {
+            self.curve_preview.upload_curves(
+                &self.gpu.device,
+                &self.gpu.queue,
+                &self.scene.working_scene.curves,
+                &self.scene.working_scene.points_prims,
+            );
+            self.curve_preview.update_params(&self.gpu.queue);
+            log::info!(
+                "Curve preview: {} curves, {} points prims",
+                self.scene.working_scene.curves.len(),
+                self.scene.working_scene.points_prims.len()
+            );
+        }
+
         // Build pick scene for viewport selection
         self.rebuild_pick_scene();
 

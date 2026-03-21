@@ -408,8 +408,8 @@ fn export_materials(
         layer.write_material(&path, mat)?;
         material_paths.insert(mat.name.to_string(), path);
     }
-    // TODO Phase 5: write OpenPBR MaterialX network alongside UsdPreviewSurface
-    // for each material (needs C++ bridge extension for MaterialX authoring)
+    // Phase 5: OpenPBR MaterialX network written by C++ bridge alongside
+    // UsdPreviewSurface (dual output: outputs:surface + outputs:mtlx:surface)
     Ok(material_paths)
 }
 

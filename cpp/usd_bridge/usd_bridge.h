@@ -1385,7 +1385,9 @@ UsdBridgeError usd_bridge_write_material(
     const char* roughness_tex,
     const char* metallic_tex,
     const char* normal_tex,
-    const char* emissive_tex
+    const char* emissive_tex,
+    float specular_ior,
+    float transmission_weight
 );
 
 /// Bind a material to a prim via UsdShadeMaterialBindingAPI.

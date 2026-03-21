@@ -704,7 +704,7 @@ extern "C" {
         kind: UsdBridgeKindRaw,
     ) -> UsdBridgeErrorCode;
 
-    // Material export
+    // Material export (UsdPreviewSurface + OpenPBR MaterialX dual output)
     fn usd_bridge_write_material(
         layer: *mut UsdBridgeEditLayerRaw,
         mat_path: *const std::ffi::c_char,
@@ -719,6 +719,8 @@ extern "C" {
         metallic_tex: *const std::ffi::c_char,
         normal_tex: *const std::ffi::c_char,
         emissive_tex: *const std::ffi::c_char,
+        specular_ior: f32,
+        transmission_weight: f32,
     ) -> UsdBridgeErrorCode;
 
     fn usd_bridge_bind_material(
@@ -4136,6 +4138,8 @@ impl UsdEditLayer {
                 metallic_tex.as_ref().map_or(ptr::null(), |s| s.as_ptr()),
                 normal_tex.as_ref().map_or(ptr::null(), |s| s.as_ptr()),
                 emissive_tex.as_ref().map_or(ptr::null(), |s| s.as_ptr()),
+                material.specular_ior,
+                material.transmission_weight,
             )
         };
         if code != UsdBridgeErrorCode::Success {

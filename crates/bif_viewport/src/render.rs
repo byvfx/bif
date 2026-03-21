@@ -1825,6 +1825,10 @@ impl Renderer {
                     self.point_preview
                         .render(&mut render_pass, &self.cam.camera_bind_group);
 
+                    // Render curve/points preview (lines, reads depth)
+                    self.curve_preview
+                        .render(&mut render_pass, &self.cam.camera_bind_group);
+
                     // Render ground grid after opaque geometry (transparent, reads depth)
                     if self.show_grid {
                         self.grid

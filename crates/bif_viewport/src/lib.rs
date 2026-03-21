@@ -12,6 +12,7 @@ pub mod app_event;
 pub mod batch_render;
 pub mod compute_ibl;
 pub mod culling_manager;
+pub mod curve_preview;
 pub mod environment;
 pub mod environment_manager;
 pub mod frustum_culling;
@@ -390,6 +391,9 @@ pub struct Renderer {
     pub(crate) point_preview_last_vp: (f32, f32),
     /// Whether point preview params need a GPU write next frame.
     pub(crate) point_preview_params_dirty: bool,
+
+    // Curve/points preview renderer (UsdGeomBasisCurves + UsdGeomPoints)
+    pub(crate) curve_preview: curve_preview::CurvePreviewRenderer,
 
     // Viewport display toggles
     pub show_grid: bool,
@@ -839,7 +843,14 @@ impl Renderer {
             config.format,
             &camera_bind_group_layout,
         );
-        log::info!("Point preview initialized");
+
+        // Create curve/points preview renderer
+        let curve_preview = curve_preview::CurvePreviewRenderer::new(
+            &device,
+            config.format,
+            &camera_bind_group_layout,
+        );
+        log::info!("Point + curve preview initialized");
 
         // Calculate stats - empty scene has 0 triangles
         let num_triangles = 0;
@@ -958,6 +969,7 @@ impl Renderer {
             pick_scene: None,
             point_preview,
             point_preview_last_vp: (0.0, 0.0),
+            curve_preview,
             point_preview_params_dirty: true,
             show_grid: true,
             apply_axis_correction: false,
