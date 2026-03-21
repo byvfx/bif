@@ -3,7 +3,11 @@
 //! Draws curves as line segments using LineList topology.
 //! Uses a storage buffer for vertex positions.
 
+use bif_math::Vec3;
 use wgpu::util::DeviceExt;
+
+/// Tessellation segments per cubic curve span. Higher = smoother, more verts.
+const TESS_SEGMENTS: usize = 4;
 
 /// GPU-aligned vertex position (16 bytes).
 #[repr(C)]
@@ -164,10 +168,11 @@ impl CurvePreviewRenderer {
         }
     }
 
-    /// Upload curve data as line segments.
+    /// Upload curve data as tessellated line segments.
     ///
-    /// Converts curves (control points + vertex counts) into pairs of
-    /// line segment endpoints for LineList rendering.
+    /// Linear curves connect consecutive control points. Cubic curves
+    /// (Bezier, B-spline, Catmull-Rom) are tessellated into smooth segments.
+    /// Uses a grow-only buffer to avoid frame hitches on re-upload.
     pub fn upload_curves(
         &mut self,
         device: &wgpu::Device,
@@ -177,82 +182,54 @@ impl CurvePreviewRenderer {
     ) {
         let mut gpu_verts: Vec<GpuVertex> = Vec::new();
 
-        // Convert curves to line segments
         for curve in curves {
             let xform = curve.transform;
+            let pts = &curve.points;
             let mut offset = 0usize;
+
             for &count in &curve.curve_vertex_counts {
                 let n = count as usize;
-                for i in 0..n.saturating_sub(1) {
-                    let idx_a = offset + i;
-                    let idx_b = offset + i + 1;
-                    if let (Some(&a), Some(&b)) = (curve.points.get(idx_a), curve.points.get(idx_b))
-                    {
-                        let wa = xform.transform_point3(a);
-                        let wb = xform.transform_point3(b);
-                        gpu_verts.push(GpuVertex {
-                            x: wa.x,
-                            y: wa.y,
-                            z: wa.z,
-                            _pad: 0.0,
-                        });
-                        gpu_verts.push(GpuVertex {
-                            x: wb.x,
-                            y: wb.y,
-                            z: wb.z,
-                            _pad: 0.0,
-                        });
+                match curve.curve_type {
+                    bif_core::usd::CurveType::Linear => {
+                        // Connect consecutive control points directly
+                        for i in 0..n.saturating_sub(1) {
+                            push_line_seg(&mut gpu_verts, &xform, pts, offset + i, offset + i + 1);
+                        }
+                    }
+                    bif_core::usd::CurveType::Cubic => {
+                        tessellate_cubic(&mut gpu_verts, &xform, pts, offset, n, curve.basis);
                     }
                 }
                 offset += n;
             }
         }
 
-        // Render points prims as small cross-hair line segments (6 verts per point)
+        // Points prims as small cross-hair line segments (6 verts per point)
         for pts in points_prims {
             let xform = pts.transform;
-            let half = 0.02_f32; // Cross size in world units
+            let half = 0.02_f32;
             for &pos in &pts.positions {
                 let wp = xform.transform_point3(pos);
-                // X axis
-                gpu_verts.push(GpuVertex {
-                    x: wp.x - half,
-                    y: wp.y,
-                    z: wp.z,
-                    _pad: 0.0,
-                });
-                gpu_verts.push(GpuVertex {
-                    x: wp.x + half,
-                    y: wp.y,
-                    z: wp.z,
-                    _pad: 0.0,
-                });
-                // Y axis
-                gpu_verts.push(GpuVertex {
-                    x: wp.x,
-                    y: wp.y - half,
-                    z: wp.z,
-                    _pad: 0.0,
-                });
-                gpu_verts.push(GpuVertex {
-                    x: wp.x,
-                    y: wp.y + half,
-                    z: wp.z,
-                    _pad: 0.0,
-                });
-                // Z axis
-                gpu_verts.push(GpuVertex {
-                    x: wp.x,
-                    y: wp.y,
-                    z: wp.z - half,
-                    _pad: 0.0,
-                });
-                gpu_verts.push(GpuVertex {
-                    x: wp.x,
-                    y: wp.y,
-                    z: wp.z + half,
-                    _pad: 0.0,
-                });
+                for axis in 0..3 {
+                    let mut a = wp;
+                    let mut b = wp;
+                    match axis {
+                        0 => {
+                            a.x -= half;
+                            b.x += half;
+                        }
+                        1 => {
+                            a.y -= half;
+                            b.y += half;
+                        }
+                        _ => {
+                            a.z -= half;
+                            b.z += half;
+                        }
+                    }
+                    gpu_verts.push(gpu_vert(a));
+                    gpu_verts.push(gpu_vert(b));
+                }
             }
         }
 
@@ -264,13 +241,18 @@ impl CurvePreviewRenderer {
         let byte_size = (gpu_verts.len() * std::mem::size_of::<GpuVertex>()) as u64;
 
         if byte_size <= self.vertex_buffer.size() {
+            // Reuse existing buffer (grow-only: never shrink)
             queue.write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&gpu_verts));
         } else {
-            self.vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            // Grow to 2x needed size to reduce future reallocations
+            let alloc_size = byte_size * 2;
+            self.vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("Curve Preview Vertices"),
-                contents: bytemuck::cast_slice(&gpu_verts),
+                size: alloc_size,
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
             });
+            queue.write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&gpu_verts));
             self.bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("Curve Preview BG"),
                 layout: &self.bind_group_layout,
@@ -310,4 +292,114 @@ impl CurvePreviewRenderer {
         render_pass.set_bind_group(1, &self.bind_group, &[]);
         render_pass.draw(0..self.vertex_count, 0..1);
     }
+}
+
+// ============================================================================
+// Curve tessellation helpers
+// ============================================================================
+
+fn gpu_vert(p: Vec3) -> GpuVertex {
+    GpuVertex {
+        x: p.x,
+        y: p.y,
+        z: p.z,
+        _pad: 0.0,
+    }
+}
+
+/// Push a single line segment (2 verts) from transformed control points.
+fn push_line_seg(
+    out: &mut Vec<GpuVertex>,
+    xform: &bif_math::Mat4,
+    pts: &[Vec3],
+    idx_a: usize,
+    idx_b: usize,
+) {
+    if let (Some(&a), Some(&b)) = (pts.get(idx_a), pts.get(idx_b)) {
+        out.push(gpu_vert(xform.transform_point3(a)));
+        out.push(gpu_vert(xform.transform_point3(b)));
+    }
+}
+
+/// Tessellate cubic curve spans into line segments.
+///
+/// Bezier: (n-1)/3 spans of 4 CVs each.
+/// BSpline/CatmullRom: n-3 spans, sliding window of 4 CVs.
+fn tessellate_cubic(
+    out: &mut Vec<GpuVertex>,
+    xform: &bif_math::Mat4,
+    pts: &[Vec3],
+    offset: usize,
+    n: usize,
+    basis: bif_core::usd::CurveBasis,
+) {
+    if n < 4 {
+        // Not enough CVs for cubic — fall back to linear
+        for i in 0..n.saturating_sub(1) {
+            push_line_seg(out, xform, pts, offset + i, offset + i + 1);
+        }
+        return;
+    }
+
+    let eval_fn: fn(Vec3, Vec3, Vec3, Vec3, f32) -> Vec3 = match basis {
+        bif_core::usd::CurveBasis::Bezier => eval_bezier,
+        bif_core::usd::CurveBasis::Bspline => eval_bspline,
+        bif_core::usd::CurveBasis::CatmullRom => eval_catmull_rom,
+    };
+
+    let (num_spans, stride) = match basis {
+        bif_core::usd::CurveBasis::Bezier => ((n - 1) / 3, 3),
+        bif_core::usd::CurveBasis::Bspline | bif_core::usd::CurveBasis::CatmullRom => (n - 3, 1),
+    };
+
+    for span in 0..num_spans {
+        let base = offset + span * stride;
+        let (Some(&p0), Some(&p1), Some(&p2), Some(&p3)) = (
+            pts.get(base),
+            pts.get(base + 1),
+            pts.get(base + 2),
+            pts.get(base + 3),
+        ) else {
+            continue;
+        };
+
+        let mut prev = xform.transform_point3(eval_fn(p0, p1, p2, p3, 0.0));
+        for seg in 1..=TESS_SEGMENTS {
+            let t = seg as f32 / TESS_SEGMENTS as f32;
+            let curr = xform.transform_point3(eval_fn(p0, p1, p2, p3, t));
+            out.push(gpu_vert(prev));
+            out.push(gpu_vert(curr));
+            prev = curr;
+        }
+    }
+}
+
+/// Evaluate cubic Bezier at t ∈ [0, 1].
+fn eval_bezier(p0: Vec3, p1: Vec3, p2: Vec3, p3: Vec3, t: f32) -> Vec3 {
+    let u = 1.0 - t;
+    let u2 = u * u;
+    let t2 = t * t;
+    p0 * (u2 * u) + p1 * (3.0 * u2 * t) + p2 * (3.0 * u * t2) + p3 * (t2 * t)
+}
+
+/// Evaluate uniform cubic B-spline at t ∈ [0, 1].
+fn eval_bspline(p0: Vec3, p1: Vec3, p2: Vec3, p3: Vec3, t: f32) -> Vec3 {
+    let t2 = t * t;
+    let t3 = t2 * t;
+    let c0 = (1.0 - 3.0 * t + 3.0 * t2 - t3) / 6.0;
+    let c1 = (4.0 - 6.0 * t2 + 3.0 * t3) / 6.0;
+    let c2 = (1.0 + 3.0 * t + 3.0 * t2 - 3.0 * t3) / 6.0;
+    let c3 = t3 / 6.0;
+    p0 * c0 + p1 * c1 + p2 * c2 + p3 * c3
+}
+
+/// Evaluate Catmull-Rom spline at t ∈ [0, 1].
+fn eval_catmull_rom(p0: Vec3, p1: Vec3, p2: Vec3, p3: Vec3, t: f32) -> Vec3 {
+    let t2 = t * t;
+    let t3 = t2 * t;
+    let c0 = (-t + 2.0 * t2 - t3) * 0.5;
+    let c1 = (2.0 - 5.0 * t2 + 3.0 * t3) * 0.5;
+    let c2 = (t + 4.0 * t2 - 3.0 * t3) * 0.5;
+    let c3 = (-t2 + t3) * 0.5;
+    p0 * c0 + p1 * c1 + p2 * c2 + p3 * c3
 }
