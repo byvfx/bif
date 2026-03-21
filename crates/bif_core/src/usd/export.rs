@@ -600,7 +600,7 @@ fn export_geom_subsets(
     scene_materials: &[std::sync::Arc<crate::scene::Material>],
 ) -> Result<usize, UsdBridgeError> {
     let face_ids = match &mesh.face_material_ids {
-        Some(ids) if ids.len() > 1 => ids,
+        Some(ids) if !ids.is_empty() => ids,
         _ => return Ok(0),
     };
 

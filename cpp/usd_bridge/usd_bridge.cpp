@@ -4354,8 +4354,11 @@ UsdBridgeError usd_bridge_write_material(
             .Set(roughness);
         shader.CreateInput(TfToken("specular"), SdfValueTypeNames->Float)
             .Set(specular);
+        // UsdPreviewSurface uses opacity < 1 + ior for glass/transmission.
+        // Combine geometry_opacity with transmission_weight.
+        float effective_opacity = opacity * (1.0f - transmission_weight);
         shader.CreateInput(TfToken("opacity"), SdfValueTypeNames->Float)
-            .Set(opacity);
+            .Set(effective_opacity);
         shader.CreateInput(TfToken("emissiveColor"), SdfValueTypeNames->Color3f)
             .Set(GfVec3f(emissive_color[0], emissive_color[1], emissive_color[2]));
         shader.CreateInput(TfToken("ior"), SdfValueTypeNames->Float)
@@ -4433,17 +4436,21 @@ UsdBridgeError usd_bridge_write_material(
         openpbr.CreateInput(TfToken("transmission_weight"), SdfValueTypeNames->Float)
             .Set(transmission_weight);
 
-        // Emission: OpenPBR emission_luminance is in nits (cd/m^2).
-        // BIF stores emissive as linear RGB [0,1]. We approximate luminance via
-        // Rec.709 coefficients and scale by 1000 nits (a reasonable indoor emitter).
-        // This is an approximation — proper scene-referred emission would need
-        // artist-authored luminance values or a tone-mapping-aware pipeline.
-        float emissive_lum = emissive_color[0] * 0.2126f + emissive_color[1] * 0.7152f + emissive_color[2] * 0.0722f;
-        if (emissive_lum > 0.0f) {
+        // Emission: OpenPBR spec says emission_color is chromaticity (tint),
+        // emission_luminance carries the energy in nits (cd/m^2).
+        // Normalize color by max component so luminance is separated.
+        float max_emissive = std::max({emissive_color[0], emissive_color[1], emissive_color[2]});
+        if (max_emissive > 0.0f) {
+            float emissive_lum = emissive_color[0] * 0.2126f
+                               + emissive_color[1] * 0.7152f
+                               + emissive_color[2] * 0.0722f;
             openpbr.CreateInput(TfToken("emission_luminance"), SdfValueTypeNames->Float)
                 .Set(emissive_lum * 1000.0f);
             openpbr.CreateInput(TfToken("emission_color"), SdfValueTypeNames->Color3f)
-                .Set(GfVec3f(emissive_color[0], emissive_color[1], emissive_color[2]));
+                .Set(GfVec3f(
+                    emissive_color[0] / max_emissive,
+                    emissive_color[1] / max_emissive,
+                    emissive_color[2] / max_emissive));
         }
 
         openpbr.CreateOutput(TfToken("out"), SdfValueTypeNames->Token);
@@ -5144,7 +5151,24 @@ UsdBridgeError usd_bridge_write_geom_subset(
                     pxr::UsdShadeMaterialBindingAPI bindingAPI =
                         pxr::UsdShadeMaterialBindingAPI::Apply(subset.GetPrim());
                     bindingAPI.Bind(material);
+                } else {
+                    TF_WARN("GeomSubset '%s': prim at '%s' is not a Material",
+                            subsetPath.GetText(), material_path);
                 }
+            } else {
+                TF_WARN("GeomSubset '%s': material at '%s' not found",
+                        subsetPath.GetText(), material_path);
+            }
+        }
+
+        // Declare materialBind family as partition on parent mesh
+        pxr::UsdPrim parentPrim = layer->stage->GetPrimAtPath(parentPath);
+        if (parentPrim) {
+            pxr::UsdGeomImageable imageable(parentPrim);
+            if (imageable) {
+                pxr::UsdGeomSubset::SetFamilyType(
+                    imageable, pxr::TfToken("materialBind"),
+                    pxr::TfToken("partition"));
             }
         }
 
