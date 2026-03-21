@@ -19,6 +19,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **GeomSubset export** — per-face material assignments via UsdGeomSubset child prims
 - **C++ bridge: write_geom_subset** — creates GeomSubset with face indices + material binding
 - **C++ bridge: write_invisible_ids** — sets invisibleIds on PointInstancer for visibility masking
+- **OpenPBR MaterialX dual export** — write_material outputs both UsdPreviewSurface + OpenPBR MaterialX (ND_open_pbr_surface_surfaceshader) with specular_ior and transmission_weight
+- **Curve/points viewport preview** — CurvePreviewRenderer draws BasisCurves as LineList segments and Points prims as cross-hairs
 - **Bound Material inspector** — property inspector shows OpenPBR params (color swatches, scalars, textures, double-sided) for selected prim's material
 - **Implicit geometry** — C++ bridge tessellates UsdGeomSphere/UsdGeomCube with dedup by radius/size, producing native instances with material overrides
 - **Native instance material overrides** — Rust loader clones prototypes for instances with different materials (e.g. 3 spheres, 3 materials)
