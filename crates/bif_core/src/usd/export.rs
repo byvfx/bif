@@ -1301,4 +1301,152 @@ mod tests {
 
         cleanup(&out);
     }
+
+    #[test]
+    fn test_export_dome_light_roundtrip() {
+        let out = temp_usda_path("dome_light");
+
+        if try_create_layer(&out).is_none() {
+            return;
+        }
+        cleanup(&out);
+
+        let mut scene = Scene::new("test");
+        scene.lights.push(crate::scene::Light::Dome {
+            rotation: 0.5,
+            intensity: 2.0,
+            texture_path: Some(Arc::from("sky.hdr")),
+        });
+
+        let edit_state = EditState::default();
+        let config = ExportConfig {
+            output_path: out.clone(),
+            as_sublayer: false,
+            ..Default::default()
+        };
+
+        let result = export_scene(&scene, &edit_state, &[], &config).expect("export");
+        assert_eq!(result.light_count, 1);
+
+        // Roundtrip: verify dome light exists
+        let stage = UsdStage::open(&out).expect("reopen");
+        let lights = stage.lights().unwrap_or_default();
+        assert_eq!(lights.len(), 1, "Should have 1 dome light");
+        assert_eq!(
+            lights[0].light_type,
+            crate::usd::cpp_bridge::UsdLightType::Dome
+        );
+
+        cleanup(&out);
+    }
+
+    #[test]
+    fn test_export_invisible_ids_roundtrip() {
+        let out = temp_usda_path("invisible_ids");
+
+        if try_create_layer(&out).is_none() {
+            return;
+        }
+        cleanup(&out);
+
+        let mut scene = Scene::new("test");
+        let proto_id = scene.add_prototype(empty_mesh(), "/World/sphere".to_string());
+
+        let count = 5;
+        let cloud = PointCloud {
+            id: 0,
+            name: "instancer_0".to_string(),
+            positions: vec![Vec3::ZERO; count],
+            attributes: PointAttributes {
+                scales: Some(vec![Vec3::ONE; count]),
+                orientations: Some(vec![Quat::IDENTITY; count]),
+                proto_indices: vec![0; count],
+                ids: None,
+            },
+            prototype_ids: vec![proto_id],
+            transform: Transform::default(),
+            distribution: DistributionMethod::Manual,
+            invisible_ids: vec![1, 3],
+        };
+        scene.point_clouds.push(cloud);
+
+        let edit_state = EditState::default();
+        let config = ExportConfig {
+            output_path: out.clone(),
+            as_sublayer: false,
+            ..Default::default()
+        };
+
+        let result = export_scene(&scene, &edit_state, &[], &config).expect("export");
+        assert_eq!(result.instancer_count, 1);
+
+        // Roundtrip: verify invisible IDs
+        let stage = UsdStage::open(&out).expect("reopen");
+        let instancers = stage.instancers().expect("instancers");
+        assert_eq!(instancers.len(), 1);
+        assert_eq!(
+            instancers[0].invisible_ids,
+            vec![1, 3],
+            "invisibleIds should roundtrip"
+        );
+
+        cleanup(&out);
+    }
+
+    #[test]
+    fn test_export_geom_subsets() {
+        let out = temp_usda_path("geom_subsets");
+
+        if try_create_layer(&out).is_none() {
+            return;
+        }
+        cleanup(&out);
+
+        let mut scene = Scene::new("test");
+
+        // Two materials
+        let mat0 = crate::scene::Material::new("/Looks/Red", Vec3::new(1.0, 0.0, 0.0));
+        let mat1 = crate::scene::Material::new("/Looks/Blue", Vec3::new(0.0, 0.0, 1.0));
+        scene.add_material(mat0);
+        scene.add_material(mat1);
+
+        // Mesh with per-face material IDs (2 tris: face 0→mat0, face 1→mat1)
+        let mesh = Arc::new(crate::mesh::Mesh::new_with_materials(
+            vec![
+                Vec3::ZERO,
+                Vec3::X,
+                Vec3::Y,
+                Vec3::Z,
+                Vec3::ONE,
+                Vec3::NEG_ONE,
+            ],
+            vec![0, 1, 2, 3, 4, 5],
+            None,
+            None,
+            Some(vec![0, 1]),
+        ));
+        scene.add_prototype(mesh, "/World/multi_mat_mesh".to_string());
+
+        let edit_state = EditState::default();
+        let config = ExportConfig {
+            output_path: out.clone(),
+            as_sublayer: false,
+            ..Default::default()
+        };
+
+        let result = export_scene(&scene, &edit_state, &[], &config).expect("export");
+        assert_eq!(result.material_count, 2, "Should export 2 materials");
+        assert_eq!(result.mesh_count, 1, "Should export 1 mesh");
+
+        // Verify file is valid and has prims (mesh + subsets + materials)
+        let stage = UsdStage::open(&out).expect("reopen");
+        let prim_count = stage.prim_count().expect("prim_count");
+        assert!(
+            prim_count >= 4,
+            "Should have mesh + 2 subsets + materials, got {}",
+            prim_count
+        );
+
+        cleanup(&out);
+    }
 }
