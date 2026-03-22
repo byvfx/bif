@@ -676,7 +676,10 @@ impl Renderer {
         // Purpose mode changed — full rebuild (combined mesh must be re-baked for Ivar).
         // TODO: skip reload when only rasterizer is active (culling/multi-draw already filter).
         if purpose_changed {
-            log::info!("Purpose mode changed to {:?}", self.display_settings.purpose_mode);
+            log::info!(
+                "Purpose mode changed to {:?}",
+                self.display_settings.purpose_mode
+            );
             if let Err(e) = self.reload_working_scene() {
                 log::error!("Failed to reload after purpose change: {}", e);
             }

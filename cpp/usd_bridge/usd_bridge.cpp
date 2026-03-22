@@ -917,10 +917,16 @@ static void cache_stage_data(UsdBridgeStage* bridge) {
                         // faceVarying: one UV per face-vertex. Split vertices at UV seams.
                         // Map (original_vertex, uv) -> new_vertex_index
                         struct PairHash {
+                            static size_t mix(int v) {
+                                size_t x = static_cast<size_t>(static_cast<unsigned int>(v));
+                                x = ((x >> 16) ^ x) * 0x45d9f3b;
+                                x = ((x >> 16) ^ x) * 0x45d9f3b;
+                                return (x >> 16) ^ x;
+                            }
                             size_t operator()(const std::pair<int, std::pair<int,int>>& p) const {
-                                size_t h = std::hash<int>{}(p.first);
-                                h ^= std::hash<int>{}(p.second.first) + 0x9e3779b9 + (h << 6) + (h >> 2);
-                                h ^= std::hash<int>{}(p.second.second) + 0x9e3779b9 + (h << 6) + (h >> 2);
+                                size_t h = mix(p.first);
+                                h ^= mix(p.second.first) + 0x9e3779b9 + (h << 6) + (h >> 2);
+                                h ^= mix(p.second.second) + 0x9e3779b9 + (h << 6) + (h >> 2);
                                 return h;
                             }
                         };
@@ -932,7 +938,7 @@ static void cache_stage_data(UsdBridgeStage* bridge) {
                         std::vector<uint32_t> newVertexIndexMap;  // Maps split vertex -> original USD vertex
 
                         newVertices.reserve(cached.vertices.size());
-                        newNormals.reserve(cached.normals.size());
+                        newNormals.reserve(normals.size() * 3);
                         newUvs.reserve(face_vertex_indices.size() * 2);
                         newIndices.reserve(cached.indices.size());
                         newVertexIndexMap.reserve(cached.vertices.size() / 3);
@@ -1074,6 +1080,14 @@ static void cache_stage_data(UsdBridgeStage* bridge) {
 
                 cached.uv_primvar_name = foundUvName;
             }
+
+            // Deferred normals fallback: meshes with normals but no UVs skip the
+            // UV block entirely, so the deferred copy inside never runs.
+            if (cached.normals.empty() && !normals.empty()) {
+                const float* ndata = reinterpret_cast<const float*>(normals.cdata());
+                cached.normals.assign(ndata, ndata + normals.size() * 3);
+            }
+
             time_uvs += duration_cast<milliseconds>(high_resolution_clock::now() - uv_start).count();
 
             // Get world transform

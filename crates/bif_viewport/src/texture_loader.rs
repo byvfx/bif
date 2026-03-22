@@ -411,7 +411,8 @@ fn upload_raw_texture(
 ) -> (wgpu::Texture, wgpu::TextureView) {
     // Apply viewport size limit (min of GPU max and configured limit)
     let effective_limit = max_dimension.min(viewport_limit);
-    let (width, height, data) = if tex.width > effective_limit || tex.height > effective_limit {
+    let needs_downscale = tex.width > effective_limit || tex.height > effective_limit;
+    let downscaled = if needs_downscale {
         let (w, h, d) = downscale_raw_nearest(tex.width, tex.height, &tex.data, effective_limit);
         log::info!(
             "Viewport downscale {} from {}x{} to {}x{} (limit {})",
@@ -422,9 +423,17 @@ fn upload_raw_texture(
             h,
             effective_limit
         );
-        (w, h, d)
+        Some((w, h, d))
     } else {
-        (tex.width, tex.height, tex.data.clone())
+        None
+    };
+    let (width, height) = downscaled
+        .as_ref()
+        .map(|(w, h, _)| (*w, *h))
+        .unwrap_or((tex.width, tex.height));
+    let data: &[u8] = match downscaled {
+        Some((_, _, ref d)) => d,
+        None => &tex.data,
     };
 
     // Determine mip count: use GPU mipmaps if generator available and texture is large enough
@@ -485,7 +494,7 @@ fn upload_raw_texture(
             origin: wgpu::Origin3d::ZERO,
             aspect: wgpu::TextureAspect::All,
         },
-        &data,
+        data,
         wgpu::ImageDataLayout {
             offset: 0,
             bytes_per_row: Some(4 * width),
@@ -1091,7 +1100,9 @@ pub fn start_texture_loading_async(
     scene: &bif_core::Scene,
     base_dir: Option<&Path>,
 ) -> mpsc::Receiver<TextureLoadMessage> {
-    let (tx, rx) = mpsc::channel();
+    // Bounded channel: background thread blocks when 32 decoded textures are buffered,
+    // preventing unbounded RAM growth on large scenes (500+ textures).
+    let (tx, rx) = mpsc::sync_channel(32);
 
     let texture_paths = collect_scene_texture_paths(scene, base_dir);
     let total_textures = texture_paths.len();
