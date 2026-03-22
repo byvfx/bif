@@ -422,6 +422,10 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
 
     let material_time = material_start.elapsed();
 
+    // Free bulk mesh geometry from C++ cache — Rust now owns all mesh data.
+    // Keeps vertices/indices/paths for animation queries via USD stage.
+    stage.free_mesh_geometry_cache();
+
     // Load lights (UsdLux)
     let light_start = Instant::now();
     let usd_lights = stage.lights().unwrap_or_default();

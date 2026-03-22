@@ -63,6 +63,10 @@ void usd_bridge_close_stage(UsdBridgeStage* stage);
 /// @param stage Stage handle (safe to pass NULL)
 void usd_bridge_clear_cache(UsdBridgeStage* stage);
 
+/// Free bulk mesh geometry (normals, UVs, subdivision) after Rust has copied it.
+/// Keeps vertices/indices/paths for animation. Frees ~50% of mesh cache RAM.
+void usd_bridge_free_mesh_geometry(UsdBridgeStage* stage);
+
 // ============================================================================
 // Timeline / Animation
 // ============================================================================

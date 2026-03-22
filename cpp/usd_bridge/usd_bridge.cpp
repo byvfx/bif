@@ -2643,7 +2643,7 @@ void usd_bridge_close_stage(UsdBridgeStage* stage) {
 
 void usd_bridge_clear_cache(UsdBridgeStage* stage) {
     if (!stage) return;
-    
+
     // Clear mesh and instancer caches to free memory
     stage->meshes.clear();
     stage->meshes.shrink_to_fit();
@@ -2653,10 +2653,45 @@ void usd_bridge_clear_cache(UsdBridgeStage* stage) {
     stage->all_prims.shrink_to_fit();
     stage->root_paths.clear();
     stage->root_path_ptrs.clear();
-    
+
     // Reset cache flags
     stage->cached = false;
     stage->prims_cached = false;
+}
+
+/// Free bulk mesh geometry data after Rust has copied it.
+/// Keeps: path, vertices (animation fallback), indices, vertex_index_map, has_uv_split.
+/// Frees: normals, UVs, face_material_ids, subdivision data (~50% of mesh RAM).
+void usd_bridge_free_mesh_geometry(UsdBridgeStage* stage) {
+    if (!stage) return;
+
+    size_t freed_bytes = 0;
+    for (auto& mesh : stage->meshes) {
+        freed_bytes += mesh.normals.capacity() * sizeof(float);
+        freed_bytes += mesh.uvs.capacity() * sizeof(float);
+        freed_bytes += mesh.face_material_ids.capacity() * sizeof(uint32_t);
+        freed_bytes += mesh.face_vertex_counts_orig.capacity() * sizeof(int32_t);
+        freed_bytes += mesh.face_vertex_indices_orig.capacity() * sizeof(int32_t);
+        freed_bytes += mesh.crease_indices.capacity() * sizeof(int32_t);
+        freed_bytes += mesh.crease_lengths.capacity() * sizeof(int32_t);
+        freed_bytes += mesh.crease_sharpnesses.capacity() * sizeof(float);
+
+        mesh.normals.clear(); mesh.normals.shrink_to_fit();
+        mesh.uvs.clear(); mesh.uvs.shrink_to_fit();
+        mesh.face_material_ids.clear(); mesh.face_material_ids.shrink_to_fit();
+        mesh.face_vertex_counts_orig.clear(); mesh.face_vertex_counts_orig.shrink_to_fit();
+        mesh.face_vertex_indices_orig.clear(); mesh.face_vertex_indices_orig.shrink_to_fit();
+        mesh.crease_indices.clear(); mesh.crease_indices.shrink_to_fit();
+        mesh.crease_lengths.clear(); mesh.crease_lengths.shrink_to_fit();
+        mesh.crease_sharpnesses.clear(); mesh.crease_sharpnesses.shrink_to_fit();
+    }
+
+    // Also free native instance + instancer caches (fully consumed by Rust loader)
+    freed_bytes += stage->native_instances.capacity() * sizeof(CachedNativeInstance);
+    stage->native_instances.clear(); stage->native_instances.shrink_to_fit();
+
+    std::cout << "[USD_BRIDGE] Freed mesh geometry cache: "
+              << (freed_bytes / (1024 * 1024)) << " MB" << std::endl;
 }
 
 UsdBridgeError usd_bridge_get_mesh_count(

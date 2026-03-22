@@ -1115,7 +1115,20 @@ pub fn start_texture_loading_async(
             total_textures - max_slots
         );
     }
+    // Adaptive texture size: auto-downsample for large scenes to save RAM
+    let adaptive_tex_size = if total_textures > 200 {
+        log::info!(
+            "Large scene ({} textures) — auto-downscaling viewport textures to 512px",
+            total_textures
+        );
+        512u32
+    } else if total_textures > 50 {
+        1024u32
+    } else {
+        DEFAULT_MAX_VIEWPORT_TEXTURE_SIZE
+    };
     let paths_to_load: Vec<_> = texture_paths.into_iter().take(max_slots).collect();
+    let load_count = paths_to_load.len();
 
     std::thread::spawn(move || {
         use rayon::prelude::*;
@@ -1123,13 +1136,33 @@ pub fn start_texture_loading_async(
         // Load textures in chunks to limit peak RAM (16 textures at a time).
         // Without chunking, rayon decodes all textures simultaneously → OOM on 500+ textures.
         const CHUNK_SIZE: usize = 16;
+        let mut loaded = 0usize;
         for chunk in paths_to_load.chunks(CHUNK_SIZE) {
             let results: Vec<_> = chunk
                 .par_iter()
                 .filter_map(|path| load_raw_texture(path).map(|tex| (path.clone(), tex)))
                 .collect();
 
-            for (path, raw_tex) in results {
+            for (path, mut raw_tex) in results {
+                // Adaptive downscale in background thread (before channel send)
+                // to reduce RAM in channel buffer and GPU upload cost
+                if raw_tex.width > adaptive_tex_size || raw_tex.height > adaptive_tex_size {
+                    let (w, h, d) = downscale_raw_nearest(
+                        raw_tex.width,
+                        raw_tex.height,
+                        &raw_tex.data,
+                        adaptive_tex_size,
+                    );
+                    raw_tex.width = w;
+                    raw_tex.height = h;
+                    raw_tex.data = d;
+                }
+
+                loaded += 1;
+                if loaded.is_multiple_of(64) || loaded == load_count {
+                    log::info!("Texture streaming: {}/{} loaded", loaded, load_count);
+                }
+
                 if tx
                     .send(TextureLoadMessage {
                         path,

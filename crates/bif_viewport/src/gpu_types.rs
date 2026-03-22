@@ -10,9 +10,10 @@ use bif_math::{Mat4, Vec4};
 use crate::Camera;
 
 /// Maximum number of textures in the viewport texture array.
-/// 512 supports complex scenes like ALab (272+ textures). Modern desktop GPUs
-/// handle thousands of descriptors; this is well within safe limits.
-pub const MAX_VIEWPORT_TEXTURES: usize = 512;
+/// 2048 supports production scenes (1000+ textures). Modern Vulkan/DX12 GPUs
+/// handle 16K+ sampled textures per stage. Device creation requests this limit
+/// and falls back if GPU doesn't support it.
+pub const MAX_VIEWPORT_TEXTURES: usize = 2048;
 
 /// No selection sentinel (0xFFFFFFFF means nothing is selected).
 pub const NO_SELECTION: u32 = 0xFFFFFFFF;

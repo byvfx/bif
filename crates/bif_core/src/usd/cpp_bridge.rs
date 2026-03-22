@@ -423,6 +423,7 @@ extern "C" {
     ) -> UsdBridgeErrorCode;
 
     fn usd_bridge_close_stage(stage: *mut UsdBridgeStageRaw);
+    fn usd_bridge_free_mesh_geometry(stage: *mut UsdBridgeStageRaw);
 
     fn usd_bridge_get_mesh_count(
         stage: *const UsdBridgeStageRaw,
@@ -3760,6 +3761,16 @@ impl UsdStage {
             has_inherits: raw.has_inherits != 0,
             has_specializes: raw.has_specializes != 0,
         })
+    }
+}
+
+impl UsdStage {
+    /// Free bulk mesh geometry cache (normals, UVs, subdivision data) after Rust
+    /// has copied it. Keeps vertices/indices/paths for animation queries.
+    pub fn free_mesh_geometry_cache(&self) {
+        if !self.raw.is_null() {
+            unsafe { usd_bridge_free_mesh_geometry(self.raw) }
+        }
     }
 }
 
