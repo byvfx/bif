@@ -17,8 +17,15 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **MAX_VIEWPORT_TEXTURES** — raised 512→2048 for production scenes
 - **Free C++ mesh cache** — `usd_bridge_free_mesh_geometry()` frees normals/UVs/subdivision after Rust copy (~8GB on 335M vert scenes)
 - **Texture streaming progress** — periodic log of loaded/total count
+- **LoadNone deferred payloads** — `UsdStage::Open(LoadNone)` opens hierarchy only; `load_payloads()` loads geometry on demand
+- **UDIM tile downscale before stitch** — tiles downscaled to adaptive size before atlas assembly (was full-res → OOM)
+- **Pick scene size guard** — skip Embree pick BVH for >50M tris (prevents 25GB OOM)
+- **C++ debug log flags** — `g_log_textures`, `g_log_timing`, `g_log_variants` toggle output sections
 
 ### Fixed
+
+- **u32 overflow in triangle count display** — use u64 for large scene stats (607M tris × 13K instances)
+- **Normals lost on meshes without UVs** — deferred normals copy was inside UV block; meshes with normals but no UVs got flat shading
 
 - **Normals lost on meshes without UVs** — deferred normals copy was inside UV block; meshes with normals but no UVs got flat shading
 - **UV seam split hash collisions** — PairHash uses bit mixing instead of MSVC identity hash

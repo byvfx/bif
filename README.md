@@ -2,28 +2,29 @@
 
 > Production-grade renderer inspired by Isotropix Clarisse, built in Rust
 
-## Current Status: Milestone 29 In Progress
+## Current Status: v0.12.0
 
-**USD Export Pipeline** — full import→modify→render→export workflow
+**VFX Scene Assembly + Rendering** — load USD → instance → render → export
 
 - Dual rendering: Vulkan viewport (60 FPS) + Ivar CPU path tracer
-- **USD export:** Sublayer composition, xform/keyframe overrides, point instancers
+- **USD:** Full C++ bridge (USDA/USDC/references), deferred payload loading (LoadNone)
+- **USD export:** Dual UsdPreviewSurface + OpenPBR MaterialX, sublayer composition
 - **Batch render:** EXR sequences with AOVs, USD camera animation
+- **Large scenes:** GPU buffer guards, adaptive texture downscale, 2048 texture slots
 - GPU instancing: 10K+ instances with LOD culling
-- USD support: USDA (pure Rust) + USDC/references (C++ bridge)
 - **Animation:** Timeline UI, transform + vertex animation, viewport camera sync
 - Intel Embree 4: Production-quality ray tracing
-- Materials: UsdPreviewSurface + MaterialX standard_surface
-- Disney Principled BSDF with NEE/MIS environment lighting
+- Materials: OpenPBR Surface v1.1 with IOR-based Fresnel
 - HDRI environment maps: GPU compute IBL (irradiance + prefiltered + BRDF LUT)
 - Textured PBR viewport with per-face materials (GeomSubsets)
 - OpenImageIO integration with subprocess .tx conversion (optional)
 - **Node graph:** 10 node types (scatter, instance, export, etc.)
 - Scene browser + property inspector + undo/redo
+- Purpose filtering (render/proxy/guide visibility toggle)
 - SHARC radiance cache (idTech 8 inspired)
-- 274+ tests passing across 6 crates
+- 170+ tests passing across 6 crates
 
-**Next:** Complete M29 export pipeline
+**Next:** M29.5 egui upgrade → M30 persistence
 
 ---
 
