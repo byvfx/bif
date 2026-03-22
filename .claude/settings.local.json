@@ -14,7 +14,8 @@
       "Bash(cargo fmt:*)",
       "Skill(bif-commit)",
       "mcp__plugin_context-mode_context-mode__ctx_fetch_and_index",
-      "Bash(find:*)"
+      "Bash(find:*)",
+      "mcp__plugin_context-mode_context-mode__ctx_stats"
     ]
   }
 }
