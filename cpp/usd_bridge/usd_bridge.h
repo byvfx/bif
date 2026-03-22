@@ -67,6 +67,13 @@ void usd_bridge_clear_cache(UsdBridgeStage* stage);
 /// Keeps vertices/indices/paths for animation. Frees ~50% of mesh cache RAM.
 void usd_bridge_free_mesh_geometry(UsdBridgeStage* stage);
 
+/// Load all payloads and cache mesh/material/animation data.
+/// Call after open_stage (which opens with LoadNone for deferred loading).
+UsdBridgeError usd_bridge_load_payloads(
+    UsdBridgeStage* stage,
+    size_t* out_prim_count
+);
+
 // ============================================================================
 // Timeline / Animation
 // ============================================================================

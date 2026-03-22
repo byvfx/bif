@@ -2519,9 +2519,12 @@ UsdBridgeError usd_bridge_open_stage(const char* path, UsdBridgeStage** out_stag
         std::cout << "[USD_BRIDGE]   Resolver context: " << resolver_time << "ms" << std::endl;
 
         auto stage_open_start = high_resolution_clock::now();
-        UsdStageRefPtr stage = UsdStage::Open(normalized_path);
+        // LoadNone: open stage without loading payloads — just hierarchy.
+        // Payloads loaded on demand via usd_bridge_load_payloads().
+        UsdStageRefPtr stage = UsdStage::Open(
+            normalized_path, UsdStage::InitialLoadSet::LoadNone);
         auto stage_open_time = duration_cast<milliseconds>(high_resolution_clock::now() - stage_open_start).count();
-        std::cout << "[USD_BRIDGE]   UsdStage::Open(): " << stage_open_time << "ms" << std::endl;
+        std::cout << "[USD_BRIDGE]   UsdStage::Open(LoadNone): " << stage_open_time << "ms" << std::endl;
 
         if (!stage) {
             std::cerr << "[USD_BRIDGE] ERROR: Failed to open stage" << std::endl;
@@ -2576,41 +2579,17 @@ UsdBridgeError usd_bridge_open_stage(const char* path, UsdBridgeStage** out_stag
             }
         }
 
-        // Pre-cache all data at load time for thread safety.
-        // All getter functions will read from these caches without mutation.
-        // Note: The resolver context binder is still active during caching,
-        // so all reference resolution during traversal will work correctly.
+        // With LoadNone, only cache prim hierarchy (fast, no geometry).
+        // Mesh/material/animation data cached later via usd_bridge_load_payloads().
         auto cache_start = high_resolution_clock::now();
-        cache_stage_data(bridge);
-        auto cache_stage_time = duration_cast<milliseconds>(high_resolution_clock::now() - cache_start).count();
-        std::cout << "[USD_BRIDGE]   cache_stage_data(): " << cache_stage_time << "ms"
-                  << " (" << bridge->meshes.size() << " meshes, "
-                  << bridge->instancers.size() << " instancers)" << std::endl;
-
-        cache_start = high_resolution_clock::now();
         cache_prim_data(bridge);
         auto cache_prim_time = duration_cast<milliseconds>(high_resolution_clock::now() - cache_start).count();
         std::cout << "[USD_BRIDGE]   cache_prim_data(): " << cache_prim_time << "ms"
                   << " (" << bridge->all_prims.size() << " prims)" << std::endl;
 
-        cache_start = high_resolution_clock::now();
-        cache_animation_data(bridge);
-        auto cache_anim_time = duration_cast<milliseconds>(high_resolution_clock::now() - cache_start).count();
-        std::cout << "[USD_BRIDGE]   cache_animation_data(): " << cache_anim_time << "ms" << std::endl;
-
-        cache_start = high_resolution_clock::now();
-        cache_vertex_animation_data(bridge);
-        auto cache_vert_anim_time = duration_cast<milliseconds>(high_resolution_clock::now() - cache_start).count();
-        std::cout << "[USD_BRIDGE]   cache_vertex_animation_data(): " << cache_vert_anim_time << "ms" << std::endl;
-
-        cache_start = high_resolution_clock::now();
-        cache_light_data(bridge);
-        auto cache_light_time = duration_cast<milliseconds>(high_resolution_clock::now() - cache_start).count();
-        std::cout << "[USD_BRIDGE]   cache_light_data(): " << cache_light_time << "ms"
-                  << " (" << bridge->lights.size() << " lights)" << std::endl;
-
         auto total_time = duration_cast<milliseconds>(high_resolution_clock::now() - total_start).count();
-        std::cout << "[USD_BRIDGE]   TOTAL: " << total_time << "ms" << std::endl;
+        std::cout << "[USD_BRIDGE]   TOTAL (hierarchy only): " << total_time << "ms"
+                  << " (" << bridge->all_prims.size() << " prims)" << std::endl;
 
         *out_stage = bridge;
         return USD_BRIDGE_SUCCESS;
@@ -2692,6 +2671,40 @@ void usd_bridge_free_mesh_geometry(UsdBridgeStage* stage) {
 
     std::cout << "[USD_BRIDGE] Freed mesh geometry cache: "
               << (freed_bytes / (1024 * 1024)) << " MB" << std::endl;
+}
+
+/// Load all payloads and cache mesh/material/animation data.
+/// Call after usd_bridge_open_stage (which opens with LoadNone).
+/// Returns prim count for the caller to decide if loading is feasible.
+UsdBridgeError usd_bridge_load_payloads(
+    UsdBridgeStage* stage,
+    size_t* out_prim_count
+) {
+    if (!stage || !out_prim_count) {
+        return USD_BRIDGE_ERROR_NULL_POINTER;
+    }
+
+    using namespace std::chrono;
+
+    // Load all payloads (deferred from Open with LoadNone)
+    auto load_start = high_resolution_clock::now();
+    stage->stage->Load();
+    auto load_time = duration_cast<milliseconds>(high_resolution_clock::now() - load_start).count();
+    std::cout << "[USD_BRIDGE]   load_payloads(): " << load_time << "ms" << std::endl;
+
+    // Cache all data now that payloads are loaded
+    if (!stage->cached) {
+        cache_stage_data(stage);
+    }
+    if (!stage->prims_cached) {
+        cache_prim_data(stage);
+    }
+    cache_animation_data(stage);
+    cache_vertex_animation_data(stage);
+    cache_light_data(stage);
+
+    *out_prim_count = stage->all_prims.size();
+    return USD_BRIDGE_SUCCESS;
 }
 
 UsdBridgeError usd_bridge_get_mesh_count(

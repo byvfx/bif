@@ -101,9 +101,13 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
 
     let load_start = Instant::now();
 
-    // Open stage via C++ bridge
+    // Open stage via C++ bridge (LoadNone — hierarchy only, no geometry yet)
     let stage_start = Instant::now();
     let stage = UsdStage::open(path)?;
+
+    // Load all payloads and cache mesh/material/animation data
+    let prim_count = stage.load_payloads()?;
+    log::info!("Stage loaded: {} prims", prim_count);
     let stage_time = stage_start.elapsed();
 
     let mut scene = Scene::new(name);

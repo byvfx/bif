@@ -424,6 +424,10 @@ extern "C" {
 
     fn usd_bridge_close_stage(stage: *mut UsdBridgeStageRaw);
     fn usd_bridge_free_mesh_geometry(stage: *mut UsdBridgeStageRaw);
+    fn usd_bridge_load_payloads(
+        stage: *mut UsdBridgeStageRaw,
+        out_prim_count: *mut usize,
+    ) -> UsdBridgeErrorCode;
 
     fn usd_bridge_get_mesh_count(
         stage: *const UsdBridgeStageRaw,
@@ -3771,6 +3775,18 @@ impl UsdStage {
         if !self.raw.is_null() {
             unsafe { usd_bridge_free_mesh_geometry(self.raw) }
         }
+    }
+
+    /// Load all payloads and cache mesh/material/animation data.
+    /// Stage opens with LoadNone (hierarchy only); call this to populate geometry.
+    /// Returns prim count.
+    pub fn load_payloads(&self) -> UsdBridgeResult<usize> {
+        let mut prim_count: usize = 0;
+        let result = unsafe { usd_bridge_load_payloads(self.raw, &mut prim_count) };
+        if result != UsdBridgeErrorCode::Success {
+            return Err(result.into());
+        }
+        Ok(prim_count)
     }
 }
 

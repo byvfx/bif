@@ -308,16 +308,20 @@ fn downscale_raw_nearest(
 /// Skips the f32 intermediate — raw sRGB bytes go straight to GPU.
 /// Handles UDIM patterns by stitching tile atlases.
 #[cfg(feature = "oiio")]
-fn load_raw_texture(path: &str) -> Option<RawTexture> {
-    load_raw_texture_with_depth(path, 0)
+fn load_raw_texture(path: &str, max_tile_size: u32) -> Option<RawTexture> {
+    load_raw_texture_with_depth(path, 0, max_tile_size)
 }
 
 /// Inner loader with UDIM recursion depth tracking (OIIO path).
 #[cfg(feature = "oiio")]
-fn load_raw_texture_with_depth(path: &str, udim_depth: u32) -> Option<RawTexture> {
+fn load_raw_texture_with_depth(
+    path: &str,
+    udim_depth: u32,
+    max_tile_size: u32,
+) -> Option<RawTexture> {
     // Handle UDIM textures
     if is_udim_path(path) {
-        return load_udim_atlas_inner(path, udim_depth);
+        return load_udim_atlas_inner(path, udim_depth, max_tile_size);
     }
 
     let is_linear = is_linear_texture_path(path);
@@ -356,16 +360,20 @@ fn load_raw_texture_with_depth(path: &str, udim_depth: u32) -> Option<RawTexture
 /// since the `image` crate path is already slower than OIIO.
 /// Handles UDIM patterns by stitching tile atlases.
 #[cfg(not(feature = "oiio"))]
-fn load_raw_texture(path: &str) -> Option<RawTexture> {
-    load_raw_texture_with_depth(path, 0)
+fn load_raw_texture(path: &str, max_tile_size: u32) -> Option<RawTexture> {
+    load_raw_texture_with_depth(path, 0, max_tile_size)
 }
 
 /// Inner loader with UDIM recursion depth tracking (non-OIIO path).
 #[cfg(not(feature = "oiio"))]
-fn load_raw_texture_with_depth(path: &str, udim_depth: u32) -> Option<RawTexture> {
+fn load_raw_texture_with_depth(
+    path: &str,
+    udim_depth: u32,
+    max_tile_size: u32,
+) -> Option<RawTexture> {
     // Handle UDIM textures
     if is_udim_path(path) {
-        return load_udim_atlas_inner(path, udim_depth);
+        return load_udim_atlas_inner(path, udim_depth, max_tile_size);
     }
 
     use bif_core::texture::TextureCache;
@@ -774,7 +782,7 @@ const MAX_UDIM_RECURSION_DEPTH: u32 = 2;
 /// Resolve UDIM texture: load all tiles and stitch into a single atlas.
 /// Returns the stitched atlas as raw RGBA bytes + grid dimensions.
 /// Includes recursion depth guard to prevent infinite recursion.
-fn load_udim_atlas_inner(pattern: &str, depth: u32) -> Option<RawTexture> {
+fn load_udim_atlas_inner(pattern: &str, depth: u32, max_tile_size: u32) -> Option<RawTexture> {
     if depth >= MAX_UDIM_RECURSION_DEPTH {
         log::error!(
             "UDIM atlas recursion depth exceeded (max {}) for: {}",
@@ -789,10 +797,18 @@ fn load_udim_atlas_inner(pattern: &str, depth: u32) -> Option<RawTexture> {
         return None;
     }
 
-    // Load all tiles
+    // Load all tiles, downscaling each to max_tile_size before stitching
     let mut loaded_tiles: Vec<(u32, RawTexture)> = Vec::new();
     for (udim, tile_path) in &tiles {
-        if let Some(tex) = load_raw_texture_with_depth(tile_path, depth + 1) {
+        if let Some(mut tex) = load_raw_texture_with_depth(tile_path, depth + 1, max_tile_size) {
+            // Downscale tile BEFORE atlas assembly to save RAM
+            if tex.width > max_tile_size || tex.height > max_tile_size {
+                let (w, h, d) =
+                    downscale_raw_nearest(tex.width, tex.height, &tex.data, max_tile_size);
+                tex.width = w;
+                tex.height = h;
+                tex.data = d;
+            }
             loaded_tiles.push((*udim, tex));
         } else {
             log::warn!("Failed to load UDIM tile {}: {}", udim, tile_path);
@@ -989,7 +1005,9 @@ pub fn create_gpu_textures_for_scene(
     let load_start = std::time::Instant::now();
     let loaded_textures: Vec<_> = paths_to_load
         .par_iter()
-        .map(|path| load_raw_texture(path).map(|tex| (path.clone(), tex)))
+        .map(|path| {
+            load_raw_texture(path, DEFAULT_MAX_VIEWPORT_TEXTURE_SIZE).map(|tex| (path.clone(), tex))
+        })
         .collect();
     let load_time = load_start.elapsed();
     log::info!(
@@ -1140,7 +1158,9 @@ pub fn start_texture_loading_async(
         for chunk in paths_to_load.chunks(CHUNK_SIZE) {
             let results: Vec<_> = chunk
                 .par_iter()
-                .filter_map(|path| load_raw_texture(path).map(|tex| (path.clone(), tex)))
+                .filter_map(|path| {
+                    load_raw_texture(path, adaptive_tex_size).map(|tex| (path.clone(), tex))
+                })
                 .collect();
 
             for (path, mut raw_tex) in results {
