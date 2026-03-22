@@ -6,6 +6,22 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **Stage::Load() eager population** — 8.3x USD loading speedup (8.8s→1s on Glasses.usd) by forcing eager USD composition
+- **GPU buffer size guards** — cap triangle material, vertex, and index buffers to device limits with placeholder fallback (prevents crash on 342M vert scenes)
+- **Chunked texture loading** — load 16 textures at a time (was all-at-once), paced GPU uploads (32/frame)
+- **Texture count warning** — log when >511 textures exceed viewport GPU slot limit
+
+### Changed
+
+- **Deferred normals copy** — skip 289ms wasted copy when UV seam split rebuilds normals
+- **Bulk vertex/normal copy** — `assign()` replaces push_back loops in C++ bridge
+- **UV seam split** — `std::map` → `std::unordered_map` (O(log n) → O(1))
+- **Deferred Rust clones** — mesh dedup hash from references, clone only unique meshes
+- **Disable Ivar prewarm** — materials built on-demand at render time (saves 8+ GB RAM on large scenes)
+- **UDIM atlas cap** — 64MP → 16MP (1GB → 256MB max per atlas)
+
 ## [0.12.0] - 2026-03-21
 
 ### Added
