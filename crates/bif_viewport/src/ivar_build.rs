@@ -532,6 +532,7 @@ impl Renderer {
     /// Spawns a thread to load textures and build materials so the first
     /// Ivar scene build can skip the expensive texture-loading step.
     /// Takes the persistent texture cache so unchanged textures aren't reloaded.
+    #[allow(dead_code)] // Kept for future use — currently disabled to save RAM on large scenes
     pub(crate) fn prewarm_ivar_materials(&mut self) {
         // Skip if no materials to build
         if self.scene.scene_materials.is_empty() {

@@ -87,14 +87,27 @@ impl Renderer {
                     usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                 });
 
-        // Triangle material buffer
+        // Triangle material buffer — cap to GPU limit
         if let Some(ref tri_mats) = mesh_data.triangle_material_ids {
+            let max_buf = self.gpu.device.limits().max_storage_buffer_binding_size as usize;
+            let buf_bytes = tri_mats.len() * std::mem::size_of::<u32>();
+            let data = if buf_bytes > max_buf {
+                let max_entries = max_buf / std::mem::size_of::<u32>();
+                log::warn!(
+                    "Triangle material buffer {} MB exceeds GPU limit {} MB — truncating",
+                    buf_bytes / (1024 * 1024),
+                    max_buf / (1024 * 1024)
+                );
+                &tri_mats[..max_entries]
+            } else {
+                tri_mats.as_slice()
+            };
             self.triangle_material_buffer =
                 self.gpu
                     .device
                     .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                         label: Some("Triangle Material Buffer"),
-                        contents: bytemuck::cast_slice(tri_mats),
+                        contents: bytemuck::cast_slice(data),
                         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                     });
             self.has_triangle_materials = true;
@@ -364,8 +377,7 @@ impl Renderer {
         // Build pick scene for viewport selection
         self.rebuild_pick_scene();
 
-        // Pre-warm materials for Ivar
-        self.prewarm_ivar_materials();
+        // Ivar materials built on-demand when render starts (prewarm disabled to save RAM)
 
         Ok(())
     }
@@ -817,6 +829,20 @@ impl Renderer {
         if compact_tri_mats.is_empty() {
             compact_tri_mats.push(0xFFFFFFFFu32);
         }
+        // Cap to GPU max_storage_buffer_binding_size (typically 128MB)
+        let max_buf = self.gpu.device.limits().max_storage_buffer_binding_size as usize;
+        let buf_bytes = compact_tri_mats.len() * std::mem::size_of::<u32>();
+        if buf_bytes > max_buf {
+            let max_entries = max_buf / std::mem::size_of::<u32>();
+            log::warn!(
+                "Triangle material buffer {} MB exceeds GPU limit {} MB — truncating ({} / {} entries)",
+                buf_bytes / (1024 * 1024),
+                max_buf / (1024 * 1024),
+                max_entries,
+                compact_tri_mats.len()
+            );
+            compact_tri_mats.truncate(max_entries);
+        }
         self.triangle_material_buffer =
             self.gpu
                 .device
@@ -849,23 +875,62 @@ impl Renderer {
                 ],
             });
 
-        // Vertex and index buffers (combined, for single-draw fallback)
-        self.vertex_buffer =
-            self.gpu
-                .device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("WS Vertex Buffer"),
-                    contents: bytemuck::cast_slice(&mesh_data.vertices),
-                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                });
-        self.index_buffer = self
-            .gpu
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("WS Index Buffer"),
-                contents: bytemuck::cast_slice(&mesh_data.indices),
-                usage: wgpu::BufferUsages::INDEX,
-            });
+        // Vertex and index buffers (combined, for single-draw fallback + Ivar)
+        // Guard: skip combined mesh if it exceeds GPU max buffer size
+        let max_buf_size = self.gpu.device.limits().max_buffer_size as usize;
+        let vb_size = std::mem::size_of_val(mesh_data.vertices.as_slice());
+        let ib_size = std::mem::size_of_val(mesh_data.indices.as_slice());
+        if vb_size > max_buf_size || ib_size > max_buf_size {
+            log::warn!(
+                "Combined mesh too large for GPU (verts={} MB, idx={} MB, limit={} MB) — skipping combined buffer, multi-draw only",
+                vb_size / (1024 * 1024),
+                ib_size / (1024 * 1024),
+                max_buf_size / (1024 * 1024),
+            );
+            // Create minimal placeholder buffers
+            let placeholder_vert = crate::gpu_types::Vertex {
+                position: [0.0; 3],
+                normal: [0.0; 3],
+                color: [0.0; 3],
+                uv: [0.0; 2],
+                material_id: 0,
+            };
+            self.vertex_buffer =
+                self.gpu
+                    .device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("WS Vertex Buffer (placeholder)"),
+                        contents: bytemuck::bytes_of(&placeholder_vert),
+                        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                    });
+            self.index_buffer =
+                self.gpu
+                    .device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("WS Index Buffer (placeholder)"),
+                        contents: bytemuck::cast_slice(&[0u32]),
+                        usage: wgpu::BufferUsages::INDEX,
+                    });
+            self.scene.mesh_data.vertices.clear();
+            self.scene.mesh_data.indices.clear();
+        } else {
+            self.vertex_buffer =
+                self.gpu
+                    .device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("WS Vertex Buffer"),
+                        contents: bytemuck::cast_slice(&mesh_data.vertices),
+                        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                    });
+            self.index_buffer =
+                self.gpu
+                    .device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("WS Index Buffer"),
+                        contents: bytemuck::cast_slice(&mesh_data.indices),
+                        usage: wgpu::BufferUsages::INDEX,
+                    });
+        }
 
         // Generate instances (pre-allocate for scene + instancer instances)
         let instancer_count: usize = self
@@ -1212,10 +1277,9 @@ impl Renderer {
         // Invalidate Ivar
         self.ivar.ivar_state.invalidate_scene();
 
-        // Invalidate material cache when materials changed; prewarm new ones
+        // Invalidate material cache when materials changed (built on-demand at Ivar render)
         if self.nodes.materials_dirty {
             self.invalidate_ivar_materials();
-            self.prewarm_ivar_materials();
         }
 
         // Rebuild pick scene
@@ -1330,8 +1394,12 @@ impl Renderer {
         let mut uploaded = 0u32;
         let mut has_udim = false;
 
-        // Drain all available textures (non-blocking)
+        // Pace uploads to avoid frame spikes (max 32 per frame)
+        const MAX_UPLOADS_PER_FRAME: u32 = 32;
         loop {
+            if uploaded >= MAX_UPLOADS_PER_FRAME {
+                break;
+            }
             match receiver.try_recv() {
                 Ok(msg) => {
                     let is_udim = msg.udim_grid_cols > 0;
@@ -1672,6 +1740,20 @@ impl Renderer {
         if compact_tri_mats.is_empty() {
             compact_tri_mats.push(0xFFFFFFFFu32);
         }
+        // Cap to GPU max_storage_buffer_binding_size
+        let max_buf = self.gpu.device.limits().max_storage_buffer_binding_size as usize;
+        let buf_bytes = compact_tri_mats.len() * std::mem::size_of::<u32>();
+        if buf_bytes > max_buf {
+            let max_entries = max_buf / std::mem::size_of::<u32>();
+            log::warn!(
+                "Triangle material buffer {} MB exceeds GPU limit {} MB — truncating ({} / {} entries)",
+                buf_bytes / (1024 * 1024),
+                max_buf / (1024 * 1024),
+                max_entries,
+                compact_tri_mats.len()
+            );
+            compact_tri_mats.truncate(max_entries);
+        }
         self.triangle_material_buffer =
             self.gpu
                 .device
@@ -1722,25 +1804,52 @@ impl Renderer {
                 ],
             });
 
-        // Create new vertex buffer (COPY_DST needed for vertex animation updates)
+        // Create new vertex/index buffers — guard against GPU max buffer size
+        let max_buf_size = self.gpu.device.limits().max_buffer_size as usize;
+        let vb_size = std::mem::size_of_val(mesh_data.vertices.as_slice());
+        let ib_size = std::mem::size_of_val(mesh_data.indices.as_slice());
+        let combined_too_large = vb_size > max_buf_size || ib_size > max_buf_size;
+        if combined_too_large {
+            log::warn!(
+                "Combined mesh too large for GPU (verts={} MB, idx={} MB, limit={} MB) — multi-draw only",
+                vb_size / (1024 * 1024),
+                ib_size / (1024 * 1024),
+                max_buf_size / (1024 * 1024),
+            );
+        }
+        let placeholder_vert = crate::gpu_types::Vertex {
+            position: [0.0; 3],
+            normal: [0.0; 3],
+            color: [0.0; 3],
+            uv: [0.0; 2],
+            material_id: 0,
+        };
         let vertex_buffer = self
             .gpu
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("Vertex Buffer"),
-                contents: bytemuck::cast_slice(&mesh_data.vertices),
+                contents: if combined_too_large {
+                    bytemuck::bytes_of(&placeholder_vert)
+                } else {
+                    bytemuck::cast_slice(&mesh_data.vertices)
+                },
                 usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             });
-
-        // Create new index buffer
         let index_buffer = self
             .gpu
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("Index Buffer"),
-                contents: bytemuck::cast_slice(&mesh_data.indices),
+                contents: if combined_too_large {
+                    bytemuck::cast_slice(&[0u32])
+                } else {
+                    bytemuck::cast_slice(&mesh_data.indices)
+                },
                 usage: wgpu::BufferUsages::INDEX,
             });
+        // If combined mesh was too large, clear it on self.scene.mesh_data after assignment
+        // (finalize_usd_scene sets self.scene.mesh_data later)
 
         // Generate instances from scene
         // Multi-draw (wgpu viewport) uses per-instance transforms
@@ -2116,7 +2225,9 @@ impl Renderer {
                     .add_instance(remapped_proto_id, inst.transform.clone());
             }
             // Preserve purpose from loaded scene
-            self.scene.working_scene.set_last_instance_purpose(inst.purpose);
+            self.scene
+                .working_scene
+                .set_last_instance_purpose(inst.purpose);
         }
         let mat_source_dir = path.parent().map(|p| p.to_path_buf());
         for mat in &scene.materials {
@@ -2207,8 +2318,7 @@ impl Renderer {
             total_viewport_time.as_secs_f64() * 1000.0
         );
 
-        // Pre-warm Ivar materials (if not already started by reload_working_scene)
-        self.prewarm_ivar_materials();
+        // Ivar materials built on-demand when render starts (prewarm disabled to save RAM)
 
         Ok(())
     }

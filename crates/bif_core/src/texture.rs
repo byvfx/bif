@@ -989,8 +989,8 @@ const MAX_IVAR_UDIM_TILE_SIZE: u32 = 4096;
 const MAX_IVAR_ATLAS_SIZE: u32 = 8192;
 
 /// Maximum total pixel count for UDIM atlases (memory budget).
-/// 64M pixels * 16 bytes/pixel = 1 GB.
-const MAX_IVAR_ATLAS_PIXELS: u64 = 67_108_864;
+/// 16M pixels * 16 bytes/pixel = 256 MB.
+const MAX_IVAR_ATLAS_PIXELS: u64 = 16_777_216;
 
 /// Normalize path for OS filesystem access.
 /// On Windows, converts forward-slash UNC paths (`//server/share/...`)

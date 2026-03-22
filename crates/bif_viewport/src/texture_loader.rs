@@ -1094,33 +1094,48 @@ pub fn start_texture_loading_async(
     let (tx, rx) = mpsc::channel();
 
     let texture_paths = collect_scene_texture_paths(scene, base_dir);
-    let paths_to_load: Vec<_> = texture_paths
-        .into_iter()
-        .take(MAX_VIEWPORT_TEXTURES - 1)
-        .collect();
+    let total_textures = texture_paths.len();
+    let max_slots = MAX_VIEWPORT_TEXTURES - 1;
+    if total_textures > max_slots {
+        log::warn!(
+            "Scene has {} textures, viewport limit is {} — {} textures will be missing",
+            total_textures,
+            max_slots,
+            total_textures - max_slots
+        );
+    }
+    let paths_to_load: Vec<_> = texture_paths.into_iter().take(max_slots).collect();
 
     std::thread::spawn(move || {
         use rayon::prelude::*;
 
-        // Load all textures in parallel on the background thread pool
-        let results: Vec<_> = paths_to_load
-            .par_iter()
-            .filter_map(|path| load_raw_texture(path).map(|tex| (path.clone(), tex)))
-            .collect();
+        // Load textures in chunks to limit peak RAM (16 textures at a time).
+        // Without chunking, rayon decodes all textures simultaneously → OOM on 500+ textures.
+        const CHUNK_SIZE: usize = 16;
+        for chunk in paths_to_load.chunks(CHUNK_SIZE) {
+            let results: Vec<_> = chunk
+                .par_iter()
+                .filter_map(|path| load_raw_texture(path).map(|tex| (path.clone(), tex)))
+                .collect();
 
-        // Send results to main thread
-        for (path, raw_tex) in results {
-            let _ = tx.send(TextureLoadMessage {
-                path,
-                width: raw_tex.width,
-                height: raw_tex.height,
-                data: raw_tex.data,
-                is_linear: raw_tex.is_linear,
-                udim_grid_cols: raw_tex.udim_grid_cols,
-                udim_grid_rows: raw_tex.udim_grid_rows,
-                udim_min_col: raw_tex.udim_min_col,
-                udim_min_row: raw_tex.udim_min_row,
-            });
+            for (path, raw_tex) in results {
+                if tx
+                    .send(TextureLoadMessage {
+                        path,
+                        width: raw_tex.width,
+                        height: raw_tex.height,
+                        data: raw_tex.data,
+                        is_linear: raw_tex.is_linear,
+                        udim_grid_cols: raw_tex.udim_grid_cols,
+                        udim_grid_rows: raw_tex.udim_grid_rows,
+                        udim_min_col: raw_tex.udim_min_col,
+                        udim_min_row: raw_tex.udim_min_row,
+                    })
+                    .is_err()
+                {
+                    return; // Receiver dropped — scene was unloaded
+                }
+            }
         }
     });
 

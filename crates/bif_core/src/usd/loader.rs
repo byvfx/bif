@@ -145,21 +145,14 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
         if !mesh_data.visible {
             continue;
         }
-        let vertices = mesh_data.vertices.clone();
-        let indices = mesh_data.indices.clone();
-        let normals = mesh_data.normals.clone();
-        let uvs = mesh_data.uvs.clone();
-
-        // Create a hash key based on mesh geometry
-        // Hash vertex/index count + sampled vertex positions for collision resistance
+        // Hash from references — no clone until we know it's unique
         let vertex_hash = {
             use std::collections::hash_map::DefaultHasher;
             use std::hash::{Hash, Hasher};
             let mut hasher = DefaultHasher::new();
-            vertices.len().hash(&mut hasher);
-            indices.len().hash(&mut hasher);
-            // Sample 10 vertices spread across the array for better collision resistance
-            let vlen = vertices.len();
+            mesh_data.vertices.len().hash(&mut hasher);
+            mesh_data.indices.len().hash(&mut hasher);
+            let vlen = mesh_data.vertices.len();
             let sample_count = vlen.min(10);
             for i in 0..sample_count {
                 let idx = if sample_count <= 1 {
@@ -167,14 +160,13 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
                 } else {
                     i * (vlen - 1) / (sample_count - 1)
                 };
-                if let Some(v) = vertices.get(idx) {
+                if let Some(v) = mesh_data.vertices.get(idx) {
                     v.x.to_bits().hash(&mut hasher);
                     v.y.to_bits().hash(&mut hasher);
                     v.z.to_bits().hash(&mut hasher);
                 }
             }
-            // Sample index values at same spread positions
-            let ilen = indices.len();
+            let ilen = mesh_data.indices.len();
             let idx_sample_count = ilen.min(10);
             for i in 0..idx_sample_count {
                 let idx = if idx_sample_count <= 1 {
@@ -182,22 +174,30 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
                 } else {
                     i * (ilen - 1) / (idx_sample_count - 1)
                 };
-                if let Some(&val) = indices.get(idx) {
+                if let Some(&val) = mesh_data.indices.get(idx) {
                     val.hash(&mut hasher);
                 }
             }
             hasher.finish()
         };
-        let dedup_key = (vertices.len(), indices.len(), vertex_hash);
+        let dedup_key = (
+            mesh_data.vertices.len(),
+            mesh_data.indices.len(),
+            vertex_hash,
+        );
 
         let proto_id = if let Some(&existing_id) = mesh_dedup.get(&dedup_key) {
             // Mesh already exists, reuse prototype
             existing_id
         } else {
-            // New unique mesh, create prototype
-            let face_material_ids = mesh_data.face_material_ids.clone();
-            let mut mesh =
-                Mesh::new_with_materials(vertices, indices, normals, uvs, face_material_ids);
+            // New unique mesh — clone data only for unique meshes
+            let mut mesh = Mesh::new_with_materials(
+                mesh_data.vertices.clone(),
+                mesh_data.indices.clone(),
+                mesh_data.normals.clone(),
+                mesh_data.uvs.clone(),
+                mesh_data.face_material_ids.clone(),
+            );
             mesh.ensure_normals();
 
             // Store subdivision data for Embree subd geometry

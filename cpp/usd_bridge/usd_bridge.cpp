@@ -642,6 +642,16 @@ static void cache_stage_data(UsdBridgeStage* bridge) {
     using namespace std::chrono;
     auto func_start = high_resolution_clock::now();
 
+    // Force eager stage population — USD defers layer resolution until first
+    // heavy attribute read.  Load() resolves all payloads + composition upfront
+    // so subsequent GetAttr().Get() calls hit the value cache.
+    {
+        auto load_start = high_resolution_clock::now();
+        bridge->stage->Load();
+        auto load_time = duration_cast<milliseconds>(high_resolution_clock::now() - load_start).count();
+        std::cout << "[USD_BRIDGE]   Stage::Load() (eager populate): " << load_time << "ms" << std::endl;
+    }
+
     // Cache materials first - needed for GeomSubset material assignment
     auto mat_start = high_resolution_clock::now();
     cache_material_data(bridge);
@@ -649,7 +659,7 @@ static void cache_stage_data(UsdBridgeStage* bridge) {
 
     // Timing accumulators for mesh processing
     long long time_vertices = 0, time_triangulate = 0, time_subsets = 0;
-    long long time_normals = 0, time_uvs = 0, time_transform = 0;
+    long long time_normals = 0, time_normals_read = 0, time_uvs = 0, time_transform = 0;
     size_t total_verts = 0, total_tris = 0;
     int sphere_count = 0, cube_count = 0;
 
@@ -731,14 +741,10 @@ static void cache_stage_data(UsdBridgeStage* bridge) {
 
             mesh.GetPointsAttr().Get(&points, timeCode);
 
-            // Pre-allocate to exact size to minimize memory overhead
-            cached.vertices.reserve(points.size() * 3);
-            cached.vertices.shrink_to_fit();
-            for (const auto& p : points) {
-                cached.vertices.push_back(p[0]);
-                cached.vertices.push_back(p[1]);
-                cached.vertices.push_back(p[2]);
-            }
+            // Bulk copy — GfVec3f is 3 contiguous floats, same layout as float[3]
+            static_assert(sizeof(GfVec3f) == 3 * sizeof(float), "GfVec3f must be 3 contiguous floats");
+            const float* pdata = reinterpret_cast<const float*>(points.cdata());
+            cached.vertices.assign(pdata, pdata + points.size() * 3);
             time_vertices += duration_cast<milliseconds>(high_resolution_clock::now() - vert_start).count();
             total_verts += points.size();
 
@@ -849,13 +855,12 @@ static void cache_stage_data(UsdBridgeStage* bridge) {
             VtArray<GfVec3f> normals;
             TfToken normalsInterpolation;
             if (mesh.GetNormalsAttr().Get(&normals, timeCode)) {
+                auto normal_read_time = high_resolution_clock::now();
+                time_normals_read += duration_cast<milliseconds>(normal_read_time - normal_start).count();
+
                 normalsInterpolation = mesh.GetNormalsInterpolation();
-                cached.normals.reserve(normals.size() * 3);
-                for (const auto& n : normals) {
-                    cached.normals.push_back(n[0]);
-                    cached.normals.push_back(n[1]);
-                    cached.normals.push_back(n[2]);
-                }
+                // Defer copy — UV seam split may rebuild normals entirely,
+                // making an early copy here 100% wasted (24MB+ on large meshes).
 
                 // Store normals interpolation enum
                 if (normalsInterpolation == UsdGeomTokens->faceVarying) {
@@ -867,6 +872,8 @@ static void cache_stage_data(UsdBridgeStage* bridge) {
                 } else {
                     cached.normals_interpolation = 0; // vertex (default)
                 }
+            } else {
+                time_normals_read += duration_cast<milliseconds>(high_resolution_clock::now() - normal_start).count();
             }
             time_normals += duration_cast<milliseconds>(high_resolution_clock::now() - normal_start).count();
 
@@ -909,7 +916,15 @@ static void cache_stage_data(UsdBridgeStage* bridge) {
                     if (interpolation == UsdGeomTokens->faceVarying) {
                         // faceVarying: one UV per face-vertex. Split vertices at UV seams.
                         // Map (original_vertex, uv) -> new_vertex_index
-                        std::map<std::pair<int, std::pair<int,int>>, uint32_t> vertUvToNew;
+                        struct PairHash {
+                            size_t operator()(const std::pair<int, std::pair<int,int>>& p) const {
+                                size_t h = std::hash<int>{}(p.first);
+                                h ^= std::hash<int>{}(p.second.first) + 0x9e3779b9 + (h << 6) + (h >> 2);
+                                h ^= std::hash<int>{}(p.second.second) + 0x9e3779b9 + (h << 6) + (h >> 2);
+                                return h;
+                            }
+                        };
+                        std::unordered_map<std::pair<int, std::pair<int,int>>, uint32_t, PairHash> vertUvToNew;
                         std::vector<float> newVertices;
                         std::vector<float> newNormals;
                         std::vector<float> newUvs;
@@ -1049,6 +1064,14 @@ static void cache_stage_data(UsdBridgeStage* bridge) {
                         }
                     }
                 }
+
+                // Deferred normals copy: only needed when seam split didn't run
+                // (seam split builds newNormals from VtArray and replaces cached.normals)
+                if (!cached.has_uv_split && !normals.empty()) {
+                    const float* ndata = reinterpret_cast<const float*>(normals.cdata());
+                    cached.normals.assign(ndata, ndata + normals.size() * 3);
+                }
+
                 cached.uv_primvar_name = foundUvName;
             }
             time_uvs += duration_cast<milliseconds>(high_resolution_clock::now() - uv_start).count();
@@ -1353,7 +1376,7 @@ static void cache_stage_data(UsdBridgeStage* bridge) {
     std::cout << "[USD_BRIDGE]   Vertices:     " << time_vertices << "ms (" << total_verts << " verts)" << std::endl;
     std::cout << "[USD_BRIDGE]   Triangulate:  " << time_triangulate << "ms (" << total_tris << " tris)" << std::endl;
     std::cout << "[USD_BRIDGE]   GeomSubsets:  " << time_subsets << "ms" << std::endl;
-    std::cout << "[USD_BRIDGE]   Normals:      " << time_normals << "ms" << std::endl;
+    std::cout << "[USD_BRIDGE]   Normals:      " << time_normals << "ms (read=" << time_normals_read << "ms, copy=" << (time_normals - time_normals_read) << "ms)" << std::endl;
     std::cout << "[USD_BRIDGE]   UVs:          " << time_uvs << "ms" << std::endl;
     std::cout << "[USD_BRIDGE]   Transforms:   " << time_transform << "ms" << std::endl;
     std::cout << "[USD_BRIDGE]   Native inst:  " << bridge->native_instances.size() << std::endl;

@@ -427,10 +427,7 @@ pub fn render_property_inspector(
 
             // -- Bottom: tabbed detail panel --
             ui.horizontal(|ui| {
-                for tab in [
-                    PropertyTab::Value,
-                    PropertyTab::MetaData,
-                ] {
+                for tab in [PropertyTab::Value, PropertyTab::MetaData] {
                     let label = match tab {
                         PropertyTab::Value => "Value",
                         PropertyTab::MetaData => "Meta Data",
