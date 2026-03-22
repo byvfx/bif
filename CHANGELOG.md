@@ -13,6 +13,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Chunked texture loading** — load 16 textures at a time (was all-at-once), paced GPU uploads (32/frame)
 - **Texture count warning** — log when >511 textures exceed viewport GPU slot limit
 - **Texture backpressure** — `sync_channel(32)` prevents unbounded RAM growth on 500+ texture scenes
+- **Adaptive texture downscale** — auto 512px for 200+ textures, 1024px for 50+ (background thread downscale before channel send)
+- **MAX_VIEWPORT_TEXTURES** — raised 512→2048 for production scenes
+- **Free C++ mesh cache** — `usd_bridge_free_mesh_geometry()` frees normals/UVs/subdivision after Rust copy (~8GB on 335M vert scenes)
+- **Texture streaming progress** — periodic log of loaded/total count
 
 ### Fixed
 
