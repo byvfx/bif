@@ -12,6 +12,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **GPU buffer size guards** — cap triangle material, vertex, and index buffers to device limits with placeholder fallback (prevents crash on 342M vert scenes)
 - **Chunked texture loading** — load 16 textures at a time (was all-at-once), paced GPU uploads (32/frame)
 - **Texture count warning** — log when >511 textures exceed viewport GPU slot limit
+- **Texture backpressure** — `sync_channel(32)` prevents unbounded RAM growth on 500+ texture scenes
+
+### Fixed
+
+- **Normals lost on meshes without UVs** — deferred normals copy was inside UV block; meshes with normals but no UVs got flat shading
+- **UV seam split hash collisions** — PairHash uses bit mixing instead of MSVC identity hash
 
 ### Changed
 
@@ -20,7 +26,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **UV seam split** — `std::map` → `std::unordered_map` (O(log n) → O(1))
 - **Deferred Rust clones** — mesh dedup hash from references, clone only unique meshes
 - **Disable Ivar prewarm** — materials built on-demand at render time (saves 8+ GB RAM on large scenes)
-- **UDIM atlas cap** — 64MP → 16MP (1GB → 256MB max per atlas)
+- **UDIM atlas cap** — 64MP → 32MP (1GB → 512MB max per atlas)
+- **Remove texture upload clone** — skip `tex.data.clone()` when no downscale needed
 
 ## [0.12.0] - 2026-03-21
 
