@@ -370,10 +370,10 @@ pub(crate) fn render_stats_panel(
         ));
         ui.label(format!("  Full mesh: {}", p.visible_instances));
         ui.label(format!("  Box LOD: {}", p.lod_box_instances));
-        // Triangle count: full mesh tris + LOD_BOX_TRIANGLES per box
-        const LOD_BOX_TRIANGLES: u32 = 12; // cube = 6 faces * 2 tris
-        let full_mesh_tris = p.triangles_per_instance * p.visible_instances;
-        let box_tris = LOD_BOX_TRIANGLES * p.lod_box_instances;
+        // Triangle count: full mesh tris + LOD_BOX_TRIANGLES per box (u64 to avoid overflow)
+        const LOD_BOX_TRIANGLES: u64 = 12; // cube = 6 faces * 2 tris
+        let full_mesh_tris = p.triangles_per_instance as u64 * p.visible_instances as u64;
+        let box_tris = LOD_BOX_TRIANGLES * p.lod_box_instances as u64;
         ui.label(format!(
             "Triangles: {} ({}+{})",
             full_mesh_tris + box_tris,

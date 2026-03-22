@@ -1283,6 +1283,19 @@ impl Renderer {
             return;
         }
 
+        // Skip pick scene for huge meshes — Embree BVH allocation would OOM
+        const MAX_PICK_TRIS: usize = 50_000_000;
+        let tri_count = self.scene.mesh_data.indices.len() / 3;
+        if tri_count > MAX_PICK_TRIS {
+            log::warn!(
+                "Pick scene skipped: {} M tris exceeds {} M limit (click-to-select disabled)",
+                tri_count / 1_000_000,
+                MAX_PICK_TRIS / 1_000_000
+            );
+            self.pick_scene = None;
+            return;
+        }
+
         // Use indexed path — pass shared positions + indices directly
         let positions = self.scene.mesh_data.extract_positions();
 

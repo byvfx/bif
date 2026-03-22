@@ -68,6 +68,13 @@
 PXR_NAMESPACE_USING_DIRECTIVE
 
 // ============================================================================
+// Debug logging flags — toggle sections independently
+// ============================================================================
+static bool g_log_textures = false;   // [BIF_TEX] material/texture resolution
+static bool g_log_timing   = true;    // [USD_BRIDGE] timing breakdowns
+static bool g_log_variants = true;    // [BIF_TEX] variant selection
+
+// ============================================================================
 // Internal Data Structures
 // ============================================================================
 
@@ -1407,14 +1414,14 @@ static std::string resolve_asset_path(const SdfAssetPath& asset_path,
                                        const UsdPrim& shader_prim) {
     // Prefer the pre-resolved absolute path (works for non-UDIM textures)
     if (!asset_path.GetResolvedPath().empty()) {
-        std::cout << "[BIF_TEX] resolve raw=" << asset_path.GetAssetPath()
+        if (g_log_textures) std::cout << "[BIF_TEX] resolve raw=" << asset_path.GetAssetPath()
                   << " resolved=" << asset_path.GetResolvedPath() << std::endl;
         return asset_path.GetResolvedPath();
     }
 
     std::string raw = asset_path.GetAssetPath();
     if (raw.empty()) {
-        std::cout << "[BIF_TEX] resolve raw=(empty)" << std::endl;
+        if (g_log_textures) std::cout << "[BIF_TEX] resolve raw=(empty)" << std::endl;
         return "";
     }
 
@@ -1429,14 +1436,14 @@ static std::string resolve_asset_path(const SdfAssetPath& asset_path,
         SdfLayerHandle source_layer = prim_stack[0]->GetLayer();
         if (source_layer) {
             std::string result = SdfComputeAssetPathRelativeToLayer(source_layer, raw);
-            std::cout << "[BIF_TEX] resolve raw=" << raw
+            if (g_log_textures) std::cout << "[BIF_TEX] resolve raw=" << raw
                       << " layer=" << source_layer->GetIdentifier()
                       << " resolved=" << result << std::endl;
             return result;
         }
     }
 
-    std::cout << "[BIF_TEX] resolve raw=" << raw << " (unresolved, no layer)" << std::endl;
+    if (g_log_textures) std::cout << "[BIF_TEX] resolve raw=" << raw << " (unresolved, no layer)" << std::endl;
     return raw;
 }
 
@@ -1451,7 +1458,7 @@ static std::string get_texture_path(const UsdShadeInput& input) {
     input.GetRawConnectedSourcePaths(&connections);
 
     if (connections.empty()) {
-        std::cout << "[BIF_TEX] PreviewSurface input=" << input_name
+        if (g_log_textures) std::cout << "[BIF_TEX] PreviewSurface input=" << input_name
                   << " connections=0" << std::endl;
     }
 
@@ -1461,7 +1468,7 @@ static std::string get_texture_path(const UsdShadeInput& input) {
         SdfPath prim_path = conn_path.GetPrimPath();
         UsdPrim shader_prim = input.GetPrim().GetStage()->GetPrimAtPath(prim_path);
         if (!shader_prim) {
-            std::cout << "[BIF_TEX] PreviewSurface input=" << input_name
+            if (g_log_textures) std::cout << "[BIF_TEX] PreviewSurface input=" << input_name
                       << " conn=" << conn_path.GetString()
                       << " prim=NOT_FOUND" << std::endl;
             continue;
@@ -1473,7 +1480,7 @@ static std::string get_texture_path(const UsdShadeInput& input) {
         // Check if this is a UsdUVTexture
         TfToken shader_id;
         shader.GetIdAttr().Get(&shader_id);
-        std::cout << "[BIF_TEX] PreviewSurface input=" << input_name
+        if (g_log_textures) std::cout << "[BIF_TEX] PreviewSurface input=" << input_name
                   << " conn=" << conn_path.GetString()
                   << " shader_id=" << shader_id.GetString() << std::endl;
         if (shader_id == TfToken("UsdUVTexture")) {
@@ -1534,7 +1541,7 @@ static std::string get_materialx_texture_path(const UsdShadeInput& input) {
     input.GetRawConnectedSourcePaths(&connections);
 
     if (connections.empty()) {
-        std::cout << "[BIF_TEX] MaterialX input=" << input_name
+        if (g_log_textures) std::cout << "[BIF_TEX] MaterialX input=" << input_name
                   << " connections=0" << std::endl;
     }
 
@@ -1542,14 +1549,14 @@ static std::string get_materialx_texture_path(const UsdShadeInput& input) {
         SdfPath prim_path = conn_path.GetPrimPath();
         UsdPrim connected_prim = input.GetPrim().GetStage()->GetPrimAtPath(prim_path);
         if (!connected_prim) {
-            std::cout << "[BIF_TEX] MaterialX input=" << input_name
+            if (g_log_textures) std::cout << "[BIF_TEX] MaterialX input=" << input_name
                       << " conn=" << conn_path.GetString()
                       << " prim=NOT_FOUND" << std::endl;
             continue;
         }
 
         std::string type_name = connected_prim.GetTypeName().GetString();
-        std::cout << "[BIF_TEX] MaterialX input=" << input_name
+        if (g_log_textures) std::cout << "[BIF_TEX] MaterialX input=" << input_name
                   << " conn=" << conn_path.GetString()
                   << " type=" << type_name << std::endl;
 
@@ -1559,7 +1566,7 @@ static std::string get_materialx_texture_path(const UsdShadeInput& input) {
 
         // If connected prim is a NodeGraph, recurse into it to find image nodes
         if (connected_prim.IsA<UsdShadeNodeGraph>()) {
-            std::cout << "[BIF_TEX]   -> traversing NodeGraph "
+            if (g_log_textures) std::cout << "[BIF_TEX]   -> traversing NodeGraph "
                       << connected_prim.GetPath().GetString() << std::endl;
 
             // First try: follow the NodeGraph's output connections
@@ -1575,7 +1582,7 @@ static std::string get_materialx_texture_path(const UsdShadeInput& input) {
                     if (!ng_prim) continue;
 
                     std::string ng_type = ng_prim.GetTypeName().GetString();
-                    std::cout << "[BIF_TEX]     ng_output conn="
+                    if (g_log_textures) std::cout << "[BIF_TEX]     ng_output conn="
                               << ng_conn.GetString()
                               << " type=" << ng_type << std::endl;
 
@@ -1596,7 +1603,7 @@ static std::string get_materialx_texture_path(const UsdShadeInput& input) {
             for (const auto& desc : connected_prim.GetDescendants()) {
                 result = try_extract_image_file(desc);
                 if (!result.empty()) {
-                    std::cout << "[BIF_TEX]     found image in descendant "
+                    if (g_log_textures) std::cout << "[BIF_TEX]     found image in descendant "
                               << desc.GetPath().GetString() << std::endl;
                     return result;
                 }
@@ -1722,7 +1729,7 @@ static void cache_material_data(UsdBridgeStage* bridge) {
         // If we found a MaterialX shader, use it
         if (mtlx_shader) {
             cached.is_materialx = true;
-            std::cout << "[BIF_TEX] material=" << mat_path
+            if (g_log_textures) std::cout << "[BIF_TEX] material=" << mat_path
                       << " type=MaterialX(mtlx:surface)" << std::endl;
             UsdShadeInput input;
 
@@ -1843,7 +1850,7 @@ static void cache_material_data(UsdBridgeStage* bridge) {
         // Check for MaterialX standard_surface first
         if (is_materialx_standard_surface(shader_id)) {
             cached.is_materialx = true;
-            std::cout << "[BIF_TEX] material=" << mat_path
+            if (g_log_textures) std::cout << "[BIF_TEX] material=" << mat_path
                       << " type=MaterialX(surface) shader_id=" << shader_id.GetString()
                       << std::endl;
             UsdShadeInput input;
@@ -1942,14 +1949,14 @@ static void cache_material_data(UsdBridgeStage* bridge) {
 
         // Fall back to UsdPreviewSurface
         if (shader_id != TfToken("UsdPreviewSurface")) {
-            std::cout << "[BIF_TEX] material=" << mat_path
+            if (g_log_textures) std::cout << "[BIF_TEX] material=" << mat_path
                       << " type=UNKNOWN shader_id=" << shader_id.GetString()
                       << std::endl;
             bridge->materials.push_back(std::move(cached));
             continue;
         }
 
-        std::cout << "[BIF_TEX] material=" << mat_path
+        if (g_log_textures) std::cout << "[BIF_TEX] material=" << mat_path
                   << " type=UsdPreviewSurface" << std::endl;
 
         // Extract UsdPreviewSurface parameters
@@ -2564,7 +2571,7 @@ UsdBridgeError usd_bridge_open_stage(const char* path, UsdBridgeStage** out_stag
                     }
                     if (!chosen.empty()) {
                         vs.SetVariantSelection(chosen);
-                        std::cout << "[BIF_TEX] variant prim=" << prim.GetPath().GetString()
+                        if (g_log_variants) std::cout << "[BIF_TEX] variant prim=" << prim.GetPath().GetString()
                                   << " set=" << vs_name
                                   << " was=" << (sel.empty() ? "(empty)" : sel)
                                   << " now=" << chosen << std::endl;
