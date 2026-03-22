@@ -166,6 +166,12 @@ impl CullingManager {
         purposes: &[bif_core::Purpose],
         purpose_mode: PurposeMode,
     ) -> CullingResult {
+        debug_assert_eq!(
+            purposes.len(),
+            transforms.len(),
+            "purposes/transforms parallel array mismatch"
+        );
+
         // Guard: clamp to shorter length if AABBs/transforms diverge after partial update
         if self.instance_aabbs.len() != transforms.len() {
             log::warn!(

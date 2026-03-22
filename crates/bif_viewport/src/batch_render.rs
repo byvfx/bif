@@ -42,6 +42,10 @@ pub enum BatchMessage {
 ///
 /// Caller provides a persistent `TextureCache` — unchanged textures reuse
 /// existing `Arc<Texture>` across rebuilds instead of reloading from disk.
+///
+/// Note: batch render ignores viewport purpose mode — always renders all
+/// geometry regardless of purpose filtering. This is intentional: batch
+/// output should be deterministic and not depend on viewport display state.
 pub fn build_materials(
     scene_materials: &[Arc<bif_core::Material>],
     fallback: &bif_core::Material,

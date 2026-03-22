@@ -436,6 +436,8 @@ typedef struct UsdNativeInstanceData {
     float transform[16];
     /// Material override index (-1 = use prototype material)
     int material_override_idx;
+    /// Purpose (0=default, 1=render, 2=proxy, 3=guide)
+    int purpose;
 } UsdNativeInstanceData;
 
 /// Get the number of native instances (from instanceable=true prims).

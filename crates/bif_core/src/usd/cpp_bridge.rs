@@ -105,6 +105,7 @@ struct UsdNativeInstanceDataRaw {
     proto_mesh_idx: i32,
     transform: [f32; 16],
     material_override_idx: i32,
+    purpose: i32,
 }
 
 /// Instancer data from C API
@@ -1084,6 +1085,8 @@ pub struct UsdNativeInstance {
     pub transform: Mat4,
     /// Material override index (-1 = use prototype material)
     pub material_override_idx: i32,
+    /// Purpose (from scene hierarchy)
+    pub purpose: MeshPurpose,
 }
 
 /// Point instancer data extracted from USD.
@@ -2212,6 +2215,7 @@ impl UsdStage {
             proto_mesh_idx: 0,
             transform: [0.0; 16],
             material_override_idx: -1,
+            purpose: 0,
         };
 
         let result = unsafe { usd_bridge_get_native_instance(self.raw, index, &mut raw_data) };
@@ -2224,10 +2228,17 @@ impl UsdStage {
             });
         }
 
+        let purpose = match raw_data.purpose {
+            1 => MeshPurpose::Render,
+            2 => MeshPurpose::Proxy,
+            3 => MeshPurpose::Guide,
+            _ => MeshPurpose::Default,
+        };
         Ok(UsdNativeInstance {
             proto_mesh_idx: raw_data.proto_mesh_idx as usize,
             transform: Mat4::from_cols_array(&raw_data.transform),
             material_override_idx: raw_data.material_override_idx,
+            purpose,
         })
     }
 

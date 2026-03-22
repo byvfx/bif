@@ -57,8 +57,6 @@ enum PropertyTab {
     #[default]
     Value,
     MetaData,
-    LayerStack,
-    Composition,
 }
 
 /// Status indicator for a property row.
@@ -432,14 +430,10 @@ pub fn render_property_inspector(
                 for tab in [
                     PropertyTab::Value,
                     PropertyTab::MetaData,
-                    PropertyTab::LayerStack,
-                    PropertyTab::Composition,
                 ] {
                     let label = match tab {
                         PropertyTab::Value => "Value",
                         PropertyTab::MetaData => "Meta Data",
-                        PropertyTab::LayerStack => "Layer Stack",
-                        PropertyTab::Composition => "Composition",
                     };
                     if ui.selectable_label(active_tab == tab, label).clicked() {
                         active_tab = tab;
@@ -463,12 +457,6 @@ pub fn render_property_inspector(
                     }
                     PropertyTab::MetaData => {
                         render_metadata_tab(ui, props);
-                    }
-                    PropertyTab::LayerStack => {
-                        ui.label("Layer stack inspection — coming in M30+");
-                    }
-                    PropertyTab::Composition => {
-                        ui.label("Composition arcs — coming in M30+");
                     }
                 });
 

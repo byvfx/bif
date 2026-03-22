@@ -274,14 +274,7 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
             scene.add_instance_with_path(proto_id, transform, mesh_data.path.clone());
         }
 
-        // Convert MeshPurpose → Purpose on the just-added instance
-        let purpose = match mesh_data.purpose {
-            crate::usd::cpp_bridge::MeshPurpose::Default => Purpose::Default,
-            crate::usd::cpp_bridge::MeshPurpose::Render => Purpose::Render,
-            crate::usd::cpp_bridge::MeshPurpose::Proxy => Purpose::Proxy,
-            crate::usd::cpp_bridge::MeshPurpose::Guide => Purpose::Guide,
-        };
-        scene.set_last_instance_purpose(purpose);
+        scene.set_last_instance_purpose(mesh_data.purpose.into());
     }
     let mesh_time = mesh_start.elapsed();
     let total_verts: usize = meshes.iter().map(|m| m.vertices.len()).sum();
@@ -413,15 +406,7 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
                 };
 
                 scene.add_instance_with_path(target_proto, transform, prim_path);
-
-                // Propagate purpose from prototype mesh
-                let purpose = match mesh_data.purpose {
-                    crate::usd::cpp_bridge::MeshPurpose::Default => Purpose::Default,
-                    crate::usd::cpp_bridge::MeshPurpose::Render => Purpose::Render,
-                    crate::usd::cpp_bridge::MeshPurpose::Proxy => Purpose::Proxy,
-                    crate::usd::cpp_bridge::MeshPurpose::Guide => Purpose::Guide,
-                };
-                scene.set_last_instance_purpose(purpose);
+                scene.set_last_instance_purpose(native_inst.purpose.into());
             }
         }
     }
@@ -540,6 +525,7 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
             basis: curve_data.basis,
             wrap: curve_data.wrap,
             transform: curve_data.transform,
+            // TODO: read purpose from C++ bridge (needs curves purpose in FFI)
             purpose: Purpose::Default,
         });
     }
@@ -557,6 +543,7 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
             normals: pt_data.normals.clone(),
             ids: pt_data.ids.clone(),
             transform: pt_data.transform,
+            // TODO: read purpose from C++ bridge (needs points purpose in FFI)
             purpose: Purpose::Default,
         });
     }

@@ -29,6 +29,17 @@ pub enum Purpose {
     Guide,
 }
 
+impl From<crate::usd::cpp_bridge::MeshPurpose> for Purpose {
+    fn from(mp: crate::usd::cpp_bridge::MeshPurpose) -> Self {
+        match mp {
+            crate::usd::cpp_bridge::MeshPurpose::Default => Purpose::Default,
+            crate::usd::cpp_bridge::MeshPurpose::Render => Purpose::Render,
+            crate::usd::cpp_bridge::MeshPurpose::Proxy => Purpose::Proxy,
+            crate::usd::cpp_bridge::MeshPurpose::Guide => Purpose::Guide,
+        }
+    }
+}
+
 /// A PBR material definition using OpenPBR Surface naming.
 ///
 /// Maps UsdPreviewSurface inputs to OpenPBR parameters on load.
@@ -654,6 +665,10 @@ impl Scene {
     }
 
     /// Set the purpose of the most recently added instance.
+    ///
+    /// **Must be called immediately after `add_instance*`** — modifies the
+    /// last element of the instances vec. Calling after two consecutive adds
+    /// will silently leave the first instance with `Purpose::Default`.
     pub fn set_last_instance_purpose(&mut self, purpose: Purpose) {
         if let Some(inst) = self.instances.last_mut() {
             inst.purpose = purpose;

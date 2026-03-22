@@ -134,6 +134,7 @@ struct CachedNativeInstance {
     int prototype_mesh_index;
     GfMatrix4d world_transform;
     int material_override_index;  // -1 = use prototype material
+    int purpose;  // 0=default, 1=render, 2=proxy, 3=guide
 };
 
 /// Cached instancer data for FFI transfer
@@ -359,6 +360,40 @@ struct UsdBridgeStage {
 // ============================================================================
 // Helper Functions
 // ============================================================================
+
+/// Compute inherited purpose for a prim, with hierarchy walk fallback
+/// for instance proxies where ComputePurpose() misses scene-level attrs.
+static int compute_inherited_purpose(UsdBridgeStage* bridge, const UsdPrim& prim) {
+    int purpose = 0;
+    UsdGeomImageable img(prim);
+    TfToken pt = img.ComputePurpose();
+    if (pt == UsdGeomTokens->render) purpose = 1;
+    else if (pt == UsdGeomTokens->proxy) purpose = 2;
+    else if (pt == UsdGeomTokens->guide) purpose = 3;
+
+    // Fallback: walk scene hierarchy (max 64 levels) for instance proxies
+    if (purpose == 0) {
+        SdfPath cur = prim.GetPath().GetParentPath();
+        int depth = 0;
+        while (!cur.IsEmpty() && cur != SdfPath::AbsoluteRootPath() && depth++ < 64) {
+            UsdPrim anc = bridge->stage->GetPrimAtPath(cur);
+            if (anc) {
+                UsdGeomImageable ai(anc);
+                if (ai) {
+                    TfToken ap;
+                    if (ai.GetPurposeAttr().Get(&ap) && ap != UsdGeomTokens->default_) {
+                        if (ap == UsdGeomTokens->render) purpose = 1;
+                        else if (ap == UsdGeomTokens->proxy) purpose = 2;
+                        else if (ap == UsdGeomTokens->guide) purpose = 3;
+                        break;
+                    }
+                }
+            }
+            cur = cur.GetParentPath();
+        }
+    }
+    return purpose;
+}
 
 /// Triangulate a polygon mesh (fan triangulation for n-gons)
 /// Also outputs original face index for each triangle (for material mapping)
@@ -650,6 +685,7 @@ static void cache_stage_data(UsdBridgeStage* bridge) {
                 inst.prototype_mesh_index = proto_it->second;
                 inst.world_transform = xform_cache.GetLocalToWorldTransform(prim);
                 inst.material_override_index = -1;
+                inst.purpose = compute_inherited_purpose(bridge, prim);
 
                 // Check for material override vs prototype
                 UsdShadeMaterialBindingAPI binding_api(prim);
@@ -1022,40 +1058,12 @@ static void cache_stage_data(UsdBridgeStage* bridge) {
             cached.transform = xform_cache.GetLocalToWorldTransform(prim);
             time_transform += duration_cast<milliseconds>(high_resolution_clock::now() - xform_start).count();
 
-            // Compute inherited purpose (not just directly-authored)
-            UsdGeomImageable imageable(prim);
-            TfToken purposeToken = imageable.ComputePurpose();
-            if (purposeToken == UsdGeomTokens->render) cached.purpose = 1;
-            else if (purposeToken == UsdGeomTokens->proxy) cached.purpose = 2;
-            else if (purposeToken == UsdGeomTokens->guide) cached.purpose = 3;
-
-            // Fallback: ComputePurpose can miss inherited purpose for instance
-            // proxies (prototype namespace lacks scene-level purpose attrs).
-            // Walk up the scene path hierarchy manually.
-            if (cached.purpose == 0) {
-                SdfPath current = prim.GetPath().GetParentPath();
-                while (!current.IsEmpty() && current != SdfPath::AbsoluteRootPath()) {
-                    UsdPrim ancestor = bridge->stage->GetPrimAtPath(current);
-                    if (ancestor) {
-                        UsdGeomImageable ancestorImg(ancestor);
-                        if (ancestorImg) {
-                            TfToken ap;
-                            if (ancestorImg.GetPurposeAttr().Get(&ap) &&
-                                ap != UsdGeomTokens->default_) {
-                                if (ap == UsdGeomTokens->render) cached.purpose = 1;
-                                else if (ap == UsdGeomTokens->proxy) cached.purpose = 2;
-                                else if (ap == UsdGeomTokens->guide) cached.purpose = 3;
-                                break;
-                            }
-                        }
-                    }
-                    current = current.GetParentPath();
-                }
-            }
+            cached.purpose = compute_inherited_purpose(bridge, prim);
 
             cached.is_instance_proxy = is_proxy;
 
             // Computed visibility (considers ancestor visibility)
+            UsdGeomImageable imageable(prim);
             cached.visible = (imageable.ComputeVisibility() != UsdGeomTokens->invisible);
 
             // Double-sided flag
@@ -1144,6 +1152,7 @@ static void cache_stage_data(UsdBridgeStage* bridge) {
                 inst.prototype_mesh_index = proto_it->second;
                 inst.world_transform = xform_cache.GetLocalToWorldTransform(prim);
                 inst.material_override_index = -1;
+                inst.purpose = compute_inherited_purpose(bridge, prim);
 
                 UsdShadeMaterialBindingAPI binding_api(prim);
                 UsdShadeMaterial bound_material = binding_api.ComputeBoundMaterial();
@@ -1169,33 +1178,7 @@ static void cache_stage_data(UsdBridgeStage* bridge) {
 
             cached.transform = xform_cache.GetLocalToWorldTransform(prim);
 
-            // Compute purpose (same logic as mesh extraction)
-            {
-                UsdGeomImageable img(prim);
-                TfToken pt = img.ComputePurpose();
-                if (pt == UsdGeomTokens->render) cached.purpose = 1;
-                else if (pt == UsdGeomTokens->proxy) cached.purpose = 2;
-                else if (pt == UsdGeomTokens->guide) cached.purpose = 3;
-                if (cached.purpose == 0) {
-                    SdfPath cur = prim.GetPath().GetParentPath();
-                    while (!cur.IsEmpty() && cur != SdfPath::AbsoluteRootPath()) {
-                        UsdPrim anc = bridge->stage->GetPrimAtPath(cur);
-                        if (anc) {
-                            UsdGeomImageable ai(anc);
-                            if (ai) {
-                                TfToken ap;
-                                if (ai.GetPurposeAttr().Get(&ap) && ap != UsdGeomTokens->default_) {
-                                    if (ap == UsdGeomTokens->render) cached.purpose = 1;
-                                    else if (ap == UsdGeomTokens->proxy) cached.purpose = 2;
-                                    else if (ap == UsdGeomTokens->guide) cached.purpose = 3;
-                                    break;
-                                }
-                            }
-                        }
-                        cur = cur.GetParentPath();
-                    }
-                }
-            }
+            cached.purpose = compute_inherited_purpose(bridge, prim);
 
             {
                 UsdShadeMaterialBindingAPI binding_api(prim);
@@ -1235,6 +1218,7 @@ static void cache_stage_data(UsdBridgeStage* bridge) {
                 inst.prototype_mesh_index = proto_it->second;
                 inst.world_transform = xform_cache.GetLocalToWorldTransform(prim);
                 inst.material_override_index = -1;
+                inst.purpose = compute_inherited_purpose(bridge, prim);
 
                 UsdShadeMaterialBindingAPI binding_api(prim);
                 UsdShadeMaterial bound_material = binding_api.ComputeBoundMaterial();
@@ -1260,34 +1244,7 @@ static void cache_stage_data(UsdBridgeStage* bridge) {
 
             cached.transform = xform_cache.GetLocalToWorldTransform(prim);
 
-            // Compute purpose (same logic as mesh extraction)
-            {
-                UsdGeomImageable img(prim);
-                TfToken pt = img.ComputePurpose();
-                if (pt == UsdGeomTokens->render) cached.purpose = 1;
-                else if (pt == UsdGeomTokens->proxy) cached.purpose = 2;
-                else if (pt == UsdGeomTokens->guide) cached.purpose = 3;
-                // Fallback: walk scene hierarchy for instance proxies
-                if (cached.purpose == 0) {
-                    SdfPath cur = prim.GetPath().GetParentPath();
-                    while (!cur.IsEmpty() && cur != SdfPath::AbsoluteRootPath()) {
-                        UsdPrim anc = bridge->stage->GetPrimAtPath(cur);
-                        if (anc) {
-                            UsdGeomImageable ai(anc);
-                            if (ai) {
-                                TfToken ap;
-                                if (ai.GetPurposeAttr().Get(&ap) && ap != UsdGeomTokens->default_) {
-                                    if (ap == UsdGeomTokens->render) cached.purpose = 1;
-                                    else if (ap == UsdGeomTokens->proxy) cached.purpose = 2;
-                                    else if (ap == UsdGeomTokens->guide) cached.purpose = 3;
-                                    break;
-                                }
-                            }
-                        }
-                        cur = cur.GetParentPath();
-                    }
-                }
-            }
+            cached.purpose = compute_inherited_purpose(bridge, prim);
 
             {
                 UsdShadeMaterialBindingAPI binding_api(prim);
@@ -1989,6 +1946,7 @@ static void cache_material_data(UsdBridgeStage* bridge) {
 
         // UsdPreviewSurface specular is always active — controlled by IOR/Fresnel.
         // specularColor is a tint, not a weight. Map to specular_weight=1.0.
+        // TODO: map specularColor → OpenPBR specular_color tint (needs FFI field).
         cached.specular = 1.0f;
 
         // Opacity
@@ -2781,6 +2739,7 @@ UsdBridgeError usd_bridge_get_native_instance(
     const CachedNativeInstance& inst = stage->native_instances[index];
     out_data->proto_mesh_idx = inst.prototype_mesh_index;
     out_data->material_override_idx = inst.material_override_index;
+    out_data->purpose = inst.purpose;
 
     float mat_data[16];
     matrix_to_float16(inst.world_transform, mat_data);
