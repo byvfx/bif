@@ -1029,6 +1029,30 @@ static void cache_stage_data(UsdBridgeStage* bridge) {
             else if (purposeToken == UsdGeomTokens->proxy) cached.purpose = 2;
             else if (purposeToken == UsdGeomTokens->guide) cached.purpose = 3;
 
+            // Fallback: ComputePurpose can miss inherited purpose for instance
+            // proxies (prototype namespace lacks scene-level purpose attrs).
+            // Walk up the scene path hierarchy manually.
+            if (cached.purpose == 0) {
+                SdfPath current = prim.GetPath().GetParentPath();
+                while (!current.IsEmpty() && current != SdfPath::AbsoluteRootPath()) {
+                    UsdPrim ancestor = bridge->stage->GetPrimAtPath(current);
+                    if (ancestor) {
+                        UsdGeomImageable ancestorImg(ancestor);
+                        if (ancestorImg) {
+                            TfToken ap;
+                            if (ancestorImg.GetPurposeAttr().Get(&ap) &&
+                                ap != UsdGeomTokens->default_) {
+                                if (ap == UsdGeomTokens->render) cached.purpose = 1;
+                                else if (ap == UsdGeomTokens->proxy) cached.purpose = 2;
+                                else if (ap == UsdGeomTokens->guide) cached.purpose = 3;
+                                break;
+                            }
+                        }
+                    }
+                    current = current.GetParentPath();
+                }
+            }
+
             cached.is_instance_proxy = is_proxy;
 
             // Computed visibility (considers ancestor visibility)
@@ -1145,6 +1169,34 @@ static void cache_stage_data(UsdBridgeStage* bridge) {
 
             cached.transform = xform_cache.GetLocalToWorldTransform(prim);
 
+            // Compute purpose (same logic as mesh extraction)
+            {
+                UsdGeomImageable img(prim);
+                TfToken pt = img.ComputePurpose();
+                if (pt == UsdGeomTokens->render) cached.purpose = 1;
+                else if (pt == UsdGeomTokens->proxy) cached.purpose = 2;
+                else if (pt == UsdGeomTokens->guide) cached.purpose = 3;
+                if (cached.purpose == 0) {
+                    SdfPath cur = prim.GetPath().GetParentPath();
+                    while (!cur.IsEmpty() && cur != SdfPath::AbsoluteRootPath()) {
+                        UsdPrim anc = bridge->stage->GetPrimAtPath(cur);
+                        if (anc) {
+                            UsdGeomImageable ai(anc);
+                            if (ai) {
+                                TfToken ap;
+                                if (ai.GetPurposeAttr().Get(&ap) && ap != UsdGeomTokens->default_) {
+                                    if (ap == UsdGeomTokens->render) cached.purpose = 1;
+                                    else if (ap == UsdGeomTokens->proxy) cached.purpose = 2;
+                                    else if (ap == UsdGeomTokens->guide) cached.purpose = 3;
+                                    break;
+                                }
+                            }
+                        }
+                        cur = cur.GetParentPath();
+                    }
+                }
+            }
+
             {
                 UsdShadeMaterialBindingAPI binding_api(prim);
                 UsdShadeMaterial bound_material = binding_api.ComputeBoundMaterial();
@@ -1207,6 +1259,35 @@ static void cache_stage_data(UsdBridgeStage* bridge) {
             tessellate_cube(cached, size);
 
             cached.transform = xform_cache.GetLocalToWorldTransform(prim);
+
+            // Compute purpose (same logic as mesh extraction)
+            {
+                UsdGeomImageable img(prim);
+                TfToken pt = img.ComputePurpose();
+                if (pt == UsdGeomTokens->render) cached.purpose = 1;
+                else if (pt == UsdGeomTokens->proxy) cached.purpose = 2;
+                else if (pt == UsdGeomTokens->guide) cached.purpose = 3;
+                // Fallback: walk scene hierarchy for instance proxies
+                if (cached.purpose == 0) {
+                    SdfPath cur = prim.GetPath().GetParentPath();
+                    while (!cur.IsEmpty() && cur != SdfPath::AbsoluteRootPath()) {
+                        UsdPrim anc = bridge->stage->GetPrimAtPath(cur);
+                        if (anc) {
+                            UsdGeomImageable ai(anc);
+                            if (ai) {
+                                TfToken ap;
+                                if (ai.GetPurposeAttr().Get(&ap) && ap != UsdGeomTokens->default_) {
+                                    if (ap == UsdGeomTokens->render) cached.purpose = 1;
+                                    else if (ap == UsdGeomTokens->proxy) cached.purpose = 2;
+                                    else if (ap == UsdGeomTokens->guide) cached.purpose = 3;
+                                    break;
+                                }
+                            }
+                        }
+                        cur = cur.GetParentPath();
+                    }
+                }
+            }
 
             {
                 UsdShadeMaterialBindingAPI binding_api(prim);
@@ -1906,14 +1987,9 @@ static void cache_material_data(UsdBridgeStage* bridge) {
             cached.roughness_texture = get_texture_path(input);
         }
 
-        // Specular (ior in UsdPreviewSurface, but we use specular for simplicity)
-        input = shader.GetInput(TfToken("specularColor"));
-        if (input) {
-            GfVec3f spec;
-            if (input.Get(&spec)) {
-                cached.specular = (spec[0] + spec[1] + spec[2]) / 3.0f;
-            }
-        }
+        // UsdPreviewSurface specular is always active — controlled by IOR/Fresnel.
+        // specularColor is a tint, not a weight. Map to specular_weight=1.0.
+        cached.specular = 1.0f;
 
         // Opacity
         input = shader.GetInput(TfToken("opacity"));

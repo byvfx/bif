@@ -72,6 +72,29 @@ pub fn build_materials(
             texture_cache,
         )));
     }
+    for (i, mat) in scene_materials.iter().enumerate() {
+        let tex_status = |t: &Option<Arc<str>>| match t {
+            Some(p) => format!("'{}'", p),
+            None => "none".to_string(),
+        };
+        log::debug!(
+            "Ivar mat[{}] '{}': color={:?} metal={:.2} rough={:.2} ior={:.2} spec_w={:.2} \
+             trans={:.2} opacity={:.2} | albedo_tex={} normal_tex={} rough_tex={} metal_tex={}",
+            i,
+            mat.name,
+            mat.base_color,
+            mat.base_metalness,
+            mat.specular_roughness,
+            mat.specular_ior,
+            mat.specular_weight,
+            mat.transmission_weight,
+            mat.geometry_opacity,
+            tex_status(&mat.base_color_texture),
+            tex_status(&mat.normal_texture),
+            tex_status(&mat.specular_roughness_texture),
+            tex_status(&mat.base_metalness_texture),
+        );
+    }
     log::info!(
         "Built {} materials ({} scene + default, textures cached: {})",
         materials.len(),

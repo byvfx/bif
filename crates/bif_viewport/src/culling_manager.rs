@@ -10,6 +10,7 @@ use crate::frustum_culling::CullingResult;
 use crate::gpu_types::{CullingScratch, InstanceData};
 use crate::ivar_state::CameraSnapshot;
 use crate::mesh_data::MeshData;
+use crate::PurposeMode;
 
 /// Manages frustum culling and LOD selection for viewport rendering.
 pub struct CullingManager {
@@ -153,6 +154,7 @@ impl CullingManager {
     /// Returns culling result with near/far instance counts.
     /// Skips GPU write when neither the camera nor instance data has changed.
     /// When `lod_enabled` is false, all visible instances render with full mesh.
+    #[allow(clippy::too_many_arguments)]
     pub fn update_visible_instances(
         &mut self,
         queue: &wgpu::Queue,
@@ -161,6 +163,8 @@ impl CullingManager {
         transforms: &[Mat4],
         material_ids: &[u32],
         lod_enabled: bool,
+        purposes: &[bif_core::Purpose],
+        purpose_mode: PurposeMode,
     ) -> CullingResult {
         // Guard: clamp to shorter length if AABBs/transforms diverge after partial update
         if self.instance_aabbs.len() != transforms.len() {
@@ -206,6 +210,12 @@ impl CullingManager {
 
         // Collect visible instances with their distances
         for (idx, aabb) in self.instance_aabbs.iter().enumerate() {
+            // Purpose filtering — skip instances not matching active mode
+            if let Some(&purpose) = purposes.get(idx) {
+                if !purpose_mode.includes(purpose) {
+                    continue;
+                }
+            }
             if !self.cached_frustum.intersects_aabb(aabb) {
                 continue;
             }

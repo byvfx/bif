@@ -1,6 +1,6 @@
-//! Property Inspector - USD prim property viewer with editable transforms.
+//! Property Inspector - usdview-style property viewer with editable transforms.
 //!
-//! Shows properties and metadata for the currently selected USD prim.
+//! Top/bottom split: flat property table on top, tabbed detail panel on bottom.
 //! When a viewport instance is selected, provides editable DragValue fields
 //! for translation, rotation (Euler degrees), and scale.
 
@@ -51,6 +51,51 @@ pub struct TransformEdit {
     pub committed: bool,
 }
 
+/// Which detail tab is active in the bottom panel.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum PropertyTab {
+    #[default]
+    Value,
+    MetaData,
+    LayerStack,
+    Composition,
+}
+
+/// Status indicator for a property row.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PropertyStatus {
+    /// Green — resolved/bound value.
+    Resolved,
+    /// Red — unresolved/unbound.
+    Unresolved,
+    /// Grey-blue — informational.
+    Info,
+}
+
+/// A single row in the property table.
+#[derive(Clone, Debug)]
+struct PropertyRow {
+    status: PropertyStatus,
+    name: String,
+    summary: String,
+    detail: PropertyDetail,
+}
+
+/// Typed detail payload for the Value tab.
+#[derive(Clone, Debug)]
+enum PropertyDetail {
+    Text(String),
+    Color(f32, f32, f32),
+    Matrix(bif_math::Mat4),
+    BoundingBox {
+        min: bif_math::Vec3,
+        max: bif_math::Vec3,
+    },
+    TexturePath(String),
+    Float(f32),
+    Bool(bool),
+}
+
 impl PrimProperties {
     /// Create properties from a PrimDisplayInfo.
     pub fn from_display_info(info: &PrimDisplayInfo) -> Self {
@@ -92,7 +137,179 @@ impl PrimProperties {
     }
 }
 
-/// Render the property inspector panel.
+/// Build flat property rows from PrimProperties for the table view.
+fn build_property_rows(props: &PrimProperties) -> Vec<PropertyRow> {
+    let mut rows = Vec::new();
+
+    // Bounding box
+    if let (Some(min), Some(max)) = (&props.bounds_min, &props.bounds_max) {
+        rows.push(PropertyRow {
+            status: PropertyStatus::Resolved,
+            name: "World Bounding Box".to_string(),
+            summary: format!(
+                "({:.1}, {:.1}, {:.1}) to ({:.1}, {:.1}, {:.1})",
+                min.x, min.y, min.z, max.x, max.y, max.z
+            ),
+            detail: PropertyDetail::BoundingBox {
+                min: *min,
+                max: *max,
+            },
+        });
+    }
+
+    // Transform
+    if let Some(transform) = &props.transform {
+        let cols = transform.to_cols_array_2d();
+        let t = bif_math::Vec3::new(cols[3][0], cols[3][1], cols[3][2]);
+        rows.push(PropertyRow {
+            status: PropertyStatus::Resolved,
+            name: "Local to World Xform".to_string(),
+            summary: format!("({:.3}, {:.3}, {:.3})", t.x, t.y, t.z),
+            detail: PropertyDetail::Matrix(*transform),
+        });
+    }
+
+    // Material section
+    if let Some(mat) = &props.bound_material {
+        rows.push(PropertyRow {
+            status: PropertyStatus::Resolved,
+            name: "Resolved Material".to_string(),
+            summary: mat.name.to_string(),
+            detail: PropertyDetail::Text(format!("Material: {}", mat.name)),
+        });
+
+        // Base color
+        let c = mat.base_color;
+        rows.push(PropertyRow {
+            status: PropertyStatus::Info,
+            name: "Base Color".to_string(),
+            summary: format!("({:.3}, {:.3}, {:.3})", c.x, c.y, c.z),
+            detail: PropertyDetail::Color(c.x, c.y, c.z),
+        });
+
+        // Metalness
+        rows.push(PropertyRow {
+            status: PropertyStatus::Info,
+            name: "Metalness".to_string(),
+            summary: format!("{:.3}", mat.base_metalness),
+            detail: PropertyDetail::Float(mat.base_metalness),
+        });
+
+        // Roughness
+        rows.push(PropertyRow {
+            status: PropertyStatus::Info,
+            name: "Roughness".to_string(),
+            summary: format!("{:.3}", mat.specular_roughness),
+            detail: PropertyDetail::Float(mat.specular_roughness),
+        });
+
+        // Specular Weight
+        rows.push(PropertyRow {
+            status: PropertyStatus::Info,
+            name: "Specular Weight".to_string(),
+            summary: format!("{:.3}", mat.specular_weight),
+            detail: PropertyDetail::Float(mat.specular_weight),
+        });
+
+        // Specular IOR
+        rows.push(PropertyRow {
+            status: PropertyStatus::Info,
+            name: "Specular IOR".to_string(),
+            summary: format!("{:.3}", mat.specular_ior),
+            detail: PropertyDetail::Float(mat.specular_ior),
+        });
+
+        // Transmission
+        rows.push(PropertyRow {
+            status: PropertyStatus::Info,
+            name: "Transmission".to_string(),
+            summary: format!("{:.3}", mat.transmission_weight),
+            detail: PropertyDetail::Float(mat.transmission_weight),
+        });
+
+        // Opacity
+        rows.push(PropertyRow {
+            status: PropertyStatus::Info,
+            name: "Opacity".to_string(),
+            summary: format!("{:.3}", mat.geometry_opacity),
+            detail: PropertyDetail::Float(mat.geometry_opacity),
+        });
+
+        // Emission (only if luminance > 0)
+        if mat.emission_luminance > 0.0 {
+            rows.push(PropertyRow {
+                status: PropertyStatus::Info,
+                name: "Emission Luminance".to_string(),
+                summary: format!("{:.1} nits", mat.emission_luminance),
+                detail: PropertyDetail::Float(mat.emission_luminance),
+            });
+
+            let ec = mat.emission_color;
+            rows.push(PropertyRow {
+                status: PropertyStatus::Info,
+                name: "Emission Color".to_string(),
+                summary: format!("({:.3}, {:.3}, {:.3})", ec.x, ec.y, ec.z),
+                detail: PropertyDetail::Color(ec.x, ec.y, ec.z),
+            });
+        }
+
+        // Double-sided
+        rows.push(PropertyRow {
+            status: PropertyStatus::Info,
+            name: "Double-Sided".to_string(),
+            summary: if mat.double_sided {
+                "Yes".to_string()
+            } else {
+                "No".to_string()
+            },
+            detail: PropertyDetail::Bool(mat.double_sided),
+        });
+
+        // Textures (only non-None)
+        let textures: &[(&str, &Option<Arc<str>>)] = &[
+            ("base_color_texture", &mat.base_color_texture),
+            ("roughness_texture", &mat.specular_roughness_texture),
+            ("metalness_texture", &mat.base_metalness_texture),
+            ("normal_texture", &mat.normal_texture),
+            ("emission_texture", &mat.emission_texture),
+            ("opacity_texture", &mat.geometry_opacity_texture),
+        ];
+        for (name, tex) in textures {
+            if let Some(path) = tex {
+                // Extract filename for summary
+                let filename = path.rsplit(['/', '\\']).next().unwrap_or(path.as_ref());
+                rows.push(PropertyRow {
+                    status: PropertyStatus::Resolved,
+                    name: name.to_string(),
+                    summary: filename.to_string(),
+                    detail: PropertyDetail::TexturePath(path.to_string()),
+                });
+            }
+        }
+    } else {
+        // No material bound
+        rows.push(PropertyRow {
+            status: PropertyStatus::Unresolved,
+            name: "Resolved Material".to_string(),
+            summary: "<unbound>".to_string(),
+            detail: PropertyDetail::Text("No material bound to this prim.".to_string()),
+        });
+    }
+
+    // Extra attributes
+    for (name, value) in &props.attributes {
+        rows.push(PropertyRow {
+            status: PropertyStatus::Info,
+            name: name.clone(),
+            summary: value.clone(),
+            detail: PropertyDetail::Text(value.clone()),
+        });
+    }
+
+    rows
+}
+
+/// Render the property inspector panel (usdview-style).
 ///
 /// `editable_transform` is `Some((instance_index, Transform))` when a viewport
 /// instance is selected and its transform can be edited.
@@ -103,7 +320,6 @@ pub fn render_property_inspector(
     editable_transform: Option<(usize, &bif_core::Transform)>,
 ) {
     ui.heading("Properties");
-    ui.separator();
 
     match properties {
         None => {
@@ -111,95 +327,241 @@ pub fn render_property_inspector(
             ui.label("Select a prim in the Scene Browser");
         }
         Some(props) => {
-            // Path
+            // Header: path, type, active
             ui.horizontal(|ui| {
                 ui.label("Path:");
                 ui.label(egui::RichText::new(&props.path).monospace());
             });
-
-            // Type
             ui.horizontal(|ui| {
                 ui.label("Type:");
                 ui.label(&props.type_name);
-            });
-
-            // Active status
-            ui.horizontal(|ui| {
+                ui.separator();
                 ui.label("Active:");
                 if props.is_active {
-                    ui.colored_label(egui::Color32::GREEN, "Yes");
+                    ui.colored_label(egui::Color32::from_rgb(60, 180, 60), "Yes");
                 } else {
-                    ui.colored_label(egui::Color32::RED, "No");
+                    ui.colored_label(egui::Color32::from_rgb(200, 60, 60), "No");
                 }
             });
 
+            // Editable transform section (when viewport instance is selected)
+            if let Some((instance_index, transform)) = editable_transform {
+                ui.separator();
+                render_editable_transform(ui, event_bus, instance_index, transform);
+                ui.add_space(4.0);
+                if ui.button("Set Key (K)").clicked() {
+                    event_bus.emit(AppEvent::SetKeyframe(instance_index as u64));
+                }
+            }
+
             ui.separator();
 
-            // Transform (if available)
-            if let Some(transform) = &props.transform {
-                ui.collapsing("Transform", |ui| {
-                    render_matrix(ui, transform);
-                });
-                ui.separator();
-            }
+            // Build property rows
+            let rows = build_property_rows(props);
 
-            // Bounding box (if available)
-            if let (Some(min), Some(max)) = (&props.bounds_min, &props.bounds_max) {
-                ui.collapsing("Bounding Box", |ui| {
-                    ui.label(format!("Min: ({:.3}, {:.3}, {:.3})", min.x, min.y, min.z));
-                    ui.label(format!("Max: ({:.3}, {:.3}, {:.3})", max.x, max.y, max.z));
+            // Read persisted state from egui temp data
+            let selected_id = egui::Id::new("prop_selected_row");
+            let tab_id = egui::Id::new("property_detail_tab");
 
-                    let size = *max - *min;
-                    ui.label(format!(
-                        "Size: ({:.3}, {:.3}, {:.3})",
-                        size.x, size.y, size.z
-                    ));
+            let mut selected_row: Option<usize> = ui.data(|d| d.get_temp(selected_id));
+            let mut active_tab: PropertyTab = ui.data(|d| d.get_temp(tab_id).unwrap_or_default());
 
-                    let center = (*min + *max) * 0.5;
-                    ui.label(format!(
-                        "Center: ({:.3}, {:.3}, {:.3})",
-                        center.x, center.y, center.z
-                    ));
-                });
-                ui.separator();
-            }
-
-            // Attributes
-            if !props.attributes.is_empty() {
-                ui.collapsing("Attributes", |ui| {
-                    egui::Grid::new("attributes_grid")
-                        .num_columns(2)
+            // -- Top: scrollable property table --
+            let table_height = ui.available_height() * 0.55;
+            egui::ScrollArea::vertical()
+                .id_salt("property_table_scroll")
+                .max_height(table_height)
+                .show(ui, |ui| {
+                    egui::Grid::new("property_table_grid")
+                        .num_columns(3)
                         .striped(true)
+                        .spacing([6.0, 3.0])
                         .show(ui, |ui| {
-                            for (name, value) in &props.attributes {
-                                ui.label(name);
-                                ui.label(egui::RichText::new(value).monospace());
+                            for (idx, row) in rows.iter().enumerate() {
+                                // Col 1: status circle
+                                let circle_color = match row.status {
+                                    PropertyStatus::Resolved => {
+                                        egui::Color32::from_rgb(60, 180, 60)
+                                    }
+                                    PropertyStatus::Unresolved => {
+                                        egui::Color32::from_rgb(200, 60, 60)
+                                    }
+                                    PropertyStatus::Info => egui::Color32::from_rgb(120, 140, 180),
+                                };
+                                let (circle_rect, _) = ui.allocate_exact_size(
+                                    egui::vec2(10.0, 10.0),
+                                    egui::Sense::hover(),
+                                );
+                                ui.painter()
+                                    .circle_filled(circle_rect.center(), 4.0, circle_color);
+
+                                // Col 2: property name
+                                ui.label(&row.name);
+
+                                // Col 3: summary (monospace, truncated)
+                                let summary_resp =
+                                    ui.label(egui::RichText::new(&row.summary).monospace());
+
+                                // Make entire row clickable
+                                let row_rect = circle_rect.union(summary_resp.rect);
+                                let row_id = ui.id().with(idx);
+                                let interact = ui.interact(row_rect, row_id, egui::Sense::click());
+
+                                if interact.clicked() {
+                                    selected_row = Some(idx);
+                                }
+
+                                // Highlight selected row
+                                if selected_row == Some(idx) {
+                                    ui.painter().rect_filled(
+                                        row_rect.expand(1.0),
+                                        2.0,
+                                        ui.visuals().selection.bg_fill.linear_multiply(0.3),
+                                    );
+                                }
+
                                 ui.end_row();
                             }
                         });
                 });
-            }
 
-            // Bound Material
-            if let Some(mat) = &props.bound_material {
-                ui.separator();
-                ui.collapsing("Bound Material", |ui| {
-                    render_material_properties(ui, mat);
+            ui.separator();
+
+            // -- Bottom: tabbed detail panel --
+            ui.horizontal(|ui| {
+                for tab in [
+                    PropertyTab::Value,
+                    PropertyTab::MetaData,
+                    PropertyTab::LayerStack,
+                    PropertyTab::Composition,
+                ] {
+                    let label = match tab {
+                        PropertyTab::Value => "Value",
+                        PropertyTab::MetaData => "Meta Data",
+                        PropertyTab::LayerStack => "Layer Stack",
+                        PropertyTab::Composition => "Composition",
+                    };
+                    if ui.selectable_label(active_tab == tab, label).clicked() {
+                        active_tab = tab;
+                    }
+                }
+            });
+
+            egui::ScrollArea::vertical()
+                .id_salt("property_detail_scroll")
+                .show(ui, |ui| match active_tab {
+                    PropertyTab::Value => {
+                        if let Some(idx) = selected_row {
+                            if let Some(row) = rows.get(idx) {
+                                render_property_detail(ui, row);
+                            } else {
+                                ui.label("Select a property above");
+                            }
+                        } else {
+                            ui.label("Select a property above");
+                        }
+                    }
+                    PropertyTab::MetaData => {
+                        render_metadata_tab(ui, props);
+                    }
+                    PropertyTab::LayerStack => {
+                        ui.label("Layer stack inspection — coming in M30+");
+                    }
+                    PropertyTab::Composition => {
+                        ui.label("Composition arcs — coming in M30+");
+                    }
                 });
+
+            // Store state
+            ui.data_mut(|d| {
+                d.insert_temp(selected_id, selected_row);
+                d.insert_temp(tab_id, active_tab);
+            });
+        }
+    }
+}
+
+/// Render the detail view for a selected property row (Value tab).
+fn render_property_detail(ui: &mut egui::Ui, row: &PropertyRow) {
+    ui.label(egui::RichText::new(&row.name).strong());
+    ui.add_space(4.0);
+
+    match &row.detail {
+        PropertyDetail::Text(text) => {
+            ui.label(egui::RichText::new(text).monospace());
+        }
+        PropertyDetail::Color(r, g, b) => {
+            ui.horizontal(|ui| {
+                let color = egui::Color32::from_rgb(
+                    (r.clamp(0.0, 1.0) * 255.0) as u8,
+                    (g.clamp(0.0, 1.0) * 255.0) as u8,
+                    (b.clamp(0.0, 1.0) * 255.0) as u8,
+                );
+                show_color_swatch(ui, color, 24.0);
+                ui.label(
+                    egui::RichText::new(format!("({:.3}, {:.3}, {:.3})", r, g, b)).monospace(),
+                );
+            });
+        }
+        PropertyDetail::Matrix(matrix) => {
+            render_matrix(ui, matrix);
+        }
+        PropertyDetail::BoundingBox { min, max } => {
+            ui.label(format!("Min: ({:.3}, {:.3}, {:.3})", min.x, min.y, min.z));
+            ui.label(format!("Max: ({:.3}, {:.3}, {:.3})", max.x, max.y, max.z));
+            let size = *max - *min;
+            ui.label(format!(
+                "Size: ({:.3}, {:.3}, {:.3})",
+                size.x, size.y, size.z
+            ));
+            let center = (*min + *max) * 0.5;
+            ui.label(format!(
+                "Center: ({:.3}, {:.3}, {:.3})",
+                center.x, center.y, center.z
+            ));
+        }
+        PropertyDetail::TexturePath(path) => {
+            ui.label(egui::RichText::new(path).monospace().small());
+        }
+        PropertyDetail::Float(val) => {
+            ui.label(egui::RichText::new(format!("{:.6}", val)).monospace());
+        }
+        PropertyDetail::Bool(val) => {
+            if *val {
+                ui.colored_label(egui::Color32::from_rgb(60, 180, 60), "Yes");
+            } else {
+                ui.colored_label(egui::Color32::from_rgb(200, 60, 60), "No");
             }
         }
     }
+}
 
-    // Editable transform section (when viewport instance is selected)
-    if let Some((instance_index, transform)) = editable_transform {
-        ui.separator();
-        render_editable_transform(ui, event_bus, instance_index, transform);
+/// Render the Meta Data tab content.
+fn render_metadata_tab(ui: &mut egui::Ui, props: &PrimProperties) {
+    egui::Grid::new("metadata_grid")
+        .num_columns(2)
+        .striped(true)
+        .spacing([8.0, 4.0])
+        .show(ui, |ui| {
+            ui.label("Path");
+            ui.label(egui::RichText::new(&props.path).monospace());
+            ui.end_row();
 
-        ui.add_space(8.0);
-        if ui.button("Set Key (K)").clicked() {
-            event_bus.emit(AppEvent::SetKeyframe(instance_index as u64));
-        }
-    }
+            ui.label("Type");
+            ui.label(&props.type_name);
+            ui.end_row();
+
+            ui.label("Active");
+            ui.label(if props.is_active { "Yes" } else { "No" });
+            ui.end_row();
+
+            // Child count from attributes
+            if let Some((_, count)) = props.attributes.iter().find(|(k, _)| k == "Children") {
+                ui.label("Children");
+                ui.label(count);
+                ui.end_row();
+            }
+        });
 }
 
 /// Render editable DragValue fields for an instance transform.
@@ -367,137 +729,14 @@ fn values_to_transform(values: &[f32; 9]) -> bif_core::Transform {
     }
 }
 
-/// Render material properties in a grid layout.
-fn render_material_properties(ui: &mut egui::Ui, mat: &bif_core::Material) {
-    // Material name
-    ui.horizontal(|ui| {
-        ui.label("Name:");
-        ui.label(egui::RichText::new(mat.name.as_ref()).monospace());
-    });
-    ui.add_space(4.0);
-
-    egui::Grid::new("material_props_grid")
-        .num_columns(2)
-        .striped(true)
-        .spacing([8.0, 4.0])
-        .show(ui, |ui| {
-            // Base color with swatch
-            ui.label("Base Color");
-            ui.horizontal(|ui| {
-                let c = mat.base_color;
-                let color = egui::Color32::from_rgb(
-                    (c.x.clamp(0.0, 1.0) * 255.0) as u8,
-                    (c.y.clamp(0.0, 1.0) * 255.0) as u8,
-                    (c.z.clamp(0.0, 1.0) * 255.0) as u8,
-                );
-                show_color_swatch(ui, color);
-                ui.label(
-                    egui::RichText::new(format!("({:.3}, {:.3}, {:.3})", c.x, c.y, c.z))
-                        .monospace(),
-                );
-            });
-            ui.end_row();
-
-            // Metalness
-            ui.label("Metalness");
-            ui.label(egui::RichText::new(format!("{:.3}", mat.base_metalness)).monospace());
-            ui.end_row();
-
-            // Roughness
-            ui.label("Roughness");
-            ui.label(egui::RichText::new(format!("{:.3}", mat.specular_roughness)).monospace());
-            ui.end_row();
-
-            // Specular Weight
-            ui.label("Specular Weight");
-            ui.label(egui::RichText::new(format!("{:.3}", mat.specular_weight)).monospace());
-            ui.end_row();
-
-            // Specular IOR
-            ui.label("Specular IOR");
-            ui.label(egui::RichText::new(format!("{:.3}", mat.specular_ior)).monospace());
-            ui.end_row();
-
-            // Transmission
-            ui.label("Transmission");
-            ui.label(egui::RichText::new(format!("{:.3}", mat.transmission_weight)).monospace());
-            ui.end_row();
-
-            // Opacity
-            ui.label("Opacity");
-            ui.label(egui::RichText::new(format!("{:.3}", mat.geometry_opacity)).monospace());
-            ui.end_row();
-
-            // Emission (only if luminance > 0)
-            if mat.emission_luminance > 0.0 {
-                ui.label("Emission Color");
-                ui.horizontal(|ui| {
-                    let c = mat.emission_color;
-                    let color = egui::Color32::from_rgb(
-                        (c.x.clamp(0.0, 1.0) * 255.0) as u8,
-                        (c.y.clamp(0.0, 1.0) * 255.0) as u8,
-                        (c.z.clamp(0.0, 1.0) * 255.0) as u8,
-                    );
-                    show_color_swatch(ui, color);
-                    ui.label(
-                        egui::RichText::new(format!("({:.3}, {:.3}, {:.3})", c.x, c.y, c.z))
-                            .monospace(),
-                    );
-                });
-                ui.end_row();
-
-                ui.label("Emission Luminance");
-                ui.label(
-                    egui::RichText::new(format!("{:.1} nits", mat.emission_luminance)).monospace(),
-                );
-                ui.end_row();
-            }
-
-            // Double-sided
-            ui.label("Double-Sided");
-            ui.label(if mat.double_sided { "Yes" } else { "No" });
-            ui.end_row();
-        });
-
-    // Textures (only show non-None)
-    let textures = [
-        ("Base Color", &mat.base_color_texture),
-        ("Roughness", &mat.specular_roughness_texture),
-        ("Metalness", &mat.base_metalness_texture),
-        ("Normal", &mat.normal_texture),
-        ("Emission", &mat.emission_texture),
-        ("Opacity", &mat.geometry_opacity_texture),
-    ];
-    let has_textures = textures.iter().any(|(_, t)| t.is_some());
-
-    if has_textures {
-        ui.add_space(4.0);
-        ui.label(egui::RichText::new("Textures").strong());
-        egui::Grid::new("material_textures_grid")
-            .num_columns(2)
-            .striped(true)
-            .spacing([8.0, 4.0])
-            .show(ui, |ui| {
-                for (name, tex) in &textures {
-                    if let Some(path) = tex {
-                        ui.label(*name);
-                        ui.label(egui::RichText::new(path.as_ref()).monospace().small());
-                        ui.end_row();
-                    }
-                }
-            });
-    }
-}
-
-/// Draw a small color swatch.
-fn show_color_swatch(ui: &mut egui::Ui, color: egui::Color32) {
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(14.0, 14.0), egui::Sense::hover());
+/// Draw a color swatch of given size.
+fn show_color_swatch(ui: &mut egui::Ui, color: egui::Color32, size: f32) {
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(size, size), egui::Sense::hover());
     ui.painter().rect_filled(rect, 2.0, color);
 }
 
-/// Render a 4x4 matrix in a collapsible grid.
+/// Render a 4x4 matrix in a grid.
 fn render_matrix(ui: &mut egui::Ui, matrix: &Mat4) {
-    // Extract columns (Mat4 is column-major)
     let cols = matrix.to_cols_array_2d();
 
     egui::Grid::new("matrix_grid")
@@ -506,7 +745,6 @@ fn render_matrix(ui: &mut egui::Ui, matrix: &Mat4) {
         .show(ui, |ui| {
             for row in 0..4 {
                 for col_data in cols.iter().take(4) {
-                    // cols[col][row] because column-major
                     ui.label(
                         egui::RichText::new(format!("{:.3}", col_data[row]))
                             .monospace()
@@ -517,10 +755,7 @@ fn render_matrix(ui: &mut egui::Ui, matrix: &Mat4) {
             }
         });
 
-    // Also show decomposed TRS if it's a typical transform
-    // (translation in last column, rotation/scale in upper-left 3x3)
     let translation = bif_math::Vec3::new(cols[3][0], cols[3][1], cols[3][2]);
-
     ui.separator();
     ui.label("Translation:");
     ui.label(
@@ -590,12 +825,14 @@ pub fn render_xform_properties(
     changed
 }
 
-/// Reset cached transform edit values (call when selection changes).
-pub fn reset_transform_edit_cache(ctx: &egui::Context) {
+/// Reset cached property inspector state (call when selection changes).
+pub fn reset_property_inspector_cache(ctx: &egui::Context) {
     ctx.data_mut(|d| {
         d.remove::<[f32; 9]>(egui::Id::new("transform_edit_values"));
         d.remove::<bif_core::Transform>(egui::Id::new("transform_drag_start"));
         d.remove::<TransformEdit>(egui::Id::new("transform_edit_event"));
+        d.remove::<Option<usize>>(egui::Id::new("prop_selected_row"));
+        d.remove::<PropertyTab>(egui::Id::new("property_detail_tab"));
     });
 }
 
@@ -666,5 +903,45 @@ mod tests {
         assert!((t.translation.y - 2.0).abs() < 0.001);
         assert!((t.translation.z - 3.0).abs() < 0.001);
         assert!((t.scale.x - 1.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_build_property_rows_minimal() {
+        let props = PrimProperties::default();
+        let rows = build_property_rows(&props);
+        // Should have unresolved material + Children attribute
+        assert!(rows
+            .iter()
+            .any(|r| r.name == "Resolved Material" && r.status == PropertyStatus::Unresolved));
+    }
+
+    #[test]
+    fn test_build_property_rows_with_material() {
+        let mat = bif_core::Material::default();
+        let props = PrimProperties::default().with_material(Arc::new(mat));
+        let rows = build_property_rows(&props);
+        // Material + base color + metalness + roughness + specular weight + specular IOR
+        // + transmission + opacity + double-sided + Children attribute = 10+
+        assert!(rows.len() >= 10);
+        assert!(rows
+            .iter()
+            .any(|r| r.name == "Resolved Material" && r.status == PropertyStatus::Resolved));
+        assert!(rows.iter().any(|r| r.name == "Base Color"));
+        assert!(rows.iter().any(|r| r.name == "Roughness"));
+    }
+
+    #[test]
+    fn test_build_property_rows_with_bounds() {
+        let props = PrimProperties::default().with_bounds(
+            bif_math::Vec3::new(-1.0, -2.0, -3.0),
+            bif_math::Vec3::new(1.0, 2.0, 3.0),
+        );
+        let rows = build_property_rows(&props);
+        assert!(rows.iter().any(|r| r.name == "World Bounding Box"));
+    }
+
+    #[test]
+    fn test_property_tab_default() {
+        assert_eq!(PropertyTab::default(), PropertyTab::Value);
     }
 }

@@ -38,8 +38,8 @@ pub use point_cloud::{DistributionMethod, PointAttributes, PointCloud};
 pub use primitives::PrimitiveKind;
 pub use scatter::PointSource;
 pub use scene::{
-    AnimatedTransform, Instance, Light, Material, Prototype, Scene, SceneCamera, TimelineInfo,
-    Transform, TransformKeyframe,
+    AnimatedTransform, Instance, Light, Material, Prototype, Purpose, Scene, SceneCamera,
+    TimelineInfo, Transform, TransformKeyframe,
 };
 pub use texture::{Texture, TextureCache, TextureError, TextureResult};
 pub use undo::{

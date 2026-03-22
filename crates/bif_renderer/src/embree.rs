@@ -1000,7 +1000,7 @@ impl Hittable for EmbreeScene {
                 static HIT_COUNT: AtomicU32 = AtomicU32::new(0);
                 let count = HIT_COUNT.fetch_add(1, Ordering::Relaxed).wrapping_add(1);
                 if count <= 5 {
-                    log::info!(
+                    log::debug!(
                         "Ray hit #{}: t={}, geom_id={}, prim_id={}, normal=({}, {}, {})",
                         count,
                         rayhit.ray.tfar,

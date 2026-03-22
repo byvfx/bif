@@ -142,6 +142,8 @@ impl Renderer {
                 &self.scene.instances.current,
                 &self.scene.instances.prototype_ids,
                 &self.scene.instances.material_ids,
+                &self.scene.instances.purposes,
+                self.display_settings.purpose_mode,
             );
         }
     }

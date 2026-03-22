@@ -70,6 +70,8 @@ impl MultiDrawState {
         transforms: &[Mat4],
         prototype_ids: &[usize],
         material_ids: &[u32],
+        purposes: &[bif_core::Purpose],
+        purpose_mode: crate::PurposeMode,
     ) {
         self.instance_groups.clear();
 
@@ -79,6 +81,13 @@ impl MultiDrawState {
         }
 
         for (i, model_matrix) in transforms.iter().enumerate() {
+            // Skip instances not matching active purpose mode
+            if let Some(&purpose) = purposes.get(i) {
+                if !purpose_mode.includes(purpose) {
+                    continue;
+                }
+            }
+
             let prototype_id = prototype_ids.get(i).copied().unwrap_or(0);
             let material_id = material_ids.get(i).copied().unwrap_or(0);
 
@@ -223,9 +232,60 @@ mod tests {
         let prototype_ids = vec![0, 1, 0]; // 2 instances of proto 0, 1 of proto 1
         let material_ids = vec![0, 1, 2];
 
-        state.rebuild_instance_groups(&transforms, &prototype_ids, &material_ids);
+        let purposes = vec![bif_core::Purpose::Default; 3];
+        state.rebuild_instance_groups(
+            &transforms,
+            &prototype_ids,
+            &material_ids,
+            &purposes,
+            crate::PurposeMode::Render,
+        );
 
         assert_eq!(state.instance_groups.get(&0).map(|v| v.len()), Some(2));
         assert_eq!(state.instance_groups.get(&1).map(|v| v.len()), Some(1));
+    }
+
+    #[test]
+    fn test_rebuild_instance_groups_purpose_filter() {
+        let mut state = MultiDrawState::new();
+
+        let transforms = vec![Mat4::IDENTITY; 3];
+        let prototype_ids = vec![0, 0, 0];
+        let material_ids = vec![0, 0, 0];
+        let purposes = vec![
+            bif_core::Purpose::Default,
+            bif_core::Purpose::Proxy,
+            bif_core::Purpose::Render,
+        ];
+
+        // Render mode: Default + Render visible (skip Proxy)
+        state.rebuild_instance_groups(
+            &transforms,
+            &prototype_ids,
+            &material_ids,
+            &purposes,
+            crate::PurposeMode::Render,
+        );
+        assert_eq!(state.instance_groups.get(&0).map(|v| v.len()), Some(2));
+
+        // Proxy mode: Default + Proxy visible (skip Render)
+        state.rebuild_instance_groups(
+            &transforms,
+            &prototype_ids,
+            &material_ids,
+            &purposes,
+            crate::PurposeMode::Proxy,
+        );
+        assert_eq!(state.instance_groups.get(&0).map(|v| v.len()), Some(2));
+
+        // All mode: everything visible
+        state.rebuild_instance_groups(
+            &transforms,
+            &prototype_ids,
+            &material_ids,
+            &purposes,
+            crate::PurposeMode::All,
+        );
+        assert_eq!(state.instance_groups.get(&0).map(|v| v.len()), Some(3));
     }
 }

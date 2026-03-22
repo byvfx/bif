@@ -405,19 +405,31 @@ pub(crate) fn render_stats_panel(
             ui.label("Purpose:");
             egui::ComboBox::from_id_salt("display_purpose")
                 .selected_text(match p.display_settings.purpose_mode {
-                    PurposeMode::Render => "Render",
-                    PurposeMode::Proxy => "Proxy",
+                    PurposeMode::Render => "Default+Render",
+                    PurposeMode::Proxy => "Default+Proxy",
+                    PurposeMode::All => "All",
+                    PurposeMode::Guide => "Default+Guide",
                 })
                 .show_ui(ui, |ui| {
                     ui.selectable_value(
                         &mut p.display_settings.purpose_mode,
                         PurposeMode::Render,
-                        "Render",
+                        "Default+Render",
                     );
                     ui.selectable_value(
                         &mut p.display_settings.purpose_mode,
                         PurposeMode::Proxy,
-                        "Proxy",
+                        "Default+Proxy",
+                    );
+                    ui.selectable_value(
+                        &mut p.display_settings.purpose_mode,
+                        PurposeMode::All,
+                        "All",
+                    );
+                    ui.selectable_value(
+                        &mut p.display_settings.purpose_mode,
+                        PurposeMode::Guide,
+                        "Default+Guide",
                     );
                 });
         });

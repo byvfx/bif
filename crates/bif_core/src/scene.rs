@@ -12,6 +12,23 @@ use bif_math::{Aabb, Mat4, Quat, Vec3};
 use crate::mesh::Mesh;
 use crate::point_cloud::PointCloud;
 
+/// USD purpose attribute (from UsdGeomImageable).
+///
+/// Controls viewport visibility filtering — DCCs let users toggle
+/// which purposes display (proxy for fast nav, render for final look).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Purpose {
+    /// Always visible regardless of mode.
+    #[default]
+    Default,
+    /// Render-quality geometry.
+    Render,
+    /// Low-res proxy geometry (viewport preview).
+    Proxy,
+    /// Guide/helper geometry (usually hidden).
+    Guide,
+}
+
 /// A PBR material definition using OpenPBR Surface naming.
 ///
 /// Maps UsdPreviewSurface inputs to OpenPBR parameters on load.
@@ -371,6 +388,9 @@ pub struct Instance {
     /// USD prim path for export (e.g., `/World/mesh_0` for standalone meshes,
     /// or empty for BIF-created instances which use `/BIF/` convention).
     pub prim_path: Arc<str>,
+
+    /// USD purpose (Default, Render, Proxy, Guide).
+    pub purpose: Purpose,
 }
 
 impl Instance {
@@ -380,6 +400,7 @@ impl Instance {
             prototype_id,
             transform,
             prim_path: Arc::from(""),
+            purpose: Purpose::Default,
         }
     }
 
@@ -389,6 +410,7 @@ impl Instance {
             prototype_id,
             transform,
             prim_path,
+            purpose: Purpose::Default,
         }
     }
 
@@ -472,6 +494,8 @@ pub struct CurvesPrim {
     pub wrap: crate::usd::cpp_bridge::CurveWrap,
     /// World transform
     pub transform: Mat4,
+    /// USD purpose (C++ bridge doesn't expose this yet; defaults to Default).
+    pub purpose: Purpose,
 }
 
 /// A points primitive (from UsdGeomPoints).
@@ -489,6 +513,8 @@ pub struct PointsPrim {
     pub ids: Option<Vec<i64>>,
     /// World transform
     pub transform: Mat4,
+    /// USD purpose (C++ bridge doesn't expose this yet; defaults to Default).
+    pub purpose: Purpose,
 }
 
 /// A camera defined in the scene graph (from a Camera primitive).
@@ -625,6 +651,13 @@ impl Scene {
             prim_path.into(),
         ));
         self.instance_animations.push(Some(animation));
+    }
+
+    /// Set the purpose of the most recently added instance.
+    pub fn set_last_instance_purpose(&mut self, purpose: Purpose) {
+        if let Some(inst) = self.instances.last_mut() {
+            inst.purpose = purpose;
+        }
     }
 
     /// Check if the scene has any animation.

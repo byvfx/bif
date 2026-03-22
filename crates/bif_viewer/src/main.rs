@@ -410,7 +410,7 @@ impl ApplicationHandler for App {
                                     {
                                         live_transform.translation = new_pos;
                                         renderer.set_live_transform(sel_idx, live_transform);
-                                        renderer.reset_transform_edit_cache();
+                                        renderer.reset_property_inspector_cache();
                                     }
                                 }
                             } else if !renderer.is_camera_locked() {

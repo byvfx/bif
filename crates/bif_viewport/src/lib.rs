@@ -89,10 +89,27 @@ const MAX_INSTANCES: u32 = 100_000;
 /// Which USD purpose geometry to display in the viewport.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PurposeMode {
-    /// Show render-purpose geometry (full detail).
+    /// Show Default + Render purpose geometry (full detail).
     Render,
-    /// Show proxy-purpose geometry where available (low-res preview).
+    /// Show Default + Proxy purpose geometry (low-res preview).
     Proxy,
+    /// Show all purposes (Default + Render + Proxy + Guide).
+    All,
+    /// Show Default + Guide purpose geometry (helper viz).
+    Guide,
+}
+
+impl PurposeMode {
+    /// Whether the given purpose is visible under this mode.
+    pub fn includes(self, purpose: bif_core::Purpose) -> bool {
+        use bif_core::Purpose;
+        match purpose {
+            Purpose::Default => true, // Default is always visible
+            Purpose::Render => matches!(self, Self::Render | Self::All),
+            Purpose::Proxy => matches!(self, Self::Proxy | Self::All),
+            Purpose::Guide => matches!(self, Self::Guide | Self::All),
+        }
+    }
 }
 
 /// Framework-agnostic display settings — UI layer reads/writes these.
@@ -243,6 +260,8 @@ pub struct SceneInstances {
     pub prototype_ids: Vec<usize>,
     /// Prim path per instance (for USD export).
     pub prim_paths: Vec<String>,
+    /// USD purpose per instance (for viewport purpose filtering).
+    pub purposes: Vec<bif_core::Purpose>,
 }
 
 /// GPU plumbing — surface, device, queue, config.
@@ -1114,6 +1133,7 @@ impl Renderer {
     /// mesh until budget is exhausted, then remaining use box proxy.
     pub fn update_visible_instances(&mut self) {
         let lod_enabled = self.display_settings.lod_enabled;
+        let purpose_mode = self.display_settings.purpose_mode;
         self.culling.update_visible_instances(
             &self.gpu.queue,
             &self.instance_buffer,
@@ -1121,6 +1141,8 @@ impl Renderer {
             &self.scene.instances.current,
             &self.scene.instances.material_ids,
             lod_enabled,
+            &self.scene.instances.purposes,
+            purpose_mode,
         );
     }
 

@@ -199,6 +199,20 @@ impl Renderer {
             .cloned()
             .unwrap_or_default();
 
+        // Material ID distribution (enable via RUST_LOG=bif_viewport::ivar_build=debug)
+        if log::log_enabled!(log::Level::Debug) {
+            let mut counts = std::collections::HashMap::new();
+            for &id in &tri_mat_ids {
+                *counts.entry(id).or_insert(0u32) += 1;
+            }
+            log::debug!(
+                "Ivar tri_mat_ids: {} tris, {} unique IDs: {:?}",
+                tri_mat_ids.len(),
+                counts.len(),
+                counts
+            );
+        }
+
         // Extract indexed data for from_indexed() path
         let is_animated = !self.scene.vertex_animated_meshes.is_empty();
         let (positions, normals_soa, uvs_soa, indices) = if is_animated {

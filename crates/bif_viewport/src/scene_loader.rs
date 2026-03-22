@@ -182,6 +182,7 @@ impl Renderer {
         let mut instance_transforms = Vec::with_capacity(scene.instance_count());
         let mut instance_material_ids = Vec::with_capacity(scene.instance_count());
         let mut instance_prototype_ids = Vec::with_capacity(scene.instance_count());
+        let mut instance_purposes = Vec::with_capacity(scene.instance_count());
         let instances: Vec<InstanceData> = if scene.instances().is_empty() {
             scene
                 .prototypes
@@ -191,6 +192,7 @@ impl Renderer {
                     let model_matrix = Mat4::IDENTITY;
                     instance_transforms.push(model_matrix);
                     instance_prototype_ids.push(proto_id);
+                    instance_purposes.push(bif_core::Purpose::Default);
                     let material_id = proto
                         .material
                         .as_ref()
@@ -212,6 +214,7 @@ impl Renderer {
                     let model_matrix = inst.model_matrix();
                     instance_transforms.push(model_matrix);
                     instance_prototype_ids.push(inst.prototype_id);
+                    instance_purposes.push(inst.purpose);
                     let material_id = scene
                         .prototypes
                         .get(inst.prototype_id)
@@ -281,6 +284,7 @@ impl Renderer {
         self.scene.instances.transforms = instance_transforms;
         self.scene.instances.material_ids = instance_material_ids;
         self.scene.instances.prototype_ids = instance_prototype_ids;
+        self.scene.instances.purposes = instance_purposes;
         // Build prim path mapping for USD export
         self.scene.instances.prim_paths = scene
             .instances()
@@ -531,6 +535,7 @@ impl Renderer {
             self.scene.instances.material_ids.clear();
             self.scene.instances.prototype_ids.clear();
             self.scene.instances.prim_paths.clear();
+            self.scene.instances.purposes.clear();
             self.scene.instance_animations = scene.instance_animations().to_vec();
             self.scene.scene_cameras = scene.cameras.clone();
             self.culling.instance_aabbs.clear();
@@ -687,11 +692,13 @@ impl Renderer {
             }
             md
         } else if !scene.instances().is_empty() {
+            let active_purpose = self.display_settings.purpose_mode;
             let mut meshes_with_transforms: Vec<(&bif_core::Mesh, Mat4, usize, u32)> = scene
                 .instances()
                 .iter()
                 .enumerate()
                 .filter(|(_idx, inst)| !hidden_proto_ids.contains(&inst.prototype_id))
+                .filter(|(_idx, inst)| active_purpose.includes(inst.purpose))
                 .filter_map(|(mesh_idx, inst)| {
                     scene.prototypes.get(inst.prototype_id).map(|proto| {
                         let mat_id = proto
@@ -711,6 +718,7 @@ impl Renderer {
                 .iter()
                 .filter(|(nid, _)| is_node_active(nid))
                 .flat_map(|(_, insts)| insts.iter())
+                .filter(|inst| active_purpose.includes(inst.purpose))
                 .enumerate()
             {
                 if let Some(proto) = scene.prototypes.get(inst.prototype_id) {
@@ -871,6 +879,7 @@ impl Renderer {
         let mut instance_transforms = Vec::with_capacity(total_capacity);
         let mut instance_material_ids = Vec::with_capacity(total_capacity);
         let mut instance_prototype_ids = Vec::with_capacity(total_capacity);
+        let mut instance_purposes = Vec::with_capacity(total_capacity);
         let mut instances: Vec<InstanceData> = if scene.instances().is_empty() {
             scene
                 .prototypes
@@ -881,6 +890,7 @@ impl Renderer {
                     let model_matrix = Mat4::IDENTITY;
                     instance_transforms.push(model_matrix);
                     instance_prototype_ids.push(proto_id);
+                    instance_purposes.push(bif_core::Purpose::Default);
                     let material_id = proto
                         .material
                         .as_ref()
@@ -903,6 +913,7 @@ impl Renderer {
                     let model_matrix = inst.model_matrix();
                     instance_transforms.push(model_matrix);
                     instance_prototype_ids.push(inst.prototype_id);
+                    instance_purposes.push(inst.purpose);
                     let material_id = scene
                         .prototypes
                         .get(inst.prototype_id)
@@ -930,6 +941,7 @@ impl Renderer {
             let model_matrix = inst.model_matrix();
             instance_transforms.push(model_matrix);
             instance_prototype_ids.push(inst.prototype_id);
+            instance_purposes.push(inst.purpose);
             let material_id = scene
                 .prototypes
                 .get(inst.prototype_id)
@@ -1116,6 +1128,7 @@ impl Renderer {
         self.scene.instances.transforms = instance_transforms;
         self.scene.instances.material_ids = instance_material_ids;
         self.scene.instances.prototype_ids = instance_prototype_ids;
+        self.scene.instances.purposes = instance_purposes;
 
         // Build prim paths for scene instances (skip instanced prototypes)
         let mut prim_paths: Vec<String> = scene
@@ -1184,6 +1197,8 @@ impl Renderer {
             &self.scene.instances.transforms,
             &self.scene.instances.prototype_ids,
             &self.scene.instances.material_ids,
+            &self.scene.instances.purposes,
+            self.display_settings.purpose_mode,
         );
 
         // Material uniform
@@ -1903,6 +1918,8 @@ impl Renderer {
             &self.scene.instances.transforms,
             &self.scene.instances.prototype_ids,
             &self.scene.instances.material_ids,
+            &self.scene.instances.purposes,
+            self.display_settings.purpose_mode,
         );
 
         if use_multi_draw {
@@ -2098,6 +2115,8 @@ impl Renderer {
                     .working_scene
                     .add_instance(remapped_proto_id, inst.transform.clone());
             }
+            // Preserve purpose from loaded scene
+            self.scene.working_scene.set_last_instance_purpose(inst.purpose);
         }
         let mat_source_dir = path.parent().map(|p| p.to_path_buf());
         for mat in &scene.materials {

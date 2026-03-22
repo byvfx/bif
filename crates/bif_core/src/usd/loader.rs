@@ -20,7 +20,7 @@ use thiserror::Error;
 use crate::mesh::Mesh;
 use crate::point_cloud::{DistributionMethod, PointAttributes, PointCloud};
 use crate::scene::{
-    AnimatedTransform, CurvesPrim, Light, PointsPrim, Scene, TimelineInfo, Transform,
+    AnimatedTransform, CurvesPrim, Light, PointsPrim, Purpose, Scene, TimelineInfo, Transform,
     TransformKeyframe,
 };
 use crate::usd::cpp_bridge::{UsdBridgeError, UsdLightType, UsdStage};
@@ -137,16 +137,10 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
     let mut mesh_dedup: HashMap<(usize, usize, u64), usize> = HashMap::new();
 
     // Load all meshes as prototypes (with deduplication).
-    // Skip proxy/guide purpose meshes — they overlap with render-purpose geometry.
+    // All purposes are loaded; filtering happens at viewport culling time.
     let mesh_start = Instant::now();
     let meshes = stage.meshes()?;
     for (mesh_idx, mesh_data) in meshes.iter().enumerate() {
-        if matches!(
-            mesh_data.purpose,
-            crate::usd::cpp_bridge::MeshPurpose::Proxy | crate::usd::cpp_bridge::MeshPurpose::Guide
-        ) {
-            continue;
-        }
         // Skip invisible meshes (inherited visibility = invisible)
         if !mesh_data.visible {
             continue;
@@ -279,6 +273,15 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
         } else {
             scene.add_instance_with_path(proto_id, transform, mesh_data.path.clone());
         }
+
+        // Convert MeshPurpose → Purpose on the just-added instance
+        let purpose = match mesh_data.purpose {
+            crate::usd::cpp_bridge::MeshPurpose::Default => Purpose::Default,
+            crate::usd::cpp_bridge::MeshPurpose::Render => Purpose::Render,
+            crate::usd::cpp_bridge::MeshPurpose::Proxy => Purpose::Proxy,
+            crate::usd::cpp_bridge::MeshPurpose::Guide => Purpose::Guide,
+        };
+        scene.set_last_instance_purpose(purpose);
     }
     let mesh_time = mesh_start.elapsed();
     let total_verts: usize = meshes.iter().map(|m| m.vertices.len()).sum();
@@ -410,6 +413,15 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
                 };
 
                 scene.add_instance_with_path(target_proto, transform, prim_path);
+
+                // Propagate purpose from prototype mesh
+                let purpose = match mesh_data.purpose {
+                    crate::usd::cpp_bridge::MeshPurpose::Default => Purpose::Default,
+                    crate::usd::cpp_bridge::MeshPurpose::Render => Purpose::Render,
+                    crate::usd::cpp_bridge::MeshPurpose::Proxy => Purpose::Proxy,
+                    crate::usd::cpp_bridge::MeshPurpose::Guide => Purpose::Guide,
+                };
+                scene.set_last_instance_purpose(purpose);
             }
         }
     }
@@ -528,6 +540,7 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
             basis: curve_data.basis,
             wrap: curve_data.wrap,
             transform: curve_data.transform,
+            purpose: Purpose::Default,
         });
     }
     if !curves_data.is_empty() {
@@ -544,6 +557,7 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
             normals: pt_data.normals.clone(),
             ids: pt_data.ids.clone(),
             transform: pt_data.transform,
+            purpose: Purpose::Default,
         });
     }
     if !points_data.is_empty() {

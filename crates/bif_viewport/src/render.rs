@@ -670,7 +670,16 @@ impl Renderer {
 
         // Update LOD max polys and display settings from UI
         self.culling.lod_max_polys = lod_max_polys;
+        let purpose_changed = self.display_settings.purpose_mode != display_settings.purpose_mode;
         self.display_settings = display_settings;
+
+        // Purpose mode changed — full rebuild (combined mesh must be re-baked for Ivar)
+        if purpose_changed {
+            log::info!("Purpose mode changed to {:?}", self.display_settings.purpose_mode);
+            if let Err(e) = self.reload_working_scene() {
+                log::error!("Failed to reload after purpose change: {}", e);
+            }
+        }
 
         // Write render mode back; detect mode change via event bus
         let mode_changed = self.ivar.ivar_state.mode != render_mode;

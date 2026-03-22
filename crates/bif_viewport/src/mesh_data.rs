@@ -469,7 +469,7 @@ impl MeshData {
         // Store per-triangle material IDs if present (for primitive_index lookup in shader)
         let triangle_material_ids = mesh.face_material_ids.as_ref().map(|face_mat_ids| {
             let unique: std::collections::HashSet<_> = face_mat_ids.iter().collect();
-            log::info!(
+            log::debug!(
                 "Mesh with per-face materials: {} triangles, {} unique materials (IDs: {:?})",
                 face_mat_ids.len(),
                 unique.len(),
