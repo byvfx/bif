@@ -8,6 +8,17 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Purpose filtering** — USD purpose attr (render/proxy/guide) toggle in viewport render settings; C++ bridge hierarchy walk for inherited purpose on instance proxies
+- **Purpose enum** — `Purpose` type on `Instance` with per-instance filtering in combined mesh build
+- **Material diagnostics** — debug-level logging for Ivar material params, texture load status, triangle material IDs (enable via `RUST_LOG=bif_renderer=debug,bif_viewport=debug`)
+
+### Fixed
+
+- **UsdPreviewSurface specular** — `specularColor` was averaged to `specular_weight`, breaking dielectrics (always 0 for many assets); now `specular_weight=1.0` since UsdPreviewSurface specular is IOR/Fresnel-controlled
+- **Ivar double-filtering** — purpose filter applied twice (reload + ivar_build) caused material index misalignment; removed redundant filter in ivar_build
+
+### Previously Added
+
 - **USD export: stage metadata** — export writes upAxis, metersPerUnit, timeCodesPerSecond, defaultPrim
 - **USD export: materials** — export writes UsdPreviewSurface materials + bind_material per mesh
 - **USD export: lights** — export writes all 4 light types (Distant, Sphere, Rect, Dome) as UsdLux prims
