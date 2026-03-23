@@ -316,8 +316,8 @@ impl OpenPbrSurface {
             .as_ref()
             .and_then(|p| load_texture_logged(p, src, |r| cache.load_linear(r)));
 
-        // Material diagnostics (enable via RUST_LOG=bif_renderer::openpbr=debug)
-        log::debug!(
+        // Material diagnostics
+        log::info!(
             "OpenPBR '{}': color={:?} metal={:.2} rough={:.2} ior={:.2} spec_w={:.2} trans={:.2} | \
              albedo={} normal={} rough={} metal={} opacity={}",
             mat.name,
