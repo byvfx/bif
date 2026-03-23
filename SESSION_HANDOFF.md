@@ -1,7 +1,7 @@
-# Session Handoff - March 21, 2026
+# Session Handoff - March 22, 2026
 
-**Last Updated:** Purpose filtering + UsdPreviewSurface specular fix
-**Next Milestone:** M29.5 egui upgrade
+**Last Updated:** Parallel UV seam split + .tx cache plan
+**Next Milestone:** .tx viewport cache integration → M29.5 egui upgrade
 **Project:** BIF - VFX Scene Assembler & Renderer
 
 ---
@@ -18,6 +18,15 @@
 ---
 
 ## Recent Work
+
+### Parallel UV Seam Split + .tx Cache Plan (Mar 22, 2026)
+
+- Refactored `cache_stage_data()` into 3-pass architecture using USD `WorkParallelForN`
+- Pass 1 serial traverse (classify meshes vs instances), pass 2 parallel geometry extraction, pass 3 merge
+- Extracted ~450-line `extract_mesh_geometry()` function, per-thread `UsdGeomXformCache`
+- ALab 528 meshes: 1s parallel geo wall-clock. Awaiting test on 335M vert rt_base scene.
+- Planned .tx texture cache integration for viewport (22.8s→2-4s on repeat loads)
+- Also noted: Ivar renderer should use same .tx pipeline for consistency
 
 ### Purpose Filtering + Specular Fix (Mar 21, 2026)
 

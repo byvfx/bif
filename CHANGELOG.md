@@ -21,6 +21,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **UDIM tile downscale before stitch** — tiles downscaled to adaptive size before atlas assembly (was full-res → OOM)
 - **Pick scene size guard** — skip Embree pick BVH for >50M tris (prevents 25GB OOM)
 - **C++ debug log flags** — `g_log_textures`, `g_log_timing`, `g_log_variants` toggle output sections
+- **Parallel UV seam split** — 3-pass `cache_stage_data()` refactor using USD `WorkParallelForN`; per-mesh geometry extraction in parallel with per-thread `UsdGeomXformCache`
 
 ### Fixed
 
