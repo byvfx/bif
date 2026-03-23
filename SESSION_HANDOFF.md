@@ -19,13 +19,21 @@
 
 ## Recent Work
 
-### Parallel UV + .tx Texture Cache (Mar 22, 2026)
+### OpenPBR MaterialX + Shading Normal AOV (Mar 23, 2026)
+
+- C++ bridge now recognizes `ND_open_pbr_surface` alongside `standard_surface`
+- Fallback input names: `base_metalness`, `geometry_normal`, `geometry_opacity`
+- Shading normal AOV (`Ns`) in EXR output + viewport AOV dropdown
+- `Material` trait gained `shading_normal()` method for normal-mapped normals
+- Diagnosed: MaterialX materials only had base_color texture, all other params were defaults
+- Code review caught .tx-as-linear bug, ClearTxCache base_dir, null prim guard
+
+### Parallel UV + .tx Texture Cache (Mar 22-23, 2026)
 
 - Parallelized UV seam split: 3-pass `cache_stage_data()` refactor with `WorkParallelForN`
 - Viewport .tx cache: `resolve_tx_path` prefers .tx over source, auto bg conversion on scene load
 - Parallel .tx conversion via rayon, parallel Ivar texture pre-warm (9s→2.7s)
-- Clear .tx cache UI button, UDIM .tx fallback
-- Ivar already uses .tx via `TextureCache` with `prefer_tx: true` — no changes needed
+- Clear .tx cache UI button, UDIM .tx fallback, UDIM path skip in pre-warm
 - Awaiting ALab .tx benchmark (272 textures) and rt_base parallel UV benchmark
 
 ### Purpose Filtering + Specular Fix (Mar 21, 2026)
