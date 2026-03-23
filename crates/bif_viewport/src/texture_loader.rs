@@ -204,10 +204,12 @@ fn resolve_tx_path(source_path: &str) -> Option<String> {
     }
 }
 
-/// Check if texture path indicates linear color space (EXR, HDR, TX).
+/// Check if texture path indicates linear color space (EXR, HDR).
+/// Note: .tx files are NOT assumed linear — they preserve the source colorspace.
+/// OIIO reports the actual is_linear flag from .tx metadata.
 pub fn is_linear_texture_path(path: &str) -> bool {
     match Path::new(path).extension().and_then(|ext| ext.to_str()) {
-        Some(ext) => matches!(ext.to_ascii_lowercase().as_str(), "exr" | "hdr" | "tx"),
+        Some(ext) => matches!(ext.to_ascii_lowercase().as_str(), "exr" | "hdr"),
         None => false,
     }
 }
@@ -1330,8 +1332,9 @@ mod tests {
         assert!(is_linear_texture_path("foo.exr"));
         assert!(is_linear_texture_path("bar.EXR"));
         assert!(is_linear_texture_path("hdr.hdr"));
-        assert!(is_linear_texture_path("diffuse.tx"));
-        assert!(is_linear_texture_path("normal.TX"));
+        // .tx preserves source colorspace — not assumed linear
+        assert!(!is_linear_texture_path("diffuse.tx"));
+        assert!(!is_linear_texture_path("normal.TX"));
         assert!(!is_linear_texture_path("diffuse.png"));
         assert!(!is_linear_texture_path("normal.jpg"));
         assert!(!is_linear_texture_path("noext"));

@@ -1425,6 +1425,7 @@ static void cache_stage_data(UsdBridgeStage* bridge) {
         for (size_t i = begin; i < end; ++i) {
             const auto& item = mesh_work[i];
             UsdPrim prim = bridge->stage->GetPrimAtPath(item.prim_path);
+            if (!prim) continue;
 
             extract_mesh_geometry(
                 bridge, prim, item.is_proxy,

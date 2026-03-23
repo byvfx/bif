@@ -951,7 +951,10 @@ impl Renderer {
                 #[cfg(feature = "oiio")]
                 {
                     let paths = self.collect_material_texture_paths();
-                    let cache = bif_core::texture::TextureCache::new();
+                    let cache = match self.scene.texture_base_dir.as_deref() {
+                        Some(dir) => bif_core::texture::TextureCache::with_base_dir(dir),
+                        None => bif_core::texture::TextureCache::new(),
+                    };
                     let removed = cache.clear_tx_cache(&paths);
                     let status = format!("{} .tx files cleared", removed);
                     self.nodes
