@@ -686,6 +686,11 @@ where
     } else {
         None
     };
+    let mut shading_normal = if aov_settings.include_normal {
+        Some(vec![[0.0f32; 3]; pixel_count])
+    } else {
+        None
+    };
     // Albedo only needed for OIDN denoising — skip allocation when disabled
     let mut albedo = if aov_settings.denoise_output {
         Some(vec![[0.0f32; 3]; pixel_count])
@@ -735,6 +740,11 @@ where
                 if let Some(ref mut n) = normal {
                     n[global_idx] = result.normals[local_idx];
                 }
+                if let Some(ref mut sn) = shading_normal {
+                    if local_idx < result.shading_normals.len() {
+                        sn[global_idx] = result.shading_normals[local_idx];
+                    }
+                }
                 if let Some(ref mut a) = albedo {
                     a[global_idx] = result.albedos[local_idx];
                 }
@@ -749,6 +759,7 @@ where
         alpha,
         depth,
         normal,
+        shading_normal,
         albedo,
     }
 }

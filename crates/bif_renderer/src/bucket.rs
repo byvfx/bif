@@ -162,8 +162,10 @@ pub struct BucketResultWithAovs {
     pub pixels: Vec<Color>,
     /// Depth values (distance to first hit) in row-major order.
     pub depths: Vec<f32>,
-    /// World-space normals in row-major order.
+    /// World-space geometric normals in row-major order.
     pub normals: Vec<[f32; 3]>,
+    /// World-space shading normals (after normal map) in row-major order.
+    pub shading_normals: Vec<[f32; 3]>,
     /// Alpha values (1.0 = hit, 0.0 = miss) in row-major order.
     pub alphas: Vec<f32>,
     /// SHARC cache sample counts at primary hit (for heatmap AOV).
@@ -197,6 +199,7 @@ pub fn render_bucket_with_aovs(
     let mut pixels = Vec::with_capacity(capacity);
     let mut depths = Vec::with_capacity(capacity);
     let mut normals = Vec::with_capacity(capacity);
+    let mut shading_normals = Vec::with_capacity(capacity);
     let mut alphas = Vec::with_capacity(capacity);
     let mut cache_samples = Vec::with_capacity(capacity);
     let mut albedos = Vec::with_capacity(capacity);
@@ -211,6 +214,7 @@ pub fn render_bucket_with_aovs(
             pixels.push(color);
             depths.push(aov.depth);
             normals.push([aov.normal.x, aov.normal.y, aov.normal.z]);
+            shading_normals.push([aov.shading_normal.x, aov.shading_normal.y, aov.shading_normal.z]);
             alphas.push(aov.alpha);
             cache_samples.push(aov.cache_samples);
             albedos.push([aov.albedo.x, aov.albedo.y, aov.albedo.z]);
@@ -223,6 +227,7 @@ pub fn render_bucket_with_aovs(
         pixels,
         depths,
         normals,
+        shading_normals,
         alphas,
         cache_samples,
         albedos,

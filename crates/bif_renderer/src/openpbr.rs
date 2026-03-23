@@ -527,6 +527,10 @@ impl Material for OpenPbrSurface {
         self.sample_base_color(u, v)
     }
 
+    fn shading_normal(&self, rec: &HitRecord) -> Vec3 {
+        self.apply_normal_map(rec.normal, rec.tangent, rec.bitangent, rec.u, rec.v)
+    }
+
     fn scatter(
         &self,
         ray_in: &Ray,

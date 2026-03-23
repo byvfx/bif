@@ -75,8 +75,10 @@ pub fn ray_color(
 pub struct AovData {
     /// Distance to first hit (f32::INFINITY if no hit).
     pub depth: f32,
-    /// World-space normal at first hit (zero if no hit).
+    /// World-space geometric normal at first hit (zero if no hit).
     pub normal: Color,
+    /// World-space shading normal (after normal map) at first hit.
+    pub shading_normal: Color,
     /// Alpha channel (1.0 = hit, 0.0 = miss).
     pub alpha: f32,
     /// SHARC cache sample count at primary hit (for heatmap AOV).
@@ -90,6 +92,7 @@ impl Default for AovData {
         Self {
             depth: f32::INFINITY,
             normal: Color::ZERO,
+            shading_normal: Color::ZERO,
             alpha: 0.0,
             cache_samples: 0,
             albedo: Color::ZERO,
@@ -167,6 +170,7 @@ pub fn ray_color_with_aovs(
         if first_hit {
             aov.depth = rec.t;
             aov.normal = rec.normal;
+            aov.shading_normal = rec.material.shading_normal(&rec);
             aov.alpha = 1.0;
             aov.albedo = rec.material.albedo(rec.u, rec.v);
             // Cache heatmap: sample count at primary hit
@@ -317,6 +321,7 @@ pub fn render_pixel_with_aovs(
     let mut total_weight = 0.0_f32;
     let mut depth_sum = 0.0_f32;
     let mut normal_sum = Color::ZERO;
+    let mut shading_normal_sum = Color::ZERO;
     let mut normal_weight_sum = 0.0_f32;
     let mut alpha_sum = 0.0_f32;
     let mut albedo_sum = Color::ZERO;
@@ -346,6 +351,7 @@ pub fn render_pixel_with_aovs(
             depth_sum += aov.depth;
             // Normal + albedo: weighted
             normal_sum += w * aov.normal;
+            shading_normal_sum += w * aov.shading_normal;
             normal_weight_sum += w;
             albedo_sum += w * aov.albedo;
             albedo_weight_sum += w;
@@ -369,6 +375,11 @@ pub fn render_pixel_with_aovs(
         } else {
             Color::ZERO
         };
+        let avg_shading_normal = if normal_weight_sum > 0.0 {
+            (shading_normal_sum / normal_weight_sum).normalize()
+        } else {
+            Color::ZERO
+        };
         let avg_albedo = if albedo_weight_sum > 0.0 {
             albedo_sum / albedo_weight_sum
         } else {
@@ -377,6 +388,7 @@ pub fn render_pixel_with_aovs(
         AovData {
             depth: depth_sum / hit_count as f32,
             normal: avg_normal,
+            shading_normal: avg_shading_normal,
             alpha: avg_alpha,
             cache_samples: max_cache_samples,
             albedo: avg_albedo,

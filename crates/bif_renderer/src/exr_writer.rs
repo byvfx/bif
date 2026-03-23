@@ -75,8 +75,10 @@ pub struct ExrOutput {
     pub alpha: Option<Vec<f32>>,
     /// Depth AOV (Z buffer, world units). None if disabled.
     pub depth: Option<Vec<f32>>,
-    /// World-space normals AOV. None if disabled.
+    /// World-space geometric normals AOV. None if disabled.
     pub normal: Option<Vec<[f32; 3]>>,
+    /// World-space shading normals (after normal map). None if disabled.
+    pub shading_normal: Option<Vec<[f32; 3]>>,
     /// Albedo AOV (denoiser guide, not written to EXR). None if disabled.
     pub albedo: Option<Vec<[f32; 3]>>,
 }
@@ -207,7 +209,7 @@ pub fn write_exr(
         channels.push(make_f16_channel("A", a));
     }
 
-    // Normal — half float
+    // Geometric normal — half float
     if let Some(ref normal) = output.normal {
         let nx: Vec<f16> = normal.iter().map(|n| f16::from_f32(n[0])).collect();
         let ny: Vec<f16> = normal.iter().map(|n| f16::from_f32(n[1])).collect();
@@ -215,6 +217,16 @@ pub fn write_exr(
         channels.push(make_f16_channel("N.X", nx));
         channels.push(make_f16_channel("N.Y", ny));
         channels.push(make_f16_channel("N.Z", nz));
+    }
+
+    // Shading normal (after normal map) — half float
+    if let Some(ref sn) = output.shading_normal {
+        let nx: Vec<f16> = sn.iter().map(|n| f16::from_f32(n[0])).collect();
+        let ny: Vec<f16> = sn.iter().map(|n| f16::from_f32(n[1])).collect();
+        let nz: Vec<f16> = sn.iter().map(|n| f16::from_f32(n[2])).collect();
+        channels.push(make_f16_channel("Ns.X", nx));
+        channels.push(make_f16_channel("Ns.Y", ny));
+        channels.push(make_f16_channel("Ns.Z", nz));
     }
 
     // Depth — full f32 (not converted to half)
@@ -339,6 +351,7 @@ mod tests {
             alpha: None,
             depth: None,
             normal: None,
+            shading_normal: None,
             albedo: None,
         };
 
@@ -355,6 +368,7 @@ mod tests {
             alpha: None,
             depth: None,
             normal: None,
+            shading_normal: None,
             albedo: None,
         };
 

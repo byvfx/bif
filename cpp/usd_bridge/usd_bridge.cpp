@@ -1563,14 +1563,14 @@ static std::string get_texture_path(const UsdShadeInput& input) {
     return "";
 }
 
-/// Helper to check if a shader ID is a MaterialX standard_surface
-static bool is_materialx_standard_surface(const TfToken& shader_id) {
+/// Helper to check if a shader ID is a MaterialX PBR shader
+/// (standard_surface or OpenPBR Surface)
+static bool is_materialx_pbr_shader(const TfToken& shader_id) {
     std::string id_str = shader_id.GetString();
-    // MaterialX standard_surface shaders typically have IDs like:
-    // ND_standard_surface_surfaceshader
-    // ND_standard_surface_to_UsdPreviewSurface (converted)
     return id_str.find("ND_standard_surface") != std::string::npos ||
-           id_str.find("standard_surface") != std::string::npos;
+           id_str.find("standard_surface") != std::string::npos ||
+           id_str.find("ND_open_pbr_surface") != std::string::npos ||
+           id_str.find("open_pbr_surface") != std::string::npos;
 }
 
 /// Try to extract a texture file path from a prim that is an ND_image_* node.
@@ -1758,11 +1758,13 @@ static void cache_material_data(UsdBridgeStage* bridge) {
                 if (mtlx_prim) {
                     // Check if this is a NodeGraph (Karma materials) or a Shader
                     if (mtlx_prim.IsA<UsdShadeNodeGraph>()) {
-                        // Search inside NodeGraph for standard_surface shader
+                        // Search inside NodeGraph for standard_surface or OpenPBR shader
                         for (const UsdPrim& ng_child : mtlx_prim.GetDescendants()) {
                             std::string child_name = ng_child.GetName().GetString();
                             if (child_name.find("mtlxstandard_surface") != std::string::npos ||
-                                child_name.find("standard_surface") != std::string::npos) {
+                                child_name.find("standard_surface") != std::string::npos ||
+                                child_name.find("open_pbr_surface") != std::string::npos ||
+                                child_name.find("mtlxopen_pbr") != std::string::npos) {
                                 UsdShadeShader potential_shader(ng_child);
                                 if (potential_shader) {
                                     mtlx_shader = potential_shader;
@@ -1777,12 +1779,14 @@ static void cache_material_data(UsdBridgeStage* bridge) {
             }
         }
 
-        // If no mtlx:surface, search children for mtlxstandard_surface
+        // If no mtlx:surface, search children for standard_surface or OpenPBR
         if (!mtlx_shader) {
             for (const UsdPrim& child : prim.GetChildren()) {
                 std::string child_name = child.GetName().GetString();
                 if (child_name.find("mtlxstandard_surface") != std::string::npos ||
-                    child_name.find("standard_surface") != std::string::npos) {
+                    child_name.find("standard_surface") != std::string::npos ||
+                    child_name.find("open_pbr_surface") != std::string::npos ||
+                    child_name.find("mtlxopen_pbr") != std::string::npos) {
                     UsdShadeShader potential_shader(child);
                     if (potential_shader) {
                         mtlx_shader = potential_shader;
@@ -1799,7 +1803,7 @@ static void cache_material_data(UsdBridgeStage* bridge) {
                       << " type=MaterialX(mtlx:surface)" << std::endl;
             UsdShadeInput input;
 
-            // MaterialX standard_surface parameter names
+            // MaterialX standard_surface / OpenPBR parameter names
             input = mtlx_shader.GetInput(TfToken("base_color"));
             if (input) {
                 GfVec3f color;
@@ -1811,7 +1815,9 @@ static void cache_material_data(UsdBridgeStage* bridge) {
                 cached.diffuse_texture = get_materialx_texture_path(input);
             }
 
+            // standard_surface: "metalness", OpenPBR: "base_metalness"
             input = mtlx_shader.GetInput(TfToken("metalness"));
+            if (!input) input = mtlx_shader.GetInput(TfToken("base_metalness"));
             if (input) {
                 input.Get(&cached.metallic);
                 cached.metallic_texture = get_materialx_texture_path(input);
@@ -1842,7 +1848,9 @@ static void cache_material_data(UsdBridgeStage* bridge) {
                 input.Get(&cached.specular_ior);
             }
 
+            // standard_surface: "opacity", OpenPBR: "geometry_opacity"
             input = mtlx_shader.GetInput(TfToken("opacity"));
+            if (!input) input = mtlx_shader.GetInput(TfToken("geometry_opacity"));
             if (input) {
                 GfVec3f opacity_vec;
                 if (input.Get(&opacity_vec)) {
@@ -1872,7 +1880,9 @@ static void cache_material_data(UsdBridgeStage* bridge) {
                 cached.emissive_texture = get_materialx_texture_path(input);
             }
 
+            // standard_surface: "normal", OpenPBR: "geometry_normal"
             input = mtlx_shader.GetInput(TfToken("normal"));
+            if (!input) input = mtlx_shader.GetInput(TfToken("geometry_normal"));
             if (input) {
                 cached.normal_texture = get_materialx_texture_path(input);
             }
@@ -1914,7 +1924,7 @@ static void cache_material_data(UsdBridgeStage* bridge) {
         shader.GetIdAttr().Get(&shader_id);
 
         // Check for MaterialX standard_surface first
-        if (is_materialx_standard_surface(shader_id)) {
+        if (is_materialx_pbr_shader(shader_id)) {
             cached.is_materialx = true;
             if (g_log_textures) std::cout << "[BIF_TEX] material=" << mat_path
                       << " type=MaterialX(surface) shader_id=" << shader_id.GetString()
@@ -1934,8 +1944,9 @@ static void cache_material_data(UsdBridgeStage* bridge) {
                 cached.diffuse_texture = get_materialx_texture_path(input);
             }
 
-            // metalness (not metallic)
+            // standard_surface: "metalness", OpenPBR: "base_metalness"
             input = shader.GetInput(TfToken("metalness"));
+            if (!input) input = shader.GetInput(TfToken("base_metalness"));
             if (input) {
                 input.Get(&cached.metallic);
                 cached.metallic_texture = get_materialx_texture_path(input);
@@ -1969,8 +1980,9 @@ static void cache_material_data(UsdBridgeStage* bridge) {
                 input.Get(&cached.specular_ior);
             }
 
-            // opacity
+            // standard_surface: "opacity", OpenPBR: "geometry_opacity"
             input = shader.GetInput(TfToken("opacity"));
+            if (!input) input = shader.GetInput(TfToken("geometry_opacity"));
             if (input) {
                 GfVec3f opacity_vec;
                 if (input.Get(&opacity_vec)) {
@@ -2003,8 +2015,9 @@ static void cache_material_data(UsdBridgeStage* bridge) {
                 cached.emissive_texture = get_materialx_texture_path(input);
             }
 
-            // normal (for normal mapping)
+            // standard_surface: "normal", OpenPBR: "geometry_normal"
             input = shader.GetInput(TfToken("normal"));
+            if (!input) input = shader.GetInput(TfToken("geometry_normal"));
             if (input) {
                 cached.normal_texture = get_materialx_texture_path(input);
             }

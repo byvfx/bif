@@ -74,6 +74,14 @@ pub trait Material: Send + Sync {
     fn albedo(&self, _u: f32, _v: f32) -> Color {
         Color::ONE
     }
+
+    /// Shading normal after normal map application (for AOV output).
+    ///
+    /// Returns the normal-mapped surface normal at the hit point.
+    /// Default returns geometric normal (no normal map).
+    fn shading_normal(&self, rec: &HitRecord) -> Vec3 {
+        rec.normal
+    }
 }
 
 /// Power heuristic for Multiple Importance Sampling (beta=2).

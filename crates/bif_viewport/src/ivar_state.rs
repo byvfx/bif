@@ -34,8 +34,10 @@ pub enum AovChannel {
     Alpha,
     /// Depth (normalized grayscale).
     Depth,
-    /// Normal (RGB from XYZ).
+    /// Geometric normal (RGB from XYZ).
     Normal,
+    /// Shading normal after normal map (RGB from XYZ).
+    ShadingNormal,
     /// Surface albedo (RGB).
     Albedo,
     /// SHARC cache heatmap (sample count visualization).
@@ -50,6 +52,7 @@ impl AovChannel {
             AovChannel::Alpha => "Alpha",
             AovChannel::Depth => "Depth",
             AovChannel::Normal => "Normal",
+            AovChannel::ShadingNormal => "Shading Normal",
             AovChannel::Albedo => "Albedo",
             AovChannel::CacheHeatmap => "Cache Heatmap",
         }
@@ -62,6 +65,7 @@ impl AovChannel {
             AovChannel::Alpha,
             AovChannel::Depth,
             AovChannel::Normal,
+            AovChannel::ShadingNormal,
             AovChannel::Albedo,
             AovChannel::CacheHeatmap,
         ]
@@ -315,7 +319,7 @@ impl CameraSnapshot {
 #[derive(Debug)]
 pub enum IvarMessage {
     /// A bucket has been completed with AOV data.
-    BucketComplete(BucketResultWithAovs),
+    BucketComplete(Box<BucketResultWithAovs>),
     /// Entire render is complete.
     RenderComplete { elapsed_secs: f32 },
     /// A single progressive pass is complete.
@@ -401,8 +405,10 @@ pub struct IvarState {
     pub alpha_buffer: Option<Vec<f32>>,
     /// Depth buffer for AOV preview (stored per pixel).
     pub depth_buffer: Option<Vec<f32>>,
-    /// Normal buffer for AOV preview (stored per pixel as [x, y, z]).
+    /// Geometric normal buffer for AOV preview (stored per pixel as [x, y, z]).
     pub normal_buffer: Option<Vec<[f32; 3]>>,
+    /// Shading normal buffer (after normal map) for AOV preview.
+    pub shading_normal_buffer: Option<Vec<[f32; 3]>>,
     /// Albedo buffer for denoiser guide image (stored per pixel as [r, g, b]).
     pub albedo_buffer: Option<Vec<[f32; 3]>>,
     /// Running sum per pixel for progressive accumulation.
@@ -468,6 +474,7 @@ impl Default for IvarState {
             alpha_buffer: None,
             depth_buffer: None,
             normal_buffer: None,
+            shading_normal_buffer: None,
             albedo_buffer: None,
             accumulation_buffer: None,
             accumulated_samples: 0,
@@ -539,6 +546,7 @@ impl IvarState {
         self.alpha_buffer = Some(vec![0.0; pixel_count]);
         self.depth_buffer = Some(vec![f32::INFINITY; pixel_count]);
         self.normal_buffer = Some(vec![[0.0; 3]; pixel_count]);
+        self.shading_normal_buffer = Some(vec![[0.0; 3]; pixel_count]);
         self.albedo_buffer = Some(vec![[0.0; 3]; pixel_count]);
         self.cache_heatmap_buffer = Some(vec![0; pixel_count]);
     }
@@ -658,11 +666,13 @@ impl IvarState {
                 self.alpha_buffer.as_mut().unwrap().fill(0.0);
                 self.depth_buffer.as_mut().unwrap().fill(f32::INFINITY);
                 self.normal_buffer.as_mut().unwrap().fill([0.0; 3]);
+                if let Some(ref mut sn) = self.shading_normal_buffer { sn.fill([0.0; 3]); }
                 self.albedo_buffer.as_mut().unwrap().fill([0.0; 3]);
             } else {
                 self.alpha_buffer = Some(vec![0.0; pixel_count]);
                 self.depth_buffer = Some(vec![f32::INFINITY; pixel_count]);
                 self.normal_buffer = Some(vec![[0.0; 3]; pixel_count]);
+                self.shading_normal_buffer = Some(vec![[0.0; 3]; pixel_count]);
                 self.albedo_buffer = Some(vec![[0.0; 3]; pixel_count]);
             }
             // Cache heatmap buffer
@@ -679,6 +689,7 @@ impl IvarState {
             self.alpha_buffer = None;
             self.depth_buffer = None;
             self.normal_buffer = None;
+            self.shading_normal_buffer = None;
             self.albedo_buffer = None;
             self.cache_heatmap_buffer = None;
         }

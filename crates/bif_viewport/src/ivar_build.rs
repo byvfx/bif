@@ -65,12 +65,26 @@ impl Renderer {
                 }
             }
             crate::ivar_state::AovChannel::Normal => {
-                // Normal mapped from [-1,1] to [0,1] as RGB
+                // Geometric normal mapped from [-1,1] to [0,1] as RGB
                 if let Some(ref normal) = self.ivar.ivar_state.normal_buffer {
                     normal
                         .iter()
                         .flat_map(|n| {
-                            // Map [-1, 1] to [0, 255]
+                            let r = ((n[0] * 0.5 + 0.5).clamp(0.0, 1.0) * 255.0) as u8;
+                            let g = ((n[1] * 0.5 + 0.5).clamp(0.0, 1.0) * 255.0) as u8;
+                            let b = ((n[2] * 0.5 + 0.5).clamp(0.0, 1.0) * 255.0) as u8;
+                            [r, g, b, 255]
+                        })
+                        .collect()
+                } else {
+                    image.to_rgba()
+                }
+            }
+            crate::ivar_state::AovChannel::ShadingNormal => {
+                // Shading normal (after normal map) mapped from [-1,1] to [0,1] as RGB
+                if let Some(ref sn) = self.ivar.ivar_state.shading_normal_buffer {
+                    sn.iter()
+                        .flat_map(|n| {
                             let r = ((n[0] * 0.5 + 0.5).clamp(0.0, 1.0) * 255.0) as u8;
                             let g = ((n[1] * 0.5 + 0.5).clamp(0.0, 1.0) * 255.0) as u8;
                             let b = ((n[2] * 0.5 + 0.5).clamp(0.0, 1.0) * 255.0) as u8;
@@ -809,7 +823,7 @@ impl Renderer {
                     return;
                 }
                 let result = render_bucket_with_aovs(bucket, &ivar_camera, world.as_ref(), &config);
-                let _ = tx.send(IvarMessage::BucketComplete(result));
+                let _ = tx.send(IvarMessage::BucketComplete(Box::new(result)));
             });
 
             if !cancel_flag.load(Ordering::Relaxed) {
@@ -910,6 +924,12 @@ impl Renderer {
                                     if pixel_idx < result.normals.len() && global_idx < normal.len()
                                     {
                                         normal[global_idx] = result.normals[pixel_idx];
+                                    }
+                                }
+                                if let Some(ref mut sn) = self.ivar.ivar_state.shading_normal_buffer {
+                                    if pixel_idx < result.shading_normals.len() && global_idx < sn.len()
+                                    {
+                                        sn[global_idx] = result.shading_normals[pixel_idx];
                                     }
                                 }
                                 if let Some(ref mut albedo) = self.ivar.ivar_state.albedo_buffer {
