@@ -39,6 +39,7 @@ target_link_libraries(usd_bridge PUBLIC
     tf
     gf
     vt
+    work
 )
 
 # Export compile commands for IDE support

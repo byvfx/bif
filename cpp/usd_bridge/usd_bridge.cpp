@@ -55,6 +55,7 @@
 #include <pxr/usd/usdGeom/imageable.h>
 #include <pxr/usd/usdGeom/tokens.h>
 #include <pxr/usd/sdf/layerUtils.h>
+#include <pxr/base/work/loops.h>
 
 #include <vector>
 #include <string>
@@ -64,6 +65,8 @@
 #include <algorithm>
 #include <chrono>
 #include <cfloat>
+#include <mutex>
+#include <atomic>
 
 PXR_NAMESPACE_USING_DIRECTIVE
 
@@ -642,6 +645,476 @@ static void tessellate_cube(CachedMesh& mesh, double size) {
     }
 }
 
+/// Per-thread timing accumulators for parallel mesh extraction.
+struct MeshTimings {
+    long long time_vertices = 0, time_triangulate = 0, time_subsets = 0;
+    long long time_normals = 0, time_normals_read = 0, time_uvs = 0;
+    long long time_transform = 0;
+    size_t total_verts = 0, total_tris = 0;
+};
+
+/// Work item for parallel mesh geometry extraction.
+struct MeshWorkItem {
+    SdfPath prim_path;
+    int assigned_index;   // pre-assigned index in bridge->meshes
+    bool is_proxy;
+};
+
+/// Extract all geometry data for a single mesh prim into a CachedMesh.
+/// Thread-safe: only reads from the composed stage + writes to `cached`.
+/// The caller-provided XformCache is NOT shared between threads.
+static void extract_mesh_geometry(
+    UsdBridgeStage* bridge,
+    const UsdPrim& prim,
+    bool is_proxy,
+    UsdGeomXformCache& xform_cache,
+    CachedMesh& cached,
+    MeshTimings& timings
+) {
+    using namespace std::chrono;
+
+    UsdGeomMesh mesh(prim);
+    cached.path = prim.GetPath().GetString();
+
+    // Get points at first time sample for animated geometry
+    // Use stage's startTimeCode if available, otherwise first authored sample
+    VtArray<GfVec3f> points;
+    UsdTimeCode timeCode = UsdTimeCode::EarliestTime();
+
+    auto vert_start = high_resolution_clock::now();
+
+    // Check if points have time samples - if so, use startTimeCode
+    UsdAttribute pointsAttr = mesh.GetPointsAttr();
+    std::vector<double> pointTimeSamples;
+    if (pointsAttr.GetTimeSamples(&pointTimeSamples) && !pointTimeSamples.empty()) {
+        // Use stage's startTimeCode or first sample time
+        double startTime = bridge->stage->GetStartTimeCode();
+        if (startTime >= pointTimeSamples.front() && startTime <= pointTimeSamples.back()) {
+            timeCode = UsdTimeCode(startTime);
+        } else {
+            timeCode = UsdTimeCode(pointTimeSamples.front());
+        }
+    }
+
+    mesh.GetPointsAttr().Get(&points, timeCode);
+
+    // Bulk copy — GfVec3f is 3 contiguous floats, same layout as float[3]
+    static_assert(sizeof(GfVec3f) == 3 * sizeof(float), "GfVec3f must be 3 contiguous floats");
+    const float* pdata = reinterpret_cast<const float*>(points.cdata());
+    cached.vertices.assign(pdata, pdata + points.size() * 3);
+    timings.time_vertices += duration_cast<milliseconds>(high_resolution_clock::now() - vert_start).count();
+    timings.total_verts += points.size();
+
+    // Read subdivision scheme early (needed to decide whether to store polygon topology)
+    {
+        TfToken subdivScheme;
+        if (mesh.GetSubdivisionSchemeAttr().Get(&subdivScheme)) {
+            cached.subdivision_scheme = subdivScheme.GetString();
+        }
+    }
+
+    // Get face topology and triangulate (use same timeCode as points)
+    auto tri_start = high_resolution_clock::now();
+    VtArray<int> face_vertex_counts;
+    VtArray<int> face_vertex_indices;
+    mesh.GetFaceVertexCountsAttr().Get(&face_vertex_counts, timeCode);
+    mesh.GetFaceVertexIndicesAttr().Get(&face_vertex_indices, timeCode);
+
+    // Store original polygon topology for subdivision surfaces
+    bool is_subd = (cached.subdivision_scheme == "catmullClark" || cached.subdivision_scheme == "loop");
+    if (is_subd) {
+        cached.face_vertex_counts_orig.assign(face_vertex_counts.begin(), face_vertex_counts.end());
+        cached.face_vertex_indices_orig.assign(face_vertex_indices.begin(), face_vertex_indices.end());
+
+        // Read crease data
+        VtArray<int> creaseIndices, creaseLengths;
+        VtArray<float> creaseSharpnesses;
+        mesh.GetCreaseIndicesAttr().Get(&creaseIndices);
+        mesh.GetCreaseLengthsAttr().Get(&creaseLengths);
+        mesh.GetCreaseSharpnessesAttr().Get(&creaseSharpnesses);
+        if (!creaseIndices.empty()) {
+            cached.crease_indices.assign(creaseIndices.begin(), creaseIndices.end());
+            cached.crease_lengths.assign(creaseLengths.begin(), creaseLengths.end());
+            cached.crease_sharpnesses.assign(creaseSharpnesses.begin(), creaseSharpnesses.end());
+        }
+    }
+
+    std::vector<uint32_t> triangle_face_indices;
+    triangulate_mesh(face_vertex_counts, face_vertex_indices, cached.indices, triangle_face_indices);
+    timings.time_triangulate += duration_cast<milliseconds>(high_resolution_clock::now() - tri_start).count();
+    timings.total_tris += cached.indices.size() / 3;
+
+    // Check orientation — left-handed meshes need winding reversal
+    TfToken orientation;
+    if (mesh.GetOrientationAttr().Get(&orientation) &&
+        orientation == UsdGeomTokens->leftHanded) {
+        for (size_t i = 0; i < cached.indices.size(); i += 3) {
+            std::swap(cached.indices[i + 1], cached.indices[i + 2]);
+        }
+    }
+
+    // Extract GeomSubsets for per-face material assignment
+    auto subset_start = high_resolution_clock::now();
+    size_t num_faces = face_vertex_counts.size();
+
+    std::vector<UsdGeomSubset> subsets = UsdGeomSubset::GetAllGeomSubsets(mesh);
+
+    if (!subsets.empty()) {
+        // Build material path -> index map
+        std::map<std::string, uint32_t> material_path_to_index;
+        for (size_t i = 0; i < bridge->materials.size(); ++i) {
+            material_path_to_index[bridge->materials[i].path] = static_cast<uint32_t>(i);
+        }
+
+        std::vector<uint32_t> face_material_map(num_faces, 0);
+
+        for (const auto& subset : subsets) {
+            // Get material binding for this subset
+            UsdShadeMaterialBindingAPI binding_api(subset.GetPrim());
+            UsdShadeMaterial bound_material = binding_api.ComputeBoundMaterial();
+
+            // Skip subsets without valid material bindings (e.g., __subdivs__ from Houdini)
+            if (!bound_material) {
+                continue;
+            }
+
+            std::string mat_path = bound_material.GetPath().GetString();
+            auto it = material_path_to_index.find(mat_path);
+            if (it == material_path_to_index.end()) {
+                continue;
+            }
+            uint32_t material_idx = it->second;
+
+            // Get face indices for this subset
+            VtArray<int> subset_indices;
+            subset.GetIndicesAttr().Get(&subset_indices);
+
+            // Assign material to these faces
+            for (int face_idx : subset_indices) {
+                if (face_idx >= 0 && static_cast<size_t>(face_idx) < num_faces) {
+                    face_material_map[face_idx] = material_idx;
+                }
+            }
+        }
+
+        // Map per-original-face materials to per-triangle
+        cached.face_material_ids.reserve(triangle_face_indices.size());
+        for (uint32_t orig_face : triangle_face_indices) {
+            cached.face_material_ids.push_back(face_material_map[orig_face]);
+        }
+    }
+    // When no GeomSubsets, leave face_material_ids empty.
+    // The shader will use the per-instance material binding instead.
+    timings.time_subsets += duration_cast<milliseconds>(high_resolution_clock::now() - subset_start).count();
+
+    // Get normals (optional) - track interpolation for UV seam split
+    auto normal_start = high_resolution_clock::now();
+    VtArray<GfVec3f> normals;
+    TfToken normalsInterpolation;
+    if (mesh.GetNormalsAttr().Get(&normals, timeCode)) {
+        auto normal_read_time = high_resolution_clock::now();
+        timings.time_normals_read += duration_cast<milliseconds>(normal_read_time - normal_start).count();
+
+        normalsInterpolation = mesh.GetNormalsInterpolation();
+        // Defer copy — UV seam split may rebuild normals entirely,
+        // making an early copy here 100% wasted (24MB+ on large meshes).
+
+        // Store normals interpolation enum
+        if (normalsInterpolation == UsdGeomTokens->faceVarying) {
+            cached.normals_interpolation = 1;
+        } else if (normalsInterpolation == UsdGeomTokens->uniform) {
+            cached.normals_interpolation = 2;
+        } else if (normalsInterpolation == UsdGeomTokens->constant) {
+            cached.normals_interpolation = 3;
+        } else {
+            cached.normals_interpolation = 0; // vertex (default)
+        }
+    } else {
+        timings.time_normals_read += duration_cast<milliseconds>(high_resolution_clock::now() - normal_start).count();
+    }
+    timings.time_normals += duration_cast<milliseconds>(high_resolution_clock::now() - normal_start).count();
+
+    // Get UV coordinates (try common primvar names, then type-based fallback)
+    auto uv_start = high_resolution_clock::now();
+    UsdGeomPrimvarsAPI primvarsAPI(mesh);
+    UsdGeomPrimvar stPrimvar;
+    std::string foundUvName;
+    {
+        static const char* uvCandidates[] = {"st", "uv", "UVMap", "st0", "map1"};
+        for (const char* name : uvCandidates) {
+            UsdGeomPrimvar pv = primvarsAPI.GetPrimvar(TfToken(name));
+            if (pv && pv.HasValue()) {
+                stPrimvar = pv;
+                foundUvName = name;
+                break;
+            }
+        }
+        // Type-based fallback: first TexCoord2fArray primvar not in candidates
+        if (!stPrimvar) {
+            std::set<std::string> tried(std::begin(uvCandidates), std::end(uvCandidates));
+            for (const auto& pv : primvarsAPI.GetPrimvars()) {
+                std::string pvName = pv.GetPrimvarName().GetString();
+                if (tried.count(pvName)) continue;
+                if (pv.HasValue() && pv.GetTypeName() == SdfValueTypeNames->TexCoord2fArray) {
+                    stPrimvar = pv;
+                    foundUvName = pvName;
+                    break;
+                }
+            }
+        }
+    }
+    if (stPrimvar) {
+        TfToken interpolation = stPrimvar.GetInterpolation();
+        VtArray<GfVec2f> uvs;
+        VtIntArray uvIndices;
+        bool hasIndices = stPrimvar.GetIndices(&uvIndices, timeCode);
+
+        if (stPrimvar.Get(&uvs, timeCode)) {
+            if (interpolation == UsdGeomTokens->faceVarying) {
+                // faceVarying: one UV per face-vertex. Split vertices at UV seams.
+                // Map (original_vertex, uv) -> new_vertex_index
+                struct PairHash {
+                    static size_t mix(int v) {
+                        size_t x = static_cast<size_t>(static_cast<unsigned int>(v));
+                        x = ((x >> 16) ^ x) * 0x45d9f3b;
+                        x = ((x >> 16) ^ x) * 0x45d9f3b;
+                        return (x >> 16) ^ x;
+                    }
+                    size_t operator()(const std::pair<int, std::pair<int,int>>& p) const {
+                        size_t h = mix(p.first);
+                        h ^= mix(p.second.first) + 0x9e3779b9 + (h << 6) + (h >> 2);
+                        h ^= mix(p.second.second) + 0x9e3779b9 + (h << 6) + (h >> 2);
+                        return h;
+                    }
+                };
+                std::unordered_map<std::pair<int, std::pair<int,int>>, uint32_t, PairHash> vertUvToNew;
+                std::vector<float> newVertices;
+                std::vector<float> newNormals;
+                std::vector<float> newUvs;
+                std::vector<uint32_t> newIndices;
+                std::vector<uint32_t> newVertexIndexMap;  // Maps split vertex -> original USD vertex
+
+                newVertices.reserve(cached.vertices.size());
+                newNormals.reserve(normals.size() * 3);
+                newUvs.reserve(face_vertex_indices.size() * 2);
+                newIndices.reserve(cached.indices.size());
+                newVertexIndexMap.reserve(cached.vertices.size() / 3);
+
+                // Rebuild triangulated indices with UV-split vertices
+                size_t faceVertIdx = 0;
+                for (size_t faceIdx = 0; faceIdx < face_vertex_counts.size(); ++faceIdx) {
+                    int faceSize = face_vertex_counts[faceIdx];
+                    if (faceSize < 3) {
+                        faceVertIdx += faceSize;
+                        continue;
+                    }
+
+                    // Fan triangulation matching triangulate_mesh()
+                    for (int i = 1; i < faceSize - 1; ++i) {
+                        int localIndices[3] = {0, i, i + 1};
+                        for (int li = 0; li < 3; ++li) {
+                            size_t fvIdx = faceVertIdx + localIndices[li];
+                            int origVert = face_vertex_indices[fvIdx];
+
+                            // Get UV for this face-vertex
+                            GfVec2f uv(0, 0);
+                            if (hasIndices && fvIdx < uvIndices.size()) {
+                                int uvIdx = uvIndices[fvIdx];
+                                if (uvIdx >= 0 && static_cast<size_t>(uvIdx) < uvs.size()) {
+                                    uv = uvs[uvIdx];
+                                }
+                            } else if (fvIdx < uvs.size()) {
+                                uv = uvs[fvIdx];
+                            } else {
+                                static std::atomic<bool> warned{false};
+                                if (!warned.exchange(true)) {
+                                    std::cout << "[USD_BRIDGE] WARNING: faceVarying UV index " << fvIdx
+                                              << " >= uvs.size() " << uvs.size()
+                                              << " on " << prim.GetPath() << std::endl;
+                                }
+                            }
+
+                            // Quantize UV to detect "same" UVs (avoid float comparison issues)
+                            int uvKeyU = static_cast<int>(uv[0] * 10000);
+                            int uvKeyV = static_cast<int>(uv[1] * 10000);
+                            auto key = std::make_pair(origVert, std::make_pair(uvKeyU, uvKeyV));
+
+                            auto it = vertUvToNew.find(key);
+                            if (it != vertUvToNew.end()) {
+                                // Reuse existing vertex
+                                newIndices.push_back(it->second);
+                            } else {
+                                // Create new vertex
+                                uint32_t newIdx = static_cast<uint32_t>(newVertices.size() / 3);
+                                vertUvToNew[key] = newIdx;
+
+                                // Track original vertex for animation
+                                newVertexIndexMap.push_back(static_cast<uint32_t>(origVert >= 0 ? origVert : 0));
+
+                                // Copy position
+                                if (origVert >= 0 && static_cast<size_t>(origVert) < points.size()) {
+                                    newVertices.push_back(points[origVert][0]);
+                                    newVertices.push_back(points[origVert][1]);
+                                    newVertices.push_back(points[origVert][2]);
+                                } else {
+                                    newVertices.push_back(0); newVertices.push_back(0); newVertices.push_back(0);
+                                }
+
+                                // Copy normal if available - handle faceVarying vs vertex interpolation
+                                if (!normals.empty()) {
+                                    GfVec3f normal(0, 1, 0);
+                                    if (normalsInterpolation == UsdGeomTokens->faceVarying) {
+                                        // faceVarying: index by face-vertex position
+                                        if (fvIdx < normals.size()) {
+                                            normal = normals[fvIdx];
+                                        }
+                                    } else {
+                                        // vertex interpolation: index by vertex
+                                        if (origVert >= 0 && static_cast<size_t>(origVert) < normals.size()) {
+                                            normal = normals[origVert];
+                                        }
+                                    }
+                                    newNormals.push_back(normal[0]);
+                                    newNormals.push_back(normal[1]);
+                                    newNormals.push_back(normal[2]);
+                                }
+
+                                // Store UV
+                                newUvs.push_back(uv[0]);
+                                newUvs.push_back(uv[1]);
+
+                                newIndices.push_back(newIdx);
+                            }
+                        }
+                    }
+                    faceVertIdx += faceSize;
+                }
+
+                // Replace cached data with UV-split version
+                cached.vertices = std::move(newVertices);
+                cached.normals = std::move(newNormals);
+                cached.uvs = std::move(newUvs);
+                cached.indices = std::move(newIndices);
+                cached.vertex_index_map = std::move(newVertexIndexMap);
+                cached.has_uv_split = true;
+
+                // Rebuild face_material_ids for new triangle count
+                // (triangulate_mesh output is no longer valid, but we re-triangulated above)
+                // The triangle order matches, so face_material_ids should still be correct
+            } else {
+                // vertex or constant interpolation
+                if (hasIndices && !uvIndices.empty()) {
+                    // Indexed vertex UVs: expand via indices
+                    cached.uvs.reserve(uvIndices.size() * 2);
+                    for (size_t i = 0; i < uvIndices.size(); ++i) {
+                        int idx = uvIndices[i];
+                        if (idx >= 0 && static_cast<size_t>(idx) < uvs.size()) {
+                            cached.uvs.push_back(uvs[idx][0]);
+                            cached.uvs.push_back(uvs[idx][1]);
+                        } else {
+                            cached.uvs.push_back(0.0f);
+                            cached.uvs.push_back(0.0f);
+                        }
+                    }
+                } else {
+                    // Direct mapping
+                    cached.uvs.reserve(uvs.size() * 2);
+                    for (const auto& uv : uvs) {
+                        cached.uvs.push_back(uv[0]);
+                        cached.uvs.push_back(uv[1]);
+                    }
+                }
+            }
+        }
+
+        // Deferred normals copy: only needed when seam split didn't run
+        // (seam split builds newNormals from VtArray and replaces cached.normals)
+        if (!cached.has_uv_split && !normals.empty()) {
+            const float* ndata = reinterpret_cast<const float*>(normals.cdata());
+            cached.normals.assign(ndata, ndata + normals.size() * 3);
+        }
+
+        cached.uv_primvar_name = foundUvName;
+    }
+
+    // Deferred normals fallback: meshes with normals but no UVs skip the
+    // UV block entirely, so the deferred copy inside never runs.
+    if (cached.normals.empty() && !normals.empty()) {
+        const float* ndata = reinterpret_cast<const float*>(normals.cdata());
+        cached.normals.assign(ndata, ndata + normals.size() * 3);
+    }
+
+    timings.time_uvs += duration_cast<milliseconds>(high_resolution_clock::now() - uv_start).count();
+
+    // Get world transform
+    auto xform_start = high_resolution_clock::now();
+    cached.transform = xform_cache.GetLocalToWorldTransform(prim);
+    timings.time_transform += duration_cast<milliseconds>(high_resolution_clock::now() - xform_start).count();
+
+    cached.purpose = compute_inherited_purpose(bridge, prim);
+
+    cached.is_instance_proxy = is_proxy;
+
+    // Computed visibility (considers ancestor visibility)
+    UsdGeomImageable imageable(prim);
+    cached.visible = (imageable.ComputeVisibility() != UsdGeomTokens->invisible);
+
+    // Double-sided flag
+    {
+        bool ds = false;
+        if (mesh.GetDoubleSidedAttr().Get(&ds)) {
+            cached.double_sided = ds;
+        }
+    }
+
+    // (subdivision scheme already read above, before face topology)
+
+    // Display color (primvars:displayColor — fallback when no material)
+    {
+        UsdGeomPrimvar displayColorPv = primvarsAPI.GetPrimvar(TfToken("displayColor"));
+        if (displayColorPv) {
+            VtArray<GfVec3f> colors;
+            if (displayColorPv.Get(&colors, timeCode) && !colors.empty()) {
+                cached.display_color.reserve(colors.size() * 3);
+                for (const auto& c : colors) {
+                    cached.display_color.push_back(c[0]);
+                    cached.display_color.push_back(c[1]);
+                    cached.display_color.push_back(c[2]);
+                }
+            }
+        }
+    }
+
+    // Display opacity (primvars:displayOpacity)
+    {
+        UsdGeomPrimvar displayOpacityPv = primvarsAPI.GetPrimvar(TfToken("displayOpacity"));
+        if (displayOpacityPv) {
+            VtArray<float> opacities;
+            if (displayOpacityPv.Get(&opacities, timeCode) && !opacities.empty()) {
+                cached.display_opacity = opacities[0];
+            }
+        }
+    }
+
+    // Check for !resetXformStack! in xformOpOrder
+    {
+        UsdGeomXformable xformable(prim);
+        bool resetsXform = false;
+        xformable.GetOrderedXformOps(&resetsXform);
+        cached.resets_xform_stack = resetsXform;
+    }
+
+    // Resolve material binding while we have the live prim
+    // (instance proxy paths are virtual — GetPrimAtPath() fails afterward)
+    {
+        UsdShadeMaterialBindingAPI binding_api(prim);
+        UsdShadeMaterial bound_material = binding_api.ComputeBoundMaterial();
+        if (bound_material) {
+            cached.bound_material_path = bound_material.GetPath().GetString();
+        }
+    }
+}
+
 /// Cache all mesh and instancer data from the stage
 static void cache_stage_data(UsdBridgeStage* bridge) {
     if (bridge->cached) return;
@@ -664,10 +1137,6 @@ static void cache_stage_data(UsdBridgeStage* bridge) {
     cache_material_data(bridge);
     auto mat_time = duration_cast<milliseconds>(high_resolution_clock::now() - mat_start).count();
 
-    // Timing accumulators for mesh processing
-    long long time_vertices = 0, time_triangulate = 0, time_subsets = 0;
-    long long time_normals = 0, time_normals_read = 0, time_uvs = 0, time_transform = 0;
-    size_t total_verts = 0, total_tris = 0;
     int sphere_count = 0, cube_count = 0;
 
     UsdGeomXformCache xform_cache;
@@ -677,7 +1146,10 @@ static void cache_stage_data(UsdBridgeStage* bridge) {
     // Maps dedup_path -> index in bridge->meshes.
     std::map<std::string, int> prototype_mesh_index;
 
-    // Traverse all prims (including instance proxies for native instancing)
+    // Work items for parallel geometry extraction (pass 2)
+    std::vector<MeshWorkItem> mesh_work;
+
+    // Pass 1: Traverse all prims — classify meshes vs instances, collect work items
     for (const UsdPrim& prim : bridge->stage->Traverse(
             UsdTraverseInstanceProxies(UsdPrimDefaultPredicate))) {
         // Check for UsdGeomMesh
@@ -722,454 +1194,11 @@ static void cache_stage_data(UsdBridgeStage* bridge) {
                 continue;
             }
 
-            UsdGeomMesh mesh(prim);
-            CachedMesh cached;
-            cached.path = prim.GetPath().GetString();
-
-            // Get points at first time sample for animated geometry
-            // Use stage's startTimeCode if available, otherwise first authored sample
-            VtArray<GfVec3f> points;
-            UsdTimeCode timeCode = UsdTimeCode::EarliestTime();
-
-            auto vert_start = high_resolution_clock::now();
-
-            // Check if points have time samples - if so, use startTimeCode
-            UsdAttribute pointsAttr = mesh.GetPointsAttr();
-            std::vector<double> pointTimeSamples;
-            if (pointsAttr.GetTimeSamples(&pointTimeSamples) && !pointTimeSamples.empty()) {
-                // Use stage's startTimeCode or first sample time
-                double startTime = bridge->stage->GetStartTimeCode();
-                if (startTime >= pointTimeSamples.front() && startTime <= pointTimeSamples.back()) {
-                    timeCode = UsdTimeCode(startTime);
-                } else {
-                    timeCode = UsdTimeCode(pointTimeSamples.front());
-                }
-            }
-
-            mesh.GetPointsAttr().Get(&points, timeCode);
-
-            // Bulk copy — GfVec3f is 3 contiguous floats, same layout as float[3]
-            static_assert(sizeof(GfVec3f) == 3 * sizeof(float), "GfVec3f must be 3 contiguous floats");
-            const float* pdata = reinterpret_cast<const float*>(points.cdata());
-            cached.vertices.assign(pdata, pdata + points.size() * 3);
-            time_vertices += duration_cast<milliseconds>(high_resolution_clock::now() - vert_start).count();
-            total_verts += points.size();
-
-            // Read subdivision scheme early (needed to decide whether to store polygon topology)
-            {
-                TfToken subdivScheme;
-                if (mesh.GetSubdivisionSchemeAttr().Get(&subdivScheme)) {
-                    cached.subdivision_scheme = subdivScheme.GetString();
-                }
-            }
-
-            // Get face topology and triangulate (use same timeCode as points)
-            auto tri_start = high_resolution_clock::now();
-            VtArray<int> face_vertex_counts;
-            VtArray<int> face_vertex_indices;
-            mesh.GetFaceVertexCountsAttr().Get(&face_vertex_counts, timeCode);
-            mesh.GetFaceVertexIndicesAttr().Get(&face_vertex_indices, timeCode);
-
-            // Store original polygon topology for subdivision surfaces
-            bool is_subd = (cached.subdivision_scheme == "catmullClark" || cached.subdivision_scheme == "loop");
-            if (is_subd) {
-                cached.face_vertex_counts_orig.assign(face_vertex_counts.begin(), face_vertex_counts.end());
-                cached.face_vertex_indices_orig.assign(face_vertex_indices.begin(), face_vertex_indices.end());
-
-                // Read crease data
-                VtArray<int> creaseIndices, creaseLengths;
-                VtArray<float> creaseSharpnesses;
-                mesh.GetCreaseIndicesAttr().Get(&creaseIndices);
-                mesh.GetCreaseLengthsAttr().Get(&creaseLengths);
-                mesh.GetCreaseSharpnessesAttr().Get(&creaseSharpnesses);
-                if (!creaseIndices.empty()) {
-                    cached.crease_indices.assign(creaseIndices.begin(), creaseIndices.end());
-                    cached.crease_lengths.assign(creaseLengths.begin(), creaseLengths.end());
-                    cached.crease_sharpnesses.assign(creaseSharpnesses.begin(), creaseSharpnesses.end());
-                }
-            }
-
-            std::vector<uint32_t> triangle_face_indices;
-            triangulate_mesh(face_vertex_counts, face_vertex_indices, cached.indices, triangle_face_indices);
-            time_triangulate += duration_cast<milliseconds>(high_resolution_clock::now() - tri_start).count();
-            total_tris += cached.indices.size() / 3;
-
-            // Check orientation — left-handed meshes need winding reversal
-            TfToken orientation;
-            if (mesh.GetOrientationAttr().Get(&orientation) &&
-                orientation == UsdGeomTokens->leftHanded) {
-                for (size_t i = 0; i < cached.indices.size(); i += 3) {
-                    std::swap(cached.indices[i + 1], cached.indices[i + 2]);
-                }
-            }
-
-            // Extract GeomSubsets for per-face material assignment
-            auto subset_start = high_resolution_clock::now();
-            size_t num_faces = face_vertex_counts.size();
-
-            std::vector<UsdGeomSubset> subsets = UsdGeomSubset::GetAllGeomSubsets(mesh);
-
-            if (!subsets.empty()) {
-                // Build material path -> index map
-                std::map<std::string, uint32_t> material_path_to_index;
-                for (size_t i = 0; i < bridge->materials.size(); ++i) {
-                    material_path_to_index[bridge->materials[i].path] = static_cast<uint32_t>(i);
-                }
-
-                std::vector<uint32_t> face_material_map(num_faces, 0);
-
-                for (const auto& subset : subsets) {
-                    // Get material binding for this subset
-                    UsdShadeMaterialBindingAPI binding_api(subset.GetPrim());
-                    UsdShadeMaterial bound_material = binding_api.ComputeBoundMaterial();
-
-                    // Skip subsets without valid material bindings (e.g., __subdivs__ from Houdini)
-                    if (!bound_material) {
-                        continue;
-                    }
-
-                    std::string mat_path = bound_material.GetPath().GetString();
-                    auto it = material_path_to_index.find(mat_path);
-                    if (it == material_path_to_index.end()) {
-                        continue;
-                    }
-                    uint32_t material_idx = it->second;
-
-                    // Get face indices for this subset
-                    VtArray<int> subset_indices;
-                    subset.GetIndicesAttr().Get(&subset_indices);
-
-                    // Assign material to these faces
-                    for (int face_idx : subset_indices) {
-                        if (face_idx >= 0 && static_cast<size_t>(face_idx) < num_faces) {
-                            face_material_map[face_idx] = material_idx;
-                        }
-                    }
-                }
-
-                // Map per-original-face materials to per-triangle
-                cached.face_material_ids.reserve(triangle_face_indices.size());
-                for (uint32_t orig_face : triangle_face_indices) {
-                    cached.face_material_ids.push_back(face_material_map[orig_face]);
-                }
-            }
-            // When no GeomSubsets, leave face_material_ids empty.
-            // The shader will use the per-instance material binding instead.
-            time_subsets += duration_cast<milliseconds>(high_resolution_clock::now() - subset_start).count();
-
-            // Get normals (optional) - track interpolation for UV seam split
-            auto normal_start = high_resolution_clock::now();
-            VtArray<GfVec3f> normals;
-            TfToken normalsInterpolation;
-            if (mesh.GetNormalsAttr().Get(&normals, timeCode)) {
-                auto normal_read_time = high_resolution_clock::now();
-                time_normals_read += duration_cast<milliseconds>(normal_read_time - normal_start).count();
-
-                normalsInterpolation = mesh.GetNormalsInterpolation();
-                // Defer copy — UV seam split may rebuild normals entirely,
-                // making an early copy here 100% wasted (24MB+ on large meshes).
-
-                // Store normals interpolation enum
-                if (normalsInterpolation == UsdGeomTokens->faceVarying) {
-                    cached.normals_interpolation = 1;
-                } else if (normalsInterpolation == UsdGeomTokens->uniform) {
-                    cached.normals_interpolation = 2;
-                } else if (normalsInterpolation == UsdGeomTokens->constant) {
-                    cached.normals_interpolation = 3;
-                } else {
-                    cached.normals_interpolation = 0; // vertex (default)
-                }
-            } else {
-                time_normals_read += duration_cast<milliseconds>(high_resolution_clock::now() - normal_start).count();
-            }
-            time_normals += duration_cast<milliseconds>(high_resolution_clock::now() - normal_start).count();
-
-            // Get UV coordinates (try common primvar names, then type-based fallback)
-            auto uv_start = high_resolution_clock::now();
-            UsdGeomPrimvarsAPI primvarsAPI(mesh);
-            UsdGeomPrimvar stPrimvar;
-            std::string foundUvName;
-            {
-                static const char* uvCandidates[] = {"st", "uv", "UVMap", "st0", "map1"};
-                for (const char* name : uvCandidates) {
-                    UsdGeomPrimvar pv = primvarsAPI.GetPrimvar(TfToken(name));
-                    if (pv && pv.HasValue()) {
-                        stPrimvar = pv;
-                        foundUvName = name;
-                        break;
-                    }
-                }
-                // Type-based fallback: first TexCoord2fArray primvar not in candidates
-                if (!stPrimvar) {
-                    std::set<std::string> tried(std::begin(uvCandidates), std::end(uvCandidates));
-                    for (const auto& pv : primvarsAPI.GetPrimvars()) {
-                        std::string pvName = pv.GetPrimvarName().GetString();
-                        if (tried.count(pvName)) continue;
-                        if (pv.HasValue() && pv.GetTypeName() == SdfValueTypeNames->TexCoord2fArray) {
-                            stPrimvar = pv;
-                            foundUvName = pvName;
-                            break;
-                        }
-                    }
-                }
-            }
-            if (stPrimvar) {
-                TfToken interpolation = stPrimvar.GetInterpolation();
-                VtArray<GfVec2f> uvs;
-                VtIntArray uvIndices;
-                bool hasIndices = stPrimvar.GetIndices(&uvIndices, timeCode);
-
-                if (stPrimvar.Get(&uvs, timeCode)) {
-                    if (interpolation == UsdGeomTokens->faceVarying) {
-                        // faceVarying: one UV per face-vertex. Split vertices at UV seams.
-                        // Map (original_vertex, uv) -> new_vertex_index
-                        struct PairHash {
-                            static size_t mix(int v) {
-                                size_t x = static_cast<size_t>(static_cast<unsigned int>(v));
-                                x = ((x >> 16) ^ x) * 0x45d9f3b;
-                                x = ((x >> 16) ^ x) * 0x45d9f3b;
-                                return (x >> 16) ^ x;
-                            }
-                            size_t operator()(const std::pair<int, std::pair<int,int>>& p) const {
-                                size_t h = mix(p.first);
-                                h ^= mix(p.second.first) + 0x9e3779b9 + (h << 6) + (h >> 2);
-                                h ^= mix(p.second.second) + 0x9e3779b9 + (h << 6) + (h >> 2);
-                                return h;
-                            }
-                        };
-                        std::unordered_map<std::pair<int, std::pair<int,int>>, uint32_t, PairHash> vertUvToNew;
-                        std::vector<float> newVertices;
-                        std::vector<float> newNormals;
-                        std::vector<float> newUvs;
-                        std::vector<uint32_t> newIndices;
-                        std::vector<uint32_t> newVertexIndexMap;  // Maps split vertex -> original USD vertex
-
-                        newVertices.reserve(cached.vertices.size());
-                        newNormals.reserve(normals.size() * 3);
-                        newUvs.reserve(face_vertex_indices.size() * 2);
-                        newIndices.reserve(cached.indices.size());
-                        newVertexIndexMap.reserve(cached.vertices.size() / 3);
-
-                        // Rebuild triangulated indices with UV-split vertices
-                        size_t faceVertIdx = 0;
-                        for (size_t faceIdx = 0; faceIdx < face_vertex_counts.size(); ++faceIdx) {
-                            int faceSize = face_vertex_counts[faceIdx];
-                            if (faceSize < 3) {
-                                faceVertIdx += faceSize;
-                                continue;
-                            }
-
-                            // Fan triangulation matching triangulate_mesh()
-                            for (int i = 1; i < faceSize - 1; ++i) {
-                                int localIndices[3] = {0, i, i + 1};
-                                for (int li = 0; li < 3; ++li) {
-                                    size_t fvIdx = faceVertIdx + localIndices[li];
-                                    int origVert = face_vertex_indices[fvIdx];
-
-                                    // Get UV for this face-vertex
-                                    GfVec2f uv(0, 0);
-                                    if (hasIndices && fvIdx < uvIndices.size()) {
-                                        int uvIdx = uvIndices[fvIdx];
-                                        if (uvIdx >= 0 && static_cast<size_t>(uvIdx) < uvs.size()) {
-                                            uv = uvs[uvIdx];
-                                        }
-                                    } else if (fvIdx < uvs.size()) {
-                                        uv = uvs[fvIdx];
-                                    } else {
-                                        static bool warned = false;
-                                        if (!warned) {
-                                            std::cout << "[USD_BRIDGE] WARNING: faceVarying UV index " << fvIdx
-                                                      << " >= uvs.size() " << uvs.size()
-                                                      << " on " << prim.GetPath() << std::endl;
-                                            warned = true;
-                                        }
-                                    }
-
-                                    // Quantize UV to detect "same" UVs (avoid float comparison issues)
-                                    int uvKeyU = static_cast<int>(uv[0] * 10000);
-                                    int uvKeyV = static_cast<int>(uv[1] * 10000);
-                                    auto key = std::make_pair(origVert, std::make_pair(uvKeyU, uvKeyV));
-
-                                    auto it = vertUvToNew.find(key);
-                                    if (it != vertUvToNew.end()) {
-                                        // Reuse existing vertex
-                                        newIndices.push_back(it->second);
-                                    } else {
-                                        // Create new vertex
-                                        uint32_t newIdx = static_cast<uint32_t>(newVertices.size() / 3);
-                                        vertUvToNew[key] = newIdx;
-
-                                        // Track original vertex for animation
-                                        newVertexIndexMap.push_back(static_cast<uint32_t>(origVert >= 0 ? origVert : 0));
-
-                                        // Copy position
-                                        if (origVert >= 0 && static_cast<size_t>(origVert) < points.size()) {
-                                            newVertices.push_back(points[origVert][0]);
-                                            newVertices.push_back(points[origVert][1]);
-                                            newVertices.push_back(points[origVert][2]);
-                                        } else {
-                                            newVertices.push_back(0); newVertices.push_back(0); newVertices.push_back(0);
-                                        }
-
-                                        // Copy normal if available - handle faceVarying vs vertex interpolation
-                                        if (!normals.empty()) {
-                                            GfVec3f normal(0, 1, 0);
-                                            if (normalsInterpolation == UsdGeomTokens->faceVarying) {
-                                                // faceVarying: index by face-vertex position
-                                                if (fvIdx < normals.size()) {
-                                                    normal = normals[fvIdx];
-                                                }
-                                            } else {
-                                                // vertex interpolation: index by vertex
-                                                if (origVert >= 0 && static_cast<size_t>(origVert) < normals.size()) {
-                                                    normal = normals[origVert];
-                                                }
-                                            }
-                                            newNormals.push_back(normal[0]);
-                                            newNormals.push_back(normal[1]);
-                                            newNormals.push_back(normal[2]);
-                                        }
-
-                                        // Store UV
-                                        newUvs.push_back(uv[0]);
-                                        newUvs.push_back(uv[1]);
-
-                                        newIndices.push_back(newIdx);
-                                    }
-                                }
-                            }
-                            faceVertIdx += faceSize;
-                        }
-
-                        // Replace cached data with UV-split version
-                        cached.vertices = std::move(newVertices);
-                        cached.normals = std::move(newNormals);
-                        cached.uvs = std::move(newUvs);
-                        cached.indices = std::move(newIndices);
-                        cached.vertex_index_map = std::move(newVertexIndexMap);
-                        cached.has_uv_split = true;
-
-                        // Rebuild face_material_ids for new triangle count
-                        // (triangulate_mesh output is no longer valid, but we re-triangulated above)
-                        // The triangle order matches, so face_material_ids should still be correct
-                    } else {
-                        // vertex or constant interpolation
-                        if (hasIndices && !uvIndices.empty()) {
-                            // Indexed vertex UVs: expand via indices
-                            cached.uvs.reserve(uvIndices.size() * 2);
-                            for (size_t i = 0; i < uvIndices.size(); ++i) {
-                                int idx = uvIndices[i];
-                                if (idx >= 0 && static_cast<size_t>(idx) < uvs.size()) {
-                                    cached.uvs.push_back(uvs[idx][0]);
-                                    cached.uvs.push_back(uvs[idx][1]);
-                                } else {
-                                    cached.uvs.push_back(0.0f);
-                                    cached.uvs.push_back(0.0f);
-                                }
-                            }
-                        } else {
-                            // Direct mapping
-                            cached.uvs.reserve(uvs.size() * 2);
-                            for (const auto& uv : uvs) {
-                                cached.uvs.push_back(uv[0]);
-                                cached.uvs.push_back(uv[1]);
-                            }
-                        }
-                    }
-                }
-
-                // Deferred normals copy: only needed when seam split didn't run
-                // (seam split builds newNormals from VtArray and replaces cached.normals)
-                if (!cached.has_uv_split && !normals.empty()) {
-                    const float* ndata = reinterpret_cast<const float*>(normals.cdata());
-                    cached.normals.assign(ndata, ndata + normals.size() * 3);
-                }
-
-                cached.uv_primvar_name = foundUvName;
-            }
-
-            // Deferred normals fallback: meshes with normals but no UVs skip the
-            // UV block entirely, so the deferred copy inside never runs.
-            if (cached.normals.empty() && !normals.empty()) {
-                const float* ndata = reinterpret_cast<const float*>(normals.cdata());
-                cached.normals.assign(ndata, ndata + normals.size() * 3);
-            }
-
-            time_uvs += duration_cast<milliseconds>(high_resolution_clock::now() - uv_start).count();
-
-            // Get world transform
-            auto xform_start = high_resolution_clock::now();
-            cached.transform = xform_cache.GetLocalToWorldTransform(prim);
-            time_transform += duration_cast<milliseconds>(high_resolution_clock::now() - xform_start).count();
-
-            cached.purpose = compute_inherited_purpose(bridge, prim);
-
-            cached.is_instance_proxy = is_proxy;
-
-            // Computed visibility (considers ancestor visibility)
-            UsdGeomImageable imageable(prim);
-            cached.visible = (imageable.ComputeVisibility() != UsdGeomTokens->invisible);
-
-            // Double-sided flag
-            {
-                bool ds = false;
-                if (mesh.GetDoubleSidedAttr().Get(&ds)) {
-                    cached.double_sided = ds;
-                }
-            }
-
-            // (subdivision scheme already read above, before face topology)
-
-            // Display color (primvars:displayColor — fallback when no material)
-            {
-                UsdGeomPrimvar displayColorPv = primvarsAPI.GetPrimvar(TfToken("displayColor"));
-                if (displayColorPv) {
-                    VtArray<GfVec3f> colors;
-                    if (displayColorPv.Get(&colors, timeCode) && !colors.empty()) {
-                        cached.display_color.reserve(colors.size() * 3);
-                        for (const auto& c : colors) {
-                            cached.display_color.push_back(c[0]);
-                            cached.display_color.push_back(c[1]);
-                            cached.display_color.push_back(c[2]);
-                        }
-                    }
-                }
-            }
-
-            // Display opacity (primvars:displayOpacity)
-            {
-                UsdGeomPrimvar displayOpacityPv = primvarsAPI.GetPrimvar(TfToken("displayOpacity"));
-                if (displayOpacityPv) {
-                    VtArray<float> opacities;
-                    if (displayOpacityPv.Get(&opacities, timeCode) && !opacities.empty()) {
-                        cached.display_opacity = opacities[0];
-                    }
-                }
-            }
-
-            // Check for !resetXformStack! in xformOpOrder
-            {
-                UsdGeomXformable xformable(prim);
-                bool resetsXform = false;
-                xformable.GetOrderedXformOps(&resetsXform);
-                cached.resets_xform_stack = resetsXform;
-            }
-
-            // Resolve material binding while we have the live prim
-            // (instance proxy paths are virtual — GetPrimAtPath() fails afterward)
-            {
-                UsdShadeMaterialBindingAPI binding_api(prim);
-                UsdShadeMaterial bound_material = binding_api.ComputeBoundMaterial();
-                if (bound_material) {
-                    cached.bound_material_path = bound_material.GetPath().GetString();
-                }
-            }
-
-            // Track mesh index for native instance dedup
+            // New unique mesh — pre-assign index, collect work item
             int mesh_idx = static_cast<int>(bridge->meshes.size());
             prototype_mesh_index[dedup_path] = mesh_idx;
-
-            bridge->meshes.push_back(std::move(cached));
+            bridge->meshes.emplace_back();  // placeholder
+            mesh_work.push_back({prim.GetPath(), mesh_idx, is_proxy});
         }
 
         // Check for UsdGeomSphere (implicit geometry → tessellate as mesh)
@@ -1383,23 +1412,59 @@ static void cache_stage_data(UsdBridgeStage* bridge) {
         }
     }
 
-    // Populate mesh-to-material bindings from pre-resolved paths
-    // (resolved during traversal when the live prim was available)
+    // Pass 2: Parallel geometry extraction for unique meshes
+    auto parallel_start = high_resolution_clock::now();
+
+    std::mutex timings_mutex;
+    MeshTimings combined_timings;
+
+    WorkParallelForN(mesh_work.size(), [&](size_t begin, size_t end) {
+        UsdGeomXformCache local_xform_cache;
+        MeshTimings local_timings;
+
+        for (size_t i = begin; i < end; ++i) {
+            const auto& item = mesh_work[i];
+            UsdPrim prim = bridge->stage->GetPrimAtPath(item.prim_path);
+
+            extract_mesh_geometry(
+                bridge, prim, item.is_proxy,
+                local_xform_cache, bridge->meshes[item.assigned_index],
+                local_timings
+            );
+        }
+
+        // Merge thread-local timings
+        std::lock_guard<std::mutex> lock(timings_mutex);
+        combined_timings.time_vertices += local_timings.time_vertices;
+        combined_timings.time_triangulate += local_timings.time_triangulate;
+        combined_timings.time_subsets += local_timings.time_subsets;
+        combined_timings.time_normals += local_timings.time_normals;
+        combined_timings.time_normals_read += local_timings.time_normals_read;
+        combined_timings.time_uvs += local_timings.time_uvs;
+        combined_timings.time_transform += local_timings.time_transform;
+        combined_timings.total_verts += local_timings.total_verts;
+        combined_timings.total_tris += local_timings.total_tris;
+    });
+
+    auto parallel_time = duration_cast<milliseconds>(
+        high_resolution_clock::now() - parallel_start).count();
+
+    // Pass 3: Finalize — build material bindings, print timing
     bridge->mesh_material_paths.clear();
     for (const auto& mesh : bridge->meshes) {
         bridge->mesh_material_paths.push_back(mesh.bound_material_path);
     }
 
-    // Print timing breakdown
     auto total_time = duration_cast<milliseconds>(high_resolution_clock::now() - func_start).count();
     std::cout << "[USD_BRIDGE] cache_stage_data breakdown:" << std::endl;
     std::cout << "[USD_BRIDGE]   Materials:    " << mat_time << "ms" << std::endl;
-    std::cout << "[USD_BRIDGE]   Vertices:     " << time_vertices << "ms (" << total_verts << " verts)" << std::endl;
-    std::cout << "[USD_BRIDGE]   Triangulate:  " << time_triangulate << "ms (" << total_tris << " tris)" << std::endl;
-    std::cout << "[USD_BRIDGE]   GeomSubsets:  " << time_subsets << "ms" << std::endl;
-    std::cout << "[USD_BRIDGE]   Normals:      " << time_normals << "ms (read=" << time_normals_read << "ms, copy=" << (time_normals - time_normals_read) << "ms)" << std::endl;
-    std::cout << "[USD_BRIDGE]   UVs:          " << time_uvs << "ms" << std::endl;
-    std::cout << "[USD_BRIDGE]   Transforms:   " << time_transform << "ms" << std::endl;
+    std::cout << "[USD_BRIDGE]   Parallel geo: " << parallel_time << "ms (" << mesh_work.size() << " meshes)" << std::endl;
+    std::cout << "[USD_BRIDGE]   Vertices:     " << combined_timings.time_vertices << "ms (" << combined_timings.total_verts << " verts)" << std::endl;
+    std::cout << "[USD_BRIDGE]   Triangulate:  " << combined_timings.time_triangulate << "ms (" << combined_timings.total_tris << " tris)" << std::endl;
+    std::cout << "[USD_BRIDGE]   GeomSubsets:  " << combined_timings.time_subsets << "ms" << std::endl;
+    std::cout << "[USD_BRIDGE]   Normals:      " << combined_timings.time_normals << "ms (read=" << combined_timings.time_normals_read << "ms)" << std::endl;
+    std::cout << "[USD_BRIDGE]   UVs:          " << combined_timings.time_uvs << "ms" << std::endl;
+    std::cout << "[USD_BRIDGE]   Transforms:   " << combined_timings.time_transform << "ms" << std::endl;
     std::cout << "[USD_BRIDGE]   Native inst:  " << bridge->native_instances.size() << std::endl;
     std::cout << "[USD_BRIDGE]   Implicits:    " << sphere_count << " spheres, " << cube_count << " cubes" << std::endl;
     std::cout << "[USD_BRIDGE]   SUBTOTAL:     " << total_time << "ms" << std::endl;
