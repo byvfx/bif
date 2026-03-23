@@ -51,6 +51,31 @@ pub fn build_materials(
     fallback: &bif_core::Material,
     texture_cache: &mut bif_core::texture::TextureCache,
 ) -> Vec<Arc<OpenPbrSurface>> {
+    // Pre-warm texture cache in parallel (all I/O happens concurrently,
+    // then build_materials hits in-memory cache for each texture)
+    #[cfg(feature = "oiio")]
+    {
+        let mut seen = std::collections::HashSet::new();
+        let paths: Vec<String> = scene_materials
+            .iter()
+            .flat_map(|mat| {
+                [
+                    mat.base_color_texture.as_deref(),
+                    mat.specular_roughness_texture.as_deref(),
+                    mat.base_metalness_texture.as_deref(),
+                    mat.normal_texture.as_deref(),
+                    mat.emission_texture.as_deref(),
+                ]
+            })
+            .flatten()
+            .filter(|p| seen.insert(p.to_string()))
+            .map(String::from)
+            .collect();
+        if !paths.is_empty() {
+            texture_cache.pre_warm_parallel(&paths);
+        }
+    }
+
     let mut materials: Vec<Arc<OpenPbrSurface>> = if scene_materials.is_empty() {
         vec![Arc::new(OpenPbrSurface::from_material_with_textures(
             fallback,

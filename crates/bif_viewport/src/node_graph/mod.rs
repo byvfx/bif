@@ -85,6 +85,8 @@ pub enum NodeGraphEvent {
     StartRender { spp: u32 },
     /// Pre-convert scene textures to .tx format
     ConvertTexturesToTx,
+    /// Delete cached .tx files for scene textures
+    ClearTxCache,
     /// Load an HDRI environment map
     LoadHdri {
         path: String,

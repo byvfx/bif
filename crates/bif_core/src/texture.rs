@@ -425,22 +425,181 @@ impl TextureCache {
     /// Call this from GUI before rendering to pre-generate .tx files.
     #[cfg(feature = "oiio")]
     pub fn convert_textures_to_tx(&self, paths: &[String]) -> usize {
-        let mut converted = 0;
+        use rayon::prelude::*;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        // Pre-filter to find which paths need conversion (serial, fast)
+        let to_convert: Vec<_> = paths
+            .iter()
+            .filter_map(|path| {
+                let full_path = self.resolve_path(path);
+                let tx_path = oiio::get_tx_path(&full_path);
+                if oiio::tx_is_valid(&full_path, &tx_path) {
+                    None
+                } else {
+                    Some((full_path, tx_path))
+                }
+            })
+            .collect();
+
+        if to_convert.is_empty() {
+            return 0;
+        }
+
+        log::info!("Converting {} textures to .tx (parallel)", to_convert.len());
+        let converted = AtomicUsize::new(0);
+
+        to_convert.par_iter().for_each(|(full_path, tx_path)| {
+            log::info!("Converting to .tx: {}", full_path.display());
+            if Self::make_tx_subprocess(full_path, tx_path) {
+                converted.fetch_add(1, Ordering::Relaxed);
+            }
+        });
+
+        let count = converted.load(Ordering::Relaxed);
+        if count > 0 {
+            log::info!("Converted {}/{} textures to .tx", count, to_convert.len());
+        }
+        count
+    }
+
+    /// Delete .tx cache files for the given source paths.
+    /// Returns number of .tx files successfully removed.
+    #[cfg(feature = "oiio")]
+    pub fn clear_tx_cache(&self, paths: &[String]) -> usize {
+        let mut removed = 0;
         for path in paths {
             let full_path = self.resolve_path(path);
             let tx_path = oiio::get_tx_path(&full_path);
-            if oiio::tx_is_valid(&full_path, &tx_path) {
-                continue; // Already up to date
-            }
-            log::info!("Converting to .tx: {}", full_path.display());
-            if Self::make_tx_subprocess(&full_path, &tx_path) {
-                converted += 1;
+            if tx_path.exists() {
+                if std::fs::remove_file(&tx_path).is_ok() {
+                    removed += 1;
+                }
             }
         }
-        if converted > 0 {
-            log::info!("Converted {} textures to .tx", converted);
+        if removed > 0 {
+            log::info!("Cleared {} .tx cache files", removed);
         }
-        converted
+        removed
+    }
+
+    /// Pre-warm the texture cache by loading all textures in parallel.
+    /// Textures already in cache are skipped. After this call,
+    /// subsequent `load()` calls will hit the in-memory cache.
+    #[cfg(feature = "oiio")]
+    pub fn pre_warm_parallel(&mut self, paths: &[String]) {
+        use rayon::prelude::*;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let to_load: Vec<_> = paths
+            .iter()
+            .filter(|p| !self.textures.contains_key(p.as_str()))
+            .cloned()
+            .collect();
+
+        if to_load.is_empty() {
+            return;
+        }
+
+        log::info!("Pre-warming {} textures in parallel", to_load.len());
+        let start = std::time::Instant::now();
+
+        let base_dir = self.base_dir.clone();
+        let prefer_tx = self.prefer_tx;
+        let generate_mipmaps = self.generate_mipmaps;
+        let failed = AtomicUsize::new(0);
+
+        let results: Vec<_> = to_load
+            .par_iter()
+            .filter_map(|path| {
+                // Resolve path (same logic as resolve_path but standalone)
+                let normalized = normalize_path(path);
+                let norm_path = std::path::Path::new(&normalized);
+                let full_path = if norm_path.is_absolute() {
+                    norm_path.to_path_buf()
+                } else if let Some(base) = &base_dir {
+                    base.join(norm_path)
+                } else {
+                    norm_path.to_path_buf()
+                };
+
+                // Prefer .tx if valid
+                let load_path = if prefer_tx {
+                    let tx_path = oiio::get_tx_path(&full_path);
+                    if oiio::tx_is_valid(&full_path, &tx_path) {
+                        tx_path
+                    } else {
+                        full_path.clone()
+                    }
+                } else {
+                    full_path.clone()
+                };
+
+                // Load via OIIO
+                let oiio_result = if generate_mipmaps {
+                    oiio::load_texture_with_mips(&load_path)
+                } else {
+                    oiio::load_texture(&load_path)
+                };
+
+                match oiio_result {
+                    Ok(oiio_tex) => {
+                        if oiio_tex.mip_levels.is_empty() {
+                            failed.fetch_add(1, Ordering::Relaxed);
+                            return None;
+                        }
+                        let base = &oiio_tex.mip_levels[0];
+                        let pixels = convert_u8_to_f32_pixels(&base.data, oiio_tex.is_linear);
+                        let mip_levels: Vec<MipLevel> = oiio_tex
+                            .mip_levels
+                            .iter()
+                            .skip(1)
+                            .map(|mip| MipLevel {
+                                width: mip.width,
+                                height: mip.height,
+                                pixels: convert_u8_to_f32_pixels(&mip.data, oiio_tex.is_linear),
+                            })
+                            .collect();
+                        let texture = Texture::with_mips(
+                            oiio_tex.width,
+                            oiio_tex.height,
+                            pixels,
+                            mip_levels,
+                            path.as_str(),
+                            oiio_tex.is_linear,
+                        );
+                        Some((path.clone(), Arc::new(texture)))
+                    }
+                    Err(e) => {
+                        log::warn!("Pre-warm failed {}: {}", path, e);
+                        failed.fetch_add(1, Ordering::Relaxed);
+                        None
+                    }
+                }
+            })
+            .collect();
+
+        let loaded = results.len();
+        for (key, tex) in results {
+            self.textures.insert(key, tex);
+        }
+
+        let elapsed = start.elapsed();
+        let fail_count = failed.load(Ordering::Relaxed);
+        if fail_count > 0 {
+            log::info!(
+                "Pre-warmed {} textures ({} failed) in {:.1}ms",
+                loaded,
+                fail_count,
+                elapsed.as_secs_f64() * 1000.0
+            );
+        } else {
+            log::info!(
+                "Pre-warmed {} textures in {:.1}ms",
+                loaded,
+                elapsed.as_secs_f64() * 1000.0
+            );
+        }
     }
 
     /// Convert single texture to .tx via subprocess (isolates OIIO crashes).
@@ -503,7 +662,7 @@ impl TextureCache {
         let load_path = if self.prefer_tx {
             let tx_path = oiio::get_tx_path(full_path);
             if oiio::tx_is_valid(full_path, &tx_path) {
-                log::info!("Loading .tx: {}", tx_path.display());
+                log::debug!("Loading .tx: {}", tx_path.display());
                 tx_path
             } else {
                 log::debug!("No .tx found: {}", full_path.display());

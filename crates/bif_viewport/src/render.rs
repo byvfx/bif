@@ -947,6 +947,24 @@ impl Renderer {
                         .mark_tx_conversion_complete("OIIO not available".into());
                 }
             }
+            NodeGraphEvent::ClearTxCache => {
+                #[cfg(feature = "oiio")]
+                {
+                    let paths = self.collect_material_texture_paths();
+                    let cache = bif_core::texture::TextureCache::new();
+                    let removed = cache.clear_tx_cache(&paths);
+                    let status = format!("{} .tx files cleared", removed);
+                    self.nodes
+                        .node_graph_state
+                        .mark_tx_conversion_complete(status);
+                }
+                #[cfg(not(feature = "oiio"))]
+                {
+                    self.nodes
+                        .node_graph_state
+                        .mark_tx_conversion_complete("OIIO not available".into());
+                }
+            }
             NodeGraphEvent::LoadHdri {
                 path,
                 rotation,

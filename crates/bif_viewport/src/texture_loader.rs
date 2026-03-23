@@ -192,10 +192,22 @@ fn calculate_mip_count(width: u32, height: u32) -> u32 {
     (max_dim as f32).log2().floor() as u32 + 1
 }
 
-/// Check if texture path indicates linear color space (EXR, HDR).
+/// Check if a .tx file exists and is valid (newer than source).
+/// Returns the .tx path if it should be used, None otherwise.
+#[cfg(feature = "oiio")]
+fn resolve_tx_path(source_path: &str) -> Option<String> {
+    let tx_path = bif_core::oiio::get_tx_path(source_path);
+    if bif_core::oiio::tx_is_valid(source_path, &tx_path) {
+        Some(tx_path.to_string_lossy().into_owned())
+    } else {
+        None
+    }
+}
+
+/// Check if texture path indicates linear color space (EXR, HDR, TX).
 pub fn is_linear_texture_path(path: &str) -> bool {
     match Path::new(path).extension().and_then(|ext| ext.to_str()) {
-        Some(ext) => matches!(ext.to_ascii_lowercase().as_str(), "exr" | "hdr"),
+        Some(ext) => matches!(ext.to_ascii_lowercase().as_str(), "exr" | "hdr" | "tx"),
         None => false,
     }
 }
@@ -324,13 +336,19 @@ fn load_raw_texture_with_depth(
         return load_udim_atlas_inner(path, udim_depth, max_tile_size);
     }
 
-    let is_linear = is_linear_texture_path(path);
+    // Prefer .tx cache if valid and newer than source
+    let tx_path = resolve_tx_path(path);
+    let load_path = tx_path.as_deref().unwrap_or(path);
+    if tx_path.is_some() {
+        log::debug!("Using .tx cache: {}", load_path);
+    }
+    let is_linear = is_linear_texture_path(load_path);
 
     // Use OIIO to load as u8 directly (no mips for viewport)
-    match bif_core::oiio::load_texture(path) {
+    match bif_core::oiio::load_texture(load_path) {
         Ok(oiio_tex) => {
             if oiio_tex.mip_levels.is_empty() {
-                log::warn!("OIIO returned no mip levels for {}", path);
+                log::warn!("OIIO returned no mip levels for {}", load_path);
                 return None;
             }
             let base = &oiio_tex.mip_levels[0];
@@ -339,7 +357,7 @@ fn load_raw_texture_with_depth(
                 height: oiio_tex.height,
                 data: base.data.clone(),
                 is_linear: oiio_tex.is_linear || is_linear,
-                path: path.to_string(),
+                path: path.to_string(), // keep original source path as key
                 udim_grid_cols: 0,
                 udim_grid_rows: 0,
                 udim_min_col: 0,
@@ -347,6 +365,34 @@ fn load_raw_texture_with_depth(
             })
         }
         Err(e) => {
+            // If .tx load failed, retry with original source
+            if tx_path.is_some() {
+                log::warn!("Failed .tx load, retrying source: {}", path);
+                let is_linear_src = is_linear_texture_path(path);
+                match bif_core::oiio::load_texture(path) {
+                    Ok(oiio_tex) => {
+                        if oiio_tex.mip_levels.is_empty() {
+                            return None;
+                        }
+                        let base = &oiio_tex.mip_levels[0];
+                        return Some(RawTexture {
+                            width: oiio_tex.width,
+                            height: oiio_tex.height,
+                            data: base.data.clone(),
+                            is_linear: oiio_tex.is_linear || is_linear_src,
+                            path: path.to_string(),
+                            udim_grid_cols: 0,
+                            udim_grid_rows: 0,
+                            udim_min_col: 0,
+                            udim_min_row: 0,
+                        });
+                    }
+                    Err(e2) => {
+                        log::warn!("Failed to load texture {}: {}", path, e2);
+                        return None;
+                    }
+                }
+            }
             log::warn!("Failed to load texture {}: {}", path, e);
             None
         }
@@ -764,6 +810,16 @@ fn find_udim_tiles(pattern: &str) -> Vec<(u32, String)> {
         let normalized = normalize_path(&tile_path);
         if Path::new(&normalized).exists() {
             tiles.push((udim, normalized));
+        } else {
+            // Fallback: check for .tx variant when source is missing
+            #[cfg(feature = "oiio")]
+            {
+                let tx_path = bif_core::oiio::get_tx_path(&normalized);
+                if tx_path.exists() {
+                    // Return source path — resolve_tx_path in load will find the .tx
+                    tiles.push((udim, normalized));
+                }
+            }
         }
     }
     tiles.sort_by_key(|(id, _)| *id);
@@ -1274,6 +1330,8 @@ mod tests {
         assert!(is_linear_texture_path("foo.exr"));
         assert!(is_linear_texture_path("bar.EXR"));
         assert!(is_linear_texture_path("hdr.hdr"));
+        assert!(is_linear_texture_path("diffuse.tx"));
+        assert!(is_linear_texture_path("normal.TX"));
         assert!(!is_linear_texture_path("diffuse.png"));
         assert!(!is_linear_texture_path("normal.jpg"));
         assert!(!is_linear_texture_path("noext"));

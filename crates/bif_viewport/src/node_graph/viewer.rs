@@ -187,10 +187,17 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer {
 
                 if *is_converting_tx {
                     ui.colored_label(egui::Color32::YELLOW, "Converting .tx...");
-                } else if ui.button("Convert to .tx").clicked() {
-                    self.events.push(NodeGraphEvent::ConvertTexturesToTx);
-                    *is_converting_tx = true;
-                    *tx_status = None;
+                } else {
+                    ui.horizontal(|ui| {
+                        if ui.button("Convert to .tx").clicked() {
+                            self.events.push(NodeGraphEvent::ConvertTexturesToTx);
+                            *is_converting_tx = true;
+                            *tx_status = None;
+                        }
+                        if ui.button("Clear .tx").clicked() {
+                            self.events.push(NodeGraphEvent::ClearTxCache);
+                        }
+                    });
                 }
                 if let Some(status) = tx_status {
                     ui.colored_label(egui::Color32::GREEN, status.as_str());

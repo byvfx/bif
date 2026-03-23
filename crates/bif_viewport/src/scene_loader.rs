@@ -1710,6 +1710,17 @@ impl Renderer {
         self.async_channels.texture_load_receiver = Some(
             texture_loader::start_texture_loading_async(&scene, base_dir),
         );
+
+        // Start background .tx conversion — next load of same scene uses cached .tx
+        #[cfg(feature = "oiio")]
+        {
+            let tex_paths = texture_loader::collect_scene_texture_paths(&scene, base_dir);
+            if !tex_paths.is_empty() {
+                self.environment
+                    .start_tx_conversion(tex_paths, base_dir.map(|p| p.to_path_buf()));
+            }
+        }
+
         let texture_time = texture_start.elapsed();
         let texture_count = self.gpu_textures.textures.len();
 
