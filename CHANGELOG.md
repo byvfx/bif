@@ -22,6 +22,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Pick scene size guard** — skip Embree pick BVH for >50M tris (prevents 25GB OOM)
 - **C++ debug log flags** — `g_log_textures`, `g_log_timing`, `g_log_variants` toggle output sections
 - **Parallel UV seam split** — 3-pass `cache_stage_data()` refactor using USD `WorkParallelForN`; per-mesh geometry extraction in parallel with per-thread `UsdGeomXformCache`
+- **Viewport .tx texture cache** — viewport prefers pre-converted .tx files over source JPG/PNG via `resolve_tx_path`; auto-triggers background .tx conversion on scene load
+- **Parallel .tx conversion** — `convert_textures_to_tx` uses rayon for concurrent subprocess spawning (~4x speedup)
+- **Parallel Ivar texture pre-warm** — `pre_warm_parallel` loads all textures concurrently before material build (9s→2.7s on 13 network textures)
+- **Clear .tx cache** — UI button to delete cached .tx files for current scene
+- **UDIM .tx fallback** — tile discovery checks for .tx variant when source file missing
 
 ### Fixed
 

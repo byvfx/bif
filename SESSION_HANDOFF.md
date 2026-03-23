@@ -19,14 +19,14 @@
 
 ## Recent Work
 
-### Parallel UV Seam Split + .tx Cache Plan (Mar 22, 2026)
+### Parallel UV + .tx Texture Cache (Mar 22, 2026)
 
-- Refactored `cache_stage_data()` into 3-pass architecture using USD `WorkParallelForN`
-- Pass 1 serial traverse (classify meshes vs instances), pass 2 parallel geometry extraction, pass 3 merge
-- Extracted ~450-line `extract_mesh_geometry()` function, per-thread `UsdGeomXformCache`
-- ALab 528 meshes: 1s parallel geo wall-clock. Awaiting test on 335M vert rt_base scene.
-- Planned .tx texture cache integration for viewport (22.8s→2-4s on repeat loads)
-- Also noted: Ivar renderer should use same .tx pipeline for consistency
+- Parallelized UV seam split: 3-pass `cache_stage_data()` refactor with `WorkParallelForN`
+- Viewport .tx cache: `resolve_tx_path` prefers .tx over source, auto bg conversion on scene load
+- Parallel .tx conversion via rayon, parallel Ivar texture pre-warm (9s→2.7s)
+- Clear .tx cache UI button, UDIM .tx fallback
+- Ivar already uses .tx via `TextureCache` with `prefer_tx: true` — no changes needed
+- Awaiting ALab .tx benchmark (272 textures) and rt_base parallel UV benchmark
 
 ### Purpose Filtering + Specular Fix (Mar 21, 2026)
 
