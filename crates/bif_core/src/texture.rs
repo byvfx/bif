@@ -429,8 +429,10 @@ impl TextureCache {
         use std::sync::atomic::{AtomicUsize, Ordering};
 
         // Pre-filter to find which paths need conversion (serial, fast)
+        // Skip UDIM patterns — individual tiles are converted separately
         let to_convert: Vec<_> = paths
             .iter()
+            .filter(|p| !is_udim_path(p))
             .filter_map(|path| {
                 let full_path = self.resolve_path(path);
                 let tx_path = oiio::get_tx_path(&full_path);
@@ -493,7 +495,7 @@ impl TextureCache {
 
         let to_load: Vec<_> = paths
             .iter()
-            .filter(|p| !self.textures.contains_key(p.as_str()))
+            .filter(|p| !is_udim_path(p) && !self.textures.contains_key(p.as_str()))
             .cloned()
             .collect();
 
