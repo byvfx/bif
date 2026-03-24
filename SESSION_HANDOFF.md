@@ -1,7 +1,7 @@
-# Session Handoff - March 23, 2026
+# Session Handoff - March 24, 2026
 
-**Last Updated:** M29.5 egui UI overhaul complete
-**Next Milestone:** M30 persistence (save/load node graphs)
+**Last Updated:** M30 Phase 1 (serde foundation) complete
+**Next Milestone:** M30 Phase 2 (ProjectFile + save/load logic)
 **Project:** BIF - VFX Scene Assembler & Renderer
 
 ---
@@ -10,15 +10,28 @@
 
 | Status | Details |
 |--------|---------|
-| Complete | Milestones 0-23, M26 (OIDN), M26.1 (Ivar material cache), M19.6, M29.5 (UI overhaul) |
-| Current | M29.5 landed — theme, panel restructure, node inspector, menu bar |
-| Next | M30 persistence (save/load), then egui 0.30 upgrade for vertical node layout |
+| Complete | Milestones 0-23, M26, M26.1, M19.6, M29.5, M30 Phase 1 (serde) |
+| Current | M30 persistence — Phase 1 done, Phase 2 next (ProjectFile, save/load) |
+| Next | M30 Phases 2-6 (ProjectFile, dirty tracking, File menu, eval modes, cache node) |
 | Tests | 390+ total across all crates |
 | Performance | 60 FPS viewport, 100K instances with LOD, Ivar build ~185ms |
 
 ---
 
 ## Recent Work
+
+### M30 Phase 1: Serde Foundation (Mar 24, 2026)
+
+Added Serialize/Deserialize derives to all types needed for .bif/.bifa project files:
+- **bif_math:** ProjectionMode, OrthoPreset (Camera handled via CameraData conversion)
+- **bif_core:** PrimitiveKind, PointSource, ScatterMode, UsdSpecifier, UsdKind, UsdPrimType
+- **bif_renderer:** PixelFilter, PixelFilterConfig, SamplerMode, ExrCompression, RadianceCacheConfig
+- **bif_viewport:** SceneNode (all 10 variants, runtime fields `#[serde(skip)]`), GraphNodeId, CameraSource, AovSettings, BatchRenderSettings, PurposeMode, DisplaySettings
+- Enabled egui-snarl `serde` feature (Snarl<SceneNode> serializes nodes+connections+positions)
+- Added bincode dep for .bif binary format
+- Round-trip tests: JSON + bincode for all SceneNode variants, Snarl graph, GraphNodeId
+
+**Plan:** Full M30 plan at `~/.claude/plans/woolly-meandering-avalanche.md` — 6 phases total.
 
 ### M29.5 egui UI Overhaul (Mar 23, 2026)
 
