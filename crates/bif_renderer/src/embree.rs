@@ -145,6 +145,7 @@ pub struct EmbreeScene {
     // When non-empty, these are used instead of per-triangle uv_data/normal_data.
     per_vertex_uvs: Vec<[f32; 2]>,
     per_vertex_normals: Vec<[f32; 3]>,
+    per_vertex_tangents: Vec<[f32; 3]>,
 
     // Per-instance inverse-transpose Mat3 for correct normal transformation
     normal_matrices: Vec<Mat3>,
@@ -476,6 +477,7 @@ impl EmbreeScene {
                 tangent_data,
                 per_vertex_uvs: vec![],
                 per_vertex_normals: vec![],
+                per_vertex_tangents: vec![],
                 normal_matrices,
                 instance_count: transforms.len(),
                 triangle_count: vertices.len(),
@@ -804,54 +806,62 @@ impl EmbreeScene {
             let per_vertex_uvs = uvs.to_vec();
             let per_vertex_normals = normals.to_vec();
 
-            // Tangent data: 1 per triangle, computed from edges + UVs (must be per-triangle)
-            let tangent_data: Vec<[f32; 3]> = (0..tri_count)
-                .into_par_iter()
-                .map(|tri| {
-                    let i0 = indices[tri * 3] as usize;
-                    let i1 = indices[tri * 3 + 1] as usize;
-                    let i2 = indices[tri * 3 + 2] as usize;
+            // Per-vertex tangent accumulation: accumulate triangle tangents at shared
+            // vertices, then normalize. Eliminates visible normal map seam artifacts
+            // on curved surfaces where tangent direction changes across triangles.
+            let vert_count = positions.len();
+            let mut tangent_accum = vec![Vec3::ZERO; vert_count];
 
-                    let p0 = if i0 < positions.len() {
-                        positions[i0]
-                    } else {
-                        [0.0; 3]
-                    };
-                    let p1 = if i1 < positions.len() {
-                        positions[i1]
-                    } else {
-                        [0.0; 3]
-                    };
-                    let p2 = if i2 < positions.len() {
-                        positions[i2]
-                    } else {
-                        [0.0; 3]
-                    };
+            for tri in 0..tri_count {
+                let i0 = indices[tri * 3] as usize;
+                let i1 = indices[tri * 3 + 1] as usize;
+                let i2 = indices[tri * 3 + 2] as usize;
 
-                    let uv0 = if i0 < uvs.len() { uvs[i0] } else { [0.0, 0.0] };
-                    let uv1 = if i1 < uvs.len() { uvs[i1] } else { [1.0, 0.0] };
-                    let uv2 = if i2 < uvs.len() { uvs[i2] } else { [0.0, 1.0] };
+                let p0 = positions.get(i0).copied().unwrap_or([0.0; 3]);
+                let p1 = positions.get(i1).copied().unwrap_or([0.0; 3]);
+                let p2 = positions.get(i2).copied().unwrap_or([0.0; 3]);
 
-                    let edge1 = Vec3::new(p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]);
-                    let edge2 = Vec3::new(p2[0] - p0[0], p2[1] - p0[1], p2[2] - p0[2]);
-                    let duv1 = [uv1[0] - uv0[0], uv1[1] - uv0[1]];
-                    let duv2 = [uv2[0] - uv0[0], uv2[1] - uv0[1]];
+                let uv0 = uvs.get(i0).copied().unwrap_or([0.0, 0.0]);
+                let uv1 = uvs.get(i1).copied().unwrap_or([1.0, 0.0]);
+                let uv2 = uvs.get(i2).copied().unwrap_or([0.0, 1.0]);
 
-                    let det = duv1[0] * duv2[1] - duv2[0] * duv1[1];
-                    if det.abs() > 1e-8 {
-                        let r = 1.0 / det;
-                        let t = (edge1 * duv2[1] - edge2 * duv1[1]) * r;
-                        let len = t.length();
-                        if len > 1e-8 {
-                            (t / len).into()
-                        } else {
-                            [1.0, 0.0, 0.0]
-                        }
+                let edge1 = Vec3::new(p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]);
+                let edge2 = Vec3::new(p2[0] - p0[0], p2[1] - p0[1], p2[2] - p0[2]);
+                let duv1 = [uv1[0] - uv0[0], uv1[1] - uv0[1]];
+                let duv2 = [uv2[0] - uv0[0], uv2[1] - uv0[1]];
+
+                let det = duv1[0] * duv2[1] - duv2[0] * duv1[1];
+                if det.abs() > 1e-8 {
+                    let r = 1.0 / det;
+                    let t = (edge1 * duv2[1] - edge2 * duv1[1]) * r;
+                    // Accumulate (unnormalized) at each vertex
+                    if i0 < vert_count {
+                        tangent_accum[i0] += t;
+                    }
+                    if i1 < vert_count {
+                        tangent_accum[i1] += t;
+                    }
+                    if i2 < vert_count {
+                        tangent_accum[i2] += t;
+                    }
+                }
+            }
+
+            // Normalize accumulated tangents; fallback for degenerate UVs
+            let per_vertex_tangents: Vec<[f32; 3]> = tangent_accum
+                .iter()
+                .map(|t| {
+                    let len = t.length();
+                    if len > 1e-8 {
+                        (*t / len).into()
                     } else {
                         [1.0, 0.0, 0.0]
                     }
                 })
                 .collect();
+
+            // Per-triangle tangent fallback (used by old `new()` path; empty for indexed)
+            let tangent_data: Vec<[f32; 3]> = Vec::new();
             let hitdata_ms = t0.elapsed().as_secs_f64() * 1000.0;
 
             let tri_mat_ids = if triangle_material_ids.is_empty() {
@@ -901,6 +911,7 @@ impl EmbreeScene {
                 tangent_data,
                 per_vertex_uvs,
                 per_vertex_normals,
+                per_vertex_tangents,
                 normal_matrices,
                 instance_count: transforms.len(),
                 triangle_count: tri_count,
@@ -1056,10 +1067,6 @@ impl Hittable for EmbreeScene {
 
             // Look up per-vertex UVs and normals — indexed path uses per-vertex
             // arrays with index buffer lookup, old path uses pre-expanded per-triangle arrays.
-            debug_assert!(
-                prim_id < self.tangent_data.len(),
-                "prim_id OOB on tangent_data"
-            );
             let (uv0, uv1, uv2, n0, n1, n2) = if !self.per_vertex_uvs.is_empty() {
                 // Indexed path: look up via index buffer
                 let idx_base = prim_id * 3;
@@ -1110,8 +1117,23 @@ impl Hittable for EmbreeScene {
             };
             rec.normal = normal;
 
-            // Per-triangle tangent (constant across triangle, no interpolation needed)
-            let raw_tangent = Vec3::from_array(self.tangent_data[prim_id]);
+            // Tangent: per-vertex interpolated (indexed path) or per-triangle (old path)
+            let raw_tangent = if !self.per_vertex_tangents.is_empty() {
+                // Indexed path: interpolate per-vertex tangents with barycentrics
+                let idx_base = prim_id * 3;
+                let i0 = self._index_data[idx_base] as usize;
+                let i1 = self._index_data[idx_base + 1] as usize;
+                let i2 = self._index_data[idx_base + 2] as usize;
+                let t0 = Vec3::from_array(self.per_vertex_tangents[i0]);
+                let t1 = Vec3::from_array(self.per_vertex_tangents[i1]);
+                let t2 = Vec3::from_array(self.per_vertex_tangents[i2]);
+                (t0 * bary_w + t1 * bary_u + t2 * bary_v).normalize_or_zero()
+            } else if prim_id < self.tangent_data.len() {
+                // Old per-triangle path
+                Vec3::from_array(self.tangent_data[prim_id])
+            } else {
+                Vec3::X
+            };
             // Gram-Schmidt orthogonalize tangent against normal
             let gs = raw_tangent - normal * normal.dot(raw_tangent);
             let (tangent, bitangent) = if gs.length_squared() > 1e-8 {
