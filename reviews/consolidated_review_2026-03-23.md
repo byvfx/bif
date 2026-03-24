@@ -20,41 +20,49 @@
 ## CRITICAL — Fix Before Next Milestone
 
 ### 1. OpenPBR diffuse missing specular Fresnel attenuation [VFX-C1]
+
 **File:** `crates/bif_renderer/src/openpbr.rs:469-483`
 **Impact:** Energy creation at grazing angles — renders too bright on glossy dielectrics.
 **Fix:** Multiply diffuse by `(1.0 - fresnel_at_angle)`. ~10 lines.
 
 ### 2. SHARC radiance cache stores direct-only (biased) [VFX-C2, Code-C1]
+
 **File:** `crates/bif_renderer/src/renderer.rs:257-265`
 **Impact:** Dark splotches in GI-heavy scenes. Cache converges to wrong answer. Torn reads can also produce NaN (Code-C1).
 **Fix:** (a) Add NaN guard after cache lookup (quick). (b) Defer cache write to include indirect contribution (complex, consider for future milestone).
 
 ### 3. Shadow ray offset uses geometric normal, not shading normal [VFX-C3]
+
 **File:** `crates/bif_renderer/src/renderer.rs:203`
 **Impact:** Dark bands at normal map discontinuities (shadow terminator artifacts).
 **Fix:** Use shading normal for offset. ~5 lines.
 
 ### 4. Distant light angle: degrees vs radians ambiguity [VFX-C4]
+
 **File:** `crates/bif_renderer/src/light.rs:64-84`, `crates/bif_core/src/scene.rs:452`
 **Impact:** Shadow softness completely wrong if units mismatch.
 **Fix:** Verify conversion path from USD loader → scene → light constructor. Add `.to_radians()` if needed.
 
 ### 5. NodeGraphContext uses egui_snarl::NodeId in non-UI code [Arch-C1]
+
 **File:** `crates/bif_viewport/src/lib.rs:302-315`
 **Impact:** Blocks clean Qt migration. Blocks M30 persistence (serialized IDs depend on egui internals).
 **Fix:** Introduce `GraphNodeId(u64)` newtype, bidirectional mapping. ~2 sessions.
 
 ### 6. EmbreeScene Drop ordering relies on field declaration order [Code-C2]
+
 **File:** `crates/bif_renderer/src/embree.rs:1130-1143`
 **Impact:** Potential use-after-free if struct fields reordered. Currently safe but fragile.
 **Fix:** Document the field-order invariant with safety comment. ~5 min.
 
 ### 7. Production-path unwrap() in PointInstancer node [Code-C3]
+
 **File:** `crates/bif_viewport/src/node_graph/viewer.rs:639-640`
 **Impact:** App crash if guard logic ever changes.
 **Fix:** Replace with `let (Some(a), Some(b)) = ... else { return; }`. ~2 lines.
 
 ### 8. Normal matrix crashes on non-invertible transforms [VFX-I6]
+
 **File:** `crates/bif_renderer/src/embree.rs:438-441`
 **Impact:** NaN/black instances for zero-scale transforms (common in USD for "hidden" instances).
 **Fix:** Check determinant, fallback to `Mat3::IDENTITY`. ~5 lines.
@@ -64,6 +72,7 @@
 ## IMPORTANT — Fix Within Next 2-3 Milestones
 
 ### Rendering & Pipeline
+
 | # | Finding | File | Source |
 |---|---------|------|--------|
 | I1 | OpenPBR `is_delta()` too loose for transmission (wastes shadow rays) | openpbr.rs:521 | VFX-I4 |
@@ -78,6 +87,7 @@
 | I10 | Point light epsilon additive instead of max (wrong falloff near light) | light.rs:156 | VFX-I9 |
 
 ### Architecture & Maintainability
+
 | # | Finding | File | Source |
 |---|---------|------|--------|
 | I11 | `run_egui_frame` 500+ lines mixing UI + state management | render.rs:135-700 | Arch-I1 |
