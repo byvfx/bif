@@ -208,16 +208,63 @@ impl Renderer {
         let mut event_bus = std::mem::take(&mut self.event_bus);
         let mut gizmo_hovered: u8 = 0;
 
+        // Load recent files once per frame (cheap — reads from memory after first load)
+        let recent_files = crate::persistence::load_recent_files();
+
         let full_output = self.egui_ctx.run(raw_input, |ctx| {
-            // Ctrl+O shortcut: open USD file via first UsdRead node
-            if ctx.input(|i| i.key_pressed(egui::Key::O) && i.modifiers.command) {
-                open_usd_file_dialog(&mut self.nodes.node_graph_state.snarl, &mut event_bus);
+            // Keyboard shortcuts
+            if ctx.input(|i| i.key_pressed(egui::Key::N) && i.modifiers.command) {
+                event_bus.emit(crate::app_event::AppEvent::ProjectNew);
+            }
+            if ctx
+                .input(|i| i.key_pressed(egui::Key::O) && i.modifiers.command && !i.modifiers.shift)
+            {
+                event_bus.emit(crate::app_event::AppEvent::ProjectOpen);
+            }
+            if ctx
+                .input(|i| i.key_pressed(egui::Key::S) && i.modifiers.command && !i.modifiers.shift)
+            {
+                event_bus.emit(crate::app_event::AppEvent::ProjectSave);
+            }
+            if ctx
+                .input(|i| i.key_pressed(egui::Key::S) && i.modifiers.command && i.modifiers.shift)
+            {
+                event_bus.emit(crate::app_event::AppEvent::ProjectSaveAs);
             }
 
             let top_panel = egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
                 egui::menu::bar(ui, |ui| {
                     // File menu
                     ui.menu_button("File", |ui| {
+                        if ui
+                            .add(egui::Button::new("New").shortcut_text("Ctrl+N"))
+                            .clicked()
+                        {
+                            event_bus.emit(crate::app_event::AppEvent::ProjectNew);
+                            ui.close_menu();
+                        }
+                        if ui
+                            .add(egui::Button::new("Open...").shortcut_text("Ctrl+O"))
+                            .clicked()
+                        {
+                            event_bus.emit(crate::app_event::AppEvent::ProjectOpen);
+                            ui.close_menu();
+                        }
+                        if ui
+                            .add(egui::Button::new("Save").shortcut_text("Ctrl+S"))
+                            .clicked()
+                        {
+                            event_bus.emit(crate::app_event::AppEvent::ProjectSave);
+                            ui.close_menu();
+                        }
+                        if ui
+                            .add(egui::Button::new("Save As...").shortcut_text("Ctrl+Shift+S"))
+                            .clicked()
+                        {
+                            event_bus.emit(crate::app_event::AppEvent::ProjectSaveAs);
+                            ui.close_menu();
+                        }
+                        ui.separator();
                         if ui.button("Open USD...").clicked() {
                             open_usd_file_dialog(
                                 &mut self.nodes.node_graph_state.snarl,
@@ -234,6 +281,29 @@ impl Renderer {
                                 event_bus.emit(crate::app_event::AppEvent::ExportEditLayer(path));
                             }
                             ui.close_menu();
+                        }
+                        if !recent_files.paths.is_empty() {
+                            ui.separator();
+                            ui.menu_button("Recent Files", |ui| {
+                                for path in &recent_files.paths {
+                                    let label = path
+                                        .file_name()
+                                        .map(|n| n.to_string_lossy().into_owned())
+                                        .unwrap_or_else(|| path.display().to_string());
+                                    if ui
+                                        .button(&label)
+                                        .on_hover_text(path.display().to_string())
+                                        .clicked()
+                                    {
+                                        event_bus.emit(
+                                            crate::app_event::AppEvent::ProjectOpenRecent(
+                                                path.clone(),
+                                            ),
+                                        );
+                                        ui.close_menu();
+                                    }
+                                }
+                            });
                         }
                         ui.separator();
                         if ui.button("Quit").clicked() {
@@ -996,6 +1066,7 @@ impl Renderer {
                 }
                 AppEvent::TransformEdit(edit) => {
                     if edit.committed {
+                        self.project.mark_dirty();
                         self.push_transform_command(
                             edit.instance_index,
                             edit.old_transform,
@@ -1054,8 +1125,42 @@ impl Renderer {
                     }
                 }
                 AppEvent::NodeGraph(node_events) => {
+                    if !node_events.is_empty() {
+                        self.project.mark_dirty();
+                    }
                     for event in node_events {
                         self.handle_node_graph_event(event);
+                    }
+                }
+                AppEvent::ProjectNew => {
+                    if self.confirm_unsaved_changes("New Project") {
+                        self.reset_project();
+                    }
+                }
+                AppEvent::ProjectOpen => {
+                    if self.confirm_unsaved_changes("Open Project") {
+                        if let Some(path) = rfd::FileDialog::new()
+                            .add_filter("BIF Project", &["bif", "bifa"])
+                            .pick_file()
+                        {
+                            self.open_project(&path);
+                        }
+                    }
+                }
+                AppEvent::ProjectSave => {
+                    if let Some(path) = self.project.file_path.clone() {
+                        self.save_project_to(&path);
+                    } else {
+                        // No path yet — trigger Save As
+                        self.save_project_as();
+                    }
+                }
+                AppEvent::ProjectSaveAs => {
+                    self.save_project_as();
+                }
+                AppEvent::ProjectOpenRecent(path) => {
+                    if self.confirm_unsaved_changes("Open Recent") {
+                        self.open_project(&path);
                     }
                 }
             }

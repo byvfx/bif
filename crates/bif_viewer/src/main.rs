@@ -273,8 +273,16 @@ impl ApplicationHandler for App {
 
         match event {
             WindowEvent::CloseRequested => {
-                log::info!("Close requested");
-                event_loop.exit();
+                // Check for unsaved changes before closing
+                let should_close = self
+                    .renderer
+                    .as_ref()
+                    .map(|r| r.confirm_unsaved_changes("Quit"))
+                    .unwrap_or(true);
+                if should_close {
+                    log::info!("Close requested");
+                    event_loop.exit();
+                }
             }
             WindowEvent::Resized(physical_size) => {
                 self.with_renderer(|r| {
@@ -517,6 +525,12 @@ impl ApplicationHandler for App {
                     r.update_fps(delta_time);
                     r.update_animation(delta_time);
                 });
+
+                // Update window title with project name and dirty indicator
+                if let (Some(window), Some(renderer)) = (&self.window, &self.renderer) {
+                    let title = renderer.project.window_title();
+                    window.set_title(&title);
+                }
 
                 // Handle keyboard movement (skip if camera locked)
                 if let Some(renderer) = &mut self.renderer {

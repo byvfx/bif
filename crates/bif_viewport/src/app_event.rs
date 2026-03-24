@@ -49,6 +49,16 @@ pub enum AppEvent {
     ExportEditLayer(PathBuf),
     /// One or more node graph events.
     NodeGraph(Vec<NodeGraphEvent>),
+    /// File > New — reset to empty project.
+    ProjectNew,
+    /// File > Open — show file dialog, load .bif/.bifa.
+    ProjectOpen,
+    /// File > Save — save to current path (or trigger SaveAs if untitled).
+    ProjectSave,
+    /// File > Save As — show save dialog.
+    ProjectSaveAs,
+    /// File > Recent Files — open a specific recent file.
+    ProjectOpenRecent(PathBuf),
 }
 
 /// Frame-scoped event bus. UI pushes events, render loop drains them.
