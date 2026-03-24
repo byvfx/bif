@@ -1,3 +1,13 @@
+//! # State Mutation Convention
+//!
+//! **Direct mutation** (in egui closures): Simple boolean toggles with no side
+//! effects (show_grid, show_ui, point_preview.visible). Safe because they only
+//! affect the next frame's rendering, with no cascading state changes.
+//!
+//! **EventBus**: Anything triggering side effects (scene reload, camera sync,
+//! undo/redo, node graph operations). Events are drained in `dispatch_events()`
+//! for predictable ordering.
+
 use anyhow::Result;
 use std::sync::atomic::Ordering;
 
@@ -303,19 +313,21 @@ impl Renderer {
                     // If an Xform node is selected, show its T/R/S in the panel
                     let selected_xform_id =
                         self.nodes.node_graph_state.selected_node.filter(|nid| {
+                            let snarl_nid: egui_snarl::NodeId = (*nid).into();
                             matches!(
-                                self.nodes.node_graph_state.snarl[*nid],
+                                self.nodes.node_graph_state.snarl[snarl_nid],
                                 crate::node_graph::SceneNode::Xform { .. }
                             )
                         });
 
                     if let Some(xform_nid) = selected_xform_id {
+                        let snarl_xform: egui_snarl::NodeId = xform_nid.into();
                         if let crate::node_graph::SceneNode::Xform {
                             translate,
                             rotate,
                             scale,
                             prim_filter,
-                        } = &mut self.nodes.node_graph_state.snarl[xform_nid]
+                        } = &mut self.nodes.node_graph_state.snarl[snarl_xform]
                         {
                             let changed = crate::property_inspector::render_xform_properties(
                                 ui,
@@ -1005,11 +1017,12 @@ impl Renderer {
                 node_id,
             } => {
                 log::info!("Node graph: Creating {:?} primitive (size={})", kind, size);
+                let snarl_id: egui_snarl::NodeId = node_id.into();
 
                 // Read prim_path from the Primitive node for export naming
                 let prim_path =
                     if let crate::node_graph::SceneNode::Primitive { ref prim_path, .. } =
-                        &self.nodes.node_graph_state.snarl[node_id]
+                        &self.nodes.node_graph_state.snarl[snarl_id]
                     {
                         Some(prim_path.clone())
                     } else {
@@ -1037,7 +1050,7 @@ impl Renderer {
 
                         // Recursively dirty all downstream nodes
                         crate::node_graph::propagate_dirty(
-                            node_id,
+                            snarl_id,
                             &mut self.nodes.node_graph_state.snarl,
                         );
 
@@ -1057,6 +1070,7 @@ impl Renderer {
                     params.count,
                     params.seed
                 );
+                let snarl_id: egui_snarl::NodeId = node_id.into();
 
                 // Remove previous cloud for this node (if regenerating)
                 if let Some(old_cloud_id) = self.nodes.node_cloud_map.remove(&node_id) {
@@ -1203,7 +1217,7 @@ impl Renderer {
                         point_size,
                         point_color,
                         ..
-                    } = &self.nodes.node_graph_state.snarl[node_id]
+                    } = &self.nodes.node_graph_state.snarl[snarl_id]
                     {
                         self.point_preview.point_size = *point_size;
                         self.point_preview.color = *point_color;
@@ -1219,7 +1233,7 @@ impl Renderer {
 
                     // Recursively dirty all downstream nodes
                     crate::node_graph::propagate_dirty(
-                        node_id,
+                        snarl_id,
                         &mut self.nodes.node_graph_state.snarl,
                     );
                 }
@@ -1229,6 +1243,7 @@ impl Renderer {
                 points_source_node,
                 proto_source_node,
             } => {
+                let snarl_id: egui_snarl::NodeId = node_id.into();
                 // Resolve cloud ID from scatter node
                 let cloud_id = self.nodes.node_cloud_map.get(&points_source_node).copied();
                 // Resolve first prototype ID from primitive/USD node
@@ -1256,7 +1271,7 @@ impl Renderer {
                 // Read PointInstancer node's prim_path for export
                 let instancer_prim_path =
                     if let crate::node_graph::SceneNode::PointInstancer { ref prim_path, .. } =
-                        &self.nodes.node_graph_state.snarl[node_id]
+                        &self.nodes.node_graph_state.snarl[snarl_id]
                     {
                         Some(prim_path.clone())
                     } else {
@@ -1308,7 +1323,7 @@ impl Renderer {
                                 is_computing,
                                 compute_failed,
                                 ..
-                            } = &mut self.nodes.node_graph_state.snarl[node_id]
+                            } = &mut self.nodes.node_graph_state.snarl[snarl_id]
                             {
                                 *instance_count = inst_count;
                                 *is_instanced = true;
@@ -1324,7 +1339,7 @@ impl Renderer {
                             );
                         } else {
                             log::warn!("Point Instancer: cloud {} not found in scene", cid);
-                            mark_compute_failed(&mut self.nodes.node_graph_state.snarl, node_id);
+                            mark_compute_failed(&mut self.nodes.node_graph_state.snarl, snarl_id);
                         }
                     }
                     (None, _) => {
@@ -1332,14 +1347,14 @@ impl Renderer {
                             "Point Instancer: no cloud for source node {:?}",
                             points_source_node
                         );
-                        mark_compute_failed(&mut self.nodes.node_graph_state.snarl, node_id);
+                        mark_compute_failed(&mut self.nodes.node_graph_state.snarl, snarl_id);
                     }
                     (_, None) => {
                         log::warn!(
                             "Point Instancer: no prototype for source node {:?}",
                             proto_source_node
                         );
-                        mark_compute_failed(&mut self.nodes.node_graph_state.snarl, node_id);
+                        mark_compute_failed(&mut self.nodes.node_graph_state.snarl, snarl_id);
                     }
                 }
             }
@@ -1374,9 +1389,10 @@ impl Renderer {
                 as_sublayer,
                 export_root,
             } => {
+                let snarl_id: egui_snarl::NodeId = node_id.into();
                 // Collect authored prims, graft prefix, and source USD path from upstream
                 let (authored_prims, graft_prefix, upstream_usd_path) =
-                    collect_export_context(node_id, &self.nodes.node_graph_state.snarl);
+                    collect_export_context(snarl_id, &self.nodes.node_graph_state.snarl);
                 // Auto-enable sublayer when upstream UsdRead exists
                 let effective_as_sublayer = as_sublayer || upstream_usd_path.is_some();
                 let config = bif_core::ExportConfig {
@@ -1398,7 +1414,7 @@ impl Renderer {
                             is_exported,
                             last_result,
                             ..
-                        } = &mut self.nodes.node_graph_state.snarl[node_id]
+                        } = &mut self.nodes.node_graph_state.snarl[snarl_id]
                         {
                             *is_exported = true;
                             *last_result = Some(status);
@@ -1411,7 +1427,7 @@ impl Renderer {
                             is_exported,
                             last_result,
                             ..
-                        } = &mut self.nodes.node_graph_state.snarl[node_id]
+                        } = &mut self.nodes.node_graph_state.snarl[snarl_id]
                         {
                             *is_exported = false;
                             *last_result = Some(format!("Error: {}", err_msg));
@@ -1758,8 +1774,8 @@ impl Renderer {
                     // Set common pipeline state
                     render_pass.set_pipeline(&self.pipeline);
                     render_pass.set_bind_group(0, &self.cam.camera_bind_group, &[]);
-                    render_pass.set_bind_group(1, &self.material_bind_group, &[]);
-                    render_pass.set_bind_group(2, &self.texture_bind_group, &[]);
+                    render_pass.set_bind_group(1, &self.materials.bind_group, &[]);
+                    render_pass.set_bind_group(2, &self.textures.bind_group, &[]);
                     render_pass.set_bind_group(3, self.environment.bind_group(), &[]);
                     render_pass.set_bind_group(4, &self.lights.bind_group, &[]);
 

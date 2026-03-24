@@ -59,7 +59,7 @@ impl Renderer {
         );
 
         // Refresh textures and material table
-        self.gpu_textures = texture_loader::create_gpu_textures_for_scene(
+        self.textures.gpu_textures = texture_loader::create_gpu_textures_for_scene(
             &self.gpu.device,
             &self.gpu.queue,
             scene,
@@ -69,16 +69,16 @@ impl Renderer {
         let mut material_table: Vec<MaterialGpu> = scene
             .materials
             .iter()
-            .map(|mat| MaterialGpu::from_material(mat.as_ref(), &self.gpu_textures))
+            .map(|mat| MaterialGpu::from_material(mat.as_ref(), &self.textures.gpu_textures))
             .collect();
         // Always append default grey as last entry — fallback for prototypes without materials
         let default_mat_index = material_table.len() as u32;
         material_table.push(MaterialGpu::from_material(
             &bif_core::Material::default(),
-            &self.gpu_textures,
+            &self.textures.gpu_textures,
         ));
-        self.material_table_len = material_table.len() as u32;
-        self.material_table_buffer =
+        self.materials.table_len = material_table.len() as u32;
+        self.materials.table_buffer =
             self.gpu
                 .device
                 .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -102,7 +102,7 @@ impl Renderer {
             } else {
                 tri_mats.as_slice()
             };
-            self.triangle_material_buffer =
+            self.materials.triangle_buffer =
                 self.gpu
                     .device
                     .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -110,9 +110,9 @@ impl Renderer {
                         contents: bytemuck::cast_slice(data),
                         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                     });
-            self.has_triangle_materials = true;
+            self.materials.has_triangle_materials = true;
         } else {
-            self.triangle_material_buffer =
+            self.materials.triangle_buffer =
                 self.gpu
                     .device
                     .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -120,40 +120,41 @@ impl Renderer {
                         contents: bytemuck::cast_slice(&[0xFFFFFFFFu32]),
                         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                     });
-            self.has_triangle_materials = false;
+            self.materials.has_triangle_materials = false;
         }
 
         // Rebuild material bind group
-        self.material_bind_group = self
+        self.materials.bind_group = self
             .gpu
             .device
             .create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("Material Bind Group"),
-                layout: &self.material_bind_group_layout,
+                layout: &self.materials.bind_group_layout,
                 entries: &[
                     wgpu::BindGroupEntry {
                         binding: 0,
-                        resource: self.material_buffer.as_entire_binding(),
+                        resource: self.materials.buffer.as_entire_binding(),
                     },
                     wgpu::BindGroupEntry {
                         binding: 1,
-                        resource: self.material_table_buffer.as_entire_binding(),
+                        resource: self.materials.table_buffer.as_entire_binding(),
                     },
                     wgpu::BindGroupEntry {
                         binding: 2,
-                        resource: self.triangle_material_buffer.as_entire_binding(),
+                        resource: self.materials.triangle_buffer.as_entire_binding(),
                     },
                 ],
             });
 
         // Rebuild texture bind group
-        let texture_view_refs: Vec<&wgpu::TextureView> = self.gpu_textures.views.iter().collect();
-        self.texture_bind_group = self
+        let texture_view_refs: Vec<&wgpu::TextureView> =
+            self.textures.gpu_textures.views.iter().collect();
+        self.textures.bind_group = self
             .gpu
             .device
             .create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("Texture Bind Group"),
-                layout: &self.texture_bind_group_layout,
+                layout: &self.textures.bind_group_layout,
                 entries: &[
                     wgpu::BindGroupEntry {
                         binding: 0,
@@ -161,7 +162,7 @@ impl Renderer {
                     },
                     wgpu::BindGroupEntry {
                         binding: 1,
-                        resource: wgpu::BindingResource::Sampler(&self.texture_sampler),
+                        resource: wgpu::BindingResource::Sampler(&self.textures.sampler),
                     },
                 ],
             });
@@ -319,11 +320,11 @@ impl Renderer {
         }
 
         // Update material uniform
-        self.material_uniform = MaterialUniform::from_material(&scene_material);
+        self.materials.uniform = MaterialUniform::from_material(&scene_material);
         self.gpu.queue.write_buffer(
-            &self.material_buffer,
+            &self.materials.buffer,
             0,
-            bytemuck::cast_slice(&[self.material_uniform]),
+            bytemuck::cast_slice(&[self.materials.uniform]),
         );
 
         // Frame camera
@@ -570,11 +571,18 @@ impl Renderer {
         let use_multi_draw = scene.prototypes.len() > 1;
 
         // Compute active node set from display flag (None = everything active)
-        let active_nodes: Option<std::collections::HashSet<egui_snarl::NodeId>> =
+        let active_nodes: Option<std::collections::HashSet<crate::node_graph::GraphNodeId>> =
             self.nodes.node_graph_state.display_node.map(|dn| {
-                crate::node_graph::collect_upstream_nodes(dn, &self.nodes.node_graph_state.snarl)
+                let snarl_dn: egui_snarl::NodeId = dn.into();
+                crate::node_graph::collect_upstream_nodes(
+                    snarl_dn,
+                    &self.nodes.node_graph_state.snarl,
+                )
+                .into_iter()
+                .map(crate::node_graph::GraphNodeId::from)
+                .collect()
             });
-        let is_node_active = |node_id: &egui_snarl::NodeId| {
+        let is_node_active = |node_id: &crate::node_graph::GraphNodeId| {
             active_nodes.as_ref().is_none_or(|s| s.contains(node_id))
         };
 
@@ -769,7 +777,7 @@ impl Renderer {
         // Xform drag or display toggle). Texture loading is expensive — disk I/O,
         // decode, GPU upload.
         if self.nodes.materials_dirty {
-            self.gpu_textures = texture_loader::create_gpu_textures_for_scene(
+            self.textures.gpu_textures = texture_loader::create_gpu_textures_for_scene(
                 &self.gpu.device,
                 &self.gpu.queue,
                 scene,
@@ -777,13 +785,13 @@ impl Renderer {
             );
 
             let texture_view_refs: Vec<&wgpu::TextureView> =
-                self.gpu_textures.views.iter().collect();
-            self.texture_bind_group =
+                self.textures.gpu_textures.views.iter().collect();
+            self.textures.bind_group =
                 self.gpu
                     .device
                     .create_bind_group(&wgpu::BindGroupDescriptor {
                         label: Some("WS Texture Bind Group"),
-                        layout: &self.texture_bind_group_layout,
+                        layout: &self.textures.bind_group_layout,
                         entries: &[
                             wgpu::BindGroupEntry {
                                 binding: 0,
@@ -793,7 +801,7 @@ impl Renderer {
                             },
                             wgpu::BindGroupEntry {
                                 binding: 1,
-                                resource: wgpu::BindingResource::Sampler(&self.texture_sampler),
+                                resource: wgpu::BindingResource::Sampler(&self.textures.sampler),
                             },
                         ],
                     });
@@ -805,16 +813,19 @@ impl Renderer {
             .materials
             .iter()
             .map(|mat| {
-                crate::gpu_types::MaterialGpu::from_material(mat.as_ref(), &self.gpu_textures)
+                crate::gpu_types::MaterialGpu::from_material(
+                    mat.as_ref(),
+                    &self.textures.gpu_textures,
+                )
             })
             .collect();
         let default_mat_index = material_table.len() as u32;
         material_table.push(crate::gpu_types::MaterialGpu::from_material(
             &bif_core::Material::default(),
-            &self.gpu_textures,
+            &self.textures.gpu_textures,
         ));
-        self.material_table_len = material_table.len() as u32;
-        self.material_table_buffer =
+        self.materials.table_len = material_table.len() as u32;
+        self.materials.table_buffer =
             self.gpu
                 .device
                 .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -825,7 +836,8 @@ impl Renderer {
 
         // Triangle material buffer — use compact buffer (one copy per prototype).
         // Must always be full-sized: shader indexes by primitive_id + tri_mat_offset.
-        self.has_triangle_materials = compact_tri_mats.iter().any(|&id| id != 0xFFFFFFFFu32);
+        self.materials.has_triangle_materials =
+            compact_tri_mats.iter().any(|&id| id != 0xFFFFFFFFu32);
         if compact_tri_mats.is_empty() {
             compact_tri_mats.push(0xFFFFFFFFu32);
         }
@@ -843,7 +855,7 @@ impl Renderer {
             );
             compact_tri_mats.truncate(max_entries);
         }
-        self.triangle_material_buffer =
+        self.materials.triangle_buffer =
             self.gpu
                 .device
                 .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -853,24 +865,24 @@ impl Renderer {
                 });
 
         // Rebuild material bind group
-        self.material_bind_group = self
+        self.materials.bind_group = self
             .gpu
             .device
             .create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("WS Material Bind Group"),
-                layout: &self.material_bind_group_layout,
+                layout: &self.materials.bind_group_layout,
                 entries: &[
                     wgpu::BindGroupEntry {
                         binding: 0,
-                        resource: self.material_buffer.as_entire_binding(),
+                        resource: self.materials.buffer.as_entire_binding(),
                     },
                     wgpu::BindGroupEntry {
                         binding: 1,
-                        resource: self.material_table_buffer.as_entire_binding(),
+                        resource: self.materials.table_buffer.as_entire_binding(),
                     },
                     wgpu::BindGroupEntry {
                         binding: 2,
-                        resource: self.triangle_material_buffer.as_entire_binding(),
+                        resource: self.materials.triangle_buffer.as_entire_binding(),
                     },
                 ],
             });
@@ -1044,13 +1056,13 @@ impl Renderer {
         // Each Xform post-multiplies its T/R/S onto instances whose prototype
         // originated from any node upstream of the Xform's scene input.
         {
-            use egui_snarl::{InPinId, NodeId as SnarlNodeId};
+            use egui_snarl::InPinId;
 
             // Collect active Xform nodes with their upstream depth for topological order.
             // Depth = max number of Xform nodes upstream (0 = no Xform parent).
             // Sorting by depth ensures upstream Xforms apply before downstream ones.
             struct XformEntry {
-                node_id: SnarlNodeId,
+                node_id: egui_snarl::NodeId,
                 translate: [f32; 3],
                 rotate: [f32; 3],
                 scale: [f32; 3],
@@ -1058,7 +1070,8 @@ impl Renderer {
             }
             let mut xform_entries: Vec<XformEntry> = Vec::new();
             for (nid, node) in self.nodes.node_graph_state.snarl.node_ids() {
-                if !is_node_active(&nid) {
+                let graph_nid = crate::node_graph::GraphNodeId::from(nid);
+                if !is_node_active(&graph_nid) {
                     continue;
                 }
                 if let crate::node_graph::SceneNode::Xform {
@@ -1133,7 +1146,10 @@ impl Renderer {
                     .nodes
                     .node_proto_map
                     .iter()
-                    .filter(|(nid, _)| upstream.contains(nid))
+                    .filter(|(nid, _)| {
+                        let snarl_nid: egui_snarl::NodeId = (**nid).into();
+                        upstream.contains(&snarl_nid)
+                    })
                     .flat_map(|(_, pids)| pids.iter().copied())
                     .collect();
 
@@ -1267,11 +1283,11 @@ impl Renderer {
         );
 
         // Material uniform
-        self.material_uniform = MaterialUniform::from_material(&self.scene.scene_material);
+        self.materials.uniform = MaterialUniform::from_material(&self.scene.scene_material);
         self.gpu.queue.write_buffer(
-            &self.material_buffer,
+            &self.materials.buffer,
             0,
-            bytemuck::cast_slice(&[self.material_uniform]),
+            bytemuck::cast_slice(&[self.materials.uniform]),
         );
 
         // Invalidate Ivar
@@ -1406,7 +1422,7 @@ impl Renderer {
                     if texture_loader::upload_streamed_texture(
                         &self.gpu.device,
                         &self.gpu.queue,
-                        &mut self.gpu_textures,
+                        &mut self.textures.gpu_textures,
                         msg,
                         max_dimension,
                         Some(&self.mipmap_generator),
@@ -1429,13 +1445,13 @@ impl Renderer {
         // Rebuild bind group if any textures were uploaded this frame
         if uploaded > 0 {
             let texture_view_refs: Vec<&wgpu::TextureView> =
-                self.gpu_textures.views.iter().collect();
-            self.texture_bind_group =
+                self.textures.gpu_textures.views.iter().collect();
+            self.textures.bind_group =
                 self.gpu
                     .device
                     .create_bind_group(&wgpu::BindGroupDescriptor {
                         label: Some("Texture Bind Group (streamed)"),
-                        layout: &self.texture_bind_group_layout,
+                        layout: &self.textures.bind_group_layout,
                         entries: &[
                             wgpu::BindGroupEntry {
                                 binding: 0,
@@ -1445,7 +1461,7 @@ impl Renderer {
                             },
                             wgpu::BindGroupEntry {
                                 binding: 1,
-                                resource: wgpu::BindingResource::Sampler(&self.texture_sampler),
+                                resource: wgpu::BindingResource::Sampler(&self.textures.sampler),
                             },
                         ],
                     });
@@ -1458,14 +1474,16 @@ impl Renderer {
                     .scene
                     .scene_materials
                     .iter()
-                    .map(|mat| MaterialGpu::from_material(mat.as_ref(), &self.gpu_textures))
+                    .map(|mat| {
+                        MaterialGpu::from_material(mat.as_ref(), &self.textures.gpu_textures)
+                    })
                     .collect();
                 material_table.push(MaterialGpu::from_material(
                     &bif_core::Material::default(),
-                    &self.gpu_textures,
+                    &self.textures.gpu_textures,
                 ));
                 self.gpu.queue.write_buffer(
-                    &self.material_table_buffer,
+                    &self.materials.table_buffer,
                     0,
                     bytemuck::cast_slice(&material_table),
                 );
@@ -1700,7 +1718,7 @@ impl Renderer {
         // Prepare placeholder textures (instant) and start async loading
         let texture_start = Instant::now();
         let base_dir = path.parent();
-        self.gpu_textures = texture_loader::prepare_texture_placeholders(
+        self.textures.gpu_textures = texture_loader::prepare_texture_placeholders(
             &self.gpu.device,
             &self.gpu.queue,
             &scene,
@@ -1722,20 +1740,20 @@ impl Renderer {
         }
 
         let texture_time = texture_start.elapsed();
-        let texture_count = self.gpu_textures.textures.len();
+        let texture_count = self.textures.gpu_textures.textures.len();
 
         let mut material_table: Vec<MaterialGpu> = scene
             .materials
             .iter()
-            .map(|mat| MaterialGpu::from_material(mat.as_ref(), &self.gpu_textures))
+            .map(|mat| MaterialGpu::from_material(mat.as_ref(), &self.textures.gpu_textures))
             .collect();
         let default_mat_index = material_table.len() as u32;
         material_table.push(MaterialGpu::from_material(
             &bif_core::Material::default(),
-            &self.gpu_textures,
+            &self.textures.gpu_textures,
         ));
-        self.material_table_len = material_table.len() as u32;
-        self.material_table_buffer =
+        self.materials.table_len = material_table.len() as u32;
+        self.materials.table_buffer =
             self.gpu
                 .device
                 .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -1747,7 +1765,8 @@ impl Renderer {
         // Triangle material buffer — use compact buffer (one copy per prototype).
         // Must always be full-sized: the shader indexes by primitive_id + tri_mat_offset,
         // and out-of-bounds GPU storage reads return 0 (not sentinel 0xFFFFFFFF).
-        self.has_triangle_materials = compact_tri_mats.iter().any(|&id| id != 0xFFFFFFFFu32);
+        self.materials.has_triangle_materials =
+            compact_tri_mats.iter().any(|&id| id != 0xFFFFFFFFu32);
         if compact_tri_mats.is_empty() {
             compact_tri_mats.push(0xFFFFFFFFu32);
         }
@@ -1765,7 +1784,7 @@ impl Renderer {
             );
             compact_tri_mats.truncate(max_entries);
         }
-        self.triangle_material_buffer =
+        self.materials.triangle_buffer =
             self.gpu
                 .device
                 .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -1774,35 +1793,36 @@ impl Renderer {
                     usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                 });
 
-        self.material_bind_group = self
+        self.materials.bind_group = self
             .gpu
             .device
             .create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("Material Bind Group"),
-                layout: &self.material_bind_group_layout,
+                layout: &self.materials.bind_group_layout,
                 entries: &[
                     wgpu::BindGroupEntry {
                         binding: 0,
-                        resource: self.material_buffer.as_entire_binding(),
+                        resource: self.materials.buffer.as_entire_binding(),
                     },
                     wgpu::BindGroupEntry {
                         binding: 1,
-                        resource: self.material_table_buffer.as_entire_binding(),
+                        resource: self.materials.table_buffer.as_entire_binding(),
                     },
                     wgpu::BindGroupEntry {
                         binding: 2,
-                        resource: self.triangle_material_buffer.as_entire_binding(),
+                        resource: self.materials.triangle_buffer.as_entire_binding(),
                     },
                 ],
             });
 
-        let texture_view_refs: Vec<&wgpu::TextureView> = self.gpu_textures.views.iter().collect();
-        self.texture_bind_group = self
+        let texture_view_refs: Vec<&wgpu::TextureView> =
+            self.textures.gpu_textures.views.iter().collect();
+        self.textures.bind_group = self
             .gpu
             .device
             .create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("Texture Bind Group"),
-                layout: &self.texture_bind_group_layout,
+                layout: &self.textures.bind_group_layout,
                 entries: &[
                     wgpu::BindGroupEntry {
                         binding: 0,
@@ -1810,7 +1830,7 @@ impl Renderer {
                     },
                     wgpu::BindGroupEntry {
                         binding: 1,
-                        resource: wgpu::BindingResource::Sampler(&self.texture_sampler),
+                        resource: wgpu::BindingResource::Sampler(&self.textures.sampler),
                     },
                 ],
             });
@@ -2055,11 +2075,11 @@ impl Renderer {
         }
 
         // Update material uniform buffer for viewport PBR
-        self.material_uniform = MaterialUniform::from_material(&scene_material);
+        self.materials.uniform = MaterialUniform::from_material(&scene_material);
         self.gpu.queue.write_buffer(
-            &self.material_buffer,
+            &self.materials.buffer,
             0,
-            bytemuck::cast_slice(&[self.material_uniform]),
+            bytemuck::cast_slice(&[self.materials.uniform]),
         );
 
         // Update culling manager with new prototype and instance AABBs

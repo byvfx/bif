@@ -6,7 +6,7 @@ use egui_snarl::{
 };
 
 use super::ops::mark_node_dirty;
-use super::{NodeGraphEvent, ScatterPointsParams, SceneNode};
+use super::{GraphNodeId, NodeGraphEvent, ScatterPointsParams, SceneNode};
 
 /// Resolve which node is connected to a given input pin.
 ///
@@ -99,7 +99,8 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer {
     ) {
         // Detect click on node body to select it
         if ui.rect_contains_pointer(ui.max_rect()) && ui.input(|i| i.pointer.any_pressed()) {
-            self.events.push(NodeGraphEvent::SelectNode(node_id));
+            self.events
+                .push(NodeGraphEvent::SelectNode(GraphNodeId::from(node_id)));
         }
 
         // Display flag indicator (blue dot like Houdini)
@@ -146,7 +147,7 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer {
                             // Emit load event
                             self.events.push(NodeGraphEvent::LoadUsdFile {
                                 path: file_path.clone(),
-                                node_id,
+                                node_id: GraphNodeId::from(node_id),
                             });
                         }
                     }
@@ -154,7 +155,7 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer {
                     if ui.button("Load").clicked() && !file_path.is_empty() {
                         self.events.push(NodeGraphEvent::LoadUsdFile {
                             path: file_path.clone(),
-                            node_id,
+                            node_id: GraphNodeId::from(node_id),
                         });
                     }
                 });
@@ -227,7 +228,7 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer {
                     self.events.push(NodeGraphEvent::CreatePrimitive {
                         kind: *kind,
                         size: *size,
-                        node_id,
+                        node_id: GraphNodeId::from(node_id),
                     });
                     *is_created = true;
                 }
@@ -531,9 +532,10 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer {
                 });
 
                 // Compute / Regenerate button
+                let graph_node_id = GraphNodeId::from(node_id);
                 let emit_event = |events: &mut Vec<NodeGraphEvent>| {
                     events.push(NodeGraphEvent::ScatterPointsCompute {
-                        node_id,
+                        node_id: graph_node_id,
                         params: ScatterPointsParams {
                             source: *source,
                             count: *count,
@@ -602,7 +604,7 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer {
                 });
                 if preview_changed {
                     self.events.push(NodeGraphEvent::PointPreviewUpdate {
-                        node_id,
+                        node_id: graph_node_id,
                         point_size: *point_size,
                         point_color: *point_color,
                     });
@@ -626,8 +628,9 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer {
 
                 // Auto-invalidate: inputs disconnected but still marked instanced
                 if !both_connected && *is_instanced {
-                    self.events
-                        .push(NodeGraphEvent::InstancerInvalidate { node_id });
+                    self.events.push(NodeGraphEvent::InstancerInvalidate {
+                        node_id: GraphNodeId::from(node_id),
+                    });
                     *is_instanced = false;
                     *is_computing = false;
                     *compute_failed = false;
@@ -641,9 +644,9 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer {
                         return;
                     };
                     self.events.push(NodeGraphEvent::PointInstancerCompute {
-                        node_id,
-                        points_source_node: points_source,
-                        proto_source_node: proto_source,
+                        node_id: GraphNodeId::from(node_id),
+                        points_source_node: GraphNodeId::from(points_source),
+                        proto_source_node: GraphNodeId::from(proto_source),
                     });
                     *is_computing = true;
                 }
@@ -707,7 +710,7 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer {
 
                 if !output_path.is_empty() && ui.button("Export").clicked() {
                     self.events.push(NodeGraphEvent::ExportUsd {
-                        node_id,
+                        node_id: GraphNodeId::from(node_id),
                         output_path: output_path.clone(),
                         as_sublayer: *as_sublayer,
                         export_root: export_root.clone(),
@@ -797,7 +800,9 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer {
                 });
 
                 if changed {
-                    self.events.push(NodeGraphEvent::XformChanged { node_id });
+                    self.events.push(NodeGraphEvent::XformChanged {
+                        node_id: GraphNodeId::from(node_id),
+                    });
                 }
             }
             SceneNode::UsdPrim {
@@ -1001,7 +1006,7 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer {
             }
         ) {
             self.events.push(NodeGraphEvent::InstancerInvalidate {
-                node_id: to.id.node,
+                node_id: GraphNodeId::from(to.id.node),
             });
         }
         snarl.disconnect(from.id, to.id);
@@ -1040,12 +1045,14 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer {
                 "Set Display"
             };
             if ui.button(label).clicked() {
-                self.events.push(NodeGraphEvent::SetDisplayNode(node));
+                self.events
+                    .push(NodeGraphEvent::SetDisplayNode(GraphNodeId::from(node)));
                 ui.close_menu();
             }
         }
         if ui.button("Delete").clicked() {
-            self.events.push(NodeGraphEvent::DeleteNode(node));
+            self.events
+                .push(NodeGraphEvent::DeleteNode(GraphNodeId::from(node)));
             ui.close_menu();
         }
     }

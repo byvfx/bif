@@ -15,7 +15,9 @@
 
 mod viewer;
 
+pub mod node_id;
 pub mod ops;
+pub use node_id::GraphNodeId;
 pub(crate) use ops::{collect_upstream_nodes, propagate_dirty};
 
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -80,7 +82,7 @@ pub struct ScatterPointsParams {
 #[derive(Debug, Clone)]
 pub enum NodeGraphEvent {
     /// Load a USD file at the given path (from a specific UsdRead node)
-    LoadUsdFile { path: String, node_id: NodeId },
+    LoadUsdFile { path: String, node_id: GraphNodeId },
     /// Start an Ivar render with the given SPP
     StartRender { spp: u32 },
     /// Pre-convert scene textures to .tx format
@@ -104,21 +106,21 @@ pub enum NodeGraphEvent {
     CreatePrimitive {
         kind: bif_core::PrimitiveKind,
         size: f32,
-        node_id: NodeId,
+        node_id: GraphNodeId,
     },
     /// Compute scatter points
     ScatterPointsCompute {
-        node_id: NodeId,
+        node_id: GraphNodeId,
         params: ScatterPointsParams,
     },
     /// Expand point cloud into geometry instances via Point Instancer
     PointInstancerCompute {
         /// The instancer node itself
-        node_id: NodeId,
+        node_id: GraphNodeId,
         /// Node that provides the point cloud (Scatter Points)
-        points_source_node: NodeId,
+        points_source_node: GraphNodeId,
         /// Node that provides the prototype mesh (Primitive or UsdRead)
-        proto_source_node: NodeId,
+        proto_source_node: GraphNodeId,
     },
     /// Update point preview appearance (size, color) without recompute.
     ///
@@ -127,29 +129,29 @@ pub enum NodeGraphEvent {
     /// per scatter node or per-point color attributes in the storage buffer.
     PointPreviewUpdate {
         /// Source scatter node
-        node_id: NodeId,
+        node_id: GraphNodeId,
         /// Point size in pixels
         point_size: f32,
         /// Point color RGBA
         point_color: [f32; 4],
     },
     /// Invalidate an instancer (clear cached results, reload scene)
-    InstancerInvalidate { node_id: NodeId },
+    InstancerInvalidate { node_id: GraphNodeId },
     /// Export USD from a UsdExport node
     ExportUsd {
-        node_id: NodeId,
+        node_id: GraphNodeId,
         output_path: String,
         as_sublayer: bool,
         export_root: String,
     },
     /// Xform node T/R/S changed — rebuild scene transforms
-    XformChanged { node_id: NodeId },
+    XformChanged { node_id: GraphNodeId },
     /// Set display flag on a node (which node feeds viewport/export)
-    SetDisplayNode(NodeId),
+    SetDisplayNode(GraphNodeId),
     /// Select a node (for keyboard delete, property inspector, etc.)
-    SelectNode(NodeId),
+    SelectNode(GraphNodeId),
     /// Delete a node by ID
-    DeleteNode(NodeId),
+    DeleteNode(GraphNodeId),
 }
 
 /// Pin types for node connections
@@ -654,10 +656,10 @@ pub struct NodeGraphState {
     /// Visual style for the graph
     pub style: SnarlStyle,
     /// Currently selected node (if any)
-    pub selected_node: Option<NodeId>,
+    pub selected_node: Option<GraphNodeId>,
     /// Display flag: which node feeds viewport/export (like Houdini's blue flag).
     /// When set, only this node and its upstream deps are "active".
-    pub display_node: Option<NodeId>,
+    pub display_node: Option<GraphNodeId>,
 }
 
 impl Default for NodeGraphState {
@@ -760,9 +762,9 @@ impl NodeGraphState {
 
     /// Delete the selected node.
     ///
-    /// Returns the NodeId so the caller can emit a `DeleteNode` event
+    /// Returns the GraphNodeId so the caller can emit a `DeleteNode` event
     /// for scene cleanup. Does NOT remove from snarl — the event loop does that.
-    pub fn delete_selected(&mut self) -> Option<NodeId> {
+    pub fn delete_selected(&mut self) -> Option<GraphNodeId> {
         self.selected_node.take()
     }
 
@@ -909,7 +911,7 @@ impl NodeGraphState {
 /// Render the node graph UI
 /// Returns any events that should be processed by the parent
 pub fn render_node_graph(ui: &mut egui::Ui, state: &mut NodeGraphState) -> Vec<NodeGraphEvent> {
-    let mut viewer = SceneNodeViewer::new(state.display_node);
+    let mut viewer = SceneNodeViewer::new(state.display_node.map(|id| id.into()));
 
     // Handle keyboard input for delete
     // TODO: macOS has no Delete key — add Backspace conditionally via cfg!(target_os = "macos")
@@ -992,6 +994,7 @@ pub fn render_node_graph(ui: &mut egui::Ui, state: &mut NodeGraphState) -> Vec<N
             }
             NodeGraphEvent::DeleteNode(id) => {
                 let id = *id;
+                let snarl_id: egui_snarl::NodeId = id.into();
                 if state.selected_node == Some(id) {
                     state.selected_node = None;
                 }
@@ -1000,10 +1003,10 @@ pub fn render_node_graph(ui: &mut egui::Ui, state: &mut NodeGraphState) -> Vec<N
                 }
 
                 // Emit InstancerInvalidate for any downstream PointInstancer before removing.
-                let output_count = state.snarl[id].output_count();
+                let output_count = state.snarl[snarl_id].output_count();
                 for out_idx in 0..output_count {
                     let out_pin = state.snarl.out_pin(OutPinId {
-                        node: id,
+                        node: snarl_id,
                         output: out_idx,
                     });
                     for remote in &out_pin.remotes {
@@ -1016,15 +1019,15 @@ pub fn render_node_graph(ui: &mut egui::Ui, state: &mut NodeGraphState) -> Vec<N
                             }
                         ) {
                             events_out.push(NodeGraphEvent::InstancerInvalidate {
-                                node_id: downstream,
+                                node_id: GraphNodeId::from(downstream),
                             });
                         }
                     }
                 }
                 // Recursively dirty all downstream nodes
-                propagate_dirty(id, &mut state.snarl);
+                propagate_dirty(snarl_id, &mut state.snarl);
 
-                state.snarl.remove_node(id);
+                state.snarl.remove_node(snarl_id);
                 // Pass through so renderer can clean up scene data
                 events_out.push(event);
                 continue;
