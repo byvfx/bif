@@ -32,6 +32,7 @@ pub mod texture_loader;
 mod animation;
 mod ivar_build;
 pub mod node_graph;
+pub mod persistence;
 pub mod property_inspector;
 mod render;
 mod render_ui;
