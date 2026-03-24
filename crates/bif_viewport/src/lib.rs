@@ -41,6 +41,7 @@ pub mod scene_manager;
 pub mod selection;
 pub mod skybox;
 pub mod timeline;
+mod types;
 
 // Re-exports from new modules
 pub use app_event::{AppEvent, EventBus};
@@ -73,8 +74,9 @@ pub use texture_loader::{
     DEFAULT_MAX_VIEWPORT_TEXTURE_SIZE,
 };
 pub use timeline::TimelineState;
+pub use types::*;
 
-pub use node_graph::{render_node_graph, NodeGraphEvent, NodeGraphState, SceneNode};
+pub use node_graph::{render_node_graph, GraphNodeId, NodeGraphEvent, NodeGraphState, SceneNode};
 pub use property_inspector::{
     render_property_inspector, reset_property_inspector_cache, PrimProperties, TransformEdit,
 };
@@ -86,182 +88,28 @@ pub use scene_browser::{
 /// Maximum instance count for dynamic instance buffer.
 const MAX_INSTANCES: u32 = 100_000;
 
-/// Which USD purpose geometry to display in the viewport.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PurposeMode {
-    /// Show Default + Render purpose geometry (full detail).
-    Render,
-    /// Show Default + Proxy purpose geometry (low-res preview).
-    Proxy,
-    /// Show all purposes (Default + Render + Proxy + Guide).
-    All,
-    /// Show Default + Guide purpose geometry (helper viz).
-    Guide,
+// Type definitions moved to types.rs — re-exported below via `pub use types::*`
+
+/// GPU material state — uniforms, bind groups, material table, triangle materials.
+pub(crate) struct GpuMaterialState {
+    pub uniform: MaterialUniform,
+    pub buffer: wgpu::Buffer,
+    pub bind_group_layout: wgpu::BindGroupLayout,
+    pub bind_group: wgpu::BindGroup,
+    pub table_buffer: wgpu::Buffer,
+    pub table_len: u32,
+    /// Per-triangle material IDs for primitive_index lookup (GeomSubsets).
+    pub triangle_buffer: wgpu::Buffer,
+    /// Whether we have per-triangle materials (vs instance materials).
+    pub has_triangle_materials: bool,
 }
 
-impl PurposeMode {
-    /// Whether the given purpose is visible under this mode.
-    pub fn includes(self, purpose: bif_core::Purpose) -> bool {
-        use bif_core::Purpose;
-        match purpose {
-            Purpose::Default => true, // Default is always visible
-            Purpose::Render => matches!(self, Self::Render | Self::All),
-            Purpose::Proxy => matches!(self, Self::Proxy | Self::All),
-            Purpose::Guide => matches!(self, Self::Guide | Self::All),
-        }
-    }
-}
-
-/// Framework-agnostic display settings — UI layer reads/writes these.
-#[derive(Debug, Clone)]
-pub struct DisplaySettings {
-    /// Which purpose geometry to show (Render or Proxy).
-    pub purpose_mode: PurposeMode,
-    /// Whether the built-in box-LOD system is enabled.
-    pub lod_enabled: bool,
-}
-
-impl Default for DisplaySettings {
-    fn default() -> Self {
-        Self {
-            purpose_mode: PurposeMode::Render,
-            lod_enabled: true,
-        }
-    }
-}
-
-/// Status of an asynchronous USD load operation.
-#[derive(Debug, Clone)]
-pub enum UsdLoadStatus {
-    /// No load in progress.
-    Idle,
-    /// Loading in progress with granular progress info.
-    Loading(UsdLoadProgress),
-    /// Load completed — scene + stage ready for GPU finalization.
-    Ready,
-    /// Load failed with error message.
-    Error(String),
-}
-
-/// Granular progress stages for USD loading.
-#[derive(Debug, Clone)]
-pub enum UsdLoadProgress {
-    /// Opening the USD stage via C++ bridge.
-    OpeningStage,
-    /// Extracting mesh geometry.
-    ExtractingMeshes { current: usize, total: usize },
-    /// Extracting materials.
-    ExtractingMaterials { current: usize, total: usize },
-    /// Extracting lights.
-    ExtractingLights,
-    /// Building BIF scene graph.
-    BuildingScene,
-    /// Finalizing (creating GPU buffers).
-    Finalizing,
-}
-
-impl std::fmt::Display for UsdLoadProgress {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::OpeningStage => write!(f, "Opening USD stage..."),
-            Self::ExtractingMeshes { current, total } => {
-                write!(f, "Extracting meshes ({current}/{total})...")
-            }
-            Self::ExtractingMaterials { current, total } => {
-                write!(f, "Extracting materials ({current}/{total})...")
-            }
-            Self::ExtractingLights => write!(f, "Extracting lights..."),
-            Self::BuildingScene => write!(f, "Building scene..."),
-            Self::Finalizing => write!(f, "Creating GPU buffers..."),
-        }
-    }
-}
-
-impl std::fmt::Display for UsdLoadStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Idle => write!(f, ""),
-            Self::Loading(p) => write!(f, "{p}"),
-            Self::Ready => write!(f, "Ready"),
-            Self::Error(e) => write!(f, "Error: {e}"),
-        }
-    }
-}
-
-/// Message sent from the background USD load thread.
-pub(crate) enum UsdLoadMessage {
-    /// Progress update.
-    Progress(UsdLoadProgress),
-    /// Load completed with scene + stage.
-    Complete {
-        scene: Box<bif_core::Scene>,
-        stage: bif_core::usd::UsdStage,
-        path: std::path::PathBuf,
-    },
-    /// Load failed.
-    Failed(String),
-}
-
-/// Async channel receivers and status for background operations.
-pub(crate) struct AsyncChannels {
-    /// Receiver for messages from the background USD load thread.
-    pub usd_load_receiver: Option<std::sync::mpsc::Receiver<UsdLoadMessage>>,
-    /// Current status of the async USD load (for UI display).
-    pub usd_load_status: UsdLoadStatus,
-    /// Receiver for textures loaded on background thread.
-    pub texture_load_receiver:
-        Option<std::sync::mpsc::Receiver<texture_loader::TextureLoadMessage>>,
-    /// Receiver for batch render messages.
-    pub batch_receiver: Option<std::sync::mpsc::Receiver<batch_render::BatchMessage>>,
-    /// Cancel flag for batch render.
-    pub batch_cancel_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
-    /// Receiver for background material pre-warm thread (materials + texture cache).
-    pub ivar_materials_receiver: Option<
-        std::sync::mpsc::Receiver<(
-            Vec<std::sync::Arc<bif_renderer::OpenPbrSurface>>,
-            bif_core::texture::TextureCache,
-        )>,
-    >,
-}
-
-impl Default for AsyncChannels {
-    fn default() -> Self {
-        Self {
-            usd_load_receiver: None,
-            usd_load_status: UsdLoadStatus::Idle,
-            texture_load_receiver: None,
-            batch_receiver: None,
-            batch_cancel_flag: None,
-            ivar_materials_receiver: None,
-        }
-    }
-}
-
-/// UI panel dimensions (for viewport-safe overlays).
-#[derive(Debug, Clone, Copy, Default)]
-pub(crate) struct UiLayout {
-    pub left_panel_width: f32,
-    pub right_panel_width: f32,
-    pub top_panel_height: f32,
-    pub bottom_panel_height: f32,
-}
-
-/// Parallel arrays of per-instance data (transforms, materials, prototype IDs, prim paths).
-/// Named `SceneInstances` to avoid confusion with `gpu_types::InstanceData`.
-#[derive(Default)]
-pub struct SceneInstances {
-    /// Base transforms (from scene load) — used for re-evaluation.
-    pub transforms: Vec<Mat4>,
-    /// Current transforms (after animation evaluation) — used for rendering.
-    pub current: Vec<Mat4>,
-    /// Material ID per instance.
-    pub material_ids: Vec<u32>,
-    /// Prototype ID per instance (for multi-draw rebuild).
-    pub prototype_ids: Vec<usize>,
-    /// Prim path per instance (for USD export).
-    pub prim_paths: Vec<String>,
-    /// USD purpose per instance (for viewport purpose filtering).
-    pub purposes: Vec<bif_core::Purpose>,
+/// GPU texture state — textures, sampler, bind group.
+pub(crate) struct GpuTextureState {
+    pub gpu_textures: GpuTextureSet,
+    pub sampler: wgpu::Sampler,
+    pub bind_group_layout: wgpu::BindGroupLayout,
+    pub bind_group: wgpu::BindGroup,
 }
 
 /// GPU plumbing — surface, device, queue, config.
@@ -302,16 +150,17 @@ pub(crate) struct IvarContext {
 /// Node graph evaluation state — graph, mappings, caches.
 pub(crate) struct NodeGraphContext {
     pub node_graph_state: NodeGraphState,
-    pub node_proto_map: std::collections::HashMap<egui_snarl::NodeId, Vec<usize>>,
-    pub node_cloud_map: std::collections::HashMap<egui_snarl::NodeId, usize>,
+    pub node_proto_map: std::collections::HashMap<node_graph::GraphNodeId, Vec<usize>>,
+    pub node_cloud_map: std::collections::HashMap<node_graph::GraphNodeId, usize>,
     pub next_cloud_id: usize,
-    pub node_scatter_surface_map: std::collections::HashMap<egui_snarl::NodeId, usize>,
-    pub instancer_results: std::collections::BTreeMap<egui_snarl::NodeId, Vec<bif_core::Instance>>,
+    pub node_scatter_surface_map: std::collections::HashMap<node_graph::GraphNodeId, usize>,
+    pub instancer_results:
+        std::collections::BTreeMap<node_graph::GraphNodeId, Vec<bif_core::Instance>>,
     pub cached_scene_graph: scene_browser::CachedSceneGraph,
     pub scene_graph_dirty: bool,
     pub primitive_name_counters: std::collections::HashMap<String, usize>,
     pub materials_dirty: bool,
-    pub xform_property_changed: Option<egui_snarl::NodeId>,
+    pub xform_property_changed: Option<node_graph::GraphNodeId>,
 }
 
 /// Core renderer managing wgpu state
@@ -325,20 +174,8 @@ pub struct Renderer {
     pub(crate) instance_buffer: wgpu::Buffer,
     pub(crate) num_instances: u32,
     pub cam: CameraState,
-    pub(crate) material_uniform: MaterialUniform,
-    pub(crate) material_buffer: wgpu::Buffer,
-    pub(crate) material_bind_group_layout: wgpu::BindGroupLayout,
-    pub(crate) material_bind_group: wgpu::BindGroup,
-    pub(crate) material_table_buffer: wgpu::Buffer,
-    pub(crate) material_table_len: u32,
-    /// Per-triangle material IDs for primitive_index lookup (GeomSubsets)
-    pub(crate) triangle_material_buffer: wgpu::Buffer,
-    /// Whether we have per-triangle materials (vs instance materials)
-    pub(crate) has_triangle_materials: bool,
-    pub(crate) gpu_textures: GpuTextureSet,
-    pub(crate) texture_sampler: wgpu::Sampler,
-    pub(crate) texture_bind_group_layout: wgpu::BindGroupLayout,
-    pub(crate) texture_bind_group: wgpu::BindGroup,
+    pub(crate) materials: GpuMaterialState,
+    pub(crate) textures: GpuTextureState,
     pub(crate) mesh_bounds_min: Vec3,
     pub(crate) mesh_bounds_max: Vec3,
     pub(crate) depth_texture: wgpu::Texture,
@@ -924,18 +761,22 @@ impl Renderer {
                 camera_locked: false,
                 selected_usd_camera: None,
             },
-            material_uniform,
-            material_buffer,
-            material_bind_group_layout,
-            material_bind_group,
-            material_table_buffer,
-            material_table_len,
-            triangle_material_buffer,
-            has_triangle_materials,
-            gpu_textures,
-            texture_sampler,
-            texture_bind_group_layout,
-            texture_bind_group,
+            materials: GpuMaterialState {
+                uniform: material_uniform,
+                buffer: material_buffer,
+                bind_group_layout: material_bind_group_layout,
+                bind_group: material_bind_group,
+                table_buffer: material_table_buffer,
+                table_len: material_table_len,
+                triangle_buffer: triangle_material_buffer,
+                has_triangle_materials,
+            },
+            textures: GpuTextureState {
+                gpu_textures,
+                sampler: texture_sampler,
+                bind_group_layout: texture_bind_group_layout,
+                bind_group: texture_bind_group,
+            },
             mesh_bounds_min: mesh_data.bounds_min,
             mesh_bounds_max: mesh_data.bounds_max,
             depth_texture,
