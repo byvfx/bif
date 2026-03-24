@@ -437,7 +437,17 @@ impl EmbreeScene {
             let t0 = Instant::now();
             let normal_matrices: Vec<Mat3> = transforms
                 .iter()
-                .map(|t| Mat3::from_mat4(*t).inverse().transpose())
+                .map(|t| {
+                    let m = Mat3::from_mat4(*t);
+                    let det = m.determinant();
+                    if det.abs() < 1e-10 {
+                        // Degenerate transform (zero-scale axis) — fall back to
+                        // identity to avoid NaN from singular matrix inverse
+                        Mat3::IDENTITY
+                    } else {
+                        m.inverse().transpose()
+                    }
+                })
                 .collect();
             let normat_ms = t0.elapsed().as_secs_f64() * 1000.0;
 
@@ -618,30 +628,43 @@ impl EmbreeScene {
 
                 // Crease edges (optional)
                 if !sd.crease_indices.is_empty() && !sd.crease_sharpnesses.is_empty() {
-                    _crease_index_data = sd.crease_indices.iter().map(|&i| i as u32).collect();
-                    _crease_weight_data = sd.crease_sharpnesses.to_vec();
+                    if sd.crease_indices.len() % 2 != 0 {
+                        log::warn!(
+                            "Odd crease index count ({}), skipping creases",
+                            sd.crease_indices.len()
+                        );
+                    } else if sd.crease_sharpnesses.len() != sd.crease_indices.len() / 2 {
+                        log::warn!(
+                            "Crease sharpness count ({}) != edge count ({}), skipping creases",
+                            sd.crease_sharpnesses.len(),
+                            sd.crease_indices.len() / 2
+                        );
+                    } else {
+                        _crease_index_data = sd.crease_indices.iter().map(|&i| i as u32).collect();
+                        _crease_weight_data = sd.crease_sharpnesses.to_vec();
 
-                    rtcSetSharedGeometryBuffer(
-                        geom,
-                        RTCBufferType::EdgeCreaseIndex as u32,
-                        0,
-                        RTCFormat::UInt as u32,
-                        _crease_index_data.as_ptr() as *const std::ffi::c_void,
-                        0,
-                        8, // pairs of u32
-                        _crease_index_data.len() / 2,
-                    );
+                        rtcSetSharedGeometryBuffer(
+                            geom,
+                            RTCBufferType::EdgeCreaseIndex as u32,
+                            0,
+                            RTCFormat::UInt as u32,
+                            _crease_index_data.as_ptr() as *const std::ffi::c_void,
+                            0,
+                            8, // pairs of u32
+                            _crease_index_data.len() / 2,
+                        );
 
-                    rtcSetSharedGeometryBuffer(
-                        geom,
-                        RTCBufferType::EdgeCreaseWeight as u32,
-                        0,
-                        RTCFormat::Float as u32,
-                        _crease_weight_data.as_ptr() as *const std::ffi::c_void,
-                        0,
-                        4,
-                        _crease_weight_data.len(),
-                    );
+                        rtcSetSharedGeometryBuffer(
+                            geom,
+                            RTCBufferType::EdgeCreaseWeight as u32,
+                            0,
+                            RTCFormat::Float as u32,
+                            _crease_weight_data.as_ptr() as *const std::ffi::c_void,
+                            0,
+                            4,
+                            _crease_weight_data.len(),
+                        );
+                    }
                 }
 
                 // Set Catmull-Clark mode with pin-corners boundary
@@ -841,7 +864,15 @@ impl EmbreeScene {
             let t0 = Instant::now();
             let normal_matrices: Vec<Mat3> = transforms
                 .par_iter()
-                .map(|t| Mat3::from_mat4(*t).inverse().transpose())
+                .map(|t| {
+                    let m = Mat3::from_mat4(*t);
+                    let det = m.determinant();
+                    if det.abs() < 1e-10 {
+                        Mat3::IDENTITY
+                    } else {
+                        m.inverse().transpose()
+                    }
+                })
                 .collect();
             let normat_ms = t0.elapsed().as_secs_f64() * 1000.0;
 
@@ -1134,9 +1165,15 @@ impl Drop for EmbreeScene {
             self.instance_count,
             self.triangle_count
         );
+        // SAFETY: Release order matters. Top-level scene references prototype_scene
+        // via Embree instances, so release top-level first. Device must be last.
+        // After drop() returns, Rust drops remaining fields in declaration order.
+        // The _vertex_data, _index_data, _transform_data fields MUST be declared
+        // AFTER device/scene/prototype_scene so they outlive the Embree pointers.
+        // Reordering struct fields will cause use-after-free.
         unsafe {
             rtcReleaseScene(self.scene);
-            rtcReleaseScene(self.prototype_scene); // Release prototype after top-level scene
+            rtcReleaseScene(self.prototype_scene);
             rtcReleaseDevice(self.device);
         }
     }

@@ -466,12 +466,16 @@ impl Material for OpenPbrSurface {
         let n_dot_h = n.dot(h).max(0.0);
         let l_dot_h = wi.dot(h).max(0.0);
 
-        // Diffuse (Burley)
+        // Diffuse (Burley) with specular Fresnel energy conservation
         let fd90 = 0.5 + 2.0 * roughness * l_dot_h * l_dot_h;
         let fl = schlick_weight(n_dot_l);
         let fv = schlick_weight(n_dot_v);
         let fd = lerp(1.0, fd90, fl) * lerp(1.0, fd90, fv);
-        let diffuse = base_color * fd * (1.0 - metalness) / PI;
+        // Attenuate diffuse by (1 - F_specular) to conserve energy: specular
+        // reflects light that never reaches the diffuse substrate.
+        let f0_dielectric = ior_to_f0(self.specular_ior) * self.specular_weight;
+        let specular_fresnel = schlick_fresnel_scalar(f0_dielectric, n_dot_l);
+        let diffuse = base_color * fd * (1.0 - metalness) * (1.0 - specular_fresnel) / PI;
 
         // Specular (GGX with IOR-based Fresnel)
         let d = ggx_d(n_dot_h, alpha);
@@ -508,19 +512,22 @@ impl Material for OpenPbrSurface {
         // Cosine-weighted hemisphere PDF
         let cos_pdf = (n_dot_l / PI).max(0.0001);
 
-        // GGX PDF
+        // GGX VNDF PDF: D(h) * G1(wo) * max(0, wo.h) / (n.wo) / (4 * wo.h)
+        //             = D(h) * G1(wo) / (4 * n.wo)
         let h = (wo + wi).normalize();
         let n_dot_h = n.dot(h).max(0.0);
-        let l_dot_h = wi.dot(h).max(0.0);
+        let n_dot_v = n.dot(wo).max(0.001);
+        let v_dot_h = wo.dot(h).max(0.0);
         let d = ggx_d(n_dot_h, alpha);
-        let ggx_pdf = (d * n_dot_h / (4.0 * l_dot_h)).max(0.0001);
+        let g1_v = smith_g1_ggx(n_dot_v, alpha);
+        let ggx_pdf = (d * g1_v * v_dot_h / (4.0 * n_dot_v)).max(0.0001);
 
         (p_diffuse * cos_pdf + p_specular * ggx_pdf).max(0.0001)
     }
 
     fn is_delta(&self) -> bool {
         self.specular_roughness < 0.001
-            && (self.base_metalness > 0.999 || self.transmission_weight > 0.5)
+            && (self.base_metalness > 0.999 || self.transmission_weight > 0.0)
     }
 
     fn albedo(&self, u: f32, v: f32) -> Color {
@@ -643,7 +650,10 @@ impl OpenPbrSurface {
             Color::ZERO
         };
 
-        let attenuation = base_color * diffuse / PI + fuzz;
+        // Attenuate diffuse by (1 - F_specular) for energy conservation
+        let f0_scalar = ior_to_f0(self.specular_ior) * self.specular_weight;
+        let specular_fresnel = schlick_fresnel_scalar(f0_scalar, n_dot_l);
+        let attenuation = base_color * diffuse * (1.0 - specular_fresnel) / PI + fuzz;
         let scattered = Ray::new(hit_point, wi, time);
         let pdf = (n_dot_l / PI).max(0.0001);
 
@@ -671,7 +681,14 @@ impl OpenPbrSurface {
         let alpha = roughness * roughness;
         let alpha = alpha.max(0.001);
 
-        let h = sample_ggx(n, alpha, rng);
+        // Transform wo into local frame (Z-up = shading normal)
+        let (tangent, bitangent) = build_orthonormal_basis(n);
+        let wo_local = Vec3::new(wo.dot(tangent), wo.dot(bitangent), wo.dot(n));
+
+        // VNDF sample microfacet normal in local space, then transform to world
+        let h_local = sample_ggx_vndf(wo_local, alpha, rng);
+        let h = (h_local.x * tangent + h_local.y * bitangent + h_local.z * n).normalize();
+
         let wi = reflect(-wo, h);
 
         let n_dot_l = n.dot(wi);
@@ -679,19 +696,24 @@ impl OpenPbrSurface {
             return None;
         }
 
-        let n_dot_v = n.dot(wo).max(0.0);
-        let n_dot_h = n.dot(h).max(0.0);
+        let n_dot_v = n.dot(wo).max(0.001);
         let l_dot_h = wi.dot(h).max(0.0);
 
-        let d = ggx_d(n_dot_h, alpha);
-        let g = smith_g_ggx(n_dot_l, n_dot_v, alpha);
+        // With VNDF sampling, weight simplifies to F * G2 / G1
+        let g2 = smith_g_ggx(n_dot_l, n_dot_v, alpha);
+        let g1_v = smith_g1_ggx(n_dot_v, alpha);
         let f0 = self.fresnel_0_textured(base_color, metalness);
         let f = schlick_fresnel3(f0, l_dot_h);
 
-        let weight = (g * l_dot_h) / (n_dot_h * n_dot_v.max(0.001));
-        let attenuation = f * weight.max(0.0);
+        let attenuation = f * (g2 / g1_v.max(0.001));
         let scattered = Ray::new(hit_point, wi, time);
-        let pdf = (d * n_dot_h / (4.0 * l_dot_h)).max(0.0001);
+
+        // VNDF PDF: D(h) * G1(wo) * max(0, wo.h) / (n.wo) / (4 * wo.h)
+        //         = D(h) * G1(wo) / (4 * n.wo)
+        let n_dot_h = n.dot(h).max(0.0);
+        let d = ggx_d(n_dot_h, alpha);
+        let v_dot_h = wo.dot(h).max(0.0);
+        let pdf = (d * g1_v * v_dot_h / (4.0 * n_dot_v)).max(0.0001);
 
         Some(ScatterResult {
             attenuation,
@@ -817,6 +839,12 @@ fn schlick_weight(cos_theta: f32) -> f32 {
     x2 * x2 * x // (1 - cos_theta)^5
 }
 
+/// Schlick Fresnel approximation (scalar).
+#[inline]
+fn schlick_fresnel_scalar(f0: f32, cos_theta: f32) -> f32 {
+    f0 + (1.0 - f0) * schlick_weight(cos_theta)
+}
+
 /// Schlick Fresnel approximation.
 #[inline]
 fn schlick_fresnel3(f0: Color, cos_theta: f32) -> Color {
@@ -840,8 +868,52 @@ fn smith_g_ggx(n_dot_l: f32, n_dot_v: f32, alpha: f32) -> f32 {
     g1_l * g1_v
 }
 
-/// Sample GGX microfacet normal in world space.
-fn sample_ggx(n: Vec3, alpha: f32, rng: &mut dyn RngCore) -> Vec3 {
+/// Smith G1 masking function for a single direction (GGX).
+#[inline]
+fn smith_g1_ggx(n_dot_v: f32, alpha: f32) -> f32 {
+    let a2 = alpha * alpha;
+    let denom = n_dot_v + (a2 + (1.0 - a2) * n_dot_v * n_dot_v).sqrt();
+    2.0 * n_dot_v / denom
+}
+
+/// Sample GGX visible normal distribution (Heitz 2018).
+/// Returns a microfacet normal in local space where Z is the surface normal.
+/// `wo_local` is the outgoing direction in the local frame (Z-up).
+fn sample_ggx_vndf(wo_local: Vec3, alpha: f32, rng: &mut dyn RngCore) -> Vec3 {
+    // 1. Stretch view direction to hemisphere configuration
+    let v = Vec3::new(alpha * wo_local.x, alpha * wo_local.y, wo_local.z).normalize();
+
+    // 2. Orthonormal basis around stretched view
+    let t1 = if v.z.abs() < 0.9999 {
+        Vec3::new(-v.y, v.x, 0.0).normalize()
+    } else {
+        Vec3::X
+    };
+    let t2 = v.cross(t1);
+
+    // 3. Sample disk and project to hemisphere
+    let r1: f32 = gen_f32(rng);
+    let r2: f32 = gen_f32(rng);
+    let a = 1.0 / (1.0 + v.z);
+    let r = r1.sqrt();
+    let phi = if r2 < a {
+        r2 / a * PI
+    } else {
+        PI + (r2 - a) / (1.0 - a) * PI
+    };
+    let p1 = r * phi.cos();
+    let p2 = r * phi.sin() * if r2 < a { 1.0 } else { v.z };
+
+    // 4. Compute normal on hemisphere
+    let n = p1 * t1 + p2 * t2 + (1.0 - p1 * p1 - p2 * p2).max(0.0).sqrt() * v;
+
+    // 5. Unstretch and normalize
+    Vec3::new(alpha * n.x, alpha * n.y, n.z.max(1e-6)).normalize()
+}
+
+/// Sample GGX microfacet normal in world space (classic NDF sampling).
+#[allow(dead_code)]
+fn sample_ggx_ndf(n: Vec3, alpha: f32, rng: &mut dyn RngCore) -> Vec3 {
     let u1 = gen_f32(rng).clamp(0.0001, 0.9999);
     let u2 = gen_f32(rng);
 

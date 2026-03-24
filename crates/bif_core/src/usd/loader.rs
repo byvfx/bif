@@ -157,7 +157,7 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
             mesh_data.vertices.len().hash(&mut hasher);
             mesh_data.indices.len().hash(&mut hasher);
             let vlen = mesh_data.vertices.len();
-            let sample_count = vlen.min(10);
+            let sample_count = vlen.min(50);
             for i in 0..sample_count {
                 let idx = if sample_count <= 1 {
                     0
@@ -171,7 +171,7 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
                 }
             }
             let ilen = mesh_data.indices.len();
-            let idx_sample_count = ilen.min(10);
+            let idx_sample_count = ilen.min(50);
             for i in 0..idx_sample_count {
                 let idx = if idx_sample_count <= 1 {
                     0
@@ -180,6 +180,23 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
                 };
                 if let Some(&val) = mesh_data.indices.get(idx) {
                     val.hash(&mut hasher);
+                }
+            }
+            // Hash sampled normals for stronger dedup
+            if let Some(normals) = mesh_data.normals.as_ref().filter(|n| !n.is_empty()) {
+                let nlen = normals.len();
+                let n_samples = nlen.min(20);
+                for i in 0..n_samples {
+                    let idx = if n_samples <= 1 {
+                        0
+                    } else {
+                        i * (nlen - 1) / (n_samples - 1)
+                    };
+                    if let Some(n) = normals.get(idx) {
+                        n.x.to_bits().hash(&mut hasher);
+                        n.y.to_bits().hash(&mut hasher);
+                        n.z.to_bits().hash(&mut hasher);
+                    }
                 }
             }
             hasher.finish()
@@ -248,10 +265,7 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
                             mesh_data.path,
                             keyframes.len()
                         );
-                        Some(AnimatedTransform::with_keyframes(
-                            transform.clone(),
-                            keyframes,
-                        ))
+                        Some(AnimatedTransform::with_keyframes(transform, keyframes))
                     }
                 }
                 Err(e) => {
@@ -267,18 +281,13 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
             None
         };
 
-        if let Some(anim) = animation {
-            scene.add_animated_instance_with_path(
-                proto_id,
-                transform,
-                anim,
-                mesh_data.path.clone(),
-            );
+        let inst_idx = if let Some(anim) = animation {
+            scene.add_animated_instance_with_path(proto_id, transform, anim, mesh_data.path.clone())
         } else {
-            scene.add_instance_with_path(proto_id, transform, mesh_data.path.clone());
-        }
+            scene.add_instance_with_path(proto_id, transform, mesh_data.path.clone())
+        };
 
-        scene.set_last_instance_purpose(mesh_data.purpose.into());
+        scene.set_instance_purpose(inst_idx, mesh_data.purpose.into());
     }
     let mesh_time = mesh_start.elapsed();
     let total_verts: usize = meshes.iter().map(|m| m.vertices.len()).sum();
@@ -409,8 +418,8 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
                     proto_id
                 };
 
-                scene.add_instance_with_path(target_proto, transform, prim_path);
-                scene.set_last_instance_purpose(native_inst.purpose.into());
+                let inst_idx = scene.add_instance_with_path(target_proto, transform, prim_path);
+                scene.set_instance_purpose(inst_idx, native_inst.purpose.into());
             }
         }
     }
@@ -676,10 +685,7 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
                 if keyframes.is_empty() {
                     None
                 } else {
-                    Some(AnimatedTransform::with_keyframes(
-                        inst.transform.clone(),
-                        keyframes,
-                    ))
+                    Some(AnimatedTransform::with_keyframes(inst.transform, keyframes))
                 }
             });
 

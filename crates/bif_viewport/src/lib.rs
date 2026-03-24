@@ -1482,7 +1482,7 @@ impl Renderer {
     /// Get the current transform for an instance, preferring edit overrides.
     pub fn get_instance_transform(&self, idx: usize) -> Option<bif_core::Transform> {
         if let Some(t) = self.scene.edit_state.transform_overrides.get(&idx) {
-            return Some(t.clone());
+            return Some(*t);
         }
         if idx < self.scene.instances.current.len() {
             return Some(bif_core::Transform::from_matrix(

@@ -948,7 +948,9 @@ pub enum UsdBridgeError {
 impl From<UsdBridgeErrorCode> for UsdBridgeError {
     fn from(code: UsdBridgeErrorCode) -> Self {
         match code {
-            UsdBridgeErrorCode::Success => unreachable!("Success is not an error"),
+            UsdBridgeErrorCode::Success => {
+                UsdBridgeError::Unknown("unexpected Success code".into())
+            }
             UsdBridgeErrorCode::NullPointer => UsdBridgeError::NullPointer,
             UsdBridgeErrorCode::FileNotFound => UsdBridgeError::FileNotFound(String::new()),
             UsdBridgeErrorCode::InvalidStage => UsdBridgeError::InvalidStage,

@@ -189,6 +189,9 @@ impl Texture {
         if self.width == 0 || self.height == 0 {
             return Vec3::new(1.0, 0.0, 1.0); // Magenta debug color
         }
+        if !u.is_finite() || !v.is_finite() {
+            return Vec3::new(1.0, 0.0, 1.0); // Magenta debug color
+        }
 
         let (u, v) = self.transform_uv(u, v);
 
@@ -229,6 +232,9 @@ impl Texture {
     #[must_use]
     pub fn sample_channel(&self, u: f32, v: f32, channel: usize) -> f32 {
         if self.width == 0 || self.height == 0 {
+            return 0.0;
+        }
+        if !u.is_finite() || !v.is_finite() {
             return 0.0;
         }
         let (u, v) = self.transform_uv(u, v);
@@ -473,10 +479,8 @@ impl TextureCache {
         for path in paths {
             let full_path = self.resolve_path(path);
             let tx_path = oiio::get_tx_path(&full_path);
-            if tx_path.exists() {
-                if std::fs::remove_file(&tx_path).is_ok() {
-                    removed += 1;
-                }
+            if tx_path.exists() && std::fs::remove_file(&tx_path).is_ok() {
+                removed += 1;
             }
         }
         if removed > 0 {

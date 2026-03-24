@@ -154,7 +154,8 @@ impl HdriEnvironment {
 
         // Convert pixel PDF to solid angle PDF
         // Clamp v away from poles to avoid MIS fireflies at singularities
-        let v_clamped = v.clamp(0.001 / PI, 1.0 - 0.001 / PI);
+        let half_texel = 0.5 / self.hdr.height as f32;
+        let v_clamped = v.clamp(half_texel, 1.0 - half_texel);
         let theta = (0.5 - v_clamped) * PI;
         let sin_polar = theta.cos().max(1e-10); // cos(elevation) = sin(polar angle)
 

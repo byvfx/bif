@@ -491,6 +491,12 @@ impl RadianceCache {
             }
 
             // Active — EMA blend, CAS count to commit
+            // NOTE: Known TOCTOU race in lock-free EMA blend — between reading old radiance
+            // values and CAS on sample_count, another thread may update radiance fields.
+            // If CAS succeeds, the blend is computed against stale values. This manifests as
+            // occasional flicker in cached regions during progressive rendering.
+            // Acceptable for IPR preview quality. For production-quality rendering, use
+            // a mutex or pack count+checksum into AtomicU64 and re-read after CAS.
             let old_r = f32::from_bits(buf.radiance_r_atomic(idx).load(Ordering::Relaxed));
             let old_g = f32::from_bits(buf.radiance_g_atomic(idx).load(Ordering::Relaxed));
             let old_b = f32::from_bits(buf.radiance_b_atomic(idx).load(Ordering::Relaxed));

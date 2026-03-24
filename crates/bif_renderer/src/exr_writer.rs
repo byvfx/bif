@@ -236,6 +236,9 @@ pub fn write_exr(
 
     let any_channels = AnyChannels::sort(channels);
 
+    // TODO: Add chromaticities (Rec.709/sRGB) and render engine metadata
+    // when the exr crate exposes attribute APIs for these fields.
+    // Production EXR files need this for correct color display in Nuke/RV.
     let layer = Layer::new(
         (w, h),
         LayerAttributes::named("main"),

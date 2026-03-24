@@ -926,8 +926,10 @@ impl Renderer {
                                         normal[global_idx] = result.normals[pixel_idx];
                                     }
                                 }
-                                if let Some(ref mut sn) = self.ivar.ivar_state.shading_normal_buffer {
-                                    if pixel_idx < result.shading_normals.len() && global_idx < sn.len()
+                                if let Some(ref mut sn) = self.ivar.ivar_state.shading_normal_buffer
+                                {
+                                    if pixel_idx < result.shading_normals.len()
+                                        && global_idx < sn.len()
                                     {
                                         sn[global_idx] = result.shading_normals[pixel_idx];
                                     }

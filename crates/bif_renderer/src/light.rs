@@ -45,17 +45,20 @@ pub struct DistantLight {
     pub color: Vec3,
     /// Light intensity
     pub intensity: f32,
-    /// Angular diameter in radians (0 = point source)
+    /// Angular diameter in radians (0 = point source).
+    /// Stored in radians; callers pass degrees, converted in constructor.
     pub angle: f32,
 }
 
 impl DistantLight {
-    pub fn new(direction: Vec3, color: Vec3, intensity: f32, angle: f32) -> Self {
+    /// Create a distant light. `angle_degrees` is the angular diameter in degrees
+    /// (matching USD's UsdLuxDistantLight convention, e.g. 0.53 for sun disk).
+    pub fn new(direction: Vec3, color: Vec3, intensity: f32, angle_degrees: f32) -> Self {
         Self {
             direction: direction.normalize(),
             color,
             intensity,
-            angle,
+            angle: angle_degrees.to_radians(),
         }
     }
 }
@@ -63,8 +66,9 @@ impl DistantLight {
 impl Light for DistantLight {
     fn sample(&self, _point: Vec3, rng: &mut dyn RngCore) -> LightSample {
         // For non-zero angle, jitter direction within cone
+        // self.angle is angular diameter in radians; half-angle defines the cone
         let dir = if self.angle > 0.0 {
-            let cos_max = (1.0 - self.angle * 0.5).cos();
+            let cos_max = (self.angle * 0.5).cos();
             sample_cone(-self.direction, cos_max, rng)
         } else {
             -self.direction
@@ -74,7 +78,7 @@ impl Light for DistantLight {
             direction: dir,
             emission: self.color * self.intensity,
             pdf: if self.angle > 0.0 {
-                let cos_max = (1.0 - self.angle * 0.5).cos();
+                let cos_max = (self.angle * 0.5).cos();
                 1.0 / (std::f32::consts::TAU * (1.0 - cos_max))
             } else {
                 1.0 // Delta PDF
@@ -87,7 +91,7 @@ impl Light for DistantLight {
     fn pdf(&self, _point: Vec3, direction: Vec3) -> f32 {
         if self.angle > 0.0 {
             let cos_theta = direction.dot(-self.direction);
-            let cos_max = (1.0 - self.angle * 0.5).cos();
+            let cos_max = (self.angle * 0.5).cos();
             if cos_theta >= cos_max {
                 1.0 / (std::f32::consts::TAU * (1.0 - cos_max))
             } else {
@@ -153,7 +157,7 @@ impl Light for SphereLight {
         } else {
             // Point light or inside sphere
             let dir = to_light / distance;
-            let falloff = 1.0 / (distance * distance + 0.01);
+            let falloff = 1.0 / (distance * distance).max(0.001);
 
             LightSample {
                 direction: dir,
@@ -467,16 +471,6 @@ fn sample_cone(axis: Vec3, cos_max: f32, rng: &mut dyn RngCore) -> Vec3 {
     let z = cos_theta;
 
     // Transform to world (build orthonormal basis from axis)
-    let (u, v) = orthonormal_basis(axis);
+    let (u, v) = bif_math::build_orthonormal_basis(axis);
     (u * x + v * y + axis * z).normalize()
-}
-
-/// Build orthonormal basis from a single vector.
-fn orthonormal_basis(n: Vec3) -> (Vec3, Vec3) {
-    let sign = if n.z >= 0.0 { 1.0 } else { -1.0 };
-    let a = -1.0 / (sign + n.z);
-    let b = n.x * n.y * a;
-    let u = Vec3::new(1.0 + sign * n.x * n.x * a, sign * b, -sign * n.x);
-    let v = Vec3::new(b, sign + n.y * n.y * a, -n.y);
-    (u, v)
 }

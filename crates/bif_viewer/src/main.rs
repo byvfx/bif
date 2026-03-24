@@ -325,7 +325,7 @@ impl ApplicationHandler for App {
                                     if let Some(current) = renderer.get_instance_transform(sel_idx)
                                     {
                                         // Build old_transform from drag_start_world
-                                        let mut old_transform = current.clone();
+                                        let mut old_transform = current;
                                         old_transform.translation =
                                             renderer.selection.gizmo_state.drag_start_world;
 

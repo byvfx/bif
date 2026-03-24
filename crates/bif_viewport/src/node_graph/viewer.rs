@@ -636,8 +636,10 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer {
 
                 // Auto-compute: both inputs connected, not yet instanced, not failed
                 if both_connected && !*is_instanced && !*is_computing && !*compute_failed {
-                    let points_source = points_node.unwrap();
-                    let proto_source = proto_node.unwrap();
+                    let (Some(points_source), Some(proto_source)) = (points_node, proto_node)
+                    else {
+                        return;
+                    };
                     self.events.push(NodeGraphEvent::PointInstancerCompute {
                         node_id,
                         points_source_node: points_source,

@@ -99,7 +99,7 @@ impl PixelFilterConfig {
 
 /// Box filter: weight 1.0 if within half-pixel, else 0.0.
 fn eval_box(dx: f32, dy: f32) -> f32 {
-    if dx.abs() <= 0.5 && dy.abs() <= 0.5 {
+    if dx.abs() < 0.5 && dy.abs() < 0.5 {
         1.0
     } else {
         0.0
@@ -250,11 +250,13 @@ mod tests {
 
     #[test]
     fn test_box_filter_identical_to_uniform() {
-        // Box filter at center and edges both return 1.0 (uniform weight)
+        // Box filter at center and interior return 1.0 (uniform weight)
         let cfg = PixelFilterConfig::default();
-        let offsets = [(0.0, 0.0), (0.1, -0.3), (-0.49, 0.49), (0.5, 0.5)];
+        let offsets = [(0.0, 0.0), (0.1, -0.3), (-0.49, 0.49)];
         for (dx, dy) in offsets {
             assert_eq!(cfg.evaluate(dx, dy), 1.0, "box at ({dx}, {dy})");
         }
+        // Half-open interval: boundary (0.5, 0.5) maps to 0.0
+        assert_eq!(cfg.evaluate(0.5, 0.5), 0.0, "box at boundary (0.5, 0.5)");
     }
 }

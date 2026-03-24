@@ -2224,21 +2224,21 @@ impl Renderer {
         }
         for (inst, anim) in scene.instances_with_animations() {
             let remapped_proto_id = inst.prototype_id + proto_offset;
-            if let Some(anim) = anim {
+            let inst_idx = if let Some(anim) = anim {
                 self.scene.working_scene.add_animated_instance(
                     remapped_proto_id,
-                    inst.transform.clone(),
+                    inst.transform,
                     anim.clone(),
-                );
+                )
             } else {
                 self.scene
                     .working_scene
-                    .add_instance(remapped_proto_id, inst.transform.clone());
-            }
+                    .add_instance(remapped_proto_id, inst.transform)
+            };
             // Preserve purpose from loaded scene
             self.scene
                 .working_scene
-                .set_last_instance_purpose(inst.purpose);
+                .set_instance_purpose(inst_idx, inst.purpose);
         }
         let mat_source_dir = path.parent().map(|p| p.to_path_buf());
         for mat in &scene.materials {

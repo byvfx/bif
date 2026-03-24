@@ -288,7 +288,7 @@ impl Renderer {
                     // Use edit override if present, otherwise decompose from current_transforms
                     let transform =
                         if let Some(t) = self.scene.edit_state.transform_overrides.get(&idx) {
-                            t.clone()
+                            *t
                         } else if idx < self.scene.instances.current.len() {
                             bif_core::Transform::from_matrix(self.scene.instances.current[idx])
                         } else {
@@ -604,7 +604,7 @@ impl Renderer {
                 if sel_idx < self.scene.instances.current.len() {
                     let transform =
                         if let Some(t) = self.scene.edit_state.transform_overrides.get(&sel_idx) {
-                            t.clone()
+                            *t
                         } else {
                             bif_core::Transform::from_matrix(self.scene.instances.current[sel_idx])
                         };

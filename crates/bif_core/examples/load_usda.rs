@@ -41,12 +41,12 @@ fn main() {
                 );
                 println!(
                     "       Bounds: ({:.2}, {:.2}, {:.2}) to ({:.2}, {:.2}, {:.2})",
-                    proto.bounds.x.min,
-                    proto.bounds.y.min,
-                    proto.bounds.z.min,
-                    proto.bounds.x.max,
-                    proto.bounds.y.max,
-                    proto.bounds.z.max
+                    proto.mesh.bounds.x.min,
+                    proto.mesh.bounds.y.min,
+                    proto.mesh.bounds.z.min,
+                    proto.mesh.bounds.x.max,
+                    proto.mesh.bounds.y.max,
+                    proto.mesh.bounds.z.max
                 );
                 println!("       Has normals: {}", proto.mesh.has_normals());
             }

@@ -122,6 +122,9 @@ impl HdrImage {
     /// `rotation` is in radians. Returns (u, v) in [0, 1].
     pub fn direction_to_uv(dir: [f32; 3], rotation: f32) -> (f32, f32) {
         let len = (dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]).sqrt();
+        if len < 1e-10 {
+            return (0.5, 0.5);
+        }
         let dx = dir[0] / len;
         let dy = dir[1] / len;
         let dz = dir[2] / len;
@@ -217,11 +220,11 @@ impl HdrImage {
     /// Downscale image if either dimension exceeds `max_dim`.
     ///
     /// Preserves aspect ratio using bilinear resampling.
-    /// Returns clone unchanged if already within limits.
-    pub fn downscale_to_max_dim(&self, max_dim: u32) -> Self {
+    /// Returns `None` if already within limits (caller should use original).
+    pub fn downscale_to_max_dim(&self, max_dim: u32) -> Option<Self> {
         let max_side = self.width.max(self.height);
         if max_side <= max_dim {
-            return self.clone();
+            return None;
         }
 
         let scale = max_dim as f32 / max_side as f32;
@@ -237,11 +240,11 @@ impl HdrImage {
             }
         }
 
-        Self {
+        Some(Self {
             width: new_w,
             height: new_h,
             pixels,
-        }
+        })
     }
 }
 
@@ -364,10 +367,10 @@ mod tests {
             height: 256,
             pixels: vec![[1.0, 0.5, 0.0]; 512 * 256],
         };
-        let result = img.downscale_to_max_dim(8192);
-        assert_eq!(result.width, 512);
-        assert_eq!(result.height, 256);
-        assert_eq!(result.pixels.len(), 512 * 256);
+        assert!(
+            img.downscale_to_max_dim(8192).is_none(),
+            "should return None when already within limits"
+        );
     }
 
     #[test]
@@ -378,7 +381,7 @@ mod tests {
             height: 1024,
             pixels: vec![[1.0, 1.0, 1.0]; 2048 * 1024],
         };
-        let result = img.downscale_to_max_dim(1024);
+        let result = img.downscale_to_max_dim(1024).expect("should downscale");
         assert_eq!(result.width, 1024);
         assert_eq!(result.height, 512);
         assert_eq!(result.pixels.len(), (1024 * 512) as usize);

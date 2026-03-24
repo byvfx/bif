@@ -666,7 +666,9 @@ impl IvarState {
                 self.alpha_buffer.as_mut().unwrap().fill(0.0);
                 self.depth_buffer.as_mut().unwrap().fill(f32::INFINITY);
                 self.normal_buffer.as_mut().unwrap().fill([0.0; 3]);
-                if let Some(ref mut sn) = self.shading_normal_buffer { sn.fill([0.0; 3]); }
+                if let Some(ref mut sn) = self.shading_normal_buffer {
+                    sn.fill([0.0; 3]);
+                }
                 self.albedo_buffer.as_mut().unwrap().fill([0.0; 3]);
             } else {
                 self.alpha_buffer = Some(vec![0.0; pixel_count]);

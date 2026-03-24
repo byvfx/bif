@@ -624,7 +624,7 @@ fn render_editable_transform(
         // Store drag start transform if not already stored
         let drag_start: Option<bif_core::Transform> = ui.data(|d| d.get_temp(drag_start_id));
         if drag_start.is_none() {
-            ui.data_mut(|d| d.insert_temp(drag_start_id, transform.clone()));
+            ui.data_mut(|d| d.insert_temp(drag_start_id, *transform));
         }
 
         let new_transform = values_to_transform(&values);
@@ -632,7 +632,7 @@ fn render_editable_transform(
         // Emit live preview edit (not committed yet)
         event_bus.emit(AppEvent::TransformEdit(TransformEdit {
             instance_index,
-            old_transform: transform.clone(),
+            old_transform: *transform,
             new_transform,
             committed: false,
         }));

@@ -65,13 +65,13 @@ impl UndoCommand for TransformCommand {
     fn execute(&self, state: &mut EditState) {
         state
             .transform_overrides
-            .insert(self.instance_index, self.new_transform.clone());
+            .insert(self.instance_index, self.new_transform);
     }
 
     fn undo(&self, state: &mut EditState) {
         state
             .transform_overrides
-            .insert(self.instance_index, self.old_transform.clone());
+            .insert(self.instance_index, self.old_transform);
     }
 
     fn description(&self) -> &str {

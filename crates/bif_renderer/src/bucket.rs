@@ -214,7 +214,11 @@ pub fn render_bucket_with_aovs(
             pixels.push(color);
             depths.push(aov.depth);
             normals.push([aov.normal.x, aov.normal.y, aov.normal.z]);
-            shading_normals.push([aov.shading_normal.x, aov.shading_normal.y, aov.shading_normal.z]);
+            shading_normals.push([
+                aov.shading_normal.x,
+                aov.shading_normal.y,
+                aov.shading_normal.z,
+            ]);
             alphas.push(aov.alpha);
             cache_samples.push(aov.cache_samples);
             albedos.push([aov.albedo.x, aov.albedo.y, aov.albedo.z]);

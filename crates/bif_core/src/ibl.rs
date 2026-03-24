@@ -5,6 +5,7 @@
 
 use std::f32::consts::PI;
 
+use bif_math::Vec3;
 use rayon::prelude::*;
 
 use crate::hdr::HdrImage;
@@ -109,16 +110,16 @@ fn face_texel_to_dir(face: usize, x: u32, y: u32, size: u32) -> [f32; 3] {
     let v = 2.0 * (y as f32 + 0.5) / size as f32 - 1.0;
 
     let dir = match face {
-        0 => [1.0, -v, -u],  // +X
-        1 => [-1.0, -v, u],  // -X
-        2 => [u, 1.0, v],    // +Y
-        3 => [u, -1.0, -v],  // -Y
-        4 => [u, -v, 1.0],   // +Z
-        5 => [-u, -v, -1.0], // -Z
+        0 => Vec3::new(1.0, -v, -u),  // +X
+        1 => Vec3::new(-1.0, -v, u),  // -X
+        2 => Vec3::new(u, 1.0, v),    // +Y
+        3 => Vec3::new(u, -1.0, -v),  // -Y
+        4 => Vec3::new(u, -v, 1.0),   // +Z
+        5 => Vec3::new(-u, -v, -1.0), // -Z
         _ => unreachable!(),
     };
 
-    normalize(dir)
+    dir.normalize_or_zero().to_array()
 }
 
 /// Generate base cubemap from equirectangular HDR.
@@ -166,9 +167,10 @@ fn generate_irradiance(hdr: &HdrImage, size: u32) -> [CubemapFace; 6] {
 /// Cosine-weighted hemisphere convolution for a single normal direction.
 fn convolve_irradiance(hdr: &HdrImage, normal: [f32; 3], sample_delta: f32) -> [f32; 3] {
     // Build tangent frame from normal
-    let (tangent, bitangent) = build_tangent_frame(normal);
+    let n = Vec3::from_array(normal);
+    let (tangent, bitangent) = build_tangent_frame(n);
 
-    let mut irradiance = [0.0f32; 3];
+    let mut irradiance = Vec3::ZERO;
     let mut sample_count = 0.0f32;
 
     let mut phi = 0.0f32;
@@ -181,28 +183,17 @@ fn convolve_irradiance(hdr: &HdrImage, normal: [f32; 3], sample_delta: f32) -> [
             let sin_phi = phi.sin();
             let cos_phi = phi.cos();
 
-            let tangent_sample = [sin_theta * cos_phi, sin_theta * sin_phi, cos_theta];
+            let tangent_sample = Vec3::new(sin_theta * cos_phi, sin_theta * sin_phi, cos_theta);
 
             // Transform to world space
-            let sample_dir = [
-                tangent_sample[0] * tangent[0]
-                    + tangent_sample[1] * bitangent[0]
-                    + tangent_sample[2] * normal[0],
-                tangent_sample[0] * tangent[1]
-                    + tangent_sample[1] * bitangent[1]
-                    + tangent_sample[2] * normal[1],
-                tangent_sample[0] * tangent[2]
-                    + tangent_sample[1] * bitangent[2]
-                    + tangent_sample[2] * normal[2],
-            ];
+            let sample_dir =
+                tangent_sample.x * tangent + tangent_sample.y * bitangent + tangent_sample.z * n;
 
-            let color = hdr.sample(sample_dir, 0.0);
+            let color = Vec3::from_array(hdr.sample(sample_dir.to_array(), 0.0));
 
             // cos(theta) * sin(theta) is the hemisphere solid angle weighting
             let weight = cos_theta * sin_theta;
-            irradiance[0] += color[0] * weight;
-            irradiance[1] += color[1] * weight;
-            irradiance[2] += color[2] * weight;
+            irradiance += color * weight;
             sample_count += 1.0;
 
             theta += sample_delta;
@@ -210,12 +201,7 @@ fn convolve_irradiance(hdr: &HdrImage, normal: [f32; 3], sample_delta: f32) -> [
         phi += sample_delta;
     }
 
-    let scale = PI / sample_count;
-    [
-        irradiance[0] * scale,
-        irradiance[1] * scale,
-        irradiance[2] * scale,
-    ]
+    (irradiance * (PI / sample_count)).to_array()
 }
 
 /// Generate prefiltered specular cubemap with multiple roughness mip levels.
@@ -254,41 +240,34 @@ fn prefilter_ggx(hdr: &HdrImage, normal: [f32; 3], roughness: f32, sample_count:
         return hdr.sample(normal, 0.0);
     }
 
-    let view = normal; // Assume V == N (split-sum approximation)
-    let (tangent, bitangent) = build_tangent_frame(normal);
+    let n = Vec3::from_array(normal);
+    let view = n; // Assume V == N (split-sum approximation)
+    let (tangent, bitangent) = build_tangent_frame(n);
 
-    let mut color = [0.0f32; 3];
+    let mut color = Vec3::ZERO;
     let mut total_weight = 0.0f32;
 
     for i in 0..sample_count {
         let xi = hammersley(i, sample_count);
-        let h = importance_sample_ggx(xi, roughness, normal, tangent, bitangent);
+        let h = importance_sample_ggx(xi, roughness, n, tangent, bitangent);
 
         // Reflect view around half-vector
-        let v_dot_h = dot(view, h);
-        let l = [
-            2.0 * v_dot_h * h[0] - view[0],
-            2.0 * v_dot_h * h[1] - view[1],
-            2.0 * v_dot_h * h[2] - view[2],
-        ];
+        let v_dot_h = view.dot(h);
+        let l = 2.0 * v_dot_h * h - view;
 
-        let n_dot_l = dot(normal, l).max(0.0);
+        let n_dot_l = n.dot(l).max(0.0);
         if n_dot_l > 0.0 {
-            let sample = hdr.sample(l, 0.0);
-            color[0] += sample[0] * n_dot_l;
-            color[1] += sample[1] * n_dot_l;
-            color[2] += sample[2] * n_dot_l;
+            let sample = Vec3::from_array(hdr.sample(l.to_array(), 0.0));
+            color += sample * n_dot_l;
             total_weight += n_dot_l;
         }
     }
 
     if total_weight > 0.0 {
-        color[0] /= total_weight;
-        color[1] /= total_weight;
-        color[2] /= total_weight;
+        color /= total_weight;
     }
 
-    color
+    color.to_array()
 }
 
 /// Generate the BRDF integration LUT.
@@ -314,14 +293,14 @@ pub fn generate_brdf_lut(size: u32) -> BrdfLut {
 
 /// Integrate BRDF for a given NdotV and roughness.
 fn integrate_brdf(n_dot_v: f32, roughness: f32) -> [f32; 2] {
-    let v = [
+    let v = Vec3::new(
         (1.0 - n_dot_v * n_dot_v).sqrt(), // sin
         0.0,
         n_dot_v, // cos
-    ];
-    let normal = [0.0, 0.0, 1.0];
-    let tangent = [1.0, 0.0, 0.0];
-    let bitangent = [0.0, 1.0, 0.0];
+    );
+    let normal = Vec3::Z;
+    let tangent = Vec3::X;
+    let bitangent = Vec3::Y;
 
     let mut scale = 0.0f32;
     let mut bias = 0.0f32;
@@ -331,18 +310,14 @@ fn integrate_brdf(n_dot_v: f32, roughness: f32) -> [f32; 2] {
         let xi = hammersley(i, sample_count);
         let h = importance_sample_ggx(xi, roughness, normal, tangent, bitangent);
 
-        let v_dot_h = dot(v, h).max(0.0);
-        let l = [
-            2.0 * v_dot_h * h[0] - v[0],
-            2.0 * v_dot_h * h[1] - v[1],
-            2.0 * v_dot_h * h[2] - v[2],
-        ];
+        let v_dot_h = v.dot(h).max(0.0);
+        let l = 2.0 * v_dot_h * h - v;
 
-        let n_dot_l = l[2].max(0.0); // normal is [0,0,1]
-        let n_dot_h = h[2].max(0.0);
+        let n_dot_l = l.z.max(0.0); // normal is Z-up
+        let n_dot_h = h.z.max(0.0);
 
         if n_dot_l > 0.0 {
-            let g = geometry_smith(normal, v, l, roughness);
+            let g = geometry_smith(v, l, roughness);
             let g_vis = (g * v_dot_h) / (n_dot_h * n_dot_v).max(0.001);
             let fc = (1.0 - v_dot_h).powi(5);
 
@@ -356,35 +331,15 @@ fn integrate_brdf(n_dot_v: f32, roughness: f32) -> [f32; 2] {
 
 // ─── Helper functions ──────────────────────────────────────────────────────
 
-fn normalize(v: [f32; 3]) -> [f32; 3] {
-    let len = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
-    if len < 1e-10 {
-        return [0.0, 1.0, 0.0];
-    }
-    [v[0] / len, v[1] / len, v[2] / len]
-}
-
-fn dot(a: [f32; 3], b: [f32; 3]) -> f32 {
-    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
-}
-
-fn cross(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
-    [
-        a[1] * b[2] - a[2] * b[1],
-        a[2] * b[0] - a[0] * b[2],
-        a[0] * b[1] - a[1] * b[0],
-    ]
-}
-
 /// Build an orthonormal tangent frame from a normal vector.
-fn build_tangent_frame(normal: [f32; 3]) -> ([f32; 3], [f32; 3]) {
-    let up = if normal[1].abs() < 0.999 {
-        [0.0, 1.0, 0.0]
+fn build_tangent_frame(normal: Vec3) -> (Vec3, Vec3) {
+    let up = if normal.y.abs() < 0.999 {
+        Vec3::Y
     } else {
-        [1.0, 0.0, 0.0]
+        Vec3::X
     };
-    let tangent = normalize(cross(up, normal));
-    let bitangent = cross(normal, tangent);
+    let tangent = up.cross(normal).normalize_or_zero();
+    let bitangent = normal.cross(tangent);
     (tangent, bitangent)
 }
 
@@ -402,10 +357,10 @@ fn radical_inverse_vdc(bits: u32) -> f32 {
 fn importance_sample_ggx(
     xi: [f32; 2],
     roughness: f32,
-    _normal: [f32; 3],
-    tangent: [f32; 3],
-    bitangent: [f32; 3],
-) -> [f32; 3] {
+    normal: Vec3,
+    tangent: Vec3,
+    bitangent: Vec3,
+) -> Vec3 {
     let a = roughness * roughness;
 
     let phi = 2.0 * PI * xi[0];
@@ -418,17 +373,14 @@ fn importance_sample_ggx(
     let hz = cos_theta;
 
     // Transform to world space
-    normalize([
-        hx * tangent[0] + hy * bitangent[0] + hz * _normal[0],
-        hx * tangent[1] + hy * bitangent[1] + hz * _normal[1],
-        hx * tangent[2] + hy * bitangent[2] + hz * _normal[2],
-    ])
+    (hx * tangent + hy * bitangent + hz * normal).normalize_or_zero()
 }
 
 /// Smith's geometry function for GGX (Schlick-GGX approximation).
-fn geometry_smith(_normal: [f32; 3], v: [f32; 3], l: [f32; 3], roughness: f32) -> f32 {
-    let n_dot_v = v[2].max(0.0); // normal is [0,0,1] for BRDF integration
-    let n_dot_l = l[2].max(0.0);
+/// Assumes normal is Z-up (used only during BRDF integration).
+fn geometry_smith(v: Vec3, l: Vec3, roughness: f32) -> f32 {
+    let n_dot_v = v.z.max(0.0); // normal is Z-up for BRDF integration
+    let n_dot_l = l.z.max(0.0);
     geometry_schlick_ggx(n_dot_v, roughness) * geometry_schlick_ggx(n_dot_l, roughness)
 }
 

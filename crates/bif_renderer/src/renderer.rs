@@ -185,7 +185,10 @@ pub fn ray_color_with_aovs(
         if !is_delta && bounce_count >= cache_min_depth {
             if let Some(c) = cache {
                 if let Some(cached) = c.lookup(rec.p, rec.normal) {
-                    accumulated += throughput * cached;
+                    // Guard against NaN/inf from torn reads in lock-free cache
+                    if cached.x.is_finite() && cached.y.is_finite() && cached.z.is_finite() {
+                        accumulated += throughput * cached;
+                    }
                     break;
                 }
             }
@@ -199,8 +202,10 @@ pub fn ray_color_with_aovs(
 
         // NEE: sample lights directly (non-delta materials only)
         if !is_delta {
-            // Offset shadow ray origin along normal to avoid self-intersection
-            let shadow_origin = rec.p + rec.normal * 0.001;
+            // Offset shadow ray origin along shading normal to avoid
+            // self-intersection and shadow terminator artifacts with normal maps
+            let shading_n = rec.material.shading_normal(&rec);
+            let shadow_origin = rec.p + shading_n * 0.001;
 
             // Sample HDRI environment
             if let Some((env, rotation, intensity)) = env_params.as_ref() {

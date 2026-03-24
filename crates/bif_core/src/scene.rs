@@ -163,6 +163,7 @@ impl Material {
 /// A prototype is a shared mesh + material that can be instanced.
 ///
 /// This corresponds to a `UsdGeomMesh` in USD terminology.
+/// Bounding box is accessed via `mesh.bounds`.
 #[derive(Clone, Debug)]
 pub struct Prototype {
     /// Unique identifier within the scene
@@ -176,21 +177,16 @@ pub struct Prototype {
 
     /// Material (optional, defaults to grey)
     pub material: Option<Arc<Material>>,
-
-    /// Local bounding box (from mesh)
-    pub bounds: Aabb,
 }
 
 impl Prototype {
     /// Create a new prototype from a mesh.
     pub fn new(id: usize, name: Arc<str>, mesh: Arc<Mesh>) -> Self {
-        let bounds = mesh.bounds;
         Self {
             id,
             name,
             mesh,
             material: None,
-            bounds,
         }
     }
 
@@ -275,12 +271,12 @@ impl AnimatedTransform {
     pub fn evaluate(&self, time: f64) -> Transform {
         let keyframes = match &self.keyframes {
             Some(kf) if !kf.is_empty() => kf,
-            _ => return self.static_transform.clone(),
+            _ => return self.static_transform,
         };
 
         // Handle edge cases
         if keyframes.len() == 1 {
-            return keyframes[0].transform.clone();
+            return keyframes[0].transform;
         }
 
         let first = &keyframes[0];
@@ -288,12 +284,12 @@ impl AnimatedTransform {
 
         // Before first keyframe
         if time <= first.time {
-            return first.transform.clone();
+            return first.transform;
         }
 
         // After last keyframe
         if time >= last.time {
-            return last.transform.clone();
+            return last.transform;
         }
 
         // Find surrounding keyframes
@@ -314,12 +310,12 @@ impl AnimatedTransform {
         }
 
         // Fallback
-        self.static_transform.clone()
+        self.static_transform
     }
 }
 
 /// Transform components that can be composed into a matrix.
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct Transform {
     /// Translation
     pub translation: Vec3,
@@ -616,59 +612,79 @@ impl Scene {
         id
     }
 
-    /// Add an instance of a prototype.
-    pub fn add_instance(&mut self, prototype_id: usize, transform: Transform) {
+    /// Add an instance of a prototype. Returns the instance index.
+    pub fn add_instance(&mut self, prototype_id: usize, transform: Transform) -> usize {
+        let idx = self.instances.len();
         self.instances.push(Instance::new(prototype_id, transform));
         self.instance_animations.push(None);
+        idx
     }
 
-    /// Add an instance with an explicit USD prim path.
+    /// Add an instance with an explicit USD prim path. Returns the instance index.
     pub fn add_instance_with_path(
         &mut self,
         prototype_id: usize,
         transform: Transform,
         prim_path: impl Into<Arc<str>>,
-    ) {
+    ) -> usize {
+        let idx = self.instances.len();
         self.instances.push(Instance::with_prim_path(
             prototype_id,
             transform,
             prim_path.into(),
         ));
         self.instance_animations.push(None);
+        idx
     }
 
-    /// Add an instance with animation data.
+    /// Add an instance with animation data. Returns the instance index.
     pub fn add_animated_instance(
         &mut self,
         prototype_id: usize,
         transform: Transform,
         animation: AnimatedTransform,
-    ) {
+    ) -> usize {
+        let idx = self.instances.len();
         self.instances.push(Instance::new(prototype_id, transform));
         self.instance_animations.push(Some(animation));
+        idx
     }
 
-    /// Add an instance with animation data and an explicit USD prim path.
+    /// Add an instance with animation data and an explicit USD prim path. Returns the instance index.
     pub fn add_animated_instance_with_path(
         &mut self,
         prototype_id: usize,
         transform: Transform,
         animation: AnimatedTransform,
         prim_path: impl Into<Arc<str>>,
-    ) {
+    ) -> usize {
+        let idx = self.instances.len();
         self.instances.push(Instance::with_prim_path(
             prototype_id,
             transform,
             prim_path.into(),
         ));
         self.instance_animations.push(Some(animation));
+        idx
+    }
+
+    /// Set the purpose of the instance at the given index.
+    pub fn set_instance_purpose(&mut self, index: usize, purpose: Purpose) {
+        if let Some(inst) = self.instances.get_mut(index) {
+            inst.purpose = purpose;
+        }
     }
 
     /// Set the purpose of the most recently added instance.
     ///
+    /// **Deprecated:** Prefer `set_instance_purpose(idx, purpose)` using the index
+    /// returned by `add_instance*()`.
+    ///
     /// **Must be called immediately after `add_instance*`** — modifies the
     /// last element of the instances vec. Calling after two consecutive adds
     /// will silently leave the first instance with `Purpose::Default`.
+    #[deprecated(note = "Use set_instance_purpose(index, purpose) instead")]
+    #[allow(deprecated)]
     pub fn set_last_instance_purpose(&mut self, purpose: Purpose) {
         if let Some(inst) = self.instances.last_mut() {
             inst.purpose = purpose;
@@ -927,7 +943,7 @@ impl Scene {
                 let matrix = instance.model_matrix();
 
                 // Transform all 8 corners of the prototype bounds
-                let b = &proto.bounds;
+                let b = &proto.mesh.bounds;
                 let corners = [
                     Vec3::new(b.x.min, b.y.min, b.z.min),
                     Vec3::new(b.x.max, b.y.min, b.z.min),
