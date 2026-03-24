@@ -8,6 +8,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **M29.5 UI overhaul** — centralized theme system (theme.rs), scene browser promoted to primary left panel, viewport stats overlay, File/View/Render menu bar with Ctrl+O, node params moved from show_body() to property inspector (all 10 types), welcome screen on empty state, Unicode prim icons replacing emoji, tooltips on all controls, node selection via header click with accent highlight
 - **VNDF GGX sampling** — Heitz 2018 visible normal distribution sampling replaces NDF sampling for 2-4x convergence on rough metals at grazing angles
 - **GraphNodeId newtype** — framework-agnostic node ID decouples node graph evaluation from egui_snarl, preparing for M30 persistence and Qt migration
 - **GpuMaterialState / GpuTextureState** — extracted 12 GPU fields from Renderer into focused sub-structs
@@ -35,6 +36,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **UDIM .tx fallback** — tile discovery checks for .tx variant when source file missing
 - **OpenPBR MaterialX import** — C++ bridge recognizes `ND_open_pbr_surface` with fallback input names (`base_metalness`, `geometry_normal`, `geometry_opacity`)
 - **Shading normal AOV** — `Ns` layer in EXR + "Shading Normal" in viewport AOV dropdown; shows normal-mapped normals vs geometric `N`
+
+### Removed
+
+- Dead `show_ui` toggle (field + early return, never wired to keybinding)
+- Emoji prim type icons (replaced with colored Unicode geometric shapes)
+- 35+ inline Color32 literals (replaced with theme constants)
 
 ### Fixed
 

@@ -1,7 +1,7 @@
 # Session Handoff - March 23, 2026
 
-**Last Updated:** Triple code review + comprehensive fixes
-**Next Milestone:** M29.5 egui upgrade → M30 persistence
+**Last Updated:** M29.5 egui UI overhaul complete
+**Next Milestone:** M30 persistence (save/load node graphs)
 **Project:** BIF - VFX Scene Assembler & Renderer
 
 ---
@@ -10,69 +10,41 @@
 
 | Status | Details |
 |--------|---------|
-| Complete | Milestones 0-23, M26 (OIDN), M26.1 (Ivar material cache), M19.6 (viewport cleanup) |
-| Current | Triple code review fixes landed, GraphNodeId decoupled from egui_snarl |
-| Tests | 93 renderer, 72 math, 19 viewer, 79 viewport, 93 bif_core (390+ total) |
-| Performance | 60 FPS viewport, 100K instances with LOD, Ivar build ~185ms (2.5M tri combined mesh) |
+| Complete | Milestones 0-23, M26 (OIDN), M26.1 (Ivar material cache), M19.6, M29.5 (UI overhaul) |
+| Current | M29.5 landed — theme, panel restructure, node inspector, menu bar |
+| Next | M30 persistence (save/load), then egui 0.30 upgrade for vertical node layout |
+| Tests | 390+ total across all crates |
+| Performance | 60 FPS viewport, 100K instances with LOD, Ivar build ~185ms |
 
 ---
 
 ## Recent Work
 
-### Triple Code Review + Fixes (Mar 23, 2026)
+### M29.5 egui UI Overhaul (Mar 23, 2026)
 
-- Ran Code Reviewer, VFX Pipeline Specialist, Software Architect over full 48k LOC
-- Found 8 critical, 21 important, 18 nice-to-have — fixed all in 4 commits
-- Renderer: energy conservation, shadow bias, distant light units, NaN guards, VNDF GGX
-- Safety: Embree Drop docs, crease validation, NaN guards, let-else patterns
-- Architecture: GraphNodeId decouples from egui_snarl, GpuMaterialState/GpuTextureState extracted, types.rs
-- API: Copy on Transform, add_instance returns index, stronger mesh dedup hash
-- Remaining: per-vertex tangent accumulation for indexed mesh path (future session)
+8-phase restructure of the egui UI:
+1. **Theme** — new theme.rs with 28 color constants + apply_theme()
+2. **Colors** — replaced 35+ inline Color32 literals with theme:: constants
+3. **Panels** — scene browser promoted to top of left panel, stats moved to viewport overlay, render settings below browser, removed dead show_ui toggle
+4. **Menu bar** — File (Open USD, Export, Quit), View (Grid, Points), Render (Vulkan, Ivar, Rebuild)
+5. **Node inspector** — params moved from show_body() to property inspector (all 10 node types, ~600 lines)
+6. **Icons** — emoji replaced with colored Unicode geometric shapes
+7. **Tooltips** — 37+ tooltips on all interactive controls
+8. **Empty state** — welcome screen with Open USD button on first launch
+9. **Node selection** — show_header() click detection + accent highlight
 
-### OpenPBR MaterialX + Shading Normal AOV (Mar 23, 2026)
+Code review fixes: extracted open_usd_file_dialog helper (was 3x duplicated), added BG_OVERLAY_BACKDROP theme constant.
 
-- C++ bridge now recognizes `ND_open_pbr_surface` alongside `standard_surface`
-- Fallback input names: `base_metalness`, `geometry_normal`, `geometry_opacity`
-- Shading normal AOV (`Ns`) in EXR output + viewport AOV dropdown
-- `Material` trait gained `shading_normal()` method for normal-mapped normals
-- Diagnosed: MaterialX materials only had base_color texture, all other params were defaults
-- Code review caught .tx-as-linear bug, ClearTxCache base_dir, null prim guard
-
-### Parallel UV + .tx Texture Cache (Mar 22-23, 2026)
-
-- Parallelized UV seam split: 3-pass `cache_stage_data()` refactor with `WorkParallelForN`
-- Viewport .tx cache: `resolve_tx_path` prefers .tx over source, auto bg conversion on scene load
-- Parallel .tx conversion via rayon, parallel Ivar texture pre-warm (9s→2.7s)
-- Clear .tx cache UI button, UDIM .tx fallback, UDIM path skip in pre-warm
-- Awaiting ALab .tx benchmark (272 textures) and rt_base parallel UV benchmark
-
-### Purpose Filtering + Specular Fix (Mar 21, 2026)
-
-- Purpose enum (Default/Render/Proxy/Guide) on Instance, C++ bridge hierarchy walk for inherited purpose
-- Viewport toggle in render settings, combined mesh filtering in reload_working_scene
-- Fixed Ivar double-filtering that caused material index misalignment
-- Fixed UsdPreviewSurface specularColor→specular_weight: was averaging RGB (broke dielectrics), now always 1.0
-- Added debug-level material diagnostics (RUST_LOG gated)
-- Tested with Nvidia Distributable assets (Glasses, BottleA, Hourglass, BookOpen)
-
-### USD Export Gap Closure (Mar 20, 2026)
-
-- All 10 phases complete — stage metadata, materials, lights, cameras, visibility, curves/points
-- OpenPBR MaterialX dual export, GeomSubset export, invisible_ids roundtrip
-- Net -955 lines (parser deletion outweighs new code)
-
----
-
-## Known Issues
-
-- Some Nvidia sample assets render grey — confirmed same in Houdini (asset issue, not BIF)
-- Normal maps load correctly but visual impact needs more testing with high-detail assets
-- `glass` material type in UsdPreviewSurface may not trigger transmission heuristic if roughness > 0.1
+### Known Limitations (from review)
+- show_body() auto-compute coupled to UI rendering — off-screen nodes don't cook (pre-existing, document before M31)
+- egui-snarl 0.5 hardcodes left-click for background panning — middle-mouse needs snarl upgrade
+- `select_stoke` is an upstream typo in egui-snarl (compiles, works, just misspelled)
 
 ---
 
 ## Next Steps
 
-1. M29.5: egui upgrade
-2. M30: Persistence (node graph save/load)
-3. Consider adding UsdPreviewSurface `specularColor` → OpenPBR `specular_color` tint mapping
+1. **M30 persistence** — save/load node graphs (serde on SceneNode + NodeGraphState)
+2. **egui 0.30 upgrade** — enables snarl 0.6+ with vertical node layout (Sandwich)
+3. **Consider:** split render_node_properties() into per-node-type functions (~720 lines)
+4. **Consider:** add explicit Recompute button in scatter inspector (safety net for off-screen nodes)

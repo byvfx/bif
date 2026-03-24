@@ -1054,26 +1054,19 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 - **Reference:** Blender asset browser (SQLite), Substance Source, Megascans plugin
 ---
 
-### Milestone 29.5: egui 0.30 Upgrade + Vertical Node Layout 📐
+### Milestone 29.5: egui UI Overhaul ✅
 
-- **Goal:** Upgrade egui ecosystem to 0.30, enable top-to-bottom node layout
-- **Estimated Time:** 5-8 hours
-- **Why:** egui-snarl 0.6.0+ has `NodeLayout::Sandwich` (inputs top, outputs bottom) — requires egui 0.30+
-- **Pre-requisite for:** M30 (node persistence needs stable snarl API)
-- **Dependency Bumps:**
-  - egui 0.29 → 0.30+
-  - egui-wgpu 0.29 → 0.30+
-  - egui-winit 0.29 → 0.30+
-  - egui-snarl 0.5.0 → 0.6.0+
-- **Key Tasks:**
-  - Bump versions in workspace `Cargo.toml`
-  - Fix breaking API changes (egui 0.29→0.30 migration)
-  - Set `style.node_layout = Some(NodeLayout::Sandwich)` for vertical flow
-  - Set `style.pin_placement` (Edge looks cleanest for vertical)
-  - Optionally add per-node layout override via `SnarlViewer::node_layout()`
-  - Run all tests, verify node graph renders correctly
-- **Key File:** `crates/bif_viewport/src/node_graph.rs` (SnarlStyle initialization)
-- **Layout:** Sandwich = inputs top, body middle, outputs bottom → top-to-bottom data flow
+- **Status:** Complete (Mar 23, 2026)
+- **Goal:** Modernize egui UI before Qt migration — theme, layout, discoverability
+- **What was done:**
+  - Centralized theme system (theme.rs) with 28 color constants + apply_theme()
+  - Panel restructure: scene browser promoted to top of left panel, stats to viewport overlay
+  - Menu bar: File/View/Render with Ctrl+O shortcut
+  - Node params moved from inline show_body() to property inspector (all 10 types)
+  - Unicode geometric icons replacing emoji, tooltips everywhere, welcome screen
+  - Node selection via header click with accent highlight
+  - Removed dead show_ui toggle, extracted open_usd_file_dialog helper
+- **Remaining for future:** egui 0.30 upgrade + vertical node layout (snarl 0.6+), middle-mouse pan (needs snarl fork or upgrade)
 
 ---
 
