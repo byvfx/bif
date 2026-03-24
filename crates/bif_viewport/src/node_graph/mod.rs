@@ -24,6 +24,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use egui_snarl::{ui::SnarlStyle, InPinId, NodeId, OutPinId, Snarl};
 
+use crate::theme;
 use viewer::SceneNodeViewer;
 
 /// Global counters for auto-incrementing prim paths per primitive kind.
@@ -169,9 +170,9 @@ impl PinType {
     /// Get the color for this pin type
     pub fn color(&self) -> egui::Color32 {
         match self {
-            PinType::Scene => egui::Color32::from_rgb(100, 200, 100), // Green for scene data
-            PinType::Image => egui::Color32::from_rgb(200, 150, 50),  // Orange for images
-            PinType::Environment => egui::Color32::from_rgb(100, 150, 255), // Blue for environment
+            PinType::Scene => theme::PIN_SCENE,
+            PinType::Image => theme::PIN_IMAGE,
+            PinType::Environment => theme::PIN_ENVIRONMENT,
         }
     }
 }
@@ -676,7 +677,11 @@ impl NodeGraphState {
         // Start with empty graph - user will add nodes
         Self {
             snarl,
-            style: SnarlStyle::default(),
+            style: SnarlStyle {
+                select_stoke: Some(egui::Stroke::new(2.0, theme::ACCENT_PRIMARY)),
+                select_fill: Some(theme::SELECTION_BG),
+                ..SnarlStyle::default()
+            },
             selected_node: None,
             display_node: None,
         }
@@ -704,7 +709,11 @@ impl NodeGraphState {
 
         Self {
             snarl,
-            style: SnarlStyle::default(),
+            style: SnarlStyle {
+                select_stoke: Some(egui::Stroke::new(2.0, theme::ACCENT_PRIMARY)),
+                select_fill: Some(theme::SELECTION_BG),
+                ..SnarlStyle::default()
+            },
             selected_node: None,
             display_node: None,
         }
@@ -911,7 +920,10 @@ impl NodeGraphState {
 /// Render the node graph UI
 /// Returns any events that should be processed by the parent
 pub fn render_node_graph(ui: &mut egui::Ui, state: &mut NodeGraphState) -> Vec<NodeGraphEvent> {
-    let mut viewer = SceneNodeViewer::new(state.display_node.map(|id| id.into()));
+    let mut viewer = SceneNodeViewer::new(
+        state.display_node.map(|id| id.into()),
+        state.selected_node.map(|id| id.into()),
+    );
 
     // Handle keyboard input for delete
     // TODO: macOS has no Delete key — add Backspace conditionally via cfg!(target_os = "macos")

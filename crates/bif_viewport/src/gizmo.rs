@@ -3,6 +3,7 @@
 //! Projects 3D axis endpoints to screen space and draws colored lines/arrows.
 //! Handles mouse hit testing and drag-to-translate along a single axis.
 
+use crate::theme;
 use bif_math::{Camera, Mat4, Vec3, Vec4};
 
 /// Which axis the gizmo is interacting with.
@@ -136,9 +137,9 @@ pub fn draw_gizmo(
     };
 
     let axes = [
-        (x_end, egui::Color32::from_rgb(220, 50, 50), GizmoAxis::X),
-        (y_end, egui::Color32::from_rgb(50, 200, 50), GizmoAxis::Y),
-        (z_end, egui::Color32::from_rgb(50, 100, 230), GizmoAxis::Z),
+        (x_end, theme::AXIS_X, GizmoAxis::X),
+        (y_end, theme::AXIS_Y, GizmoAxis::Y),
+        (z_end, theme::AXIS_Z, GizmoAxis::Z),
     ];
 
     let mut closest_axis = GizmoAxis::None;
@@ -225,7 +226,7 @@ pub fn draw_gizmo(
     painter.circle_filled(
         egui::pos2(origin_screen.0, origin_screen.1),
         3.0,
-        egui::Color32::WHITE,
+        theme::TEXT_PRIMARY,
     );
 
     closest_axis

@@ -96,7 +96,6 @@ fn parse_args() -> CliOptions {
             println!("  Middle Mouse Drag  Pan camera");
             println!("  Scroll Wheel       Zoom in/out");
             println!("  WASD               Move camera");
-            println!("  Tab                Toggle UI");
             std::process::exit(0);
         }
         Err(msg) => {

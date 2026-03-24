@@ -7,6 +7,7 @@ use egui_snarl::{
 
 use super::ops::mark_node_dirty;
 use super::{GraphNodeId, NodeGraphEvent, ScatterPointsParams, SceneNode};
+use crate::theme;
 
 /// Resolve which node is connected to a given input pin.
 ///
@@ -24,20 +25,17 @@ pub(crate) struct SceneNodeViewer {
     pub events: Vec<NodeGraphEvent>,
     /// Which node has the display flag (for blue indicator)
     pub display_node: Option<NodeId>,
+    /// Currently selected node (for visual highlight)
+    pub selected_node: Option<NodeId>,
 }
 
 impl SceneNodeViewer {
-    pub fn new(display_node: Option<NodeId>) -> Self {
+    pub fn new(display_node: Option<NodeId>, selected_node: Option<NodeId>) -> Self {
         Self {
             events: Vec::new(),
             display_node,
+            selected_node,
         }
-    }
-}
-
-impl Default for SceneNodeViewer {
-    fn default() -> Self {
-        Self::new(None)
     }
 }
 
@@ -86,6 +84,44 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer {
         }
     }
 
+    fn show_header(
+        &mut self,
+        node: NodeId,
+        _inputs: &[InPin],
+        _outputs: &[OutPin],
+        ui: &mut egui::Ui,
+        _scale: f32,
+        snarl: &mut Snarl<SceneNode>,
+    ) {
+        // Detect left-click on header to select node
+        let header_rect = ui.max_rect();
+        if ui.rect_contains_pointer(header_rect) && ui.input(|i| i.pointer.primary_clicked()) {
+            self.events
+                .push(NodeGraphEvent::SelectNode(GraphNodeId::from(node)));
+        }
+
+        // Visual highlight for selected node (accent stroke around header)
+        let is_selected = self.selected_node == Some(node);
+        if is_selected {
+            let painter = ui.painter();
+            let highlight_rect = header_rect.expand(2.0);
+            painter.rect_stroke(
+                highlight_rect,
+                4.0,
+                egui::Stroke::new(2.0, theme::ACCENT_PRIMARY),
+            );
+        }
+
+        // Title label
+        let title = snarl[node].name();
+        let text_color = if is_selected {
+            theme::TEXT_PRIMARY
+        } else {
+            theme::TEXT_SECONDARY
+        };
+        ui.colored_label(text_color, title);
+    }
+
     // TODO: decouple auto-compute from show_body — cook triggers should come from
     // dependency graph evaluation, not UI rendering (nodes scrolled out of view won't cook)
     fn show_body(
@@ -97,8 +133,8 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer {
         _scale: f32,
         snarl: &mut Snarl<SceneNode>,
     ) {
-        // Detect click on node body to select it
-        if ui.rect_contains_pointer(ui.max_rect()) && ui.input(|i| i.pointer.any_pressed()) {
+        // Detect left-click on body to select it (fallback — header is primary target)
+        if ui.rect_contains_pointer(ui.max_rect()) && ui.input(|i| i.pointer.primary_clicked()) {
             self.events
                 .push(NodeGraphEvent::SelectNode(GraphNodeId::from(node_id)));
         }
@@ -107,12 +143,9 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer {
         if self.display_node == Some(node_id) {
             ui.horizontal(|ui| {
                 let (rect, _) = ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
-                ui.painter().circle_filled(
-                    rect.center(),
-                    4.0,
-                    egui::Color32::from_rgb(80, 140, 255),
-                );
-                ui.colored_label(egui::Color32::from_rgb(80, 140, 255), "Display");
+                ui.painter()
+                    .circle_filled(rect.center(), 4.0, theme::ACCENT_PRIMARY);
+                ui.colored_label(theme::ACCENT_PRIMARY, "Display");
             });
         }
 
@@ -120,110 +153,32 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer {
 
         match node {
             SceneNode::UsdRead {
-                file_path,
-                is_loaded,
-                error,
+                is_loaded, error, ..
             } => {
-                ui.horizontal(|ui| {
-                    ui.label("File:");
-                    if ui.text_edit_singleline(file_path).changed() {
-                        // Reset status when path changes
-                        *is_loaded = false;
-                        *error = None;
-                    }
-                });
-
-                ui.horizontal(|ui| {
-                    if ui.button("Browse...").clicked() {
-                        // Open file dialog
-                        if let Some(path) = rfd::FileDialog::new()
-                            .add_filter("USD Files", &["usda", "usdc", "usd"])
-                            .add_filter("All Files", &["*"])
-                            .pick_file()
-                        {
-                            *file_path = path.display().to_string();
-                            *is_loaded = false;
-                            *error = None;
-                            // Emit load event
-                            self.events.push(NodeGraphEvent::LoadUsdFile {
-                                path: file_path.clone(),
-                                node_id: GraphNodeId::from(node_id),
-                            });
-                        }
-                    }
-
-                    if ui.button("Load").clicked() && !file_path.is_empty() {
-                        self.events.push(NodeGraphEvent::LoadUsdFile {
-                            path: file_path.clone(),
-                            node_id: GraphNodeId::from(node_id),
-                        });
-                    }
-                });
-
                 if *is_loaded {
-                    ui.colored_label(egui::Color32::GREEN, "\u{2713} Loaded");
+                    ui.colored_label(theme::STATUS_OK, "\u{2713} Loaded");
                 } else if let Some(err) = error {
-                    ui.colored_label(egui::Color32::RED, format!("\u{2717} {}", err));
+                    ui.colored_label(theme::STATUS_ERROR, format!("\u{2717} {}", err));
                 }
             }
             SceneNode::IvarRender {
-                spp,
                 is_rendering,
                 is_converting_tx,
-                tx_status,
+                ..
             } => {
-                ui.horizontal(|ui| {
-                    ui.label("SPP:");
-                    ui.add(egui::DragValue::new(spp).range(1..=1024));
-                });
-
                 if *is_rendering {
-                    ui.colored_label(egui::Color32::YELLOW, "Rendering...");
-                } else if ui.button("Render").clicked() {
-                    self.events.push(NodeGraphEvent::StartRender { spp: *spp });
-                    *is_rendering = true;
-                }
-
-                ui.separator();
-
-                if *is_converting_tx {
-                    ui.colored_label(egui::Color32::YELLOW, "Converting .tx...");
-                } else {
-                    ui.horizontal(|ui| {
-                        if ui.button("Convert to .tx").clicked() {
-                            self.events.push(NodeGraphEvent::ConvertTexturesToTx);
-                            *is_converting_tx = true;
-                            *tx_status = None;
-                        }
-                        if ui.button("Clear .tx").clicked() {
-                            self.events.push(NodeGraphEvent::ClearTxCache);
-                        }
-                    });
-                }
-                if let Some(status) = tx_status {
-                    ui.colored_label(egui::Color32::GREEN, status.as_str());
+                    ui.colored_label(theme::STATUS_WARNING, "Rendering...");
+                } else if *is_converting_tx {
+                    ui.colored_label(theme::STATUS_WARNING, "Converting .tx...");
                 }
             }
             SceneNode::Primitive {
                 kind,
                 size,
                 is_created,
-                prim_path,
+                ..
             } => {
-                ui.horizontal(|ui| {
-                    ui.label("Size:");
-                    if ui
-                        .add(egui::DragValue::new(size).speed(0.01).range(0.01..=100.0))
-                        .changed()
-                    {
-                        *is_created = false; // Need to recreate
-                    }
-                });
-                ui.horizontal(|ui| {
-                    ui.label("Path:");
-                    ui.text_edit_singleline(prim_path);
-                });
-
+                // Auto-compute: create primitive when needed
                 if !*is_created {
                     self.events.push(NodeGraphEvent::CreatePrimitive {
                         kind: *kind,
@@ -232,7 +187,7 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer {
                     });
                     *is_created = true;
                 }
-                ui.colored_label(egui::Color32::GREEN, "Created");
+                ui.colored_label(theme::STATUS_OK, "Created");
             }
             SceneNode::ScatterPoints {
                 source,
@@ -254,287 +209,17 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer {
                 rotation_range,
                 target_proto_id: _,
                 is_computed,
-                point_size,
-                point_color,
+                ..
             } => {
-                // Source dropdown
-                ui.horizontal(|ui| {
-                    ui.label("Source:");
-                    egui::ComboBox::from_id_salt("scatter_source")
-                        .selected_text(match source {
-                            bif_core::PointSource::Surface => "Surface",
-                            bif_core::PointSource::Grid => "Grid",
-                            bif_core::PointSource::Sphere => "Sphere",
-                        })
-                        .show_ui(ui, |ui| {
-                            if ui
-                                .selectable_value(source, bif_core::PointSource::Surface, "Surface")
-                                .changed()
-                            {
-                                *is_computed = false;
-                            }
-                            if ui
-                                .selectable_value(source, bif_core::PointSource::Grid, "Grid")
-                                .changed()
-                            {
-                                *is_computed = false;
-                            }
-                            if ui
-                                .selectable_value(source, bif_core::PointSource::Sphere, "Sphere")
-                                .changed()
-                            {
-                                *is_computed = false;
-                            }
-                        });
-                });
+                // Auto-compute: check if inputs are satisfied
+                let inputs_satisfied = match source {
+                    bif_core::PointSource::Surface => resolve_input_connection(inputs, 0).is_some(),
+                    bif_core::PointSource::Grid | bif_core::PointSource::Sphere => true,
+                };
 
-                // Source-specific params
-                match source {
-                    bif_core::PointSource::Surface => {
-                        ui.horizontal(|ui| {
-                            ui.label("Count:");
-                            if ui
-                                .add(egui::DragValue::new(count).range(1..=100_000))
-                                .changed()
-                            {
-                                *is_computed = false;
-                            }
-                        });
-
-                        ui.horizontal(|ui| {
-                            ui.label("Mode:");
-                            let mut is_poisson =
-                                *scatter_mode == bif_core::scatter::ScatterMode::PoissonDisk;
-                            if ui.checkbox(&mut is_poisson, "Poisson Disk").changed() {
-                                *scatter_mode = if is_poisson {
-                                    bif_core::scatter::ScatterMode::PoissonDisk
-                                } else {
-                                    bif_core::scatter::ScatterMode::Random
-                                };
-                                *is_computed = false;
-                            }
-                        });
-
-                        if *scatter_mode == bif_core::scatter::ScatterMode::PoissonDisk {
-                            ui.horizontal(|ui| {
-                                ui.label("Min Dist:");
-                                if ui
-                                    .add(
-                                        egui::DragValue::new(min_distance)
-                                            .speed(0.01)
-                                            .range(0.01..=100.0),
-                                    )
-                                    .changed()
-                                {
-                                    *is_computed = false;
-                                }
-                            });
-                        }
-
-                        ui.horizontal(|ui| {
-                            ui.label("Seed:");
-                            let mut seed_val = *seed as i64;
-                            if ui
-                                .add(egui::DragValue::new(&mut seed_val).range(0..=999_999))
-                                .changed()
-                            {
-                                *seed = seed_val as u64;
-                                *is_computed = false;
-                            }
-                        });
-
-                        if ui.checkbox(align_to_normal, "Align to Normal").changed() {
-                            *is_computed = false;
-                        }
-                    }
-                    bif_core::PointSource::Grid => {
-                        ui.horizontal(|ui| {
-                            ui.label("Size X:");
-                            if ui
-                                .add(
-                                    egui::DragValue::new(&mut grid_size[0])
-                                        .speed(0.1)
-                                        .range(0.0..=1000.0),
-                                )
-                                .changed()
-                            {
-                                *is_computed = false;
-                            }
-                        });
-                        ui.horizontal(|ui| {
-                            ui.label("Size Y:");
-                            if ui
-                                .add(
-                                    egui::DragValue::new(&mut grid_size[1])
-                                        .speed(0.1)
-                                        .range(0.0..=1000.0),
-                                )
-                                .changed()
-                            {
-                                *is_computed = false;
-                            }
-                        });
-                        ui.horizontal(|ui| {
-                            ui.label("Size Z:");
-                            if ui
-                                .add(
-                                    egui::DragValue::new(&mut grid_size[2])
-                                        .speed(0.1)
-                                        .range(0.0..=1000.0),
-                                )
-                                .changed()
-                            {
-                                *is_computed = false;
-                            }
-                        });
-                        ui.horizontal(|ui| {
-                            ui.label("Spacing:");
-                            if ui
-                                .add(
-                                    egui::DragValue::new(grid_spacing)
-                                        .speed(0.01)
-                                        .range(0.01..=100.0),
-                                )
-                                .changed()
-                            {
-                                *is_computed = false;
-                            }
-                        });
-                    }
-                    bif_core::PointSource::Sphere => {
-                        ui.horizontal(|ui| {
-                            ui.label("Count:");
-                            if ui
-                                .add(egui::DragValue::new(count).range(1..=100_000))
-                                .changed()
-                            {
-                                *is_computed = false;
-                            }
-                        });
-                        ui.horizontal(|ui| {
-                            ui.label("Radius:");
-                            if ui
-                                .add(
-                                    egui::DragValue::new(sphere_radius)
-                                        .speed(0.1)
-                                        .range(0.01..=1000.0),
-                                )
-                                .changed()
-                            {
-                                *is_computed = false;
-                            }
-                        });
-                        if ui.checkbox(sphere_on_surface, "Surface Only").changed() {
-                            *is_computed = false;
-                        }
-                        ui.horizontal(|ui| {
-                            ui.label("Seed:");
-                            let mut seed_val = *seed as i64;
-                            if ui
-                                .add(egui::DragValue::new(&mut seed_val).range(0..=999_999))
-                                .changed()
-                            {
-                                *seed = seed_val as u64;
-                                *is_computed = false;
-                            }
-                        });
-                    }
-                }
-
-                // Common: max point limit
-                ui.horizontal(|ui| {
-                    ui.label("Max Pts:");
-                    if ui
-                        .add(egui::DragValue::new(max_point_limit).range(1..=1_000_000))
-                        .changed()
-                    {
-                        *is_computed = false;
-                    }
-                });
-
-                // Relax section
-                ui.separator();
-                ui.horizontal(|ui| {
-                    ui.label("Relax Iters:");
-                    if ui
-                        .add(egui::DragValue::new(relax_iterations).range(0..=100))
-                        .changed()
-                    {
-                        *is_computed = false;
-                    }
-                });
-                if *relax_iterations > 0 {
-                    ui.horizontal(|ui| {
-                        ui.label("Scale Radii:");
-                        if ui
-                            .add(
-                                egui::DragValue::new(scale_radii)
-                                    .speed(0.01)
-                                    .range(0.01..=10.0),
-                            )
-                            .changed()
-                        {
-                            *is_computed = false;
-                        }
-                    });
-                    ui.horizontal(|ui| {
-                        ui.label("Max Radius:");
-                        if ui
-                            .add(
-                                egui::DragValue::new(max_relax_radius)
-                                    .speed(0.01)
-                                    .range(0.01..=100.0),
-                            )
-                            .changed()
-                        {
-                            *is_computed = false;
-                        }
-                    });
-                }
-
-                // Per-point attributes
-                ui.separator();
-                ui.horizontal(|ui| {
-                    ui.label("Scale:");
-                    let changed_min = ui
-                        .add(
-                            egui::DragValue::new(scale_min)
-                                .speed(0.01)
-                                .range(0.01..=10.0),
-                        )
-                        .changed();
-                    ui.label("-");
-                    let changed_max = ui
-                        .add(
-                            egui::DragValue::new(scale_max)
-                                .speed(0.01)
-                                .range(0.01..=10.0),
-                        )
-                        .changed();
-                    if changed_min || changed_max {
-                        *is_computed = false;
-                    }
-                });
-
-                ui.horizontal(|ui| {
-                    ui.label("Rotation:");
-                    if ui
-                        .add(
-                            egui::DragValue::new(rotation_range)
-                                .speed(1.0)
-                                .suffix("deg")
-                                .range(0.0..=360.0),
-                        )
-                        .changed()
-                    {
-                        *is_computed = false;
-                    }
-                });
-
-                // Compute / Regenerate button
-                let graph_node_id = GraphNodeId::from(node_id);
-                let emit_event = |events: &mut Vec<NodeGraphEvent>| {
-                    events.push(NodeGraphEvent::ScatterPointsCompute {
+                if !*is_computed && inputs_satisfied {
+                    let graph_node_id = GraphNodeId::from(node_id);
+                    self.events.push(NodeGraphEvent::ScatterPointsCompute {
                         node_id: graph_node_id,
                         params: ScatterPointsParams {
                             source: *source,
@@ -557,57 +242,14 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer {
                             target_proto_id: None,
                         },
                     });
-                };
-
-                // Auto-compute: check if inputs are satisfied
-                let inputs_satisfied = match source {
-                    bif_core::PointSource::Surface => resolve_input_connection(inputs, 0).is_some(),
-                    bif_core::PointSource::Grid | bif_core::PointSource::Sphere => true,
-                };
-
-                if !*is_computed && inputs_satisfied {
-                    emit_event(&mut self.events);
                     *is_computed = true;
                 }
 
                 // Status display
                 if *is_computed {
-                    ui.colored_label(egui::Color32::GREEN, "Computed");
+                    ui.colored_label(theme::STATUS_OK, format!("{} pts", count));
                 } else if !inputs_satisfied {
-                    ui.colored_label(egui::Color32::YELLOW, "Waiting for input");
-                }
-
-                // Point preview controls (cosmetic only, no recompute)
-                ui.separator();
-                let mut preview_changed = false;
-                ui.horizontal(|ui| {
-                    ui.label("Pt Size:");
-                    if ui
-                        .add(
-                            egui::DragValue::new(point_size)
-                                .speed(0.5)
-                                .range(1.0..=20.0),
-                        )
-                        .changed()
-                    {
-                        preview_changed = true;
-                    }
-                });
-                ui.horizontal(|ui| {
-                    ui.label("Color:");
-                    if ui
-                        .color_edit_button_rgba_unmultiplied(point_color)
-                        .changed()
-                    {
-                        preview_changed = true;
-                    }
-                });
-                if preview_changed {
-                    self.events.push(NodeGraphEvent::PointPreviewUpdate {
-                        node_id: graph_node_id,
-                        point_size: *point_size,
-                        point_color: *point_color,
-                    });
+                    ui.colored_label(theme::STATUS_WARNING, "Waiting for input");
                 }
             }
             SceneNode::PointInstancer {
@@ -615,13 +257,8 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer {
                 is_instanced,
                 is_computing,
                 compute_failed,
-                prim_path,
+                ..
             } => {
-                ui.horizontal(|ui| {
-                    ui.label("Path:");
-                    ui.text_edit_singleline(prim_path);
-                });
-
                 let points_node = resolve_input_connection(inputs, 0);
                 let proto_node = resolve_input_connection(inputs, 1);
                 let both_connected = points_node.is_some() && proto_node.is_some();
@@ -653,14 +290,11 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer {
 
                 // Status display
                 if *is_instanced {
-                    ui.colored_label(
-                        egui::Color32::GREEN,
-                        format!("{} instances", instance_count),
-                    );
+                    ui.colored_label(theme::STATUS_OK, format!("{} instances", instance_count));
                 } else if *is_computing {
-                    ui.colored_label(egui::Color32::YELLOW, "Computing...");
+                    ui.colored_label(theme::STATUS_WARNING, "Computing...");
                 } else if *compute_failed {
-                    ui.colored_label(egui::Color32::RED, "Compute failed");
+                    ui.colored_label(theme::STATUS_ERROR, "Compute failed");
                 } else {
                     let mut need = String::new();
                     if points_node.is_none() {
@@ -672,304 +306,60 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer {
                         }
                         need.push_str("proto");
                     }
-                    ui.colored_label(egui::Color32::YELLOW, format!("Need: {}", need));
+                    ui.colored_label(theme::STATUS_WARNING, format!("Need: {}", need));
                 }
             }
             SceneNode::UsdExport {
-                output_path,
-                as_sublayer,
-                export_root,
                 is_exported,
                 last_result,
+                ..
             } => {
-                ui.horizontal(|ui| {
-                    ui.label("Path:");
-                    ui.text_edit_singleline(output_path);
-                });
-
-                ui.horizontal(|ui| {
-                    if ui.button("Browse...").clicked() {
-                        if let Some(path) = rfd::FileDialog::new()
-                            .add_filter("USD Files", &["usda", "usdc"])
-                            .set_file_name("export.usda")
-                            .save_file()
-                        {
-                            *output_path = path.display().to_string();
-                            *is_exported = false;
-                            *last_result = None;
-                        }
-                    }
-                });
-
-                ui.checkbox(as_sublayer, "As Sublayer");
-
-                ui.horizontal(|ui| {
-                    ui.label("Root:");
-                    ui.text_edit_singleline(export_root);
-                });
-
-                if !output_path.is_empty() && ui.button("Export").clicked() {
-                    self.events.push(NodeGraphEvent::ExportUsd {
-                        node_id: GraphNodeId::from(node_id),
-                        output_path: output_path.clone(),
-                        as_sublayer: *as_sublayer,
-                        export_root: export_root.clone(),
-                    });
-                }
-
                 if *is_exported {
                     if let Some(ref result) = last_result {
-                        ui.colored_label(egui::Color32::GREEN, result.as_str());
+                        ui.colored_label(theme::STATUS_OK, result.as_str());
                     }
                 } else if let Some(ref result) = last_result {
-                    // Error case
-                    ui.colored_label(egui::Color32::RED, result.as_str());
+                    ui.colored_label(theme::STATUS_ERROR, result.as_str());
                 }
             }
             SceneNode::Xform {
-                translate,
-                rotate,
-                scale,
-                prim_filter,
+                translate, scale, ..
             } => {
-                let axis_colors = [
-                    egui::Color32::from_rgb(220, 80, 80),  // X = red
-                    egui::Color32::from_rgb(80, 200, 80),  // Y = green
-                    egui::Color32::from_rgb(80, 120, 220), // Z = blue
-                ];
-                let axis_labels = ["X", "Y", "Z"];
-
-                let mut changed = false;
-
-                ui.label("Translate");
-                ui.horizontal(|ui| {
-                    for i in 0..3 {
-                        ui.colored_label(axis_colors[i], axis_labels[i]);
-                        if ui
-                            .add(egui::DragValue::new(&mut translate[i]).speed(0.1))
-                            .changed()
-                        {
-                            changed = true;
-                        }
-                    }
-                });
-
-                ui.label("Rotate");
-                ui.horizontal(|ui| {
-                    for i in 0..3 {
-                        ui.colored_label(axis_colors[i], axis_labels[i]);
-                        if ui
-                            .add(
-                                egui::DragValue::new(&mut rotate[i])
-                                    .speed(1.0)
-                                    .suffix("\u{b0}"),
-                            )
-                            .changed()
-                        {
-                            changed = true;
-                        }
-                    }
-                });
-
-                ui.label("Scale");
-                ui.horizontal(|ui| {
-                    for i in 0..3 {
-                        ui.colored_label(axis_colors[i], axis_labels[i]);
-                        if ui
-                            .add(
-                                egui::DragValue::new(&mut scale[i])
-                                    .speed(0.01)
-                                    .range(0.001..=1000.0),
-                            )
-                            .changed()
-                        {
-                            changed = true;
-                        }
-                    }
-                });
-
-                // Prim filter (placeholder, non-functional V1)
-                ui.horizontal(|ui| {
-                    ui.label("Filter:");
-                    ui.add_enabled(
-                        false,
-                        egui::TextEdit::singleline(prim_filter)
-                            .hint_text("all prims (future)")
-                            .desired_width(100.0),
-                    );
-                });
-
-                if changed {
-                    self.events.push(NodeGraphEvent::XformChanged {
-                        node_id: GraphNodeId::from(node_id),
-                    });
+                // Compact T/S summary
+                ui.label(format!(
+                    "T({:.1},{:.1},{:.1})",
+                    translate[0], translate[1], translate[2]
+                ));
+                if scale.iter().any(|s| (*s - 1.0).abs() > 0.001) {
+                    ui.label(format!(
+                        "S({:.2},{:.2},{:.2})",
+                        scale[0], scale[1], scale[2]
+                    ));
                 }
             }
-            SceneNode::UsdPrim {
-                prim_path,
-                prim_type,
-                kind,
-                specifier,
-            } => {
-                ui.horizontal(|ui| {
-                    ui.label("Path:");
-                    ui.text_edit_singleline(prim_path);
-                });
-                // Type combo
-                ui.horizontal(|ui| {
-                    ui.label("Type:");
-                    egui::ComboBox::from_id_salt("prim_type")
-                        .selected_text(format!("{}", prim_type))
-                        .show_ui(ui, |ui| {
-                            for t in bif_core::usd::UsdPrimType::ALL {
-                                ui.selectable_value(prim_type, t, format!("{}", t));
-                            }
-                        });
-                });
-                // Kind combo
-                ui.horizontal(|ui| {
-                    ui.label("Kind:");
-                    egui::ComboBox::from_id_salt("prim_kind")
-                        .selected_text(format!("{}", kind))
-                        .show_ui(ui, |ui| {
-                            for k in bif_core::usd::UsdKind::ALL {
-                                ui.selectable_value(kind, k, format!("{}", k));
-                            }
-                        });
-                });
-                // Specifier combo
-                ui.horizontal(|ui| {
-                    ui.label("Spec:");
-                    egui::ComboBox::from_id_salt("prim_spec")
-                        .selected_text(format!("{}", specifier))
-                        .show_ui(ui, |ui| {
-                            for s in bif_core::usd::UsdSpecifier::ALL {
-                                ui.selectable_value(specifier, s, format!("{}", s));
-                            }
-                        });
-                });
-                // Prim path label
-                ui.colored_label(egui::Color32::from_rgb(100, 200, 100), prim_path.as_str());
+            SceneNode::UsdPrim { prim_path, .. } => {
+                ui.colored_label(theme::PIN_SCENE, prim_path.as_str());
             }
             SceneNode::GraftBranches { destination_path } => {
-                ui.horizontal(|ui| {
-                    ui.label("Dest:");
-                    ui.text_edit_singleline(destination_path);
-                });
-                // Show connected branch count
+                // Show connected branch count (needs inputs from snarl)
                 let connected = (0..4)
                     .filter(|&i| !inputs.get(i).is_none_or(|p| p.remotes.is_empty()))
                     .count();
-                ui.label(format!("{}/4 branches connected", connected));
-                // Destination path label
-                ui.colored_label(
-                    egui::Color32::from_rgb(100, 200, 100),
-                    destination_path.as_str(),
-                );
+                ui.label(format!("{}/4 branches", connected));
+                ui.colored_label(theme::PIN_SCENE, destination_path.as_str());
             }
             SceneNode::HdriEnvironment {
-                file_path,
                 is_loaded,
                 is_loading,
-                rotation,
-                intensity,
-                show_background,
                 error,
-                last_load_secs,
-                last_compute_secs,
+                ..
             } => {
-                ui.horizontal(|ui| {
-                    ui.label("File:");
-                    ui.add_enabled_ui(!*is_loading, |ui| {
-                        if ui.text_edit_singleline(file_path).changed() {
-                            *is_loaded = false;
-                            *error = None;
-                        }
-                    });
-                });
-
-                ui.horizontal(|ui| {
-                    ui.add_enabled_ui(!*is_loading, |ui| {
-                        if ui.button("Browse...").clicked() {
-                            if let Some(path) = rfd::FileDialog::new()
-                                .add_filter("HDR Files", &["hdr", "exr"])
-                                .add_filter("All Files", &["*"])
-                                .pick_file()
-                            {
-                                *file_path = path.display().to_string();
-                                *is_loaded = false;
-                                *error = None;
-                                self.events.push(NodeGraphEvent::LoadHdri {
-                                    path: file_path.clone(),
-                                    rotation: *rotation,
-                                    intensity: *intensity,
-                                    show_background: *show_background,
-                                });
-                            }
-                        }
-
-                        if ui.button("Load").clicked() && !file_path.is_empty() {
-                            self.events.push(NodeGraphEvent::LoadHdri {
-                                path: file_path.clone(),
-                                rotation: *rotation,
-                                intensity: *intensity,
-                                show_background: *show_background,
-                            });
-                        }
-                    });
-                });
-
-                let mut params_changed = false;
-
-                ui.horizontal(|ui| {
-                    ui.label("Rotation:");
-                    if ui
-                        .add(egui::DragValue::new(rotation).speed(1.0).suffix("deg"))
-                        .changed()
-                    {
-                        params_changed = true;
-                    }
-                });
-
-                ui.horizontal(|ui| {
-                    ui.label("Intensity:");
-                    if ui
-                        .add(
-                            egui::DragValue::new(intensity)
-                                .speed(0.01)
-                                .range(0.0..=10.0),
-                        )
-                        .changed()
-                    {
-                        params_changed = true;
-                    }
-                });
-
-                if let Some(load_secs) = last_load_secs {
-                    ui.label(format!("Load: {:.2}s", load_secs));
-                }
-                if let Some(compute_secs) = last_compute_secs {
-                    ui.label(format!("IBL: {:.2}s", compute_secs));
-                }
-
-                if ui.checkbox(show_background, "Show Background").changed() {
-                    params_changed = true;
-                }
-
-                if params_changed && *is_loaded {
-                    self.events.push(NodeGraphEvent::UpdateHdriParams {
-                        rotation: *rotation,
-                        intensity: *intensity,
-                        show_background: *show_background,
-                    });
-                }
-
                 if *is_loading {
-                    ui.colored_label(egui::Color32::YELLOW, "Generating IBL...");
+                    ui.colored_label(theme::STATUS_WARNING, "Generating IBL...");
                 } else if *is_loaded {
-                    ui.colored_label(egui::Color32::GREEN, "Loaded");
+                    ui.colored_label(theme::STATUS_OK, "Loaded");
                 } else if let Some(err) = error {
-                    ui.colored_label(egui::Color32::RED, format!("Error: {}", err));
+                    ui.colored_label(theme::STATUS_ERROR, format!("Error: {}", err));
                 }
             }
         }

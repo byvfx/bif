@@ -1,7 +1,7 @@
 //! # State Mutation Convention
 //!
 //! **Direct mutation** (in egui closures): Simple boolean toggles with no side
-//! effects (show_grid, show_ui, point_preview.visible). Safe because they only
+//! effects (show_grid, point_preview.visible). Safe because they only
 //! affect the next frame's rendering, with no cascading state changes.
 //!
 //! **EventBus**: Anything triggering side effects (scene reload, camera sync,
@@ -20,7 +20,45 @@ use crate::property_inspector::{
     render_property_inspector, reset_property_inspector_cache, PrimProperties,
 };
 use crate::scene_browser::{self, CompositeProvider, PrimDataProvider, ProceduralPrimKind};
+use crate::theme;
 use crate::Renderer;
+
+/// Open a USD file dialog and load into the first UsdRead node in the graph.
+fn open_usd_file_dialog(
+    snarl: &mut egui_snarl::Snarl<SceneNode>,
+    event_bus: &mut crate::app_event::EventBus,
+) {
+    let Some(path) = rfd::FileDialog::new()
+        .add_filter("USD Files", &["usd", "usda", "usdc", "usdz"])
+        .pick_file()
+    else {
+        return;
+    };
+    let Some(nid) = snarl
+        .node_ids()
+        .find(|(_, node)| matches!(node, SceneNode::UsdRead { .. }))
+        .map(|(id, _)| id)
+    else {
+        return;
+    };
+    let path_str = path.display().to_string();
+    if let SceneNode::UsdRead {
+        file_path,
+        is_loaded,
+        error,
+    } = &mut snarl[nid]
+    {
+        *file_path = path_str.clone();
+        *is_loaded = false;
+        *error = None;
+    }
+    event_bus.emit(crate::app_event::AppEvent::NodeGraph(vec![
+        NodeGraphEvent::LoadUsdFile {
+            path: path_str,
+            node_id: crate::node_graph::GraphNodeId::from(nid),
+        },
+    ]));
+}
 
 impl Renderer {
     /// Render a frame with the given clear color.
@@ -147,18 +185,6 @@ impl Renderer {
         let raw_input = self.egui_state.take_egui_input(window);
 
         // Build UI - need to split borrow to avoid closure borrowing entire self
-        let show_ui = self.show_ui;
-        let fps = self.fps;
-        let camera = &self.cam.camera;
-        let num_instances = self.num_instances;
-        let visible_instances = self.culling.visible_count;
-        let lod_box_instances = self.culling.lod_box_count;
-        let triangles_per_instance = self.culling.triangles_per_instance;
-        let mesh_bounds_min = self.mesh_bounds_min;
-        let mesh_bounds_max = self.mesh_bounds_max;
-        let size = self.size;
-        let mut gnomon_size = self.gnomon.size;
-        let mut lod_max_polys = self.culling.lod_max_polys;
         let mut left_panel_width = self.ui_layout.left_panel_width;
         let mut right_panel_width = self.ui_layout.right_panel_width;
         let mut top_panel_height = self.ui_layout.top_panel_height;
@@ -174,6 +200,7 @@ impl Renderer {
         let mut ivar_target_spp = self.ivar.ivar_state.target_spp;
         let ivar_current_scale = self.ivar.ivar_state.current_scale;
         let mut ivar_nav_quality = self.ivar.ivar_state.interaction_quality;
+        let mut lod_max_polys = self.culling.lod_max_polys;
         let mut display_settings = self.display_settings.clone();
 
         // Take event bus out of self so it can be passed into the closure
@@ -182,112 +209,182 @@ impl Renderer {
         let mut gizmo_hovered: u8 = 0;
 
         let full_output = self.egui_ctx.run(raw_input, |ctx| {
-            if !show_ui {
-                left_panel_width = 0.0;
-                right_panel_width = 0.0;
-                top_panel_height = 0.0;
-                bottom_panel_height = 0.0;
-                return;
+            // Ctrl+O shortcut: open USD file via first UsdRead node
+            if ctx.input(|i| i.key_pressed(egui::Key::O) && i.modifiers.command) {
+                open_usd_file_dialog(&mut self.nodes.node_graph_state.snarl, &mut event_bus);
             }
 
-            let top_panel = egui::TopBottomPanel::top("top_panel")
-                .exact_height(28.0)
-                .show(ctx, |ui| {
-                    ui.horizontal_centered(|ui| {
-                        ui.label("BIF");
-                        ui.separator();
-                        ui.checkbox(&mut self.show_grid, "Grid");
-                        ui.checkbox(&mut self.point_preview.visible, "Points");
-
-                        // Show async USD load status
-                        if let crate::UsdLoadStatus::Loading(ref progress) =
-                            self.async_channels.usd_load_status
-                        {
-                            ui.separator();
-                            ui.spinner();
-                            ui.label(progress.to_string());
-                        } else if let crate::UsdLoadStatus::Error(ref msg) =
-                            self.async_channels.usd_load_status
-                        {
-                            ui.separator();
-                            ui.colored_label(egui::Color32::RED, msg);
-                        }
-
-                        // Show stage metadata (metersPerUnit, upAxis) if available
-                        if let Some(ref meta) = self.scene.working_scene.stage_metadata {
-                            ui.separator();
-                            ui.colored_label(
-                                egui::Color32::from_rgb(160, 160, 160),
-                                format!("[{}]", meta),
+            let top_panel = egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
+                egui::menu::bar(ui, |ui| {
+                    // File menu
+                    ui.menu_button("File", |ui| {
+                        if ui.button("Open USD...").clicked() {
+                            open_usd_file_dialog(
+                                &mut self.nodes.node_graph_state.snarl,
+                                &mut event_bus,
                             );
-
-                            // Axis/unit correction toggles (only when metadata exists)
-                            let needs_axis = meta.up_axis == bif_core::usd::cpp_bridge::UpAxis::Z;
-                            let needs_scale = (meta.meters_per_unit - 1.0).abs() > 1e-6;
-
-                            if needs_axis
-                                && ui
-                                    .checkbox(&mut self.apply_axis_correction, "Z\u{2192}Y")
-                                    .on_hover_text("Rotate scene from Z-up to Y-up")
-                                    .changed()
+                            ui.close_menu();
+                        }
+                        if ui.button("Export Edits...").clicked() {
+                            if let Some(path) = rfd::FileDialog::new()
+                                .add_filter("USD Files", &["usda", "usdc"])
+                                .set_file_name("edits.usda")
+                                .save_file()
                             {
-                                event_bus.emit(crate::app_event::AppEvent::StageCorrectionsChanged);
+                                event_bus.emit(crate::app_event::AppEvent::ExportEditLayer(path));
                             }
-                            if needs_scale
-                                && ui
-                                    .checkbox(&mut self.apply_unit_scaling, "\u{2192}m")
-                                    .on_hover_text(format!(
-                                        "Scale from {:.4} to meters",
-                                        meta.meters_per_unit
-                                    ))
-                                    .changed()
-                            {
-                                event_bus.emit(crate::app_event::AppEvent::StageCorrectionsChanged);
-                            }
+                            ui.close_menu();
+                        }
+                        ui.separator();
+                        if ui.button("Quit").clicked() {
+                            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                         }
                     });
+
+                    // View menu
+                    ui.menu_button("View", |ui| {
+                        ui.checkbox(&mut self.show_grid, "Grid")
+                            .on_hover_text("Show ground grid");
+                        ui.checkbox(&mut self.point_preview.visible, "Points")
+                            .on_hover_text("Show scatter point preview");
+                    });
+
+                    // Render menu
+                    ui.menu_button("Render", |ui| {
+                        if ui.button("Vulkan Preview").clicked() {
+                            render_mode = RenderMode::Vulkan;
+                            ui.close_menu();
+                        }
+                        if ui.button("Ivar Render").clicked() {
+                            render_mode = RenderMode::Ivar;
+                            ui.close_menu();
+                        }
+                        ui.separator();
+                        if ui.button("Rebuild Scene").clicked() {
+                            event_bus.emit(crate::app_event::AppEvent::RebuildScene);
+                            ui.close_menu();
+                        }
+                    });
+
+                    ui.separator();
+
+                    // Status area: USD load status
+                    if let crate::UsdLoadStatus::Loading(ref progress) =
+                        self.async_channels.usd_load_status
+                    {
+                        ui.spinner();
+                        ui.label(progress.to_string());
+                        ui.separator();
+                    } else if let crate::UsdLoadStatus::Error(ref msg) =
+                        self.async_channels.usd_load_status
+                    {
+                        ui.colored_label(theme::STATUS_ERROR, msg);
+                        ui.separator();
+                    }
+
+                    // Stage metadata and correction toggles
+                    if let Some(ref meta) = self.scene.working_scene.stage_metadata {
+                        ui.colored_label(theme::TEXT_SECONDARY, format!("[{}]", meta));
+
+                        let needs_axis = meta.up_axis == bif_core::usd::cpp_bridge::UpAxis::Z;
+                        let needs_scale = (meta.meters_per_unit - 1.0).abs() > 1e-6;
+
+                        if needs_axis
+                            && ui
+                                .checkbox(&mut self.apply_axis_correction, "Z\u{2192}Y")
+                                .on_hover_text("Rotate scene from Z-up to Y-up")
+                                .changed()
+                        {
+                            event_bus.emit(crate::app_event::AppEvent::StageCorrectionsChanged);
+                        }
+                        if needs_scale
+                            && ui
+                                .checkbox(&mut self.apply_unit_scaling, "\u{2192}m")
+                                .on_hover_text(format!(
+                                    "Scale from {:.4} to meters",
+                                    meta.meters_per_unit
+                                ))
+                                .changed()
+                        {
+                            event_bus.emit(crate::app_event::AppEvent::StageCorrectionsChanged);
+                        }
+                    }
                 });
+            });
             top_panel_height = top_panel.response.rect.height();
 
-            let stats_panel = egui::SidePanel::left("stats_panel")
+            let stats_panel = egui::SidePanel::left("left_panel")
                 .default_width(300.0)
                 .show(ctx, |ui| {
-                    crate::render_ui::render_stats_panel(
-                        ui,
-                        &mut event_bus,
-                        &mut crate::render_ui::StatsPanelParams {
-                            ivar_state: &mut self.ivar.ivar_state,
-                            scene_browser_state: &mut self.selection.scene_browser_state,
-                            usd_stage: &self.scene.usd_stage,
-                            timeline_state: &self.timeline_state,
-                            cached_scene_graph: &self.nodes.cached_scene_graph,
-                            fps,
-                            camera,
-                            num_instances,
-                            visible_instances,
-                            lod_box_instances,
-                            triangles_per_instance,
-                            mesh_bounds_min,
-                            mesh_bounds_max,
-                            size,
-                            instance_count: self.scene.instances.transforms.len(),
-                            mesh_triangle_count: self.scene.mesh_data.indices.len() / 3,
-                            edit_override_count: self.scene.edit_state.transform_overrides.len(),
-                            edit_keyframe_count: self.scene.edit_state.keyframe_overrides.len(),
-                            ivar_buckets_completed,
-                            ivar_total_buckets,
-                            ivar_elapsed,
-                            ivar_render_complete,
-                            ivar_accumulated_spp,
-                            ivar_current_scale,
-                            render_mode: &mut render_mode,
-                            gnomon_size: &mut gnomon_size,
-                            lod_max_polys: &mut lod_max_polys,
-                            ivar_target_spp: &mut ivar_target_spp,
-                            ivar_nav_quality: &mut ivar_nav_quality,
-                            display_settings: &mut display_settings,
-                        },
-                    );
+                    // Scene Browser (always visible, top section)
+                    ui.heading("Scene");
+
+                    // Give scene browser ~60% of panel height
+                    let available = ui.available_height();
+                    let browser_height = (available * 0.6).max(200.0);
+
+                    egui::ScrollArea::vertical()
+                        .id_salt("scene_browser_scroll")
+                        .max_height(browser_height)
+                        .show(ui, |ui| {
+                            let composite = CompositeProvider::new(
+                                self.scene
+                                    .usd_stage
+                                    .as_ref()
+                                    .map(|s| s.as_ref() as &dyn PrimDataProvider),
+                                &self.nodes.cached_scene_graph,
+                            );
+                            let provider: &dyn PrimDataProvider = &composite;
+                            if let Some(new_selection) = scene_browser::render_scene_browser(
+                                ui,
+                                &mut self.selection.scene_browser_state,
+                                provider,
+                            ) {
+                                event_bus
+                                    .emit(crate::app_event::AppEvent::PrimSelected(new_selection));
+                            }
+                        });
+
+                    ui.separator();
+
+                    // Render Settings (bottom section, scrollable)
+                    egui::ScrollArea::vertical()
+                        .id_salt("render_settings_scroll")
+                        .show(ui, |ui| {
+                            ui.heading("Render");
+                            crate::render_ui::render_stats_panel(
+                                ui,
+                                &mut event_bus,
+                                &mut crate::render_ui::StatsPanelParams {
+                                    ivar_state: &mut self.ivar.ivar_state,
+                                    usd_stage: &self.scene.usd_stage,
+                                    timeline_state: &self.timeline_state,
+                                    instance_count: self.scene.instances.transforms.len(),
+                                    mesh_triangle_count: self.scene.mesh_data.indices.len() / 3,
+                                    edit_override_count: self
+                                        .scene
+                                        .edit_state
+                                        .transform_overrides
+                                        .len(),
+                                    edit_keyframe_count: self
+                                        .scene
+                                        .edit_state
+                                        .keyframe_overrides
+                                        .len(),
+                                    ivar_buckets_completed,
+                                    ivar_total_buckets,
+                                    ivar_elapsed,
+                                    ivar_render_complete,
+                                    ivar_accumulated_spp,
+                                    ivar_current_scale,
+                                    render_mode: &mut render_mode,
+                                    ivar_target_spp: &mut ivar_target_spp,
+                                    ivar_nav_quality: &mut ivar_nav_quality,
+                                    lod_max_polys: &mut lod_max_polys,
+                                    display_settings: &mut display_settings,
+                                },
+                            );
+                        });
                 });
             left_panel_width = stats_panel.response.rect.width();
 
@@ -310,35 +407,24 @@ impl Renderer {
             let property_panel = egui::SidePanel::right("property_panel")
                 .default_width(280.0)
                 .show(ctx, |ui| {
-                    // If an Xform node is selected, show its T/R/S in the panel
-                    let selected_xform_id =
-                        self.nodes.node_graph_state.selected_node.filter(|nid| {
-                            let snarl_nid: egui_snarl::NodeId = (*nid).into();
-                            matches!(
-                                self.nodes.node_graph_state.snarl[snarl_nid],
-                                crate::node_graph::SceneNode::Xform { .. }
-                            )
-                        });
-
-                    if let Some(xform_nid) = selected_xform_id {
-                        let snarl_xform: egui_snarl::NodeId = xform_nid.into();
-                        if let crate::node_graph::SceneNode::Xform {
-                            translate,
-                            rotate,
-                            scale,
-                            prim_filter,
-                        } = &mut self.nodes.node_graph_state.snarl[snarl_xform]
-                        {
-                            let changed = crate::property_inspector::render_xform_properties(
-                                ui,
-                                translate,
-                                rotate,
-                                scale,
-                                prim_filter,
-                            );
-                            if changed {
-                                self.nodes.xform_property_changed = Some(xform_nid);
-                            }
+                    // Show selected node properties in inspector
+                    if let Some(selected_nid) = self.nodes.node_graph_state.selected_node {
+                        let snarl_id: egui_snarl::NodeId = selected_nid.into();
+                        let node = &mut self.nodes.node_graph_state.snarl[snarl_id];
+                        let node_events = crate::property_inspector::render_node_properties(
+                            ui,
+                            node,
+                            selected_nid,
+                        );
+                        // Track xform property changes for live update
+                        let has_xform_change = node_events
+                            .iter()
+                            .any(|e| matches!(e, NodeGraphEvent::XformChanged { .. }));
+                        if has_xform_change {
+                            self.nodes.xform_property_changed = Some(selected_nid);
+                        }
+                        if !node_events.is_empty() {
+                            event_bus.emit(crate::app_event::AppEvent::NodeGraph(node_events));
                         }
                         ui.separator();
                     }
@@ -492,7 +578,15 @@ impl Renderer {
                             } else {
                                 "Free"
                             };
-                            if ui.button(icon).clicked() {
+                            if ui
+                                .button(icon)
+                                .on_hover_text(if self.cam.camera_locked {
+                                    "Camera locked to USD/scene camera — click to free"
+                                } else {
+                                    "Camera free — click to lock to USD/scene camera"
+                                })
+                                .clicked()
+                            {
                                 self.cam.camera_locked = !self.cam.camera_locked;
                             }
                         }
@@ -506,12 +600,17 @@ impl Renderer {
                             } else {
                                 "▶"
                             };
-                            if ui.button(play_text).clicked() {
+                            let play_tooltip = if self.timeline_state.is_playing {
+                                "Pause animation playback"
+                            } else {
+                                "Play animation"
+                            };
+                            if ui.button(play_text).on_hover_text(play_tooltip).clicked() {
                                 self.timeline_state.toggle_playback();
                             }
 
                             // Go to start
-                            if ui.button("|◀").clicked() {
+                            if ui.button("|◀").on_hover_text("Go to first frame").clicked() {
                                 self.timeline_state.go_to_start();
                             }
                         });
@@ -558,11 +657,8 @@ impl Renderer {
                                     ];
                                     painter.add(egui::Shape::convex_polygon(
                                         points,
-                                        egui::Color32::from_rgb(255, 200, 50),
-                                        egui::Stroke::new(
-                                            1.0,
-                                            egui::Color32::from_rgb(180, 140, 30),
-                                        ),
+                                        theme::KEYFRAME_FILL,
+                                        egui::Stroke::new(1.0, theme::KEYFRAME_STROKE),
                                     ));
                                 }
                             }
@@ -573,13 +669,14 @@ impl Renderer {
 
                         // Go to end (disabled if no animation)
                         ui.add_enabled_ui(has_animation, |ui| {
-                            if ui.button("▶|").clicked() {
+                            if ui.button("▶|").on_hover_text("Go to last frame").clicked() {
                                 self.timeline_state.go_to_end();
                             }
                         });
 
                         // Loop toggle
-                        ui.checkbox(&mut self.timeline_state.loop_playback, "Loop");
+                        ui.checkbox(&mut self.timeline_state.loop_playback, "Loop")
+                            .on_hover_text("Loop animation playback");
 
                         // Realtime toggle (wall-clock vs every-frame)
                         if ui
@@ -591,7 +688,8 @@ impl Renderer {
                         }
 
                         // Integer frame snap toggle
-                        ui.checkbox(&mut self.timeline_state.snap_to_frames, "Int");
+                        ui.checkbox(&mut self.timeline_state.snap_to_frames, "Int")
+                            .on_hover_text("Snap playback to integer frames");
 
                         // FPS display
                         ui.label(format!("@{:.0}fps", self.timeline_state.fps));
@@ -610,6 +708,90 @@ impl Renderer {
                     }
                 });
             bottom_panel_height = node_graph_panel.response.rect.height() + timeline_height;
+
+            // First-launch empty state (centered welcome when no scene loaded)
+            if self.scene.usd_stage.is_none() && self.scene.instances.transforms.is_empty() {
+                egui::Area::new(egui::Id::new("welcome"))
+                    .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                    .interactable(true)
+                    .show(ctx, |ui| {
+                        egui::Frame::none()
+                            .fill(theme::BG_OVERLAY_BACKDROP)
+                            .inner_margin(egui::Margin::same(24.0))
+                            .rounding(8.0)
+                            .show(ui, |ui| {
+                                ui.vertical_centered(|ui| {
+                                    ui.heading("BIF");
+                                    ui.colored_label(theme::TEXT_SECONDARY, "VFX Scene Assembly");
+                                    ui.add_space(12.0);
+                                    if ui.button("Open USD File...").clicked() {
+                                        open_usd_file_dialog(
+                                            &mut self.nodes.node_graph_state.snarl,
+                                            &mut event_bus,
+                                        );
+                                    }
+                                    ui.colored_label(
+                                        theme::TEXT_DISABLED,
+                                        "or add a USD Read node in the graph below",
+                                    );
+                                });
+                            });
+                    });
+            }
+
+            // Viewport stats overlay (top-left of viewport area)
+            {
+                let overlay_offset = egui::pos2(left_panel_width + 8.0, top_panel_height + 8.0);
+                egui::Area::new(egui::Id::new("viewport_stats"))
+                    .fixed_pos(overlay_offset)
+                    .interactable(false)
+                    .show(ctx, |ui| {
+                        egui::Frame::none()
+                            .fill(theme::BG_OVERLAY_BACKDROP)
+                            .inner_margin(egui::Margin::same(6.0))
+                            .rounding(4.0)
+                            .show(ui, |ui| {
+                                ui.style_mut().spacing.item_spacing.y = 1.0;
+                                ui.colored_label(
+                                    theme::TEXT_SECONDARY,
+                                    format!("{:.0} fps", self.fps),
+                                );
+                                ui.colored_label(
+                                    theme::TEXT_SECONDARY,
+                                    format!(
+                                        "{}/{} instances",
+                                        self.culling.visible_count + self.culling.lod_box_count,
+                                        self.num_instances
+                                    ),
+                                );
+                                let full_tris = self.culling.triangles_per_instance as u64
+                                    * self.culling.visible_count as u64;
+                                let box_tris = 12u64 * self.culling.lod_box_count as u64;
+                                let total_tris = full_tris + box_tris;
+                                let tris_str = if total_tris > 1_000_000 {
+                                    format!("{:.1}M tris", total_tris as f64 / 1_000_000.0)
+                                } else if total_tris > 1_000 {
+                                    format!("{:.1}K tris", total_tris as f64 / 1_000.0)
+                                } else {
+                                    format!("{} tris", total_tris)
+                                };
+                                ui.colored_label(theme::TEXT_SECONDARY, tris_str);
+                                // Show render SPP when in Ivar mode
+                                if self.ivar.ivar_state.mode == crate::ivar_state::RenderMode::Ivar
+                                    && self.ivar.ivar_state.accumulated_samples > 0
+                                {
+                                    ui.colored_label(
+                                        theme::TEXT_SECONDARY,
+                                        format!(
+                                            "{}/{} spp",
+                                            self.ivar.ivar_state.accumulated_samples,
+                                            self.ivar.ivar_state.target_spp
+                                        ),
+                                    );
+                                }
+                            });
+                    });
+            }
 
             // Draw translate gizmo overlay (after all panels, on foreground layer)
             if let Some(sel_idx) = self.selection.selected_instance_index {
@@ -656,8 +838,6 @@ impl Renderer {
                 crate::gizmo::GizmoAxis::from_u8(gizmo_hovered);
         }
 
-        // Update gnomon size from UI
-        self.gnomon.size = gnomon_size;
         // Update target SPP from UI (may resume rendering if increased)
         if ivar_target_spp != self.ivar.ivar_state.target_spp {
             self.ivar.ivar_state.target_spp = ivar_target_spp;
@@ -686,7 +866,6 @@ impl Renderer {
         self.display_settings = display_settings;
 
         // Purpose mode changed — full rebuild (combined mesh must be re-baked for Ivar).
-        // TODO: skip reload when only rasterizer is active (culling/multi-draw already filter).
         if purpose_changed {
             log::info!(
                 "Purpose mode changed to {:?}",

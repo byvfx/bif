@@ -40,6 +40,7 @@ mod scene_loader;
 pub mod scene_manager;
 pub mod selection;
 pub mod skybox;
+pub mod theme;
 pub mod timeline;
 mod types;
 
@@ -193,7 +194,6 @@ pub struct Renderer {
     pub(crate) egui_renderer: egui_wgpu::Renderer,
 
     // UI state
-    pub show_ui: bool,
     pub fps: f32,
     pub(crate) frame_count: u32,
     pub(crate) fps_update_timer: f32,
@@ -666,6 +666,7 @@ impl Renderer {
 
         // Initialize egui
         let egui_ctx = egui::Context::default();
+        theme::apply_theme(&egui_ctx);
         let egui_state = egui_winit::State::new(
             egui_ctx.clone(),
             egui::ViewportId::ROOT,
@@ -786,7 +787,6 @@ impl Renderer {
             egui_ctx,
             egui_state,
             egui_renderer,
-            show_ui: true,
             fps: 0.0,
             frame_count: 0,
             fps_update_timer: 0.0,

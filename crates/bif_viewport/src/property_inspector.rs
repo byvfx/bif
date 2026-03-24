@@ -7,7 +7,9 @@
 use std::sync::Arc;
 
 use crate::app_event::{AppEvent, EventBus};
+use crate::node_graph::{GraphNodeId, NodeGraphEvent, SceneNode};
 use crate::scene_browser::PrimDisplayInfo;
+use crate::theme;
 use bif_math::Mat4;
 
 /// Properties for a selected prim to display in the inspector.
@@ -336,9 +338,9 @@ pub fn render_property_inspector(
                 ui.separator();
                 ui.label("Active:");
                 if props.is_active {
-                    ui.colored_label(egui::Color32::from_rgb(60, 180, 60), "Yes");
+                    ui.colored_label(theme::STATUS_OK, "Yes");
                 } else {
-                    ui.colored_label(egui::Color32::from_rgb(200, 60, 60), "No");
+                    ui.colored_label(theme::STATUS_ERROR, "No");
                 }
             });
 
@@ -347,7 +349,13 @@ pub fn render_property_inspector(
                 ui.separator();
                 render_editable_transform(ui, event_bus, instance_index, transform);
                 ui.add_space(4.0);
-                if ui.button("Set Key (K)").clicked() {
+                if ui
+                    .button("Set Key (K)")
+                    .on_hover_text(
+                        "Set a keyframe for this instance's transform at the current frame",
+                    )
+                    .clicked()
+                {
                     event_bus.emit(AppEvent::SetKeyframe(instance_index as u64));
                 }
             }
@@ -378,13 +386,9 @@ pub fn render_property_inspector(
                             for (idx, row) in rows.iter().enumerate() {
                                 // Col 1: status circle
                                 let circle_color = match row.status {
-                                    PropertyStatus::Resolved => {
-                                        egui::Color32::from_rgb(60, 180, 60)
-                                    }
-                                    PropertyStatus::Unresolved => {
-                                        egui::Color32::from_rgb(200, 60, 60)
-                                    }
-                                    PropertyStatus::Info => egui::Color32::from_rgb(120, 140, 180),
+                                    PropertyStatus::Resolved => theme::STATUS_OK,
+                                    PropertyStatus::Unresolved => theme::STATUS_ERROR,
+                                    PropertyStatus::Info => theme::STATUS_INFO,
                                 };
                                 let (circle_rect, _) = ui.allocate_exact_size(
                                     egui::vec2(10.0, 10.0),
@@ -513,9 +517,9 @@ fn render_property_detail(ui: &mut egui::Ui, row: &PropertyRow) {
         }
         PropertyDetail::Bool(val) => {
             if *val {
-                ui.colored_label(egui::Color32::from_rgb(60, 180, 60), "Yes");
+                ui.colored_label(theme::STATUS_OK, "Yes");
             } else {
-                ui.colored_label(egui::Color32::from_rgb(200, 60, 60), "No");
+                ui.colored_label(theme::STATUS_ERROR, "No");
             }
         }
     }
@@ -590,7 +594,14 @@ fn render_editable_transform(
         .num_columns(4)
         .spacing([4.0, 2.0])
         .show(ui, |ui| {
-            let (c, r) = drag_value_row(ui, &["X", "Y", "Z"], &mut values[0..3], 0.1);
+            let (c, r) = drag_value_row(
+                ui,
+                &["X", "Y", "Z"],
+                &mut values[0..3],
+                0.1,
+                "Translation",
+                "",
+            );
             any_changed |= c;
             any_released |= r;
         });
@@ -601,7 +612,14 @@ fn render_editable_transform(
         .num_columns(4)
         .spacing([4.0, 2.0])
         .show(ui, |ui| {
-            let (c, r) = drag_value_row(ui, &["X", "Y", "Z"], &mut values[3..6], 1.0);
+            let (c, r) = drag_value_row(
+                ui,
+                &["X", "Y", "Z"],
+                &mut values[3..6],
+                1.0,
+                "Rotation",
+                "degrees",
+            );
             any_changed |= c;
             any_released |= r;
         });
@@ -612,7 +630,7 @@ fn render_editable_transform(
         .num_columns(4)
         .spacing([4.0, 2.0])
         .show(ui, |ui| {
-            let (c, r) = drag_value_row(ui, &["X", "Y", "Z"], &mut values[6..9], 0.01);
+            let (c, r) = drag_value_row(ui, &["X", "Y", "Z"], &mut values[6..9], 0.01, "Scale", "");
             any_changed |= c;
             any_released |= r;
         });
@@ -656,28 +674,40 @@ fn render_editable_transform(
 }
 
 /// Render a row of 3 labeled DragValue fields. Returns (any_changed, any_released).
+///
+/// `section` is the transform section name ("Translation", "Rotation", "Scale") used
+/// for tooltip text on each DragValue.
 fn drag_value_row(
     ui: &mut egui::Ui,
     labels: &[&str; 3],
     values: &mut [f32],
     speed: f32,
+    section: &str,
+    unit: &str,
 ) -> (bool, bool) {
     let mut changed = false;
     let mut released = false;
 
     let colors = [
-        egui::Color32::from_rgb(200, 60, 60),  // R for X
-        egui::Color32::from_rgb(60, 180, 60),  // G for Y
-        egui::Color32::from_rgb(60, 100, 220), // B for Z
+        theme::AXIS_X, // R for X
+        theme::AXIS_Y, // G for Y
+        theme::AXIS_Z, // B for Z
     ];
 
     for i in 0..3 {
         ui.colored_label(colors[i], labels[i]);
-        let resp = ui.add(
-            egui::DragValue::new(&mut values[i])
-                .speed(speed)
-                .fixed_decimals(3),
-        );
+        let tooltip = if unit.is_empty() {
+            format!("{} {}", section, labels[i])
+        } else {
+            format!("{} {} ({})", section, labels[i], unit)
+        };
+        let resp = ui
+            .add(
+                egui::DragValue::new(&mut values[i])
+                    .speed(speed)
+                    .fixed_decimals(3),
+            )
+            .on_hover_text(tooltip);
         if resp.changed() {
             changed = true;
         }
@@ -772,7 +802,14 @@ pub fn render_xform_properties(
         .num_columns(4)
         .spacing([4.0, 2.0])
         .show(ui, |ui| {
-            let (c, _) = drag_value_row(ui, &["X", "Y", "Z"], translate.as_mut_slice(), 0.1);
+            let (c, _) = drag_value_row(
+                ui,
+                &["X", "Y", "Z"],
+                translate.as_mut_slice(),
+                0.1,
+                "Translation",
+                "",
+            );
             changed |= c;
         });
 
@@ -782,7 +819,14 @@ pub fn render_xform_properties(
         .num_columns(4)
         .spacing([4.0, 2.0])
         .show(ui, |ui| {
-            let (c, _) = drag_value_row(ui, &["X", "Y", "Z"], rotate.as_mut_slice(), 1.0);
+            let (c, _) = drag_value_row(
+                ui,
+                &["X", "Y", "Z"],
+                rotate.as_mut_slice(),
+                1.0,
+                "Rotation",
+                "degrees",
+            );
             changed |= c;
         });
 
@@ -792,7 +836,14 @@ pub fn render_xform_properties(
         .num_columns(4)
         .spacing([4.0, 2.0])
         .show(ui, |ui| {
-            let (c, _) = drag_value_row(ui, &["X", "Y", "Z"], scale.as_mut_slice(), 0.01);
+            let (c, _) = drag_value_row(
+                ui,
+                &["X", "Y", "Z"],
+                scale.as_mut_slice(),
+                0.01,
+                "Scale",
+                "",
+            );
             changed |= c;
         });
 
@@ -808,6 +859,729 @@ pub fn render_xform_properties(
     });
 
     changed
+}
+
+/// Render parameters for the selected node in the property inspector.
+/// Returns a list of node graph events to emit.
+pub(crate) fn render_node_properties(
+    ui: &mut egui::Ui,
+    node: &mut SceneNode,
+    node_id: GraphNodeId,
+) -> Vec<NodeGraphEvent> {
+    let mut events = Vec::new();
+
+    match node {
+        SceneNode::UsdRead {
+            file_path,
+            is_loaded,
+            error,
+        } => {
+            ui.heading("USD Read");
+            ui.horizontal(|ui| {
+                ui.label("File:");
+                if ui.text_edit_singleline(file_path).changed() {
+                    *is_loaded = false;
+                    *error = None;
+                }
+            });
+            ui.horizontal(|ui| {
+                if ui.button("Browse...").clicked() {
+                    if let Some(path) = rfd::FileDialog::new()
+                        .add_filter("USD Files", &["usda", "usdc", "usd"])
+                        .add_filter("All Files", &["*"])
+                        .pick_file()
+                    {
+                        *file_path = path.display().to_string();
+                        *is_loaded = false;
+                        *error = None;
+                        events.push(NodeGraphEvent::LoadUsdFile {
+                            path: file_path.clone(),
+                            node_id,
+                        });
+                    }
+                }
+                if ui.button("Load").clicked() && !file_path.is_empty() {
+                    events.push(NodeGraphEvent::LoadUsdFile {
+                        path: file_path.clone(),
+                        node_id,
+                    });
+                }
+            });
+            if *is_loaded {
+                ui.colored_label(theme::STATUS_OK, "\u{2713} Loaded");
+            } else if let Some(err) = error {
+                ui.colored_label(theme::STATUS_ERROR, format!("\u{2717} {}", err));
+            }
+        }
+        SceneNode::IvarRender {
+            spp,
+            is_rendering,
+            is_converting_tx,
+            tx_status,
+        } => {
+            ui.heading("Ivar Render");
+            ui.horizontal(|ui| {
+                ui.label("SPP:");
+                ui.add(egui::DragValue::new(spp).range(1..=1024))
+                    .on_hover_text("Samples per pixel — higher = less noise, slower");
+            });
+            if *is_rendering {
+                ui.colored_label(theme::STATUS_WARNING, "Rendering...");
+            } else if ui
+                .button("Render")
+                .on_hover_text("Start Ivar path tracer render")
+                .clicked()
+            {
+                events.push(NodeGraphEvent::StartRender { spp: *spp });
+                *is_rendering = true;
+            }
+            ui.separator();
+            if *is_converting_tx {
+                ui.colored_label(theme::STATUS_WARNING, "Converting .tx...");
+            } else {
+                ui.horizontal(|ui| {
+                    if ui
+                        .button("Convert to .tx")
+                        .on_hover_text(
+                            "Convert scene textures to tiled .tx format for faster rendering",
+                        )
+                        .clicked()
+                    {
+                        events.push(NodeGraphEvent::ConvertTexturesToTx);
+                        *is_converting_tx = true;
+                        *tx_status = None;
+                    }
+                    if ui
+                        .button("Clear .tx")
+                        .on_hover_text("Delete all cached .tx texture files")
+                        .clicked()
+                    {
+                        events.push(NodeGraphEvent::ClearTxCache);
+                    }
+                });
+            }
+            if let Some(status) = tx_status {
+                ui.colored_label(theme::STATUS_OK, status.as_str());
+            }
+        }
+        SceneNode::Primitive {
+            kind: _,
+            size,
+            is_created,
+            prim_path,
+        } => {
+            ui.heading("Primitive");
+            ui.horizontal(|ui| {
+                ui.label("Size:");
+                if ui
+                    .add(egui::DragValue::new(size).speed(0.01).range(0.01..=100.0))
+                    .changed()
+                {
+                    *is_created = false;
+                }
+            });
+            ui.horizontal(|ui| {
+                ui.label("Path:");
+                ui.text_edit_singleline(prim_path);
+            });
+        }
+        SceneNode::ScatterPoints {
+            source,
+            count,
+            max_point_limit,
+            seed,
+            scatter_mode,
+            min_distance,
+            align_to_normal,
+            grid_size,
+            grid_spacing,
+            sphere_radius,
+            sphere_on_surface,
+            relax_iterations,
+            scale_radii,
+            max_relax_radius,
+            scale_min,
+            scale_max,
+            rotation_range,
+            target_proto_id: _,
+            is_computed,
+            point_size,
+            point_color,
+        } => {
+            ui.heading("Scatter Points");
+
+            // Source dropdown
+            ui.horizontal(|ui| {
+                ui.label("Source:");
+                egui::ComboBox::from_id_salt("scatter_source_inspector")
+                    .selected_text(match source {
+                        bif_core::PointSource::Surface => "Surface",
+                        bif_core::PointSource::Grid => "Grid",
+                        bif_core::PointSource::Sphere => "Sphere",
+                    })
+                    .show_ui(ui, |ui| {
+                        if ui
+                            .selectable_value(source, bif_core::PointSource::Surface, "Surface")
+                            .changed()
+                        {
+                            *is_computed = false;
+                        }
+                        if ui
+                            .selectable_value(source, bif_core::PointSource::Grid, "Grid")
+                            .changed()
+                        {
+                            *is_computed = false;
+                        }
+                        if ui
+                            .selectable_value(source, bif_core::PointSource::Sphere, "Sphere")
+                            .changed()
+                        {
+                            *is_computed = false;
+                        }
+                    });
+            });
+
+            // Source-specific params
+            match source {
+                bif_core::PointSource::Surface => {
+                    ui.horizontal(|ui| {
+                        ui.label("Count:");
+                        if ui
+                            .add(egui::DragValue::new(count).range(1..=100_000))
+                            .changed()
+                        {
+                            *is_computed = false;
+                        }
+                    });
+
+                    ui.horizontal(|ui| {
+                        ui.label("Mode:");
+                        let mut is_poisson =
+                            *scatter_mode == bif_core::scatter::ScatterMode::PoissonDisk;
+                        if ui
+                            .checkbox(&mut is_poisson, "Poisson Disk")
+                            .on_hover_text(
+                                "Poisson Disk: even distribution with minimum spacing; unchecked = random",
+                            )
+                            .changed()
+                        {
+                            *scatter_mode = if is_poisson {
+                                bif_core::scatter::ScatterMode::PoissonDisk
+                            } else {
+                                bif_core::scatter::ScatterMode::Random
+                            };
+                            *is_computed = false;
+                        }
+                    });
+
+                    if *scatter_mode == bif_core::scatter::ScatterMode::PoissonDisk {
+                        ui.horizontal(|ui| {
+                            ui.label("Min Dist:");
+                            if ui
+                                .add(
+                                    egui::DragValue::new(min_distance)
+                                        .speed(0.01)
+                                        .range(0.01..=100.0),
+                                )
+                                .changed()
+                            {
+                                *is_computed = false;
+                            }
+                        });
+                    }
+
+                    ui.horizontal(|ui| {
+                        ui.label("Seed:");
+                        let mut seed_val = *seed as i64;
+                        if ui
+                            .add(egui::DragValue::new(&mut seed_val).range(0..=999_999))
+                            .changed()
+                        {
+                            *seed = seed_val as u64;
+                            *is_computed = false;
+                        }
+                    });
+
+                    if ui
+                        .checkbox(align_to_normal, "Align to Normal")
+                        .on_hover_text(
+                            "Orient instances to the surface normal at their scatter point",
+                        )
+                        .changed()
+                    {
+                        *is_computed = false;
+                    }
+                }
+                bif_core::PointSource::Grid => {
+                    ui.horizontal(|ui| {
+                        ui.label("Size X:");
+                        if ui
+                            .add(
+                                egui::DragValue::new(&mut grid_size[0])
+                                    .speed(0.1)
+                                    .range(0.0..=1000.0),
+                            )
+                            .changed()
+                        {
+                            *is_computed = false;
+                        }
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Size Y:");
+                        if ui
+                            .add(
+                                egui::DragValue::new(&mut grid_size[1])
+                                    .speed(0.1)
+                                    .range(0.0..=1000.0),
+                            )
+                            .changed()
+                        {
+                            *is_computed = false;
+                        }
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Size Z:");
+                        if ui
+                            .add(
+                                egui::DragValue::new(&mut grid_size[2])
+                                    .speed(0.1)
+                                    .range(0.0..=1000.0),
+                            )
+                            .changed()
+                        {
+                            *is_computed = false;
+                        }
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Spacing:");
+                        if ui
+                            .add(
+                                egui::DragValue::new(grid_spacing)
+                                    .speed(0.01)
+                                    .range(0.01..=100.0),
+                            )
+                            .changed()
+                        {
+                            *is_computed = false;
+                        }
+                    });
+                }
+                bif_core::PointSource::Sphere => {
+                    ui.horizontal(|ui| {
+                        ui.label("Count:");
+                        if ui
+                            .add(egui::DragValue::new(count).range(1..=100_000))
+                            .changed()
+                        {
+                            *is_computed = false;
+                        }
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Radius:");
+                        if ui
+                            .add(
+                                egui::DragValue::new(sphere_radius)
+                                    .speed(0.1)
+                                    .range(0.01..=1000.0),
+                            )
+                            .changed()
+                        {
+                            *is_computed = false;
+                        }
+                    });
+                    if ui
+                        .checkbox(sphere_on_surface, "Surface Only")
+                        .on_hover_text("Scatter only on the sphere surface, not inside the volume")
+                        .changed()
+                    {
+                        *is_computed = false;
+                    }
+                    ui.horizontal(|ui| {
+                        ui.label("Seed:");
+                        let mut seed_val = *seed as i64;
+                        if ui
+                            .add(egui::DragValue::new(&mut seed_val).range(0..=999_999))
+                            .changed()
+                        {
+                            *seed = seed_val as u64;
+                            *is_computed = false;
+                        }
+                    });
+                }
+            }
+
+            // Common: max point limit
+            ui.horizontal(|ui| {
+                ui.label("Max Pts:");
+                if ui
+                    .add(egui::DragValue::new(max_point_limit).range(1..=1_000_000))
+                    .on_hover_text(
+                        "Hard cap on scatter points regardless of count/density settings",
+                    )
+                    .changed()
+                {
+                    *is_computed = false;
+                }
+            });
+
+            // Relax section
+            ui.separator();
+            ui.horizontal(|ui| {
+                ui.label("Relax Iters:");
+                if ui
+                    .add(egui::DragValue::new(relax_iterations).range(0..=100))
+                    .on_hover_text("Lloyd relaxation passes to improve point distribution evenness")
+                    .changed()
+                {
+                    *is_computed = false;
+                }
+            });
+            if *relax_iterations > 0 {
+                ui.horizontal(|ui| {
+                    ui.label("Scale Radii:");
+                    if ui
+                        .add(
+                            egui::DragValue::new(scale_radii)
+                                .speed(0.01)
+                                .range(0.01..=10.0),
+                        )
+                        .changed()
+                    {
+                        *is_computed = false;
+                    }
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Max Radius:");
+                    if ui
+                        .add(
+                            egui::DragValue::new(max_relax_radius)
+                                .speed(0.01)
+                                .range(0.01..=100.0),
+                        )
+                        .changed()
+                    {
+                        *is_computed = false;
+                    }
+                });
+            }
+
+            // Per-point attributes
+            ui.separator();
+            ui.horizontal(|ui| {
+                ui.label("Scale:");
+                let changed_min = ui
+                    .add(
+                        egui::DragValue::new(scale_min)
+                            .speed(0.01)
+                            .range(0.01..=10.0),
+                    )
+                    .changed();
+                ui.label("-");
+                let changed_max = ui
+                    .add(
+                        egui::DragValue::new(scale_max)
+                            .speed(0.01)
+                            .range(0.01..=10.0),
+                    )
+                    .changed();
+                if changed_min || changed_max {
+                    *is_computed = false;
+                }
+            });
+
+            ui.horizontal(|ui| {
+                ui.label("Rotation:");
+                if ui
+                    .add(
+                        egui::DragValue::new(rotation_range)
+                            .speed(1.0)
+                            .suffix("deg")
+                            .range(0.0..=360.0),
+                    )
+                    .changed()
+                {
+                    *is_computed = false;
+                }
+            });
+
+            // Status display
+            if *is_computed {
+                ui.colored_label(theme::STATUS_OK, "Computed");
+            }
+
+            // Point preview controls (cosmetic only, no recompute)
+            ui.separator();
+            let mut preview_changed = false;
+            ui.horizontal(|ui| {
+                ui.label("Pt Size:");
+                if ui
+                    .add(
+                        egui::DragValue::new(point_size)
+                            .speed(0.5)
+                            .range(1.0..=20.0),
+                    )
+                    .changed()
+                {
+                    preview_changed = true;
+                }
+            });
+            ui.horizontal(|ui| {
+                ui.label("Color:");
+                if ui
+                    .color_edit_button_rgba_unmultiplied(point_color)
+                    .changed()
+                {
+                    preview_changed = true;
+                }
+            });
+            if preview_changed {
+                events.push(NodeGraphEvent::PointPreviewUpdate {
+                    node_id,
+                    point_size: *point_size,
+                    point_color: *point_color,
+                });
+            }
+        }
+        SceneNode::PointInstancer {
+            prim_path,
+            instance_count,
+            is_instanced,
+            ..
+        } => {
+            ui.heading("Point Instancer");
+            ui.horizontal(|ui| {
+                ui.label("Path:");
+                ui.text_edit_singleline(prim_path);
+            });
+            if *is_instanced {
+                ui.colored_label(theme::STATUS_OK, format!("{} instances", instance_count));
+            }
+        }
+        SceneNode::UsdExport {
+            output_path,
+            as_sublayer,
+            export_root,
+            is_exported,
+            last_result,
+        } => {
+            ui.heading("USD Export");
+            ui.horizontal(|ui| {
+                ui.label("Path:");
+                ui.text_edit_singleline(output_path);
+            });
+            ui.horizontal(|ui| {
+                if ui.button("Browse...").clicked() {
+                    if let Some(path) = rfd::FileDialog::new()
+                        .add_filter("USD Files", &["usda", "usdc"])
+                        .set_file_name("export.usda")
+                        .save_file()
+                    {
+                        *output_path = path.display().to_string();
+                        *is_exported = false;
+                        *last_result = None;
+                    }
+                }
+            });
+            ui.checkbox(as_sublayer, "As Sublayer")
+                .on_hover_text("Export as a sublayer reference instead of a flattened stage");
+            ui.horizontal(|ui| {
+                ui.label("Root:");
+                ui.text_edit_singleline(export_root);
+            });
+            if !output_path.is_empty() && ui.button("Export").clicked() {
+                events.push(NodeGraphEvent::ExportUsd {
+                    node_id,
+                    output_path: output_path.clone(),
+                    as_sublayer: *as_sublayer,
+                    export_root: export_root.clone(),
+                });
+            }
+            if *is_exported {
+                if let Some(ref result) = last_result {
+                    ui.colored_label(theme::STATUS_OK, result.as_str());
+                }
+            } else if let Some(ref result) = last_result {
+                ui.colored_label(theme::STATUS_ERROR, result.as_str());
+            }
+        }
+        SceneNode::Xform {
+            translate,
+            rotate,
+            scale,
+            prim_filter,
+        } => {
+            let changed = render_xform_properties(ui, translate, rotate, scale, prim_filter);
+            if changed {
+                events.push(NodeGraphEvent::XformChanged { node_id });
+            }
+        }
+        SceneNode::UsdPrim {
+            prim_path,
+            prim_type,
+            kind,
+            specifier,
+        } => {
+            ui.heading("USD Prim");
+            ui.horizontal(|ui| {
+                ui.label("Path:");
+                ui.text_edit_singleline(prim_path);
+            });
+            ui.horizontal(|ui| {
+                ui.label("Type:");
+                egui::ComboBox::from_id_salt("prim_type_inspector")
+                    .selected_text(format!("{}", prim_type))
+                    .show_ui(ui, |ui| {
+                        for t in bif_core::usd::UsdPrimType::ALL {
+                            ui.selectable_value(prim_type, t, format!("{}", t));
+                        }
+                    });
+            });
+            ui.horizontal(|ui| {
+                ui.label("Kind:");
+                egui::ComboBox::from_id_salt("prim_kind_inspector")
+                    .selected_text(format!("{}", kind))
+                    .show_ui(ui, |ui| {
+                        for k in bif_core::usd::UsdKind::ALL {
+                            ui.selectable_value(kind, k, format!("{}", k));
+                        }
+                    })
+                    .response
+                    .on_hover_text(
+                        "USD prim kind metadata (component, assembly, group, subcomponent)",
+                    );
+            });
+            ui.horizontal(|ui| {
+                ui.label("Spec:");
+                egui::ComboBox::from_id_salt("prim_spec_inspector")
+                    .selected_text(format!("{}", specifier))
+                    .show_ui(ui, |ui| {
+                        for s in bif_core::usd::UsdSpecifier::ALL {
+                            ui.selectable_value(specifier, s, format!("{}", s));
+                        }
+                    })
+                    .response
+                    .on_hover_text("USD prim specifier (def = concrete prim, over = opinion, class = abstract)");
+            });
+            ui.colored_label(theme::PIN_SCENE, prim_path.as_str());
+        }
+        SceneNode::GraftBranches { destination_path } => {
+            ui.heading("Graft Branches");
+            ui.horizontal(|ui| {
+                ui.label("Dest:");
+                ui.text_edit_singleline(destination_path);
+            });
+            ui.colored_label(theme::PIN_SCENE, destination_path.as_str());
+        }
+        SceneNode::HdriEnvironment {
+            file_path,
+            is_loaded,
+            is_loading,
+            rotation,
+            intensity,
+            show_background,
+            error,
+            last_load_secs,
+            last_compute_secs,
+        } => {
+            ui.heading("HDRI Environment");
+            ui.horizontal(|ui| {
+                ui.label("File:");
+                ui.add_enabled_ui(!*is_loading, |ui| {
+                    if ui.text_edit_singleline(file_path).changed() {
+                        *is_loaded = false;
+                        *error = None;
+                    }
+                });
+            });
+            ui.horizontal(|ui| {
+                ui.add_enabled_ui(!*is_loading, |ui| {
+                    if ui.button("Browse...").clicked() {
+                        if let Some(path) = rfd::FileDialog::new()
+                            .add_filter("HDR Files", &["hdr", "exr"])
+                            .add_filter("All Files", &["*"])
+                            .pick_file()
+                        {
+                            *file_path = path.display().to_string();
+                            *is_loaded = false;
+                            *error = None;
+                            events.push(NodeGraphEvent::LoadHdri {
+                                path: file_path.clone(),
+                                rotation: *rotation,
+                                intensity: *intensity,
+                                show_background: *show_background,
+                            });
+                        }
+                    }
+                    if ui.button("Load").clicked() && !file_path.is_empty() {
+                        events.push(NodeGraphEvent::LoadHdri {
+                            path: file_path.clone(),
+                            rotation: *rotation,
+                            intensity: *intensity,
+                            show_background: *show_background,
+                        });
+                    }
+                });
+            });
+
+            let mut params_changed = false;
+
+            ui.horizontal(|ui| {
+                ui.label("Rotation:");
+                if ui
+                    .add(egui::DragValue::new(rotation).speed(1.0).suffix("deg"))
+                    .changed()
+                {
+                    params_changed = true;
+                }
+            });
+            ui.horizontal(|ui| {
+                ui.label("Intensity:");
+                if ui
+                    .add(
+                        egui::DragValue::new(intensity)
+                            .speed(0.01)
+                            .range(0.0..=10.0),
+                    )
+                    .changed()
+                {
+                    params_changed = true;
+                }
+            });
+
+            if let Some(load_secs) = last_load_secs {
+                ui.label(format!("Load: {:.2}s", load_secs));
+            }
+            if let Some(compute_secs) = last_compute_secs {
+                ui.label(format!("IBL: {:.2}s", compute_secs));
+            }
+
+            if ui
+                .checkbox(show_background, "Show Background")
+                .on_hover_text("Show HDRI image as the viewport background")
+                .changed()
+            {
+                params_changed = true;
+            }
+
+            if params_changed && *is_loaded {
+                events.push(NodeGraphEvent::UpdateHdriParams {
+                    rotation: *rotation,
+                    intensity: *intensity,
+                    show_background: *show_background,
+                });
+            }
+
+            if *is_loading {
+                ui.colored_label(theme::STATUS_WARNING, "Generating IBL...");
+            } else if *is_loaded {
+                ui.colored_label(theme::STATUS_OK, "Loaded");
+            } else if let Some(err) = error {
+                ui.colored_label(theme::STATUS_ERROR, format!("Error: {}", err));
+            }
+        }
+    }
+
+    events
 }
 
 /// Reset cached property inspector state (call when selection changes).

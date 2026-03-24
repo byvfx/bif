@@ -17,6 +17,8 @@
 
 use std::collections::{HashMap, HashSet};
 
+use crate::theme;
+
 /// State for the scene browser UI.
 #[derive(Default)]
 pub struct SceneBrowserState {
@@ -104,21 +106,22 @@ impl SceneBrowserState {
     }
 }
 
-/// Get the icon for a USD prim type.
-pub fn prim_type_icon(type_name: &str) -> &'static str {
+/// Get the icon and color for a USD prim type.
+pub fn prim_type_icon(type_name: &str) -> (&'static str, egui::Color32) {
     match type_name {
-        "Mesh" => "🔷",           // Blue diamond for mesh
-        "Xform" => "📐",          // Transform
-        "PointInstancer" => "🔁", // Instancer
-        "Scope" => "📁",          // Folder/scope
-        "Camera" => "📷",         // Camera
-        "Light" | "DistantLight" | "DomeLight" | "SphereLight" | "RectLight" => "💡",
-        "Material" => "🎨", // Material
-        "Shader" => "🔲",   // Shader
-        "Skeleton" => "🦴", // Skeleton
-        "SkelRoot" => "🦴", // Skeleton root
-        "" => "◇",          // Empty/unknown type
-        _ => "○",           // Default circle for other types
+        "Mesh" => ("◆", theme::PIN_SCENE),
+        "Xform" => ("✦", theme::STATUS_WARNING),
+        "PointInstancer" => ("⊕", theme::ACCENT_PRIMARY),
+        "Scope" => ("▸", theme::TEXT_SECONDARY),
+        "Camera" => ("◎", theme::STATUS_INFO),
+        "Light" | "DistantLight" | "DomeLight" | "SphereLight" | "RectLight" => {
+            ("✧", theme::KEYFRAME_FILL)
+        }
+        "Material" => ("●", theme::STATUS_OK),
+        "Shader" => ("◇", theme::TEXT_SECONDARY),
+        "Skeleton" | "SkelRoot" => ("⊞", theme::TEXT_SECONDARY),
+        "" => ("◇", theme::TEXT_SECONDARY),
+        _ => ("○", theme::TEXT_SECONDARY),
     }
 }
 
@@ -199,8 +202,8 @@ impl PrimDisplayInfo {
         }
     }
 
-    /// Get the icon for this prim's type.
-    pub fn icon(&self) -> &'static str {
+    /// Get the icon character and color for this prim's type.
+    pub fn icon(&self) -> (&'static str, egui::Color32) {
         prim_type_icon(&self.type_name)
     }
 }
@@ -270,7 +273,7 @@ pub fn render_scene_browser(
     // Header row with column labels (Houdini style)
     ui.horizontal(|ui| {
         ui.set_min_height(20.0);
-        ui.style_mut().visuals.widgets.inactive.bg_fill = egui::Color32::from_gray(50);
+        ui.style_mut().visuals.widgets.inactive.bg_fill = theme::BG_SURFACE;
 
         // Scene Graph Path column header
         ui.allocate_ui_with_layout(
@@ -392,7 +395,7 @@ fn render_prim_row(
 
     // Row background color (alternating or selection highlight)
     let row_bg = if is_selected {
-        egui::Color32::from_rgb(50, 80, 120)
+        theme::ACCENT_DIM
     } else {
         egui::Color32::TRANSPARENT
     };
@@ -427,14 +430,15 @@ fn render_prim_row(
                     ui.add_space(18.0);
                 }
 
-                // Type icon
-                ui.label(info.icon());
+                // Type icon (colored Unicode shape)
+                let (icon_char, icon_color) = info.icon();
+                ui.colored_label(icon_color, icon_char);
 
                 // Prim name
                 let name_text = if info.is_active {
                     egui::RichText::new(&info.name)
                 } else {
-                    egui::RichText::new(&info.name).color(egui::Color32::GRAY)
+                    egui::RichText::new(&info.name).color(theme::TEXT_DISABLED)
                 };
 
                 let name_response = ui.selectable_label(is_selected, name_text);
@@ -454,7 +458,7 @@ fn render_prim_row(
             egui::Layout::left_to_right(egui::Align::Center),
             |ui| {
                 let type_text = if info.type_name.is_empty() {
-                    egui::RichText::new("-").color(egui::Color32::GRAY)
+                    egui::RichText::new("-").color(theme::TEXT_DISABLED)
                 } else {
                     egui::RichText::new(&info.type_name).small()
                 };
@@ -472,7 +476,7 @@ fn render_prim_row(
                 if info.child_count > 0 {
                     ui.label(egui::RichText::new(format!("{}", info.child_count)).small());
                 } else {
-                    ui.label(egui::RichText::new("-").color(egui::Color32::GRAY).small());
+                    ui.label(egui::RichText::new("-").color(theme::TEXT_DISABLED).small());
                 }
             },
         );
@@ -485,7 +489,7 @@ fn render_prim_row(
             egui::Layout::left_to_right(egui::Align::Center),
             |ui| {
                 if info.kind.is_empty() {
-                    ui.label(egui::RichText::new("-").color(egui::Color32::GRAY).small());
+                    ui.label(egui::RichText::new("-").color(theme::TEXT_DISABLED).small());
                 } else {
                     ui.label(egui::RichText::new(&info.kind).small());
                 }
@@ -872,10 +876,14 @@ mod tests {
 
     #[test]
     fn test_prim_type_icon() {
-        assert_eq!(prim_type_icon("Mesh"), "🔷");
-        assert_eq!(prim_type_icon("Xform"), "📐");
-        assert_eq!(prim_type_icon("PointInstancer"), "🔁");
-        assert_eq!(prim_type_icon("UnknownType"), "○");
+        assert_eq!(prim_type_icon("Mesh").0, "◆");
+        assert_eq!(prim_type_icon("Mesh").1, theme::PIN_SCENE);
+        assert_eq!(prim_type_icon("Xform").0, "✦");
+        assert_eq!(prim_type_icon("Xform").1, theme::STATUS_WARNING);
+        assert_eq!(prim_type_icon("PointInstancer").0, "⊕");
+        assert_eq!(prim_type_icon("PointInstancer").1, theme::ACCENT_PRIMARY);
+        assert_eq!(prim_type_icon("UnknownType").0, "○");
+        assert_eq!(prim_type_icon("UnknownType").1, theme::TEXT_SECONDARY);
     }
 
     #[test]
@@ -889,7 +897,8 @@ mod tests {
         );
 
         assert_eq!(info.name, "MyMesh");
-        assert_eq!(info.icon(), "🔷");
+        assert_eq!(info.icon().0, "◆");
+        assert_eq!(info.icon().1, theme::PIN_SCENE);
     }
 
     #[test]

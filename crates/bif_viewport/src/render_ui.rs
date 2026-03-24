@@ -1,30 +1,19 @@
 use crate::app_event::{AppEvent, EventBus};
 use crate::ivar_state::{self, BuildStatus, RenderMode};
-use crate::scene_browser::{self, CompositeProvider, PrimDataProvider};
+use crate::theme;
 use crate::{DisplaySettings, PurposeMode};
 
-/// All data the left stats panel needs, passed by value or reference
+/// All data the left render-settings panel needs, passed by value or reference
 /// to avoid borrowing `self` inside the closure.
 pub(crate) struct StatsPanelParams<'a> {
     // Mutable state refs
     pub ivar_state: &'a mut crate::ivar_state::IvarState,
-    pub scene_browser_state: &'a mut crate::scene_browser::SceneBrowserState,
 
     // Read-only state refs
     pub usd_stage: &'a Option<std::sync::Arc<bif_core::usd::UsdStage>>,
     pub timeline_state: &'a crate::TimelineState,
-    pub cached_scene_graph: &'a crate::scene_browser::CachedSceneGraph,
 
     // Read-only display values (scalar copies)
-    pub fps: f32,
-    pub camera: &'a bif_math::Camera,
-    pub num_instances: u32,
-    pub visible_instances: u32,
-    pub lod_box_instances: u32,
-    pub triangles_per_instance: u32,
-    pub mesh_bounds_min: bif_math::Vec3,
-    pub mesh_bounds_max: bif_math::Vec3,
-    pub size: (u32, u32),
     pub instance_count: usize,
     pub mesh_triangle_count: usize,
     pub edit_override_count: usize,
@@ -40,12 +29,9 @@ pub(crate) struct StatsPanelParams<'a> {
 
     // Mutable value refs (local copies, written back by caller)
     pub render_mode: &'a mut RenderMode,
-    pub gnomon_size: &'a mut u32,
-    pub lod_max_polys: &'a mut u32,
     pub ivar_target_spp: &'a mut u32,
     pub ivar_nav_quality: &'a mut u32,
-
-    /// Display settings (purpose toggle, LOD enable)
+    pub lod_max_polys: &'a mut u32,
     pub display_settings: &'a mut DisplaySettings,
 }
 
@@ -55,9 +41,6 @@ pub(crate) fn render_stats_panel(
     event_bus: &mut EventBus,
     p: &mut StatsPanelParams<'_>,
 ) {
-    ui.heading("BIF Viewer");
-    ui.separator();
-
     // Render Mode Dropdown (Houdini-style)
     ui.horizontal(|ui| {
         ui.label("Renderer:");
@@ -66,7 +49,9 @@ pub(crate) fn render_stats_panel(
             .show_ui(ui, |ui| {
                 ui.selectable_value(p.render_mode, RenderMode::Vulkan, "Vulkan");
                 ui.selectable_value(p.render_mode, RenderMode::Ivar, "Ivar");
-            });
+            })
+            .response
+            .on_hover_text("Switch between Vulkan rasterizer and Ivar path tracer");
     });
 
     // Show Ivar stats when in Ivar mode
@@ -91,7 +76,7 @@ pub(crate) fn render_stats_panel(
                 ));
             }
             BuildStatus::Failed => {
-                ui.colored_label(egui::Color32::RED, "⚠ Scene build failed");
+                ui.colored_label(theme::STATUS_ERROR, "⚠ Scene build failed");
             }
             BuildStatus::Complete => {
                 // Progressive SPP progress
@@ -124,7 +109,8 @@ pub(crate) fn render_stats_panel(
                 // Target SPP slider
                 ui.horizontal(|ui| {
                     ui.label("Target:");
-                    ui.add(egui::Slider::new(p.ivar_target_spp, 1..=256).text("SPP"));
+                    ui.add(egui::Slider::new(p.ivar_target_spp, 1..=256).text("SPP"))
+                        .on_hover_text("Samples per pixel — higher = less noise, slower");
                 });
 
                 // Navigation preview quality slider
@@ -139,7 +125,8 @@ pub(crate) fn render_stats_panel(
                                 _ => format!("1/{}", 2u32.pow(v as u32)),
                             },
                         ),
-                    );
+                    )
+                    .on_hover_text("Preview resolution during camera movement");
                 });
 
                 // Pixel filter dropdown
@@ -163,7 +150,9 @@ pub(crate) fn render_stats_panel(
                                     event_bus.emit(AppEvent::FilterChanged);
                                 }
                             }
-                        });
+                        })
+                        .response
+                        .on_hover_text("Anti-aliasing filter applied to the final image");
                 });
 
                 // Sampler mode dropdown
@@ -185,12 +174,15 @@ pub(crate) fn render_stats_panel(
                                     event_bus.emit(AppEvent::FilterChanged);
                                 }
                             }
-                        });
+                        })
+                        .response
+                        .on_hover_text("Random sampling strategy for path tracing");
                 });
 
                 // Default sky toggle
                 if ui
                     .checkbox(&mut p.ivar_state.use_sky_gradient, "Default Sky")
+                    .on_hover_text("Use default gradient sky when no HDRI is loaded")
                     .changed()
                 {
                     event_bus.emit(AppEvent::FilterChanged);
@@ -199,7 +191,7 @@ pub(crate) fn render_stats_panel(
                 // Show current preview scale when not at full res
                 if p.ivar_current_scale > 1 {
                     ui.colored_label(
-                        egui::Color32::YELLOW,
+                        theme::STATUS_WARNING,
                         format!("Preview: 1/{}", p.ivar_current_scale),
                     );
                 }
@@ -209,21 +201,25 @@ pub(crate) fn render_stats_panel(
                 // Auto-denoise checkbox (feature-gated)
                 #[cfg(feature = "oidn")]
                 {
-                    ui.checkbox(&mut p.ivar_state.auto_denoise, "Auto-denoise");
+                    ui.checkbox(&mut p.ivar_state.auto_denoise, "Auto-denoise")
+                        .on_hover_text("Automatically denoise when render completes");
                 }
 
                 if p.ivar_render_complete {
-                    ui.colored_label(egui::Color32::GREEN, "Render Complete");
+                    ui.colored_label(theme::STATUS_OK, "Render Complete");
 
                     // Denoise button (feature-gated)
                     #[cfg(feature = "oidn")]
                     {
                         if p.ivar_state.denoise.is_denoised {
-                            ui.colored_label(egui::Color32::from_rgb(100, 200, 255), "Denoised");
+                            ui.colored_label(theme::STATUS_INFO, "Denoised");
                         } else if p.ivar_state.denoise.in_progress {
-                            ui.colored_label(egui::Color32::YELLOW, "Denoising...");
+                            ui.colored_label(theme::STATUS_WARNING, "Denoising...");
                         } else if !p.ivar_state.auto_denoise
-                            && ui.button("Denoise (OIDN)").clicked()
+                            && ui
+                                .button("Denoise (OIDN)")
+                                .on_hover_text("Run Intel OIDN denoiser on current render")
+                                .clicked()
                         {
                             event_bus.emit(AppEvent::DenoiseRequested);
                         }
@@ -234,7 +230,7 @@ pub(crate) fn render_stats_panel(
                             .on_disabled_hover_text("Build with --features oidn");
                     }
                 } else if p.ivar_accumulated_spp > 0 {
-                    ui.colored_label(egui::Color32::YELLOW, "Refining...");
+                    ui.colored_label(theme::STATUS_WARNING, "Refining...");
                 }
             }
         }
@@ -252,7 +248,9 @@ pub(crate) fn render_stats_panel(
                             channel.display_name(),
                         );
                     }
-                });
+                })
+                .response
+                .on_hover_text("Select render channel to preview in the viewport");
         });
 
         // SHARC Radiance Cache settings
@@ -261,7 +259,11 @@ pub(crate) fn render_stats_panel(
             let cfg = &mut p.ivar_state.radiance_cache_config;
             let mut changed = false;
             let mut enabled = cfg.enabled;
-            if ui.checkbox(&mut enabled, "Enabled").changed() {
+            if ui
+                .checkbox(&mut enabled, "Enabled")
+                .on_hover_text("Enable radiance cache for faster indirect lighting")
+                .changed()
+            {
                 cfg.enabled = enabled;
                 changed = true;
             }
@@ -269,6 +271,7 @@ pub(crate) fn render_stats_panel(
                 ui.label("Cell Size:");
                 if ui
                     .add(egui::Slider::new(&mut cfg.cell_size, 0.01..=10.0).logarithmic(true))
+                    .on_hover_text("Spatial resolution of cache cells (smaller = more detail)")
                     .changed()
                 {
                     changed = true;
@@ -300,12 +303,15 @@ pub(crate) fn render_stats_panel(
                                 changed = true;
                             }
                         }
-                    });
+                    })
+                    .response
+                    .on_hover_text("Memory allocated for radiance cache entries");
             });
             ui.horizontal(|ui| {
                 ui.label("Min Samples:");
                 if ui
                     .add(egui::Slider::new(&mut cfg.min_samples, 1..=16))
+                    .on_hover_text("Minimum samples before a result is stored in the cache")
                     .changed()
                 {
                     changed = true;
@@ -315,6 +321,7 @@ pub(crate) fn render_stats_panel(
                 ui.label("Min Bounce:");
                 if ui
                     .add(egui::Slider::new(&mut cfg.min_bounce_depth, 1..=4))
+                    .on_hover_text("Minimum bounce depth before cache lookups are used")
                     .changed()
                 {
                     changed = true;
@@ -343,48 +350,24 @@ pub(crate) fn render_stats_panel(
 
         // Rebuild Scene button
         ui.separator();
-        if ui.button("Rebuild Scene").clicked() {
+        if ui
+            .button("Rebuild Scene")
+            .on_hover_text("Force rebuild of Embree scene geometry")
+            .clicked()
+        {
             event_bus.emit(AppEvent::RebuildScene);
         }
         ui.label("↻ Rebuild if geometry changes");
     }
 
+    // Display settings (LOD, purpose)
     ui.separator();
-
-    // FPS Counter
-    ui.label(format!("FPS: {:.1}", p.fps));
-    ui.separator();
-
-    // Scene Stats
-    ui.collapsing("Scene Stats", |ui| {
-        ui.label(format!("Instances: {} total", p.num_instances));
-        let total_visible = p.visible_instances + p.lod_box_instances;
-        ui.label(format!(
-            "Visible: {} ({:.0}%)",
-            total_visible,
-            if p.num_instances > 0 {
-                (total_visible as f32 / p.num_instances as f32) * 100.0
-            } else {
-                0.0
-            }
-        ));
-        ui.label(format!("  Full mesh: {}", p.visible_instances));
-        ui.label(format!("  Box LOD: {}", p.lod_box_instances));
-        // Triangle count: full mesh tris + LOD_BOX_TRIANGLES per box (u64 to avoid overflow)
-        const LOD_BOX_TRIANGLES: u64 = 12; // cube = 6 faces * 2 tris
-        let full_mesh_tris = p.triangles_per_instance as u64 * p.visible_instances as u64;
-        let box_tris = LOD_BOX_TRIANGLES * p.lod_box_instances as u64;
-        ui.label(format!(
-            "Triangles: {} ({}+{})",
-            full_mesh_tris + box_tris,
-            full_mesh_tris,
-            box_tris
-        ));
-        ui.label(format!("Tris/Instance: {}", p.triangles_per_instance));
-
-        ui.separator();
-        ui.label("LOD Budget Control:");
-        // Slider for max polys (in millions for readability)
+    ui.collapsing("Display", |ui| {
+        ui.checkbox(&mut p.display_settings.lod_enabled, "Enable LOD")
+            .on_hover_text(
+                "Replace distant instances with bounding boxes to reduce triangle count",
+            );
+        // LOD budget slider (in millions)
         let max_millions = (*p.lod_max_polys as f32 / 1_000_000.0).max(0.1);
         let mut millions = max_millions;
         ui.add(
@@ -392,15 +375,11 @@ pub(crate) fn render_stats_panel(
                 .logarithmic(true)
                 .text("Max M tris")
                 .suffix("M"),
-        );
+        )
+        .on_hover_text("Triangle budget — instances beyond this limit are replaced with boxes");
         if (millions - max_millions).abs() > 0.001 {
             *p.lod_max_polys = (millions * 1_000_000.0) as u32;
         }
-        let budget_used = (full_mesh_tris as f32 / *p.lod_max_polys as f32 * 100.0).min(100.0);
-        ui.label(format!("Budget: {:.0}% used", budget_used));
-
-        ui.separator();
-        ui.checkbox(&mut p.display_settings.lod_enabled, "Enable LOD");
         ui.horizontal(|ui| {
             ui.label("Purpose:");
             egui::ComboBox::from_id_salt("display_purpose")
@@ -431,73 +410,10 @@ pub(crate) fn render_stats_panel(
                         PurposeMode::Guide,
                         "Default+Guide",
                     );
-                });
+                })
+                .response
+                .on_hover_text("USD display purpose filter — controls which prims are shown");
         });
-    });
-
-    ui.separator();
-
-    // Camera Stats
-    ui.collapsing("Camera", |ui| {
-        ui.label(format!(
-            "Position: ({:.2}, {:.2}, {:.2})",
-            p.camera.position.x, p.camera.position.y, p.camera.position.z
-        ));
-        ui.label(format!(
-            "Target: ({:.2}, {:.2}, {:.2})",
-            p.camera.target.x, p.camera.target.y, p.camera.target.z
-        ));
-        ui.label(format!("Distance: {:.2}", p.camera.distance));
-        ui.label(format!("Yaw: {:.2}°", p.camera.yaw.to_degrees()));
-        ui.label(format!("Pitch: {:.2}°", p.camera.pitch.to_degrees()));
-        ui.label(format!("FOV: {:.2}°", p.camera.fov_y.to_degrees()));
-        ui.label(format!("Near: {:.2}", p.camera.near));
-        ui.label(format!("Far: {:.2}", p.camera.far));
-
-        ui.label("Press F to frame mesh");
-    });
-
-    ui.separator();
-
-    // Mesh Info
-    ui.collapsing("Mesh Bounds", |ui| {
-        let mesh_center = (p.mesh_bounds_min + p.mesh_bounds_max) * 0.5;
-        let mesh_size = (p.mesh_bounds_max - p.mesh_bounds_min).length();
-
-        ui.label(format!(
-            "Bounds Min: ({:.2}, {:.2}, {:.2})",
-            p.mesh_bounds_min.x, p.mesh_bounds_min.y, p.mesh_bounds_min.z
-        ));
-        ui.label(format!(
-            "Bounds Max: ({:.2}, {:.2}, {:.2})",
-            p.mesh_bounds_max.x, p.mesh_bounds_max.y, p.mesh_bounds_max.z
-        ));
-        ui.label(format!(
-            "Center: ({:.2}, {:.2}, {:.2})",
-            mesh_center.x, mesh_center.y, mesh_center.z
-        ));
-        ui.label(format!("Size: {:.2}", mesh_size));
-    });
-
-    ui.separator();
-
-    // Viewport Info
-    ui.collapsing("Viewport", |ui| {
-        ui.label(format!("Resolution: {}x{}", p.size.0, p.size.1));
-        ui.label(format!("Aspect: {:.3}", p.size.0 as f32 / p.size.1 as f32));
-        ui.add(egui::Slider::new(p.gnomon_size, 40..=120).text("Gnomon Size"));
-    });
-
-    ui.separator();
-
-    // Controls Help
-    ui.collapsing("Controls", |ui| {
-        ui.label("🖱️ Left Mouse: Tumble (orbit)");
-        ui.label("🖱️ Middle Mouse: Track (pan)");
-        ui.label("🖱️ Scroll Wheel: Dolly (zoom)");
-        ui.label("⌨️ W/A/S/D: Move forward/left/back/right");
-        ui.label("⌨️ Q/E: Move down/up");
-        ui.label("⌨️ F: Frame mesh");
     });
 
     ui.separator();
@@ -715,15 +631,15 @@ pub(crate) fn render_stats_panel(
                 }
                 ivar_state::BatchRenderStatus::Complete { total_elapsed_secs } => {
                     ui.colored_label(
-                        egui::Color32::GREEN,
+                        theme::STATUS_OK,
                         format!("Done ({:.1}s)", total_elapsed_secs),
                     );
                 }
                 ivar_state::BatchRenderStatus::Cancelled => {
-                    ui.colored_label(egui::Color32::YELLOW, "Cancelled");
+                    ui.colored_label(theme::STATUS_WARNING, "Cancelled");
                 }
                 ivar_state::BatchRenderStatus::Failed(msg) => {
-                    ui.colored_label(egui::Color32::RED, format!("Failed: {}", msg));
+                    ui.colored_label(theme::STATUS_ERROR, format!("Failed: {}", msg));
                 }
                 _ => {}
             }
@@ -767,24 +683,4 @@ pub(crate) fn render_stats_panel(
             }
         });
     }
-
-    ui.separator();
-
-    // Scene Browser (collapsible)
-    ui.collapsing("Scene Browser", |ui| {
-        // Composite provider: lightweight wrapper over cached scene graph
-        let composite = CompositeProvider::new(
-            p.usd_stage
-                .as_ref()
-                .map(|s| s.as_ref() as &dyn PrimDataProvider),
-            p.cached_scene_graph,
-        );
-        let provider: &dyn PrimDataProvider = &composite;
-
-        if let Some(new_selection) =
-            scene_browser::render_scene_browser(ui, p.scene_browser_state, provider)
-        {
-            event_bus.emit(AppEvent::PrimSelected(new_selection));
-        }
-    });
 }
