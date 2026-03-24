@@ -14,7 +14,7 @@
 - GPU instancing: 10K+ instances with LOD culling
 - **Animation:** Timeline UI, transform + vertex animation, viewport camera sync
 - Intel Embree 4: Production-quality ray tracing
-- Materials: OpenPBR Surface v1.1 with IOR-based Fresnel
+- Materials: OpenPBR Surface v1.1 with IOR-based Fresnel, VNDF GGX sampling, energy-conserving diffuse
 - HDRI environment maps: GPU compute IBL (irradiance + prefiltered + BRDF LUT)
 - Textured PBR viewport with per-face materials (GeomSubsets)
 - OpenImageIO integration with subprocess .tx conversion (optional)
@@ -22,7 +22,7 @@
 - Scene browser + property inspector + undo/redo
 - Purpose filtering (render/proxy/guide visibility toggle)
 - SHARC radiance cache (idTech 8 inspired)
-- 170+ tests passing across 6 crates
+- 390+ tests passing across 6 crates
 
 **Next:** M29.5 egui upgrade → M30 persistence
 
@@ -56,9 +56,9 @@ cargo run -p bif_viewer -- --usd assets/lucy/usd/assets/lucy/lucy.usd
 - **Massive Instancing:** 10K-1M instances via prototype/instance architecture
 - **Dual Renderers:**
   - **GPU (Vulkan):** Real-time textured PBR at 60+ FPS
-  - **CPU (Ivar):** Production path tracing with Disney BSDF
+  - **CPU (Ivar):** Production path tracing with OpenPBR Surface v1.1 (VNDF GGX, energy-conserving diffuse)
 - **USD Workflow:** Import USDA/USDC scenes from Houdini/Maya
-- **Materials:** UsdPreviewSurface + MaterialX standard_surface
+- **Materials:** UsdPreviewSurface + MaterialX OpenPBR/standard_surface
 - **Textures:** Per-face materials via GeomSubsets, parallel loading
 - **OIDN Denoising:** Optional Intel OIDN for final-frame denoising (viewport + batch)
 - **OIIO Support:** Optional OpenImageIO with subprocess .tx conversion and mipmaps

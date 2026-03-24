@@ -8,6 +8,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **VNDF GGX sampling** — Heitz 2018 visible normal distribution sampling replaces NDF sampling for 2-4x convergence on rough metals at grazing angles
+- **GraphNodeId newtype** — framework-agnostic node ID decouples node graph evaluation from egui_snarl, preparing for M30 persistence and Qt migration
+- **GpuMaterialState / GpuTextureState** — extracted 12 GPU fields from Renderer into focused sub-structs
+- **types.rs** — moved PurposeMode, DisplaySettings, UsdLoadStatus, AsyncChannels, SceneInstances out of lib.rs
+- **State mutation convention** — documented direct-mutation vs EventBus patterns in render.rs
+- **set_instance_purpose(index)** — add_instance returns index; replaces fragile set_last_instance_purpose API
 - **Stage::Load() eager population** — 8.3x USD loading speedup (8.8s→1s on Glasses.usd) by forcing eager USD composition
 - **GPU buffer size guards** — cap triangle material, vertex, and index buffers to device limits with placeholder fallback (prevents crash on 342M vert scenes)
 - **Chunked texture loading** — load 16 textures at a time (was all-at-once), paced GPU uploads (32/frame)
@@ -32,14 +38,33 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **OpenPBR energy conservation** — diffuse attenuated by (1-F_specular) to prevent energy creation at grazing angles
+- **Shadow ray shading normal** — offset uses shading normal instead of geometric normal, fixing dark bands with normal maps
+- **Distant light angle units** — convert degrees→radians in constructor, fix cos_max formula for correct soft shadows
+- **Normal matrix zero-scale guard** — fallback to identity for degenerate transforms (prevents NaN on hidden USD instances)
+- **SHARC cache NaN guard** — filter non-finite values from lock-free cache torn reads
+- **Point light falloff** — use max() instead of additive epsilon for correct near-light energy
+- **OpenPBR is_delta()** — any transmission with roughness<0.001 treated as delta (saves wasted shadow rays)
+- **Crease data validation** — validate index/sharpness counts before Embree FFI
+- **NaN guards** — HDR direction_to_uv zero-length, texture sample non-finite UV inputs
+- **UsdBridgeError Success** — safe fallback instead of unreachable!() panic
+- **Box filter boundary** — half-open interval avoids double-counting at bucket edges
+- **Embree Drop safety** — documented field-order invariant preventing use-after-free
+- **Node graph unwrap** — let-else pattern match prevents potential panic on disconnect
+- **Mesh dedup hash** — 10→50 vertex/index samples + normal hashing reduces collision risk
 - **u32 overflow in triangle count display** — use u64 for large scene stats (607M tris × 13K instances)
-- **Normals lost on meshes without UVs** — deferred normals copy was inside UV block; meshes with normals but no UVs got flat shading
-
 - **Normals lost on meshes without UVs** — deferred normals copy was inside UV block; meshes with normals but no UVs got flat shading
 - **UV seam split hash collisions** — PairHash uses bit mixing instead of MSVC identity hash
 
 ### Changed
 
+- **Copy on Transform** — derive Copy on Transform struct, removing redundant .clone() calls across codebase
+- **HdrImage::downscale_to_max_dim** — returns Option<Self> to avoid cloning when no downscale needed
+- **Prototype::bounds removed** — redundant field, use mesh.bounds directly
+- **IBL Vec3 ops** — replaced local [f32;3] math helpers with glam Vec3 operations
+- **Orthonormal basis dedup** — light.rs uses bif_math::build_orthonormal_basis instead of local copy
+- **HDRI pole clamp** — resolution-dependent half-texel clamp replaces fixed epsilon
+- **SHARC TOCTOU race** — documented known lock-free EMA blend race condition
 - **Deferred normals copy** — skip 289ms wasted copy when UV seam split rebuilds normals
 - **Bulk vertex/normal copy** — `assign()` replaces push_back loops in C++ bridge
 - **UV seam split** — `std::map` → `std::unordered_map` (O(log n) → O(1))

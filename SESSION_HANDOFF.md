@@ -1,7 +1,7 @@
-# Session Handoff - March 22, 2026
+# Session Handoff - March 23, 2026
 
-**Last Updated:** Parallel UV seam split + .tx cache plan
-**Next Milestone:** .tx viewport cache integration → M29.5 egui upgrade
+**Last Updated:** Triple code review + comprehensive fixes
+**Next Milestone:** M29.5 egui upgrade → M30 persistence
 **Project:** BIF - VFX Scene Assembler & Renderer
 
 ---
@@ -11,13 +11,23 @@
 | Status | Details |
 |--------|---------|
 | Complete | Milestones 0-23, M26 (OIDN), M26.1 (Ivar material cache), M19.6 (viewport cleanup) |
-| Current | Purpose filtering done, USD spec compliance complete |
-| Tests | 93 renderer (+4 glass), 72 math, 19 viewer, 79 viewport, 93 bif_core |
+| Current | Triple code review fixes landed, GraphNodeId decoupled from egui_snarl |
+| Tests | 93 renderer, 72 math, 19 viewer, 79 viewport, 93 bif_core (390+ total) |
 | Performance | 60 FPS viewport, 100K instances with LOD, Ivar build ~185ms (2.5M tri combined mesh) |
 
 ---
 
 ## Recent Work
+
+### Triple Code Review + Fixes (Mar 23, 2026)
+
+- Ran Code Reviewer, VFX Pipeline Specialist, Software Architect over full 48k LOC
+- Found 8 critical, 21 important, 18 nice-to-have — fixed all in 4 commits
+- Renderer: energy conservation, shadow bias, distant light units, NaN guards, VNDF GGX
+- Safety: Embree Drop docs, crease validation, NaN guards, let-else patterns
+- Architecture: GraphNodeId decouples from egui_snarl, GpuMaterialState/GpuTextureState extracted, types.rs
+- API: Copy on Transform, add_instance returns index, stronger mesh dedup hash
+- Remaining: per-vertex tangent accumulation for indexed mesh path (future session)
 
 ### OpenPBR MaterialX + Shading Normal AOV (Mar 23, 2026)
 
