@@ -3,10 +3,11 @@
 //! Filters weight samples based on their sub-pixel offset from the pixel center,
 //! improving image quality over the implicit box filter (equal-weight averaging).
 
+use serde::{Deserialize, Serialize};
 use std::f32::consts::PI;
 
 /// Available pixel reconstruction filters.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum PixelFilter {
     /// Equal-weight box filter (radius 0.5). Equivalent to no filter.
     #[default]
@@ -52,7 +53,7 @@ impl PixelFilter {
 }
 
 /// Pixel filter configuration: filter type + radius.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct PixelFilterConfig {
     /// Filter type.
     pub filter: PixelFilter,

@@ -1,7 +1,8 @@
 use glam::{Mat4, Vec3};
+use serde::{Deserialize, Serialize};
 
 /// Projection mode: perspective or orthographic.
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
 pub enum ProjectionMode {
     #[default]
     Perspective,
@@ -12,7 +13,7 @@ pub enum ProjectionMode {
 }
 
 /// Standard orthographic view presets.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum OrthoPreset {
     Top,
     Bottom,
@@ -510,6 +511,28 @@ mod tests {
         // position == target (glam limitation), but construction itself
         // must not panic.
         let _view = camera.view_matrix();
+    }
+
+    #[test]
+    fn serde_projection_mode_round_trip() {
+        let modes = vec![
+            ProjectionMode::Perspective,
+            ProjectionMode::Orthographic { ortho_size: 5.0 },
+        ];
+        for mode in &modes {
+            let json = serde_json::to_string(mode).unwrap();
+            let back: ProjectionMode = serde_json::from_str(&json).unwrap();
+            assert_eq!(*mode, back);
+        }
+    }
+
+    #[test]
+    fn serde_ortho_preset_round_trip() {
+        for preset in OrthoPreset::all() {
+            let json = serde_json::to_string(preset).unwrap();
+            let back: OrthoPreset = serde_json::from_str(&json).unwrap();
+            assert_eq!(*preset, back);
+        }
     }
 
     #[test]

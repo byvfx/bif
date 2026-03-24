@@ -1,12 +1,13 @@
 //! Procedural geometry primitives (cube, sphere, camera wireframe).
 
 use bif_math::Vec3;
+use serde::{Deserialize, Serialize};
 use std::f32::consts::PI;
 
 use crate::mesh::Mesh;
 
 /// Kind of primitive geometry.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PrimitiveKind {
     Cube,
     Sphere,

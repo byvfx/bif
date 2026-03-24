@@ -23,6 +23,7 @@ pub(crate) use ops::{collect_upstream_nodes, propagate_dirty};
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use egui_snarl::{ui::SnarlStyle, InPinId, NodeId, OutPinId, Snarl};
+use serde::{Deserialize, Serialize};
 
 use crate::theme;
 use viewer::SceneNodeViewer;
@@ -156,7 +157,7 @@ pub enum NodeGraphEvent {
 }
 
 /// Pin types for node connections
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PinType {
     /// USD Scene data (stage/prims)
     Scene,
@@ -178,15 +179,17 @@ impl PinType {
 }
 
 /// A node in the scene graph
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub enum SceneNode {
     /// Load a USD file
     UsdRead {
         /// Path to the USD file
         file_path: String,
         /// Whether the file is loaded successfully
+        #[serde(skip, default)]
         is_loaded: bool,
         /// Error message if loading failed
+        #[serde(skip, default)]
         error: Option<String>,
     },
     /// Render the scene with Ivar CPU path tracer
@@ -194,10 +197,13 @@ pub enum SceneNode {
         /// Samples per pixel
         spp: u32,
         /// Whether currently rendering
+        #[serde(skip, default)]
         is_rendering: bool,
         /// Whether .tx conversion is in progress
+        #[serde(skip, default)]
         is_converting_tx: bool,
         /// Status message from last .tx conversion
+        #[serde(skip, default)]
         tx_status: Option<String>,
     },
     /// Procedural primitive (cube, sphere, camera wireframe)
@@ -207,6 +213,7 @@ pub enum SceneNode {
         /// Size parameter
         size: f32,
         /// Whether geometry has been created
+        #[serde(skip, default)]
         is_created: bool,
         /// USD prim path for export
         prim_path: String,
@@ -250,6 +257,7 @@ pub enum SceneNode {
         /// Prototype ID to scatter on (Surface: None = first)
         target_proto_id: Option<usize>,
         /// Whether scatter has been computed
+        #[serde(skip, default)]
         is_computed: bool,
         /// Point preview size in pixels
         point_size: f32,
@@ -259,12 +267,16 @@ pub enum SceneNode {
     /// Expand point clouds into geometry instances
     PointInstancer {
         /// Number of expanded instances (display only)
+        #[serde(skip, default)]
         instance_count: usize,
         /// Whether instancing has been computed
+        #[serde(skip, default)]
         is_instanced: bool,
         /// Whether a compute event has been emitted this frame (guards duplicate emission)
+        #[serde(skip, default)]
         is_computing: bool,
         /// Whether compute failed (prevents infinite retry loop)
+        #[serde(skip, default)]
         compute_failed: bool,
         /// USD prim path for export
         prim_path: String,
@@ -278,8 +290,10 @@ pub enum SceneNode {
         /// Root prim path for BIF-authored prims (default "/BIF")
         export_root: String,
         /// Whether last export succeeded
+        #[serde(skip, default)]
         is_exported: bool,
         /// Status text from last export attempt
+        #[serde(skip, default)]
         last_result: Option<String>,
     },
     /// Transform node — applies translate/rotate/scale to upstream scene
@@ -314,8 +328,10 @@ pub enum SceneNode {
         /// Path to the HDR file
         file_path: String,
         /// Whether the file is loaded
+        #[serde(skip, default)]
         is_loaded: bool,
         /// Whether IBL is currently being generated
+        #[serde(skip, default)]
         is_loading: bool,
         /// Rotation in degrees
         rotation: f32,
@@ -324,10 +340,13 @@ pub enum SceneNode {
         /// Whether to show environment as background
         show_background: bool,
         /// Error message if loading failed
+        #[serde(skip, default)]
         error: Option<String>,
         /// Last HDRI load time (seconds)
+        #[serde(skip, default)]
         last_load_secs: Option<f64>,
         /// Last IBL compute time (seconds)
+        #[serde(skip, default)]
         last_compute_secs: Option<f64>,
     },
 }
@@ -1115,5 +1134,106 @@ mod tests {
         assert_eq!(node.input_pin(1), Some(("proto", PinType::Scene)));
         assert_eq!(node.input_pin(2), None);
         assert_eq!(node.output_pin(0), Some(("scene", PinType::Scene)));
+    }
+
+    #[test]
+    fn serde_scene_node_usd_read_round_trip() {
+        let node = SceneNode::UsdRead {
+            file_path: "/path/to/scene.usda".into(),
+            is_loaded: true,
+            error: Some("test error".into()),
+        };
+        let json = serde_json::to_string(&node).unwrap();
+        let back: SceneNode = serde_json::from_str(&json).unwrap();
+
+        // file_path persists, runtime fields reset to defaults
+        if let SceneNode::UsdRead {
+            file_path,
+            is_loaded,
+            error,
+        } = &back
+        {
+            assert_eq!(file_path, "/path/to/scene.usda");
+            assert!(!is_loaded, "is_loaded should be false after deser");
+            assert!(error.is_none(), "error should be None after deser");
+        } else {
+            panic!("wrong variant");
+        }
+    }
+
+    #[test]
+    fn serde_scene_node_scatter_round_trip() {
+        let node = SceneNode::scatter_points();
+        let json = serde_json::to_string(&node).unwrap();
+        let back: SceneNode = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.name(), "Scatter Points");
+    }
+
+    #[test]
+    fn serde_scene_node_all_variants_round_trip() {
+        let nodes = vec![
+            SceneNode::usd_read(),
+            SceneNode::ivar_render(),
+            SceneNode::primitive(bif_core::PrimitiveKind::Cube),
+            SceneNode::scatter_points(),
+            SceneNode::point_instancer(),
+            SceneNode::usd_export(),
+            SceneNode::xform(),
+            SceneNode::usd_prim(),
+            SceneNode::graft_branches(),
+            SceneNode::hdri_environment(),
+        ];
+        for node in &nodes {
+            let json = serde_json::to_string(node).unwrap();
+            let back: SceneNode = serde_json::from_str(&json).unwrap();
+            assert_eq!(back.name(), node.name(), "variant name mismatch");
+        }
+    }
+
+    #[test]
+    fn serde_snarl_graph_round_trip() {
+        let mut snarl = Snarl::new();
+        let read_id = snarl.insert_node(egui::pos2(100.0, 200.0), SceneNode::usd_read());
+        let render_id = snarl.insert_node(egui::pos2(400.0, 200.0), SceneNode::ivar_render());
+        snarl.connect(
+            OutPinId {
+                node: read_id,
+                output: 0,
+            },
+            InPinId {
+                node: render_id,
+                input: 0,
+            },
+        );
+
+        let json = serde_json::to_string_pretty(&snarl).unwrap();
+        let back: Snarl<SceneNode> = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(back.node_ids().count(), 2);
+        // Connection preserved
+        let in_pin = back.in_pin(InPinId {
+            node: render_id,
+            input: 0,
+        });
+        assert_eq!(in_pin.remotes.len(), 1);
+    }
+
+    #[test]
+    fn serde_bincode_snarl_round_trip() {
+        let mut snarl = Snarl::new();
+        snarl.insert_node(egui::pos2(50.0, 50.0), SceneNode::usd_read());
+        snarl.insert_node(egui::pos2(300.0, 50.0), SceneNode::ivar_render());
+
+        let bytes = bincode::serialize(&snarl).unwrap();
+        let back: Snarl<SceneNode> = bincode::deserialize(&bytes).unwrap();
+        assert_eq!(back.node_ids().count(), 2);
+    }
+
+    #[test]
+    fn serde_graph_node_id_round_trip() {
+        let id = GraphNodeId(42);
+        let json = serde_json::to_string(&id).unwrap();
+        let back: GraphNodeId = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, id);
     }
 }

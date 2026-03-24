@@ -7,13 +7,14 @@ use std::collections::HashMap;
 
 use bif_math::{Mat4, Quat, Vec3};
 use rand::prelude::*;
+use serde::{Deserialize, Serialize};
 
 use crate::mesh::Mesh;
 use crate::point_cloud::{DistributionMethod, PointAttributes, PointCloud};
 use crate::scene::Transform;
 
 /// Point generation source.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum PointSource {
     /// Scatter on a mesh surface (requires input mesh).
     Surface,
@@ -24,7 +25,7 @@ pub enum PointSource {
 }
 
 /// Scatter distribution mode (surface source only).
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum ScatterMode {
     /// Uniform random scatter weighted by triangle area.
     Random,

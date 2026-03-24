@@ -21,7 +21,7 @@ static BLUE_NOISE: &[u8; (TEXTURE_SIZE * TEXTURE_SIZE) as usize] =
     include_bytes!("data/blue_noise_256x256.bin");
 
 /// Sampler mode for camera jitter.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum SamplerMode {
     /// Standard white noise RNG (traditional).
     WhiteNoise,

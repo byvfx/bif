@@ -19,6 +19,7 @@ use std::path::Path;
 use std::ptr;
 
 use bif_math::{Mat4, Vec3};
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 // ============================================================================
@@ -1393,7 +1394,7 @@ pub struct UsdVolumeData {
 }
 
 /// USD prim specifier — how the prim opinion is authored.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum UsdSpecifier {
     /// DefinePrim: creates a concrete prim with a type
     Define,
@@ -1416,7 +1417,7 @@ impl std::fmt::Display for UsdSpecifier {
 }
 
 /// USD model kind — used by asset pipelines (UsdModelAPI).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum UsdKind {
     /// No kind set
     None,
@@ -1454,7 +1455,7 @@ impl std::fmt::Display for UsdKind {
 }
 
 /// USD prim type for scene assembly.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum UsdPrimType {
     /// No type (typeless prim)
     None,

@@ -11,7 +11,7 @@ use crate::batch_render;
 use crate::texture_loader;
 
 /// Which USD purpose geometry to display in the viewport.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum PurposeMode {
     /// Show Default + Render purpose geometry (full detail).
     Render,
@@ -37,7 +37,7 @@ impl PurposeMode {
 }
 
 /// Framework-agnostic display settings — UI layer reads/writes these.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct DisplaySettings {
     /// Which purpose geometry to show (Render or Proxy).
     pub purpose_mode: PurposeMode,

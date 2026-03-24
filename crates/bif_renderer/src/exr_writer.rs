@@ -13,7 +13,7 @@ use half::f16;
 use std::path::Path;
 
 /// EXR compression options.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum ExrCompression {
     /// No compression (fastest write, largest files)
     None,

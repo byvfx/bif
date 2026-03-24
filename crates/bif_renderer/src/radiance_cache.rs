@@ -63,7 +63,7 @@ impl Default for CacheEntry {
 // ---------------------------------------------------------------------------
 
 /// Radiance cache tuning knobs.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct RadianceCacheConfig {
     /// World-space cell size for spatial quantization.
     pub cell_size: f32,

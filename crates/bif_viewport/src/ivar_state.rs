@@ -97,7 +97,7 @@ pub enum BuildStatus {
 }
 
 /// Camera source for batch rendering.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum CameraSource {
     /// Use current viewport camera (free perspective orbit).
     #[default]
@@ -123,7 +123,7 @@ impl CameraSource {
 }
 
 /// Per-AOV settings for batch rendering.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct AovSettings {
     /// Include alpha channel in EXR output.
     pub include_alpha: bool,
@@ -156,7 +156,7 @@ impl Default for AovSettings {
 }
 
 /// Settings for batch rendering to disk.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct BatchRenderSettings {
     /// Start frame number.
     pub start_frame: i32,

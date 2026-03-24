@@ -2,7 +2,9 @@
 ///
 /// Decouples scene evaluation and persistence from the UI framework (egui_snarl).
 /// Maps bidirectionally to `egui_snarl::NodeId` at the UI boundary.
-#[derive(Debug, Clone, Copy, Hash, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(
+    Debug, Clone, Copy, Hash, Eq, PartialEq, Ord, PartialOrd, serde::Serialize, serde::Deserialize,
+)]
 pub struct GraphNodeId(pub u64);
 
 impl From<egui_snarl::NodeId> for GraphNodeId {
