@@ -8,6 +8,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **M30 Phase 2: ProjectFile persistence** — save/load .bif (bincode) + .bifa (JSON), CameraData snapshot, relative path resolution, RecentFiles (8 max), ProjectState (dirty flag + window title), EvalMode enum, format versioning. 10 unit tests.
 - **M30 Phase 1: serde foundation** — Serialize/Deserialize derives on all types needed for .bif/.bifa persistence across 4 crates (SceneNode, GraphNodeId, BatchRenderSettings, Camera types, USD enums, renderer configs). egui-snarl serde feature enabled, bincode added. Round-trip tests for all 10 node variants + Snarl graph.
 - **M29.5 UI overhaul** — centralized theme system (theme.rs), scene browser promoted to primary left panel, viewport stats overlay, File/View/Render menu bar with Ctrl+O, node params moved from show_body() to property inspector (all 10 types), welcome screen on empty state, Unicode prim icons replacing emoji, tooltips on all controls, node selection via header click with accent highlight
 - **VNDF GGX sampling** — Heitz 2018 visible normal distribution sampling replaces NDF sampling for 2-4x convergence on rough metals at grazing angles
