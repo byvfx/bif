@@ -15,7 +15,7 @@ use crate::batch_render::BatchMessage;
 use crate::environment_manager::IblResult;
 use crate::gpu_types::InstanceData;
 use crate::ivar_state::{BatchRenderStatus, BuildStatus, CameraSource, RenderMode};
-use crate::node_graph::{render_node_graph, NodeGraphEvent, SceneNode};
+use crate::node_graph::{render_node_graph, GraphNodeId, NodeGraphEvent, SceneNode};
 use crate::property_inspector::{
     render_property_inspector, reset_property_inspector_cache, PrimProperties,
 };
@@ -1807,6 +1807,94 @@ impl Renderer {
                         crate::scene_browser::SceneBrowserState::new();
                     self.selection.selected_prim_path = None;
                     self.selection.selected_prim_properties = None;
+                }
+            }
+            NodeGraphEvent::CookNode { node_id } => {
+                // Re-dispatch as the proper compute event by reading node state
+                let snarl_id: egui_snarl::NodeId = node_id.into();
+                let event = match &self.nodes.node_graph_state.snarl[snarl_id] {
+                    SceneNode::Primitive { kind, size, .. } => {
+                        Some(NodeGraphEvent::CreatePrimitive {
+                            kind: *kind,
+                            size: *size,
+                            node_id,
+                        })
+                    }
+                    SceneNode::ScatterPoints {
+                        source,
+                        count,
+                        max_point_limit,
+                        seed,
+                        scatter_mode,
+                        min_distance,
+                        align_to_normal,
+                        grid_size,
+                        grid_spacing,
+                        sphere_radius,
+                        sphere_on_surface,
+                        relax_iterations,
+                        scale_radii,
+                        max_relax_radius,
+                        scale_min,
+                        scale_max,
+                        rotation_range,
+                        ..
+                    } => Some(NodeGraphEvent::ScatterPointsCompute {
+                        node_id,
+                        params: crate::node_graph::ScatterPointsParams {
+                            source: *source,
+                            count: *count,
+                            max_point_limit: *max_point_limit,
+                            seed: *seed,
+                            scatter_mode: *scatter_mode,
+                            min_distance: *min_distance,
+                            align_to_normal: *align_to_normal,
+                            grid_size: *grid_size,
+                            grid_spacing: *grid_spacing,
+                            sphere_radius: *sphere_radius,
+                            sphere_on_surface: *sphere_on_surface,
+                            relax_iterations: *relax_iterations,
+                            scale_radii: *scale_radii,
+                            max_relax_radius: *max_relax_radius,
+                            scale_min: *scale_min,
+                            scale_max: *scale_max,
+                            rotation_range: *rotation_range,
+                            target_proto_id: None,
+                        },
+                    }),
+                    SceneNode::PointInstancer { .. } => {
+                        // Need upstream node IDs from connections
+                        let in0 = self
+                            .nodes
+                            .node_graph_state
+                            .snarl
+                            .in_pin(egui_snarl::InPinId {
+                                node: snarl_id,
+                                input: 0,
+                            });
+                        let in1 = self
+                            .nodes
+                            .node_graph_state
+                            .snarl
+                            .in_pin(egui_snarl::InPinId {
+                                node: snarl_id,
+                                input: 1,
+                            });
+                        match (in0.remotes.first(), in1.remotes.first()) {
+                            (Some(pts), Some(proto)) => {
+                                Some(NodeGraphEvent::PointInstancerCompute {
+                                    node_id,
+                                    points_source_node: GraphNodeId::from(pts.node),
+                                    proto_source_node: GraphNodeId::from(proto.node),
+                                })
+                            }
+                            _ => None,
+                        }
+                    }
+                    _ => None,
+                };
+                if let Some(e) = event {
+                    self.handle_node_graph_event(e);
                 }
             }
         }

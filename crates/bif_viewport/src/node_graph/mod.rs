@@ -20,11 +20,13 @@ pub mod ops;
 pub use node_id::GraphNodeId;
 pub(crate) use ops::{collect_upstream_nodes, propagate_dirty};
 
+use std::collections::HashSet;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use egui_snarl::{ui::SnarlStyle, InPinId, NodeId, OutPinId, Snarl};
 use serde::{Deserialize, Serialize};
 
+use crate::persistence::EvalMode;
 use crate::theme;
 use viewer::SceneNodeViewer;
 
@@ -154,6 +156,8 @@ pub enum NodeGraphEvent {
     SelectNode(GraphNodeId),
     /// Delete a node by ID
     DeleteNode(GraphNodeId),
+    /// Cook a dirty node (Manual eval mode). Handler reads params from snarl.
+    CookNode { node_id: GraphNodeId },
 }
 
 /// Pin types for node connections
@@ -680,6 +684,10 @@ pub struct NodeGraphState {
     /// Display flag: which node feeds viewport/export (like Houdini's blue flag).
     /// When set, only this node and its upstream deps are "active".
     pub display_node: Option<GraphNodeId>,
+    /// Evaluation mode (Auto/Manual/OnMouseRelease).
+    pub eval_mode: EvalMode,
+    /// Nodes that need re-evaluation (Manual mode tracking).
+    pub dirty_nodes: HashSet<GraphNodeId>,
 }
 
 impl Default for NodeGraphState {
@@ -703,6 +711,8 @@ impl NodeGraphState {
             },
             selected_node: None,
             display_node: None,
+            eval_mode: EvalMode::Auto,
+            dirty_nodes: HashSet::new(),
         }
     }
 
@@ -735,6 +745,8 @@ impl NodeGraphState {
             },
             selected_node: None,
             display_node: None,
+            eval_mode: EvalMode::Auto,
+            dirty_nodes: HashSet::new(),
         }
     }
 
@@ -939,16 +951,14 @@ impl NodeGraphState {
 /// Render the node graph UI
 /// Returns any events that should be processed by the parent
 pub fn render_node_graph(ui: &mut egui::Ui, state: &mut NodeGraphState) -> Vec<NodeGraphEvent> {
-    let mut viewer = SceneNodeViewer::new(
-        state.display_node.map(|id| id.into()),
-        state.selected_node.map(|id| id.into()),
-    );
+    // Pre-cook events (before viewer borrows dirty_nodes)
+    let mut pre_events: Vec<NodeGraphEvent> = Vec::new();
 
     // Handle keyboard input for delete
     // TODO: macOS has no Delete key — add Backspace conditionally via cfg!(target_os = "macos")
     if ui.input(|i| i.key_pressed(egui::Key::Delete)) {
         if let Some(node_id) = state.delete_selected() {
-            viewer.events.push(NodeGraphEvent::DeleteNode(node_id));
+            pre_events.push(NodeGraphEvent::DeleteNode(node_id));
         }
     }
 
@@ -995,12 +1005,73 @@ pub fn render_node_graph(ui: &mut egui::Ui, state: &mut NodeGraphState) -> Vec<N
         ui.separator();
         if ui.button("Del Selected").clicked() {
             if let Some(node_id) = state.delete_selected() {
-                viewer.events.push(NodeGraphEvent::DeleteNode(node_id));
+                pre_events.push(NodeGraphEvent::DeleteNode(node_id));
             }
         }
     });
 
+    // Eval mode toolbar
+    ui.horizontal(|ui| {
+        ui.label("Eval:");
+        egui::ComboBox::from_id_salt("eval_mode")
+            .selected_text(match state.eval_mode {
+                EvalMode::Auto => "Auto",
+                EvalMode::Manual => "Manual",
+                EvalMode::OnMouseRelease => "On Release",
+            })
+            .width(90.0)
+            .show_ui(ui, |ui| {
+                ui.selectable_value(&mut state.eval_mode, EvalMode::Auto, "Auto");
+                ui.selectable_value(&mut state.eval_mode, EvalMode::Manual, "Manual");
+                ui.selectable_value(&mut state.eval_mode, EvalMode::OnMouseRelease, "On Release");
+            });
+
+        if state.eval_mode == EvalMode::Manual {
+            let dirty_count = state.dirty_nodes.len();
+            if ui
+                .add_enabled(dirty_count > 0, egui::Button::new("Cook All"))
+                .on_hover_text(format!("{} dirty node(s)", dirty_count))
+                .clicked()
+            {
+                let dirty: Vec<_> = state.dirty_nodes.drain().collect();
+                for node_id in dirty {
+                    pre_events.push(NodeGraphEvent::CookNode { node_id });
+                }
+            }
+            if ui
+                .add_enabled(
+                    state
+                        .selected_node
+                        .map(|id| state.dirty_nodes.contains(&id))
+                        .unwrap_or(false),
+                    egui::Button::new("Cook Selected"),
+                )
+                .clicked()
+            {
+                if let Some(node_id) = state.selected_node {
+                    state.dirty_nodes.remove(&node_id);
+                    pre_events.push(NodeGraphEvent::CookNode { node_id });
+                }
+            }
+        }
+
+        if !state.dirty_nodes.is_empty() {
+            ui.label(
+                egui::RichText::new(format!("({} dirty)", state.dirty_nodes.len()))
+                    .color(theme::STATUS_WARNING),
+            );
+        }
+    });
+
     ui.separator();
+
+    // Create viewer (after toolbar so Cook buttons can use state.dirty_nodes directly)
+    let mut viewer = SceneNodeViewer::new(
+        state.display_node.map(|id| id.into()),
+        state.selected_node.map(|id| id.into()),
+        state.eval_mode,
+        &mut state.dirty_nodes,
+    );
 
     // Render the snarl node graph (guard against degenerate panel size)
     let avail = ui.available_size();
@@ -1013,9 +1084,13 @@ pub fn render_node_graph(ui: &mut egui::Ui, state: &mut NodeGraphState) -> Vec<N
         );
     }
 
+    // Combine pre-cook events with viewer events
+    let mut all_events = pre_events;
+    all_events.extend(viewer.events);
+
     // Process selection and deletion events before returning
     let mut events_out = Vec::new();
-    for event in viewer.events {
+    for event in all_events {
         match &event {
             NodeGraphEvent::SetDisplayNode(_) => {
                 // Toggle handled in render.rs (needs reload_working_scene)

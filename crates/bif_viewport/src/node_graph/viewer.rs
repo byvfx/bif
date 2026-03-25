@@ -1,5 +1,7 @@
 //! SceneNodeViewer: SnarlViewer implementation for the node graph UI.
 
+use std::collections::HashSet;
+
 use egui_snarl::{
     ui::{PinInfo, SnarlViewer},
     InPin, NodeId, OutPin, Snarl,
@@ -7,6 +9,7 @@ use egui_snarl::{
 
 use super::ops::mark_node_dirty;
 use super::{GraphNodeId, NodeGraphEvent, ScatterPointsParams, SceneNode};
+use crate::persistence::EvalMode;
 use crate::theme;
 
 /// Resolve which node is connected to a given input pin.
@@ -20,26 +23,37 @@ fn resolve_input_connection(inputs: &[InPin], input_index: usize) -> Option<Node
 }
 
 /// Viewer implementation for the scene node graph
-pub(crate) struct SceneNodeViewer {
+pub(crate) struct SceneNodeViewer<'a> {
     /// Events to be processed by the parent
     pub events: Vec<NodeGraphEvent>,
     /// Which node has the display flag (for blue indicator)
     pub display_node: Option<NodeId>,
     /// Currently selected node (for visual highlight)
     pub selected_node: Option<NodeId>,
+    /// Current evaluation mode
+    pub eval_mode: EvalMode,
+    /// Nodes needing re-evaluation (for dirty indicator)
+    pub dirty_nodes: &'a mut HashSet<GraphNodeId>,
 }
 
-impl SceneNodeViewer {
-    pub fn new(display_node: Option<NodeId>, selected_node: Option<NodeId>) -> Self {
+impl<'a> SceneNodeViewer<'a> {
+    pub fn new(
+        display_node: Option<NodeId>,
+        selected_node: Option<NodeId>,
+        eval_mode: EvalMode,
+        dirty_nodes: &'a mut HashSet<GraphNodeId>,
+    ) -> Self {
         Self {
             events: Vec::new(),
             display_node,
             selected_node,
+            eval_mode,
+            dirty_nodes,
         }
     }
 }
 
-impl SnarlViewer<SceneNode> for SceneNodeViewer {
+impl SnarlViewer<SceneNode> for SceneNodeViewer<'_> {
     fn title(&mut self, node: &SceneNode) -> String {
         node.name().to_string()
     }
@@ -179,15 +193,24 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer {
                 ..
             } => {
                 // Auto-compute: create primitive when needed
+                let graph_id = GraphNodeId::from(node_id);
                 if !*is_created {
-                    self.events.push(NodeGraphEvent::CreatePrimitive {
-                        kind: *kind,
-                        size: *size,
-                        node_id: GraphNodeId::from(node_id),
-                    });
-                    *is_created = true;
+                    if self.eval_mode == EvalMode::Auto {
+                        self.events.push(NodeGraphEvent::CreatePrimitive {
+                            kind: *kind,
+                            size: *size,
+                            node_id: graph_id,
+                        });
+                        *is_created = true;
+                    } else {
+                        self.dirty_nodes.insert(graph_id);
+                    }
                 }
-                ui.colored_label(theme::STATUS_OK, "Created");
+                if *is_created {
+                    ui.colored_label(theme::STATUS_OK, "Created");
+                } else if self.dirty_nodes.contains(&graph_id) {
+                    ui.colored_label(theme::STATUS_WARNING, "Dirty");
+                }
             }
             SceneNode::ScatterPoints {
                 source,
@@ -219,35 +242,42 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer {
 
                 if !*is_computed && inputs_satisfied {
                     let graph_node_id = GraphNodeId::from(node_id);
-                    self.events.push(NodeGraphEvent::ScatterPointsCompute {
-                        node_id: graph_node_id,
-                        params: ScatterPointsParams {
-                            source: *source,
-                            count: *count,
-                            max_point_limit: *max_point_limit,
-                            seed: *seed,
-                            scatter_mode: *scatter_mode,
-                            min_distance: *min_distance,
-                            align_to_normal: *align_to_normal,
-                            grid_size: *grid_size,
-                            grid_spacing: *grid_spacing,
-                            sphere_radius: *sphere_radius,
-                            sphere_on_surface: *sphere_on_surface,
-                            relax_iterations: *relax_iterations,
-                            scale_radii: *scale_radii,
-                            max_relax_radius: *max_relax_radius,
-                            scale_min: *scale_min,
-                            scale_max: *scale_max,
-                            rotation_range: *rotation_range,
-                            target_proto_id: None,
-                        },
-                    });
-                    *is_computed = true;
+                    if self.eval_mode != EvalMode::Auto {
+                        self.dirty_nodes.insert(graph_node_id);
+                    } else {
+                        self.events.push(NodeGraphEvent::ScatterPointsCompute {
+                            node_id: graph_node_id,
+                            params: ScatterPointsParams {
+                                source: *source,
+                                count: *count,
+                                max_point_limit: *max_point_limit,
+                                seed: *seed,
+                                scatter_mode: *scatter_mode,
+                                min_distance: *min_distance,
+                                align_to_normal: *align_to_normal,
+                                grid_size: *grid_size,
+                                grid_spacing: *grid_spacing,
+                                sphere_radius: *sphere_radius,
+                                sphere_on_surface: *sphere_on_surface,
+                                relax_iterations: *relax_iterations,
+                                scale_radii: *scale_radii,
+                                max_relax_radius: *max_relax_radius,
+                                scale_min: *scale_min,
+                                scale_max: *scale_max,
+                                rotation_range: *rotation_range,
+                                target_proto_id: None,
+                            },
+                        });
+                        *is_computed = true;
+                    } // end Auto branch
                 }
 
                 // Status display
+                let scatter_graph_id = GraphNodeId::from(node_id);
                 if *is_computed {
                     ui.colored_label(theme::STATUS_OK, format!("{} pts", count));
+                } else if self.dirty_nodes.contains(&scatter_graph_id) {
+                    ui.colored_label(theme::STATUS_WARNING, "Dirty");
                 } else if !inputs_satisfied {
                     ui.colored_label(theme::STATUS_WARNING, "Waiting for input");
                 }
@@ -275,17 +305,22 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer {
                 }
 
                 // Auto-compute: both inputs connected, not yet instanced, not failed
+                let inst_graph_id = GraphNodeId::from(node_id);
                 if both_connected && !*is_instanced && !*is_computing && !*compute_failed {
-                    let (Some(points_source), Some(proto_source)) = (points_node, proto_node)
-                    else {
-                        return;
-                    };
-                    self.events.push(NodeGraphEvent::PointInstancerCompute {
-                        node_id: GraphNodeId::from(node_id),
-                        points_source_node: GraphNodeId::from(points_source),
-                        proto_source_node: GraphNodeId::from(proto_source),
-                    });
-                    *is_computing = true;
+                    if self.eval_mode == EvalMode::Auto {
+                        let (Some(points_source), Some(proto_source)) = (points_node, proto_node)
+                        else {
+                            return;
+                        };
+                        self.events.push(NodeGraphEvent::PointInstancerCompute {
+                            node_id: inst_graph_id,
+                            points_source_node: GraphNodeId::from(points_source),
+                            proto_source_node: GraphNodeId::from(proto_source),
+                        });
+                        *is_computing = true;
+                    } else {
+                        self.dirty_nodes.insert(inst_graph_id);
+                    }
                 }
 
                 // Status display
@@ -295,6 +330,8 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer {
                     ui.colored_label(theme::STATUS_WARNING, "Computing...");
                 } else if *compute_failed {
                     ui.colored_label(theme::STATUS_ERROR, "Compute failed");
+                } else if self.dirty_nodes.contains(&inst_graph_id) {
+                    ui.colored_label(theme::STATUS_WARNING, "Dirty");
                 } else {
                     let mut need = String::new();
                     if points_node.is_none() {
