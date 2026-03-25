@@ -50,6 +50,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **M30 review fixes (13 items)** — SavePromptResult enum fixes "Yes" = silent cancel data loss; eval_mode now persists round-trip; reset_project clears scene/instances/stage/selection; cached recent files (was per-frame disk I/O); pub FORMAT_VERSION const; Cache node dirty propagation; path canonicalization for recent files; compute nodes marked dirty on project load; OnMouseRelease labeled TODO; SelectNode no longer sets dirty flag; bincode fragility documented; title bar cached; save_recent_files logs warnings
 - **OpenPBR energy conservation** — diffuse attenuated by (1-F_specular) to prevent energy creation at grazing angles
 - **Shadow ray shading normal** — offset uses shading normal instead of geometric normal, fixing dark bands with normal maps
 - **Distant light angle units** — convert degrees→radians in constructor, fix cos_max formula for correct soft shadows
