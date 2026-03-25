@@ -10,9 +10,9 @@
 
 | Status | Details |
 |--------|---------|
-| Complete | Milestones 0-23, M26, M26.1, M19.6, M29.5, M30 Phases 1-2 |
-| Current | M30 persistence — Phases 1-2 done, Phase 3 next (dirty tracking, AppEvents) |
-| Next | M30 Phases 3-6 (dirty tracking, File menu, eval modes, cache node) |
+| Complete | Milestones 0-23, M26, M26.1, M19.6, M29.5, M30 Phases 1-4 |
+| Current | M30 persistence — Phases 1-4 done, Phase 5 next (eval modes) |
+| Next | M30 Phases 5-6 (eval modes, cache node) |
 | Tests | 390+ total across all crates |
 | Performance | 60 FPS viewport, 100K instances with LOD, Ivar build ~185ms |
 
