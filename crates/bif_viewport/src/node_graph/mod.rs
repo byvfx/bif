@@ -158,6 +158,10 @@ pub enum NodeGraphEvent {
     DeleteNode(GraphNodeId),
     /// Cook a dirty node (Manual eval mode). Handler reads params from snarl.
     CookNode { node_id: GraphNodeId },
+    /// Toggle bypass on a Cache node.
+    CacheToggleBypass { node_id: GraphNodeId },
+    /// Clear a Cache node's cached state.
+    CacheClear { node_id: GraphNodeId },
 }
 
 /// Pin types for node connections
@@ -326,6 +330,19 @@ pub enum SceneNode {
     GraftBranches {
         /// Destination prim path (parent for all grafted branches)
         destination_path: String,
+    },
+    /// Cache node — stores evaluated scene snapshot for skip-recompute.
+    Cache {
+        /// Whether cache is bypassed (pass-through to upstream).
+        bypassed: bool,
+        /// Display label.
+        label: String,
+        /// Whether a valid cache exists.
+        #[serde(skip, default)]
+        is_cached: bool,
+        /// Cache key (hash of upstream node parameters).
+        #[serde(skip, default)]
+        cache_key: Option<u64>,
     },
     /// HDRI environment map for IBL lighting
     HdriEnvironment {
@@ -500,6 +517,16 @@ impl SceneNode {
         }
     }
 
+    /// Create a new Cache node.
+    pub fn cache() -> Self {
+        Self::Cache {
+            bypassed: false,
+            label: "Cache".into(),
+            is_cached: false,
+            cache_key: None,
+        }
+    }
+
     /// Get the display name for this node
     pub fn name(&self) -> &'static str {
         match self {
@@ -516,6 +543,7 @@ impl SceneNode {
             SceneNode::Xform { .. } => "Xform",
             SceneNode::UsdPrim { .. } => "USD Prim",
             SceneNode::GraftBranches { .. } => "Graft Branches",
+            SceneNode::Cache { .. } => "Cache",
             SceneNode::HdriEnvironment { .. } => "HDRI Environment",
         }
     }
@@ -535,6 +563,7 @@ impl SceneNode {
             SceneNode::Xform { .. } => 1,          // scene input
             SceneNode::UsdPrim { .. } => 1,        // pass-through scene input
             SceneNode::GraftBranches { .. } => 4,  // up to 4 branches
+            SceneNode::Cache { .. } => 1,          // scene input
             SceneNode::HdriEnvironment { .. } => 0,
         }
     }
@@ -548,6 +577,7 @@ impl SceneNode {
             SceneNode::ScatterPoints { .. } => 1,
             SceneNode::PointInstancer { .. } => 1,
             SceneNode::UsdExport { .. } => 0, // sink node, no output
+            SceneNode::Cache { .. } => 1,
             SceneNode::Xform { .. } => 1,
             SceneNode::UsdPrim { .. } => 1,
             SceneNode::GraftBranches { .. } => 1,
@@ -599,6 +629,10 @@ impl SceneNode {
                 3 => Some(("branch 4", PinType::Scene)),
                 _ => None,
             },
+            SceneNode::Cache { .. } => match index {
+                0 => Some(("scene", PinType::Scene)),
+                _ => None,
+            },
             SceneNode::HdriEnvironment { .. } => None,
         }
     }
@@ -627,6 +661,10 @@ impl SceneNode {
                 _ => None,
             },
             SceneNode::UsdExport { .. } => None, // sink node
+            SceneNode::Cache { .. } => match index {
+                0 => Some(("scene", PinType::Scene)),
+                _ => None,
+            },
             SceneNode::Xform { .. } => match index {
                 0 => Some(("scene", PinType::Scene)),
                 _ => None,
@@ -798,6 +836,11 @@ impl NodeGraphState {
     /// Add a Graft Branches node at the given position
     pub fn add_graft_branches(&mut self, pos: egui::Pos2) -> NodeId {
         self.snarl.insert_node(pos, SceneNode::graft_branches())
+    }
+
+    /// Add a Cache node at the given position.
+    pub fn add_cache(&mut self, pos: egui::Pos2) -> NodeId {
+        self.snarl.insert_node(pos, SceneNode::cache())
     }
 
     /// Delete the selected node.
@@ -1001,6 +1044,9 @@ pub fn render_node_graph(ui: &mut egui::Ui, state: &mut NodeGraphState) -> Vec<N
         }
         if ui.button("+ Graft").clicked() {
             state.add_graft_branches(egui::pos2(350.0, 200.0));
+        }
+        if ui.button("+ Cache").clicked() {
+            state.add_cache(egui::pos2(300.0, 300.0));
         }
         ui.separator();
         if ui.button("Del Selected").clicked() {
@@ -1256,6 +1302,7 @@ mod tests {
             SceneNode::xform(),
             SceneNode::usd_prim(),
             SceneNode::graft_branches(),
+            SceneNode::cache(),
             SceneNode::hdri_environment(),
         ];
         for node in &nodes {

@@ -399,6 +399,19 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer<'_> {
                     ui.colored_label(theme::STATUS_ERROR, format!("Error: {}", err));
                 }
             }
+            SceneNode::Cache {
+                bypassed,
+                is_cached,
+                ..
+            } => {
+                if *bypassed {
+                    ui.colored_label(theme::TEXT_SECONDARY, "Bypassed");
+                } else if *is_cached {
+                    ui.colored_label(theme::STATUS_OK, "Cached");
+                } else {
+                    ui.colored_label(theme::STATUS_WARNING, "Stale");
+                }
+            }
         }
     }
 

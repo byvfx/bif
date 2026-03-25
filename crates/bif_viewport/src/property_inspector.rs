@@ -1579,6 +1579,37 @@ pub(crate) fn render_node_properties(
                 ui.colored_label(theme::STATUS_ERROR, format!("Error: {}", err));
             }
         }
+        SceneNode::Cache {
+            bypassed,
+            label,
+            is_cached,
+            cache_key,
+        } => {
+            ui.heading("Cache");
+            ui.horizontal(|ui| {
+                ui.label("Label:");
+                ui.text_edit_singleline(label);
+            });
+            if ui.checkbox(bypassed, "Bypass").changed() {
+                events.push(NodeGraphEvent::CacheToggleBypass { node_id });
+            }
+            if ui.button("Clear Cache").clicked() {
+                *is_cached = false;
+                *cache_key = None;
+                events.push(NodeGraphEvent::CacheClear { node_id });
+            }
+            ui.separator();
+            if *bypassed {
+                ui.colored_label(theme::TEXT_SECONDARY, "Bypassed — pass-through");
+            } else if *is_cached {
+                ui.colored_label(theme::STATUS_OK, "Cached");
+                if let Some(key) = cache_key {
+                    ui.colored_label(theme::TEXT_SECONDARY, format!("Key: {:016x}", key));
+                }
+            } else {
+                ui.colored_label(theme::STATUS_WARNING, "Stale — needs evaluation");
+            }
+        }
     }
 
     events

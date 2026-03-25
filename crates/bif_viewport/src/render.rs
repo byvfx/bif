@@ -1809,6 +1809,12 @@ impl Renderer {
                     self.selection.selected_prim_properties = None;
                 }
             }
+            NodeGraphEvent::CacheToggleBypass { node_id } => {
+                log::info!("Cache node {:?} bypass toggled", node_id);
+            }
+            NodeGraphEvent::CacheClear { node_id } => {
+                log::info!("Cache node {:?} cleared", node_id);
+            }
             NodeGraphEvent::CookNode { node_id } => {
                 // Re-dispatch as the proper compute event by reading node state
                 let snarl_id: egui_snarl::NodeId = node_id.into();
