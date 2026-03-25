@@ -8,6 +8,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **M30 Phase 6: Cache node** — SceneNode::Cache with bypass toggle, visual indicators (Cached/Stale/Bypassed), property inspector, CacheToggleBypass/CacheClear events. Data serialization deferred.
 - **M30 Phase 5: eval modes** — Auto/Manual/OnMouseRelease with dirty node tracking, eval mode ComboBox toolbar, Cook All/Cook Selected buttons, dirty visual indicators, CookNode event for deferred compute dispatch
 - **M30 Phases 3-4: File menu + save/load UI** — File > New/Open/Save/SaveAs with Ctrl+N/O/S/Shift+S, Recent Files submenu, dirty tracking on node/transform events, dynamic title bar with unsaved indicator, unsaved-changes prompt on close/new/open, extract/apply project for full state round-trip
 - **M30 Phase 2: ProjectFile persistence** — save/load .bif (bincode) + .bifa (JSON), CameraData snapshot, relative path resolution, RecentFiles (8 max), ProjectState (dirty flag + window title), EvalMode enum, format versioning. 10 unit tests.

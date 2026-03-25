@@ -1070,7 +1070,7 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 
 ---
 
-### Milestone 30: Node Graph Persistence & Evaluation Modes 💾
+### Milestone 30: Node Graph Persistence & Evaluation Modes 💾 ✅
 
 - **Goal:** Save/load node graphs + Houdini-style evaluation control
 - **Estimated Time:** 15-20 hours

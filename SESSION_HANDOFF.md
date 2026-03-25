@@ -10,9 +10,9 @@
 
 | Status | Details |
 |--------|---------|
-| Complete | Milestones 0-23, M26, M26.1, M19.6, M29.5, M30 Phases 1-5 |
-| Current | M30 persistence — Phases 1-5 done, Phase 6 next (cache node) |
-| Next | M30 Phase 6 (cache node), then M31 (per-node scene viz) |
+| Complete | Milestones 0-23, M26, M26.1, M19.6, M29.5, M30 (all 6 phases) |
+| Current | M30 complete — save/load, eval modes, cache node all landed |
+| Next | M31 (per-node scene graph viz), then M32 (opinion trace) |
 | Tests | 390+ total across all crates |
 | Performance | 60 FPS viewport, 100K instances with LOD, Ivar build ~185ms |
 
