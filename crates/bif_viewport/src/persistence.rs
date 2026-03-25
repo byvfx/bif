@@ -1,7 +1,12 @@
 //! BIF project file persistence (.bif / .bifa).
 //!
-//! `.bif` — binary (bincode), fast load/save.
-//! `.bifa` — ASCII (JSON pretty-print), human-readable/diffable.
+//! `.bif` — binary (bincode), fast load/save. **Not forward-compatible**: any
+//! field addition/removal/reorder in serialized types breaks existing files.
+//! Treat `.bif` as a fast cache format, not a durable archive.
+//!
+//! `.bifa` — ASCII (JSON pretty-print), human-readable/diffable. More tolerant
+//! of schema changes via `#[serde(default)]`.
+//!
 //! Modeled after Maya's `.mb` / `.ma` dual format.
 
 use std::path::{Path, PathBuf};
@@ -17,7 +22,18 @@ use crate::node_graph::{GraphNodeId, SceneNode};
 use crate::DisplaySettings;
 
 /// Current format version. Bump on breaking schema changes.
-const FORMAT_VERSION: u32 = 1;
+pub const FORMAT_VERSION: u32 = 1;
+
+/// Result of the "Save changes?" dialog.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SavePromptResult {
+    /// User chose "Yes" — save then proceed.
+    Save,
+    /// User chose "No" — discard changes and proceed.
+    Discard,
+    /// User chose "Cancel" — abort the action.
+    Cancel,
+}
 
 /// Maximum number of recent files to track.
 const MAX_RECENT_FILES: usize = 8;
@@ -362,9 +378,9 @@ pub struct RecentFiles {
 impl RecentFiles {
     /// Add a path to the front of the list. Deduplicates and caps at MAX_RECENT_FILES.
     pub fn add(&mut self, path: &Path) {
-        let canonical = path.to_path_buf();
-        self.paths.retain(|p| p != &canonical);
-        self.paths.insert(0, canonical);
+        let normalized = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        self.paths.retain(|p| p != &normalized);
+        self.paths.insert(0, normalized);
         self.paths.truncate(MAX_RECENT_FILES);
     }
 
@@ -404,12 +420,15 @@ pub fn save_recent_files(recent: &RecentFiles) {
     let Some(dir) = config_dir() else {
         return;
     };
-    if std::fs::create_dir_all(&dir).is_err() {
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        log::warn!("Failed to create config dir {}: {}", dir.display(), e);
         return;
     }
     let path = dir.join("recent.json");
     if let Ok(json) = serde_json::to_string_pretty(recent) {
-        let _ = std::fs::write(&path, json);
+        if let Err(e) = std::fs::write(&path, &json) {
+            log::warn!("Failed to save recent files: {}", e);
+        }
     }
 }
 

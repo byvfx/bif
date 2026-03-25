@@ -208,9 +208,6 @@ impl Renderer {
         let mut event_bus = std::mem::take(&mut self.event_bus);
         let mut gizmo_hovered: u8 = 0;
 
-        // Load recent files once per frame (cheap — reads from memory after first load)
-        let recent_files = crate::persistence::load_recent_files();
-
         let full_output = self.egui_ctx.run(raw_input, |ctx| {
             // Keyboard shortcuts
             if ctx.input(|i| i.key_pressed(egui::Key::N) && i.modifiers.command) {
@@ -282,10 +279,10 @@ impl Renderer {
                             }
                             ui.close_menu();
                         }
-                        if !recent_files.paths.is_empty() {
+                        if !self.recent_files.paths.is_empty() {
                             ui.separator();
                             ui.menu_button("Recent Files", |ui| {
-                                for path in &recent_files.paths {
+                                for path in &self.recent_files.paths {
                                     let label = path
                                         .file_name()
                                         .map(|n| n.to_string_lossy().into_owned())
@@ -1125,7 +1122,13 @@ impl Renderer {
                     }
                 }
                 AppEvent::NodeGraph(node_events) => {
-                    if !node_events.is_empty() {
+                    let has_mutation = node_events.iter().any(|e| {
+                        !matches!(
+                            e,
+                            NodeGraphEvent::SelectNode(_) | NodeGraphEvent::SetDisplayNode(_)
+                        )
+                    });
+                    if has_mutation {
                         self.project.mark_dirty();
                     }
                     for event in node_events {
@@ -1133,12 +1136,12 @@ impl Renderer {
                     }
                 }
                 AppEvent::ProjectNew => {
-                    if self.confirm_unsaved_changes("New Project") {
+                    if self.save_if_needed_then_proceed("New Project") {
                         self.reset_project();
                     }
                 }
                 AppEvent::ProjectOpen => {
-                    if self.confirm_unsaved_changes("Open Project") {
+                    if self.save_if_needed_then_proceed("Open Project") {
                         if let Some(path) = rfd::FileDialog::new()
                             .add_filter("BIF Project", &["bif", "bifa"])
                             .pick_file()
@@ -1159,7 +1162,7 @@ impl Renderer {
                     self.save_project_as();
                 }
                 AppEvent::ProjectOpenRecent(path) => {
-                    if self.confirm_unsaved_changes("Open Recent") {
+                    if self.save_if_needed_then_proceed("Open Recent") {
                         self.open_project(&path);
                     }
                 }

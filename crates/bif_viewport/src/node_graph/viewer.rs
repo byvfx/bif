@@ -240,8 +240,8 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer<'_> {
                     bif_core::PointSource::Grid | bif_core::PointSource::Sphere => true,
                 };
 
+                let graph_node_id = GraphNodeId::from(node_id);
                 if !*is_computed && inputs_satisfied {
-                    let graph_node_id = GraphNodeId::from(node_id);
                     if self.eval_mode != EvalMode::Auto {
                         self.dirty_nodes.insert(graph_node_id);
                     } else {
@@ -273,10 +273,9 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer<'_> {
                 }
 
                 // Status display
-                let scatter_graph_id = GraphNodeId::from(node_id);
                 if *is_computed {
                     ui.colored_label(theme::STATUS_OK, format!("{} pts", count));
-                } else if self.dirty_nodes.contains(&scatter_graph_id) {
+                } else if self.dirty_nodes.contains(&graph_node_id) {
                     ui.colored_label(theme::STATUS_WARNING, "Dirty");
                 } else if !inputs_satisfied {
                     ui.colored_label(theme::STATUS_WARNING, "Waiting for input");

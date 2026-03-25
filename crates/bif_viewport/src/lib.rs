@@ -228,6 +228,8 @@ pub struct Renderer {
 
     // Project persistence state (open file, dirty flag)
     pub project: persistence::ProjectState,
+    /// Cached recent files list (avoids per-frame disk reads).
+    pub(crate) recent_files: persistence::RecentFiles,
 
     // Unified selection state (prim path, properties, instance, scene browser, gizmo)
     pub selection: SelectionManager,
@@ -840,6 +842,7 @@ impl Renderer {
             apply_unit_scaling: false,
             event_bus: EventBus::default(),
             project: persistence::ProjectState::default(),
+            recent_files: persistence::load_recent_files(),
             async_channels: AsyncChannels::default(),
             mipmap_generator,
             display_settings: DisplaySettings::default(),
@@ -1537,13 +1540,13 @@ impl Renderer {
     /// Extract current renderer state into a ProjectFile for saving.
     pub fn extract_project(&self) -> persistence::ProjectFile {
         persistence::ProjectFile {
-            version: 1,
+            version: persistence::FORMAT_VERSION,
             graph: self.nodes.node_graph_state.snarl.clone(),
             display_node: self.nodes.node_graph_state.display_node,
             camera: persistence::CameraData::from(&self.cam.camera),
             render_settings: self.ivar.ivar_state.batch_settings.clone(),
             display_settings: self.display_settings.clone(),
-            eval_mode: persistence::EvalMode::Auto,
+            eval_mode: self.nodes.node_graph_state.eval_mode,
         }
     }
 
@@ -1553,6 +1556,8 @@ impl Renderer {
         self.nodes.node_graph_state.snarl = project.graph;
         self.nodes.node_graph_state.display_node = project.display_node;
         self.nodes.node_graph_state.selected_node = None;
+        self.nodes.node_graph_state.eval_mode = project.eval_mode;
+        self.nodes.node_graph_state.dirty_nodes.clear();
 
         // Restore camera (preserve aspect from current window)
         project.camera.apply_to(&mut self.cam.camera);
@@ -1600,6 +1605,15 @@ impl Renderer {
                         show_background: *show_background,
                     });
                 }
+                // Mark compute nodes dirty so they rebuild after USD loads
+                node_graph::SceneNode::Primitive { .. }
+                | node_graph::SceneNode::ScatterPoints { .. }
+                | node_graph::SceneNode::PointInstancer { .. } => {
+                    self.nodes
+                        .node_graph_state
+                        .dirty_nodes
+                        .insert(node_graph::GraphNodeId::from(*nid));
+                }
                 _ => {}
             }
         }
@@ -1612,15 +1626,31 @@ impl Renderer {
 
     /// Reset to empty project state.
     pub fn reset_project(&mut self) {
+        // Clear node graph
         self.nodes.node_graph_state.snarl = egui_snarl::Snarl::new();
         self.nodes.node_graph_state.display_node = None;
         self.nodes.node_graph_state.selected_node = None;
+        self.nodes.node_graph_state.dirty_nodes.clear();
         self.nodes.node_proto_map.clear();
         self.nodes.node_cloud_map.clear();
         self.nodes.instancer_results.clear();
         self.nodes.scene_graph_dirty = true;
         self.nodes.materials_dirty = true;
         self.nodes.primitive_name_counters.clear();
+
+        // Clear scene data (geometry, instances, USD stage)
+        self.scene.working_scene = bif_core::Scene::default();
+        self.scene.instances = SceneInstances::default();
+        self.scene.usd_stage = None;
+        self.scene.loaded_usd_path = None;
+
+        // Clear selection
+        self.selection.selected_prim_path = None;
+        self.selection.selected_prim_properties = None;
+        self.selection.selected_instance_index = None;
+        self.selection.scene_browser_state = scene_browser::SceneBrowserState::new();
+
+        // Project state
         self.project.file_path = None;
         self.project.dirty = false;
         log::info!("New project");
@@ -1634,10 +1664,9 @@ impl Renderer {
                 self.project.file_path = Some(path.to_path_buf());
                 self.project.mark_clean();
 
-                // Update recent files
-                let mut recent = persistence::load_recent_files();
-                recent.add(path);
-                persistence::save_recent_files(&recent);
+                // Update recent files (cached + disk)
+                self.recent_files.add(path);
+                persistence::save_recent_files(&self.recent_files);
             }
             Err(e) => {
                 log::error!("Failed to open project: {}", e);
@@ -1658,10 +1687,9 @@ impl Renderer {
                 self.project.file_path = Some(path.to_path_buf());
                 self.project.mark_clean();
 
-                // Update recent files
-                let mut recent = persistence::load_recent_files();
-                recent.add(path);
-                persistence::save_recent_files(&recent);
+                // Update recent files (cached + disk)
+                self.recent_files.add(path);
+                persistence::save_recent_files(&self.recent_files);
             }
             Err(e) => {
                 log::error!("Failed to save project: {}", e);
@@ -1686,10 +1714,10 @@ impl Renderer {
         }
     }
 
-    /// Show "Save changes?" dialog if dirty. Returns true if OK to proceed.
-    pub fn confirm_unsaved_changes(&self, action: &str) -> bool {
+    /// Show "Save changes?" dialog if dirty. Returns action to take.
+    pub fn prompt_unsaved_changes(&self, action: &str) -> persistence::SavePromptResult {
         if !self.project.dirty {
-            return true;
+            return persistence::SavePromptResult::Discard;
         }
         let result = rfd::MessageDialog::new()
             .set_title(action)
@@ -1697,16 +1725,26 @@ impl Renderer {
             .set_buttons(rfd::MessageButtons::YesNoCancel)
             .show();
         match result {
-            rfd::MessageDialogResult::Yes => {
-                // Can't save here because we'd need &mut self — caller handles
-                // For now, return false (cancel) since save requires mutation
-                // The user can Ctrl+S first then retry the action
-                log::info!("Save requested but not yet implemented in confirm flow — save first");
-                false
+            rfd::MessageDialogResult::Yes => persistence::SavePromptResult::Save,
+            rfd::MessageDialogResult::No => persistence::SavePromptResult::Discard,
+            _ => persistence::SavePromptResult::Cancel,
+        }
+    }
+
+    /// Save-then-proceed helper for unsaved changes prompts.
+    /// Returns true if OK to proceed with the destructive action.
+    pub fn save_if_needed_then_proceed(&mut self, action: &str) -> bool {
+        match self.prompt_unsaved_changes(action) {
+            persistence::SavePromptResult::Save => {
+                if let Some(path) = self.project.file_path.clone() {
+                    self.save_project_to(&path);
+                } else {
+                    self.save_project_as();
+                }
+                true
             }
-            rfd::MessageDialogResult::No => true, // Discard changes
-            rfd::MessageDialogResult::Cancel => false,
-            _ => false,
+            persistence::SavePromptResult::Discard => true,
+            persistence::SavePromptResult::Cancel => false,
         }
     }
 }

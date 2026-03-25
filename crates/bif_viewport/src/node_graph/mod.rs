@@ -1063,13 +1063,17 @@ pub fn render_node_graph(ui: &mut egui::Ui, state: &mut NodeGraphState) -> Vec<N
             .selected_text(match state.eval_mode {
                 EvalMode::Auto => "Auto",
                 EvalMode::Manual => "Manual",
-                EvalMode::OnMouseRelease => "On Release",
+                EvalMode::OnMouseRelease => "On Release (TODO)",
             })
             .width(90.0)
             .show_ui(ui, |ui| {
                 ui.selectable_value(&mut state.eval_mode, EvalMode::Auto, "Auto");
                 ui.selectable_value(&mut state.eval_mode, EvalMode::Manual, "Manual");
-                ui.selectable_value(&mut state.eval_mode, EvalMode::OnMouseRelease, "On Release");
+                ui.selectable_value(
+                    &mut state.eval_mode,
+                    EvalMode::OnMouseRelease,
+                    "On Release (TODO)",
+                );
             });
 
         if state.eval_mode == EvalMode::Manual {

@@ -134,6 +134,8 @@ struct App {
 
     // Redraw tracking — set when user interaction or state change needs a frame
     needs_redraw: bool,
+    /// Cached window title — only call set_title when changed.
+    last_title: Option<String>,
 }
 
 impl App {
@@ -153,6 +155,7 @@ impl App {
             mouse_press_pos: None,
             mouse_drag_distance: 0.0,
             needs_redraw: true,
+            last_title: None,
         }
     }
 
@@ -276,8 +279,8 @@ impl ApplicationHandler for App {
                 // Check for unsaved changes before closing
                 let should_close = self
                     .renderer
-                    .as_ref()
-                    .map(|r| r.confirm_unsaved_changes("Quit"))
+                    .as_mut()
+                    .map(|r| r.save_if_needed_then_proceed("Quit"))
                     .unwrap_or(true);
                 if should_close {
                     log::info!("Close requested");
@@ -526,10 +529,13 @@ impl ApplicationHandler for App {
                     r.update_animation(delta_time);
                 });
 
-                // Update window title with project name and dirty indicator
+                // Update window title (only when changed)
                 if let (Some(window), Some(renderer)) = (&self.window, &self.renderer) {
                     let title = renderer.project.window_title();
-                    window.set_title(&title);
+                    if self.last_title.as_ref() != Some(&title) {
+                        window.set_title(&title);
+                        self.last_title = Some(title);
+                    }
                 }
 
                 // Handle keyboard movement (skip if camera locked)
