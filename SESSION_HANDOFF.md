@@ -1,7 +1,7 @@
-# Session Handoff - March 24, 2026
+# Session Handoff - March 25, 2026
 
-**Last Updated:** M30 Phase 1 (serde foundation) complete
-**Next Milestone:** M30 Phase 2 (ProjectFile + save/load logic)
+**Last Updated:** M31 (per-node scene graph visualization) complete
+**Next Milestone:** M32 (USD composition inspector & opinion trace)
 **Project:** BIF - VFX Scene Assembler & Renderer
 
 ---
@@ -10,15 +10,25 @@
 
 | Status | Details |
 |--------|---------|
-| Complete | Milestones 0-23, M26, M26.1, M19.6, M29.5, M30 (all 6 phases) |
-| Current | M30 complete — save/load, eval modes, cache node all landed |
-| Next | M31 (per-node scene graph viz), then M32 (opinion trace) |
-| Tests | 390+ total across all crates |
+| Complete | Milestones 0-23, M26, M26.1, M19.6, M29.5, M30, M31 |
+| Current | M31 complete — source tagging, badges, filtered browser, highlighting |
+| Next | M32 (opinion trace), then M33 (usdview-parity debugging) |
+| Tests | 394+ total across all crates |
 | Performance | 60 FPS viewport, 100K instances with LOD, Ivar build ~185ms |
 
 ---
 
 ## Recent Work
+
+### M31: Per-Node Scene Graph Visualization (Mar 25, 2026)
+
+4-phase implementation:
+1. **Source tagging** — ProceduralPrim.source_node via reverse maps from node_proto_map/node_cloud_map
+2. **Prim count badges** — `[N]` overlay on node headers via NodeGraphContext.node_prim_counts
+3. **Node scene browser** — Scene/Node tab bar, NodeFilteredProvider filters to upstream subgraph
+4. **Row highlighting** — selected node's prims tinted green in full scene browser
+
+**Pre-existing test failures:** test_should_restart_no_render (known flaky), test_build_property_rows_with_material (Material::default() row count mismatch — needs investigation)
 
 ### M30 Phase 1: Serde Foundation (Mar 24, 2026)
 

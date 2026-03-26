@@ -1095,18 +1095,16 @@ Complete milestone history and future roadmap for the BIF VFX renderer project.
 
 ---
 
-### Milestone 31: Per-Node Scene Graph Visualization 🌲
+### Milestone 31: Per-Node Scene Graph Visualization 🌲 ✅
 
 - **Goal:** Click any node → see scene graph tree at that evaluation point
-- **Estimated Time:** 10-15 hours
-- **Why:** Makes the node workflow click — users can see what each node contributes
-- **Already Built (80%):** CompositeProvider, CachedSceneGraph, scene browser, PrimDataProvider trait
-- **Key Tasks:**
-  - Per-node evaluation: click node → evaluate chain up to that node only → show resulting tree
-  - Highlight prims added/modified by selected node (color-coded in scene browser)
-  - Dual-panel layout: node graph + live scene graph tree side-by-side
-  - Node contribution markers: each prim tagged with which node produced it
-  - Evaluation display: badge/overlay on each node showing prim count it contributes
+- **Status:** Complete
+- **Completed:**
+  - Source node tagging: ProceduralPrim.source_node via reverse maps from node_proto_map/node_cloud_map
+  - Prim count badges: `[N]` overlay on each node header showing prim contribution count
+  - Scene/Node tab bar: NodeFilteredProvider filters scene browser to upstream subgraph of selected node
+  - Row highlighting: selected node's prims tinted green in full scene browser
+  - 4 new tests (source tagging, prim counts, filtered provider)
 
 ---
 
