@@ -69,7 +69,7 @@ pub(crate) fn propagate_dirty(start: NodeId, snarl: &mut Snarl<SceneNode>) {
 /// Returns a set containing `start` and every node reachable by walking
 /// backwards through input pins. Used to determine the active subgraph
 /// when a display flag is set.
-pub(crate) fn collect_upstream_nodes(start: NodeId, snarl: &Snarl<SceneNode>) -> HashSet<NodeId> {
+pub fn collect_upstream_nodes(start: NodeId, snarl: &Snarl<SceneNode>) -> HashSet<NodeId> {
     let mut visited = HashSet::from([start]);
     let mut queue = VecDeque::from([start]);
 

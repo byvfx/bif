@@ -17,7 +17,18 @@
 
 use std::collections::{HashMap, HashSet};
 
+use crate::node_graph::GraphNodeId;
 use crate::theme;
+
+/// Which view mode the scene browser is in.
+#[derive(Default, Clone, Copy, PartialEq, Eq)]
+pub enum SceneBrowserViewMode {
+    /// Show the full scene graph.
+    #[default]
+    FullScene,
+    /// Show only prims from the selected node and its upstream chain.
+    NodeContribution(GraphNodeId),
+}
 
 /// State for the scene browser UI.
 #[derive(Default)]
@@ -33,6 +44,9 @@ pub struct SceneBrowserState {
 
     /// Whether to show inactive prims
     pub show_inactive: bool,
+
+    /// Scene browser view mode (full scene or node contribution).
+    pub view_mode: SceneBrowserViewMode,
 }
 
 impl SceneBrowserState {
@@ -43,6 +57,7 @@ impl SceneBrowserState {
             expanded_paths: HashSet::new(),
             search_filter: String::new(),
             show_inactive: true,
+            view_mode: SceneBrowserViewMode::FullScene,
         }
     }
 
@@ -153,6 +168,9 @@ pub struct PrimDisplayInfo {
 
     /// Visibility state (computed from inherited visibility)
     pub is_visible: bool,
+
+    /// Which graph node produced this prim (for highlighting).
+    pub source_node: Option<GraphNodeId>,
 }
 
 impl PrimDisplayInfo {
@@ -175,6 +193,7 @@ impl PrimDisplayInfo {
             child_count,
             kind: String::new(), // Default to empty
             is_visible: true,    // Default to visible
+            source_node: None,   // Default to unknown
         }
     }
 
@@ -199,6 +218,7 @@ impl PrimDisplayInfo {
             child_count,
             kind,
             is_visible,
+            source_node: None,
         }
     }
 
@@ -227,10 +247,13 @@ pub trait PrimDataProvider {
 /// Render the scene browser UI in Houdini-style table layout.
 ///
 /// Returns `Some(path)` if selection changed, `None` otherwise.
+///
+/// `highlight_node`: when set, prims from this node get a tinted background.
 pub fn render_scene_browser(
     ui: &mut egui::Ui,
     state: &mut SceneBrowserState,
     provider: &dyn PrimDataProvider,
+    highlight_node: Option<GraphNodeId>,
 ) -> Option<String> {
     let mut selection_changed: Option<String> = None;
 
@@ -345,9 +368,15 @@ pub fn render_scene_browser(
             };
 
             for root_path in root_paths {
-                if let Some(new_selection) =
-                    render_prim_row(ui, state, provider, &root_path, 0, &col_widths)
-                {
+                if let Some(new_selection) = render_prim_row(
+                    ui,
+                    state,
+                    provider,
+                    &root_path,
+                    0,
+                    &col_widths,
+                    highlight_node,
+                ) {
                     selection_changed = Some(new_selection);
                 }
             }
@@ -373,6 +402,7 @@ fn render_prim_row(
     path: &str,
     depth: usize,
     col_widths: &ColumnWidths,
+    highlight_node: Option<GraphNodeId>,
 ) -> Option<String> {
     let info = provider.get_prim_info(path)?;
 
@@ -393,9 +423,14 @@ fn render_prim_row(
     let is_selected = state.selected_path.as_ref() == Some(&info.path);
     let is_expanded = state.is_expanded(&info.path);
 
-    // Row background color (alternating or selection highlight)
+    // Row background color (selection > node highlight > transparent)
+    let is_highlighted = highlight_node.is_some()
+        && info.source_node.is_some()
+        && info.source_node == highlight_node;
     let row_bg = if is_selected {
         theme::ACCENT_DIM
+    } else if is_highlighted {
+        egui::Color32::from_rgba_premultiplied(40, 120, 80, 40)
     } else {
         egui::Color32::TRANSPARENT
     };
@@ -524,9 +559,15 @@ fn render_prim_row(
     if is_expanded && info.has_children {
         let children = provider.get_children(&info.path);
         for child_path in children {
-            if let Some(new_selection) =
-                render_prim_row(ui, state, provider, &child_path, depth + 1, col_widths)
-            {
+            if let Some(new_selection) = render_prim_row(
+                ui,
+                state,
+                provider,
+                &child_path,
+                depth + 1,
+                col_widths,
+                highlight_node,
+            ) {
                 selection_changed = Some(new_selection);
             }
         }
@@ -612,6 +653,8 @@ pub struct ProceduralPrim {
     pub path: String,
     /// Type-specific data.
     pub kind: ProceduralPrimKind,
+    /// Which graph node produced this prim (None for auto-generated Scopes).
+    pub source_node: Option<GraphNodeId>,
 }
 
 /// Cached scene graph data built from working_scene.
@@ -625,15 +668,45 @@ pub struct CachedSceneGraph {
     pub children_index: HashMap<String, Vec<String>>,
 }
 
+impl CachedSceneGraph {
+    /// Count procedural prims per source node (excludes auto-generated Scopes).
+    pub fn prim_count_by_node(&self) -> HashMap<GraphNodeId, usize> {
+        let mut counts = HashMap::new();
+        for prim in self.procedural_prims.values() {
+            if let Some(node_id) = prim.source_node {
+                *counts.entry(node_id).or_insert(0) += 1;
+            }
+        }
+        counts
+    }
+}
+
 /// Build a cached scene graph from the working scene.
 ///
 /// Iterates prototypes and point clouds once, builds the prim HashMap
-/// and pre-computes the parent->children index.
-pub fn build_scene_graph_cache(scene: &bif_core::Scene) -> CachedSceneGraph {
+/// and pre-computes the parent->children index. Tags each prim with
+/// its source graph node via reverse lookups on the node maps.
+pub fn build_scene_graph_cache(
+    scene: &bif_core::Scene,
+    node_proto_map: &HashMap<GraphNodeId, Vec<usize>>,
+    node_cloud_map: &HashMap<GraphNodeId, usize>,
+) -> CachedSceneGraph {
+    // Build reverse maps: proto_index -> node, cloud_id -> node
+    let mut proto_to_node: HashMap<usize, GraphNodeId> = HashMap::new();
+    for (&node_id, proto_ids) in node_proto_map {
+        for &pid in proto_ids {
+            proto_to_node.insert(pid, node_id);
+        }
+    }
+    let mut cloud_to_node: HashMap<usize, GraphNodeId> = HashMap::new();
+    for (&node_id, &cloud_id) in node_cloud_map {
+        cloud_to_node.insert(cloud_id, node_id);
+    }
+
     let mut procedural_prims = HashMap::new();
 
     // Add ALL prototypes as Mesh prims
-    for proto in &scene.prototypes {
+    for (proto_idx, proto) in scene.prototypes.iter().enumerate() {
         let path = if proto.name.starts_with('/') {
             proto.name.to_string()
         } else {
@@ -648,12 +721,13 @@ pub fn build_scene_graph_cache(scene: &bif_core::Scene) -> CachedSceneGraph {
                     vertex_count: mesh.positions.len(),
                     triangle_count: mesh.indices.len() / 3,
                 },
+                source_node: proto_to_node.get(&proto_idx).copied(),
             },
         );
     }
 
     // Add point clouds as PointInstancer prims
-    for cloud in &scene.point_clouds {
+    for (cloud_idx, cloud) in scene.point_clouds.iter().enumerate() {
         if cloud.positions.is_empty() || cloud.name.is_empty() {
             continue;
         }
@@ -683,6 +757,7 @@ pub fn build_scene_graph_cache(scene: &bif_core::Scene) -> CachedSceneGraph {
                     point_count: cloud.positions.len(),
                     prototype_refs: proto_refs,
                 },
+                source_node: cloud_to_node.get(&cloud_idx).copied(),
             },
         );
     }
@@ -700,6 +775,7 @@ pub fn build_scene_graph_cache(scene: &bif_core::Scene) -> CachedSceneGraph {
                     ProceduralPrim {
                         path: current.clone(),
                         kind: ProceduralPrimKind::Scope,
+                        source_node: None,
                     },
                 );
             }
@@ -804,13 +880,15 @@ impl PrimDataProvider for CompositeProvider<'_> {
             }
             let children = self.get_children(path);
             let child_count = children.len();
-            return Some(PrimDisplayInfo::new(
+            let mut info = PrimDisplayInfo::new(
                 proc_prim.path.clone(),
                 proc_prim.kind.type_name().to_string(),
                 true,
                 child_count > 0,
                 child_count,
-            ));
+            );
+            info.source_node = proc_prim.source_node;
+            return Some(info);
         }
 
         // Fall back to USD stage
@@ -837,6 +915,89 @@ impl PrimDataProvider for CompositeProvider<'_> {
         children.sort();
         children.dedup();
         children
+    }
+}
+
+/// Filters scene graph to show only prims from a set of upstream nodes.
+///
+/// Used in NodeContribution view mode: shows the scene "at" a selected node
+/// by including prims from the selected node + all upstream nodes.
+pub struct NodeFilteredProvider<'a> {
+    inner: &'a dyn PrimDataProvider,
+    cache: &'a CachedSceneGraph,
+    /// The node whose contribution we're inspecting.
+    selected_node: GraphNodeId,
+    /// Set of allowed paths (prims from upstream nodes + ancestor Scopes).
+    allowed_paths: HashSet<String>,
+}
+
+impl<'a> NodeFilteredProvider<'a> {
+    /// Build a filtered provider showing prims from `upstream_nodes` only.
+    ///
+    /// `upstream_nodes` should include the selected node itself.
+    pub fn new(
+        inner: &'a dyn PrimDataProvider,
+        cache: &'a CachedSceneGraph,
+        selected_node: GraphNodeId,
+        upstream_nodes: &HashSet<GraphNodeId>,
+    ) -> Self {
+        // Collect paths of prims whose source_node is in the upstream set
+        let mut allowed_paths = HashSet::new();
+        for prim in cache.procedural_prims.values() {
+            if let Some(src) = prim.source_node {
+                if upstream_nodes.contains(&src) {
+                    allowed_paths.insert(prim.path.clone());
+                    // Also include all ancestor paths for tree context
+                    let mut current = String::new();
+                    for segment in prim.path.split('/').filter(|s| !s.is_empty()) {
+                        current.push('/');
+                        current.push_str(segment);
+                        allowed_paths.insert(current.clone());
+                    }
+                }
+            }
+        }
+        Self {
+            inner,
+            cache,
+            selected_node,
+            allowed_paths,
+        }
+    }
+
+    /// Whether a prim was produced by the selected node (for highlighting).
+    pub fn is_from_selected_node(&self, path: &str) -> bool {
+        self.cache
+            .procedural_prims
+            .get(path)
+            .and_then(|p| p.source_node)
+            .map(|src| src == self.selected_node)
+            .unwrap_or(false)
+    }
+}
+
+impl PrimDataProvider for NodeFilteredProvider<'_> {
+    fn root_paths(&self) -> Vec<String> {
+        self.inner
+            .root_paths()
+            .into_iter()
+            .filter(|p| self.allowed_paths.contains(p))
+            .collect()
+    }
+
+    fn get_prim_info(&self, path: &str) -> Option<PrimDisplayInfo> {
+        if !self.allowed_paths.contains(path) {
+            return None;
+        }
+        self.inner.get_prim_info(path)
+    }
+
+    fn get_children(&self, parent_path: &str) -> Vec<String> {
+        self.inner
+            .get_children(parent_path)
+            .into_iter()
+            .filter(|p| self.allowed_paths.contains(p))
+            .collect()
     }
 }
 
@@ -960,9 +1121,119 @@ mod tests {
     #[test]
     fn test_build_scene_graph_cache_children_index() {
         let scene = bif_core::Scene::new("test");
-        let cache = build_scene_graph_cache(&scene);
+        let empty_proto = HashMap::new();
+        let empty_cloud = HashMap::new();
+        let cache = build_scene_graph_cache(&scene, &empty_proto, &empty_cloud);
         // Empty scene should produce empty cache
         assert!(cache.procedural_prims.is_empty());
         assert!(cache.children_index.is_empty());
+    }
+
+    #[test]
+    fn test_source_node_tagging() {
+        use crate::node_graph::GraphNodeId;
+        use std::sync::Arc;
+
+        let mut scene = bif_core::Scene::new("test");
+        scene.prototypes.push(Arc::new(bif_core::Prototype {
+            id: 0,
+            name: Arc::from("/World/Cube"),
+            mesh: Arc::new(bif_core::Mesh::new(vec![], vec![], None)),
+            material: None,
+        }));
+
+        let node_a = GraphNodeId(42);
+        let mut proto_map = HashMap::new();
+        proto_map.insert(node_a, vec![0]);
+        let empty_cloud = HashMap::new();
+
+        let cache = build_scene_graph_cache(&scene, &proto_map, &empty_cloud);
+
+        // Mesh prim should be tagged with node_a
+        let prim = cache.procedural_prims.get("/World/Cube").unwrap();
+        assert_eq!(prim.source_node, Some(node_a));
+
+        // Auto-generated Scope "/World" should have no source
+        let scope = cache.procedural_prims.get("/World").unwrap();
+        assert_eq!(scope.source_node, None);
+    }
+
+    #[test]
+    fn test_prim_count_by_node() {
+        use crate::node_graph::GraphNodeId;
+        use std::sync::Arc;
+
+        let mut scene = bif_core::Scene::new("test");
+        scene.prototypes.push(Arc::new(bif_core::Prototype {
+            id: 0,
+            name: Arc::from("/World/Cube"),
+            mesh: Arc::new(bif_core::Mesh::new(vec![], vec![], None)),
+            material: None,
+        }));
+        scene.prototypes.push(Arc::new(bif_core::Prototype {
+            id: 1,
+            name: Arc::from("/World/Sphere"),
+            mesh: Arc::new(bif_core::Mesh::new(vec![], vec![], None)),
+            material: None,
+        }));
+
+        let node_a = GraphNodeId(1);
+        let node_b = GraphNodeId(2);
+        let mut proto_map = HashMap::new();
+        proto_map.insert(node_a, vec![0]);
+        proto_map.insert(node_b, vec![1]);
+        let empty_cloud = HashMap::new();
+
+        let cache = build_scene_graph_cache(&scene, &proto_map, &empty_cloud);
+        let counts = cache.prim_count_by_node();
+
+        assert_eq!(counts.get(&node_a), Some(&1));
+        assert_eq!(counts.get(&node_b), Some(&1));
+    }
+
+    #[test]
+    fn test_node_filtered_provider() {
+        use crate::node_graph::GraphNodeId;
+        use std::sync::Arc;
+
+        let mut scene = bif_core::Scene::new("test");
+        scene.prototypes.push(Arc::new(bif_core::Prototype {
+            id: 0,
+            name: Arc::from("/World/Cube"),
+            mesh: Arc::new(bif_core::Mesh::new(vec![], vec![], None)),
+            material: None,
+        }));
+        scene.prototypes.push(Arc::new(bif_core::Prototype {
+            id: 1,
+            name: Arc::from("/World/Sphere"),
+            mesh: Arc::new(bif_core::Mesh::new(vec![], vec![], None)),
+            material: None,
+        }));
+
+        let node_a = GraphNodeId(1);
+        let node_b = GraphNodeId(2);
+        let mut proto_map = HashMap::new();
+        proto_map.insert(node_a, vec![0]);
+        proto_map.insert(node_b, vec![1]);
+        let empty_cloud = HashMap::new();
+
+        let cache = build_scene_graph_cache(&scene, &proto_map, &empty_cloud);
+        let composite = CompositeProvider::new(None, &cache);
+
+        // Filter to only node_a (upstream set = {node_a})
+        let upstream = HashSet::from([node_a]);
+        let filtered = NodeFilteredProvider::new(&composite, &cache, node_a, &upstream);
+
+        // Should include /World/Cube and ancestor /World, but NOT /World/Sphere
+        let roots = filtered.root_paths();
+        assert!(roots.contains(&"/World".to_string()));
+
+        let children = filtered.get_children("/World");
+        assert!(children.contains(&"/World/Cube".to_string()));
+        assert!(!children.contains(&"/World/Sphere".to_string()));
+
+        // Selected node check
+        assert!(filtered.is_from_selected_node("/World/Cube"));
+        assert!(!filtered.is_from_selected_node("/World"));
     }
 }

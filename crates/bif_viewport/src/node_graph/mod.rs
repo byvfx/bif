@@ -993,7 +993,11 @@ impl NodeGraphState {
 
 /// Render the node graph UI
 /// Returns any events that should be processed by the parent
-pub fn render_node_graph(ui: &mut egui::Ui, state: &mut NodeGraphState) -> Vec<NodeGraphEvent> {
+pub fn render_node_graph(
+    ui: &mut egui::Ui,
+    state: &mut NodeGraphState,
+    prim_counts: &std::collections::HashMap<GraphNodeId, usize>,
+) -> Vec<NodeGraphEvent> {
     // Pre-cook events (before viewer borrows dirty_nodes)
     let mut pre_events: Vec<NodeGraphEvent> = Vec::new();
 
@@ -1121,6 +1125,7 @@ pub fn render_node_graph(ui: &mut egui::Ui, state: &mut NodeGraphState) -> Vec<N
         state.selected_node.map(|id| id.into()),
         state.eval_mode,
         &mut state.dirty_nodes,
+        prim_counts,
     );
 
     // Render the snarl node graph (guard against degenerate panel size)

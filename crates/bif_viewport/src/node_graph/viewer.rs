@@ -1,6 +1,6 @@
 //! SceneNodeViewer: SnarlViewer implementation for the node graph UI.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use egui_snarl::{
     ui::{PinInfo, SnarlViewer},
@@ -34,6 +34,8 @@ pub(crate) struct SceneNodeViewer<'a> {
     pub eval_mode: EvalMode,
     /// Nodes needing re-evaluation (for dirty indicator)
     pub dirty_nodes: &'a mut HashSet<GraphNodeId>,
+    /// Prim count per node (for badge display)
+    pub prim_counts: &'a HashMap<GraphNodeId, usize>,
 }
 
 impl<'a> SceneNodeViewer<'a> {
@@ -42,6 +44,7 @@ impl<'a> SceneNodeViewer<'a> {
         selected_node: Option<NodeId>,
         eval_mode: EvalMode,
         dirty_nodes: &'a mut HashSet<GraphNodeId>,
+        prim_counts: &'a HashMap<GraphNodeId, usize>,
     ) -> Self {
         Self {
             events: Vec::new(),
@@ -49,6 +52,7 @@ impl<'a> SceneNodeViewer<'a> {
             selected_node,
             eval_mode,
             dirty_nodes,
+            prim_counts,
         }
     }
 }
@@ -126,14 +130,22 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer<'_> {
             );
         }
 
-        // Title label
+        // Title label + prim count badge
         let title = snarl[node].name();
         let text_color = if is_selected {
             theme::TEXT_PRIMARY
         } else {
             theme::TEXT_SECONDARY
         };
-        ui.colored_label(text_color, title);
+        ui.horizontal(|ui| {
+            ui.colored_label(text_color, title);
+            let gid = GraphNodeId::from(node);
+            if let Some(&count) = self.prim_counts.get(&gid) {
+                if count > 0 {
+                    ui.colored_label(theme::TEXT_DISABLED, format!("[{}]", count));
+                }
+            }
+        });
     }
 
     // TODO: decouple auto-compute from show_body — cook triggers should come from

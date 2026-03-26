@@ -84,7 +84,8 @@ pub use property_inspector::{
 };
 pub use scene_browser::{
     build_scene_graph_cache, CachedSceneGraph, CompositeProvider, EmptyPrimProvider,
-    PrimDataProvider, PrimDisplayInfo, ProceduralPrim, ProceduralPrimKind, SceneBrowserState,
+    NodeFilteredProvider, PrimDataProvider, PrimDisplayInfo, ProceduralPrim, ProceduralPrimKind,
+    SceneBrowserState, SceneBrowserViewMode,
 };
 
 /// Maximum instance count for dynamic instance buffer.
@@ -163,6 +164,7 @@ pub(crate) struct NodeGraphContext {
     pub primitive_name_counters: std::collections::HashMap<String, usize>,
     pub materials_dirty: bool,
     pub xform_property_changed: Option<node_graph::GraphNodeId>,
+    pub node_prim_counts: std::collections::HashMap<node_graph::GraphNodeId, usize>,
 }
 
 /// Core renderer managing wgpu state
@@ -828,6 +830,7 @@ impl Renderer {
                 primitive_name_counters: std::collections::HashMap::new(),
                 materials_dirty: true,
                 xform_property_changed: None,
+                node_prim_counts: std::collections::HashMap::new(),
             },
             timeline_state: TimelineState::default(),
             environment,

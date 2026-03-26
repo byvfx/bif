@@ -15,11 +15,15 @@ use crate::batch_render::BatchMessage;
 use crate::environment_manager::IblResult;
 use crate::gpu_types::InstanceData;
 use crate::ivar_state::{BatchRenderStatus, BuildStatus, CameraSource, RenderMode};
+use crate::node_graph::ops::collect_upstream_nodes;
 use crate::node_graph::{render_node_graph, GraphNodeId, NodeGraphEvent, SceneNode};
 use crate::property_inspector::{
     render_property_inspector, reset_property_inspector_cache, PrimProperties,
 };
-use crate::scene_browser::{self, CompositeProvider, PrimDataProvider, ProceduralPrimKind};
+use crate::scene_browser::{
+    self, CompositeProvider, NodeFilteredProvider, PrimDataProvider, ProceduralPrimKind,
+    SceneBrowserViewMode,
+};
 use crate::theme;
 use crate::Renderer;
 
@@ -85,8 +89,12 @@ impl Renderer {
 
         // Rebuild cached scene graph if dirty
         if self.nodes.scene_graph_dirty {
-            self.nodes.cached_scene_graph =
-                scene_browser::build_scene_graph_cache(&self.scene.working_scene);
+            self.nodes.cached_scene_graph = scene_browser::build_scene_graph_cache(
+                &self.scene.working_scene,
+                &self.nodes.node_proto_map,
+                &self.nodes.node_cloud_map,
+            );
+            self.nodes.node_prim_counts = self.nodes.cached_scene_graph.prim_count_by_node();
             self.nodes.scene_graph_dirty = false;
         }
 
@@ -384,12 +392,48 @@ impl Renderer {
                 .default_width(300.0)
                 .show(ctx, |ui| {
                     // Scene Browser (always visible, top section)
-                    ui.heading("Scene");
+                    // Tab bar: Scene | Node (when a node is selected)
+                    let selected_node = self.nodes.node_graph_state.selected_node;
+                    let view_mode = &mut self.selection.scene_browser_state.view_mode;
+                    ui.horizontal(|ui| {
+                        if ui
+                            .selectable_label(
+                                *view_mode == SceneBrowserViewMode::FullScene,
+                                "Scene",
+                            )
+                            .clicked()
+                        {
+                            *view_mode = SceneBrowserViewMode::FullScene;
+                        }
+                        if let Some(node_id) = selected_node {
+                            let node_name = self.nodes.node_graph_state.snarl
+                                [egui_snarl::NodeId::from(node_id)]
+                            .name();
+                            let is_node_mode =
+                                matches!(*view_mode, SceneBrowserViewMode::NodeContribution(_));
+                            if ui
+                                .selectable_label(is_node_mode, format!("Node: {}", node_name))
+                                .clicked()
+                            {
+                                *view_mode = SceneBrowserViewMode::NodeContribution(node_id);
+                            }
+                            // Auto-update if already in node mode and selection changed
+                            if let SceneBrowserViewMode::NodeContribution(prev) = *view_mode {
+                                if prev != node_id {
+                                    *view_mode = SceneBrowserViewMode::NodeContribution(node_id);
+                                }
+                            }
+                        } else if matches!(*view_mode, SceneBrowserViewMode::NodeContribution(_)) {
+                            // No node selected — fall back to full scene
+                            *view_mode = SceneBrowserViewMode::FullScene;
+                        }
+                    });
 
                     // Give scene browser ~60% of panel height
                     let available = ui.available_height();
                     let browser_height = (available * 0.6).max(200.0);
 
+                    let view_mode = self.selection.scene_browser_state.view_mode;
                     egui::ScrollArea::vertical()
                         .id_salt("scene_browser_scroll")
                         .max_height(browser_height)
@@ -401,14 +445,56 @@ impl Renderer {
                                     .map(|s| s.as_ref() as &dyn PrimDataProvider),
                                 &self.nodes.cached_scene_graph,
                             );
-                            let provider: &dyn PrimDataProvider = &composite;
-                            if let Some(new_selection) = scene_browser::render_scene_browser(
-                                ui,
-                                &mut self.selection.scene_browser_state,
-                                provider,
-                            ) {
-                                event_bus
-                                    .emit(crate::app_event::AppEvent::PrimSelected(new_selection));
+
+                            let highlight = self.nodes.node_graph_state.selected_node;
+                            match view_mode {
+                                SceneBrowserViewMode::FullScene => {
+                                    let provider: &dyn PrimDataProvider = &composite;
+                                    if let Some(new_selection) =
+                                        scene_browser::render_scene_browser(
+                                            ui,
+                                            &mut self.selection.scene_browser_state,
+                                            provider,
+                                            highlight,
+                                        )
+                                    {
+                                        event_bus.emit(
+                                            crate::app_event::AppEvent::PrimSelected(
+                                                new_selection,
+                                            ),
+                                        );
+                                    }
+                                }
+                                SceneBrowserViewMode::NodeContribution(node_id) => {
+                                    let snarl_id = egui_snarl::NodeId::from(node_id);
+                                    let upstream = collect_upstream_nodes(
+                                        snarl_id,
+                                        &self.nodes.node_graph_state.snarl,
+                                    );
+                                    let upstream_gids: std::collections::HashSet<GraphNodeId> =
+                                        upstream.into_iter().map(GraphNodeId::from).collect();
+                                    let filtered = NodeFilteredProvider::new(
+                                        &composite,
+                                        &self.nodes.cached_scene_graph,
+                                        node_id,
+                                        &upstream_gids,
+                                    );
+                                    let provider: &dyn PrimDataProvider = &filtered;
+                                    if let Some(new_selection) =
+                                        scene_browser::render_scene_browser(
+                                            ui,
+                                            &mut self.selection.scene_browser_state,
+                                            provider,
+                                            Some(node_id),
+                                        )
+                                    {
+                                        event_bus.emit(
+                                            crate::app_event::AppEvent::PrimSelected(
+                                                new_selection,
+                                            ),
+                                        );
+                                    }
+                                }
                             }
                         });
 
@@ -769,7 +855,11 @@ impl Renderer {
                 .default_height(200.0)
                 .resizable(true)
                 .show(ctx, |ui| {
-                    let events = render_node_graph(ui, &mut self.nodes.node_graph_state);
+                    let events = render_node_graph(
+                        ui,
+                        &mut self.nodes.node_graph_state,
+                        &self.nodes.node_prim_counts,
+                    );
                     if !events.is_empty() {
                         event_bus.emit(crate::app_event::AppEvent::NodeGraph(events));
                     }
