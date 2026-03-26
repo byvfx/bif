@@ -1,6 +1,6 @@
-# Session Handoff - March 25, 2026
+# Session Handoff - March 26, 2026
 
-**Last Updated:** M31 (per-node scene graph visualization) complete
+**Last Updated:** Per-tile UDIM loading (eliminate atlas stitching)
 **Next Milestone:** M32 (USD composition inspector & opinion trace)
 **Project:** BIF - VFX Scene Assembler & Renderer
 
@@ -11,7 +11,7 @@
 | Status | Details |
 |--------|---------|
 | Complete | Milestones 0-23, M26, M26.1, M19.6, M29.5, M30, M31 |
-| Current | M31 complete — source tagging, badges, filtered browser, highlighting |
+| Current | Per-tile UDIM loading complete, async texture streaming next |
 | Next | M32 (opinion trace), then M33 (usdview-parity debugging) |
 | Tests | 394+ total across all crates |
 | Performance | 60 FPS viewport, 100K instances with LOD, Ivar build ~185ms |
@@ -19,6 +19,10 @@
 ---
 
 ## Recent Work
+
+### Per-Tile UDIM Loading (Mar 26, 2026)
+
+Replaced UDIM atlas stitching with per-tile loading. Each UDIM tile is now an individual texture in the GPU binding array. Shader computes tile offset from UV floor. New `UdimTileSet` type in bif_core provides unified CPU/GPU sampling. Tested with alab scene (743 textures, zero stitching). Next step: switch viewport to async texture streaming path for interactive loading.
 
 ### M31: Per-Node Scene Graph Visualization (Mar 25, 2026)
 

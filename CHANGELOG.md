@@ -8,6 +8,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Per-tile UDIM loading** — UdimTileSet/UdimGridLayout types in bif_core, per-tile sampling (CPU+GPU), contiguous texture array blocks with shader tile offset. Eliminates atlas stitching (~3s/set). Unified CPU/GPU path ready for material editor.
+
+### Removed
+
+- UDIM atlas stitching, disk cache (UdimCacheMeta, cache dir/key/load/save/clear), scale_pixels_box, ClearUdimCache UI, serde_json dep from bif_core
+
 - **M31: Per-node scene graph visualization** — source_node tagging on ProceduralPrim, prim count `[N]` badges on node headers, Scene/Node tab bar with NodeFilteredProvider for upstream-filtered browsing, row highlighting for selected node's prims in full scene browser. 4 new tests.
 - **M30 Phase 6: Cache node** — SceneNode::Cache with bypass toggle, visual indicators (Cached/Stale/Bypassed), property inspector, CacheToggleBypass/CacheClear events. Data serialization deferred.
 - **M30 Phase 5: eval modes** — Auto/Manual/OnMouseRelease with dirty node tracking, eval mode ComboBox toolbar, Cook All/Cook Selected buttons, dirty visual indicators, CookNode event for deferred compute dispatch
