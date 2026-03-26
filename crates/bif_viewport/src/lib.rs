@@ -71,9 +71,8 @@ pub use multi_draw::MultiDrawState;
 pub use scene_manager::SceneManager;
 pub use selection::SelectionManager;
 pub use texture_loader::{
-    collect_scene_texture_paths, create_default_gpu_textures, create_gpu_texture,
-    create_gpu_textures_for_scene, MipmapGenerator, TextureLoadMessage,
-    DEFAULT_MAX_VIEWPORT_TEXTURE_SIZE,
+    collect_scene_texture_paths, create_default_gpu_textures, create_gpu_texture, MipmapGenerator,
+    TextureLoadMessage, DEFAULT_MAX_VIEWPORT_TEXTURE_SIZE,
 };
 pub use timeline::TimelineState;
 pub use types::*;

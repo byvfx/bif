@@ -58,13 +58,16 @@ impl Renderer {
             mesh_data.indices.len()
         );
 
-        // Refresh textures and material table
-        self.textures.gpu_textures = texture_loader::create_gpu_textures_for_scene(
+        // Refresh textures (async — placeholders now, real textures stream in)
+        let (gpu_textures, tile_paths) = texture_loader::prepare_texture_placeholders(
             &self.gpu.device,
             &self.gpu.queue,
             scene,
             None,
         );
+        self.textures.gpu_textures = gpu_textures;
+        self.async_channels.texture_load_receiver =
+            Some(texture_loader::start_texture_loading_async(tile_paths));
 
         let mut material_table: Vec<MaterialGpu> = scene
             .materials
@@ -774,15 +777,19 @@ impl Renderer {
         };
 
         // Only rebuild GPU textures when materials actually changed (not on every
-        // Xform drag or display toggle). Texture loading is expensive — disk I/O,
-        // decode, GPU upload.
+        // Xform drag or display toggle). Uses async loading — placeholders appear
+        // instantly, real textures stream in via poll_texture_loads().
         if self.nodes.materials_dirty {
-            self.textures.gpu_textures = texture_loader::create_gpu_textures_for_scene(
+            // Cancel any in-flight texture loading from a previous rebuild
+            self.async_channels.texture_load_receiver = None;
+
+            let (gpu_textures, tile_paths) = texture_loader::prepare_texture_placeholders(
                 &self.gpu.device,
                 &self.gpu.queue,
                 scene,
                 self.scene.texture_base_dir.as_deref(),
             );
+            self.textures.gpu_textures = gpu_textures;
 
             let texture_view_refs: Vec<&wgpu::TextureView> =
                 self.textures.gpu_textures.views.iter().collect();
@@ -805,6 +812,10 @@ impl Renderer {
                             },
                         ],
                     });
+
+            self.async_channels.texture_load_receiver =
+                Some(texture_loader::start_texture_loading_async(tile_paths));
+
             self.nodes.materials_dirty = false;
         }
 
@@ -1687,9 +1698,20 @@ impl Renderer {
         );
         let gpu_time = gpu_start.elapsed();
 
+        // Clean up stale .bif_cache/udim/ from old atlas stitching system
+        let base_dir = path.parent();
+        if let Some(dir) = base_dir {
+            let stale_cache = dir.join(".bif_cache").join("udim");
+            if stale_cache.exists() {
+                match std::fs::remove_dir_all(&stale_cache) {
+                    Ok(()) => log::info!("Cleaned up stale UDIM cache: {}", stale_cache.display()),
+                    Err(e) => log::warn!("Failed to clean UDIM cache: {}", e),
+                }
+            }
+        }
+
         // Prepare placeholder textures (instant) and start async loading
         let texture_start = Instant::now();
-        let base_dir = path.parent();
         let (gpu_textures, tile_paths) = texture_loader::prepare_texture_placeholders(
             &self.gpu.device,
             &self.gpu.queue,
@@ -1698,9 +1720,8 @@ impl Renderer {
         );
         self.textures.gpu_textures = gpu_textures;
         // Start background texture loading — textures stream in via poll_texture_loads()
-        self.async_channels.texture_load_receiver = Some(
-            texture_loader::start_texture_loading_async(tile_paths),
-        );
+        self.async_channels.texture_load_receiver =
+            Some(texture_loader::start_texture_loading_async(tile_paths));
 
         // Start background .tx conversion — next load of same scene uses cached .tx
         #[cfg(feature = "oiio")]
