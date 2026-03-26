@@ -791,5 +791,8 @@ fn main() -> Result<()> {
     log::info!("Running event loop");
     event_loop.run_app(&mut app)?;
 
-    Ok(())
+    // Force-exit to avoid zombie process from native library teardown.
+    // wgpu/USD/Embree DLL finalization can deadlock on Windows.
+    // Save dialog runs before event_loop.exit() so no data loss risk.
+    std::process::exit(0);
 }

@@ -168,6 +168,7 @@ pub(crate) struct NodeGraphContext {
 
 /// Core renderer managing wgpu state
 pub struct Renderer {
+    pub(crate) window: std::sync::Arc<winit::window::Window>,
     pub(crate) gpu: GpuContext,
     pub size: (u32, u32),
     pub(crate) pipeline: wgpu::RenderPipeline,
@@ -747,6 +748,7 @@ impl Renderer {
         let mipmap_generator = texture_loader::MipmapGenerator::new(&device);
 
         Ok(Self {
+            window,
             gpu: GpuContext {
                 surface,
                 device,
@@ -1295,6 +1297,7 @@ impl Renderer {
             .undo_stack
             .push(Box::new(cmd), &mut self.scene.edit_state);
         self.apply_transform_override(instance_index);
+        self.project.mark_dirty();
 
         // Invalidate Ivar scene so transform change is reflected
         if self.ivar.ivar_state.mode == ivar_state::RenderMode::Ivar {
@@ -1310,6 +1313,7 @@ impl Renderer {
             .undo(&mut self.scene.edit_state)?
             .to_string();
         self.apply_all_transform_overrides();
+        self.project.mark_dirty();
         if self.ivar.ivar_state.mode == ivar_state::RenderMode::Ivar {
             self.invalidate_ivar_scene();
         }
@@ -1324,6 +1328,7 @@ impl Renderer {
             .redo(&mut self.scene.edit_state)?
             .to_string();
         self.apply_all_transform_overrides();
+        self.project.mark_dirty();
         if self.ivar.ivar_state.mode == ivar_state::RenderMode::Ivar {
             self.invalidate_ivar_scene();
         }
@@ -1414,6 +1419,7 @@ impl Renderer {
         self.scene
             .undo_stack
             .push(Box::new(cmd), &mut self.scene.edit_state);
+        self.project.mark_dirty();
 
         // Also update the live animation data for playback
         let anim = self
@@ -1721,11 +1727,14 @@ impl Renderer {
         if !self.project.dirty {
             return persistence::SavePromptResult::Discard;
         }
+        // Hide main window so the native dialog isn't stuck behind it
+        self.window.set_visible(false);
         let result = rfd::MessageDialog::new()
             .set_title(action)
             .set_description("You have unsaved changes. Save before continuing?")
             .set_buttons(rfd::MessageButtons::YesNoCancel)
             .show();
+        self.window.set_visible(true);
         match result {
             rfd::MessageDialogResult::Yes => persistence::SavePromptResult::Save,
             rfd::MessageDialogResult::No => persistence::SavePromptResult::Discard,
