@@ -865,14 +865,27 @@ pub fn prepare_texture_placeholders(
     };
 
     let mut total_slots = 0usize;
+    let max_slots = MAX_VIEWPORT_TEXTURES - 1; // slot 0 = default white
     let mut expanded_paths: Vec<String> = Vec::new();
 
     for path in &texture_paths {
         if is_udim_path(path) {
             let tiles = find_udim_tiles(path);
             if let Some(layout) = UdimGridLayout::from_tiles(tiles) {
-                let base_index = texture_set.textures.len() as u32;
                 let slots = layout.grid_slots() as usize;
+
+                // I1: Check capacity BEFORE allocating — skip sets that won't fit
+                if total_slots + slots > max_slots {
+                    log::warn!(
+                        "UDIM '{}' needs {} slots, only {} remain — skipping",
+                        path,
+                        slots,
+                        max_slots - total_slots
+                    );
+                    continue;
+                }
+
+                let base_index = texture_set.textures.len() as u32;
 
                 texture_set.index_map.insert(path.clone(), base_index);
                 texture_set.udim_map.insert(
@@ -902,16 +915,32 @@ pub fn prepare_texture_placeholders(
                 total_slots += slots;
             }
         } else {
+            if total_slots >= max_slots {
+                log::warn!("Texture slots at GPU limit ({}), skipping remaining", max_slots);
+                break;
+            }
             let index = texture_set.textures.len() as u32;
             texture_set.index_map.insert(path.clone(), index);
             texture_set.textures.push(make_placeholder(device));
             expanded_paths.push(path.clone());
             total_slots += 1;
         }
+    }
 
-        if total_slots >= MAX_VIEWPORT_TEXTURES - 1 {
-            log::warn!("Texture slots ({}) at GPU limit", total_slots);
-            break;
+    // C1: Sync views to cover all allocated texture slots.
+    // views was pre-allocated to MAX_VIEWPORT_TEXTURES in create_default_gpu_textures,
+    // all pointing to the default white texture. textures.len() should never exceed
+    // MAX_VIEWPORT_TEXTURES due to the capacity checks above, but guard defensively.
+    if texture_set.textures.len() > texture_set.views.len() {
+        log::error!(
+            "BUG: textures ({}) > views ({}), padding views to prevent panic",
+            texture_set.textures.len(),
+            texture_set.views.len()
+        );
+        while texture_set.views.len() < texture_set.textures.len() {
+            texture_set.views.push(
+                texture_set.textures[0].create_view(&wgpu::TextureViewDescriptor::default()),
+            );
         }
     }
 
@@ -1028,6 +1057,19 @@ pub fn upload_streamed_texture(
         log::warn!("Streamed texture {} has no pre-allocated index", msg.path);
         return false;
     };
+
+    // C1: Bounds guard — prevent panic if index exceeds views/textures capacity
+    let idx = index as usize;
+    if idx >= texture_set.views.len() || idx >= texture_set.textures.len() {
+        log::warn!(
+            "Streamed texture {} index {} out of bounds (views={}, textures={})",
+            msg.path,
+            index,
+            texture_set.views.len(),
+            texture_set.textures.len()
+        );
+        return false;
+    }
 
     let label = format!("Viewport Texture: {}", msg.path);
     let raw = RawTexture {

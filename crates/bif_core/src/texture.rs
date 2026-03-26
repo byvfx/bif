@@ -289,6 +289,10 @@ impl UdimGridLayout {
         let mut max_row = 0u32;
         let mut infos = Vec::with_capacity(tiles.len());
         for (udim, path) in tiles {
+            if !(1001..=1200).contains(&udim) {
+                log::warn!("Skipping invalid UDIM ID {} (expected 1001-1200)", udim);
+                continue;
+            }
             let col = (udim - 1001) % 10;
             let row = (udim - 1001) / 10;
             min_col = min_col.min(col);
@@ -302,6 +306,9 @@ impl UdimGridLayout {
                 path,
             });
         }
+        if infos.is_empty() {
+            return None;
+        }
         Some(Self {
             tiles: infos,
             num_cols: max_col - min_col + 1,
@@ -312,6 +319,7 @@ impl UdimGridLayout {
     }
 
     /// Total grid slots (num_cols * num_rows). Some may be empty (sparse UDIM).
+    #[must_use]
     pub fn grid_slots(&self) -> u32 {
         self.num_cols * self.num_rows
     }
@@ -369,6 +377,9 @@ impl UdimTileSet {
     }
 
     /// Resolve which tile a UV coordinate maps to.
+    /// Out-of-range UVs clamp to the grid boundary (matches shader behavior).
+    /// This silently shows the edge tile instead of a diagnostic color —
+    /// acceptable for viewport preview, but a future debug mode could return None.
     fn resolve_tile(&self, u: f32, v: f32) -> Option<&Texture> {
         let raw_col = u.floor() as i32 - self.layout.min_col as i32;
         let raw_row = v.floor() as i32 - self.layout.min_row as i32;
@@ -1449,5 +1460,45 @@ mod tests {
         assert!((ts.sample_channel(0.5, 0.5, 0) - 0.2).abs() < 0.01);
         assert!((ts.sample_channel(0.5, 0.5, 1) - 0.5).abs() < 0.01);
         assert!((ts.sample_channel(0.5, 0.5, 2) - 0.8).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_udim_tileset_negative_uv() {
+        // Negative UVs should clamp to tile (0,0) via resolve_tile
+        let red = Arc::new(Texture::new(
+            2, 2,
+            vec![[1.0, 0.0, 0.0, 1.0]; 4],
+            "red",
+        ));
+        let layout = UdimGridLayout::from_tiles(vec![
+            (1001, "a_1001.exr".into()),
+            (1002, "a_1002.exr".into()),
+        ]).unwrap();
+        let ts = UdimTileSet {
+            layout,
+            tiles: vec![Some(red), None],
+            is_linear: false,
+            pattern: "a_<UDIM>.exr".into(),
+        };
+
+        // Negative UV clamps to col=0 (tile 1001 = red)
+        let c = ts.sample(-0.5, 0.5);
+        assert!((c.x - 1.0).abs() < 0.01, "negative u should clamp to tile 0: {:?}", c);
+
+        // Negative v also clamps
+        let c = ts.sample(0.5, -0.5);
+        assert!((c.x - 1.0).abs() < 0.01, "negative v should clamp to tile 0: {:?}", c);
+    }
+
+    #[test]
+    fn test_udim_grid_layout_invalid_id() {
+        // UDIM IDs outside 1001-1200 should be skipped
+        let tiles = vec![
+            (999, "bad.exr".into()),
+            (1001, "a_1001.exr".into()),
+        ];
+        let layout = UdimGridLayout::from_tiles(tiles).unwrap();
+        assert_eq!(layout.tiles.len(), 1);
+        assert_eq!(layout.tiles[0].udim_id, 1001);
     }
 }

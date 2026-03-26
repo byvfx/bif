@@ -20,6 +20,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Deduplicate `find_udim_tiles` calls — `prepare_texture_placeholders` passes expanded paths to async loader
 - Removed vestigial `udim_grid_*` fields from `Texture` struct (16 bytes/texture savings)
 - Clean up stale `.bif_cache/udim/` directories on scene load
+- Panic guard: bounds check in `upload_streamed_texture` + views/textures sync in `prepare_texture_placeholders`
+- UDIM capacity check before allocating — skip sets that won't fit in texture array
+- Validate UDIM ID range (1001-1200) in `UdimGridLayout::from_tiles`
+- `#[must_use]` on `grid_slots()`, negative UV test, clamping behavior documented
 
 ### Removed
 
