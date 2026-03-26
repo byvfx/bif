@@ -1408,7 +1408,6 @@ impl Renderer {
 
         let max_dimension = self.gpu.device.limits().max_texture_dimension_2d;
         let mut uploaded = 0u32;
-        let mut has_udim = false;
 
         // Pace uploads to avoid frame spikes (max 32 per frame)
         const MAX_UPLOADS_PER_FRAME: u32 = 32;
@@ -1418,7 +1417,6 @@ impl Renderer {
             }
             match receiver.try_recv() {
                 Ok(msg) => {
-                    let is_udim = msg.udim_grid_cols > 0;
                     if texture_loader::upload_streamed_texture(
                         &self.gpu.device,
                         &self.gpu.queue,
@@ -1428,9 +1426,6 @@ impl Renderer {
                         Some(&self.mipmap_generator),
                     ) {
                         uploaded += 1;
-                        if is_udim {
-                            has_udim = true;
-                        }
                     }
                 }
                 Err(std::sync::mpsc::TryRecvError::Empty) => break,
@@ -1466,29 +1461,6 @@ impl Renderer {
                         ],
                     });
             log::info!("Streamed {} textures to GPU", uploaded);
-
-            // Rebuild material table if UDIM textures arrived — grid info wasn't
-            // available at initial material build time, so extra_indices need updating.
-            if has_udim {
-                let mut material_table: Vec<MaterialGpu> = self
-                    .scene
-                    .scene_materials
-                    .iter()
-                    .map(|mat| {
-                        MaterialGpu::from_material(mat.as_ref(), &self.textures.gpu_textures)
-                    })
-                    .collect();
-                material_table.push(MaterialGpu::from_material(
-                    &bif_core::Material::default(),
-                    &self.textures.gpu_textures,
-                ));
-                self.gpu.queue.write_buffer(
-                    &self.materials.table_buffer,
-                    0,
-                    bytemuck::cast_slice(&material_table),
-                );
-                log::info!("Rebuilt material table with UDIM grid info");
-            }
         }
     }
 

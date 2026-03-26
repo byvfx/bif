@@ -11,7 +11,7 @@ use crate::material::{
     cosine_weighted_hemisphere, gen_f32, reflect, refract, Color, ScatterResult,
 };
 use crate::{hittable::HitRecord, Material, Ray};
-use bif_core::texture::Texture;
+use bif_core::texture::{is_udim_path, Texture, UdimTileSet};
 use bif_math::{build_orthonormal_basis, Vec3};
 use rand::RngCore;
 use std::f32::consts::PI;
@@ -121,6 +121,13 @@ pub struct OpenPbrSurface {
 
     /// Geometry opacity texture (samples from R channel).
     pub geometry_opacity_texture: Option<Arc<Texture>>,
+
+    // === UDIM tile sets (per-tile, no atlas stitching) ===
+    pub base_color_udim: Option<Arc<UdimTileSet>>,
+    pub specular_roughness_udim: Option<Arc<UdimTileSet>>,
+    pub base_metalness_udim: Option<Arc<UdimTileSet>>,
+    pub normal_udim: Option<Arc<UdimTileSet>>,
+    pub geometry_opacity_udim: Option<Arc<UdimTileSet>>,
 }
 
 impl Default for OpenPbrSurface {
@@ -152,6 +159,11 @@ impl Default for OpenPbrSurface {
             base_metalness_texture: None,
             normal_texture: None,
             geometry_opacity_texture: None,
+            base_color_udim: None,
+            specular_roughness_udim: None,
+            base_metalness_udim: None,
+            normal_udim: None,
+            geometry_opacity_udim: None,
         }
     }
 }
@@ -276,6 +288,11 @@ impl From<&bif_core::Material> for OpenPbrSurface {
             base_metalness_texture: None,
             normal_texture: None,
             geometry_opacity_texture: None,
+            base_color_udim: None,
+            specular_roughness_udim: None,
+            base_metalness_udim: None,
+            normal_udim: None,
+            geometry_opacity_udim: None,
         }
     }
 }
@@ -291,32 +308,24 @@ impl OpenPbrSurface {
     ) -> Self {
         let src = mat.source_dir.as_deref();
 
-        let base_color_texture = mat
-            .base_color_texture
-            .as_ref()
-            .and_then(|p| load_texture_logged(p, src, |r| cache.load(r)));
+        // Load each texture slot — UDIM paths get per-tile sets, others get single textures
+        let (base_color_texture, base_color_udim) =
+            load_slot(mat.base_color_texture.as_deref(), src, cache, false);
+        let (specular_roughness_texture, specular_roughness_udim) =
+            load_slot(mat.specular_roughness_texture.as_deref(), src, cache, true);
+        let (base_metalness_texture, base_metalness_udim) =
+            load_slot(mat.base_metalness_texture.as_deref(), src, cache, true);
+        let (normal_texture, normal_udim) =
+            load_slot(mat.normal_texture.as_deref(), src, cache, true);
+        let (geometry_opacity_texture, geometry_opacity_udim) =
+            load_slot(mat.geometry_opacity_texture.as_deref(), src, cache, true);
 
-        let specular_roughness_texture = mat
-            .specular_roughness_texture
-            .as_ref()
-            .and_then(|p| load_texture_logged(p, src, |r| cache.load_linear(r)));
+        let has_tex = base_color_texture.is_some() || base_color_udim.is_some();
+        let has_norm = normal_texture.is_some() || normal_udim.is_some();
+        let has_rough = specular_roughness_texture.is_some() || specular_roughness_udim.is_some();
+        let has_metal = base_metalness_texture.is_some() || base_metalness_udim.is_some();
+        let has_opacity = geometry_opacity_texture.is_some() || geometry_opacity_udim.is_some();
 
-        let base_metalness_texture = mat
-            .base_metalness_texture
-            .as_ref()
-            .and_then(|p| load_texture_logged(p, src, |r| cache.load_linear(r)));
-
-        let normal_texture = mat
-            .normal_texture
-            .as_ref()
-            .and_then(|p| load_texture_logged(p, src, |r| cache.load_linear(r)));
-
-        let geometry_opacity_texture = mat
-            .geometry_opacity_texture
-            .as_ref()
-            .and_then(|p| load_texture_logged(p, src, |r| cache.load_linear(r)));
-
-        // Material diagnostics
         log::info!(
             "OpenPBR '{}': color={:?} metal={:.2} rough={:.2} ior={:.2} spec_w={:.2} trans={:.2} | \
              albedo={} normal={} rough={} metal={} opacity={}",
@@ -327,11 +336,11 @@ impl OpenPbrSurface {
             mat.specular_ior,
             mat.specular_weight,
             mat.transmission_weight,
-            base_color_texture.is_some(),
-            normal_texture.is_some(),
-            specular_roughness_texture.is_some(),
-            base_metalness_texture.is_some(),
-            geometry_opacity_texture.is_some(),
+            has_tex,
+            has_norm,
+            has_rough,
+            has_metal,
+            has_opacity,
         );
 
         Self {
@@ -365,39 +374,56 @@ impl OpenPbrSurface {
             base_metalness_texture,
             normal_texture,
             geometry_opacity_texture,
+            base_color_udim,
+            specular_roughness_udim,
+            base_metalness_udim,
+            normal_udim,
+            geometry_opacity_udim,
         }
     }
 
-    /// Sample base color at given UV, using texture if available.
+    /// Sample base color at given UV, using UDIM tileset or texture if available.
     #[inline]
     pub fn sample_base_color(&self, u: f32, v: f32) -> Color {
+        if let Some(udim) = &self.base_color_udim {
+            return udim.sample(u, v);
+        }
         match &self.base_color_texture {
             Some(tex) => tex.sample(u, v),
             None => self.base_color,
         }
     }
 
-    /// Sample specular roughness at given UV, using texture if available.
+    /// Sample specular roughness at given UV.
     #[inline]
     pub fn sample_specular_roughness(&self, u: f32, v: f32) -> f32 {
+        if let Some(udim) = &self.specular_roughness_udim {
+            return udim.sample_channel(u, v, 0);
+        }
         match &self.specular_roughness_texture {
             Some(tex) => tex.sample_channel(u, v, 0),
             None => self.specular_roughness,
         }
     }
 
-    /// Sample base metalness at given UV, using texture if available.
+    /// Sample base metalness at given UV.
     #[inline]
     pub fn sample_base_metalness(&self, u: f32, v: f32) -> f32 {
+        if let Some(udim) = &self.base_metalness_udim {
+            return udim.sample_channel(u, v, 0);
+        }
         match &self.base_metalness_texture {
             Some(tex) => tex.sample_channel(u, v, 0),
             None => self.base_metalness,
         }
     }
 
-    /// Sample geometry opacity at given UV, using texture if available.
+    /// Sample geometry opacity at given UV.
     #[inline]
     pub fn sample_geometry_opacity(&self, u: f32, v: f32) -> f32 {
+        if let Some(udim) = &self.geometry_opacity_udim {
+            return self.geometry_opacity * udim.sample_channel(u, v, 0);
+        }
         match &self.geometry_opacity_texture {
             Some(tex) => self.geometry_opacity * tex.sample_channel(u, v, 0),
             None => self.geometry_opacity,
@@ -414,14 +440,14 @@ impl OpenPbrSurface {
         u: f32,
         v: f32,
     ) -> Vec3 {
-        match &self.normal_texture {
-            Some(tex) => {
-                let sampled = tex.sample(u, v);
-                let map_normal = Vec3::new(
-                    sampled.x * 2.0 - 1.0,
-                    sampled.y * 2.0 - 1.0,
-                    sampled.z * 2.0 - 1.0,
-                );
+        let sampled = if let Some(udim) = &self.normal_udim {
+            Some(udim.sample(u, v))
+        } else {
+            self.normal_texture.as_ref().map(|tex| tex.sample(u, v))
+        };
+        match sampled {
+            Some(s) => {
+                let map_normal = Vec3::new(s.x * 2.0 - 1.0, s.y * 2.0 - 1.0, s.z * 2.0 - 1.0);
                 let world_normal =
                     tangent * map_normal.x + bitangent * map_normal.y + normal * map_normal.z;
                 let len_sq = world_normal.length_squared();
@@ -438,10 +464,15 @@ impl OpenPbrSurface {
     /// Check if this material has any textures bound.
     pub fn has_textures(&self) -> bool {
         self.base_color_texture.is_some()
+            || self.base_color_udim.is_some()
             || self.specular_roughness_texture.is_some()
+            || self.specular_roughness_udim.is_some()
             || self.base_metalness_texture.is_some()
+            || self.base_metalness_udim.is_some()
             || self.normal_texture.is_some()
+            || self.normal_udim.is_some()
             || self.geometry_opacity_texture.is_some()
+            || self.geometry_opacity_udim.is_some()
     }
 }
 
@@ -797,20 +828,37 @@ fn resolve_texture_path(path: &str, source_dir: Option<&Path>) -> String {
 }
 
 /// Resolve a texture path, load via the provided loader, and log failures.
-fn load_texture_logged<F>(
-    raw_path: &str,
+/// Load a texture slot — returns (single_texture, udim_tileset).
+/// UDIM paths get a per-tile set; regular paths get a single texture.
+fn load_slot(
+    raw_path: Option<&str>,
     source_dir: Option<&Path>,
-    loader: F,
-) -> Option<Arc<Texture>>
-where
-    F: FnOnce(&str) -> Result<Arc<Texture>, bif_core::texture::TextureError>,
-{
-    let resolved = resolve_texture_path(raw_path, source_dir);
-    match loader(&resolved) {
-        Ok(tex) => Some(tex),
+    cache: &mut bif_core::texture::TextureCache,
+    linear: bool,
+) -> (Option<Arc<Texture>>, Option<Arc<UdimTileSet>>) {
+    let Some(path) = raw_path else {
+        return (None, None);
+    };
+    let resolved = resolve_texture_path(path, source_dir);
+    if is_udim_path(&resolved) {
+        match cache.load_udim_tileset(&resolved, linear) {
+            Ok(ts) => return (None, Some(ts)),
+            Err(e) => {
+                log::warn!("Ivar: UDIM tileset load failed '{}': {}", resolved, e);
+                return (None, None);
+            }
+        }
+    }
+    let loader = if linear {
+        bif_core::texture::TextureCache::load_linear
+    } else {
+        bif_core::texture::TextureCache::load
+    };
+    match loader(cache, &resolved) {
+        Ok(tex) => (Some(tex), None),
         Err(e) => {
             log::warn!("Ivar: texture load failed '{}': {}", resolved, e);
-            None
+            (None, None)
         }
     }
 }

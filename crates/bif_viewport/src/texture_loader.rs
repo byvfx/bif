@@ -19,11 +19,6 @@ pub struct TextureLoadMessage {
     pub height: u32,
     pub data: Vec<u8>,
     pub is_linear: bool,
-    /// UDIM atlas grid dimensions (0 = not a UDIM texture)
-    pub udim_grid_cols: u32,
-    pub udim_grid_rows: u32,
-    pub udim_min_col: u32,
-    pub udim_min_row: u32,
 }
 
 /// Default maximum texture dimension for viewport rendering.
@@ -39,11 +34,6 @@ struct RawTexture {
     data: Vec<u8>,
     is_linear: bool,
     path: String,
-    /// UDIM atlas grid dimensions (0 = not a UDIM texture)
-    udim_grid_cols: u32,
-    udim_grid_rows: u32,
-    udim_min_col: u32,
-    udim_min_row: u32,
 }
 
 /// Minimum texture size (in either dimension) to use GPU mipmaps.
@@ -326,16 +316,17 @@ fn load_raw_texture(path: &str, max_tile_size: u32) -> Option<RawTexture> {
     load_raw_texture_with_depth(path, 0, max_tile_size)
 }
 
-/// Inner loader with UDIM recursion depth tracking (OIIO path).
+/// Inner loader with recursion depth tracking (OIIO path).
+/// UDIM patterns should be expanded before calling — this loads individual tiles only.
 #[cfg(feature = "oiio")]
-fn load_raw_texture_with_depth(
-    path: &str,
-    udim_depth: u32,
-    max_tile_size: u32,
-) -> Option<RawTexture> {
-    // Handle UDIM textures
+fn load_raw_texture_with_depth(path: &str, _depth: u32, _max_tile_size: u32) -> Option<RawTexture> {
+    // UDIM patterns should never reach here — they're expanded by the caller
     if is_udim_path(path) {
-        return load_udim_atlas_inner(path, udim_depth, max_tile_size);
+        log::warn!(
+            "UDIM pattern reached load_raw_texture — should be expanded: {}",
+            path
+        );
+        return None;
     }
 
     // Prefer .tx cache if valid and newer than source
@@ -359,11 +350,7 @@ fn load_raw_texture_with_depth(
                 height: oiio_tex.height,
                 data: base.data.clone(),
                 is_linear: oiio_tex.is_linear || is_linear,
-                path: path.to_string(), // keep original source path as key
-                udim_grid_cols: 0,
-                udim_grid_rows: 0,
-                udim_min_col: 0,
-                udim_min_row: 0,
+                path: path.to_string(),
             })
         }
         Err(e) => {
@@ -383,10 +370,6 @@ fn load_raw_texture_with_depth(
                             data: base.data.clone(),
                             is_linear: oiio_tex.is_linear || is_linear_src,
                             path: path.to_string(),
-                            udim_grid_cols: 0,
-                            udim_grid_rows: 0,
-                            udim_min_col: 0,
-                            udim_min_row: 0,
                         });
                     }
                     Err(e2) => {
@@ -412,16 +395,16 @@ fn load_raw_texture(path: &str, max_tile_size: u32) -> Option<RawTexture> {
     load_raw_texture_with_depth(path, 0, max_tile_size)
 }
 
-/// Inner loader with UDIM recursion depth tracking (non-OIIO path).
+/// Inner loader (non-OIIO path).
+/// UDIM patterns should be expanded before calling — this loads individual tiles only.
 #[cfg(not(feature = "oiio"))]
-fn load_raw_texture_with_depth(
-    path: &str,
-    udim_depth: u32,
-    max_tile_size: u32,
-) -> Option<RawTexture> {
-    // Handle UDIM textures
+fn load_raw_texture_with_depth(path: &str, _depth: u32, _max_tile_size: u32) -> Option<RawTexture> {
     if is_udim_path(path) {
-        return load_udim_atlas_inner(path, udim_depth, max_tile_size);
+        log::warn!(
+            "UDIM pattern reached load_raw_texture — should be expanded: {}",
+            path
+        );
+        return None;
     }
 
     use bif_core::texture::TextureCache;
@@ -437,10 +420,6 @@ fn load_raw_texture_with_depth(
                 data,
                 is_linear,
                 path: path.to_string(),
-                udim_grid_cols: 0,
-                udim_grid_rows: 0,
-                udim_min_col: 0,
-                udim_min_row: 0,
             })
         }
         Err(e) => {
@@ -779,7 +758,7 @@ pub fn create_default_gpu_textures(device: &Device, queue: &Queue) -> GpuTexture
         textures,
         views,
         index_map: HashMap::new(),
-        udim_grid: HashMap::new(),
+        udim_map: HashMap::new(),
     }
 }
 
@@ -788,185 +767,9 @@ pub fn is_udim_path(path: &str) -> bool {
     bif_core::texture::is_udim_path(path)
 }
 
-/// Normalize path for OS filesystem access.
-/// On Windows, converts forward-slash UNC paths (`//server/share/...`)
-/// to backslash UNC paths (`\\server\share\...`) that Windows APIs expect.
-fn normalize_path(path: &str) -> String {
-    #[cfg(target_os = "windows")]
-    {
-        path.replace('/', "\\")
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        path.to_string()
-    }
-}
+// normalize_path and find_udim_tiles removed — using bif_core::texture equivalents
 
-/// Scan filesystem for existing UDIM tiles matching the pattern.
-/// Returns a vec of (udim_id, path) sorted by UDIM ID.
-fn find_udim_tiles(pattern: &str) -> Vec<(u32, String)> {
-    let mut tiles = Vec::new();
-    // UDIM range: 1001..=1100 (10 columns x 10 rows)
-    for udim in 1001..=1100 {
-        let tile_path = pattern.replace("<UDIM>", &udim.to_string());
-        let normalized = normalize_path(&tile_path);
-        if Path::new(&normalized).exists() {
-            tiles.push((udim, normalized));
-        } else {
-            // Fallback: check for .tx variant when source is missing
-            #[cfg(feature = "oiio")]
-            {
-                let tx_path = bif_core::oiio::get_tx_path(&normalized);
-                if tx_path.exists() {
-                    // Return source path — resolve_tx_path in load will find the .tx
-                    tiles.push((udim, normalized));
-                }
-            }
-        }
-    }
-    tiles.sort_by_key(|(id, _)| *id);
-    log::debug!(
-        "UDIM tile scan (viewport): pattern={}, found {} tiles",
-        pattern,
-        tiles.len()
-    );
-    tiles
-}
-
-/// Maximum recursion depth for UDIM atlas loading.
-/// Prevents infinite recursion if UDIM tile paths themselves contain `<UDIM>`.
-const MAX_UDIM_RECURSION_DEPTH: u32 = 2;
-
-/// Resolve UDIM texture: load all tiles and stitch into a single atlas.
-/// Returns the stitched atlas as raw RGBA bytes + grid dimensions.
-/// Includes recursion depth guard to prevent infinite recursion.
-fn load_udim_atlas_inner(pattern: &str, depth: u32, max_tile_size: u32) -> Option<RawTexture> {
-    if depth >= MAX_UDIM_RECURSION_DEPTH {
-        log::error!(
-            "UDIM atlas recursion depth exceeded (max {}) for: {}",
-            MAX_UDIM_RECURSION_DEPTH,
-            pattern
-        );
-        return None;
-    }
-    let tiles = find_udim_tiles(pattern);
-    if tiles.is_empty() {
-        log::warn!("No UDIM tiles found for pattern: {}", pattern);
-        return None;
-    }
-
-    // Load all tiles, downscaling each to max_tile_size before stitching
-    let mut loaded_tiles: Vec<(u32, RawTexture)> = Vec::new();
-    for (udim, tile_path) in &tiles {
-        if let Some(mut tex) = load_raw_texture_with_depth(tile_path, depth + 1, max_tile_size) {
-            // Downscale tile BEFORE atlas assembly to save RAM
-            if tex.width > max_tile_size || tex.height > max_tile_size {
-                let (w, h, d) =
-                    downscale_raw_nearest(tex.width, tex.height, &tex.data, max_tile_size);
-                tex.width = w;
-                tex.height = h;
-                tex.data = d;
-            }
-            loaded_tiles.push((*udim, tex));
-        } else {
-            log::warn!("Failed to load UDIM tile {}: {}", udim, tile_path);
-        }
-    }
-
-    if loaded_tiles.is_empty() {
-        return None;
-    }
-
-    // Determine grid bounds from UDIM IDs
-    // UDIM = 1000 + col + row*10, col in 1..=10, row in 0..=9
-    let mut min_col = u32::MAX;
-    let mut max_col = 0u32;
-    let mut min_row = u32::MAX;
-    let mut max_row = 0u32;
-    for (udim, _) in &loaded_tiles {
-        let col = (udim - 1001) % 10;
-        let row = (udim - 1001) / 10;
-        min_col = min_col.min(col);
-        max_col = max_col.max(col);
-        min_row = min_row.min(row);
-        max_row = max_row.max(row);
-    }
-    let num_cols = max_col - min_col + 1;
-    let num_rows = max_row - min_row + 1;
-
-    // Find max tile dimensions (handle mixed resolutions)
-    let max_tile_w = loaded_tiles.iter().map(|(_, t)| t.width).max().unwrap_or(1);
-    let max_tile_h = loaded_tiles
-        .iter()
-        .map(|(_, t)| t.height)
-        .max()
-        .unwrap_or(1);
-
-    let atlas_w = num_cols * max_tile_w;
-    let atlas_h = num_rows * max_tile_h;
-    let mut atlas_data = vec![0u8; (atlas_w * atlas_h * 4) as usize];
-
-    // Stitch tiles into atlas
-    for (udim, tile) in &loaded_tiles {
-        let col = (udim - 1001) % 10 - min_col;
-        let row = (udim - 1001) / 10 - min_row;
-        // USD UDIM: row 0 is bottom, but in atlas pixel space row 0 is top.
-        // Flip row so UDIM row 0 maps to the bottom of the atlas.
-        let flipped_row = (num_rows - 1) - row;
-
-        // Resize tile if smaller than max tile size
-        let (tw, th, tdata) = if tile.width != max_tile_w || tile.height != max_tile_h {
-            downscale_raw_nearest(
-                tile.width,
-                tile.height,
-                &tile.data,
-                max_tile_w.max(max_tile_h),
-            )
-        } else {
-            (tile.width, tile.height, tile.data.clone())
-        };
-
-        let dest_x = col * max_tile_w;
-        let dest_y = flipped_row * max_tile_h;
-        for y in 0..th.min(max_tile_h) {
-            let src_off = (y * tw * 4) as usize;
-            let dst_off = ((dest_y + y) * atlas_w + dest_x) as usize * 4;
-            let copy_bytes = (tw.min(max_tile_w) * 4) as usize;
-            if src_off + copy_bytes <= tdata.len() && dst_off + copy_bytes <= atlas_data.len() {
-                atlas_data[dst_off..dst_off + copy_bytes]
-                    .copy_from_slice(&tdata[src_off..src_off + copy_bytes]);
-            }
-        }
-    }
-
-    let is_linear = loaded_tiles
-        .first()
-        .map(|(_, t)| t.is_linear)
-        .unwrap_or(false);
-
-    log::info!(
-        "UDIM atlas: {} tiles -> {}x{} ({}x{} grid, tile {}x{})",
-        loaded_tiles.len(),
-        atlas_w,
-        atlas_h,
-        num_cols,
-        num_rows,
-        max_tile_w,
-        max_tile_h
-    );
-
-    Some(RawTexture {
-        width: atlas_w,
-        height: atlas_h,
-        data: atlas_data,
-        is_linear,
-        path: pattern.to_string(),
-        udim_grid_cols: num_cols,
-        udim_grid_rows: num_rows,
-        udim_min_col: min_col,
-        udim_min_row: min_row,
-    })
-}
+// ── UDIM Atlas Disk Cache (u8 viewport path) ──────────────────────
 
 /// Resolve a texture path against a per-material `source_dir`, falling back
 /// to `fallback_base` if the material has no `source_dir`.
@@ -1041,29 +844,90 @@ pub fn create_gpu_textures_for_scene(
     scene: &bif_core::Scene,
     base_dir: Option<&Path>,
 ) -> GpuTextureSet {
+    use bif_core::texture::{find_udim_tiles, UdimGridLayout};
     use rayon::prelude::*;
 
     let mut texture_set = create_default_gpu_textures(device, queue);
     let max_dimension = device.limits().max_texture_dimension_2d;
 
     let texture_paths = collect_scene_texture_paths(scene, base_dir);
-    let paths_to_load: Vec<_> = texture_paths
-        .into_iter()
-        .take(MAX_VIEWPORT_TEXTURES - 1) // Leave slot 0 for default
-        .collect();
 
-    if paths_to_load.len() >= MAX_VIEWPORT_TEXTURES - 1 {
+    // Expand UDIM patterns into individual tile paths
+    let mut all_tile_paths: Vec<String> = Vec::new();
+    for path in &texture_paths {
+        if is_udim_path(path) {
+            let tiles = find_udim_tiles(path);
+            if let Some(layout) = UdimGridLayout::from_tiles(tiles) {
+                let base_index = (texture_set.textures.len() + all_tile_paths.len()) as u32;
+                let slots = layout.grid_slots() as usize;
+
+                // Reserve contiguous tile paths (None slots get no path)
+                let mut slot_paths: Vec<Option<String>> = vec![None; slots];
+                for info in &layout.tiles {
+                    let col = info.col - layout.min_col;
+                    let row = info.row - layout.min_row;
+                    let idx = (row * layout.num_cols + col) as usize;
+                    slot_paths[idx] = Some(info.path.clone());
+                }
+
+                // Map the UDIM pattern to base index
+                texture_set.index_map.insert(path.clone(), base_index);
+                texture_set.udim_map.insert(
+                    path.clone(),
+                    crate::gpu_types::UdimGpuMapping {
+                        base_index,
+                        num_cols: layout.num_cols,
+                        num_rows: layout.num_rows,
+                        min_col: layout.min_col,
+                        min_row: layout.min_row,
+                    },
+                );
+
+                // Add individual tile paths (or empty string for missing)
+                for (i, tile_path) in slot_paths.iter().enumerate() {
+                    let actual_path = tile_path.clone().unwrap_or_default();
+                    if !actual_path.is_empty() {
+                        texture_set
+                            .index_map
+                            .insert(actual_path.clone(), base_index + i as u32);
+                    }
+                    all_tile_paths.push(actual_path);
+                }
+
+                log::info!(
+                    "UDIM '{}': {} tiles in {}x{} grid, base_index={}",
+                    path,
+                    layout.tiles.len(),
+                    layout.num_cols,
+                    layout.num_rows,
+                    base_index
+                );
+            }
+        } else {
+            all_tile_paths.push(path.clone());
+        }
+    }
+
+    if all_tile_paths.len() >= MAX_VIEWPORT_TEXTURES - 1 {
         log::warn!(
-            "Texture count exceeds GPU limit {}. Extra textures will be skipped.",
+            "Texture count ({}) exceeds GPU limit {}. Extra textures will be skipped.",
+            all_tile_paths.len(),
             MAX_VIEWPORT_TEXTURES - 1
         );
     }
+    let paths_to_load: Vec<_> = all_tile_paths
+        .into_iter()
+        .take(MAX_VIEWPORT_TEXTURES - 1)
+        .collect();
 
     // Load textures in parallel as raw u8 (no f32 conversion)
     let load_start = std::time::Instant::now();
     let loaded_textures: Vec<_> = paths_to_load
         .par_iter()
         .map(|path| {
+            if path.is_empty() {
+                return None; // Missing UDIM tile — keep default white
+            }
             load_raw_texture(path, DEFAULT_MAX_VIEWPORT_TEXTURE_SIZE).map(|tex| (path.clone(), tex))
         })
         .collect();
@@ -1076,37 +940,45 @@ pub fn create_gpu_textures_for_scene(
 
     // Upload to GPU (must be sequential — wgpu API requirement)
     let upload_start = std::time::Instant::now();
-    for item in loaded_textures.into_iter().flatten() {
-        let (path, raw_tex) = item;
-        let label = format!("Viewport Texture: {}", path);
-        let (gpu_texture, view) = upload_raw_texture(
-            device,
-            queue,
-            &raw_tex,
-            &label,
-            max_dimension,
-            DEFAULT_MAX_VIEWPORT_TEXTURE_SIZE,
-            None, // No GPU mipmaps in sync path
-        );
-        let index = texture_set.textures.len() as u32;
-
-        texture_set.textures.push(gpu_texture);
-        texture_set.views[index as usize] = view;
-
-        // Store UDIM grid info if this is a UDIM atlas
-        if raw_tex.udim_grid_cols > 0 {
-            texture_set.udim_grid.insert(
-                index,
-                [
-                    raw_tex.udim_grid_cols,
-                    raw_tex.udim_grid_rows,
-                    raw_tex.udim_min_col,
-                    raw_tex.udim_min_row,
-                ],
+    for (i, item) in loaded_textures.into_iter().enumerate() {
+        let expected_index = texture_set.textures.len() as u32;
+        if let Some((path, raw_tex)) = item {
+            let label = format!("Viewport Texture: {}", path);
+            let (gpu_texture, view) = upload_raw_texture(
+                device,
+                queue,
+                &raw_tex,
+                &label,
+                max_dimension,
+                DEFAULT_MAX_VIEWPORT_TEXTURE_SIZE,
+                None,
             );
-        }
+            texture_set.textures.push(gpu_texture);
+            texture_set.views[expected_index as usize] = view;
 
-        texture_set.index_map.insert(path, index);
+            // Non-UDIM paths: map path -> index (UDIM paths already mapped above)
+            texture_set.index_map.entry(path).or_insert(expected_index);
+        } else {
+            // Missing tile or empty path — push placeholder to keep contiguous indices
+            texture_set
+                .textures
+                .push(device.create_texture(&wgpu::TextureDescriptor {
+                    label: Some("Empty UDIM slot"),
+                    size: wgpu::Extent3d {
+                        width: 1,
+                        height: 1,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                    usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                    view_formats: &[],
+                }));
+            // View stays as default white (from create_default_gpu_textures)
+        }
+        let _ = i; // suppress unused warning
     }
     let upload_time = upload_start.elapsed();
     log::info!(
@@ -1128,41 +1000,83 @@ pub fn prepare_texture_placeholders(
     scene: &bif_core::Scene,
     base_dir: Option<&Path>,
 ) -> GpuTextureSet {
+    use bif_core::texture::{find_udim_tiles, UdimGridLayout};
+
     let mut texture_set = create_default_gpu_textures(device, queue);
 
     let texture_paths = collect_scene_texture_paths(scene, base_dir);
-    let paths_to_load: Vec<_> = texture_paths
-        .into_iter()
-        .take(MAX_VIEWPORT_TEXTURES - 1)
-        .collect();
 
-    // Pre-allocate indices — views point to default white texture for now
-    for path in &paths_to_load {
-        let index = texture_set.textures.len() as u32;
-        // No new GPU texture yet — view stays as default white (from create_default_gpu_textures)
-        texture_set.index_map.insert(path.clone(), index);
-        // Push a dummy reference to default texture to keep indices contiguous
-        texture_set
-            .textures
-            .push(device.create_texture(&wgpu::TextureDescriptor {
-                label: Some("Placeholder"),
-                size: wgpu::Extent3d {
-                    width: 1,
-                    height: 1,
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rgba8UnormSrgb,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-                view_formats: &[],
-            }));
+    let make_placeholder = |device: &Device| {
+        device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Placeholder"),
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        })
+    };
+
+    let mut total_slots = 0usize;
+    for path in &texture_paths {
+        if is_udim_path(path) {
+            let tiles = find_udim_tiles(path);
+            if let Some(layout) = UdimGridLayout::from_tiles(tiles) {
+                let base_index = texture_set.textures.len() as u32;
+                let slots = layout.grid_slots() as usize;
+
+                // Map UDIM pattern to base index
+                texture_set.index_map.insert(path.clone(), base_index);
+                texture_set.udim_map.insert(
+                    path.clone(),
+                    crate::gpu_types::UdimGpuMapping {
+                        base_index,
+                        num_cols: layout.num_cols,
+                        num_rows: layout.num_rows,
+                        min_col: layout.min_col,
+                        min_row: layout.min_row,
+                    },
+                );
+
+                // Map each tile path and allocate placeholder slots
+                for info in &layout.tiles {
+                    let col = info.col - layout.min_col;
+                    let row = info.row - layout.min_row;
+                    let idx = row * layout.num_cols + col;
+                    texture_set
+                        .index_map
+                        .insert(info.path.clone(), base_index + idx);
+                }
+
+                // Push placeholder textures for all grid slots (including empty)
+                for _ in 0..slots {
+                    texture_set.textures.push(make_placeholder(device));
+                }
+                total_slots += slots;
+            }
+        } else {
+            let index = texture_set.textures.len() as u32;
+            texture_set.index_map.insert(path.clone(), index);
+            texture_set.textures.push(make_placeholder(device));
+            total_slots += 1;
+        }
+
+        if total_slots >= MAX_VIEWPORT_TEXTURES - 1 {
+            log::warn!("Texture slots ({}) at GPU limit", total_slots);
+            break;
+        }
     }
 
     log::info!(
-        "Prepared {} placeholder textures for async loading",
-        paths_to_load.len()
+        "Prepared {} texture slots for async loading ({} UDIM groups)",
+        total_slots,
+        texture_set.udim_map.len()
     );
 
     texture_set
@@ -1176,16 +1090,34 @@ pub fn start_texture_loading_async(
     scene: &bif_core::Scene,
     base_dir: Option<&Path>,
 ) -> mpsc::Receiver<TextureLoadMessage> {
+    use bif_core::texture::{find_udim_tiles, UdimGridLayout};
+
     // Bounded channel: background thread blocks when 32 decoded textures are buffered,
     // preventing unbounded RAM growth on large scenes (500+ textures).
     let (tx, rx) = mpsc::sync_channel(32);
 
     let texture_paths = collect_scene_texture_paths(scene, base_dir);
-    let total_textures = texture_paths.len();
+
+    // Expand UDIM patterns into individual tile paths
+    let mut all_tile_paths: Vec<String> = Vec::new();
+    for path in &texture_paths {
+        if is_udim_path(path) {
+            let tiles = find_udim_tiles(path);
+            if let Some(layout) = UdimGridLayout::from_tiles(tiles) {
+                for info in &layout.tiles {
+                    all_tile_paths.push(info.path.clone());
+                }
+            }
+        } else {
+            all_tile_paths.push(path.clone());
+        }
+    }
+
+    let total_textures = all_tile_paths.len();
     let max_slots = MAX_VIEWPORT_TEXTURES - 1;
     if total_textures > max_slots {
         log::warn!(
-            "Scene has {} textures, viewport limit is {} — {} textures will be missing",
+            "Scene has {} texture tiles, viewport limit is {} — {} will be missing",
             total_textures,
             max_slots,
             total_textures - max_slots
@@ -1194,7 +1126,7 @@ pub fn start_texture_loading_async(
     // Adaptive texture size: auto-downsample for large scenes to save RAM
     let adaptive_tex_size = if total_textures > 200 {
         log::info!(
-            "Large scene ({} textures) — auto-downscaling viewport textures to 512px",
+            "Large scene ({} tiles) — auto-downscaling viewport textures to 512px",
             total_textures
         );
         512u32
@@ -1203,14 +1135,13 @@ pub fn start_texture_loading_async(
     } else {
         DEFAULT_MAX_VIEWPORT_TEXTURE_SIZE
     };
-    let paths_to_load: Vec<_> = texture_paths.into_iter().take(max_slots).collect();
+    let paths_to_load: Vec<_> = all_tile_paths.into_iter().take(max_slots).collect();
     let load_count = paths_to_load.len();
 
     std::thread::spawn(move || {
         use rayon::prelude::*;
 
         // Load textures in chunks to limit peak RAM (16 textures at a time).
-        // Without chunking, rayon decodes all textures simultaneously → OOM on 500+ textures.
         const CHUNK_SIZE: usize = 16;
         let mut loaded = 0usize;
         for chunk in paths_to_load.chunks(CHUNK_SIZE) {
@@ -1222,8 +1153,6 @@ pub fn start_texture_loading_async(
                 .collect();
 
             for (path, mut raw_tex) in results {
-                // Adaptive downscale in background thread (before channel send)
-                // to reduce RAM in channel buffer and GPU upload cost
                 if raw_tex.width > adaptive_tex_size || raw_tex.height > adaptive_tex_size {
                     let (w, h, d) = downscale_raw_nearest(
                         raw_tex.width,
@@ -1248,10 +1177,6 @@ pub fn start_texture_loading_async(
                         height: raw_tex.height,
                         data: raw_tex.data,
                         is_linear: raw_tex.is_linear,
-                        udim_grid_cols: raw_tex.udim_grid_cols,
-                        udim_grid_rows: raw_tex.udim_grid_rows,
-                        udim_min_col: raw_tex.udim_min_col,
-                        udim_min_row: raw_tex.udim_min_row,
                     })
                     .is_err()
                 {
@@ -1288,10 +1213,6 @@ pub fn upload_streamed_texture(
         data: msg.data,
         is_linear: msg.is_linear,
         path: msg.path,
-        udim_grid_cols: msg.udim_grid_cols,
-        udim_grid_rows: msg.udim_grid_rows,
-        udim_min_col: msg.udim_min_col,
-        udim_min_row: msg.udim_min_row,
     };
     let (gpu_texture, view) = upload_raw_texture(
         device,
@@ -1306,19 +1227,6 @@ pub fn upload_streamed_texture(
     // Replace placeholder
     texture_set.textures[index as usize] = gpu_texture;
     texture_set.views[index as usize] = view;
-
-    // Store UDIM grid info if this is a UDIM atlas
-    if raw.udim_grid_cols > 0 {
-        texture_set.udim_grid.insert(
-            index,
-            [
-                raw.udim_grid_cols,
-                raw.udim_grid_rows,
-                raw.udim_min_col,
-                raw.udim_min_row,
-            ],
-        );
-    }
 
     true
 }

@@ -314,6 +314,9 @@ pub struct MaterialGpu {
 impl MaterialGpu {
     pub fn from_material(material: &bif_core::Material, textures: &GpuTextureSet) -> Self {
         let src_dir = material.source_dir.as_deref();
+
+        // Resolve a texture path to its GPU index.
+        // For UDIM patterns, returns the base_index of the contiguous tile block.
         let resolve_index = |path: &Option<Arc<str>>| -> u32 {
             path.as_ref()
                 .and_then(|p| {
@@ -336,25 +339,52 @@ impl MaterialGpu {
                 .unwrap_or(0)
         };
 
+        // Find UDIM mapping for any texture path on this material.
+        // All slots share the same UDIM grid (VFX convention).
+        let find_udim = |path: &Option<Arc<str>>| -> Option<&UdimGpuMapping> {
+            path.as_ref().and_then(|p| {
+                let normalized = p.replace('\\', "/");
+                if let Some(m) = textures.udim_map.get(&normalized) {
+                    return Some(m);
+                }
+                if let Some(m) = textures.udim_map.get(&**p) {
+                    return Some(m);
+                }
+                if let Some(dir) = src_dir {
+                    let resolved = dir.join(&**p);
+                    let resolved_str = resolved.to_string_lossy().replace('\\', "/");
+                    if let Some(m) = textures.udim_map.get(&resolved_str) {
+                        return Some(m);
+                    }
+                }
+                None
+            })
+        };
+
         let base_color_idx = resolve_index(&material.base_color_texture);
         let rough_idx = resolve_index(&material.specular_roughness_texture);
         let metal_idx = resolve_index(&material.base_metalness_texture);
         let emissive_idx = resolve_index(&material.emission_texture);
         let normal_idx = resolve_index(&material.normal_texture);
 
-        let udim_info = [
-            base_color_idx,
-            rough_idx,
-            metal_idx,
-            normal_idx,
-            emissive_idx,
+        // Find UDIM grid info from any textured slot
+        let udim_mapping = [
+            &material.base_color_texture,
+            &material.specular_roughness_texture,
+            &material.base_metalness_texture,
+            &material.normal_texture,
+            &material.emission_texture,
         ]
-        .iter()
-        .filter(|&&idx| idx != 0)
-        .find_map(|&idx| textures.udim_grid.get(&idx))
-        .copied();
-        let (grid_packed, offset_packed) = udim_info
-            .map(|g| ((g[0] << 16) | g[1], (g[2] << 16) | g[3]))
+        .into_iter()
+        .find_map(find_udim);
+
+        let (grid_packed, offset_packed) = udim_mapping
+            .map(|m| {
+                (
+                    (m.num_cols << 16) | m.num_rows,
+                    (m.min_col << 16) | m.min_row,
+                )
+            })
             .unwrap_or((0, 0));
 
         Self {
@@ -526,13 +556,26 @@ impl InstanceData {
     }
 }
 
+/// Per-tile UDIM mapping for a single UDIM texture set.
+#[derive(Clone, Debug)]
+pub struct UdimGpuMapping {
+    /// Index of tile (0,0) in the texture array
+    pub base_index: u32,
+    pub num_cols: u32,
+    pub num_rows: u32,
+    pub min_col: u32,
+    pub min_row: u32,
+}
+
 /// GPU texture set with index mapping.
 pub struct GpuTextureSet {
     pub textures: Vec<wgpu::Texture>,
     pub views: Vec<wgpu::TextureView>,
+    /// Maps texture path → index in texture array.
+    /// For UDIM: maps both the pattern AND each tile path.
     pub index_map: HashMap<String, u32>,
-    /// UDIM atlas grid info per texture: tex_index → [cols, rows, min_col, min_row]
-    pub udim_grid: HashMap<u32, [u32; 4]>,
+    /// UDIM pattern → per-tile GPU mapping (used by MaterialGpu)
+    pub udim_map: HashMap<String, UdimGpuMapping>,
 }
 
 /// Per-prototype GPU buffers for multi-draw rendering.
