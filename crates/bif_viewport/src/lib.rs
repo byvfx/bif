@@ -1678,11 +1678,13 @@ impl Renderer {
             }
             Err(e) => {
                 log::error!("Failed to open project: {}", e);
-                rfd::MessageDialog::new()
-                    .set_title("Open Failed")
-                    .set_description(format!("Could not open project:\n{}", e))
-                    .set_buttons(rfd::MessageButtons::Ok)
-                    .show();
+                self.with_dialog_focus(|| {
+                    rfd::MessageDialog::new()
+                        .set_title("Open Failed")
+                        .set_description(format!("Could not open project:\n{}", e))
+                        .set_buttons(rfd::MessageButtons::Ok)
+                        .show()
+                });
             }
         }
     }
@@ -1701,25 +1703,38 @@ impl Renderer {
             }
             Err(e) => {
                 log::error!("Failed to save project: {}", e);
-                rfd::MessageDialog::new()
-                    .set_title("Save Failed")
-                    .set_description(format!("Could not save project:\n{}", e))
-                    .set_buttons(rfd::MessageButtons::Ok)
-                    .show();
+                self.with_dialog_focus(|| {
+                    rfd::MessageDialog::new()
+                        .set_title("Save Failed")
+                        .set_description(format!("Could not save project:\n{}", e))
+                        .set_buttons(rfd::MessageButtons::Ok)
+                        .show()
+                });
             }
         }
     }
 
     /// Show Save As dialog and save.
     pub fn save_project_as(&mut self) {
-        if let Some(path) = rfd::FileDialog::new()
-            .add_filter("BIF Project (ASCII)", &["bifa"])
-            .add_filter("BIF Project (Binary)", &["bif"])
-            .set_file_name("untitled.bifa")
-            .save_file()
-        {
+        let path = self.with_dialog_focus(|| {
+            rfd::FileDialog::new()
+                .add_filter("BIF Project (ASCII)", &["bifa"])
+                .add_filter("BIF Project (Binary)", &["bif"])
+                .set_file_name("untitled.bifa")
+                .save_file()
+        });
+        if let Some(path) = path {
             self.save_project_to(&path);
         }
+    }
+
+    /// Run a closure that shows a native dialog, hiding the main window
+    /// so the dialog isn't stuck behind it (Windows z-order workaround).
+    fn with_dialog_focus<T>(&self, f: impl FnOnce() -> T) -> T {
+        self.window.set_visible(false);
+        let result = f();
+        self.window.set_visible(true);
+        result
     }
 
     /// Show "Save changes?" dialog if dirty. Returns action to take.
@@ -1727,14 +1742,13 @@ impl Renderer {
         if !self.project.dirty {
             return persistence::SavePromptResult::Discard;
         }
-        // Hide main window so the native dialog isn't stuck behind it
-        self.window.set_visible(false);
-        let result = rfd::MessageDialog::new()
-            .set_title(action)
-            .set_description("You have unsaved changes. Save before continuing?")
-            .set_buttons(rfd::MessageButtons::YesNoCancel)
-            .show();
-        self.window.set_visible(true);
+        let result = self.with_dialog_focus(|| {
+            rfd::MessageDialog::new()
+                .set_title(action)
+                .set_description("You have unsaved changes. Save before continuing?")
+                .set_buttons(rfd::MessageButtons::YesNoCancel)
+                .show()
+        });
         match result {
             rfd::MessageDialogResult::Yes => persistence::SavePromptResult::Save,
             rfd::MessageDialogResult::No => persistence::SavePromptResult::Discard,

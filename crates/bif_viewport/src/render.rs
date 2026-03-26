@@ -1232,10 +1232,12 @@ impl Renderer {
                 }
                 AppEvent::ProjectOpen => {
                     if self.save_if_needed_then_proceed("Open Project") {
-                        if let Some(path) = rfd::FileDialog::new()
-                            .add_filter("BIF Project", &["bif", "bifa"])
-                            .pick_file()
-                        {
+                        let path = self.with_dialog_focus(|| {
+                            rfd::FileDialog::new()
+                                .add_filter("BIF Project", &["bif", "bifa"])
+                                .pick_file()
+                        });
+                        if let Some(path) = path {
                             self.open_project(&path);
                         }
                     }
