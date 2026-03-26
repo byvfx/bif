@@ -10,15 +10,21 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - **Per-tile UDIM loading** — UdimTileSet/UdimGridLayout types in bif_core, per-tile sampling (CPU+GPU), contiguous texture array blocks with shader tile offset. Eliminates atlas stitching (~3s/set). Unified CPU/GPU path ready for material editor.
 
+### Changed
+
+- **Async texture loading for all paths** — working scene rebuild and legacy loader now use async placeholders + streaming instead of blocking sync load. Viewport interactive immediately on scene load.
+
 ### Fixed
 
 - Shader `tex_offset` comment for future UDIM texture slots (roughness, normal, etc.)
 - Deduplicate `find_udim_tiles` calls — `prepare_texture_placeholders` passes expanded paths to async loader
 - Removed vestigial `udim_grid_*` fields from `Texture` struct (16 bytes/texture savings)
+- Clean up stale `.bif_cache/udim/` directories on scene load
 
 ### Removed
 
 - UDIM atlas stitching, disk cache (UdimCacheMeta, cache dir/key/load/save/clear), scale_pixels_box, ClearUdimCache UI, serde_json dep from bif_core
+- `create_gpu_textures_for_scene` sync loader (replaced by async path)
 
 - **M31: Per-node scene graph visualization** — source_node tagging on ProceduralPrim, prim count `[N]` badges on node headers, Scene/Node tab bar with NodeFilteredProvider for upstream-filtered browsing, row highlighting for selected node's prims in full scene browser. 4 new tests.
 - **M30 Phase 6: Cache node** — SceneNode::Cache with bypass toggle, visual indicators (Cached/Stale/Bypassed), property inspector, CacheToggleBypass/CacheClear events. Data serialization deferred.
