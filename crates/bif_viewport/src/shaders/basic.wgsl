@@ -284,8 +284,10 @@ fn fs_main(
     let ior = mat.specular_params.y;
     let spec_weight = mat.specular_params.z;
 
-    // Per-tile UDIM: compute tile offset from UV, then sample with fract UV
-    var sample_uv = vec2<f32>(fract(in.uv.x), 1.0 - fract(in.uv.y));
+    // Per-tile UDIM: compute tile offset from UV, then sample with fract UV.
+    // IMPORTANT: ALL texture lookups must add tex_offset to their index —
+    // each UDIM tile is a separate texture in a contiguous array block.
+    var sample_uv: vec2<f32>;
     var tex_offset = 0u;
 
     let udim_packed = mat.extra_indices.y;
@@ -301,13 +303,9 @@ fn fs_main(
         let col = u32(clamp(raw_col, 0, i32(grid_cols) - 1));
         let row = u32(clamp(raw_row, 0, i32(grid_rows) - 1));
 
-        // Tile offset into the contiguous texture array block
         tex_offset = row * grid_cols + col;
-
-        // Each tile is its own texture — sample with fractional UV
         sample_uv = vec2<f32>(fract(in.uv.x), 1.0 - fract(in.uv.y));
     } else {
-        // Non-UDIM: standard UV flip
         sample_uv = vec2<f32>(in.uv.x, 1.0 - in.uv.y);
     }
 

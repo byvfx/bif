@@ -1690,15 +1690,16 @@ impl Renderer {
         // Prepare placeholder textures (instant) and start async loading
         let texture_start = Instant::now();
         let base_dir = path.parent();
-        self.textures.gpu_textures = texture_loader::prepare_texture_placeholders(
+        let (gpu_textures, tile_paths) = texture_loader::prepare_texture_placeholders(
             &self.gpu.device,
             &self.gpu.queue,
             &scene,
             base_dir,
         );
+        self.textures.gpu_textures = gpu_textures;
         // Start background texture loading — textures stream in via poll_texture_loads()
         self.async_channels.texture_load_receiver = Some(
-            texture_loader::start_texture_loading_async(&scene, base_dir),
+            texture_loader::start_texture_loading_async(tile_paths),
         );
 
         // Start background .tx conversion — next load of same scene uses cached .tx

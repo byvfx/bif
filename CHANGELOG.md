@@ -10,6 +10,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - **Per-tile UDIM loading** — UdimTileSet/UdimGridLayout types in bif_core, per-tile sampling (CPU+GPU), contiguous texture array blocks with shader tile offset. Eliminates atlas stitching (~3s/set). Unified CPU/GPU path ready for material editor.
 
+### Fixed
+
+- Shader `tex_offset` comment for future UDIM texture slots (roughness, normal, etc.)
+- Deduplicate `find_udim_tiles` calls — `prepare_texture_placeholders` passes expanded paths to async loader
+- Removed vestigial `udim_grid_*` fields from `Texture` struct (16 bytes/texture savings)
+
 ### Removed
 
 - UDIM atlas stitching, disk cache (UdimCacheMeta, cache dir/key/load/save/clear), scale_pixels_box, ClearUdimCache UI, serde_json dep from bif_core

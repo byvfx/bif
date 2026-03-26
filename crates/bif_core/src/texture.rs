@@ -74,15 +74,6 @@ pub struct Texture {
 
     /// Whether the source was linear (EXR/HDR) or sRGB
     pub is_linear: bool,
-
-    /// UDIM atlas grid columns (0 = not a UDIM texture)
-    pub udim_grid_cols: u32,
-    /// UDIM atlas grid rows
-    pub udim_grid_rows: u32,
-    /// Minimum column index in the UDIM grid
-    pub udim_min_col: u32,
-    /// Minimum row index in the UDIM grid
-    pub udim_min_row: u32,
 }
 
 impl Texture {
@@ -95,10 +86,6 @@ impl Texture {
             mip_levels: Vec::new(),
             path: path.into(),
             is_linear: false,
-            udim_grid_cols: 0,
-            udim_grid_rows: 0,
-            udim_min_col: 0,
-            udim_min_row: 0,
         }
     }
 
@@ -118,10 +105,6 @@ impl Texture {
             mip_levels,
             path: path.into(),
             is_linear,
-            udim_grid_cols: 0,
-            udim_grid_rows: 0,
-            udim_min_col: 0,
-            udim_min_row: 0,
         }
     }
 
@@ -134,10 +117,6 @@ impl Texture {
             mip_levels: Vec::new(),
             path: "<solid>".to_string(),
             is_linear: false,
-            udim_grid_cols: 0,
-            udim_grid_rows: 0,
-            udim_min_col: 0,
-            udim_min_row: 0,
         }
     }
 
@@ -146,38 +125,15 @@ impl Texture {
         1 + self.mip_levels.len() as u32
     }
 
-    /// Whether this texture is a UDIM atlas.
-    pub fn is_udim(&self) -> bool {
-        self.udim_grid_cols > 0
-    }
-
     /// Check if this texture has mipmaps.
     pub fn has_mipmaps(&self) -> bool {
         !self.mip_levels.is_empty()
     }
 
-    /// Transform UV coordinates for UDIM atlas lookup.
-    ///
-    /// For non-UDIM textures, wraps UVs to [0, 1].
-    /// For UDIM atlases, maps tile-space UVs to atlas-space UVs
-    /// using the same math as `basic.wgsl` lines 287-310.
-    ///
-    /// Note on V-axis: returns UVs in standard UV space (0=bottom) so that
-    /// `sample()`'s single `1.0 - v` flip produces the correct pixel row.
+    /// Wrap UV coordinates to [0, 1] for texture sampling.
     #[inline]
-    fn transform_uv(&self, u: f32, v: f32) -> (f32, f32) {
-        if !self.is_udim() {
-            return (u.rem_euclid(1.0), v.rem_euclid(1.0));
-        }
-        let raw_col = u.floor() as i32 - self.udim_min_col as i32;
-        let raw_row = v.floor() as i32 - self.udim_min_row as i32;
-        let col = raw_col.clamp(0, self.udim_grid_cols as i32 - 1) as u32;
-        let row = raw_row.clamp(0, self.udim_grid_rows as i32 - 1) as u32;
-        let sub_u = u.fract().rem_euclid(1.0);
-        let sub_v = v.fract().rem_euclid(1.0);
-        let atlas_u = (col as f32 + sub_u) / self.udim_grid_cols as f32;
-        let atlas_v = (row as f32 + sub_v) / self.udim_grid_rows as f32;
-        (atlas_u, atlas_v)
+    fn wrap_uv(&self, u: f32, v: f32) -> (f32, f32) {
+        (u.rem_euclid(1.0), v.rem_euclid(1.0))
     }
 
     /// Sample the texture at UV coordinates (bilinear filtering).
@@ -193,7 +149,7 @@ impl Texture {
             return Vec3::new(1.0, 0.0, 1.0); // Magenta debug color
         }
 
-        let (u, v) = self.transform_uv(u, v);
+        let (u, v) = self.wrap_uv(u, v);
 
         // Convert to pixel coordinates
         let x = u * (self.width as f32 - 1.0);
@@ -237,7 +193,7 @@ impl Texture {
         if !u.is_finite() || !v.is_finite() {
             return 0.0;
         }
-        let (u, v) = self.transform_uv(u, v);
+        let (u, v) = self.wrap_uv(u, v);
         let ch = channel.min(3);
 
         let x = u * (self.width as f32 - 1.0);
@@ -1276,10 +1232,10 @@ mod tests {
     }
 
     #[test]
-    fn test_transform_uv_non_udim() {
+    fn test_wrap_uv() {
         let tex = Texture::solid_color(Vec3::new(1.0, 0.0, 0.0));
-        // Non-UDIM wraps to [0,1]
-        let (u, v) = tex.transform_uv(1.5, -0.3);
+        // Wraps to [0,1]
+        let (u, v) = tex.wrap_uv(1.5, -0.3);
         assert!((u - 0.5).abs() < 1e-5);
         assert!((v - 0.7).abs() < 1e-5);
     }

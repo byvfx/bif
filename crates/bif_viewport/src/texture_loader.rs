@@ -993,13 +993,14 @@ pub fn create_gpu_textures_for_scene(
 /// Create GPU texture set with placeholder (white) textures for all paths.
 ///
 /// Pre-allocates texture indices so materials can reference them immediately.
-/// Actual textures stream in asynchronously via `start_texture_loading_async`.
+/// Returns `(GpuTextureSet, expanded_tile_paths)` — pass the tile paths to
+/// `start_texture_loading_async` to avoid redundant UDIM tile discovery.
 pub fn prepare_texture_placeholders(
     device: &Device,
     queue: &Queue,
     scene: &bif_core::Scene,
     base_dir: Option<&Path>,
-) -> GpuTextureSet {
+) -> (GpuTextureSet, Vec<String>) {
     use bif_core::texture::{find_udim_tiles, UdimGridLayout};
 
     let mut texture_set = create_default_gpu_textures(device, queue);
@@ -1024,6 +1025,8 @@ pub fn prepare_texture_placeholders(
     };
 
     let mut total_slots = 0usize;
+    let mut expanded_paths: Vec<String> = Vec::new();
+
     for path in &texture_paths {
         if is_udim_path(path) {
             let tiles = find_udim_tiles(path);
@@ -1031,7 +1034,6 @@ pub fn prepare_texture_placeholders(
                 let base_index = texture_set.textures.len() as u32;
                 let slots = layout.grid_slots() as usize;
 
-                // Map UDIM pattern to base index
                 texture_set.index_map.insert(path.clone(), base_index);
                 texture_set.udim_map.insert(
                     path.clone(),
@@ -1044,7 +1046,6 @@ pub fn prepare_texture_placeholders(
                     },
                 );
 
-                // Map each tile path and allocate placeholder slots
                 for info in &layout.tiles {
                     let col = info.col - layout.min_col;
                     let row = info.row - layout.min_row;
@@ -1052,9 +1053,9 @@ pub fn prepare_texture_placeholders(
                     texture_set
                         .index_map
                         .insert(info.path.clone(), base_index + idx);
+                    expanded_paths.push(info.path.clone());
                 }
 
-                // Push placeholder textures for all grid slots (including empty)
                 for _ in 0..slots {
                     texture_set.textures.push(make_placeholder(device));
                 }
@@ -1064,6 +1065,7 @@ pub fn prepare_texture_placeholders(
             let index = texture_set.textures.len() as u32;
             texture_set.index_map.insert(path.clone(), index);
             texture_set.textures.push(make_placeholder(device));
+            expanded_paths.push(path.clone());
             total_slots += 1;
         }
 
@@ -1079,41 +1081,24 @@ pub fn prepare_texture_placeholders(
         texture_set.udim_map.len()
     );
 
-    texture_set
+    (texture_set, expanded_paths)
 }
 
 /// Start loading textures on a background thread.
 ///
+/// `tile_paths` should come from `prepare_texture_placeholders` (already expanded,
+/// avoids redundant UDIM tile discovery).
+///
 /// Returns a receiver that delivers `TextureLoadMessage` for each loaded texture.
 /// Call `poll_texture_loads()` each frame to upload completed textures to GPU.
 pub fn start_texture_loading_async(
-    scene: &bif_core::Scene,
-    base_dir: Option<&Path>,
+    tile_paths: Vec<String>,
 ) -> mpsc::Receiver<TextureLoadMessage> {
-    use bif_core::texture::{find_udim_tiles, UdimGridLayout};
-
     // Bounded channel: background thread blocks when 32 decoded textures are buffered,
     // preventing unbounded RAM growth on large scenes (500+ textures).
     let (tx, rx) = mpsc::sync_channel(32);
 
-    let texture_paths = collect_scene_texture_paths(scene, base_dir);
-
-    // Expand UDIM patterns into individual tile paths
-    let mut all_tile_paths: Vec<String> = Vec::new();
-    for path in &texture_paths {
-        if is_udim_path(path) {
-            let tiles = find_udim_tiles(path);
-            if let Some(layout) = UdimGridLayout::from_tiles(tiles) {
-                for info in &layout.tiles {
-                    all_tile_paths.push(info.path.clone());
-                }
-            }
-        } else {
-            all_tile_paths.push(path.clone());
-        }
-    }
-
-    let total_textures = all_tile_paths.len();
+    let total_textures = tile_paths.len();
     let max_slots = MAX_VIEWPORT_TEXTURES - 1;
     if total_textures > max_slots {
         log::warn!(
@@ -1135,7 +1120,7 @@ pub fn start_texture_loading_async(
     } else {
         DEFAULT_MAX_VIEWPORT_TEXTURE_SIZE
     };
-    let paths_to_load: Vec<_> = all_tile_paths.into_iter().take(max_slots).collect();
+    let paths_to_load: Vec<_> = tile_paths.into_iter().take(max_slots).collect();
     let load_count = paths_to_load.len();
 
     std::thread::spawn(move || {
