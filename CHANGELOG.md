@@ -16,6 +16,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **Zombie process on close** — `process::exit(0)` after event loop prevents native DLL teardown deadlock on Windows
+- **Unsaved changes dialog not showing** — `mark_dirty()` added to gizmo drag, undo, redo, keyframe operations
+- **Save dialog hidden behind window** — store window Arc in Renderer, hide main window while rfd MessageDialog shows
 - Shader `tex_offset` comment for future UDIM texture slots (roughness, normal, etc.)
 - Deduplicate `find_udim_tiles` calls — `prepare_texture_placeholders` passes expanded paths to async loader
 - Removed vestigial `udim_grid_*` fields from `Texture` struct (16 bytes/texture savings)

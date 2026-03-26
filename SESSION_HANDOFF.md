@@ -20,6 +20,10 @@
 
 ## Recent Work
 
+### Fix: Zombie Process + Unsaved Changes Dialog (Mar 26, 2026)
+
+Fixed two close-related bugs: (1) zombie process after window close — added `process::exit(0)` after event loop to avoid native DLL teardown deadlock on Windows; (2) unsaved changes dialog never showing — added `mark_dirty()` to gizmo drag, undo, redo, keyframe; (3) dialog appearing behind window — hide main window while rfd MessageDialog shows. Stored `Arc<Window>` in Renderer.
+
 ### Per-Tile UDIM Loading (Mar 26, 2026)
 
 Replaced UDIM atlas stitching with per-tile loading. Each UDIM tile is now an individual texture in the GPU binding array. Shader computes tile offset from UV floor. New `UdimTileSet` type in bif_core provides unified CPU/GPU sampling. Tested with alab scene (743 textures, zero stitching). Next step: switch viewport to async texture streaming path for interactive loading.
