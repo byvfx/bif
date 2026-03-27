@@ -2,6 +2,7 @@
 
 use serde::Serialize;
 
+use crate::metrics::MeasurementMeta;
 use crate::runner::SceneResults;
 
 #[derive(Serialize)]
@@ -30,6 +31,8 @@ struct YamlMetric<'a> {
     stddev_ms: f64,
     p95_s: f64,
     count: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    metadata: Option<&'a MeasurementMeta>,
 }
 
 pub fn render(results: &[SceneResults]) -> String {
@@ -59,6 +62,7 @@ pub fn render(results: &[SceneResults]) -> String {
                     stddev_ms: m.stats.stddev_ms,
                     p95_s: m.stats.p95.as_secs_f64(),
                     count: m.stats.count,
+                    metadata: m.metadata.as_ref(),
                 })
                 .collect(),
         })
@@ -70,5 +74,5 @@ pub fn render(results: &[SceneResults]) -> String {
         scenes,
     };
 
-    serde_yaml::to_string(&report).unwrap_or_else(|e| format!("# YAML error: {e}\n"))
+    serde_yml::to_string(&report).unwrap_or_else(|e| format!("# YAML error: {e}\n"))
 }

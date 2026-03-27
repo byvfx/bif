@@ -37,21 +37,25 @@ impl Stats {
 
         let total_ns: u128 = sorted.iter().map(|d| d.as_nanos()).sum();
         let mean_ns = total_ns / count as u128;
-        let mean = Duration::from_nanos(mean_ns as u64);
+        let mean = Duration::from_nanos(u64::try_from(mean_ns).expect("mean duration overflow"));
 
-        let median = if count.is_multiple_of(2) {
+        #[allow(clippy::manual_is_multiple_of)]
+        let median = if count % 2 == 0 {
             let a = sorted[count / 2 - 1].as_nanos();
             let b = sorted[count / 2].as_nanos();
-            Duration::from_nanos(((a + b) / 2) as u64)
+            Duration::from_nanos(u64::try_from((a + b) / 2).expect("median duration overflow"))
         } else {
             sorted[count / 2]
         };
 
+        // Nearest-rank percentile method
         let p95_idx = ((count as f64) * 0.95).ceil() as usize - 1;
         let p95 = sorted[p95_idx.min(count - 1)];
 
-        // Standard deviation in milliseconds
+        // Sample standard deviation (N-1 denominator) in milliseconds.
+        // Falls back to population stddev for N=1.
         let mean_ms = mean.as_secs_f64() * 1000.0;
+        let denom = if count > 1 { count - 1 } else { 1 };
         let variance: f64 = sorted
             .iter()
             .map(|d| {
@@ -59,7 +63,7 @@ impl Stats {
                 (ms - mean_ms).powi(2)
             })
             .sum::<f64>()
-            / count as f64;
+            / denom as f64;
         let stddev_ms = variance.sqrt();
 
         Self {

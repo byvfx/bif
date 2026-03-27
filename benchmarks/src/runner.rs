@@ -4,7 +4,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use crate::config::RunConfig;
-use crate::metrics::{Metric, MetricError};
+use crate::metrics::{Measurement, MeasurementMeta, Metric, MetricError};
 use crate::stats::Stats;
 
 use serde::{Deserialize, Serialize};
@@ -17,6 +17,8 @@ pub struct MetricResults {
     pub metric_name: String,
     pub measurements: Vec<Duration>,
     pub stats: Stats,
+    /// Metadata from the last iteration (prim count, mesh count, etc.).
+    pub metadata: Option<MeasurementMeta>,
 }
 
 /// Results for one scene across all metrics.
@@ -84,6 +86,7 @@ pub fn run_scene(
         );
 
         let mut durations = Vec::with_capacity(config.iterations);
+        let mut last_measurement: Option<Measurement> = None;
         for i in 0..config.iterations {
             let m = metric
                 .measure(scene_path)
@@ -98,6 +101,7 @@ pub fn run_scene(
                     m.duration.as_secs_f64()
                 );
             }
+            last_measurement = Some(m);
         }
 
         let stats = Stats::from_durations(&durations);
@@ -108,6 +112,7 @@ pub fn run_scene(
             metric_name: metric.name().to_string(),
             measurements: durations,
             stats,
+            metadata: last_measurement.and_then(|m| m.metadata),
         });
     }
 

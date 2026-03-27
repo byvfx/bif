@@ -24,6 +24,25 @@ struct MetricRow {
     p95: String,
     #[tabled(rename = "N")]
     count: String,
+    #[tabled(rename = "Info")]
+    info: String,
+}
+
+fn format_meta(m: &crate::runner::MetricResults) -> String {
+    let Some(ref meta) = m.metadata else {
+        return String::new();
+    };
+    let mut parts = Vec::new();
+    if let Some(p) = meta.prim_count {
+        parts.push(format!("{p} prims"));
+    }
+    if let Some(n) = meta.mesh_count {
+        parts.push(format!("{n} meshes"));
+    }
+    if let Some(i) = meta.instance_count {
+        parts.push(format!("{i} instances"));
+    }
+    parts.join(", ")
 }
 
 pub fn render(results: &[SceneResults]) -> String {
@@ -40,6 +59,7 @@ pub fn render(results: &[SceneResults]) -> String {
                 stddev: format!("{:.2}", m.stats.stddev_ms),
                 p95: format!("{:.6}", m.stats.p95.as_secs_f64()),
                 count: m.stats.count.to_string(),
+                info: format_meta(m),
             })
         })
         .collect();

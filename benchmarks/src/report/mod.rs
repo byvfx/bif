@@ -42,14 +42,23 @@ impl Report {
     }
 }
 
+/// Quote a CSV field if it contains commas, quotes, or newlines.
+fn csv_quote(s: &str) -> String {
+    if s.contains(',') || s.contains('"') || s.contains('\n') {
+        format!("\"{}\"", s.replace('"', "\"\""))
+    } else {
+        s.to_string()
+    }
+}
+
 fn csv_render(results: &[SceneResults]) -> String {
     let mut out = String::from("scene,metric,min_s,max_s,mean_s,median_s,stddev_ms,p95_s,count\n");
     for scene in results {
         for m in &scene.metrics {
             out.push_str(&format!(
                 "{},{},{:.6},{:.6},{:.6},{:.6},{:.2},{:.6},{}\n",
-                scene.scene_name,
-                m.metric_id,
+                csv_quote(&scene.scene_name),
+                csv_quote(&m.metric_id),
                 m.stats.min.as_secs_f64(),
                 m.stats.max.as_secs_f64(),
                 m.stats.mean.as_secs_f64(),

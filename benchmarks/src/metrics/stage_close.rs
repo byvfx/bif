@@ -26,7 +26,9 @@ impl Metric for StageClose {
             .load_payloads()
             .map_err(|e| MetricError::Bridge(e.to_string()))?;
 
-        // Timed: drop triggers usd_bridge_close_stage
+        // Timed: drop triggers usd_bridge_close_stage via FFI.
+        // NOTE: timing depends on UsdStage::Drop calling usd_bridge_close_stage.
+        // If the Drop impl changes to a manual .close() method, update this metric.
         let start = Instant::now();
         drop(stage);
         let duration = start.elapsed();

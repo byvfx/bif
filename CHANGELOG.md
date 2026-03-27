@@ -11,6 +11,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **USD performance metrics harness** (`bif_perf`) — new `benchmarks/` crate with modular Metric trait, 4 metrics (StageOpen, PayloadLoad, StageClose, FullLoad), scene registry with tier filtering, terminal/YAML/CSV reporters, CLI (`run`, `list`). Based on USD `ref_performance_metrics.html` methodology (N iterations, warmup, min/max/mean/median/p95).
 - **Per-tile UDIM loading** — UdimTileSet/UdimGridLayout types in bif_core, per-tile sampling (CPU+GPU), contiguous texture array blocks with shader tile offset. Eliminates atlas stitching (~3s/set). Unified CPU/GPU path ready for material editor.
 
+### Fixed
+
+- **bif_perf code review fixes** — stable Rust compat (`count % 2` over nightly `is_multiple_of`), safe `u64::try_from` for duration stats, sample stddev (N-1), metadata surfaced in reports, iterations>=1 guard, CSV field escaping, `CARGO_MANIFEST_DIR` workspace root, `serde_yml` replacing deprecated `serde_yaml`, removed unused `csv` dep
+
 ### Changed
 
 - **Async texture loading for all paths** — working scene rebuild and legacy loader now use async placeholders + streaming instead of blocking sync load. Viewport interactive immediately on scene load.

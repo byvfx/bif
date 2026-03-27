@@ -30,7 +30,7 @@ enum Command {
         #[arg(short, long, default_value = "bif")]
         target: String,
 
-        /// Number of iterations per metric.
+        /// Number of iterations per metric (minimum 1).
         #[arg(short = 'n', long, default_value = "100")]
         iterations: usize,
 
@@ -73,6 +73,11 @@ fn main() {
             output,
             metrics: metric_filter,
         } => {
+            if iterations == 0 {
+                log::error!("iterations must be >= 1");
+                std::process::exit(1);
+            }
+
             let fmt = OutputFormat::parse(&format);
             let config = RunConfig {
                 iterations,
@@ -143,8 +148,21 @@ fn main() {
     }
 }
 
-/// Walk up from the binary's location to find the workspace root (contains Cargo.toml with [workspace]).
+/// Find workspace root using CARGO_MANIFEST_DIR (compile-time) with cwd fallback.
 fn find_workspace_root() -> PathBuf {
+    // CARGO_MANIFEST_DIR points to benchmarks/ at compile time — parent is workspace root
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let from_manifest = PathBuf::from(manifest_dir)
+        .parent()
+        .map(|p| p.to_path_buf());
+
+    if let Some(ref root) = from_manifest {
+        if root.join("Cargo.toml").exists() {
+            return root.clone();
+        }
+    }
+
+    // Fallback: walk up from cwd
     let mut dir = std::env::current_dir().expect("cannot get current directory");
     loop {
         let cargo_toml = dir.join("Cargo.toml");
@@ -156,7 +174,6 @@ fn find_workspace_root() -> PathBuf {
             }
         }
         if !dir.pop() {
-            // Fallback to current dir
             return std::env::current_dir().expect("cannot get current directory");
         }
     }
