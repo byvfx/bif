@@ -16,6 +16,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **OIDN denoiser using geometric normals** — switched to shading normals for better edge preservation on normal-mapped surfaces
 - **Zombie process on close** — `process::exit(0)` after event loop prevents native DLL teardown deadlock on Windows
 - **Unsaved changes dialog not showing** — `mark_dirty()` added to gizmo drag, undo, redo, keyframe operations
 - **Save dialog hidden behind window** — store window Arc in Renderer, hide main window while rfd MessageDialog shows

@@ -1022,7 +1022,7 @@ impl Renderer {
         let height = image.height as usize;
         let beauty = image.pixels.clone();
         let albedo = self.ivar.ivar_state.albedo_buffer.clone();
-        let normal = self.ivar.ivar_state.normal_buffer.clone();
+        let normal = self.ivar.ivar_state.shading_normal_buffer.clone();
 
         let (tx, rx) = mpsc::channel();
         self.ivar.ivar_state.denoise.receiver = Some(rx);

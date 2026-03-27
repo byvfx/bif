@@ -34,7 +34,7 @@ pub enum DenoiseError {
 /// - `width`, `height`: image dimensions
 /// - `beauty`: input beauty buffer (linear HDR, one `Color` per pixel)
 /// - `albedo`: optional albedo guide (improves texture detail preservation)
-/// - `normal`: optional normal guide (improves edge preservation)
+/// - `normal`: optional shading normal guide (improves edge preservation)
 ///
 /// Returns denoised beauty buffer on success.
 pub fn denoise_beauty(

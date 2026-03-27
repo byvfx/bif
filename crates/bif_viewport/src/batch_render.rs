@@ -505,7 +505,7 @@ fn batch_render_loop(
                 h,
                 &result.beauty,
                 result.albedo.as_deref(),
-                result.normal.as_deref(),
+                result.shading_normal.as_deref(),
             ) {
                 Ok(denoised) => {
                     log::info!("Batch frame {} denoised", frame);
