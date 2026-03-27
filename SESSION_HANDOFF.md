@@ -1,6 +1,6 @@
-# Session Handoff - March 26, 2026
+# Session Handoff - March 27, 2026
 
-**Last Updated:** Per-tile UDIM loading (eliminate atlas stitching)
+**Last Updated:** USD performance metrics harness (Phase 1)
 **Next Milestone:** M32 (USD composition inspector & opinion trace)
 **Project:** BIF - VFX Scene Assembler & Renderer
 
@@ -11,14 +11,18 @@
 | Status | Details |
 |--------|---------|
 | Complete | Milestones 0-23, M26, M26.1, M19.6, M29.5, M30, M31 |
-| Current | Per-tile UDIM loading complete, async texture streaming next |
-| Next | M32 (opinion trace), then M33 (usdview-parity debugging) |
-| Tests | 394+ total across all crates |
+| Current | bif_perf Phase 1 complete, Phase 2-5 remaining |
+| Next | bif_perf Phase 2 (full metric suite), then M32 (opinion trace) |
+| Tests | 399+ total across all crates (5 new in bif_perf) |
 | Performance | 60 FPS viewport, 100K instances with LOD, Ivar build ~185ms |
 
 ---
 
 ## Recent Work
+
+### USD Performance Metrics Harness — Phase 1 (Mar 27, 2026)
+
+New `bif_perf` crate in `benchmarks/`. Modular Metric trait with 4 implementations (StageOpen, PayloadLoad, StageClose, FullLoad). Scene registry with tier filtering (simple/medium/large/official). Terminal table, YAML, CSV reporters. CLI with `run` and `list` subcommands. Based on USD `ref_performance_metrics.html` methodology. Remaining: Phase 2 (MeshExtract, MaterialLoad, PrimTraversal metrics), Phase 3 (audit checks from maxperf.html), Phase 4 (usdview/Houdini subprocess targets), Phase 5 (historical results + auto-download).
 
 ### Fix: Zombie Process + Unsaved Changes Dialog (Mar 26, 2026)
 

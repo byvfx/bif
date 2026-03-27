@@ -1,0 +1,3 @@
+# Benchmark results are machine-specific — commit baselines manually if needed
+*.yaml
+*.csv

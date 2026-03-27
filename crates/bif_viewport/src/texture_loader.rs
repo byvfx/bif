@@ -916,7 +916,10 @@ pub fn prepare_texture_placeholders(
             }
         } else {
             if total_slots >= max_slots {
-                log::warn!("Texture slots at GPU limit ({}), skipping remaining", max_slots);
+                log::warn!(
+                    "Texture slots at GPU limit ({}), skipping remaining",
+                    max_slots
+                );
                 break;
             }
             let index = texture_set.textures.len() as u32;
@@ -938,9 +941,9 @@ pub fn prepare_texture_placeholders(
             texture_set.views.len()
         );
         while texture_set.views.len() < texture_set.textures.len() {
-            texture_set.views.push(
-                texture_set.textures[0].create_view(&wgpu::TextureViewDescriptor::default()),
-            );
+            texture_set
+                .views
+                .push(texture_set.textures[0].create_view(&wgpu::TextureViewDescriptor::default()));
         }
     }
 

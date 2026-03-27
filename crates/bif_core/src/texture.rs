@@ -1465,15 +1465,12 @@ mod tests {
     #[test]
     fn test_udim_tileset_negative_uv() {
         // Negative UVs should clamp to tile (0,0) via resolve_tile
-        let red = Arc::new(Texture::new(
-            2, 2,
-            vec![[1.0, 0.0, 0.0, 1.0]; 4],
-            "red",
-        ));
+        let red = Arc::new(Texture::new(2, 2, vec![[1.0, 0.0, 0.0, 1.0]; 4], "red"));
         let layout = UdimGridLayout::from_tiles(vec![
             (1001, "a_1001.exr".into()),
             (1002, "a_1002.exr".into()),
-        ]).unwrap();
+        ])
+        .unwrap();
         let ts = UdimTileSet {
             layout,
             tiles: vec![Some(red), None],
@@ -1483,20 +1480,25 @@ mod tests {
 
         // Negative UV clamps to col=0 (tile 1001 = red)
         let c = ts.sample(-0.5, 0.5);
-        assert!((c.x - 1.0).abs() < 0.01, "negative u should clamp to tile 0: {:?}", c);
+        assert!(
+            (c.x - 1.0).abs() < 0.01,
+            "negative u should clamp to tile 0: {:?}",
+            c
+        );
 
         // Negative v also clamps
         let c = ts.sample(0.5, -0.5);
-        assert!((c.x - 1.0).abs() < 0.01, "negative v should clamp to tile 0: {:?}", c);
+        assert!(
+            (c.x - 1.0).abs() < 0.01,
+            "negative v should clamp to tile 0: {:?}",
+            c
+        );
     }
 
     #[test]
     fn test_udim_grid_layout_invalid_id() {
         // UDIM IDs outside 1001-1200 should be skipped
-        let tiles = vec![
-            (999, "bad.exr".into()),
-            (1001, "a_1001.exr".into()),
-        ];
+        let tiles = vec![(999, "bad.exr".into()), (1001, "a_1001.exr".into())];
         let layout = UdimGridLayout::from_tiles(tiles).unwrap();
         assert_eq!(layout.tiles.len(), 1);
         assert_eq!(layout.tiles[0].udim_id, 1001);
