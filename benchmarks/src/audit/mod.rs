@@ -43,7 +43,27 @@ impl std::fmt::Display for AuditStatus {
 pub trait AuditCheck: Send + Sync {
     fn id(&self) -> &str;
     fn name(&self) -> &str;
+    /// Whether this check requires payloads to be loaded.
+    fn needs_payloads(&self) -> bool {
+        true
+    }
     fn run(&self, scene_path: &Path, stage: &UsdStage) -> AuditResult;
+
+    /// Helper to construct an AuditResult with this check's id/name.
+    fn result(
+        &self,
+        status: AuditStatus,
+        detail: String,
+        recommendation: Option<String>,
+    ) -> AuditResult {
+        AuditResult {
+            check_id: self.id().into(),
+            check_name: self.name().into(),
+            status,
+            detail,
+            recommendation,
+        }
+    }
 }
 
 /// All available audit checks.
@@ -59,44 +79,73 @@ pub fn all_checks() -> Vec<Box<dyn AuditCheck>> {
 }
 
 /// Run all audit checks on a scene. Opens and loads the stage internally.
+/// Checks that don't need payloads run first, so they still produce results
+/// even if payload loading fails.
 pub fn run_audit(scene_path: &Path) -> Vec<AuditResult> {
     let checks = all_checks();
+    let mut results = Vec::new();
 
     let stage = match UsdStage::open(scene_path) {
         Ok(s) => s,
         Err(e) => {
-            return vec![AuditResult {
+            results.push(AuditResult {
                 check_id: "stage_open".into(),
                 check_name: "Stage Open".into(),
                 status: AuditStatus::Fail,
                 detail: format!("Cannot open stage: {e}"),
                 recommendation: Some("Check file path and USD environment".into()),
-            }];
+            });
+            return results;
         }
     };
 
+    // Run checks that don't need payloads first (e.g., BinaryFormatCheck)
+    for check in checks.iter().filter(|c| !c.needs_payloads()) {
+        results.push(check.run(scene_path, &stage));
+    }
+
+    // Load payloads, then run remaining checks
     if let Err(e) = stage.load_payloads() {
-        return vec![AuditResult {
+        results.push(AuditResult {
             check_id: "payload_load".into(),
             check_name: "Payload Load".into(),
             status: AuditStatus::Fail,
             detail: format!("Cannot load payloads: {e}"),
             recommendation: None,
-        }];
+        });
+        return results;
     }
 
-    checks.iter().map(|c| c.run(scene_path, &stage)).collect()
+    for check in checks.iter().filter(|c| c.needs_payloads()) {
+        results.push(check.run(scene_path, &stage));
+    }
+
+    results
 }
 
 /// Render audit results as a terminal string.
 pub fn render_audit(results: &[AuditResult]) -> String {
     let mut out = String::new();
+    let (mut pass, mut warn, mut fail, mut skip) = (0, 0, 0, 0);
+
     for r in results {
         let icon = match r.status {
-            AuditStatus::Pass => "+",
-            AuditStatus::Warn => "!",
-            AuditStatus::Fail => "X",
-            AuditStatus::Skip => "-",
+            AuditStatus::Pass => {
+                pass += 1;
+                "+"
+            }
+            AuditStatus::Warn => {
+                warn += 1;
+                "!"
+            }
+            AuditStatus::Fail => {
+                fail += 1;
+                "X"
+            }
+            AuditStatus::Skip => {
+                skip += 1;
+                "-"
+            }
         };
         out.push_str(&format!("[{}] {} — {}\n", icon, r.check_name, r.detail));
         if let Some(ref rec) = r.recommendation {
@@ -104,22 +153,6 @@ pub fn render_audit(results: &[AuditResult]) -> String {
         }
     }
 
-    let pass = results
-        .iter()
-        .filter(|r| r.status == AuditStatus::Pass)
-        .count();
-    let warn = results
-        .iter()
-        .filter(|r| r.status == AuditStatus::Warn)
-        .count();
-    let fail = results
-        .iter()
-        .filter(|r| r.status == AuditStatus::Fail)
-        .count();
-    let skip = results
-        .iter()
-        .filter(|r| r.status == AuditStatus::Skip)
-        .count();
     out.push_str(&format!(
         "\nSummary: {pass} pass, {warn} warn, {fail} fail, {skip} skip\n"
     ));
