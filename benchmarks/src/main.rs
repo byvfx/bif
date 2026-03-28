@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 
+use bif_perf::audit;
 use bif_perf::config::RunConfig;
 use bif_perf::metrics;
 use bif_perf::report::{OutputFormat, Report};
@@ -49,6 +50,12 @@ enum Command {
         /// Run only these metrics (comma-separated IDs).
         #[arg(short, long)]
         metrics: Option<String>,
+    },
+
+    /// Audit a scene against USD maxperf.html best practices.
+    Audit {
+        /// Scene file to audit.
+        scene: PathBuf,
     },
 
     /// List available scenes, metrics, and targets.
@@ -122,10 +129,31 @@ fn main() {
                 println!("{rendered}");
             }
         }
+        Command::Audit { scene } => {
+            let scene_path = if scene.is_absolute() {
+                scene
+            } else {
+                workspace_root.join(&scene)
+            };
+
+            if !scene_path.exists() {
+                log::error!("Scene not found: {}", scene_path.display());
+                std::process::exit(1);
+            }
+
+            log::info!("Auditing: {}", scene_path.display());
+            let results = audit::run_audit(&scene_path);
+            print!("{}", audit::render_audit(&results));
+        }
         Command::List => {
             println!("=== Metrics ===");
             for m in metrics::all_bif_metrics() {
                 println!("  {:20} {}", m.id(), m.name());
+            }
+
+            println!("\n=== Audit Checks ===");
+            for c in audit::all_checks() {
+                println!("  {:20} {}", c.id(), c.name());
             }
 
             println!("\n=== Targets ===");
