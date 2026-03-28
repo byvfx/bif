@@ -1,7 +1,10 @@
 //! Metric trait and registry.
 
 pub mod full_load;
+pub mod material_load;
+pub mod mesh_extract;
 pub mod payload_load;
+pub mod prim_traversal;
 pub mod stage_close;
 pub mod stage_open;
 
@@ -63,6 +66,9 @@ pub fn all_bif_metrics() -> Vec<Box<dyn Metric>> {
     vec![
         Box::new(stage_open::StageOpen),
         Box::new(payload_load::PayloadLoad),
+        Box::new(mesh_extract::MeshExtract),
+        Box::new(material_load::MaterialLoad),
+        Box::new(prim_traversal::PrimTraversal),
         Box::new(stage_close::StageClose),
         Box::new(full_load::FullLoad),
     ]

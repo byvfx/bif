@@ -8,7 +8,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-- **USD performance metrics harness** (`bif_perf`) — new `benchmarks/` crate with modular Metric trait, 4 metrics (StageOpen, PayloadLoad, StageClose, FullLoad), scene registry with tier filtering, terminal/YAML/CSV reporters, CLI (`run`, `list`). Based on USD `ref_performance_metrics.html` methodology (N iterations, warmup, min/max/mean/median/p95).
+- **USD performance metrics harness** (`bif_perf`) — new `benchmarks/` crate with modular Metric trait, 7 metrics (StageOpen, PayloadLoad, MeshExtract, MaterialLoad, PrimTraversal, StageClose, FullLoad), scene registry with tier filtering, terminal/YAML/CSV reporters, CLI (`run`, `list`). Based on USD `ref_performance_metrics.html` methodology (N iterations, warmup, min/max/mean/median/p95).
 - **Per-tile UDIM loading** — UdimTileSet/UdimGridLayout types in bif_core, per-tile sampling (CPU+GPU), contiguous texture array blocks with shader tile offset. Eliminates atlas stitching (~3s/set). Unified CPU/GPU path ready for material editor.
 
 ### Fixed
