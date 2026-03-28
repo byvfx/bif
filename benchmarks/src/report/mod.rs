@@ -1,5 +1,6 @@
 //! Report generation — terminal tables, YAML, CSV.
 
+pub mod comparison;
 pub mod terminal;
 pub mod yaml;
 

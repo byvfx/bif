@@ -13,6 +13,7 @@ path = "src/main.rs"
 bif_core = { path = "../crates/bif_core" }
 clap = { version = "4", features = ["derive"] }
 serde = { workspace = true }
+serde_json = { workspace = true }
 serde_yml = "0.0.12"
 tabled = "0.17"
 log = { workspace = true }

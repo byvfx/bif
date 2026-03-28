@@ -7,6 +7,7 @@ use clap::{Parser, Subcommand};
 use bif_perf::audit;
 use bif_perf::config::RunConfig;
 use bif_perf::metrics;
+use bif_perf::report::comparison;
 use bif_perf::report::{OutputFormat, Report};
 use bif_perf::runner;
 use bif_perf::scenes;
@@ -27,7 +28,7 @@ enum Command {
         #[arg(default_value = "all")]
         scene: String,
 
-        /// Target: bif (usdview/houdini in Phase 4).
+        /// Target: bif, usdview, houdini.
         #[arg(short, long, default_value = "bif")]
         target: String,
 
@@ -56,6 +57,14 @@ enum Command {
     Audit {
         /// Scene file to audit.
         scene: PathBuf,
+    },
+
+    /// Compare two benchmark result YAML files.
+    Compare {
+        /// Baseline results file.
+        baseline: PathBuf,
+        /// Current results file.
+        current: PathBuf,
     },
 
     /// List available scenes, metrics, and targets.
@@ -145,6 +154,13 @@ fn main() {
             let results = audit::run_audit(&scene_path);
             print!("{}", audit::render_audit(&results));
         }
+        Command::Compare { baseline, current } => match comparison::compare(&baseline, &current) {
+            Ok(table) => println!("{table}"),
+            Err(e) => {
+                log::error!("Comparison failed: {e}");
+                std::process::exit(1);
+            }
+        },
         Command::List => {
             println!("=== Metrics ===");
             for m in metrics::all_bif_metrics() {
