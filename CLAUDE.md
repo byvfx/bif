@@ -14,9 +14,9 @@ You Create a new DCC that is inspired by Clarisse / Houdini, focused on VFX scen
 
 **BIF** - VFX scene assembler/renderer (like Clarisse/Houdini).
 
-- **Status:** Milestones 0-23 + M26 + M26.1 complete (viewport, instancing, USD C++, Embree, materials, MaterialX, animation, batch render, node graph, scatter, SHARC cache, OIDN denoising, Ivar material cache)
-- **Current:** M29 - USD Export (in-progress, most phases done)
-- **Next:** M29.5 (egui upgrade) → M30 (persistence) → M31 (per-node viz) → M32 (opinion trace) → M33-M40
+- **Status:** v0.12.0 released (USD export, OpenPBR, subsystem extraction). v0.13.0 in progress.
+- **Current:** v0.13.0 — Pipeline Foundation (M29.5 UI overhaul, M30 persistence, M31 per-node viz)
+- **Next:** v0.14.0 (USD debugging) → v0.15.0 (Qt migration) → v0.16.0 (viewport perf) — see [MILESTONES.md](MILESTONES.md)
 - **Goal:** Load Houdini USD → instance massively → render → export USD
 - **Timeline:** Side project, 10-20 hrs/week
 

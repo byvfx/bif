@@ -16,10 +16,10 @@ Follow the BIF commit workflow from CLAUDE.md:
 
 ### 1. Pre-commit Checks
 
-Run these in parallel:
+Run these in parallel (check all modified crates, not just bif_viewport):
 
-- `cargo build -p bif_viewport 2>&1 | tail -5` (no warnings)
-- `cargo clippy -p bif_viewport -- -D warnings 2>&1 | tail -5`
+- `cargo build 2>&1 | tail -5` (no warnings)
+- `cargo clippy -- -D warnings 2>&1 | tail -5`
 - `cargo fmt --check`
 
 If any fail, report and stop.
@@ -43,8 +43,10 @@ Based on the diff above:
 
 ### 4. Update Documentation and Devlog
 - Update `CHANGELOG.md`: add entries under `## [Unreleased]` in the appropriate section (Added/Changed/Fixed). Keep entries concise (one line each). Do NOT create a new version heading — that happens at release time.
-- Update `MILESTONES.md` if relevant (e.g. mark milestone complete, update next steps)
+- Update `MILESTONES.md` if a version's status changed (e.g., mark version complete, update in-progress)
+- Update `ROADMAP_DETAIL.md` if tasks within the current version were completed
 - Update `SESSION_HANDOFF.md` if relevant (e.g. note any important context for next session)
+- Note: `MILESTONES_HISTORY.md` is only updated at release time (when moving a completed version entry)
 - Add a new entry to `devlog/DEVLOG_YYYY-MM-DD.md` with today's date, summarizing the session:
   - Duration
   - Goals

@@ -96,6 +96,8 @@ For each issue, provide:
 - Challenge premature optimization but recognize VFX performance requirements
 - Consider GPU memory and bandwidth constraints
 - Account for artist workflow and usability
+- Check MILESTONES.md and ROADMAP_DETAIL.md for the current version's scope — flag changes that don't align with the active release goals (scope creep)
+- All subsystems must maintain UI-agnostic APIs (Qt migration planned for v0.15.0)
 
 **Red Flags to Always Challenge:**
 
