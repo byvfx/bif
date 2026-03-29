@@ -8,6 +8,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **FFI bridge split** — extracted `ffi_raw.rs` (898 lines, raw C types + extern block) and `ffi_convert.rs` (2,054 lines, 17 conversion functions + 44 tests) from monolithic `cpp_bridge.rs`. Conversion logic now testable without C++ DLLs. Phase 1 of architecture deepening plan.
+- **Architecture refactors plan** — `ARCHITECTURE_REFACTORS.md` documenting 5-phase plan: FFI split, Linux support, node graph eval engine, scene pipeline, renderer decomposition. 45-65 new tests targeted.
 - **USD performance metrics harness** (`bif_perf`) — new `benchmarks/` crate with modular Metric trait, 7 metrics (StageOpen, PayloadLoad, MeshExtract, MaterialLoad, PrimTraversal, StageClose, FullLoad), scene registry with tier filtering, terminal/YAML/CSV reporters, CLI (`run`, `list`, `audit`). Based on USD `ref_performance_metrics.html` methodology (N iterations, warmup, min/max/mean/median/p95).
 - **USD best-practices audit** — AuditCheck trait with 6 checks from maxperf.html: binary format, payload usage, prim count, instance usage, Alembic detection, layer count (skip). CLI `audit` subcommand with pass/warn/fail/skip output.
 - **External measurement targets** — usdview (Python/pxr subprocess) and Houdini (hython subprocess) targets for cross-tool USD load time comparison

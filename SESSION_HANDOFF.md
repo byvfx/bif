@@ -1,6 +1,6 @@
-# Session Handoff - March 27, 2026
+# Session Handoff - March 29, 2026
 
-**Last Updated:** Documentation overhaul — semver milestones, README rewrite
+**Last Updated:** FFI bridge split (Phase 1 architecture deepening)
 **Current Version:** v0.13.0-dev (Pipeline Foundation)
 **Project:** BIF - VFX Scene Assembler & Renderer
 
@@ -11,14 +11,25 @@
 | Status | Details |
 |--------|---------|
 | Released | v0.1.0, v0.11.0, v0.12.0 |
-| Current | v0.13.0-dev — M29.5, M30, M31 complete, shipping current work |
-| Next | v0.14.0 (USD debugging), then v0.15.0 (Qt migration) |
-| Tests | 400+ total across all crates |
+| Current | v0.13.0-dev — M29.5, M30, M31 complete, architecture refactors in progress |
+| Next | Phase 1 complete (FFI split), Phase 2 (Linux), then v0.14.0 (layer-aware stage) |
+| Tests | 400+ total across all crates (44 new ffi_convert tests) |
 | Performance | 60 FPS viewport, 100K instances with LOD, Ivar build ~185ms |
 
 ---
 
 ## Recent Work
+
+### Architecture Deepening: Phase 1 FFI Bridge Split (Mar 28-29, 2026)
+
+Split monolithic `cpp_bridge.rs` (4,542 LOC) into 3 modules:
+- `ffi_raw.rs` (898 lines) — `#[repr(C)]` types + `extern "C"` block
+- `ffi_convert.rs` (2,054 lines) — 17 conversion functions + 44 tests (no C++ DLLs needed)
+- `cpp_bridge.rs` slimmed to 3,651 lines (-20%)
+
+Also created `ARCHITECTURE_REFACTORS.md` (5-phase plan) and `BIF_USD_WORKFLOW.md` (layer-aware editor spec).
+
+**Next:** Wire UsdStage methods to delegate to ffi_convert (incremental), then Phase 2 (Linux cross-platform).
 
 ### Documentation Overhaul (Mar 27, 2026)
 
