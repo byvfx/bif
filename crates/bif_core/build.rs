@@ -9,26 +9,81 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+/// Returns the vcpkg triplet for the current platform.
+fn vcpkg_triplet() -> &'static str {
+    if cfg!(target_os = "windows") {
+        "x64-windows"
+    } else if cfg!(target_os = "macos") {
+        "x64-osx"
+    } else {
+        "x64-linux"
+    }
+}
+
+/// Returns platform-specific fallback paths for vcpkg root.
+fn vcpkg_fallback_paths() -> Vec<String> {
+    if cfg!(windows) {
+        vec![
+            r"D:\__projects\_programming\vcpkg".to_string(),
+            r"C:\vcpkg".to_string(),
+        ]
+    } else {
+        let mut paths = vec!["/opt/vcpkg".to_string(), "/usr/local/vcpkg".to_string()];
+        if let Ok(home) = env::var("HOME") {
+            paths.push(format!("{}/vcpkg", home));
+        }
+        paths
+    }
+}
+
+/// Returns the CMake build output subdirectory (MSVC uses Release/, others use .).
+fn cmake_build_subdir() -> &'static str {
+    if cfg!(windows) {
+        "Release"
+    } else {
+        "."
+    }
+}
+
+/// Returns CMake generator arguments for the current platform.
+fn cmake_generator_args() -> Vec<String> {
+    if cfg!(windows) {
+        vec![
+            "-G".to_string(),
+            "Visual Studio 17 2022".to_string(),
+            "-A".to_string(),
+            "x64".to_string(),
+        ]
+    } else {
+        // Use default generator (Makefiles or Ninja if available)
+        vec![]
+    }
+}
+
+/// Returns vcpkg lib and bin paths for a given root.
+fn vcpkg_lib_bin_paths(root: &str) -> (PathBuf, PathBuf) {
+    let triplet = vcpkg_triplet();
+    let base = PathBuf::from(root).join("installed").join(triplet);
+    (base.join("lib"), base.join("bin"))
+}
+
 fn main() {
     // Build OIIO bridge if feature enabled
     #[cfg(feature = "oiio")]
     build_oiio_bridge();
 
     // Find vcpkg root with USD installed (toolchain + pxr headers must exist)
+    let triplet = vcpkg_triplet();
     let vcpkg_root = env::var("VCPKG_ROOT")
         .ok()
         .into_iter()
-        .chain(
-            ["D:\\__projects\\_programming\\vcpkg", "C:\\vcpkg"]
-                .iter()
-                .map(|s| s.to_string()),
-        )
+        .chain(vcpkg_fallback_paths())
         .find(|root| {
             Path::new(root)
                 .join("scripts/buildsystems/vcpkg.cmake")
                 .exists()
                 && Path::new(root)
-                    .join("installed/x64-windows/include/pxr/pxr.h")
+                    .join(format!("installed/{}/include/pxr/pxr.h", triplet))
                     .exists()
         });
 
@@ -79,33 +134,21 @@ fn main() {
     // Link the USD bridge library
     println!(
         "cargo:rustc-link-search=native={}",
-        build_dir.join("Release").display()
+        build_dir.join(cmake_build_subdir()).display()
     );
     println!("cargo:rustc-link-lib=static=usd_bridge");
 
     // Link USD libraries from vcpkg
-    // Note: vcpkg puts USD import libs (.lib) in bin/ folder alongside DLLs
     if let Ok(vcpkg_root) = env::var("VCPKG_ROOT") {
-        let lib_path = format!("{}\\installed\\x64-windows\\lib", vcpkg_root);
-        let bin_path = format!("{}\\installed\\x64-windows\\bin", vcpkg_root);
-        println!("cargo:rustc-link-search=native={}", lib_path);
-        println!("cargo:rustc-link-search=native={}", bin_path);
+        let (lib_path, bin_path) = vcpkg_lib_bin_paths(&vcpkg_root);
+        println!("cargo:rustc-link-search=native={}", lib_path.display());
+        println!("cargo:rustc-link-search=native={}", bin_path.display());
     } else {
-        // Try to find vcpkg in common locations
-        let possible_vcpkg_paths = vec![
-            (
-                "D:\\__projects\\_programming\\vcpkg\\installed\\x64-windows\\lib",
-                "D:\\__projects\\_programming\\vcpkg\\installed\\x64-windows\\bin",
-            ),
-            (
-                "C:\\vcpkg\\installed\\x64-windows\\lib",
-                "C:\\vcpkg\\installed\\x64-windows\\bin",
-            ),
-        ];
-        for (lib_path, bin_path) in possible_vcpkg_paths {
-            if Path::new(lib_path).exists() {
-                println!("cargo:rustc-link-search=native={}", lib_path);
-                println!("cargo:rustc-link-search=native={}", bin_path);
+        for root in vcpkg_fallback_paths() {
+            let (lib_path, bin_path) = vcpkg_lib_bin_paths(&root);
+            if lib_path.exists() {
+                println!("cargo:rustc-link-search=native={}", lib_path.display());
+                println!("cargo:rustc-link-search=native={}", bin_path.display());
                 break;
             }
         }
@@ -141,12 +184,14 @@ fn main() {
     // TBB (required by USD)
     println!("cargo:rustc-link-lib=tbb12");
 
-    // Windows system libraries
+    // Platform system libraries
     if cfg!(windows) {
         println!("cargo:rustc-link-lib=ws2_32");
         println!("cargo:rustc-link-lib=dbghelp");
         println!("cargo:rustc-link-lib=shlwapi");
         println!("cargo:rustc-link-lib=advapi32");
+    } else {
+        println!("cargo:rustc-link-lib=stdc++");
     }
 }
 
@@ -182,21 +227,28 @@ fn find_cmake() -> String {
         return "cmake".to_string();
     }
 
-    // Visual Studio 2022 bundled CMake
-    let vs_cmake = "C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\Common7\\IDE\\CommonExtensions\\Microsoft\\CMake\\CMake\\bin\\cmake.exe";
-    if Path::new(vs_cmake).exists() {
-        return vs_cmake.to_string();
-    }
+    if cfg!(windows) {
+        // Visual Studio 2022 bundled CMake
+        let vs_cmake = r"C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe";
+        if Path::new(vs_cmake).exists() {
+            return vs_cmake.to_string();
+        }
 
-    // Fallback locations
-    let fallbacks = [
-        "C:\\Program Files\\CMake\\bin\\cmake.exe",
-        "C:\\Program Files (x86)\\CMake\\bin\\cmake.exe",
-    ];
-
-    for path in fallbacks {
-        if Path::new(path).exists() {
-            return path.to_string();
+        let fallbacks = [
+            r"C:\Program Files\CMake\bin\cmake.exe",
+            r"C:\Program Files (x86)\CMake\bin\cmake.exe",
+        ];
+        for path in fallbacks {
+            if Path::new(path).exists() {
+                return path.to_string();
+            }
+        }
+    } else {
+        let fallbacks = ["/usr/bin/cmake", "/usr/local/bin/cmake", "/snap/bin/cmake"];
+        for path in fallbacks {
+            if Path::new(path).exists() {
+                return path.to_string();
+            }
         }
     }
 
@@ -212,20 +264,19 @@ fn build_usd_bridge(cpp_dir: &Path, build_dir: &Path, toolchain: &str) {
     let cmake = find_cmake();
 
     // CMake configure
+    let mut configure_args = vec![
+        "-S".to_string(),
+        cpp_dir.to_str().unwrap().to_string(),
+        "-B".to_string(),
+        ".".to_string(),
+    ];
+    configure_args.extend(cmake_generator_args());
+    configure_args.push(format!("-DCMAKE_TOOLCHAIN_FILE={}", toolchain));
+    configure_args.push("-DCMAKE_BUILD_TYPE=Release".to_string());
+
     let configure_status = Command::new(&cmake)
         .current_dir(build_dir)
-        .args([
-            "-S",
-            cpp_dir.to_str().unwrap(),
-            "-B",
-            ".",
-            "-G",
-            "Visual Studio 17 2022",
-            "-A",
-            "x64",
-            &format!("-DCMAKE_TOOLCHAIN_FILE={}", toolchain),
-            "-DCMAKE_BUILD_TYPE=Release",
-        ])
+        .args(&configure_args)
         .status()
         .expect("Failed to run cmake configure");
 
@@ -289,32 +340,21 @@ fn build_oiio_bridge() {
     // Link the OIIO bridge library
     println!(
         "cargo:rustc-link-search=native={}",
-        build_dir.join("Release").display()
+        build_dir.join(cmake_build_subdir()).display()
     );
     println!("cargo:rustc-link-lib=static=oiio_bridge");
 
     // Link OIIO libraries from vcpkg
     if let Ok(vcpkg_root) = env::var("VCPKG_ROOT") {
-        let lib_path = format!("{}\\installed\\x64-windows\\lib", vcpkg_root);
-        let bin_path = format!("{}\\installed\\x64-windows\\bin", vcpkg_root);
-        println!("cargo:rustc-link-search=native={}", lib_path);
-        println!("cargo:rustc-link-search=native={}", bin_path);
+        let (lib_path, bin_path) = vcpkg_lib_bin_paths(&vcpkg_root);
+        println!("cargo:rustc-link-search=native={}", lib_path.display());
+        println!("cargo:rustc-link-search=native={}", bin_path.display());
     } else {
-        // Try to find vcpkg in common locations
-        let possible_vcpkg_paths = vec![
-            (
-                "D:\\__projects\\_programming\\vcpkg\\installed\\x64-windows\\lib",
-                "D:\\__projects\\_programming\\vcpkg\\installed\\x64-windows\\bin",
-            ),
-            (
-                "C:\\vcpkg\\installed\\x64-windows\\lib",
-                "C:\\vcpkg\\installed\\x64-windows\\bin",
-            ),
-        ];
-        for (lib_path, bin_path) in possible_vcpkg_paths {
-            if Path::new(lib_path).exists() {
-                println!("cargo:rustc-link-search=native={}", lib_path);
-                println!("cargo:rustc-link-search=native={}", bin_path);
+        for root in vcpkg_fallback_paths() {
+            let (lib_path, bin_path) = vcpkg_lib_bin_paths(&root);
+            if lib_path.exists() {
+                println!("cargo:rustc-link-search=native={}", lib_path.display());
+                println!("cargo:rustc-link-search=native={}", bin_path.display());
                 break;
             }
         }
@@ -358,25 +398,32 @@ fn build_oiio_bridge_cmake(cpp_dir: &Path, build_dir: &Path) {
     let cmake = find_cmake();
 
     // Find vcpkg toolchain file
-    let vcpkg_root = env::var("VCPKG_ROOT")
-        .unwrap_or_else(|_| "D:\\__projects\\_programming\\vcpkg".to_string());
+    let vcpkg_root = env::var("VCPKG_ROOT").unwrap_or_else(|_| {
+        vcpkg_fallback_paths()
+            .into_iter()
+            .find(|p| {
+                Path::new(p)
+                    .join("scripts/buildsystems/vcpkg.cmake")
+                    .exists()
+            })
+            .unwrap_or_else(|| panic!("VCPKG_ROOT not set and no vcpkg found in fallback paths"))
+    });
     let toolchain = format!("{}/scripts/buildsystems/vcpkg.cmake", vcpkg_root);
 
     // CMake configure
+    let mut configure_args = vec![
+        "-S".to_string(),
+        cpp_dir.to_str().unwrap().to_string(),
+        "-B".to_string(),
+        ".".to_string(),
+    ];
+    configure_args.extend(cmake_generator_args());
+    configure_args.push(format!("-DCMAKE_TOOLCHAIN_FILE={}", toolchain));
+    configure_args.push("-DCMAKE_BUILD_TYPE=Release".to_string());
+
     let configure_status = Command::new(&cmake)
         .current_dir(build_dir)
-        .args([
-            "-S",
-            cpp_dir.to_str().unwrap(),
-            "-B",
-            ".",
-            "-G",
-            "Visual Studio 17 2022",
-            "-A",
-            "x64",
-            &format!("-DCMAKE_TOOLCHAIN_FILE={}", toolchain),
-            "-DCMAKE_BUILD_TYPE=Release",
-        ])
+        .args(&configure_args)
         .status()
         .expect("Failed to run cmake configure for OIIO bridge");
 

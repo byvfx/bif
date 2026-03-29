@@ -791,8 +791,10 @@ fn main() -> Result<()> {
     log::info!("Running event loop");
     event_loop.run_app(&mut app)?;
 
-    // Force-exit to avoid zombie process from native library teardown.
+    // Force-exit on Windows to avoid zombie process from DLL teardown.
     // wgpu/USD/Embree DLL finalization can deadlock on Windows.
     // Save dialog runs before event_loop.exit() so no data loss risk.
+    // Linux/macOS clean up shared libraries without deadlocking.
+    #[cfg(windows)]
     std::process::exit(0);
 }
