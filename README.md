@@ -1,30 +1,36 @@
-# BIF - VFX Scene Assembler & Renderer
+# BIF
 
-> Production-grade renderer inspired by Isotropix Clarisse, built in Rust
+> Lightweight VFX scene assembler and renderer. Load USD. Instance massively. Render.
 
-## Current Status: v0.12.0
+<!-- TODO: add hero render image -->
+<!-- ![BIF Render](renders/hero.png) -->
 
-**VFX Scene Assembly + Rendering** — load USD → instance → render → export
+---
 
-- Dual rendering: Vulkan viewport (60 FPS) + Ivar CPU path tracer
-- **USD:** Full C++ bridge (USDA/USDC/references), deferred payload loading (LoadNone)
-- **USD export:** Dual UsdPreviewSurface + OpenPBR MaterialX, sublayer composition
-- **Batch render:** EXR sequences with AOVs, USD camera animation
-- **Large scenes:** GPU buffer guards, adaptive texture downscale, 2048 texture slots
-- GPU instancing: 10K+ instances with LOD culling
-- **Animation:** Timeline UI, transform + vertex animation, viewport camera sync
-- Intel Embree 4: Production-quality ray tracing
-- Materials: OpenPBR Surface v1.1 with IOR-based Fresnel, VNDF GGX sampling, energy-conserving diffuse
-- HDRI environment maps: GPU compute IBL (irradiance + prefiltered + BRDF LUT)
-- Textured PBR viewport with per-face materials (GeomSubsets)
-- OpenImageIO integration with subprocess .tx conversion (optional)
-- **Node graph:** 10 node types (scatter, instance, export, etc.)
-- Scene browser + property inspector + undo/redo
-- Purpose filtering (render/proxy/guide visibility toggle)
-- SHARC radiance cache (idTech 8 inspired)
-- 390+ tests passing across 6 crates
+## What is BIF?
 
-**Next:** M29.5 egui upgrade → M30 persistence
+BIF is a focused scene assembly tool for VFX, inspired by Clarisse and Gaffer. It does one thing well: take USD scenes, scatter and instance geometry at scale, and render production-quality images.
+
+Built from scratch in Rust with a USD-native pipeline.
+
+**BIF is not** a general-purpose 3D package. It doesn't model, rig, or animate. It assembles scenes authored in Houdini, Maya, or Blender and renders them.
+
+---
+
+## Features
+
+| | |
+|---|---|
+| **USD-Native** | Full C++ bridge — USDA/USDC, references, payloads, deferred loading |
+| **Massive Instancing** | 10K-1M instances with GPU LOD culling |
+| **Dual Rendering** | Vulkan viewport (60 FPS) + Ivar CPU path tracer (OpenPBR Surface v1.1) |
+| **Node Graph** | 10 node types — scatter, instance, export, cache, graft |
+| **Materials** | OpenPBR + UsdPreviewSurface + MaterialX import |
+| **Batch Render** | EXR sequences with AOVs, camera animation, OIDN denoising |
+| **Persistence** | .bif/.bifa project files, auto/manual eval modes, cache nodes |
+| **Embree 4** | Production ray tracing with subdivision surfaces |
+| **HDRI Lighting** | GPU-computed IBL (irradiance + prefiltered + BRDF LUT) |
+| **USD Export** | Round-trip with dual material export (UsdPreviewSurface + OpenPBR MaterialX) |
 
 ---
 
@@ -32,112 +38,76 @@
 
 ```bash
 # Build and run
-cargo run --package bif_viewer
+cargo run -p bif_viewer
 
-# Build with OIIO support (optional, requires vcpkg openimageio)
-cargo build --features oiio
-
-# Build with OIDN denoising (optional, requires Intel OIDN)
-# Set OIDN_DIR to your OIDN install path, ensure DLLs in PATH
-cargo build --features oidn
-
-# Run tests
-cargo test
-
-# Load USD scene (needs USD env)
+# With USD scene (needs USD env)
 . .\setup_usd_env.ps1
-cargo run -p bif_viewer -- --usd assets/lucy/usd/assets/lucy/lucy.usd
+cargo run -p bif_viewer
+
+# Optional features
+cargo build --features oidn    # Intel OIDN denoising
+cargo build --features oiio    # OpenImageIO .tx conversion
 ```
 
----
+### Viewport Controls
 
-## Features
-
-- **Massive Instancing:** 10K-1M instances via prototype/instance architecture
-- **Dual Renderers:**
-  - **GPU (Vulkan):** Real-time textured PBR at 60+ FPS
-  - **CPU (Ivar):** Production path tracing with OpenPBR Surface v1.1 (VNDF GGX, energy-conserving diffuse)
-- **USD Workflow:** Import USDA/USDC scenes from Houdini/Maya
-- **Materials:** UsdPreviewSurface + MaterialX OpenPBR/standard_surface
-- **Textures:** Per-face materials via GeomSubsets, parallel loading
-- **OIDN Denoising:** Optional Intel OIDN for final-frame denoising (viewport + batch)
-- **OIIO Support:** Optional OpenImageIO with subprocess .tx conversion and mipmaps
-- **IBL:** GPU compute environment maps (irradiance, prefiltered, BRDF LUT)
-- **Intel Embree 4:** Production two-level BVH ray tracing
-- **File References:** `@path.usda@</Prim>` resolved automatically
+| Input | Action |
+|-------|--------|
+| Left drag | Orbit |
+| Middle drag | Pan |
+| Scroll | Dolly |
+| WASD + QE | Fly |
+| F | Frame selection |
 
 ---
 
 ## Architecture
 
-```text
+```
 bif/
 ├── crates/
-│   ├── bif_math/       # Math primitives (Vec3, Ray, AABB, Camera, Transform)
-│   ├── bif_core/       # Scene graph, USD parser, mesh data, materials, textures
-│   ├── bif_viewport/   # GPU viewport (wgpu + Vulkan + egui)
-│   ├── bif_renderer/   # CPU path tracer "Ivar" (Embree + Disney BSDF)
-│   ├── bif_viewer/     # Application entry point
-│   └── bif_maketx/     # Standalone .tx converter (subprocess, OIIO)
-├── benchmarks/         # bif_perf: USD performance metrics + audit (7 crate)
-├── cpp/
-│   ├── usd_bridge/     # C++ FFI bridge to Pixar USD
-│   └── oiio_bridge/    # C++ FFI bridge to OpenImageIO (optional)
-├── devlog/             # Development session logs
-├── legacy/             # Original Go raytracer (reference)
-└── renders/            # Render output files
+│   ├── bif_math/       # Vec3, Ray, AABB, Camera, Transform
+│   ├── bif_core/       # Scene graph, USD bridge, materials, textures
+│   ├── bif_renderer/   # "Ivar" CPU path tracer (Embree, OpenPBR)
+│   ├── bif_viewport/   # GPU viewport (wgpu/Vulkan, egui)
+│   ├── bif_viewer/     # Application shell
+│   └── bif_maketx/     # Standalone .tx converter
+├── cpp/usd_bridge/     # C++ FFI to Pixar USD
+└── benchmarks/         # bif_perf performance harness
 ```
 
 ---
 
-## Documentation
-
-### Getting Started
-
-- **[Milestones](MILESTONES.md)** - Complete history + roadmap
-- **[Session Handoff](SESSION_HANDOFF.md)** - Current status and next steps
-
-### Architecture & Design
-
-- **[Architecture](ARCHITECTURE.md)** - Core principles, design decisions
-- **[Houdini Export](HOUDINI_EXPORT.md)** - Best practices for USD export
-
-### Development
-
-- **[Reference](REFERENCE.md)** - Code patterns and best practices
-- **[Dev Logs](devlog/)** - Session-by-session history
-- **[Claude Instructions](CLAUDE.md)** - AI assistant instructions
-
----
-
-## Statistics (Milestone 26)
+## Stats
 
 | Metric | Value |
 |--------|-------|
-| Total LOC | ~12,000 |
-| Tests Passing | 274+ |
-| Milestones Complete | 23 + M26 |
-| Node Types | 10 |
-| Build Time (dev) | ~5s |
-| Runtime FPS | 60+ (VSync) |
-| Instances Rendered | 10K+ with LOD |
-| Total Triangles | 28M+ |
-| Embree BVH Build | 28ms |
-| USD Load (921 meshes) | 5s |
-| USD Load (220K verts) | 0.37s |
+| Rust LOC | ~50,000 |
+| Tests | 400+ |
+| Node types | 10 |
+| Viewport FPS | 60+ (VSync) |
+| Max instances | 1M+ with LOD |
+| Embree BVH build | 28ms |
 
 ---
 
-## Technology Stack
+## Tech Stack
 
-- **Language:** Rust 1.92+
-- **GPU:** wgpu 22.1 (Vulkan/DX12/Metal)
-- **Ray Tracing:** Intel Embree 4.4.0
-- **Math:** glam 0.29 (SIMD)
-- **UI:** egui 0.29 + egui-snarl 0.5 (node graph)
-- **USD:** Pixar USD 25.11 (C++ bridge) + pure Rust parser
-- **Textures:** OpenImageIO 3.0 (optional, via vcpkg)
-- **Format:** USD (USDA/USDC), OBJ (legacy), .tx (tiled mipmapped)
+**Rust** · wgpu 22 (Vulkan/DX12/Metal) · egui 0.29 · Intel Embree 4 · Pixar USD 25.11 (C++) · glam (SIMD) · OpenImageIO (optional) · Intel OIDN (optional)
+
+---
+
+## Roadmap
+
+See **[MILESTONES.md](MILESTONES.md)** for the full version-organized roadmap.
+
+| Next | Theme |
+|------|-------|
+| v0.13.0 | Pipeline foundation *(in progress)* |
+| v0.14.0 | USD debugging tools |
+| v0.15.0 | Qt 6 migration |
+| v0.16.0 | Viewport performance |
+| ... | [Full roadmap](MILESTONES.md) |
 
 ---
 
@@ -145,165 +115,47 @@ bif/
 
 ### Prerequisites
 
-```bash
-# Rust toolchain (1.86+)
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-
-# System dependencies (Windows)
-# Visual Studio 2022 with C++ Desktop Development workload
-
-# System dependencies (Linux)
-sudo apt-get install cmake pkg-config libssl-dev
-```
-
-### Build
+- Rust 1.86+ ([rustup](https://rustup.rs/))
+- Visual Studio 2022 C++ workload (Windows) or cmake + pkg-config (Linux)
+- Pixar USD 25.11 (for USD features)
 
 ```bash
-# Clone repository
 git clone https://github.com/byvfx/bif.git
 cd bif
-
-# Build workspace
 cargo build
-
-# Run viewer
-cargo run --package bif_viewer
-
-# Run tests
 cargo test
 ```
 
----
-
-## Usage Examples
-
-### Load and View USD Scene
-
-```bash
-# Set up USD environment first
-. .\setup_usd_env.ps1
-
-# View Lucy model with MaterialX material
-cargo run -p bif_viewer -- --usd assets/lucy/usd/assets/lucy/lucy.usd
-```
-
-**Viewport Controls:**
-
-- **Left Mouse:** Orbit camera around target
-- **Middle Mouse:** Pan camera and target
-- **Scroll Wheel:** Dolly (zoom in/out)
-- **WASD + QE:** 6DOF camera movement
-- **F:** Frame mesh in viewport
-
-### Toggle Renderers
-
-Use the egui side panel to switch between:
-
-- **Vulkan:** Real-time GPU rendering (60 FPS)
-- **Ivar:** CPU path tracer (progressive, Disney BSDF)
+See **[CLAUDE.md](CLAUDE.md)** for detailed build instructions and feature flags.
 
 ---
 
-## Performance Benchmarking (bif_perf)
+## Documentation
 
-The `bif_perf` crate provides modular USD performance metrics, best-practice auditing, and cross-tool comparison.
-
-```bash
-# Setup USD environment first
-. .\setup_usd_env.ps1
-
-# List available metrics, scenes, audit checks, targets
-cargo run -p bif_perf -- list
-
-# Run benchmarks — all local scenes, 10 iterations (quick test)
-cargo run -p bif_perf -- run all -n 10
-
-# Run on a specific scene or tier
-cargo run -p bif_perf -- run assets/lucy_10000.usda -n 50
-cargo run -p bif_perf -- run medium -n 20
-
-# Run specific metrics only
-cargo run -p bif_perf -- run all -n 10 --metrics stage_open,full_load
-
-# Output as YAML/CSV, or save to file
-cargo run -p bif_perf -- run simple -n 10 -f yaml
-cargo run -p bif_perf -- run simple -n 10 -f csv -o results.csv
-
-# Auto-save with timestamp to benchmarks/results/
-cargo run -p bif_perf -- run all -n 50 --save
-
-# Audit a scene against USD maxperf.html best practices
-cargo run -p bif_perf -- audit assets/lucy_10000.usda
-
-# Compare two saved runs (regression detection)
-cargo run -p bif_perf -- compare benchmarks/results/baseline.yaml benchmarks/results/current.yaml
-
-# Check which official USD test assets are missing
-cargo run -p bif_perf -- download
-```
-
-**Key flags:** `-n` iterations, `-w` warmup, `-t` target (bif/usdview/houdini), `-f` format (terminal/yaml/csv), `-o` output file, `--save` auto-save, `-m` metric filter.
-
-**Add custom scenes:** Edit `benchmarks/src/scenes/mod.rs` → `default_registry()`, or pass any USD file path directly.
-
----
-
-## Roadmap
-
-See [MILESTONES.md](MILESTONES.md) for complete history and future plans.
-
-### Completed (Milestone 23)
-
-- Math library, wgpu viewport, camera controls
-- OBJ/USD loading, GPU instancing, Embree 4
-- egui UI, CPU path tracer "Ivar"
-- USD C++ bridge (USDC, references)
-- Scene browser, property inspector, node graph (10 node types)
-- UsdPreviewSurface + MaterialX materials
-- Disney Principled BSDF with NEE/MIS
-- Textured PBR viewport with GeomSubsets
-- OpenImageIO + .tx texture pipeline (subprocess)
-- HDRI IBL: GPU compute prefiltering, async loading
-- Animation: Timeline UI, transform + vertex animation, batch EXR render
-- Scene interactivity: Picking, gizmos, undo/redo, keyframing
-- Point instancing + scattering (scatter points, PointInstancer node)
-- SHARC radiance cache + Russian roulette path termination
-- USD export pipeline (sublayer composition, xform overrides)
-
-### Next Up
-
-- **Milestone 29:** USD Export (in-progress — most phases done)
-- **Milestone 25:** Volumes/OpenVDB
-
-### Future
-
-- GPU path tracing + ReSTIR
-- Qt 6 UI
+| Doc | Description |
+|-----|-------------|
+| [MILESTONES.md](MILESTONES.md) | Version roadmap |
+| [ROADMAP_DETAIL.md](ROADMAP_DETAIL.md) | Detailed task breakdowns per version |
+| [MILESTONES_HISTORY.md](MILESTONES_HISTORY.md) | Completed milestone history |
+| [CHANGELOG.md](CHANGELOG.md) | Release notes |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | Design decisions |
+| [HOUDINI_EXPORT.md](HOUDINI_EXPORT.md) | USD export best practices |
+| [devlog/](devlog/) | Session-by-session development logs |
 
 ---
 
 ## Contributing
 
-BIF is in active development.
-
-- no contributions at this time, but feel free to open issues or reach out if you're interested in collaborating!
-
-See [MILESTONES.md](MILESTONES.md) for upcoming work.
+BIF is in active development. No contributions at this time, but feel free to open issues.
 
 ---
 
 ## License
 
-MIT License - See [LICENSE](LICENSE) for details
+MIT — See [LICENSE](LICENSE)
 
 ---
 
 ## Acknowledgments
 
-- Inspired by **Isotropix Clarisse**, **Houdini**, and **Gaffer**
-- Built with **Rust**, **wgpu**, **egui**, **glam**, and **USD**
-
----
-
-**Last Updated:** March 6, 2026
-**Status:** M23 + M26 Complete, M29 In Progress | USD export, OIDN denoising, CI/CD pipeline
+Inspired by **Isotropix Clarisse**, **Foundry Katana**, and **Image Engine Gaffer**. Built with Rust, wgpu, egui, USD, and Embree.

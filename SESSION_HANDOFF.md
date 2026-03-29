@@ -1,7 +1,7 @@
 # Session Handoff - March 27, 2026
 
-**Last Updated:** USD performance metrics harness (Phase 1)
-**Next Milestone:** M32 (USD composition inspector & opinion trace)
+**Last Updated:** Documentation overhaul — semver milestones, README rewrite
+**Current Version:** v0.13.0-dev (Pipeline Foundation)
 **Project:** BIF - VFX Scene Assembler & Renderer
 
 ---
@@ -10,76 +10,49 @@
 
 | Status | Details |
 |--------|---------|
-| Complete | Milestones 0-23, M26, M26.1, M19.6, M29.5, M30, M31 |
-| Current | bif_perf Phase 1 complete, Phase 2-5 remaining |
-| Next | bif_perf Phase 2 (full metric suite), then M32 (opinion trace) |
-| Tests | 399+ total across all crates (5 new in bif_perf) |
+| Released | v0.1.0, v0.11.0, v0.12.0 |
+| Current | v0.13.0-dev — M29.5, M30, M31 complete, shipping current work |
+| Next | v0.14.0 (USD debugging), then v0.15.0 (Qt migration) |
+| Tests | 400+ total across all crates |
 | Performance | 60 FPS viewport, 100K instances with LOD, Ivar build ~185ms |
 
 ---
 
 ## Recent Work
 
-### USD Performance Metrics Harness — Phase 1 (Mar 27, 2026)
+### Documentation Overhaul (Mar 27, 2026)
 
-New `bif_perf` crate in `benchmarks/`. Modular Metric trait with 4 implementations (StageOpen, PayloadLoad, StageClose, FullLoad). Scene registry with tier filtering (simple/medium/large/official). Terminal table, YAML, CSV reporters. CLI with `run` and `list` subcommands. Based on USD `ref_performance_metrics.html` methodology. Remaining: Phase 2 (MeshExtract, MaterialLoad, PrimTraversal metrics), Phase 3 (audit checks from maxperf.html), Phase 4 (usdview/Houdini subprocess targets), Phase 5 (historical results + auto-download).
+Reworked project documentation to correlate milestones with semantic versioning:
+- **MILESTONES.md** — rewritten as lean semver roadmap (v0.13.0 through v0.23.0+)
+- **MILESTONES_HISTORY.md** — new file, all completed milestones (M0-M31) moved here
+- **ROADMAP_DETAIL.md** — new file, per-version task lists + acceptance criteria
+- **README.md** — full rewrite, new positioning ("lightweight scene assembly"), updated stats
+- **CHANGELOG.md** — targeting v0.13.0 note
+- **Cargo.toml** — version bumped to 0.13.0-dev
+- **bif-commit skill** — updated for new file structure
+- **vfx-code-reviewer agent** — added version scope awareness
 
-### Fix: Zombie Process + Unsaved Changes Dialog (Mar 26, 2026)
+Key decisions informed by software architect + engineer reviews:
+- Qt migration (v0.15.0) promoted before context system — avoids building UI twice
+- M22/M25/M27 no longer deferred — all scheduled in roadmap
+- 1.0 criteria defined (10 gates)
 
-Fixed two close-related bugs: (1) zombie process after window close — added `process::exit(0)` after event loop to avoid native DLL teardown deadlock on Windows; (2) unsaved changes dialog never showing — added `mark_dirty()` to gizmo drag, undo, redo, keyframe; (3) dialog appearing behind window — hide main window while rfd MessageDialog shows. Stored `Arc<Window>` in Renderer.
+### M30 Complete (Mar 24-26, 2026)
 
-### Per-Tile UDIM Loading (Mar 26, 2026)
+All 6 phases landed: serde foundation, ProjectFile persistence, file menu + save/load UI, eval modes (Auto/Manual/OnMouseRelease), cache node with bypass toggle.
 
-Replaced UDIM atlas stitching with per-tile loading. Each UDIM tile is now an individual texture in the GPU binding array. Shader computes tile offset from UV floor. New `UdimTileSet` type in bif_core provides unified CPU/GPU sampling. Tested with alab scene (743 textures, zero stitching). Next step: switch viewport to async texture streaming path for interactive loading.
+### M31 Complete (Mar 26, 2026)
 
-### M31: Per-Node Scene Graph Visualization (Mar 25, 2026)
+Per-node scene graph visualization — source node tagging, prim count badges, filtered provider.
 
-4-phase implementation:
-1. **Source tagging** — ProceduralPrim.source_node via reverse maps from node_proto_map/node_cloud_map
-2. **Prim count badges** — `[N]` overlay on node headers via NodeGraphContext.node_prim_counts
-3. **Node scene browser** — Scene/Node tab bar, NodeFilteredProvider filters to upstream subgraph
-4. **Row highlighting** — selected node's prims tinted green in full scene browser
+### M29.5 Complete (Mar 23, 2026)
 
-**Pre-existing test failures:** test_should_restart_no_render (known flaky), test_build_property_rows_with_material (Material::default() row count mismatch — needs investigation)
-
-### M30 Phase 1: Serde Foundation (Mar 24, 2026)
-
-Added Serialize/Deserialize derives to all types needed for .bif/.bifa project files:
-- **bif_math:** ProjectionMode, OrthoPreset (Camera handled via CameraData conversion)
-- **bif_core:** PrimitiveKind, PointSource, ScatterMode, UsdSpecifier, UsdKind, UsdPrimType
-- **bif_renderer:** PixelFilter, PixelFilterConfig, SamplerMode, ExrCompression, RadianceCacheConfig
-- **bif_viewport:** SceneNode (all 10 variants, runtime fields `#[serde(skip)]`), GraphNodeId, CameraSource, AovSettings, BatchRenderSettings, PurposeMode, DisplaySettings
-- Enabled egui-snarl `serde` feature (Snarl<SceneNode> serializes nodes+connections+positions)
-- Added bincode dep for .bif binary format
-- Round-trip tests: JSON + bincode for all SceneNode variants, Snarl graph, GraphNodeId
-
-**Plan:** Full M30 plan at `~/.claude/plans/woolly-meandering-avalanche.md` — 6 phases total.
-
-### M29.5 egui UI Overhaul (Mar 23, 2026)
-
-8-phase restructure of the egui UI:
-1. **Theme** — new theme.rs with 28 color constants + apply_theme()
-2. **Colors** — replaced 35+ inline Color32 literals with theme:: constants
-3. **Panels** — scene browser promoted to top of left panel, stats moved to viewport overlay, render settings below browser, removed dead show_ui toggle
-4. **Menu bar** — File (Open USD, Export, Quit), View (Grid, Points), Render (Vulkan, Ivar, Rebuild)
-5. **Node inspector** — params moved from show_body() to property inspector (all 10 node types, ~600 lines)
-6. **Icons** — emoji replaced with colored Unicode geometric shapes
-7. **Tooltips** — 37+ tooltips on all interactive controls
-8. **Empty state** — welcome screen with Open USD button on first launch
-9. **Node selection** — show_header() click detection + accent highlight
-
-Code review fixes: extracted open_usd_file_dialog helper (was 3x duplicated), added BG_OVERLAY_BACKDROP theme constant.
-
-### Known Limitations (from review)
-- show_body() auto-compute coupled to UI rendering — off-screen nodes don't cook (pre-existing, document before M31)
-- egui-snarl 0.5 hardcodes left-click for background panning — middle-mouse needs snarl upgrade
-- `select_stoke` is an upstream typo in egui-snarl (compiles, works, just misspelled)
+egui UI overhaul — centralized theme, panel restructure, property inspector, menu bar, Unicode icons.
 
 ---
 
 ## Next Steps
 
-1. **M30 persistence** — save/load node graphs (serde on SceneNode + NodeGraphState)
-2. **egui 0.30 upgrade** — enables snarl 0.6+ with vertical node layout (Sandwich)
-3. **Consider:** split render_node_properties() into per-node-type functions (~720 lines)
-4. **Consider:** add explicit Recompute button in scatter inspector (safety net for off-screen nodes)
+1. **v0.13.0 release** — final validation, version bump, ship current work
+2. **v0.14.0 planning** — USD composition inspector + opinion trace (M32, M33)
+3. **v0.15.0 research** — Qt 6 Rust bindings evaluation (cxx, ritual, qt-build-utils)
