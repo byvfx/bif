@@ -411,7 +411,7 @@ dependencies = [
 
 [[package]]
 name = "bif_perf"
-version = "0.12.0"
+version = "0.13.0-dev"
 dependencies = [
  "bif_core",
  "chrono",
