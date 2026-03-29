@@ -34,6 +34,8 @@
 
 pub mod cpp_bridge;
 pub mod export;
+pub(crate) mod ffi_convert;
+pub(crate) mod ffi_raw;
 mod loader;
 mod types;
 pub mod validate;
