@@ -97,6 +97,29 @@ bif/
 
 ---
 
+## Performance Benchmarking (bif_perf)
+
+Modular USD performance metrics, best-practice auditing, and cross-tool comparison.
+
+```bash
+. .\setup_usd_env.ps1
+
+cargo run -p bif_perf -- list                          # show metrics, scenes, targets
+cargo run -p bif_perf -- run all -n 10                 # quick test, all local scenes
+cargo run -p bif_perf -- run medium -n 50 --save       # save YAML to benchmarks/results/
+cargo run -p bif_perf -- run assets/scene.usdc -n 100  # specific file
+cargo run -p bif_perf -- run all --metrics stage_open,full_load -f yaml
+cargo run -p bif_perf -- audit assets/scene.usdc       # maxperf.html best-practice checks
+cargo run -p bif_perf -- compare baseline.yaml current.yaml  # regression detection
+cargo run -p bif_perf -- download                      # show missing official USD assets
+```
+
+**Flags:** `-n` iterations, `-w` warmup, `-t` target (bif/usdview/houdini), `-f` format (terminal/yaml/csv), `-o` file, `--save`, `-m` metric filter
+
+**Custom scenes:** Edit `benchmarks/src/scenes/mod.rs` or pass any USD path directly.
+
+---
+
 ## Roadmap
 
 See **[MILESTONES.md](MILESTONES.md)** for the full version-organized roadmap.
