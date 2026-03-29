@@ -79,6 +79,7 @@ bif/
 │   ├── bif_renderer/   # CPU path tracer "Ivar" (Embree + Disney BSDF)
 │   ├── bif_viewer/     # Application entry point
 │   └── bif_maketx/     # Standalone .tx converter (subprocess, OIIO)
+├── benchmarks/         # bif_perf: USD performance metrics + audit (7 crate)
 ├── cpp/
 │   ├── usd_bridge/     # C++ FFI bridge to Pixar USD
 │   └── oiio_bridge/    # C++ FFI bridge to OpenImageIO (optional)
@@ -200,6 +201,50 @@ Use the egui side panel to switch between:
 
 - **Vulkan:** Real-time GPU rendering (60 FPS)
 - **Ivar:** CPU path tracer (progressive, Disney BSDF)
+
+---
+
+## Performance Benchmarking (bif_perf)
+
+The `bif_perf` crate provides modular USD performance metrics, best-practice auditing, and cross-tool comparison.
+
+```bash
+# Setup USD environment first
+. .\setup_usd_env.ps1
+
+# List available metrics, scenes, audit checks, targets
+cargo run -p bif_perf -- list
+
+# Run benchmarks — all local scenes, 10 iterations (quick test)
+cargo run -p bif_perf -- run all -n 10
+
+# Run on a specific scene or tier
+cargo run -p bif_perf -- run assets/lucy_10000.usda -n 50
+cargo run -p bif_perf -- run medium -n 20
+
+# Run specific metrics only
+cargo run -p bif_perf -- run all -n 10 --metrics stage_open,full_load
+
+# Output as YAML/CSV, or save to file
+cargo run -p bif_perf -- run simple -n 10 -f yaml
+cargo run -p bif_perf -- run simple -n 10 -f csv -o results.csv
+
+# Auto-save with timestamp to benchmarks/results/
+cargo run -p bif_perf -- run all -n 50 --save
+
+# Audit a scene against USD maxperf.html best practices
+cargo run -p bif_perf -- audit assets/lucy_10000.usda
+
+# Compare two saved runs (regression detection)
+cargo run -p bif_perf -- compare benchmarks/results/baseline.yaml benchmarks/results/current.yaml
+
+# Check which official USD test assets are missing
+cargo run -p bif_perf -- download
+```
+
+**Key flags:** `-n` iterations, `-w` warmup, `-t` target (bif/usdview/houdini), `-f` format (terminal/yaml/csv), `-o` output file, `--save` auto-save, `-m` metric filter.
+
+**Add custom scenes:** Edit `benchmarks/src/scenes/mod.rs` → `default_registry()`, or pass any USD file path directly.
 
 ---
 
