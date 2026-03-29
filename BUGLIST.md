@@ -13,8 +13,6 @@
 
 ### Selective Prim Loading
 
-- Research Katana/Houdini prim-load UI patterns
-- Implement selective USD load (avoid full-stage load on large scenes)
 - Prioritize: artists need simple UI, optional deep control
 
 ## Features
@@ -31,7 +29,7 @@
 - Sub-surface scattering (skin, organic materials)
 - Multi-layer/complex BRDF support
 - Test with self-authored assets
-- Check to  see if proxies  have materials
+- Check to  see if proxies have materials if not use displace color
 
 ### Viewport & Rendering
 
@@ -45,6 +43,7 @@
 ## Architecture
 
 - Double-check USD schema compliance (custom vs standard)
+- Add USD skeletal animation support (joints, skinning, blendshapes)
 
 ### Scene Assembly (Novel Approach)
 

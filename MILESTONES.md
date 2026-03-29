@@ -21,18 +21,19 @@ Roadmap organized by semantic version. Each release is testable, demoable, and g
 | Version | Theme | Est. Hours | Key Milestones |
 |---------|-------|-----------|----------------|
 | **v0.13.0** | **Pipeline Foundation** | — | M29.5, M30, M31 *(in progress)* |
-| v0.14.0 | USD Debugging | 35-50h | M32, M33 |
-| v0.15.0 | Qt Migration | 50-60h | M28 |
-| v0.16.0 | Viewport Performance | 20-30h | M22 |
-| v0.17.0 | Context System | 30-40h | M39 |
-| v0.18.0 | Scene Authoring | 30-40h | M37, M38 |
-| v0.19.0 | MaterialX Authoring | 25-30h | M40 |
-| v0.20.0 | GPU Path Tracing | 30-40h | M27 |
-| v0.21.0 | Volumes & OpenVDB | 20-30h | M25 |
-| v0.22.0 | API & Integration | 40-55h | M35, M34 |
-| v0.23.0+ | Framework Extraction | 40+h | M36+ |
+| v0.14.0 | Layer-Aware Stage | 35-50h | M32, M33 + workflow Phase 1 |
+| v0.15.0 | Qt Migration | 50-60h | M28 (three-panel layout target) |
+| v0.16.0 | Edit Operations + Save | 30-40h | Workflow Phase 2 + templates |
+| v0.17.0 | Viewport Performance | 25-35h | M22 + payload policies |
+| v0.18.0 | Context System | 30-40h | M39 |
+| v0.19.0 | Scene Authoring + Layer Diff | 35-45h | M37, M38 + workflow Phase 7 |
+| v0.20.0 | MaterialX Authoring | 25-30h | M40 |
+| v0.21.0 | GPU Path Tracing | 30-40h | M27 |
+| v0.22.0 | Volumes & OpenVDB | 20-30h | M25 |
+| v0.23.0 | API & Integration | 40-55h | M35, M34 |
+| v0.24.0+ | Framework Extraction | 40+h | M36+ |
 
-**Total estimated:** ~340-445h remaining to 1.0
+**Total estimated:** ~360-475h remaining to 1.0
 
 ---
 
@@ -40,43 +41,77 @@ Roadmap organized by semantic version. Each release is testable, demoable, and g
 
 M29.5 (UI overhaul), M30 (persistence + eval modes), M31 (per-node viz), unreleased perf fixes. **Last egui feature release.** Ship current work.
 
-### v0.14.0 — USD Debugging
+### v0.14.0 — Layer-Aware Stage
 
-M32 (composition inspector + opinion trace), M33 (debugging tools). "Understand your USD scene." **Last release on egui UI** — logic is UI-agnostic for later Qt port.
+Merges workflow Phase 1 + old M32/M33. BIF starts understanding USD layers. **Last release on egui UI** — logic is UI-agnostic for Qt port.
+- FFI expansion: minimal subset — `SdfLayer` read, `GetEditTarget`, `GetPrimStack`, payload load/unload
+- Open USD stage → parse sublayer stack → display layer list in UI
+- Select working layer → layer isolation mode (edit layer writable, others locked)
+- `PayloadPolicy::LoadAll` and `PayloadPolicy::BoundingBoxOnly`
+- Opinion inspector (which layer contributes which value)
+- Composition arc visualization
+- File watching: detect external sublayer changes, offer reload
+- Node graph: add "Layer Stack" node, color-code nodes (blue=composition, orange=operations)
+- **Validation**: Open multi-layer USD from Houdini, see layer stack, toggle layers, see opinion sources
 
 ### v0.15.0 — Qt Migration
 
-M28 (Qt 6 UI framework). **The pivot — everything after is Qt-native.** Port scene browser, property inspector, node graph, viewport. Largest single release.
+M28 (Qt 6 UI framework). **The pivot — everything after is Qt-native.** Target: three-panel layout from [BIF_USD_WORKFLOW.md](BIF_USD_WORKFLOW.md).
+- Port scene browser, property inspector, node graph, viewport
+- Add USDA code preview panel (read-only initially, shows active layer content)
+- Three-panel sync: select in one → highlights in others
+- Layer indicators in stage tree (colored dots showing opinion sources)
 
-### v0.16.0 — Viewport Performance
+### v0.16.0 — Edit Operations + Save
 
-M22 (Vulkan 1.3, lazy loading, GPU-driven rendering). Foundation for production-scale scenes before authoring tools land.
+Workflow Phase 2. BIF becomes a real editor.
+- `EditOperation` enum with `to_usda()` for core types (Transform, MaterialAssign, Visibility, MaterialParamOverride)
+- `EditHistory` with undo/redo (builds on existing `EditState` + `UndoStack`)
+- Save to layer file on disk (Ctrl+S writes active layer only)
+- Auto-save to `.bif_autosave_<layer>.usd`
+- Live USDA code preview updates as artist works
+- Existing nodes (scatter, instancer) gain `to_usda()` — write to active layer continuously
+- Shot templates: JSON-configurable presets (`~/.bif/templates/`), `BIF_TEMPLATE_DIR` env var override
+- **Validation**: Make edits in BIF, save, open in usdview, verify edits compose correctly
 
-### v0.17.0 — Context System
+### v0.17.0 — Viewport Performance
+
+M22 (Vulkan 1.3, lazy loading, GPU-driven rendering) + deferred loading from workflow doc.
+- `PayloadPolicy::CameraFrustum` and `PayloadPolicy::Manual`
+- `RenderContext` with on-demand prototype loading
+- `PrototypeState` enum (BoundingBox / Loaded / Deferred)
+- LRU cache for prototype eviction + Embree BVH integration
+
+### v0.18.0 — Context System
 
 M39 (Assembly/Materials/Animation contexts, multi-graph). Built in Qt. Highest architectural risk — touches scene_loader, render, property_inspector.
 
-### v0.18.0 — Scene Authoring
+### v0.19.0 — Scene Authoring + Layer Diff
 
-M37 (lights) + M38 (materials + shader graph on context arch). "Create content without external USD." Includes namespace editor.
+M37 (lights) + M38 (materials) + workflow Phase 7. "Create content + see what you changed."
+- Layer diff panel: semantic diff of edit layer vs composed base
+- Point edit mode with soft-select (vertex nudging, `points` override)
+- `AnimKey` operation for simple keyframe overrides (`timeSamples` output)
+- `ScatterInstances` operation integrated into edit layer authoring
+- New operation nodes: Material Override, Anim Key, Point Edit
 
-### v0.19.0 — MaterialX Authoring
+### v0.20.0 — MaterialX Authoring
 
 M40 (standard_surface graph, XML round-trip, node previews). Built on context system in Materials context.
 
-### v0.20.0 — GPU Path Tracing
+### v0.21.0 — GPU Path Tracing
 
 M27 (wgpu compute, BVH on GPU, ReSTIR). Fast material preview for authoring workflows.
 
-### v0.21.0 — Volumes & OpenVDB
+### v0.22.0 — Volumes & OpenVDB
 
 M25 (fog, smoke, clouds, VDB support). Fills the biggest production content gap.
 
-### v0.22.0 — API & Integration
+### v0.23.0 — API & Integration
 
 M35 (API cleanup) then M34 (PyO3 pipeline integration). "Embed BIF in studio pipelines."
 
-### v0.23.0+ — Framework Extraction
+### v0.24.0+ — Framework Extraction
 
 M36+ (widget crates, plugin system, DCC connectors). "Reusable VFX framework crates."
 
@@ -92,16 +127,17 @@ M36+ (widget crates, plugin system, DCC connectors). "Reusable VFX framework cra
 
 ## 1.0 Criteria
 
-1. Reliable USD round-trip (Houdini → BIF → export → re-import, no data loss)
-2. Scene authoring without external tools (lights, materials, scatter, export)
-3. Save/load with auto-save and crash recovery
-4. Undo/redo for all authoring operations
-5. Production batch rendering with denoising
-6. GPU path tracing for interactive preview
-7. Volume rendering (VDB)
-8. Qt-based professional UI
-9. User-facing error messages
-10. User documentation
+1. Layer-aware USD editing (open stage, pick layer, edit, save clean USD)
+2. Reliable USD round-trip (Houdini → BIF → export → re-import, no data loss)
+3. Scene authoring without external tools (lights, materials, scatter, export)
+4. Save/load with auto-save and crash recovery
+5. Undo/redo for all authoring operations
+6. Production batch rendering with denoising
+7. GPU path tracing for interactive preview
+8. Volume rendering (VDB)
+9. Qt-based professional UI with three-panel layout
+10. User-facing error messages
+11. User documentation
 
 ---
 

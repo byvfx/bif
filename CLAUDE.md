@@ -16,8 +16,9 @@ You Create a new DCC that is inspired by Clarisse / Houdini, focused on VFX scen
 
 - **Status:** v0.12.0 released (USD export, OpenPBR, subsystem extraction). v0.13.0 in progress.
 - **Current:** v0.13.0 — Pipeline Foundation (M29.5 UI overhaul, M30 persistence, M31 per-node viz)
-- **Next:** v0.14.0 (USD debugging) → v0.15.0 (Qt migration) → v0.16.0 (viewport perf) — see [MILESTONES.md](MILESTONES.md)
-- **Goal:** Load Houdini USD → instance massively → render → export USD
+- **Next:** v0.14.0 (layer-aware stage) → v0.15.0 (Qt migration) → v0.16.0 (edit ops + save) — see [MILESTONES.md](MILESTONES.md)
+- **Goal:** Layer-aware USD editor + scene assembler — open stage, pick layer, edit, save clean USD
+- **Design:** [BIF_USD_WORKFLOW.md](BIF_USD_WORKFLOW.md) — hybrid approach (procedural nodes + layer awareness)
 - **Timeline:** Side project, 10-20 hrs/week
 
 ### Key Architecture
