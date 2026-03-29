@@ -8,6 +8,8 @@
 - Compare bif vs usdview on reference scenes (OpenUSD docs + custom assets)
 - Index [OpenUSD v25 perf guide](https://openusd.org/release/ref_performance_metrics.html), audit codebase compliance
 - Plan upgrade to USD v26 post-stabilization
+- Test on  SSD for  speeds
+- Look into Rendermans denoising
 
 ### Selective Prim Loading
 
@@ -29,11 +31,16 @@
 - Sub-surface scattering (skin, organic materials)
 - Multi-layer/complex BRDF support
 - Test with self-authored assets
+- Check to  see if proxies  have materials
 
 ### Viewport & Rendering
 
 - Subdivision surface validation (re-test custom assets)
 - Camera safe-area greybox overlay
+- Fix show background in hdri properties
+- Get display color of prims to display in viewport as option to textured, also make one with no lighting.
+- Check depth and add to ui
+- OpenSubdiv support
 
 ## Architecture
 
