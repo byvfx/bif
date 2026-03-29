@@ -12,6 +12,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **USD best-practices audit** — AuditCheck trait with 6 checks from maxperf.html: binary format, payload usage, prim count, instance usage, Alembic detection, layer count (skip). CLI `audit` subcommand with pass/warn/fail/skip output.
 - **External measurement targets** — usdview (Python/pxr subprocess) and Houdini (hython subprocess) targets for cross-tool USD load time comparison
 - **Benchmark comparison** — `compare` subcommand loads two YAML result files, shows per-metric delta_ms/delta_%/FASTER/SLOWER/~same
+- **Historical results storage** — `--save` flag auto-saves YAML to `benchmarks/results/` with timestamp + `latest_{target}.yaml`
+- **Asset download helper** — `download` subcommand shows missing official assets with download URLs (Kitchen Set, ALab, Moore Lane)
 - **Per-tile UDIM loading** — UdimTileSet/UdimGridLayout types in bif_core, per-tile sampling (CPU+GPU), contiguous texture array blocks with shader tile offset. Eliminates atlas stitching (~3s/set). Unified CPU/GPU path ready for material editor.
 
 ### Fixed

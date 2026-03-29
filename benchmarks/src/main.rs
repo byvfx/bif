@@ -51,6 +51,10 @@ enum Command {
         /// Run only these metrics (comma-separated IDs).
         #[arg(short, long)]
         metrics: Option<String>,
+
+        /// Auto-save results to benchmarks/results/ with timestamp.
+        #[arg(long)]
+        save: bool,
     },
 
     /// Audit a scene against USD maxperf.html best practices.
@@ -66,6 +70,9 @@ enum Command {
         /// Current results file.
         current: PathBuf,
     },
+
+    /// Show download instructions for missing official test assets.
+    Download,
 
     /// List available scenes, metrics, and targets.
     List,
@@ -88,6 +95,7 @@ fn main() {
             format,
             output,
             metrics: metric_filter,
+            save,
         } => {
             if iterations == 0 {
                 log::error!("iterations must be >= 1");
@@ -137,6 +145,25 @@ fn main() {
             } else {
                 println!("{rendered}");
             }
+
+            // Auto-save YAML to benchmarks/results/ with timestamp
+            if save {
+                let results_dir = workspace_root.join("benchmarks/results");
+                let _ = std::fs::create_dir_all(&results_dir);
+                let ts = chrono::Local::now().format("%Y-%m-%d_%H%M%S");
+                let filename = format!("{ts}_{target}.yaml");
+                let save_path = results_dir.join(&filename);
+                let yaml = report.render(&OutputFormat::Yaml);
+                match std::fs::write(&save_path, &yaml) {
+                    Ok(()) => {
+                        log::info!("Results saved to {}", save_path.display());
+                        // Write latest pointer file
+                        let latest = results_dir.join(format!("latest_{target}.yaml"));
+                        let _ = std::fs::write(&latest, &yaml);
+                    }
+                    Err(e) => log::error!("Failed to save results: {e}"),
+                }
+            }
         }
         Command::Audit { scene } => {
             let scene_path = if scene.is_absolute() {
@@ -161,6 +188,27 @@ fn main() {
                 std::process::exit(1);
             }
         },
+        Command::Download => {
+            let registry = scenes::default_registry();
+            let mut missing = false;
+            for entry in &registry {
+                let Some(ref url) = entry.download_url else {
+                    continue;
+                };
+                let abs = workspace_root.join(&entry.path);
+                if abs.exists() {
+                    println!("[OK]      {} — already at {}", entry.name, entry.path);
+                } else {
+                    missing = true;
+                    println!("[MISSING] {} — download from:", entry.name);
+                    println!("          {url}");
+                    println!("          Extract to: {}", entry.path);
+                }
+            }
+            if !missing {
+                println!("\nAll official assets present.");
+            }
+        }
         Command::List => {
             println!("=== Metrics ===");
             for m in metrics::all_bif_metrics() {

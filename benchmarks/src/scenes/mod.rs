@@ -43,6 +43,8 @@ pub struct SceneEntry {
     /// Relative path from workspace root.
     pub path: String,
     pub tier: SceneTier,
+    /// Download URL for official assets (None for in-repo scenes).
+    pub download_url: Option<String>,
 }
 
 /// All registered scenes.
@@ -53,44 +55,52 @@ pub fn default_registry() -> Vec<SceneEntry> {
             name: "Cube".into(),
             path: "assets/cube.usd".into(),
             tier: SceneTier::Simple,
+            download_url: None,
         },
         SceneEntry {
             name: "Boxes 100".into(),
             path: "assets/boxes_100.usda".into(),
             tier: SceneTier::Simple,
+            download_url: None,
         },
         // Medium
         SceneEntry {
             name: "Lucy 100".into(),
             path: "assets/lucy_100.usda".into(),
             tier: SceneTier::Medium,
+            download_url: None,
         },
         SceneEntry {
             name: "Lucy 900".into(),
             path: "assets/lucy_900.usda".into(),
             tier: SceneTier::Medium,
+            download_url: None,
         },
         // Large
         SceneEntry {
             name: "Lucy 10000".into(),
             path: "assets/lucy_10000.usda".into(),
             tier: SceneTier::Large,
+            download_url: None,
         },
-        // Official (user-downloaded to assets/perf/)
+        // Official (download to assets/perf/)
         SceneEntry {
             name: "Kitchen Set".into(),
             path: "assets/perf/Kitchen_set/Kitchen_set.usd".into(),
             tier: SceneTier::Official,
+            download_url: Some("https://openusd.org/release/dl_kitchen_set.html".into()),
         },
         SceneEntry {
             name: "ALab".into(),
             path: "assets/perf/ALab/ALab.usd".into(),
             tier: SceneTier::Official,
+            download_url: Some("https://animallogic.com/alab/".into()),
         },
         SceneEntry {
             name: "Moore Lane".into(),
             path: "assets/perf/MooreLane/MooreLane_ASWF_0623.usda".into(),
             tier: SceneTier::Official,
+            download_url: Some("https://dpel.aswf.io/4004-moore-lane/".into()),
         },
     ]
 }
