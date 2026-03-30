@@ -233,6 +233,16 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
             let proto_id = scene.add_prototype(mesh_arc, mesh_data.path.clone());
             mesh_dedup.insert(dedup_key, proto_id);
             prototype_map.insert(mesh_data.path.clone(), proto_id);
+            // Map parent Xform path → same proto_id (common PointInstancer pattern:
+            // prototype targets are Xforms wrapping a single child mesh)
+            if let Some(parent_end) = mesh_data.path.rfind('/') {
+                let parent_path = &mesh_data.path[..parent_end];
+                if !parent_path.is_empty() {
+                    prototype_map
+                        .entry(parent_path.to_string())
+                        .or_insert(proto_id);
+                }
+            }
             proto_id
         };
 

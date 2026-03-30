@@ -1,6 +1,6 @@
-# Session Handoff - March 29, 2026
+# Session Handoff - March 30, 2026
 
-**Last Updated:** FFI bridge split (Phase 1 architecture deepening)
+**Last Updated:** PointInstancer loading fixes
 **Current Version:** v0.13.0-dev (Pipeline Foundation)
 **Project:** BIF - VFX Scene Assembler & Renderer
 
@@ -19,6 +19,14 @@
 ---
 
 ## Recent Work
+
+### PointInstancer Loading Fixes (Mar 30, 2026)
+
+Fixed two bugs preventing time-sampled PointInstancer files (e.g., Pixar's PointInstancedMedCity.usd) from loading:
+1. C++ bridge now uses stage startTimeCode / first sample instead of Default when reading instancer attrs
+2. Rust loader maps parent Xform paths in prototype_map for instancer prototype resolution
+
+Test file: `assets/PointInstancedMedCity.usd` (40K instances, 8 prototypes)
 
 ### Architecture Deepening: Phase 1 FFI Bridge Split (Mar 28-29, 2026)
 

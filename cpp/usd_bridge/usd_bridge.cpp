@@ -1350,17 +1350,35 @@ static void cache_stage_data(UsdBridgeStage* bridge) {
                 cached.prototype_path_ptrs.push_back(path_str.c_str());
             }
 
+            // Determine evaluation time: prefer startTimeCode, fall back to first sample
+            UsdTimeCode evalTime = UsdTimeCode::Default();
+            {
+                std::vector<double> timeSamples;
+                instancer.GetPositionsAttr().GetTimeSamples(&timeSamples);
+                if (timeSamples.empty())
+                    instancer.GetOrientationsAttr().GetTimeSamples(&timeSamples);
+                if (timeSamples.empty())
+                    instancer.GetScalesAttr().GetTimeSamples(&timeSamples);
+                if (!timeSamples.empty()) {
+                    double startTime = bridge->stage->GetStartTimeCode();
+                    if (startTime >= timeSamples.front() && startTime <= timeSamples.back())
+                        evalTime = UsdTimeCode(startTime);
+                    else
+                        evalTime = UsdTimeCode(timeSamples.front());
+                }
+            }
+
             // Get proto indices
             VtArray<int> proto_indices;
-            instancer.GetProtoIndicesAttr().Get(&proto_indices);
+            instancer.GetProtoIndicesAttr().Get(&proto_indices, evalTime);
             cached.proto_indices.assign(proto_indices.begin(), proto_indices.end());
 
             // Compute instance transforms
             VtArray<GfMatrix4d> instance_transforms;
             if (instancer.ComputeInstanceTransformsAtTime(
                     &instance_transforms,
-                    UsdTimeCode::Default(),
-                    UsdTimeCode::Default())) {
+                    evalTime,
+                    evalTime)) {
 
                 // Pre-allocate exact size for transforms
                 cached.transforms.reserve(instance_transforms.size() * 16);
@@ -1377,7 +1395,7 @@ static void cache_stage_data(UsdBridgeStage* bridge) {
             // Velocities (for motion blur interpolation)
             {
                 VtArray<GfVec3f> vels;
-                if (instancer.GetVelocitiesAttr().Get(&vels, UsdTimeCode::Default()) && !vels.empty()) {
+                if (instancer.GetVelocitiesAttr().Get(&vels, evalTime) && !vels.empty()) {
                     cached.velocities.reserve(vels.size() * 3);
                     for (const auto& v : vels) {
                         cached.velocities.push_back(v[0]);
@@ -1390,7 +1408,7 @@ static void cache_stage_data(UsdBridgeStage* bridge) {
             // Angular velocities (for motion blur)
             {
                 VtArray<GfVec3f> angVels;
-                if (instancer.GetAngularVelocitiesAttr().Get(&angVels, UsdTimeCode::Default()) && !angVels.empty()) {
+                if (instancer.GetAngularVelocitiesAttr().Get(&angVels, evalTime) && !angVels.empty()) {
                     cached.angular_velocities.reserve(angVels.size() * 3);
                     for (const auto& v : angVels) {
                         cached.angular_velocities.push_back(v[0]);
