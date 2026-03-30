@@ -70,6 +70,32 @@ cargo fmt --check
 - [MILESTONES.md](MILESTONES.md) - architecture, roadmap
 - [SESSION_HANDOFF.md](SESSION_HANDOFF.md) - current state
 
+## USD Reference
+
+- **Local curated docs:** [`docs/usd/`](docs/usd/) — AI-optimized reference covering core concepts, composition, all major schemas, datatypes, toolset, and common gotchas
+  - `concepts.md` — Stage, Layer, Prim, Property, value resolution, model hierarchy
+  - `composition.md` — LIVRPS, sublayers, references, payloads, variants, inherits, specializes, edit targets
+  - `schemas-geom.md` — UsdGeom (Mesh, Xformable, PointInstancer, Camera, primvars, stage metrics)
+  - `schemas-shade.md` — UsdShade (Material, Shader, NodeGraph, connections, binding, render contexts)
+  - `schemas-lux.md` — UsdLux (all light types, LightAPI, shadow/shaping, filters)
+  - `sdf-foundations.md` — SdfLayer, SdfPath, PrimSpec, file format plugins, asset resolution
+  - `datatypes.md` — All USD types with C++/Rust equivalents, roles, arrays
+  - `toolset.md` — usdcat, usdview, usdedit, usdchecker, usdrecord, etc.
+  - `preview-surface.md` — UsdPreviewSurface spec (all inputs, texture nodes, complete example)
+  - `faq.md` — Common gotchas, pitfalls, format differences
+- **Deep API lookups:** Fetch from `https://openusd.org/release/api/` when specific class/method details needed
+- **Key API URLs for deep dives:**
+  - `https://openusd.org/release/api/class_usd_stage.html`
+  - `https://openusd.org/release/api/class_usd_prim.html`
+  - `https://openusd.org/release/api/class_sdf_layer.html`
+  - `https://openusd.org/release/api/class_sdf_path.html`
+  - `https://openusd.org/release/api/class_usd_geom_mesh.html`
+  - `https://openusd.org/release/api/class_usd_geom_point_instancer.html`
+  - `https://openusd.org/release/api/class_usd_shade_material.html`
+  - `https://openusd.org/release/api/class_usd_shade_shader.html`
+  - `https://openusd.org/release/api/class_usd_geom_xformable.html`
+  - `https://openusd.org/release/glossary.html`
+
 ## Technical Background
 
 **Strong:** Go (2000+ line raytracer), Python/PyQt, graphics (raytracing, BVH, materials)

@@ -1,6 +1,6 @@
 # BIF USD Workflow Foundation
 
-**Version:** 0.2.0
+**Version:** 0.3.0
 **Last Updated:** 2026-03-28
 **Status:** Design specification — hybrid approach adopted (see Implementation Notes)
 
@@ -438,7 +438,9 @@ pub enum LayerPosition {
 
 ### USD Text Output
 
-Every operation can serialize itself to USDA text. This powers both the live code preview panel and the actual file writing.
+Every operation can serialize to USDA text for the **live code preview panel only**. Actual file I/O uses `UsdEditLayer` C++ FFI — never string concatenation. Each operation also implements `apply_to_layer()` which writes through the real USD API.
+
+> **Critical design rule:** `to_usda()` = preview/debug only. `apply_to_layer()` = all file writes.
 
 ```rust
 impl EditOperation {
@@ -573,52 +575,149 @@ impl ParamValue {
 fn trim_path(path: &str) -> &str {
     path.trim_start_matches('/')
 }
+
+/// Build nested `over` blocks for a multi-segment prim path.
+/// e.g. "/world/lights/key_light" → over "world" { over "lights" { over "key_light" { ... } } }
+fn prim_path_to_usda_nesting(path: &str, inner_body: &str) -> String {
+    let segments: Vec<&str> = path.trim_start_matches('/').split('/').collect();
+    let indent_base = "    ";
+    let mut usda = String::new();
+    for (i, seg) in segments.iter().enumerate() {
+        let indent = indent_base.repeat(i);
+        usda.push_str(&format!("{}over \"{}\" {{\n", indent, seg));
+    }
+    // Write inner body at deepest indent
+    let deep_indent = indent_base.repeat(segments.len());
+    for line in inner_body.lines() {
+        usda.push_str(&format!("{}{}\n", deep_indent, line));
+    }
+    // Close braces in reverse
+    for i in (0..segments.len()).rev() {
+        let indent = indent_base.repeat(i);
+        usda.push_str(&format!("{}}}\n", indent));
+    }
+    usda
+}
 ```
 
-### Undo/Redo Stack
+### Undo/Redo Stack + Current-State Map
 
-Operations are stored in an undo stack. Undo removes the operation from the active layer; redo re-applies it.
+The edit layer is **declarative state**, not an operation log. `EditHistory` maintains a current-state map keyed by `(prim_path, property_name)` that represents the layer's current opinions. The undo stack tracks history for reversal, but saving always writes the current state — never replays operations.
+
+> **Critical design rule:** USD layers are declarative. Two transforms on the same prim produce one `over` block with the final value, not two duplicate blocks. The current-state map enforces this.
 
 ```rust
+/// A single authored opinion on the edit layer.
+#[derive(Clone, Debug)]
+pub struct AuthoredOpinion {
+    pub prim_path: String,
+    pub property: String,       // e.g. "xformOp:translate", "material:binding"
+    pub value: ParamValue,
+    pub spec_type: SpecType,    // Over (modify existing) or Def (create new)
+}
+
+#[derive(Clone, Debug)]
+pub enum SpecType { Over, Def }
+
+/// Uniquely identifies an opinion slot on the layer.
+#[derive(Clone, Debug, Hash, Eq, PartialEq)]
+pub struct OpinionKey {
+    pub prim_path: String,
+    pub property: String,
+}
+
 pub struct EditHistory {
-    operations: Vec<EditOperation>,
-    undo_stack: Vec<EditOperation>,
-    redo_stack: Vec<EditOperation>,
+    /// Current state of the edit layer — what gets saved to disk.
+    /// Keyed by (prim_path, property_name) → deduplicated by design.
+    current_state: HashMap<OpinionKey, AuthoredOpinion>,
+
+    /// Undo stack: stores (old_state, new_state) pairs for reversal.
+    undo_stack: Vec<UndoEntry>,
+    redo_stack: Vec<UndoEntry>,
+
     active_layer: String,
+}
+
+pub struct UndoEntry {
+    /// Previous value (None if this was a new opinion)
+    old: Option<AuthoredOpinion>,
+    /// New value (None if this was a deletion)
+    new: Option<AuthoredOpinion>,
+    key: OpinionKey,
 }
 
 impl EditHistory {
     pub fn apply(&mut self, op: EditOperation) {
-        // 1. Apply to the scene graph in memory
-        // 2. Record for undo
-        self.undo_stack.push(op.clone());
-        self.redo_stack.clear();
-        self.operations.push(op);
-    }
+        // 1. Convert operation to one or more AuthoredOpinions
+        let opinions = op.to_opinions();
 
-    pub fn undo(&mut self) -> Option<EditOperation> {
-        let op = self.undo_stack.pop()?;
-        self.redo_stack.push(op.clone());
-        Some(op)
-    }
-
-    pub fn save_to_layer(&self, layer_path: &Path) -> Result<()> {
-        // Combine all operations into a single USDA layer file
-        let mut usda = String::new();
-        usda.push_str("#usda 1.0\n(\n");
-        usda.push_str("    doc = \"BIF edit layer\"\n");
-        usda.push_str(")\n\n");
-
-        for op in &self.operations {
-            usda.push_str(&op.to_usda());
-            usda.push_str("\n");
+        // 2. For each opinion, record old state for undo, then update current state
+        for opinion in opinions {
+            let key = OpinionKey {
+                prim_path: opinion.prim_path.clone(),
+                property: opinion.property.clone(),
+            };
+            let old = self.current_state.get(&key).cloned();
+            self.undo_stack.push(UndoEntry {
+                old,
+                new: Some(opinion.clone()),
+                key: key.clone(),
+            });
+            self.current_state.insert(key, opinion);
         }
+        self.redo_stack.clear();
+    }
 
-        std::fs::write(layer_path, &usda)?;
+    pub fn undo(&mut self) {
+        if let Some(entry) = self.undo_stack.pop() {
+            // Restore previous state (or remove if opinion didn't exist before)
+            match &entry.old {
+                Some(old) => { self.current_state.insert(entry.key.clone(), old.clone()); }
+                None => { self.current_state.remove(&entry.key); }
+            }
+            self.redo_stack.push(entry);
+        }
+    }
+
+    pub fn save_to_layer(&self, layer: &mut UsdEditLayer) -> Result<()> {
+        // Write current state through USD C++ FFI — not string concatenation
+        layer.clear()?;
+        for opinion in self.current_state.values() {
+            opinion.apply_to_layer(layer)?;
+        }
         Ok(())
+    }
+
+    /// Preview-only: generate USDA text for the code preview panel.
+    pub fn to_usda_preview(&self) -> String {
+        let mut usda = String::from("#usda 1.0\n(\n    doc = \"BIF edit layer\"\n)\n\n");
+        // Group opinions by prim path for clean nested output
+        let mut by_prim: HashMap<&str, Vec<&AuthoredOpinion>> = HashMap::new();
+        for opinion in self.current_state.values() {
+            by_prim.entry(&opinion.prim_path).or_default().push(opinion);
+        }
+        for (prim_path, opinions) in &by_prim {
+            let body: String = opinions.iter()
+                .map(|o| format!("{} = {}", o.property, o.value.to_usda()))
+                .collect::<Vec<_>>()
+                .join("\n");
+            usda.push_str(&prim_path_to_usda_nesting(prim_path, &body));
+            usda.push('\n');
+        }
+        usda
     }
 }
 ```
+
+### Undo System Migration Plan
+
+BIF has an existing undo system (`EditState` + `UndoStack` in `undo.rs`) for procedural node edits. The new `EditHistory` handles USD layer opinions. Migration happens in 3 stages:
+
+1. **v0.14-v0.15 — Coexistence.** `EditState`/`UndoStack` handles procedural node edits (scatter params, instance transforms). `EditHistory` handles layer opinions (transform overrides, material assignments). Ownership boundary: if it touches the USD stage, it's `EditHistory`. If it's node-graph-internal, it's `EditState`.
+
+2. **v0.16 — Convergence.** Procedural nodes gain `to_opinions()` and `apply_to_layer()`. Scatter/instancer ops flow through `EditHistory`. `EditState` shrinks to node-graph-only state (connections, node positions, non-USD parameter values).
+
+3. **v0.17+ — Unified.** `EditHistory` is the single undo unit. `EditState` deprecated or reduced to UI-only state. One undo stack, one history, one save path.
 
 ---
 
@@ -1022,10 +1121,11 @@ This tells the artist: "here's everything your layer does to the scene." Invalua
 
 When the artist hits Save (Ctrl+S):
 
-1. BIF collects all `EditOperation`s on the active layer
-2. Generates the USDA text for each operation
-3. Writes to the layer `.usd` file on disk
-4. The master stage file is NOT modified (it just references the layers)
+1. BIF reads the current-state map from `EditHistory`
+2. Calls `save_to_layer()` which writes through `UsdEditLayer` C++ FFI (never string concatenation)
+3. Validates all opinions via `validate()` before write — hard errors block, soft warnings proceed
+4. Writes to the layer `.usd` file on disk
+5. The master stage file is NOT modified (it just references the layers)
 
 This means saving is fast (only writes one layer file) and safe (other departments' layers are untouched).
 
@@ -1144,6 +1244,213 @@ BIF is not a modeler. Adding face/edge operations, topology changes, or sculptin
 
 ---
 
+## Variant Set Handling
+
+Variant sets handle switchable alternatives in USD (LODs, render/proxy, seasonal looks). BIF supports them at three levels:
+
+### Read (v0.14)
+
+Display variant sets in stage tree. Show current selection per prim. Artist switches variants via dropdown — writes a `variantSelection` opinion to the active edit layer via `UsdEditLayer` FFI.
+
+```
+Stage Tree:
+  /world/hero_char
+    ├── [variants: quality] → proxy | render | high  [render ▾]
+    ├── [variants: season]  → summer | winter        [summer ▾]
+    └── /mesh, /skeleton, /materials...
+```
+
+FFI needed: `UsdPrim::GetVariantSets()`, `UsdVariantSet::GetVariantSelection()`, `SetVariantSelection()`.
+
+### Author (v0.19+)
+
+Dedicated variant editor panel for creating new variant sets and populating variants. E.g. artist creates "quality" variant set on `/world/hero` with variants "proxy" / "render" / "high". Each variant contains different child prims or material bindings.
+
+```
+┌───────────────────────────────────────┐
+│  Variant Editor: /world/hero_char     │
+├───────────────────────────────────────┤
+│  Variant Set: [quality ▾] [+ New Set]│
+│                                       │
+│  Variants:                            │
+│  ┌─────────────────────────────────┐  │
+│  │ ● proxy   (active)             │  │
+│  │   └ child prims: /proxy_mesh   │  │
+│  │ ○ render                       │  │
+│  │   └ child prims: /render_mesh  │  │
+│  │ ○ high                         │  │
+│  │   └ child prims: /high_mesh    │  │
+│  │ [+ Add Variant]                │  │
+│  └─────────────────────────────────┘  │
+│                                       │
+│  [Apply] [Cancel]                     │
+└───────────────────────────────────────┘
+```
+
+### Node Graph (future)
+
+A "Variant Switch" composition node (blue) that selects variants as part of the procedural graph. Lower priority — manual variant selection covers 80% of production use.
+
+**Key rule:** Variant selections are opinions like everything else — they go on the active edit layer via `UsdEditLayer` FFI, not string concatenation.
+
+---
+
+## Schema Validation
+
+Validate authored opinions against USD schemas before writing to layer. Two levels, configurable per-schema via `~/.bif/schema_validation.toml`.
+
+### Level 1 — Type Validation (v0.16, ships with edit ops)
+
+- Attribute type matches schema (e.g. `xformOp:translate` must be `double3`)
+- Required attributes present (e.g. transform has `xformOpOrder`)
+- Relationship targets point to existing prims (warn on dangling `material:binding`)
+
+```rust
+impl EditOperation {
+    /// Validate this operation against USD schemas before applying.
+    pub fn validate(&self, stage: &UsdStage) -> Vec<ValidationWarning> {
+        let mut warnings = Vec::new();
+        match self {
+            EditOperation::Transform { prim_path, .. } => {
+                if !stage.prim_exists(prim_path) {
+                    warnings.push(ValidationWarning::hard(
+                        format!("Prim {} does not exist on stage", prim_path)
+                    ));
+                }
+            }
+            EditOperation::MaterialAssign { prim_path, material_path } => {
+                if !stage.prim_exists(material_path) {
+                    warnings.push(ValidationWarning::soft(
+                        format!("Material {} not found — dangling binding", material_path)
+                    ));
+                }
+            }
+            // ... other variants
+            _ => {}
+        }
+        warnings
+    }
+}
+
+pub struct ValidationWarning {
+    pub message: String,
+    pub severity: Severity,
+}
+
+pub enum Severity {
+    /// Blocks the write — type mismatch, missing prim
+    Hard,
+    /// Allows write with yellow indicator — dangling reference, missing optional attr
+    Soft,
+}
+```
+
+Call `validate()` before `apply_to_layer()`. Hard errors block. Soft warnings show in USDA preview as inline annotations.
+
+### Level 2 — Schema Conformance (v0.19+)
+
+- Prim conforms to its applied schemas (e.g. `UsdGeomMesh` has required attributes)
+- Custom schemas validated against registered schema definitions
+- Uses USD's `UsdSchemaRegistry` via FFI
+
+### Configuration
+
+Studios with custom schemas can register them and set severity levels:
+
+```toml
+# ~/.bif/schema_validation.toml
+[defaults]
+dangling_reference = "soft"    # warn but allow
+type_mismatch = "hard"         # block write
+missing_required = "hard"
+
+[custom_schemas]
+"StudioHero" = { path = "/studio/schemas/hero.usda", severity = "soft" }
+```
+
+---
+
+## Eager Node Evaluation + Stale Opinion Cleanup
+
+### Evaluation Model
+
+Operation nodes evaluate **eagerly** — every parameter change triggers immediate re-evaluation. This keeps the USDA preview panel and viewport in sync with the artist's changes.
+
+### Stale Opinion Cleanup
+
+When a scatter node re-evaluates (e.g. artist changes seed), previous opinions at `/world/scatter_01` are stale. The cleanup model:
+
+1. Each operation node tracks its **authored prim paths** (set of paths it has written to the current-state map)
+2. On re-evaluation, node calls `clear_authored_opinions(previous_paths)` before writing new opinions
+3. Stale opinions are removed and fresh ones written atomically
+4. The undo entry captures both removal of old opinions and addition of new ones
+
+```rust
+impl OperationNode {
+    /// Paths this node has authored to the current-state map.
+    authored_paths: HashSet<OpinionKey>,
+
+    pub fn re_evaluate(&mut self, history: &mut EditHistory, params: &NodeParams) {
+        // 1. Clear previous opinions from current-state map
+        for key in &self.authored_paths {
+            history.clear_opinion(key);
+        }
+
+        // 2. Evaluate with new params
+        let new_ops = self.evaluate(params);
+
+        // 3. Apply new opinions and track paths
+        self.authored_paths.clear();
+        for op in new_ops {
+            let keys = history.apply(op);
+            self.authored_paths.extend(keys);
+        }
+    }
+}
+```
+
+### Conflict Resolution
+
+If two nodes write to the same prim path, last-write-wins within the current-state map. The UI warns when this happens (yellow indicator on conflicting nodes). Rare in practice — node paths are usually unique.
+
+### `export_scene()` Coexistence
+
+- **v0.14-v0.15:** `export_scene()` remains the batch export path. Continuous layer authoring runs in parallel for the preview panel.
+- **v0.16+:** `export_scene()` becomes a "flatten + export" convenience — reads the composed stage and writes a single flattened layer. Both paths coexist, they serve different purposes.
+
+---
+
+## Session Layer
+
+Viewport-only state (solo, hide, display overrides) must not pollute the edit layer. BIF uses a USD anonymous session layer for temporary state that is never saved to disk.
+
+```rust
+/// Anonymous in-memory layer for viewport-only state.
+/// Never written to disk. Discarded on session close.
+pub struct SessionLayer {
+    /// USD anonymous layer (strongest — overrides everything for viewport display)
+    layer: UsdAnonymousLayer,
+}
+
+impl SessionLayer {
+    /// Solo a prim: hide everything else in the viewport
+    pub fn solo(&mut self, prim_path: &str) { /* set visibility opinions */ }
+
+    /// Temporarily hide a prim in viewport only
+    pub fn viewport_hide(&mut self, prim_path: &str) { /* visibility = invisible */ }
+
+    /// Display color override (e.g. wireframe color for selection)
+    pub fn set_display_color(&mut self, prim_path: &str, color: Vec3) { /* ... */ }
+
+    /// Clear all viewport overrides
+    pub fn reset(&mut self) { self.layer.clear(); }
+}
+```
+
+The session layer sits above all other layers in composition strength. It affects viewport display but is invisible to save, export, and render operations.
+
+---
+
 ## Glossary
 
 | Term | Meaning in BIF |
@@ -1160,3 +1467,8 @@ BIF is not a modeler. Adding face/edge operations, topology changes, or sculptin
 | **Edit Operation** | A single user action that produces USD output |
 | **Layer Isolation** | Mode where only the edit layer is writable |
 | **Render Context** | Configuration for resolving the full scene at render time |
+| **Current-State Map** | `HashMap<OpinionKey, AuthoredOpinion>` — the edit layer's current opinions, keyed by (prim, property) |
+| **Session Layer** | Anonymous in-memory USD layer for viewport-only state (solo, hide) — never saved |
+| **Variant Set** | USD mechanism for switchable alternatives (LODs, render/proxy) on a prim |
+| **Schema Validation** | Pre-write check that opinions match USD schema types and constraints |
+| **Eager Evaluation** | Operation nodes re-evaluate immediately on every parameter change |

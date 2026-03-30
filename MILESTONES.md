@@ -20,26 +20,43 @@ Roadmap organized by semantic version. Each release is testable, demoable, and g
 
 | Version | Theme | Est. Hours | Key Milestones |
 |---------|-------|-----------|----------------|
-| **v0.13.0** | **Pipeline Foundation** | — | M29.5, M30, M31 *(in progress)* |
+| **v0.13.0** | **Pipeline Foundation** | — | M29.5, M30, M31, subdiv, displacement *(in progress)* |
+| v0.13.5 | UsdSkel Import | 20-30h | Skeleton eval, skinning, bind pose + anim playback |
 | v0.14.0 | Layer-Aware Stage | 35-50h | M32, M33 + workflow Phase 1 |
 | v0.15.0 | Qt Migration | 50-60h | M28 (three-panel layout target) |
 | v0.16.0 | Edit Operations + Save | 30-40h | Workflow Phase 2 + templates |
 | v0.17.0 | Viewport Performance | 25-35h | M22 + payload policies |
-| v0.18.0 | Context System | 30-40h | M39 |
-| v0.19.0 | Scene Authoring + Layer Diff | 35-45h | M37, M38 + workflow Phase 7 |
-| v0.20.0 | MaterialX Authoring | 25-30h | M40 |
-| v0.21.0 | GPU Path Tracing | 30-40h | M27 |
-| v0.22.0 | Volumes & OpenVDB | 20-30h | M25 |
-| v0.23.0 | API & Integration | 40-55h | M35, M34 |
-| v0.24.0+ | Framework Extraction | 40+h | M36+ |
+| v0.18.0 | AI Integration | 38-59h | Material creator, scene builder, ComfyUI |
+| v0.19.0 | Context System | 30-40h | M39 |
+| v0.20.0 | Scene Authoring + Layer Diff | 35-45h | M37, M38 + workflow Phase 7 |
+| v0.21.0 | MaterialX Authoring | 25-30h | M40 |
+| v0.22.0 | GPU Path Tracing | 30-40h | M27 |
+| v0.23.0 | Volumes & OpenVDB | 20-30h | M25 |
+| v0.24.0 | API & Integration | 40-55h | M35, M34 |
+| v0.25.0+ | Framework Extraction | 40+h | M36+ |
 
-**Total estimated:** ~360-475h remaining to 1.0
+**Total estimated:** ~418-564h remaining to 1.0
 
 ---
 
 ### v0.13.0 — Pipeline Foundation *(in progress)*
 
 M29.5 (UI overhaul), M30 (persistence + eval modes), M31 (per-node viz), unreleased perf fixes. **Last egui feature release.** Ship current work.
+- Subdivision surfaces: crease indices/lengths/sharpnesses, corner sharpnesses, interpolateBoundary, faceVaryingLinearInterpolation
+- OpenSubdiv evaluation (CPU-side, limit surface tessellation for catmullClark/loop/bilinear meshes)
+- Displacement mapping: UsdPreviewSurface `displacement` input → vertex displacement along normals
+- **Validation**: Load subdivided mesh from Houdini, verify smooth surface matches usdview; displacement visible on dense mesh
+
+### v0.13.5 — UsdSkel Import
+
+Skeletal animation import + CPU skinning for rendering characters in assembled scenes.
+- C++ bridge: UsdSkelCache, UsdSkelSkeletonQuery, UsdSkelSkinningQuery
+- Read skeleton topology (joints, bind transforms, rest transforms)
+- Read skin weights + joint indices per-vertex
+- CPU linear blend skinning (LBS) at bind pose → bake to Mesh
+- Animated playback: evaluate skeleton at current timeline frame, re-skin per frame
+- Blend shapes (UsdSkelBlendShape): read targets + weights, apply to base mesh
+- **Validation**: Load skinned character (e.g., from Houdini/Maya), see bind pose; scrub timeline, see animation
 
 ### v0.14.0 — Layer-Aware Stage
 
@@ -52,6 +69,8 @@ Merges workflow Phase 1 + old M32/M33. BIF starts understanding USD layers. **La
 - Composition arc visualization
 - File watching: detect external sublayer changes, offer reload
 - Node graph: add "Layer Stack" node, color-code nodes (blue=composition, orange=operations)
+- Layer muting (hide layer contributions without removing)
+- Layer offsets (time offset/scale on sublayers and references)
 - **Validation**: Open multi-layer USD from Houdini, see layer stack, toggle layers, see opinion sources
 
 ### v0.15.0 — Qt Migration
@@ -72,6 +91,7 @@ Workflow Phase 2. BIF becomes a real editor.
 - Live USDA code preview updates as artist works
 - Existing nodes (scatter, instancer) gain `to_usda()` — write to active layer continuously
 - Shot templates: JSON-configurable presets (`~/.bif/templates/`), `BIF_TEMPLATE_DIR` env var override
+- Material overrides per-instance (per-instance material binding table)
 - **Validation**: Make edits in BIF, save, open in usdview, verify edits compose correctly
 
 ### v0.17.0 — Viewport Performance
@@ -81,12 +101,23 @@ M22 (Vulkan 1.3, lazy loading, GPU-driven rendering) + deferred loading from wor
 - `RenderContext` with on-demand prototype loading
 - `PrototypeState` enum (BoundingBox / Loaded / Deferred)
 - LRU cache for prototype eviction + Embree BVH integration
+- Camera depth of field and lens distortion
 
-### v0.18.0 — Context System
+### v0.18.0 — AI Integration
+
+New `bif_ai` crate (feature-gated `--features ai`). Three AI-assisted workflows: material creation from text, scene building from natural language, ComfyUI render post-processing. Provider-agnostic (Ollama default, OpenAI, Anthropic). Async bridge via channels — zero async contagion. AI produces inert data, viewport executes. Ships independently across 5 phases.
+- Phase 1: Material creator (text → OpenPBR params, validated)
+- Phase 2: Provider breadth (OpenAI + Anthropic + config UI)
+- Phase 3: Scene builder (text → SceneAction plan → preview/confirm → node graph)
+- Phase 4: ComfyUI integration (render → workflow template → post-processed result)
+- Phase 5: Polish (error UX, caching, multi-turn refinement)
+- **Validation**: "brushed steel" → valid Material; "red cube next to blue sphere" → node graph; render → ComfyUI upscale
+
+### v0.19.0 — Context System
 
 M39 (Assembly/Materials/Animation contexts, multi-graph). Built in Qt. Highest architectural risk — touches scene_loader, render, property_inspector.
 
-### v0.19.0 — Scene Authoring + Layer Diff
+### v0.20.0 — Scene Authoring + Layer Diff
 
 M37 (lights) + M38 (materials) + workflow Phase 7. "Create content + see what you changed."
 - Layer diff panel: semantic diff of edit layer vs composed base
@@ -94,26 +125,41 @@ M37 (lights) + M38 (materials) + workflow Phase 7. "Create content + see what yo
 - `AnimKey` operation for simple keyframe overrides (`timeSamples` output)
 - `ScatterInstances` operation integrated into edit layer authoring
 - New operation nodes: Material Override, Anim Key, Point Edit
+- Light linking (UsdLuxLightListAPI — control which geometry a light affects)
+- Color temperature (Kelvin → RGB conversion for lights)
+- Shadow control per-light (UsdLuxShadowAPI — enable, color, distance, falloff)
+- Portal lights (DomeLight portals for interior scenes)
 
-### v0.20.0 — MaterialX Authoring
+### v0.21.0 — MaterialX Authoring
 
 M40 (standard_surface graph, XML round-trip, node previews). Built on context system in Materials context.
+- Custom shader networks (arbitrary UsdShade graphs beyond UsdPreviewSurface/OpenPBR)
 
-### v0.21.0 — GPU Path Tracing
+### v0.22.0 — GPU Path Tracing
 
 M27 (wgpu compute, BVH on GPU, ReSTIR). Fast material preview for authoring workflows.
 
-### v0.22.0 — Volumes & OpenVDB
+### v0.23.0 — Volumes & OpenVDB
 
 M25 (fog, smoke, clouds, VDB support). Fills the biggest production content gap.
 
-### v0.23.0 — API & Integration
+### v0.24.0 — API & Integration
 
 M35 (API cleanup) then M34 (PyO3 pipeline integration). "Embed BIF in studio pipelines."
 
-### v0.24.0+ — Framework Extraction
+### v0.25.0+ — Framework Extraction
 
 M36+ (widget crates, plugin system, DCC connectors). "Reusable VFX framework crates."
+
+---
+
+## Backlog (Low Priority / Unversioned)
+
+- UsdGeomNurbsPatch, UsdGeomNurbsCurves import
+- Intrinsic geometry USD read (Capsule, Cone, Cylinder — currently procedural-only)
+- Texture animation (UV offset keyframes)
+- Velocity-based motion blur (UsdGeomMotionAPI)
+- Native instancing read (instanceable prims — currently only PointInstancer)
 
 ---
 

@@ -49,7 +49,7 @@ For the high-level roadmap, see [MILESTONES.md](MILESTONES.md). For completed mi
 - **Variant Set Selector:** Interactive variant switching in property inspector
 - **Layer Stack Viewer:** Which layers contribute to selected prim
 - **Prim Metadata Inspector:** kind, purpose, apiSchemas, custom data
-- **Namespace Editor:** Rename/reparent prims (writes to edit layer) — deferred to v0.18.0
+- **Namespace Editor:** Rename/reparent prims (writes to edit layer) — deferred to v0.20.0
 
 ### Technical Notes
 - Requires new C++ bridge work for PcpPrimIndex/SdfLayerStack (different domain from current 79 FFI functions)
@@ -63,7 +63,7 @@ For the high-level roadmap, see [MILESTONES.md](MILESTONES.md). For completed mi
 - Layer stack is browsable with opinion highlighting
 - LIVRPS composition ordering is visible per attribute
 - Prim metadata (kind, purpose, apiSchemas, custom data) inspectable
-- Read-only — no namespace editing (deferred to v0.18.0)
+- Read-only — no namespace editing (deferred to v0.20.0)
 
 ---
 
@@ -133,35 +133,136 @@ For the high-level roadmap, see [MILESTONES.md](MILESTONES.md). For completed mi
 
 ---
 
-## v0.16.0 — Viewport Performance
+## v0.17.0 — Viewport Performance
 
 **Milestones:** M22 (viewport performance)
 **Estimate:** 20-30h
 **Dependencies:** v0.15.0
 **Already Done:** Frustum culling, LOD system, polygon budget.
 
-### Tasks
+### Tasks — Vulkan/wgpu Modernization
 - Upgrade to Vulkan 1.3 features:
   - Dynamic rendering (simplify render passes)
   - Buffer device address (bindless buffers)
   - Descriptor indexing (bindless textures)
   - Synchronization2 (cleaner barriers)
-- Lazy geometry loading (load on demand)
 - Async texture streaming
 - GPU-driven rendering (indirect draw calls)
+
+### Tasks — Embree Two-Level BVH Streaming
+Core architecture for rendering scenes that don't fit in memory. Exploits BIF's prototype/instance split — instance transforms are tiny (~64 bytes each), prototype geometry is loaded on demand.
+
+- **Top-level BVH** (always in memory): instance bounding boxes + transforms only
+  - 1M instances × 64 bytes = 64MB — cheap, always resident
+  - Built once when entering render mode, shape never changes
+- **Bottom-level BVHs** (per prototype, loaded on demand): full triangle meshes
+  - Created via `rtcNewInstance` + `rtcSetGeometryInstancedScene`
+  - Instance starts with just a bounding box — no geometry needed
+  - On first ray hit to unloaded prototype: load mesh from USD, build BVH, attach to all instances
+- **`StreamingEmbreeScene`** struct:
+  - `top_scene: RTCScene` — instances only
+  - `prototype_scenes: HashMap<PrototypeId, PrototypeEntry>` — one Embree scene per prototype
+  - `cache: LruCache<PrototypeId, ()>` — eviction tracking
+  - `memory_budget` / `memory_used` — hard limit on prototype memory
+- **`PrototypeState` enum**:
+  - `BoundingBox(AABB)` — viewport mode, wireframe display only
+  - `Loaded { mesh, embree_geom_id }` — full geometry, ready to intersect
+  - `Deferred { usd_prim_path, bounds, estimated_memory_bytes }` — knows where data lives, loads on first ray hit
+- **`RenderContext`** with on-demand loading:
+  - `prototype_cache: LruCache<PrototypeId, Arc<Mesh>>` — LRU eviction when budget exceeded
+  - `ensure_loaded()` transitions `Deferred → Loaded` by reading from USD via C++ bridge
+  - `trace_ray()` — if ray hits unloaded prototype bbox, load geometry, rebuild, re-trace
+- **Eviction**: `unload_prototype()` detaches Embree child scene, reverts to bounding-box-only hits
+- **Memory budget example**: 500 prototypes × 5MB avg = 2.5GB total; 4GB budget → all fit. At 10MB avg (5GB total) → ~380 in memory, 120 evict/reload. Typical frames hit ~200 prototypes (camera frustum).
+
+### Tasks — Payload Policies
+- `PayloadPolicy::CameraFrustum` — load geometry visible to camera + padding
+- `PayloadPolicy::Manual` — artist manually picks what to load/unload
+- Task-driven inference: suggest payloads based on active working layer
+- UI for payload management in stage tree (right-click load/unload)
 
 ### Technical Notes
 - Not hitting viewport limits yet — this is optimization, not features
 - Reference: [howtovulkan.com](https://howtovulkan.com) — Modern Vulkan patterns
+- Embree streaming is what made Clarisse revolutionary for environment work — BIF gets it from prototype/instance design + Embree's native two-level traversal
+- Loading one prototype enables rendering ALL its instances (could be thousands)
+- Top-level BVH never changes shape — only child scenes get populated/evicted
+- No custom intersection code needed — Embree handles two-level traversal natively
 
 ### Acceptance Criteria
 - Measurable FPS improvement on large scenes (>1M instances)
 - GPU memory usage reduced for scenes not fully visible
 - Smooth interaction at production scale
+- Render scenes exceeding memory budget via LRU prototype eviction
+- Prototype load-on-demand: first ray hit triggers geometry load from USD
+- Payload policies functional: CameraFrustum, Manual, BoundingBoxOnly
 
 ---
 
-## v0.17.0 — Context System
+## v0.18.0 — AI Integration
+
+**Estimate:** 38-59h (5 phases)
+**Dependencies:** v0.15.0 (Qt — for panel UI), bif_core stable API
+**Stretch goal — ships independently as feature-gated `bif_ai` crate.**
+
+### Architecture
+- New `bif_ai` crate: depends on bif_core only, feature-gated (`--features ai`)
+- Async bridge: owns tokio runtime, channel-based polling from UI loop
+- Provider-agnostic: LlmProvider trait (Ollama default, OpenAI, Anthropic)
+- AI produces inert data (MaterialParams, ScenePlan) — viewport executes
+
+### Phase 1: Material Creator (10-15h)
+- LlmProvider trait + Ollama/OpenAI/Anthropic implementations
+- AiService async bridge (tokio runtime, mpsc channels)
+- Text → MaterialParams (OpenPBR subset, 13 validated fields)
+- Validation: clamp ranges, physical plausibility checks (metalness binary, IOR >= 1.0)
+- egui/Qt panel: prompt input, generate, apply to scene
+- New AppEvent variants: AiMaterialReady, AiError, AiProgress
+
+### Phase 2: Provider Breadth (4-6h)
+- OpenAI + Anthropic providers
+- Config UI: provider selection, API key from env vars (BIF_OPENAI_API_KEY, etc.)
+- Model selection per provider
+
+### Phase 3: Scene Builder (12-18h)
+- SceneAction enum: CreateNode, Connect, SetDisplayNode (uses logical temp_ids)
+- ScenePlan generation from text prompt via structured JSON output
+- Preview/confirm UI (mandatory — AI never auto-applies)
+- Viewport translates SceneAction → NodeGraphEvent (temp_id → real NodeId)
+- Single undo group for entire AI build
+- Connection validation before execution
+
+### Phase 4: ComfyUI Integration (8-12h)
+- REST client: POST /upload/image, POST /prompt, GET /history/{id}
+- Workflow template system (JSON files, BIF_INPUT node convention)
+- Ship 2-3 templates: upscale_2x, denoise, style_transfer
+- User custom workflows in ~/.bif/comfyui_workflows/
+- Progress polling → AppEvent::AiComfyUiReady
+
+### Phase 5: Polish (4-8h)
+- Error UX, prompt refinement, response caching
+- Preset materials as non-AI fallback
+- Multi-turn scene editing (conversation history + graph state as context)
+
+### Technical Notes
+- Zero async contagion: bif_ai owns tokio runtime, exposes sync poll API
+- API keys via env vars only, `#[serde(skip)]` — never serialized to disk
+- Default Ollama (free, local) — best onboarding, no API key needed
+- MockProvider for deterministic testing, golden-file tests for CI
+- SceneAction vocabulary limited to existing 10 node types
+- JSON schema in system prompt (not function calling) for provider-agnostic structured output
+
+### Acceptance Criteria
+- "brushed steel" → valid OpenPBR Material with clamped params
+- "red cube next to blue sphere" → ScenePlan → preview → apply → nodes in graph
+- Render → ComfyUI upscale → result displayed in viewport
+- All AI features disabled cleanly without `--features ai`
+- Ctrl+Z undoes entire AI scene build as one operation
+- Works with Ollama (local), OpenAI, and Anthropic providers
+
+---
+
+## v0.19.0 — Context System
 
 **Milestones:** M39 (Assembly/Materials/Animation contexts)
 **Estimate:** 30-40h
@@ -192,11 +293,11 @@ For the high-level roadmap, see [MILESTONES.md](MILESTONES.md). For completed mi
 
 ---
 
-## v0.18.0 — Scene Authoring
+## v0.20.0 — Scene Authoring
 
 **Milestones:** M37 (lights authoring), M38 (materials authoring)
 **Estimate:** 30-40h (M37: 10-15h, M38: 20-25h)
-**Dependencies:** v0.17.0 (context system)
+**Dependencies:** v0.19.0 (context system)
 
 ### Tasks — Lights (M37)
 - Light graph nodes: DistantLight, PointLight, RectLight (output Scene pin)
@@ -232,11 +333,11 @@ For the high-level roadmap, see [MILESTONES.md](MILESTONES.md). For completed mi
 
 ---
 
-## v0.19.0 — MaterialX Authoring
+## v0.21.0 — MaterialX Authoring
 
 **Milestones:** M40 (MaterialX authoring)
 **Estimate:** 25-30h
-**Dependencies:** v0.18.0 (materials), v0.17.0 (context system)
+**Dependencies:** v0.20.0 (materials), v0.19.0 (context system)
 
 ### Tasks
 - Full `standard_surface` node graph (beyond M38 presets)
@@ -259,11 +360,11 @@ For the high-level roadmap, see [MILESTONES.md](MILESTONES.md). For completed mi
 
 ---
 
-## v0.20.0 — GPU Path Tracing
+## v0.22.0 — GPU Path Tracing
 
 **Milestones:** M27 (GPU path tracing)
 **Estimate:** 30-40h
-**Dependencies:** v0.16.0 (viewport perf)
+**Dependencies:** v0.17.0 (viewport perf)
 
 ### Tasks
 - wgpu compute shader path tracer
@@ -289,7 +390,7 @@ For the high-level roadmap, see [MILESTONES.md](MILESTONES.md). For completed mi
 
 ---
 
-## v0.21.0 — Volumes & OpenVDB
+## v0.23.0 — Volumes & OpenVDB
 
 **Milestones:** M25 (volumes + OpenVDB)
 **Estimate:** 20-30h
@@ -316,11 +417,11 @@ For the high-level roadmap, see [MILESTONES.md](MILESTONES.md). For completed mi
 
 ---
 
-## v0.22.0 — API & Integration
+## v0.24.0 — API & Integration
 
 **Milestones:** M35 (API cleanup), M34 (PyO3 pipeline integration)
 **Estimate:** 40-55h (M35: 10-15h, M34: 15-20h)
-**Dependencies:** v0.18.0+ (features stabilized)
+**Dependencies:** v0.20.0+ (features stabilized)
 
 ### Tasks — API Cleanup (M35, do first)
 - bif_core + bif_renderer documented as Rust libraries
@@ -354,11 +455,11 @@ For the high-level roadmap, see [MILESTONES.md](MILESTONES.md). For completed mi
 
 ---
 
-## v0.23.0+ — Framework Extraction
+## v0.25.0+ — Framework Extraction
 
 **Milestones:** M36+ (framework phase 2)
 **Estimate:** 40+h
-**Dependencies:** v0.22.0 (clean API)
+**Dependencies:** v0.24.0 (clean API)
 
 ### Tasks
 - Extract `bif_node_graph` — configurable node graph widget crate

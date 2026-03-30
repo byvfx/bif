@@ -19,8 +19,8 @@ Built from scratch in Rust with a USD-native pipeline.
 
 ## Features
 
-| | |
-|---|---|
+| Feature | Description |
+|---------|-------------|
 | **USD-Native** | Full C++ bridge — USDA/USDC, references, payloads, deferred loading |
 | **Massive Instancing** | 10K-1M instances with GPU LOD culling |
 | **Dual Rendering** | Vulkan viewport (60 FPS) + Ivar CPU path tracer (OpenPBR Surface v1.1) |
