@@ -39,6 +39,7 @@ mod render_ui;
 pub mod scene_browser;
 mod scene_loader;
 pub mod scene_manager;
+mod scene_pipeline;
 pub mod selection;
 pub mod skybox;
 pub mod theme;
