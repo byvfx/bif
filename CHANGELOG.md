@@ -8,6 +8,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **GitHub Pages site** — mdBook-based dev diary + manual at byvfx.github.io/bif. Auto-deploys on push via `scripts/generate-site.sh` (copies devlog/docs, generates SUMMARY.md) + GitHub Actions workflow. Manual sections: getting started, architecture, USD reference, changelog.
 - **FFI bridge split** — extracted `ffi_raw.rs` (898 lines, raw C types + extern block) and `ffi_convert.rs` (2,054 lines, 17 conversion functions + 44 tests) from monolithic `cpp_bridge.rs`. Conversion logic now testable without C++ DLLs. Phase 1 of architecture deepening plan.
 - **Architecture refactors plan** — `ARCHITECTURE_REFACTORS.md` documenting 5-phase plan: FFI split, Linux support, node graph eval engine, scene pipeline, renderer decomposition. 45-65 new tests targeted.
 - **Cross-platform build foundation** — platform-detect CMake generator, vcpkg triplet, lib paths in `build.rs`. Linux CI job (bif_math + bif_renderer). `setup_usd_env.sh` for Linux/macOS. Windows `process::exit(0)` guarded with `#[cfg(windows)]`.

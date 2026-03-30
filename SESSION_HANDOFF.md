@@ -1,6 +1,6 @@
 # Session Handoff - March 30, 2026
 
-**Last Updated:** PointInstancer loading fixes
+**Last Updated:** GitHub Pages site setup (mdBook)
 **Current Version:** v0.13.0-dev (Pipeline Foundation)
 **Project:** BIF - VFX Scene Assembler & Renderer
 
@@ -19,6 +19,10 @@
 ---
 
 ## Recent Work
+
+### GitHub Pages Site (Mar 30, 2026)
+
+Set up mdBook-based site with auto-deployed dev diary (85 entries) + manual (USD reference, getting started, architecture, changelog). `scripts/generate-site.sh` auto-generates SUMMARY.md from devlog tree. GitHub Actions deploys on push. **Action needed:** enable Pages source = "GitHub Actions" in repo settings.
 
 ### PointInstancer Loading Fixes (Mar 30, 2026)
 

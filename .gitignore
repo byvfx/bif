@@ -1,2 +1,9 @@
 /target
 /assets/palm_coconut_field_2
+
+# mdBook generated content (rebuilt by scripts/generate-site.sh)
+/site/book/
+/site/src/devlog/
+/site/src/reference/usd/
+/site/src/reference/changelog.md
+/site/src/SUMMARY.md
