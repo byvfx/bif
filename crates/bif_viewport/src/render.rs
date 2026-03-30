@@ -1801,5 +1801,3 @@ impl Renderer {
         Ok(())
     }
 }
-
-// collect_export_context() and canonicalize_for_usd() moved to node_dispatch.rs

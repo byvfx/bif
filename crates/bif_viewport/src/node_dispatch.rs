@@ -736,16 +736,27 @@ impl Renderer {
 }
 
 /// Canonicalize a path for USD (strips Windows `\\?\` prefix).
-fn canonicalize_for_usd(path: &str) -> String {
+///
+/// Falls back to the original path with a warning if canonicalize fails
+/// (e.g. file doesn't exist yet).
+pub(crate) fn canonicalize_for_usd(path: &str) -> String {
     let result = std::fs::canonicalize(path)
         .map(|p| p.display().to_string())
-        .unwrap_or_else(|_| path.to_string());
+        .unwrap_or_else(|e| {
+            log::warn!(
+                "canonicalize failed for '{}': {}, using original path",
+                path,
+                e
+            );
+            path.to_string()
+        });
     result.strip_prefix(r"\\?\").unwrap_or(&result).to_string()
 }
 
 /// Walk upstream from an export node and collect AuthoredPrims, graft prefix,
 /// and the source USD path from an upstream UsdRead node.
-fn collect_export_context(
+// TODO: move to node_graph/ops.rs — pure function of (NodeId, &Snarl), no Renderer dependency
+pub(crate) fn collect_export_context(
     export_node: egui_snarl::NodeId,
     snarl: &egui_snarl::Snarl<SceneNode>,
 ) -> (Vec<bif_core::AuthoredPrim>, Option<String>, Option<String>) {

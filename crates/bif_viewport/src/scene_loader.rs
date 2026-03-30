@@ -12,20 +12,7 @@ use crate::mesh_data::MeshData;
 use crate::timeline::TimelineState;
 use crate::{texture_loader, Renderer, MAX_INSTANCES};
 
-/// Resolve the USD prim path for an instance — use the instance's prim_path
-/// if set, otherwise synthesise one from the prototype name and index.
-fn resolve_prim_path(inst: &bif_core::Instance, scene: &bif_core::Scene, idx: usize) -> String {
-    if !inst.prim_path.is_empty() {
-        inst.prim_path.to_string()
-    } else {
-        let proto_name = scene
-            .prototypes
-            .get(inst.prototype_id)
-            .map(|p| &*p.name)
-            .unwrap_or("unknown");
-        format!("/BIF/{}/{}", proto_name, idx)
-    }
-}
+use crate::scene_pipeline::resolve_prim_path;
 
 impl Renderer {
     /// Load scene data from a pre-parsed Scene (pure Rust USDA parser fallback).

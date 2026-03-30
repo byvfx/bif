@@ -227,7 +227,7 @@ fn extract_scatter_params(snarl: &Snarl<SceneNode>, node_id: NodeId) -> ScatterP
             rotation_range: *rotation_range,
             target_proto_id: None,
         },
-        _ => panic!("extract_scatter_params called on non-ScatterPoints node"),
+        _ => unreachable!("evaluate_node guarantees ScatterPoints variant"),
     }
 }
 

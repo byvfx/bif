@@ -20,7 +20,11 @@ pub struct ExpandedInstances {
     pub purposes: Vec<bif_core::Purpose>,
 }
 
-/// World-space bounding box.
+/// World-space bounding box (min/max Vec3 pair).
+///
+/// Separate from `bif_math::Aabb` which uses per-axis `Interval`s and is
+/// oriented toward BVH ray intersection. WorldBounds is a simpler min/max
+/// pair for scene framing and camera positioning.
 #[derive(Debug, Clone)]
 pub struct WorldBounds {
     pub min: Vec3,
@@ -203,10 +207,13 @@ pub fn compute_world_bounds(
         .iter()
         .zip(instance_prototype_ids.iter())
     {
-        let proto_aabb = prototype_aabbs
-            .get(proto_id)
-            .copied()
-            .unwrap_or_else(|| prototype_aabbs[0]);
+        let proto_aabb = prototype_aabbs.get(proto_id).copied().unwrap_or_else(|| {
+            log::warn!(
+                "Unknown prototype ID {} in bounds computation, using first prototype",
+                proto_id
+            );
+            prototype_aabbs[0]
+        });
         let transformed = transform.transform_aabb(&proto_aabb);
         let t_min = transformed.min_point();
         let t_max = transformed.max_point();
