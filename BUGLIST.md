@@ -34,13 +34,19 @@
 ### Viewport & Rendering
 
 - Subdivision surface validation (re-test custom assets)
+- OpenSubdiv support (GPU-accelerated subdivision surfaces)
 - Camera safe-area greybox overlay
 - Fix show background in hdri properties
 - Get display color of prims to display in viewport as option to textured, also make one with no lighting.
 - Check depth and add to ui
-- OpenSubdiv support
 
 ## Architecture
+  VFX review summary (other suggestions noted for future):
+  
+- Use GetBracketingTimeSamples instead of GetTimeSamples for perf on large clips
+- Extract evalTime logic to a helper function
+- Consider exposing resolved evalTime to Rust for timeline scrubbing
+- Compound prototype support (multi-mesh Xforms) as future work
 
 - Double-check USD schema compliance (custom vs standard)
 - Add USD skeletal animation support (joints, skinning, blendshapes)
