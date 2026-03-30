@@ -63,6 +63,7 @@ cargo fmt --check
 - **OIDN DLLs must be in PATH:** Set `OIDN_DIR` and add its `bin/` to PATH for `--features oidn`
 - **Feature flags are optional:** `oiio` and `oidn` are off by default, UI gracefully degrades without them
 - **`test_should_restart_no_render`:** Known timing-sensitive flaky test
+- **USD debug tools at `D:\__projects\_programming\usd_25_11\`:** usdcat, usdchecker, usddumpcrate, usdtree, etc. Run `scripts\set_usd_env.bat` first, or use Python with `from pxr import Usd, UsdGeom`. Custom `dump_usd.py` script for shader inspection also lives there.
 
 ## Related Docs
 

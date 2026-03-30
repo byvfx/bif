@@ -234,13 +234,26 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
             mesh_dedup.insert(dedup_key, proto_id);
             prototype_map.insert(mesh_data.path.clone(), proto_id);
             // Map parent Xform path → same proto_id (common PointInstancer pattern:
-            // prototype targets are Xforms wrapping a single child mesh)
+            // prototype targets are Xforms wrapping a single child mesh).
+            // NOTE: multi-mesh prototypes (Xform with >1 child mesh) will only
+            // map to the first child — compound prototypes not yet supported.
             if let Some(parent_end) = mesh_data.path.rfind('/') {
                 let parent_path = &mesh_data.path[..parent_end];
                 if !parent_path.is_empty() {
-                    prototype_map
-                        .entry(parent_path.to_string())
-                        .or_insert(proto_id);
+                    if let Some(&existing_id) = prototype_map.get(parent_path) {
+                        if existing_id != proto_id {
+                            log::warn!(
+                                "Multi-mesh prototype: '{}' already mapped to proto {}, \
+                                 skipping proto {} from '{}'",
+                                parent_path,
+                                existing_id,
+                                proto_id,
+                                mesh_data.path
+                            );
+                        }
+                    } else {
+                        prototype_map.insert(parent_path.to_string(), proto_id);
+                    }
                 }
             }
             proto_id

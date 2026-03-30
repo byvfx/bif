@@ -1421,7 +1421,7 @@ static void cache_stage_data(UsdBridgeStage* bridge) {
             // Invisible instance IDs
             {
                 VtArray<int64_t> invisIds;
-                if (instancer.GetInvisibleIdsAttr().Get(&invisIds) && !invisIds.empty()) {
+                if (instancer.GetInvisibleIdsAttr().Get(&invisIds, evalTime) && !invisIds.empty()) {
                     cached.invisible_ids.assign(invisIds.begin(), invisIds.end());
                 }
             }
