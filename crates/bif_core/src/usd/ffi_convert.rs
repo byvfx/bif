@@ -10,8 +10,7 @@
 //! inside the FFI structs. Callers must ensure the raw data's pointers are valid
 //! and point to arrays of the specified counts.
 
-// These functions will be called from cpp_bridge.rs in a future refactoring step.
-#![allow(dead_code)]
+// Called from cpp_bridge.rs to convert raw FFI structs to safe domain types.
 
 use std::ffi::CStr;
 

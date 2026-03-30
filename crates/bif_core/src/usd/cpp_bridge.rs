@@ -946,212 +946,8 @@ impl UsdStage {
             });
         }
 
-        // Convert to Rust types
-        let path = unsafe {
-            if raw_data.path.is_null() {
-                String::new()
-            } else {
-                CStr::from_ptr(raw_data.path).to_string_lossy().into_owned()
-            }
-        };
-
-        // Convert vertices (flat f32 array to Vec<Vec3>)
-        let vertices = unsafe {
-            if raw_data.vertices.is_null() || raw_data.vertex_count == 0 {
-                Vec::new()
-            } else {
-                let slice =
-                    std::slice::from_raw_parts(raw_data.vertices, raw_data.vertex_count * 3);
-                slice
-                    .chunks_exact(3)
-                    .map(|chunk| Vec3::new(chunk[0], chunk[1], chunk[2]))
-                    .collect()
-            }
-        };
-
-        // Convert indices
-        let indices = unsafe {
-            if raw_data.indices.is_null() || raw_data.index_count == 0 {
-                Vec::new()
-            } else {
-                std::slice::from_raw_parts(raw_data.indices, raw_data.index_count).to_vec()
-            }
-        };
-
-        // Convert normals (optional)
-        let normals = unsafe {
-            if raw_data.normals.is_null() || raw_data.normal_count == 0 {
-                None
-            } else {
-                let slice = std::slice::from_raw_parts(raw_data.normals, raw_data.normal_count * 3);
-                Some(
-                    slice
-                        .chunks_exact(3)
-                        .map(|chunk| Vec3::new(chunk[0], chunk[1], chunk[2]))
-                        .collect(),
-                )
-            }
-        };
-
-        // Convert UVs (optional)
-        let uvs = unsafe {
-            if raw_data.uvs.is_null() || raw_data.uv_count == 0 {
-                None
-            } else {
-                let slice = std::slice::from_raw_parts(raw_data.uvs, raw_data.uv_count * 2);
-                Some(
-                    slice
-                        .chunks_exact(2)
-                        .map(|chunk| [chunk[0], chunk[1]])
-                        .collect(),
-                )
-            }
-        };
-
-        // Convert per-triangle material IDs (optional, from GeomSubsets)
-        let face_material_ids = unsafe {
-            if raw_data.face_material_ids.is_null() || raw_data.triangle_count == 0 {
-                None
-            } else {
-                Some(
-                    std::slice::from_raw_parts(raw_data.face_material_ids, raw_data.triangle_count)
-                        .to_vec(),
-                )
-            }
-        };
-
-        // USD row-major f32[16] -> glam Mat4 via from_cols_array() (implicit transpose
-        // from row-vector to column-vector convention)
-        let transform = Mat4::from_cols_array(&raw_data.transform);
-
-        let purpose = match raw_data.purpose {
-            UsdBridgePurposeRaw::Render => MeshPurpose::Render,
-            UsdBridgePurposeRaw::Proxy => MeshPurpose::Proxy,
-            UsdBridgePurposeRaw::Guide => MeshPurpose::Guide,
-            _ => MeshPurpose::Default,
-        };
-
-        let subdivision_scheme = unsafe {
-            if raw_data.subdivision_scheme.is_null() {
-                SubdivisionScheme::None
-            } else {
-                match CStr::from_ptr(raw_data.subdivision_scheme)
-                    .to_str()
-                    .unwrap_or("none")
-                {
-                    "catmullClark" => SubdivisionScheme::CatmullClark,
-                    "loop" => SubdivisionScheme::Loop,
-                    "bilinear" => SubdivisionScheme::Bilinear,
-                    _ => SubdivisionScheme::None,
-                }
-            }
-        };
-
-        let normals_interpolation = match raw_data.normals_interpolation {
-            1 => NormalsInterpolation::FaceVarying,
-            2 => NormalsInterpolation::Uniform,
-            3 => NormalsInterpolation::Constant,
-            _ => NormalsInterpolation::Vertex,
-        };
-
-        Ok(UsdMeshData {
-            path,
-            vertices,
-            indices,
-            normals,
-            uvs,
-            face_material_ids,
-            transform,
-            purpose,
-            is_instance_proxy: raw_data.is_instance_proxy != 0,
-            visible: raw_data.visibility != 0,
-            double_sided: raw_data.double_sided != 0,
-            subdivision_scheme,
-            normals_interpolation,
-            display_color: unsafe {
-                if raw_data.display_color.is_null() || raw_data.display_color_count == 0 {
-                    None
-                } else {
-                    let slice = std::slice::from_raw_parts(
-                        raw_data.display_color,
-                        raw_data.display_color_count * 3,
-                    );
-                    Some(
-                        slice
-                            .chunks_exact(3)
-                            .map(|c| Vec3::new(c[0], c[1], c[2]))
-                            .collect(),
-                    )
-                }
-            },
-            display_opacity: raw_data.display_opacity,
-            resets_xform_stack: raw_data.resets_xform_stack != 0,
-            face_vertex_counts: unsafe {
-                if raw_data.face_vertex_counts.is_null() || raw_data.face_count == 0 {
-                    None
-                } else {
-                    Some(
-                        std::slice::from_raw_parts(
-                            raw_data.face_vertex_counts,
-                            raw_data.face_count,
-                        )
-                        .to_vec(),
-                    )
-                }
-            },
-            face_vertex_indices: unsafe {
-                if raw_data.face_vertex_indices.is_null() || raw_data.face_vertex_index_count == 0 {
-                    None
-                } else {
-                    Some(
-                        std::slice::from_raw_parts(
-                            raw_data.face_vertex_indices,
-                            raw_data.face_vertex_index_count,
-                        )
-                        .to_vec(),
-                    )
-                }
-            },
-            crease_indices: unsafe {
-                if raw_data.crease_indices.is_null() || raw_data.crease_index_count == 0 {
-                    None
-                } else {
-                    Some(
-                        std::slice::from_raw_parts(
-                            raw_data.crease_indices,
-                            raw_data.crease_index_count,
-                        )
-                        .to_vec(),
-                    )
-                }
-            },
-            crease_lengths: unsafe {
-                if raw_data.crease_lengths.is_null() || raw_data.crease_length_count == 0 {
-                    None
-                } else {
-                    Some(
-                        std::slice::from_raw_parts(
-                            raw_data.crease_lengths,
-                            raw_data.crease_length_count,
-                        )
-                        .to_vec(),
-                    )
-                }
-            },
-            crease_sharpnesses: unsafe {
-                if raw_data.crease_sharpnesses.is_null() || raw_data.crease_sharpness_count == 0 {
-                    None
-                } else {
-                    Some(
-                        std::slice::from_raw_parts(
-                            raw_data.crease_sharpnesses,
-                            raw_data.crease_sharpness_count,
-                        )
-                        .to_vec(),
-                    )
-                }
-            },
-        })
+        // SAFETY: raw_data populated by FFI call above; pointers valid while stage is open
+        Ok(unsafe { super::ffi_convert::convert_mesh(&raw_data) })
     }
 
     /// Get instancer data by index.
@@ -1182,114 +978,8 @@ impl UsdStage {
             });
         }
 
-        // Convert path
-        let path = unsafe {
-            if raw_data.path.is_null() {
-                String::new()
-            } else {
-                CStr::from_ptr(raw_data.path).to_string_lossy().into_owned()
-            }
-        };
-
-        // Convert prototype paths
-        let prototype_paths = unsafe {
-            if raw_data.prototype_paths.is_null() || raw_data.prototype_count == 0 {
-                Vec::new()
-            } else {
-                let ptrs =
-                    std::slice::from_raw_parts(raw_data.prototype_paths, raw_data.prototype_count);
-                ptrs.iter()
-                    .map(|&ptr| {
-                        if ptr.is_null() {
-                            String::new()
-                        } else {
-                            CStr::from_ptr(ptr).to_string_lossy().into_owned()
-                        }
-                    })
-                    .collect()
-            }
-        };
-
-        // Convert transforms (flat f32 array to Vec<Mat4>)
-        let transforms = unsafe {
-            if raw_data.transforms.is_null() || raw_data.instance_count == 0 {
-                Vec::new()
-            } else {
-                let slice =
-                    std::slice::from_raw_parts(raw_data.transforms, raw_data.instance_count * 16);
-                slice
-                    .chunks_exact(16)
-                    .map(|chunk| {
-                        let mut arr = [0.0f32; 16];
-                        arr.copy_from_slice(chunk);
-                        Mat4::from_cols_array(&arr)
-                    })
-                    .collect()
-            }
-        };
-
-        // Convert proto indices
-        let proto_indices = unsafe {
-            if raw_data.proto_indices.is_null() || raw_data.instance_count == 0 {
-                Vec::new()
-            } else {
-                std::slice::from_raw_parts(raw_data.proto_indices, raw_data.instance_count).to_vec()
-            }
-        };
-
-        // Convert velocities (optional)
-        let velocities = unsafe {
-            if raw_data.velocities.is_null() || raw_data.velocity_count == 0 {
-                None
-            } else {
-                let slice =
-                    std::slice::from_raw_parts(raw_data.velocities, raw_data.velocity_count * 3);
-                Some(
-                    slice
-                        .chunks_exact(3)
-                        .map(|c| Vec3::new(c[0], c[1], c[2]))
-                        .collect(),
-                )
-            }
-        };
-
-        // Convert angular velocities (optional)
-        let angular_velocities = unsafe {
-            if raw_data.angular_velocities.is_null() || raw_data.angular_velocity_count == 0 {
-                None
-            } else {
-                let slice = std::slice::from_raw_parts(
-                    raw_data.angular_velocities,
-                    raw_data.angular_velocity_count * 3,
-                );
-                Some(
-                    slice
-                        .chunks_exact(3)
-                        .map(|c| Vec3::new(c[0], c[1], c[2]))
-                        .collect(),
-                )
-            }
-        };
-
-        // Convert invisible IDs
-        let invisible_ids = unsafe {
-            if raw_data.invisible_ids.is_null() || raw_data.invisible_id_count == 0 {
-                Vec::new()
-            } else {
-                std::slice::from_raw_parts(raw_data.invisible_ids, raw_data.invisible_id_count)
-                    .to_vec()
-            }
-        };
-
-        Ok(UsdInstancerData {
-            path,
-            prototype_paths,
-            transforms,
-            proto_indices,
-            velocities,
-            angular_velocities,
-            invisible_ids,
-        })
+        // SAFETY: raw_data populated by FFI call above; pointers valid while stage is open
+        Ok(unsafe { super::ffi_convert::convert_instancer(&raw_data) })
     }
 
     /// Get all meshes in the stage.
@@ -1345,18 +1035,8 @@ impl UsdStage {
             });
         }
 
-        let purpose = match raw_data.purpose {
-            1 => MeshPurpose::Render,
-            2 => MeshPurpose::Proxy,
-            3 => MeshPurpose::Guide,
-            _ => MeshPurpose::Default,
-        };
-        Ok(UsdNativeInstance {
-            proto_mesh_idx: raw_data.proto_mesh_idx as usize,
-            transform: Mat4::from_cols_array(&raw_data.transform),
-            material_override_idx: raw_data.material_override_idx,
-            purpose,
-        })
+        // SAFETY: raw_data populated by FFI call above; pointers valid while stage is open
+        Ok(unsafe { super::ffi_convert::convert_native_instance(&raw_data) })
     }
 
     /// Get all native instances.
@@ -1413,55 +1093,8 @@ impl UsdStage {
             });
         }
 
-        // Convert path
-        let path = unsafe {
-            if raw_data.path.is_null() {
-                String::new()
-            } else {
-                CStr::from_ptr(raw_data.path).to_string_lossy().into_owned()
-            }
-        };
-
-        // Helper to convert optional texture path
-        let texture_path = |ptr: *const std::ffi::c_char| -> Option<String> {
-            if ptr.is_null() {
-                None
-            } else {
-                let s = unsafe { CStr::from_ptr(ptr).to_string_lossy().into_owned() };
-                if s.is_empty() {
-                    None
-                } else {
-                    Some(s)
-                }
-            }
-        };
-
-        Ok(UsdMaterialData {
-            path,
-            base_color: Vec3::new(
-                raw_data.diffuse_color[0],
-                raw_data.diffuse_color[1],
-                raw_data.diffuse_color[2],
-            ),
-            base_metalness: raw_data.metallic,
-            specular_roughness: raw_data.roughness,
-            specular_weight: raw_data.specular,
-            specular_ior: raw_data.specular_ior,
-            transmission_weight: raw_data.transmission,
-            geometry_opacity: raw_data.opacity,
-            emission_color: Vec3::new(
-                raw_data.emissive_color[0],
-                raw_data.emissive_color[1],
-                raw_data.emissive_color[2],
-            ),
-            base_color_texture: texture_path(raw_data.diffuse_texture),
-            specular_roughness_texture: texture_path(raw_data.roughness_texture),
-            base_metalness_texture: texture_path(raw_data.metallic_texture),
-            normal_texture: texture_path(raw_data.normal_texture),
-            emission_texture: texture_path(raw_data.emissive_texture),
-            geometry_opacity_texture: texture_path(raw_data.opacity_texture),
-            is_materialx: raw_data.is_materialx != 0,
-        })
+        // SAFETY: raw_data populated by FFI call above; pointers valid while stage is open
+        Ok(unsafe { super::ffi_convert::convert_material(&raw_data) })
     }
 
     /// Get the material path bound to a mesh.
@@ -1553,96 +1186,8 @@ impl UsdStage {
             });
         }
 
-        // Convert path
-        let path = unsafe {
-            if raw_data.path.is_null() {
-                String::new()
-            } else {
-                CStr::from_ptr(raw_data.path).to_string_lossy().into_owned()
-            }
-        };
-
-        // Convert texture path
-        let texture_path = if raw_data.texture_path.is_null() {
-            None
-        } else {
-            let s = unsafe {
-                CStr::from_ptr(raw_data.texture_path)
-                    .to_string_lossy()
-                    .into_owned()
-            };
-            if s.is_empty() {
-                None
-            } else {
-                Some(s)
-            }
-        };
-
-        // Combine intensity * 2^exposure
-        let combined_intensity = raw_data.intensity * (2.0_f32).powf(raw_data.exposure);
-
-        Ok(UsdLightData {
-            path,
-            light_type: raw_data.light_type.into(),
-            color: Vec3::new(raw_data.color[0], raw_data.color[1], raw_data.color[2]),
-            intensity: combined_intensity,
-            transform: Mat4::from_cols_array(&raw_data.transform),
-            angle: raw_data.angle,
-            radius: raw_data.radius,
-            width: raw_data.width,
-            height: raw_data.height,
-            texture_path,
-            length: raw_data.length,
-            shaping: UsdLightShaping {
-                cone_angle: raw_data.shaping_cone_angle,
-                cone_softness: raw_data.shaping_cone_softness,
-                focus: raw_data.shaping_focus,
-                ies_file: if raw_data.shaping_ies_file.is_null() {
-                    None
-                } else {
-                    let s = unsafe {
-                        CStr::from_ptr(raw_data.shaping_ies_file)
-                            .to_string_lossy()
-                            .into_owned()
-                    };
-                    if s.is_empty() {
-                        None
-                    } else {
-                        Some(s)
-                    }
-                },
-            },
-            light_link_includes: unsafe {
-                if raw_data.light_link_includes.is_null() || raw_data.light_link_include_count == 0
-                {
-                    Vec::new()
-                } else {
-                    let ptrs = std::slice::from_raw_parts(
-                        raw_data.light_link_includes,
-                        raw_data.light_link_include_count,
-                    );
-                    ptrs.iter()
-                        .filter(|&&p| !p.is_null())
-                        .map(|&p| CStr::from_ptr(p).to_string_lossy().into_owned())
-                        .collect()
-                }
-            },
-            light_link_excludes: unsafe {
-                if raw_data.light_link_excludes.is_null() || raw_data.light_link_exclude_count == 0
-                {
-                    Vec::new()
-                } else {
-                    let ptrs = std::slice::from_raw_parts(
-                        raw_data.light_link_excludes,
-                        raw_data.light_link_exclude_count,
-                    );
-                    ptrs.iter()
-                        .filter(|&&p| !p.is_null())
-                        .map(|&p| CStr::from_ptr(p).to_string_lossy().into_owned())
-                        .collect()
-                }
-            },
-        })
+        // SAFETY: raw_data populated by FFI call above; pointers valid while stage is open
+        Ok(unsafe { super::ffi_convert::convert_light(&raw_data) })
     }
 
     /// Get all lights in the stage.
@@ -1689,62 +1234,8 @@ impl UsdStage {
             return Err(result.into());
         }
 
-        let path = unsafe {
-            if raw.path.is_null() {
-                String::new()
-            } else {
-                CStr::from_ptr(raw.path).to_string_lossy().into_owned()
-            }
-        };
-
-        let positions = unsafe {
-            if raw.positions.is_null() || raw.point_count == 0 {
-                Vec::new()
-            } else {
-                let s = std::slice::from_raw_parts(raw.positions, raw.point_count * 3);
-                s.chunks_exact(3)
-                    .map(|c| Vec3::new(c[0], c[1], c[2]))
-                    .collect()
-            }
-        };
-
-        let widths = unsafe {
-            if raw.widths.is_null() || raw.width_count == 0 {
-                None
-            } else {
-                Some(std::slice::from_raw_parts(raw.widths, raw.width_count).to_vec())
-            }
-        };
-
-        let normals = unsafe {
-            if raw.normals.is_null() || raw.normal_count == 0 {
-                None
-            } else {
-                let s = std::slice::from_raw_parts(raw.normals, raw.normal_count * 3);
-                Some(
-                    s.chunks_exact(3)
-                        .map(|c| Vec3::new(c[0], c[1], c[2]))
-                        .collect(),
-                )
-            }
-        };
-
-        let ids = unsafe {
-            if raw.ids.is_null() || raw.id_count == 0 {
-                None
-            } else {
-                Some(std::slice::from_raw_parts(raw.ids, raw.id_count).to_vec())
-            }
-        };
-
-        Ok(UsdPointsData {
-            path,
-            positions,
-            widths,
-            normals,
-            ids,
-            transform: Mat4::from_cols_array(&raw.transform),
-        })
+        // SAFETY: raw populated by FFI call above; pointers valid while stage is open
+        Ok(unsafe { super::ffi_convert::convert_points(&raw) })
     }
 
     /// Get all UsdGeomPoints prims.
@@ -1792,62 +1283,8 @@ impl UsdStage {
             return Err(result.into());
         }
 
-        let path = unsafe {
-            if raw.path.is_null() {
-                String::new()
-            } else {
-                CStr::from_ptr(raw.path).to_string_lossy().into_owned()
-            }
-        };
-
-        let points = unsafe {
-            if raw.points.is_null() || raw.point_count == 0 {
-                Vec::new()
-            } else {
-                let s = std::slice::from_raw_parts(raw.points, raw.point_count * 3);
-                s.chunks_exact(3)
-                    .map(|c| Vec3::new(c[0], c[1], c[2]))
-                    .collect()
-            }
-        };
-
-        let widths = unsafe {
-            if raw.widths.is_null() || raw.width_count == 0 {
-                None
-            } else {
-                Some(std::slice::from_raw_parts(raw.widths, raw.width_count).to_vec())
-            }
-        };
-
-        let curve_vertex_counts = unsafe {
-            if raw.curve_vertex_counts.is_null() || raw.curve_count == 0 {
-                Vec::new()
-            } else {
-                std::slice::from_raw_parts(raw.curve_vertex_counts, raw.curve_count).to_vec()
-            }
-        };
-
-        Ok(UsdCurvesData {
-            path,
-            points,
-            widths,
-            curve_vertex_counts,
-            curve_type: match raw.curve_type {
-                UsdBridgeCurveTypeRaw::Cubic => CurveType::Cubic,
-                _ => CurveType::Linear,
-            },
-            basis: match raw.basis {
-                UsdBridgeCurveBasisRaw::Bspline => CurveBasis::Bspline,
-                UsdBridgeCurveBasisRaw::CatmullRom => CurveBasis::CatmullRom,
-                _ => CurveBasis::Bezier,
-            },
-            wrap: match raw.wrap {
-                UsdBridgeCurveWrapRaw::Periodic => CurveWrap::Periodic,
-                UsdBridgeCurveWrapRaw::Pinned => CurveWrap::Pinned,
-                _ => CurveWrap::Nonperiodic,
-            },
-            transform: Mat4::from_cols_array(&raw.transform),
-        })
+        // SAFETY: raw populated by FFI call above; pointers valid while stage is open
+        Ok(unsafe { super::ffi_convert::convert_curves(&raw) })
     }
 
     /// Get all BasisCurves prims.
@@ -1888,67 +1325,8 @@ impl UsdStage {
             return Err(result.into());
         }
 
-        let path = unsafe {
-            if raw.path.is_null() {
-                String::new()
-            } else {
-                CStr::from_ptr(raw.path).to_string_lossy().into_owned()
-            }
-        };
-
-        let joint_paths = unsafe {
-            if raw.joint_paths.is_null() || raw.joint_count == 0 {
-                Vec::new()
-            } else {
-                let ptrs = std::slice::from_raw_parts(raw.joint_paths, raw.joint_count);
-                ptrs.iter()
-                    .map(|&p| {
-                        if p.is_null() {
-                            String::new()
-                        } else {
-                            CStr::from_ptr(p).to_string_lossy().into_owned()
-                        }
-                    })
-                    .collect()
-            }
-        };
-
-        let bind_transforms = unsafe {
-            if raw.bind_transforms.is_null() || raw.joint_count == 0 {
-                Vec::new()
-            } else {
-                let s = std::slice::from_raw_parts(raw.bind_transforms, raw.joint_count * 16);
-                s.chunks_exact(16)
-                    .map(|c| {
-                        let mut arr = [0.0f32; 16];
-                        arr.copy_from_slice(c);
-                        Mat4::from_cols_array(&arr)
-                    })
-                    .collect()
-            }
-        };
-
-        let rest_transforms = unsafe {
-            if raw.rest_transforms.is_null() || raw.joint_count == 0 {
-                Vec::new()
-            } else {
-                let s = std::slice::from_raw_parts(raw.rest_transforms, raw.joint_count * 16);
-                s.chunks_exact(16)
-                    .map(|c| {
-                        let mut arr = [0.0f32; 16];
-                        arr.copy_from_slice(c);
-                        Mat4::from_cols_array(&arr)
-                    })
-                    .collect()
-            }
-        };
-
-        Ok(UsdSkeletonData {
-            path,
-            joint_paths,
-            bind_transforms,
-            rest_transforms,
-        })
+        // SAFETY: raw populated by FFI call above; pointers valid while stage is open
+        Ok(unsafe { super::ffi_convert::convert_skeleton(&raw) })
     }
 
     /// Get skin binding for a mesh (if it has UsdSkelBindingAPI).
@@ -1968,40 +1346,8 @@ impl UsdStage {
             return Err(result.into());
         }
 
-        Ok(UsdSkinBindingData {
-            mesh_path: unsafe {
-                if raw.mesh_path.is_null() {
-                    String::new()
-                } else {
-                    CStr::from_ptr(raw.mesh_path).to_string_lossy().into_owned()
-                }
-            },
-            skeleton_path: unsafe {
-                if raw.skeleton_path.is_null() {
-                    String::new()
-                } else {
-                    CStr::from_ptr(raw.skeleton_path)
-                        .to_string_lossy()
-                        .into_owned()
-                }
-            },
-            joint_indices: unsafe {
-                if raw.joint_indices.is_null() || raw.joint_indices_count == 0 {
-                    Vec::new()
-                } else {
-                    std::slice::from_raw_parts(raw.joint_indices, raw.joint_indices_count).to_vec()
-                }
-            },
-            joint_weights: unsafe {
-                if raw.joint_weights.is_null() || raw.joint_weights_count == 0 {
-                    Vec::new()
-                } else {
-                    std::slice::from_raw_parts(raw.joint_weights, raw.joint_weights_count).to_vec()
-                }
-            },
-            element_size: raw.joint_indices_element_size,
-            geom_bind_transform: Mat4::from_cols_array(&raw.geom_bind_transform),
-        })
+        // SAFETY: raw populated by FFI call above; pointers valid while stage is open
+        Ok(unsafe { super::ffi_convert::convert_skin_binding(&raw) })
     }
 
     // ========================================================================
@@ -2031,31 +1377,8 @@ impl UsdStage {
             return Err(result.into());
         }
 
-        let to_opt_string = |p: *const std::ffi::c_char| -> Option<String> {
-            if p.is_null() {
-                None
-            } else {
-                let s = unsafe { CStr::from_ptr(p).to_string_lossy().into_owned() };
-                if s.is_empty() {
-                    None
-                } else {
-                    Some(s)
-                }
-            }
-        };
-
-        Ok(UsdVolumeData {
-            path: unsafe {
-                if raw.path.is_null() {
-                    String::new()
-                } else {
-                    CStr::from_ptr(raw.path).to_string_lossy().into_owned()
-                }
-            },
-            vdb_file_path: to_opt_string(raw.vdb_file_path),
-            field_name: to_opt_string(raw.field_name),
-            transform: Mat4::from_cols_array(&raw.transform),
-        })
+        // SAFETY: raw populated by FFI call above; pointers valid while stage is open
+        Ok(unsafe { super::ffi_convert::convert_volume(&raw) })
     }
 
     /// Get all volumes.
@@ -2096,61 +1419,8 @@ impl UsdStage {
                 continue;
             }
 
-            let name = unsafe {
-                if raw.name.is_null() {
-                    String::new()
-                } else {
-                    CStr::from_ptr(raw.name).to_string_lossy().into_owned()
-                }
-            };
-
-            let primvar_type = match raw.primvar_type {
-                UsdBridgePrimvarTypeRaw::Float => PrimvarType::Float,
-                UsdBridgePrimvarTypeRaw::Float2 => PrimvarType::Float2,
-                UsdBridgePrimvarTypeRaw::Float3 => PrimvarType::Float3,
-                UsdBridgePrimvarTypeRaw::Int => PrimvarType::Int,
-            };
-
-            let interpolation = match raw.interpolation {
-                UsdBridgePrimvarInterpolationRaw::Constant => PrimvarInterpolation::Constant,
-                UsdBridgePrimvarInterpolationRaw::Uniform => PrimvarInterpolation::Uniform,
-                UsdBridgePrimvarInterpolationRaw::Vertex => PrimvarInterpolation::Vertex,
-                UsdBridgePrimvarInterpolationRaw::FaceVarying => PrimvarInterpolation::FaceVarying,
-            };
-
-            let float_count = match primvar_type {
-                PrimvarType::Float => raw.element_count,
-                PrimvarType::Float2 => raw.element_count * 2,
-                PrimvarType::Float3 => raw.element_count * 3,
-                PrimvarType::Int => 0,
-            };
-
-            let float_data = unsafe {
-                if raw.float_data.is_null() || float_count == 0 {
-                    Vec::new()
-                } else {
-                    std::slice::from_raw_parts(raw.float_data, float_count).to_vec()
-                }
-            };
-
-            let int_data = unsafe {
-                if raw.int_data.is_null() || raw.element_count == 0 {
-                    Vec::new()
-                } else if matches!(primvar_type, PrimvarType::Int) {
-                    std::slice::from_raw_parts(raw.int_data, raw.element_count).to_vec()
-                } else {
-                    Vec::new()
-                }
-            };
-
-            primvars.push(UsdPrimvarData {
-                name,
-                primvar_type,
-                interpolation,
-                float_data,
-                int_data,
-                element_count: raw.element_count,
-            });
+            // SAFETY: raw populated by FFI call above; pointers valid while stage is open
+            primvars.push(unsafe { super::ffi_convert::convert_primvar(&raw) });
         }
 
         Ok(primvars)
@@ -2336,14 +1606,8 @@ impl UsdStage {
             return Err(result.into());
         }
 
-        Ok(UsdStageMetadata {
-            meters_per_unit: raw.meters_per_unit,
-            up_axis: match raw.up_axis {
-                UsdBridgeUpAxisRaw::Z => UpAxis::Z,
-                _ => UpAxis::Y,
-            },
-            time_codes_per_second: raw.time_codes_per_second,
-        })
+        // SAFETY: no pointers in stage metadata raw struct
+        Ok(super::ffi_convert::convert_stage_metadata(&raw))
     }
 
     // ========================================================================
@@ -2367,12 +1631,8 @@ impl UsdStage {
             return Err(result.into());
         }
 
-        Ok(UsdTimelineData {
-            start_time_code: raw_data.start_time_code,
-            end_time_code: raw_data.end_time_code,
-            frames_per_second: raw_data.frames_per_second,
-            has_authored_time_range: raw_data.has_authored_time_range != 0,
-        })
+        // SAFETY: no pointers in timeline raw struct
+        Ok(super::ffi_convert::convert_timeline(&raw_data))
     }
 
     /// Get animation data for a mesh by index.
@@ -2396,25 +1656,8 @@ impl UsdStage {
             });
         }
 
-        let xform_samples = if raw_data.xform_samples.is_null() || raw_data.xform_sample_count == 0
-        {
-            Vec::new()
-        } else {
-            unsafe {
-                std::slice::from_raw_parts(raw_data.xform_samples, raw_data.xform_sample_count)
-                    .iter()
-                    .map(|s| TransformSample {
-                        time: s.time,
-                        transform: Mat4::from_cols_array(&s.transform),
-                    })
-                    .collect()
-            }
-        };
-
-        Ok(UsdAnimatedMeshData {
-            mesh_index: raw_data.mesh_index,
-            xform_samples,
-        })
+        // SAFETY: raw_data populated by FFI call above; pointers valid while stage is open
+        Ok(unsafe { super::ffi_convert::convert_mesh_animation(&raw_data) })
     }
 
     /// Get animation data for an instancer by index.
@@ -2444,46 +1687,8 @@ impl UsdStage {
             });
         }
 
-        let time_samples = if raw_data.time_samples.is_null() || raw_data.time_sample_count == 0 {
-            Vec::new()
-        } else {
-            unsafe {
-                std::slice::from_raw_parts(raw_data.time_samples, raw_data.time_sample_count)
-                    .to_vec()
-            }
-        };
-
-        let transforms = if raw_data.transforms.is_null()
-            || raw_data.time_sample_count == 0
-            || raw_data.instance_count == 0
-        {
-            Vec::new()
-        } else {
-            let total_matrices = raw_data.time_sample_count * raw_data.instance_count;
-            let flat_data =
-                unsafe { std::slice::from_raw_parts(raw_data.transforms, total_matrices * 16) };
-
-            // Reshape: [time_sample_count][instance_count] -> Vec<Vec<Mat4>>
-            let mut result = Vec::with_capacity(raw_data.time_sample_count);
-            for time_idx in 0..raw_data.time_sample_count {
-                let mut instances = Vec::with_capacity(raw_data.instance_count);
-                for inst_idx in 0..raw_data.instance_count {
-                    let offset = (time_idx * raw_data.instance_count + inst_idx) * 16;
-                    let mut arr = [0.0f32; 16];
-                    arr.copy_from_slice(&flat_data[offset..offset + 16]);
-                    instances.push(Mat4::from_cols_array(&arr));
-                }
-                result.push(instances);
-            }
-            result
-        };
-
-        Ok(UsdAnimatedInstancerData {
-            instancer_index: raw_data.instancer_index,
-            time_samples,
-            instance_count: raw_data.instance_count,
-            transforms,
-        })
+        // SAFETY: raw_data populated by FFI call above; pointers valid while stage is open
+        Ok(unsafe { super::ffi_convert::convert_instancer_animation(&raw_data) })
     }
 
     /// Get animated transform samples for a camera by path.
@@ -2607,13 +1812,8 @@ impl UsdStage {
             return Err(result.into());
         }
 
-        Ok(CameraProperties {
-            focal_length: props.focal_length,
-            vertical_aperture: props.vertical_aperture,
-            clip_near: props.clip_near,
-            clip_far: props.clip_far,
-            horizontal_aperture: props.horizontal_aperture,
-        })
+        // SAFETY: no pointers in camera properties raw struct
+        Ok(super::ffi_convert::convert_camera_properties(&props))
     }
 
     // ========================================================================
@@ -2848,35 +2048,8 @@ impl UsdStage {
 
     /// Helper to convert raw prim info to Rust type.
     fn convert_prim_info(raw: &UsdBridgePrimInfoRaw) -> UsdBridgeResult<UsdPrimInfo> {
-        let path = unsafe {
-            if raw.path.is_null() {
-                String::new()
-            } else {
-                CStr::from_ptr(raw.path).to_string_lossy().into_owned()
-            }
-        };
-
-        let type_name = unsafe {
-            if raw.type_name.is_null() {
-                String::new()
-            } else {
-                CStr::from_ptr(raw.type_name).to_string_lossy().into_owned()
-            }
-        };
-
-        Ok(UsdPrimInfo {
-            path,
-            type_name,
-            is_active: raw.is_active != 0,
-            has_children: raw.has_children != 0,
-            child_count: raw.child_count,
-            visible: raw.visibility != 0,
-            has_payload: raw.has_payload != 0,
-            is_loaded: raw.is_loaded != 0,
-            variant_set_count: raw.variant_set_count,
-            has_inherits: raw.has_inherits != 0,
-            has_specializes: raw.has_specializes != 0,
-        })
+        // SAFETY: raw populated by FFI call in caller; pointers valid while stage is open
+        Ok(unsafe { super::ffi_convert::convert_prim_info(raw) })
     }
 }
 
