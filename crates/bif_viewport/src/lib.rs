@@ -31,6 +31,7 @@ pub mod texture_loader;
 // Scene browser and property inspector modules
 mod animation;
 mod ivar_build;
+mod node_dispatch;
 pub mod node_graph;
 pub mod persistence;
 pub mod property_inspector;
