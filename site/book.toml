@@ -8,8 +8,8 @@ src = "src"
 build-dir = "book"
 
 [output.html]
-default-theme = "navy"
-preferred-dark-theme = "navy"
+default-theme = "ayu"
+preferred-dark-theme = "ayu"
 git-repository-url = "https://github.com/byvfx/bif"
 edit-url-template = "https://github.com/byvfx/bif/edit/main/{path}"
 
