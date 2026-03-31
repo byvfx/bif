@@ -20,6 +20,13 @@
 
 ## Recent Work
 
+### Power-Weighted Light Sampling (Mar 30, 2026)
+
+- Replaced uniform 1/N light selection with power-weighted CDF in `LightList`
+- Added `power()` to `Light` trait (DistantLight, SphereLight, RectLight)
+- Foundation for hierarchical light tree (v0.20.0) and env map visibility cache (v0.22.0)
+- Scoped two Octane-inspired features: many-light sampling + env visibility cache
+
 ### SHARC Cache + Max Depth UI (Mar 30, 2026)
 
 - SHARC radiance cache now skips low-roughness surfaces (< 0.1) via new `Material::roughness()` trait — fixes blurred reflections on glossy/mirror materials
