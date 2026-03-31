@@ -319,10 +319,21 @@ Core architecture for rendering scenes that don't fit in memory. Exploits BIF's 
 - Namespace editor (rename/reparent prims — moved from M33)
 - **Existing code:** `bif_core/src/scene.rs` Material struct, `bif_renderer/src/material.rs`
 
+### Tasks — Ground-Clamp Placement
+- Raycast down from scatter/placed position → find surface hit (reuse Embree pick from M20)
+- Snap object origin to hit point
+- Orient to surface normal (align Y-up to hit normal)
+- Random rotation jitter (configurable range per axis)
+- Integration with `ScatterInstances` operation — ground-clamp as optional post-step
+- Works with both individual prims and PointInstancer instances
+- Scatter density painting (brush-based density control)
+- Exclusion zones (mask regions where scatter is suppressed)
+
 ### Technical Notes
 - All authoring operations must include undo commands (QUndoStack from M28)
 - Shader graph built on context system architecture (M39)
 - Material presets stored as .mtlx templates
+- Ground-clamp reuses existing Embree scene for raycasting — no new dependencies
 
 ### Acceptance Criteria
 - Can author lights and materials entirely in BIF
@@ -330,6 +341,8 @@ Core architecture for rendering scenes that don't fit in memory. Exploits BIF's 
 - Viewport shows light gizmos
 - Undo/redo works for all authoring operations
 - Shader graph functional in Materials context
+- Scattered objects sit on terrain surfaces without floating/intersecting
+- Ground-clamp works with both individual prims and PointInstancer output
 
 ---
 
@@ -477,6 +490,36 @@ Core architecture for rendering scenes that don't fit in memory. Exploits BIF's 
 - Widget crates usable outside BIF (independent Cargo.toml, published)
 - At least one DCC connector prototype (Houdini TOP or HDA)
 - Plugin system can load external node types
+
+---
+
+## Post-1.0 Backlog — Physics Painter
+
+**Estimate:** ~3-4 weeks
+**Dependencies:** v0.20.0 (ground-clamp placement, scatter, PointInstancer export)
+**Scope hard-capped:** Gravity + convex hull + freeze. No joints, constraints, friction tuning, soft body.
+
+### Tasks
+- rapier3d integration: `PhysicsPipeline`, rigid bodies, convex hull colliders via parry3d
+- Convex hull from USD mesh: read vertices (or sim proxy geometry), `ConvexHull::from_points()`
+- Paint interaction: viewport raycasting, spawn bodies on click/drag
+- Live sim feedback: update transforms each physics step, render in viewport
+- Freeze: stop sim, bake final resting transforms
+- Bake to USD: PointInstancer arrays (positions/orientations/protoIndices) or individual prim xformOps
+- UI controls: drop height, sim duration, reset
+
+### Technical Notes
+- rapier3d is pure Rust, bundles parry3d for collision geometry — no external deps
+- Watch coordinate system (Y-up vs Z-up per stage) and scale (rapier tuned for meters, USD often cm)
+- Don't step physics on render thread — fixed timestep with interpolation for display
+- Trimesh colliders for ground/terrain are one-sided — verify face normals
+- Sleeping thresholds: tune or force-sleep after N stable frames to avoid vibration
+
+### Acceptance Criteria
+- Paint objects that settle via gravity onto surfaces
+- Supports convex hull collision from USD mesh or sim proxy
+- Bake to both PointInstancer and individual xforms
+- No scope creep beyond rigid body + gravity + freeze
 
 ---
 

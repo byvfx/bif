@@ -124,6 +124,8 @@ M37 (lights) + M38 (materials) + workflow Phase 7. "Create content + see what yo
 - Point edit mode with soft-select (vertex nudging, `points` override)
 - `AnimKey` operation for simple keyframe overrides (`timeSamples` output)
 - `ScatterInstances` operation integrated into edit layer authoring
+- Ground-clamp placement: raycast down → snap to surface, orient to surface normal, jitter/randomize rotation
+- Scatter density painting + exclusion zones
 - New operation nodes: Material Override, Anim Key, Point Edit
 - Light linking (UsdLuxLightListAPI — control which geometry a light affects)
 - Color temperature (Kelvin → RGB conversion for lights)
@@ -160,6 +162,7 @@ M36+ (widget crates, plugin system, DCC connectors). "Reusable VFX framework cra
 - Texture animation (UV offset keyframes)
 - Velocity-based motion blur (UsdGeomMotionAPI)
 - Native instancing read (instanceable prims — currently only PointInstancer)
+- Physics painter (post-1.0): rapier3d rigid-body settle for organic object piling (gravity + convex hull + freeze, no constraints/friction)
 
 ---
 
