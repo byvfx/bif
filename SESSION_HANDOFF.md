@@ -20,6 +20,12 @@
 
 ## Recent Work
 
+### SHARC Cache + Max Depth UI (Mar 30, 2026)
+
+- SHARC radiance cache now skips low-roughness surfaces (< 0.1) via new `Material::roughness()` trait — fixes blurred reflections on glossy/mirror materials
+- Added Max Depth slider (1–32) to interactive Ivar render panel
+- Roadmap trimmed: removed AI Integration version, renumbered
+
 ### GitHub Pages Site (Mar 30, 2026)
 
 Set up mdBook-based site with auto-deployed dev diary (85 entries) + manual (USD reference, getting started, architecture, changelog). `scripts/generate-site.sh` auto-generates SUMMARY.md from devlog tree. GitHub Actions deploys on push. **Action needed:** enable Pages source = "GitHub Actions" in repo settings.

@@ -182,7 +182,8 @@ pub fn ray_color_with_aovs(
 
         // --- SHARC cache READ ---
         let is_delta = rec.material.is_delta();
-        if !is_delta && bounce_count >= cache_min_depth {
+        let skip_cache = is_delta || rec.material.roughness() < 0.1;
+        if !skip_cache && bounce_count >= cache_min_depth {
             if let Some(c) = cache {
                 if let Some(cached) = c.lookup(rec.p, rec.normal) {
                     // Guard against NaN/inf from torn reads in lock-free cache
@@ -263,7 +264,7 @@ pub fn ray_color_with_aovs(
         // NOTE: Stores emission + NEE only (not indirect). Biases cached values
         // low but converges over passes via EMA blending. Acceptable for IPR
         // preview; deferred write-back needed for final quality.
-        if !is_delta && bounce_count >= cache_min_depth {
+        if !skip_cache && bounce_count >= cache_min_depth {
             if let Some(c) = cache {
                 c.write(rec.p, rec.normal, local_radiance);
             }

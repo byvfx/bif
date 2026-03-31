@@ -14,8 +14,8 @@ use rayon::prelude::*;
 use bif_math::Vec3;
 use bif_renderer::{
     generate_buckets, radiance_cache::auto_cell_size, render_bucket, BvhNode, Camera, Color,
-    DiffuseLight, Hittable, Lambertian, LightList, Material, RadianceCache, RadianceCacheConfig,
-    RenderConfig, Sphere, Triangle,
+    DiffuseLight, Hittable, Lambertian, LightList, Material, Metal, RadianceCache,
+    RadianceCacheConfig, RenderConfig, Sphere, Triangle,
 };
 
 const WIDTH: u32 = 256;
@@ -489,7 +489,7 @@ fn build_cornell_box() -> BvhNode {
         light_mat,
     );
 
-    // Two white spheres
+    // Diffuse sphere + glossy metal sphere (roughness 0.05 < 0.1 cache threshold)
     objects.push(Box::new(Sphere::new(
         Vec3::new(1.75, 1.0, 2.5),
         1.0,
@@ -498,7 +498,7 @@ fn build_cornell_box() -> BvhNode {
     objects.push(Box::new(Sphere::new(
         Vec3::new(3.5, 1.0, 3.5),
         1.0,
-        Lambertian::new(Color::new(0.73, 0.73, 0.73)),
+        Metal::new(Color::new(0.8, 0.8, 0.8), 0.05),
     )));
 
     BvhNode::new(objects)

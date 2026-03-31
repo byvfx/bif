@@ -67,6 +67,15 @@ pub trait Material: Send + Sync {
         false
     }
 
+    /// Surface roughness for radiance cache eligibility.
+    ///
+    /// Returns 0.0 (mirror) to 1.0 (fully diffuse). Surfaces with roughness
+    /// below the cache threshold skip SHARC reads/writes to avoid blurred
+    /// reflections. Default = 1.0 (diffuse, always cache-eligible).
+    fn roughness(&self) -> f32 {
+        1.0
+    }
+
     /// Surface albedo at given UV coordinates (for denoiser guide image).
     ///
     /// Returns the diffuse reflectance color at this point. Used by OIDN
@@ -229,6 +238,10 @@ impl Material for Metal {
 
     fn is_delta(&self) -> bool {
         self.fuzz < 0.001
+    }
+
+    fn roughness(&self) -> f32 {
+        self.fuzz
     }
 
     fn albedo(&self, _u: f32, _v: f32) -> Color {

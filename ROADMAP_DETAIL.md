@@ -12,10 +12,12 @@ For the high-level roadmap, see [MILESTONES.md](MILESTONES.md). For completed mi
 **Last egui feature release.**
 
 ### Remaining Tasks
+
 - Final validation of M29 USD export on production files
 - Release packaging and version bump
 
 ### Acceptance Criteria
+
 - .bif/.bifa save/load round-trips all 10 node types
 - Auto/Manual/OnMouseRelease eval modes functional
 - Cache node with bypass toggle
@@ -32,6 +34,7 @@ For the high-level roadmap, see [MILESTONES.md](MILESTONES.md). For completed mi
 **Last release on egui UI.** Logic is UI-agnostic for later Qt port.
 
 ### Tasks — Composition Inspector (M32)
+
 - **C++ Bridge Extensions:**
   - Expose `PcpPrimIndex` — composition arcs per prim
   - Expose `SdfLayerStack` — layer ordering
@@ -46,24 +49,27 @@ For the high-level roadmap, see [MILESTONES.md](MILESTONES.md). For completed mi
 - Reference: [havocado/usd-opinion-trace](https://github.com/havocado/usd-opinion-trace) (reimplement natively, don't clone)
 
 ### Tasks — USD Debugging Tools (M33)
+
 - **Variant Set Selector:** Interactive variant switching in property inspector
 - **Layer Stack Viewer:** Which layers contribute to selected prim
 - **Prim Metadata Inspector:** kind, purpose, apiSchemas, custom data
-- **Namespace Editor:** Rename/reparent prims (writes to edit layer) — deferred to v0.20.0
+- **Namespace Editor:** Rename/reparent prims (writes to edit layer) — deferred to v0.18.0
 
 ### Technical Notes
+
 - Requires new C++ bridge work for PcpPrimIndex/SdfLayerStack (different domain from current 79 FFI functions)
 - Variant switching forces full re-cache via `cache_stage_data()` architecture
 - Budget extra time for C++ composition API work
 - M33 estimated 10-15h, M32 estimated 15-20h
 
 ### Acceptance Criteria
+
 - Can inspect opinion source for any USD property
 - Can switch variants and see scene update live
 - Layer stack is browsable with opinion highlighting
 - LIVRPS composition ordering is visible per attribute
 - Prim metadata (kind, purpose, apiSchemas, custom data) inspectable
-- Read-only — no namespace editing (deferred to v0.20.0)
+- Read-only — no namespace editing (deferred to v0.18.0)
 
 ---
 
@@ -75,6 +81,7 @@ For the high-level roadmap, see [MILESTONES.md](MILESTONES.md). For completed mi
 **The pivot release — everything after is Qt-native.**
 
 ### Tasks — Qt 6 Shell (M28)
+
 - Qt 6 application shell via cxx-qt (C++ <-> Rust bridge)
 - Embed wgpu viewport in Qt widget
 - QDockWidget — true floating/docking panels
@@ -85,6 +92,7 @@ For the high-level roadmap, see [MILESTONES.md](MILESTONES.md). For completed mi
 - Port theme/styling to Qt stylesheets
 
 ### Tasks — Asset Browser (M28.1)
+
 - **Format Registry:**
   - `AssetFormat` trait: `extensions()`, `icon()`, `can_thumbnail()`, `generate_thumbnail()`, `node_type()`
   - Ships with: USD (.usd/.usda/.usdc), textures (.exr/.tx/.png/.jpg), HDRI (.hdr/.exr), OBJ (.obj)
@@ -106,6 +114,7 @@ For the high-level roadmap, see [MILESTONES.md](MILESTONES.md). For completed mi
 - Reference: Clarisse iFX browser, Houdini file chooser, Blender asset browser
 
 ### Tasks — Asset Library (M28.2)
+
 - **SQLite Schema (rusqlite):**
   - Assets table: path, format, tags, metadata, thumbnail_hash, created, modified
   - Tags with many-to-many junction table
@@ -116,6 +125,7 @@ For the high-level roadmap, see [MILESTONES.md](MILESTONES.md). For completed mi
 - **UI:** toggle between file browser / library view, inline tag chips, search bar with autocomplete
 
 ### Technical Notes
+
 - All subsystems already have UI-agnostic APIs (per project design principle)
 - Largest single release — consider phasing: v0.15.0 (core shell + viewport) then v0.15.x (browser + library)
 - Node graph is the highest-risk port (egui-snarl has no Qt equivalent — may need custom QGraphicsScene widget)
@@ -123,6 +133,7 @@ For the high-level roadmap, see [MILESTONES.md](MILESTONES.md). For completed mi
 - `bif_core::asset_browser` and `bif_core::asset_library` are UI-agnostic core modules
 
 ### Acceptance Criteria
+
 - All current UI functionality works in Qt
 - Dockable/undockable panels
 - Keyboard shortcuts match egui version
@@ -133,136 +144,38 @@ For the high-level roadmap, see [MILESTONES.md](MILESTONES.md). For completed mi
 
 ---
 
-## v0.17.0 — Viewport Performance
+## v0.16.0 — Viewport Performance
 
 **Milestones:** M22 (viewport performance)
 **Estimate:** 20-30h
 **Dependencies:** v0.15.0
 **Already Done:** Frustum culling, LOD system, polygon budget.
 
-### Tasks — Vulkan/wgpu Modernization
+### Tasks
+
 - Upgrade to Vulkan 1.3 features:
   - Dynamic rendering (simplify render passes)
   - Buffer device address (bindless buffers)
   - Descriptor indexing (bindless textures)
   - Synchronization2 (cleaner barriers)
+- Lazy geometry loading (load on demand)
 - Async texture streaming
 - GPU-driven rendering (indirect draw calls)
 
-### Tasks — Embree Two-Level BVH Streaming
-Core architecture for rendering scenes that don't fit in memory. Exploits BIF's prototype/instance split — instance transforms are tiny (~64 bytes each), prototype geometry is loaded on demand.
-
-- **Top-level BVH** (always in memory): instance bounding boxes + transforms only
-  - 1M instances × 64 bytes = 64MB — cheap, always resident
-  - Built once when entering render mode, shape never changes
-- **Bottom-level BVHs** (per prototype, loaded on demand): full triangle meshes
-  - Created via `rtcNewInstance` + `rtcSetGeometryInstancedScene`
-  - Instance starts with just a bounding box — no geometry needed
-  - On first ray hit to unloaded prototype: load mesh from USD, build BVH, attach to all instances
-- **`StreamingEmbreeScene`** struct:
-  - `top_scene: RTCScene` — instances only
-  - `prototype_scenes: HashMap<PrototypeId, PrototypeEntry>` — one Embree scene per prototype
-  - `cache: LruCache<PrototypeId, ()>` — eviction tracking
-  - `memory_budget` / `memory_used` — hard limit on prototype memory
-- **`PrototypeState` enum**:
-  - `BoundingBox(AABB)` — viewport mode, wireframe display only
-  - `Loaded { mesh, embree_geom_id }` — full geometry, ready to intersect
-  - `Deferred { usd_prim_path, bounds, estimated_memory_bytes }` — knows where data lives, loads on first ray hit
-- **`RenderContext`** with on-demand loading:
-  - `prototype_cache: LruCache<PrototypeId, Arc<Mesh>>` — LRU eviction when budget exceeded
-  - `ensure_loaded()` transitions `Deferred → Loaded` by reading from USD via C++ bridge
-  - `trace_ray()` — if ray hits unloaded prototype bbox, load geometry, rebuild, re-trace
-- **Eviction**: `unload_prototype()` detaches Embree child scene, reverts to bounding-box-only hits
-- **Memory budget example**: 500 prototypes × 5MB avg = 2.5GB total; 4GB budget → all fit. At 10MB avg (5GB total) → ~380 in memory, 120 evict/reload. Typical frames hit ~200 prototypes (camera frustum).
-
-### Tasks — Payload Policies
-- `PayloadPolicy::CameraFrustum` — load geometry visible to camera + padding
-- `PayloadPolicy::Manual` — artist manually picks what to load/unload
-- Task-driven inference: suggest payloads based on active working layer
-- UI for payload management in stage tree (right-click load/unload)
-
 ### Technical Notes
+
 - Not hitting viewport limits yet — this is optimization, not features
 - Reference: [howtovulkan.com](https://howtovulkan.com) — Modern Vulkan patterns
-- Embree streaming is what made Clarisse revolutionary for environment work — BIF gets it from prototype/instance design + Embree's native two-level traversal
-- Loading one prototype enables rendering ALL its instances (could be thousands)
-- Top-level BVH never changes shape — only child scenes get populated/evicted
-- No custom intersection code needed — Embree handles two-level traversal natively
 
 ### Acceptance Criteria
+
 - Measurable FPS improvement on large scenes (>1M instances)
 - GPU memory usage reduced for scenes not fully visible
 - Smooth interaction at production scale
-- Render scenes exceeding memory budget via LRU prototype eviction
-- Prototype load-on-demand: first ray hit triggers geometry load from USD
-- Payload policies functional: CameraFrustum, Manual, BoundingBoxOnly
 
 ---
 
-## v0.18.0 — AI Integration
-
-**Estimate:** 38-59h (5 phases)
-**Dependencies:** v0.15.0 (Qt — for panel UI), bif_core stable API
-**Stretch goal — ships independently as feature-gated `bif_ai` crate.**
-
-### Architecture
-- New `bif_ai` crate: depends on bif_core only, feature-gated (`--features ai`)
-- Async bridge: owns tokio runtime, channel-based polling from UI loop
-- Provider-agnostic: LlmProvider trait (Ollama default, OpenAI, Anthropic)
-- AI produces inert data (MaterialParams, ScenePlan) — viewport executes
-
-### Phase 1: Material Creator (10-15h)
-- LlmProvider trait + Ollama/OpenAI/Anthropic implementations
-- AiService async bridge (tokio runtime, mpsc channels)
-- Text → MaterialParams (OpenPBR subset, 13 validated fields)
-- Validation: clamp ranges, physical plausibility checks (metalness binary, IOR >= 1.0)
-- egui/Qt panel: prompt input, generate, apply to scene
-- New AppEvent variants: AiMaterialReady, AiError, AiProgress
-
-### Phase 2: Provider Breadth (4-6h)
-- OpenAI + Anthropic providers
-- Config UI: provider selection, API key from env vars (BIF_OPENAI_API_KEY, etc.)
-- Model selection per provider
-
-### Phase 3: Scene Builder (12-18h)
-- SceneAction enum: CreateNode, Connect, SetDisplayNode (uses logical temp_ids)
-- ScenePlan generation from text prompt via structured JSON output
-- Preview/confirm UI (mandatory — AI never auto-applies)
-- Viewport translates SceneAction → NodeGraphEvent (temp_id → real NodeId)
-- Single undo group for entire AI build
-- Connection validation before execution
-
-### Phase 4: ComfyUI Integration (8-12h)
-- REST client: POST /upload/image, POST /prompt, GET /history/{id}
-- Workflow template system (JSON files, BIF_INPUT node convention)
-- Ship 2-3 templates: upscale_2x, denoise, style_transfer
-- User custom workflows in ~/.bif/comfyui_workflows/
-- Progress polling → AppEvent::AiComfyUiReady
-
-### Phase 5: Polish (4-8h)
-- Error UX, prompt refinement, response caching
-- Preset materials as non-AI fallback
-- Multi-turn scene editing (conversation history + graph state as context)
-
-### Technical Notes
-- Zero async contagion: bif_ai owns tokio runtime, exposes sync poll API
-- API keys via env vars only, `#[serde(skip)]` — never serialized to disk
-- Default Ollama (free, local) — best onboarding, no API key needed
-- MockProvider for deterministic testing, golden-file tests for CI
-- SceneAction vocabulary limited to existing 10 node types
-- JSON schema in system prompt (not function calling) for provider-agnostic structured output
-
-### Acceptance Criteria
-- "brushed steel" → valid OpenPBR Material with clamped params
-- "red cube next to blue sphere" → ScenePlan → preview → apply → nodes in graph
-- Render → ComfyUI upscale → result displayed in viewport
-- All AI features disabled cleanly without `--features ai`
-- Ctrl+Z undoes entire AI scene build as one operation
-- Works with Ollama (local), OpenAI, and Anthropic providers
-
----
-
-## v0.19.0 — Context System
+## v0.17.0 — Context System
 
 **Milestones:** M39 (Assembly/Materials/Animation contexts)
 **Estimate:** 30-40h
@@ -270,6 +183,7 @@ Core architecture for rendering scenes that don't fit in memory. Exploits BIF's 
 **Highest architectural risk.**
 
 ### Tasks
+
 - Refactor `SceneNode` into context-specific enums or trait-based system
 - **Assembly context** (current graph): UsdRead, Scatter, Instancer, Xform, Export
 - **Materials context**: shader graph nodes from M38, expanded
@@ -281,11 +195,13 @@ Core architecture for rendering scenes that don't fit in memory. Exploits BIF's 
 - NodeBehavior trait pattern for extensible node types
 
 ### Technical Notes
+
 - RISK: Touches scene_loader.rs (~2,356 lines), render.rs (~2,490 lines), property_inspector.rs (~1,737 lines)
 - Mitigation: Implement NodeBehavior trait before splitting SceneNode enum
 - Built in Qt (not egui) — avoids building twice
 
 ### Acceptance Criteria
+
 - Can switch between Assembly/Materials/Animation contexts
 - Each context has its own node graph
 - Existing Assembly workflow unbroken
@@ -293,13 +209,14 @@ Core architecture for rendering scenes that don't fit in memory. Exploits BIF's 
 
 ---
 
-## v0.20.0 — Scene Authoring
+## v0.18.0 — Scene Authoring
 
 **Milestones:** M37 (lights authoring), M38 (materials authoring)
 **Estimate:** 30-40h (M37: 10-15h, M38: 20-25h)
-**Dependencies:** v0.19.0 (context system)
+**Dependencies:** v0.17.0 (context system)
 
 ### Tasks — Lights (M37)
+
 - Light graph nodes: DistantLight, PointLight, RectLight (output Scene pin)
 - Property inspector: edit color, intensity, position, radius, angle
 - Viewport light visualization (wireframe icons)
@@ -309,6 +226,7 @@ Core architecture for rendering scenes that don't fit in memory. Exploits BIF's 
 - **Existing code:** `bif_renderer/src/light.rs` (DistantLight, SphereLight, RectLight + NEE/MIS)
 
 ### Tasks — Materials (M38)
+
 - Material creation: presets (diffuse, metal, glass, emissive)
 - Property inspector: PBR params (diffuse color, roughness, metallic, specular, textures)
 - Texture slot assignment (file picker)
@@ -320,11 +238,13 @@ Core architecture for rendering scenes that don't fit in memory. Exploits BIF's 
 - **Existing code:** `bif_core/src/scene.rs` Material struct, `bif_renderer/src/material.rs`
 
 ### Technical Notes
+
 - All authoring operations must include undo commands (QUndoStack from M28)
 - Shader graph built on context system architecture (M39)
 - Material presets stored as .mtlx templates
 
 ### Acceptance Criteria
+
 - Can author lights and materials entirely in BIF
 - Authored lights/materials export to valid USD
 - Viewport shows light gizmos
@@ -333,13 +253,14 @@ Core architecture for rendering scenes that don't fit in memory. Exploits BIF's 
 
 ---
 
-## v0.21.0 — MaterialX Authoring
+## v0.19.0 — MaterialX Authoring
 
 **Milestones:** M40 (MaterialX authoring)
 **Estimate:** 25-30h
-**Dependencies:** v0.20.0 (materials), v0.19.0 (context system)
+**Dependencies:** v0.18.0 (materials), v0.17.0 (context system)
 
 ### Tasks
+
 - Full `standard_surface` node graph (beyond M38 presets)
 - MaterialX node types in graph editor: Math, Color, Texture, Noise, Normal map, etc.
 - MaterialX XML export/import (round-trip)
@@ -349,10 +270,12 @@ Core architecture for rendering scenes that don't fit in memory. Exploits BIF's 
 - Material assignment to prims via drag-and-drop
 
 ### Technical Notes
+
 - Builds on M38 basic shader graph, expanding to full MaterialX node set
 - Existing code: `bif_core/src/materialx.rs` (M16 parser), `bif_renderer/src/material.rs`
 
 ### Acceptance Criteria
+
 - MaterialX graphs export valid .mtlx XML
 - Can import existing .mtlx files and edit them
 - Node previews render in graph (using Ivar)
@@ -360,13 +283,14 @@ Core architecture for rendering scenes that don't fit in memory. Exploits BIF's 
 
 ---
 
-## v0.22.0 — GPU Path Tracing
+## v0.20.0 — GPU Path Tracing
 
 **Milestones:** M27 (GPU path tracing)
 **Estimate:** 30-40h
-**Dependencies:** v0.17.0 (viewport perf)
+**Dependencies:** v0.16.0 (viewport perf)
 
 ### Tasks
+
 - wgpu compute shader path tracer
 - GPU BVH construction and traversal
 - ReSTIR (basic reservoir sampling first)
@@ -377,12 +301,14 @@ Core architecture for rendering scenes that don't fit in memory. Exploits BIF's 
 - Fallback to CPU Ivar for unsupported features
 
 ### Technical Notes
+
 - Positioned after authoring — there's content to preview
 - Fast material preview enables better authoring workflows
 - May require wgpu ray tracing extensions (experimental)
 - 10-100x speedup over CPU expected
 
 ### Acceptance Criteria
+
 - Interactive path tracing in viewport (>10 FPS on moderate scenes)
 - Material preview renders in <1s
 - ReSTIR improves convergence on complex lighting
@@ -390,13 +316,14 @@ Core architecture for rendering scenes that don't fit in memory. Exploits BIF's 
 
 ---
 
-## v0.23.0 — Volumes & OpenVDB
+## v0.21.0 — Volumes & OpenVDB
 
 **Milestones:** M25 (volumes + OpenVDB)
 **Estimate:** 20-30h
 **Dependencies:** v0.13.0
 
 ### Tasks
+
 - OpenVDB integration via C++ bridge
 - UsdVolume support (load from USD)
 - Null-scattering path integral formulation
@@ -407,9 +334,11 @@ Core architecture for rendering scenes that don't fit in memory. Exploits BIF's 
 - Volume node type in Assembly context
 
 ### Technical Notes
+
 - Reference: Arnold papers on participating media, null-scattering path integral (2019)
 
 ### Acceptance Criteria
+
 - Can load and render .vdb files
 - Fog/smoke volumes render in Ivar
 - Viewport shows volume bounds and density preview
@@ -417,13 +346,14 @@ Core architecture for rendering scenes that don't fit in memory. Exploits BIF's 
 
 ---
 
-## v0.24.0 — API & Integration
+## v0.22.0 — API & Integration
 
 **Milestones:** M35 (API cleanup), M34 (PyO3 pipeline integration)
 **Estimate:** 40-55h (M35: 10-15h, M34: 15-20h)
-**Dependencies:** v0.20.0+ (features stabilized)
+**Dependencies:** v0.18.0+ (features stabilized)
 
 ### Tasks — API Cleanup (M35, do first)
+
 - bif_core + bif_renderer documented as Rust libraries
 - Doc comments on all public items
 - Example programs (load scene, render to EXR, export USD)
@@ -433,6 +363,7 @@ Core architecture for rendering scenes that don't fit in memory. Exploits BIF's 
 - Remove/hide internal-only types from public API
 
 ### Tasks — Pipeline Integration (M34)
+
 - Embedded Python via PyO3 (static linking, ~30-50MB dist size)
 - Bundle Python interpreter (like Houdini hython, Maya mayapy)
 - Expose bif_core types to Python (Scene, Prim, Material, etc.)
@@ -442,11 +373,13 @@ Core architecture for rendering scenes that don't fit in memory. Exploits BIF's 
 - CLI mode for headless batch operations
 
 ### Technical Notes
+
 - PyO3 + USD's embedded TfPython = dual Python interpreter conflict
 - May need vcpkg USD rebuild without Python, or careful isolation
 - API cleanup first — clean what you expose before binding it
 
 ### Acceptance Criteria
+
 - `cargo doc` generates clean, complete API docs
 - Example programs compile and run
 - Python scripts can drive BIF headlessly
@@ -455,13 +388,14 @@ Core architecture for rendering scenes that don't fit in memory. Exploits BIF's 
 
 ---
 
-## v0.25.0+ — Framework Extraction
+## v0.23.0+ — Framework Extraction
 
 **Milestones:** M36+ (framework phase 2)
 **Estimate:** 40+h
-**Dependencies:** v0.24.0 (clean API)
+**Dependencies:** v0.22.0 (clean API)
 
 ### Tasks
+
 - Extract `bif_node_graph` — configurable node graph widget crate
 - Extract `bif_scene_browser` — scene browser widget crate
 - Extract `bif_viewport_3d` — 3D viewport widget crate
@@ -471,9 +405,11 @@ Core architecture for rendering scenes that don't fit in memory. Exploits BIF's 
 - Plugin system architecture
 
 ### Prerequisites
+
 - Renderer decomposition: God object (~30 fields remaining) -> focused sub-structs (~10-15h)
 
 ### Acceptance Criteria
+
 - Widget crates usable outside BIF (independent Cargo.toml, published)
 - At least one DCC connector prototype (Houdini TOP or HDA)
 - Plugin system can load external node types
@@ -485,6 +421,7 @@ Core architecture for rendering scenes that don't fit in memory. Exploits BIF's 
 **Version TBD** (may be distributed across patch releases)
 
 ### Tasks
+
 - Error recovery / auto-save (~5-8h) — crash recovery dialog, periodic auto-save
 - User-facing error notifications (~5-10h) — toast/notification system replacing log spam
 - Undo hardening — ensure every authoring operation has undo commands
@@ -492,6 +429,7 @@ Core architecture for rendering scenes that don't fit in memory. Exploits BIF's 
 - User documentation — getting started guide, node reference, workflow tutorials
 
 ### Acceptance Criteria (1.0 gates)
+
 1. Reliable USD round-trip (Houdini -> BIF -> export -> re-import, no data loss)
 2. Scene authoring without external tools (lights, materials, scatter, export)
 3. Save/load projects with auto-save and crash recovery

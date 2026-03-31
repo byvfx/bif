@@ -561,6 +561,10 @@ impl Material for OpenPbrSurface {
             && (self.base_metalness > 0.999 || self.transmission_weight > 0.0)
     }
 
+    fn roughness(&self) -> f32 {
+        self.specular_roughness
+    }
+
     fn albedo(&self, u: f32, v: f32) -> Color {
         self.sample_base_color(u, v)
     }

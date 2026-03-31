@@ -113,6 +113,20 @@ pub(crate) fn render_stats_panel(
                         .on_hover_text("Samples per pixel — higher = less noise, slower");
                 });
 
+                // Max bounce depth
+                ui.horizontal(|ui| {
+                    ui.label("Max Depth:");
+                    if ui
+                        .add(egui::Slider::new(&mut p.ivar_state.max_depth, 1..=32))
+                        .on_hover_text(
+                            "Maximum ray bounce depth — higher = more accurate reflections/GI, slower",
+                        )
+                        .changed()
+                    {
+                        event_bus.emit(AppEvent::FilterChanged);
+                    }
+                });
+
                 // Navigation preview quality slider
                 ui.horizontal(|ui| {
                     ui.label("Nav Quality:");
