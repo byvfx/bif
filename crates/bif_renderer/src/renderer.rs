@@ -17,6 +17,11 @@ use crate::{Camera, Color, HitRecord, Hittable, Ray};
 use bif_math::Interval;
 use rand::RngCore;
 
+/// Surfaces below this roughness skip SHARC cache reads/writes.
+/// GGX alpha = roughness²; at 0.1 the specular lobe is ~1-2° wide,
+/// too narrow for spatial hashing to resolve without visible blur.
+pub const SHARC_ROUGHNESS_THRESHOLD: f32 = 0.1;
+
 /// Render configuration.
 #[derive(Debug, Clone, Default)]
 pub struct RenderConfig {
@@ -182,7 +187,7 @@ pub fn ray_color_with_aovs(
 
         // --- SHARC cache READ ---
         let is_delta = rec.material.is_delta();
-        let skip_cache = is_delta || rec.material.roughness() < 0.1;
+        let skip_cache = is_delta || rec.material.roughness() < SHARC_ROUGHNESS_THRESHOLD;
         if !skip_cache && bounce_count >= cache_min_depth {
             if let Some(c) = cache {
                 if let Some(cached) = c.lookup(rec.p, rec.normal) {

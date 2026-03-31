@@ -489,7 +489,7 @@ fn build_cornell_box() -> BvhNode {
         light_mat,
     );
 
-    // Diffuse sphere + glossy metal sphere (roughness 0.05 < 0.1 cache threshold)
+    // Diffuse sphere + glossy metal sphere (roughness 0.05 < SHARC_ROUGHNESS_THRESHOLD)
     objects.push(Box::new(Sphere::new(
         Vec3::new(1.75, 1.0, 2.5),
         1.0,

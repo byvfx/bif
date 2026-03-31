@@ -312,6 +312,10 @@ impl Material for Dielectric {
         true
     }
 
+    fn roughness(&self) -> f32 {
+        0.0
+    }
+
     /// Schlick F0 reflectance at normal incidence.
     ///
     /// For glass (IOR 1.5) this returns ~0.04 — the fraction of light
@@ -449,6 +453,24 @@ mod tests {
         let mat = Dielectric::new(1.5);
         let albedo = mat.albedo(0.0, 0.0);
         assert!((albedo.x - 0.04).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_lambertian_roughness_default() {
+        let mat = Lambertian::new(Color::new(0.8, 0.2, 0.1));
+        assert!((mat.roughness() - 1.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_metal_roughness() {
+        assert!((Metal::new(Color::ONE, 0.05).roughness() - 0.05).abs() < 0.001);
+        assert!(Metal::new(Color::ONE, 0.0).roughness().abs() < 0.001);
+    }
+
+    #[test]
+    fn test_dielectric_roughness_zero() {
+        let mat = Dielectric::new(1.5);
+        assert!(mat.roughness().abs() < 0.001);
     }
 
     #[test]

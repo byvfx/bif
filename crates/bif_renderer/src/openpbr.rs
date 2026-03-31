@@ -562,6 +562,9 @@ impl Material for OpenPbrSurface {
     }
 
     fn roughness(&self) -> f32 {
+        // TODO: when coat_weight > 0, the coat lobe has its own roughness
+        // (coat_roughness). A smooth coat on a rough base will still cache
+        // the rough base, potentially blurring the coat reflection.
         self.specular_roughness
     }
 

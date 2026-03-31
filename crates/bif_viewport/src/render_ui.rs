@@ -123,6 +123,7 @@ pub(crate) fn render_stats_panel(
                         )
                         .changed()
                     {
+                        // Reuses FilterChanged to trigger render restart
                         event_bus.emit(AppEvent::FilterChanged);
                     }
                 });
