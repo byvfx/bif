@@ -71,15 +71,24 @@ Merges workflow Phase 1 + old M32/M33. BIF starts understanding USD layers. **La
 - Node graph: add "Layer Stack" node, color-code nodes (blue=composition, orange=operations)
 - Layer muting (hide layer contributions without removing)
 - Layer offsets (time offset/scale on sublayers and references)
+- **Layer color coding (proof-of-concept):** Auto-assign colors per layer, show as dots in scene tree + borders in property inspector
+- **Opinion stack (basic):** Expandable per-property view showing which layers contribute values
 - **Validation**: Open multi-layer USD from Houdini, see layer stack, toggle layers, see opinion sources
 
 ### v0.15.0 — Qt Migration
 
-M28 (Qt 6 UI framework). **The pivot — everything after is Qt-native.** Target: three-panel layout from [BIF_USD_WORKFLOW.md](BIF_USD_WORKFLOW.md).
+M28 (Qt 6 UI framework). **The pivot — everything after is Qt-native.** Target: viewport-dominant T-layout (see [UI Design](docs/ux/UI_DESIGN.md)).
 - Port scene browser, property inspector, node graph, viewport
-- Add USDA code preview panel (read-only initially, shows active layer content)
+- **T-layout:** Viewport-dominant center, left dock (scene tree + layers), right dock (properties), tabbed bottom dock (node graph | USDA preview | render log)
+- **Layer color coding (full):** Colors flow through all panels — tree dots, property borders, node badges, USDA syntax highlighting
+- USDA code preview panel (read-only, syntax highlighted, shows active layer content)
 - Three-panel sync: select in one → highlights in others
-- Layer indicators in stage tree (colored dots showing opinion sources)
+- Command palette (`Ctrl+P`) — fuzzy-search prims, commands, layers, node types
+- Breadcrumb bar: `stage > layer (edit) > /selected/prim`
+- Multi-monitor: pop-out panels via QDockWidget
+- Virtualized scene tree (design for 100K+ prims)
+- **"Quiet confidence" theme:** `#1c1c1c` bg, shadow gaps, single blue accent, 6px radius
+- Micro-interactions: 150ms panel collapse, 100ms selection fade
 
 ### v0.16.0 — Edit Operations + Save
 
@@ -88,10 +97,13 @@ Workflow Phase 2. BIF becomes a real editor.
 - `EditHistory` with undo/redo (builds on existing `EditState` + `UndoStack`)
 - Save to layer file on disk (Ctrl+S writes active layer only)
 - Auto-save to `.bif_autosave_<layer>.usd`
+- **USDA code preview becomes editable** (parse + validate on save)
 - Live USDA code preview updates as artist works
 - Existing nodes (scatter, instancer) gain `to_usda()` — write to active layer continuously
 - Shot templates: JSON-configurable presets (`~/.bif/templates/`), `BIF_TEMPLATE_DIR` env var override
 - Material overrides per-instance (per-instance material binding table)
+- **Opinion stack (full hover):** Hover any property → see full layer contribution stack
+- **Workspace presets:** Assembly, Lighting, Materials, Review — reconfigure panels + payload policy
 - **Validation**: Make edits in BIF, save, open in usdview, verify edits compose correctly
 
 ### v0.17.0 — Viewport Performance

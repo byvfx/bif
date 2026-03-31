@@ -57,12 +57,27 @@ For the high-level roadmap, see [MILESTONES.md](MILESTONES.md). For completed mi
 - Budget extra time for C++ composition API work
 - M33 estimated 10-15h, M32 estimated 15-20h
 
+### Tasks — Layer Color Coding (Proof-of-Concept)
+- Auto-assign color per layer from 8-color palette (teal, purple, orange, gold, pink, blue, green, red)
+- Scene tree: tiny colored dot next to each prim showing strongest opinion source
+- Property inspector: colored left-border on each property row showing owning layer
+- Node graph: node header tint matches target layer
+- Colors stored in layer metadata, user-overridable in settings
+
+### Tasks — Opinion Stack (Basic)
+- Per-property expandable view in property inspector
+- Collapsed: winning value + owning layer dot
+- Expanded: full stack — all contributing layers with values, strongest highlighted
+- Requires `GetPrimStack` FFI (part of M32 C++ bridge work)
+
 ### Acceptance Criteria
 - Can inspect opinion source for any USD property
 - Can switch variants and see scene update live
 - Layer stack is browsable with opinion highlighting
 - LIVRPS composition ordering is visible per attribute
 - Prim metadata (kind, purpose, apiSchemas, custom data) inspectable
+- Layer colors visible in scene tree and property inspector
+- Opinion stack expandable per property
 - Read-only — no namespace editing (deferred to v0.20.0)
 
 ---
@@ -77,12 +92,45 @@ For the high-level roadmap, see [MILESTONES.md](MILESTONES.md). For completed mi
 ### Tasks — Qt 6 Shell (M28)
 - Qt 6 application shell via cxx-qt (C++ <-> Rust bridge)
 - Embed wgpu viewport in Qt widget
-- QDockWidget — true floating/docking panels
-- QTreeView with model/view separation (scene browser)
+- QDockWidget — true floating/docking panels, multi-monitor pop-out support
+- QTreeView with model/view separation (scene browser), virtualized for 100K+ prims
 - Professional node editor (QGraphicsScene-based)
 - QMenuBar, QToolBar, QShortcut — standard DCC conventions
 - QUndoStack integration (replace simple undo stack from M20)
 - Port theme/styling to Qt stylesheets
+
+### Tasks — T-Layout & Visual Design
+- **Viewport-dominant T-layout:** Center viewport (60%+), left dock (scene tree + layer stack tabs), right dock (context-sensitive properties + opinion inspector), tabbed bottom dock (node graph | USDA preview | render log)
+- All docks collapsible (thin grab bar), `Ctrl+\` zen mode (viewport only)
+- Double-click dock edge → auto-fit to content width
+- `Tab` key cycles bottom dock tabs
+- Panel size remembered per-session
+- **"Quiet confidence" theme:**
+  - Background `#1c1c1c`, panels `#252525`, elevated `#2d2d2d`
+  - Primary text `#d4d4d4`, secondary `#808080`, accent `#4a9eff`
+  - Shadow gaps between panels (no visible borders)
+  - 6px border radius, 8px panel padding, 24px min click targets
+  - 150ms panel collapse, 100ms selection fade, 400ms tooltip delay
+
+### Tasks — Layer Color Coding (Full)
+- Colors flow through all panels consistently:
+  - Scene tree: colored dots per prim (strongest opinion source)
+  - Property inspector: colored left-borders per property row
+  - Node graph: node header color + layer badge pill
+  - USDA preview: syntax coloring by layer origin (not just keywords)
+  - Viewport: optional colored wireframe overlay (layer ownership)
+- Default 8-color palette: teal/purple/orange/gold/pink/blue/green/red
+- User/studio configurable override in settings
+
+### Tasks — Command Palette & Navigation
+- `Ctrl+P` command palette — fuzzy-search prims, commands, layers, node types, settings
+- Breadcrumb bar (top of viewport): `stage > layer (edit) > /selected/prim` — each segment clickable
+- Hybrid input: everything has a hotkey AND a mouse path (right-click context menus + palette)
+
+### Tasks — USDA Code Preview
+- Read-only syntax-highlighted USDA panel (bottom dock tab)
+- Shows active edit layer content, updates live as artist works
+- Layer-aware coloring: opinions from different layers in different colors
 
 ### Tasks — Asset Browser (M28.1)
 - **Format Registry:**
@@ -124,12 +172,60 @@ For the high-level roadmap, see [MILESTONES.md](MILESTONES.md). For completed mi
 
 ### Acceptance Criteria
 - All current UI functionality works in Qt
-- Dockable/undockable panels
-- Keyboard shortcuts match egui version
+- T-layout with viewport-dominant center, dockable/undockable/pop-out panels
+- Layer colors visible consistently across all panels (tree, properties, nodes, USDA)
+- Command palette (`Ctrl+P`) finds prims, commands, layers, node types
+- Breadcrumb bar shows current context (stage > layer > prim)
+- USDA code preview (read-only) with syntax highlighting and layer-aware coloring
+- Zen mode (`Ctrl+\`) hides all docks
+- Scene tree handles 100K+ prims without lag (virtualized)
+- Keyboard shortcuts match egui version + new hybrid input
 - Viewport rendering unchanged (wgpu backend)
 - .bif/.bifa project files still load
 - Asset browser with thumbnails, drag-and-drop into graph/viewport/panels
 - Asset library with SQLite-backed search, tags, collections
+
+---
+
+## v0.16.0 — Edit Operations + Save
+
+**Estimate:** 30-40h
+**Dependencies:** v0.15.0
+**BIF becomes a real editor.**
+
+### Tasks — Edit Operations
+- `EditOperation` enum with `to_usda()` for core types (Transform, MaterialAssign, Visibility, MaterialParamOverride)
+- `EditHistory` with current-state map + undo/redo (builds on existing `EditState` + `UndoStack`)
+- Existing nodes (scatter, instancer) gain `to_usda()` — write to active layer continuously
+- Material overrides per-instance (per-instance material binding table)
+
+### Tasks — Save Pipeline
+- Save to layer file on disk (Ctrl+S writes active layer only)
+- Auto-save to `.bif_autosave_<layer>.usd`
+- USDA code preview becomes **editable** (parse + validate on save)
+- Shot templates: JSON-configurable presets (`~/.bif/templates/`), `BIF_TEMPLATE_DIR` env var override
+
+### Tasks — Opinion Stack (Full Hover)
+- Hover any property → tooltip shows full layer contribution stack
+- All contributing layers with values, winning opinion highlighted
+- Click through to jump to source layer
+
+### Tasks — Workspace Presets
+- 4 built-in presets that reconfigure panels + payload policy:
+  - **Assembly**: Node graph prominent, all layers visible, LoadAll
+  - **Lighting**: Viewport dominant, light properties, CameraFrustum loading
+  - **Materials**: Material editor + lookdev viewport, material layer active
+  - **Review**: Viewport maximized, render settings, minimal UI
+- Switch via `Ctrl+1/2/3/4` or workspace tabs in top bar
+- Workspace-driven payload loading: switching workspace auto-adjusts what's in memory
+
+### Acceptance Criteria
+- Make edits in BIF, save, open in usdview, verify edits compose correctly
+- Undo/redo works across all edit operation types
+- Auto-save recovers work after crash
+- USDA panel is editable with validation feedback
+- Opinion stack hover shows full layer contributions
+- Workspace presets switch layout + payload policy in one click
 
 ---
 
