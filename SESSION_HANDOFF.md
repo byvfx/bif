@@ -1,6 +1,6 @@
-# Session Handoff - March 30, 2026
+# Session Handoff - March 31, 2026
 
-**Last Updated:** GitHub Pages site setup (mdBook)
+**Last Updated:** MaterialX (.mtlx) file format support
 **Current Version:** v0.13.0-dev (Pipeline Foundation)
 **Project:** BIF - VFX Scene Assembler & Renderer
 
@@ -19,6 +19,14 @@
 ---
 
 ## Recent Work
+
+### MaterialX File Format Support (Mar 31, 2026)
+
+- Rebuilt vcpkg USD 25.11 with `materialx` feature — adds `usdMtlx` plugin for `.mtlx` file references
+- C++ bridge: usdMtlx plugin detection at startup, `resolve_mtlx_input()` follows Material interface connections, deep descendant shader search by `info:id`, refactored duplicated extraction into shared helper
+- `setup_usd_env.ps1` scans both `bin/usd` and `lib/usd` for plugin resources
+- **WIP**: Scalar values from Material interface inputs not resolving yet — needs debugging (textures load fine)
+- **WIP**: Normal maps may not work correctly with composed MaterialX structure
 
 ### UI/UX Design Brainstorm (Mar 30, 2026)
 
