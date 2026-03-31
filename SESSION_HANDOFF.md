@@ -20,6 +20,13 @@
 
 ## Recent Work
 
+### UI/UX Design Brainstorm (Mar 30, 2026)
+
+- Designed viewport-dominant T-layout, layer color coding system, opinion stack, command palette
+- Full design: `docs/ux/UI_DESIGN.md` | Research: `docs/ux/DCC_UI_RESEARCH.md`
+- Updated MILESTONES.md + ROADMAP_DETAIL.md with UI features threaded into v0.14–v0.16
+- Material editor designed: param sheet + node graph + floating lookdev orb ([design](docs/ux/MATERIAL_EDITOR_DESIGN.md))
+
 ### Power-Weighted Light Sampling (Mar 30, 2026)
 
 - Replaced uniform 1/N light selection with power-weighted CDF in `LightList`

@@ -219,6 +219,22 @@ For the high-level roadmap, see [MILESTONES.md](MILESTONES.md). For completed mi
 - Switch via `Ctrl+1/2/3/4` or workspace tabs in top bar
 - Workspace-driven payload loading: switching workspace auto-adjusts what's in memory
 
+### Tasks — Material Parameter Sheet
+- Right-panel material editor when material is selected (OpenPBR + UsdPreviewSurface)
+- Collapsible sections: Base, Specular, Coat, Emission, Transmission, Subsurface (auto-expand when non-default)
+- Color swatches (click → HSV picker), sliders (drag + double-click numeric), texture slots (drag from asset browser)
+- Shading model dropdown: OpenPBR / UsdPreviewSurface with auto-conversion + lossy-param warning dialog
+- Inline USDA preview (6 lines max, expandable) showing authored material opinions
+- "Open in Graph" button → switches to Material Graph tab in bottom dock
+- See [Material Editor Design](docs/ux/MATERIAL_EDITOR_DESIGN.md)
+
+### Tasks — Lookdev Preview Orb
+- Floating 192x192 sphere in viewport bottom-right corner (appears on material selection)
+- Ivar path tracer: 1 SPP during parameter drag (~16ms), progressive to 64 SPP on release
+- Click to cycle preview shapes: sphere (default), cube, plane, custom mesh
+- Draggable edge to resize (128-384px), right-click: Pin/Pop Out/Hide
+- Prebuilt unit sphere BVH, environment from scene HDRI or baked-in default studio HDRI
+
 ### Acceptance Criteria
 - Make edits in BIF, save, open in usdview, verify edits compose correctly
 - Undo/redo works across all edit operation types
@@ -226,6 +242,9 @@ For the high-level roadmap, see [MILESTONES.md](MILESTONES.md). For completed mi
 - USDA panel is editable with validation feedback
 - Opinion stack hover shows full layer contributions
 - Workspace presets switch layout + payload policy in one click
+- Material param sheet edits OpenPBR/UsdPreviewSurface with sliders, swatches, textures
+- Lookdev orb renders preview sphere with <20ms feedback during drag
+- Shading model conversion works with lossy-param warnings
 
 ---
 

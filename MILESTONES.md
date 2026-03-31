@@ -23,9 +23,9 @@ Roadmap organized by semantic version. Each release is testable, demoable, and g
 | **v0.13.0** | **Pipeline Foundation** | — | M29.5, M30, M31, subdiv, displacement *(in progress)* |
 | v0.13.5 | UsdSkel Import | 20-30h | Skeleton eval, skinning, bind pose + anim playback |
 | v0.14.0 | Layer-Aware Stage | 35-50h | M32, M33 + workflow Phase 1 |
-| v0.15.0 | Qt Migration | 50-60h | M28 (three-panel layout target) |
-| v0.16.0 | Edit Operations + Save | 30-40h | Workflow Phase 2 + templates |
-| v0.17.0 | Viewport Performance | 25-35h | M22 + payload policies |
+| v0.15.0 | Qt Migration | 50-60h | M28 (T-layout, command palette, theme) |
+| v0.16.0 | Edit Operations + Save | 30-40h | Workflow Phase 2 + material param sheet + lookdev orb |
+| v0.17.0 | Viewport Performance | 25-35h | M22 + payload policies + texture nodes in material editor |
 | v0.18.0 | AI Integration | 38-59h | Material creator, scene builder, ComfyUI |
 | v0.19.0 | Context System | 30-40h | M39 |
 | v0.20.0 | Scene Authoring + Layer Diff | 35-45h | M37, M38 + workflow Phase 7 |
@@ -102,6 +102,9 @@ Workflow Phase 2. BIF becomes a real editor.
 - Existing nodes (scatter, instancer) gain `to_usda()` — write to active layer continuously
 - Shot templates: JSON-configurable presets (`~/.bif/templates/`), `BIF_TEMPLATE_DIR` env var override
 - Material overrides per-instance (per-instance material binding table)
+- **Material param sheet:** Right-panel property editor for OpenPBR/UsdPreviewSurface (sliders, swatches, texture slots, collapsible sections)
+- **Lookdev orb:** Floating 192px preview sphere in viewport corner (1 SPP drag, progressive to 64 SPP)
+- **Shading model dropdown:** OpenPBR / UsdPreviewSurface switch with auto-conversion + lossy-param warnings
 - **Opinion stack (full hover):** Hover any property → see full layer contribution stack
 - **Workspace presets:** Assembly, Lighting, Materials, Review — reconfigure panels + payload policy
 - **Validation**: Make edits in BIF, save, open in usdview, verify edits compose correctly
@@ -114,6 +117,7 @@ M22 (Vulkan 1.3, lazy loading, GPU-driven rendering) + deferred loading from wor
 - `PrototypeState` enum (BoundingBox / Loaded / Deferred)
 - LRU cache for prototype eviction + Embree BVH integration
 - Camera depth of field and lens distortion
+- **Material editor texture nodes:** UsdUVTexture, PrimvarReader, Transform2d nodes in material graph
 
 ### v0.18.0 — AI Integration
 
@@ -146,8 +150,14 @@ M37 (lights) + M38 (materials) + workflow Phase 7. "Create content + see what yo
 
 ### v0.21.0 — MaterialX Authoring
 
-M40 (standard_surface graph, XML round-trip, node previews). Built on context system in Materials context.
-- Custom shader networks (arbitrary UsdShade graphs beyond UsdPreviewSurface/OpenPBR)
+M40 (standard_surface graph, XML round-trip, node previews). Built on context system in Materials context. Full node-based material editor. See [Material Editor Design](docs/ux/MATERIAL_EDITOR_DESIGN.md).
+- **Full material node graph** in bottom dock tab (separate from scene graph, same framework)
+- MtlX Standard Surface node + MaterialX pattern nodes (Image, Noise, Mix, Ramp, NormalMap, Math ops)
+- MaterialX XML round-trip (import/export .mtlx files)
+- MaterialOut node with embedded 128px preview thumbnail
+- 8 material pin types (Surface, Color3f, Float, Normal3f, Float2, Token, Asset, Displacement) with industry-standard colors
+- Node color coding: blue=OpenPBR, green=UsdPreview, gold=MaterialX, light blue=textures, gray=utility
+- Two-mode sync: param sheet edits update graph nodes and vice versa
 
 ### v0.22.0 — GPU Path Tracing
 
