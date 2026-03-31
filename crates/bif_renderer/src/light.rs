@@ -65,7 +65,7 @@ impl DistantLight {
         Self {
             direction: direction.normalize(),
             color,
-            intensity,
+            intensity: intensity.max(0.0),
             angle: angle_degrees.to_radians(),
         }
     }
@@ -115,7 +115,7 @@ impl Light for DistantLight {
     }
 
     fn power(&self) -> f32 {
-        luminance(self.color) * self.intensity.max(0.0)
+        luminance(self.color) * self.intensity
     }
 }
 
@@ -136,8 +136,8 @@ impl SphereLight {
         Self {
             position,
             color,
-            intensity,
-            radius,
+            intensity: intensity.max(0.0),
+            radius: radius.max(0.0),
         }
     }
 }
@@ -206,12 +206,10 @@ impl Light for SphereLight {
     }
 
     fn power(&self) -> f32 {
-        let base = luminance(self.color) * self.intensity.max(0.0);
-        if self.radius > 0.0 {
-            base * 4.0 * std::f32::consts::PI * self.radius * self.radius
-        } else {
-            base
-        }
+        // No area factor — flat CDF has no distance info, so area creates bias
+        // toward large lights regardless of contribution. Area-aware power
+        // estimates belong in the light tree (v0.20.0).
+        luminance(self.color) * self.intensity
     }
 }
 
@@ -240,7 +238,7 @@ impl RectLight {
             v_axis,
             normal,
             color,
-            intensity,
+            intensity: intensity.max(0.0),
         }
     }
 
@@ -264,7 +262,7 @@ impl RectLight {
             v_axis,
             normal,
             color,
-            intensity,
+            intensity: intensity.max(0.0),
         }
     }
 }
@@ -344,8 +342,8 @@ impl Light for RectLight {
     }
 
     fn power(&self) -> f32 {
-        let area = self.u_axis.length() * self.v_axis.length() * 4.0;
-        luminance(self.color) * self.intensity.max(0.0) * area
+        // No area factor — see SphereLight::power() comment.
+        luminance(self.color) * self.intensity
     }
 }
 
@@ -589,19 +587,16 @@ mod tests {
 
     #[test]
     fn power_sphere_light() {
-        // Point light (radius=0): no area factor
+        // No area factor in flat CDF — both should be luminance * intensity
         let point = SphereLight::new(Vec3::ZERO, Vec3::new(1.0, 0.0, 0.0), 10.0, 0.0);
-        assert!((point.power() - 2.126).abs() < 1e-4); // luminance(1,0,0)=0.2126 * 10
+        assert!((point.power() - 2.126).abs() < 1e-4);
 
-        // Sphere light (radius=0.5): includes 4*PI*r^2
         let sphere = SphereLight::new(Vec3::ZERO, Vec3::new(1.0, 0.0, 0.0), 10.0, 0.5);
-        let expected = 2.126 * 4.0 * std::f32::consts::PI * 0.25; // 0.2126 * 10 * 4*PI*0.25
-        assert!((sphere.power() - expected).abs() < 1e-3);
+        assert!((sphere.power() - 2.126).abs() < 1e-4);
     }
 
     #[test]
     fn power_rect_light() {
-        // u_axis length=1 (half-width), v_axis length=1 (half-height) → area = 4.0
         let light = RectLight::new(
             Vec3::ZERO,
             Vec3::new(1.0, 0.0, 0.0),
@@ -609,8 +604,8 @@ mod tests {
             Vec3::ONE,
             2.0,
         );
-        // luminance(1,1,1) = 1.0, * 2.0 * 4.0 = 8.0
-        assert!((light.power() - 8.0).abs() < 1e-4);
+        // No area factor in flat CDF: luminance(1,1,1) * 2.0 = 2.0
+        assert!((light.power() - 2.0).abs() < 1e-4);
     }
 
     #[test]
@@ -799,5 +794,47 @@ mod tests {
     fn negative_color_clamps_to_zero_power() {
         let light = DistantLight::new(Vec3::NEG_Y, Vec3::new(-1.0, -1.0, -1.0), 5.0, 0.53);
         assert_eq!(light.power(), 0.0);
+    }
+
+    #[test]
+    fn negative_intensity_clamps_in_constructor() {
+        let distant = DistantLight::new(Vec3::NEG_Y, Vec3::ONE, -5.0, 0.53);
+        assert_eq!(distant.intensity, 0.0);
+        assert_eq!(distant.power(), 0.0);
+
+        let sphere = SphereLight::new(Vec3::ZERO, Vec3::ONE, -10.0, 0.5);
+        assert_eq!(sphere.intensity, 0.0);
+
+        let rect = RectLight::new(Vec3::ZERO, Vec3::X, Vec3::Y, Vec3::ONE, -3.0);
+        assert_eq!(rect.intensity, 0.0);
+    }
+
+    #[test]
+    fn combined_pdf_ge_single_light_pdf() {
+        let mut list = LightList::new();
+        list.add(Box::new(SphereLight::new(
+            Vec3::new(0.0, 5.0, 0.0),
+            Vec3::ONE,
+            10.0,
+            1.0,
+        )));
+        list.add(Box::new(SphereLight::new(
+            Vec3::new(5.0, 0.0, 0.0),
+            Vec3::ONE,
+            1.0,
+            1.0,
+        )));
+
+        let mut rng = test_rng();
+        let point = Vec3::ZERO;
+        for _ in 0..100 {
+            let (sample, idx) = list.sample_one(point, &mut rng).unwrap();
+            let single_pdf = list.pdf_for_light(idx, point, sample.direction);
+            let combined_pdf = list.pdf(point, sample.direction);
+            assert!(
+                combined_pdf >= single_pdf - 1e-6,
+                "combined {combined_pdf:.6} < single {single_pdf:.6} for light {idx}"
+            );
+        }
     }
 }
