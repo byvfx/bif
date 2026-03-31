@@ -10,6 +10,7 @@
 - Plan upgrade to USD v26 post-stabilization
 - Test on  SSD for  speeds
 - Look into Rendermans denoising
+- Look into how you would get ridgid body animation data into usd and then into bif for viewport display and rendering, in houdini they use RBD prodecurals
 
 ### Selective Prim Loading
 
@@ -23,7 +24,9 @@
 - USD Stage Inspector (prim hierarchy, attributes, metadata) <-- look at usdview's implementation for reference and katana's USD tools
 - USD Stage Outliner (scene graph view with search/filter)
 - Paint setup for  instancing
-
+- Physics painter
+- bug with the previous camera imported and it if you load another usd the camera stays in the list. you need to be in the camera view to duplicate it.
+- saved plan for rbd intergrations under ./claude/plans
 ### Materials
 
 - Sub-surface scattering (skin, organic materials)
@@ -33,12 +36,15 @@
 
 ### Viewport & Rendering
 
+- add lights
+- get OCIO ACES working in the viewport
 - Subdivision surface validation (re-test custom assets)
 - OpenSubdiv support (GPU-accelerated subdivision surfaces)
 - Camera safe-area greybox overlay
 - Fix show background in hdri properties
 - Get display color of prims to display in viewport as option to textured, also make one with no lighting.
 - Check depth and add to ui
+- store IBL on disk and load it in the viewport and that way you wouldnt need to recompute that each time
 
 ## Architecture
   VFX review summary (other suggestions noted for future):
