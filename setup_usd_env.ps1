@@ -19,8 +19,14 @@ $env:OIDN_DIR = $OidnRoot
 $env:VCPKG_ROOT = $VcpkgRoot
 
 # Set USD plugin path (required for USD to find its plugins)
-$pluginDirs = Get-ChildItem "$UsdBinPath\usd" -Directory | 
+# Scan both bin/usd and lib/usd — usdMtlx (MaterialX) may land in either location
+$UsdLibPath = "$VcpkgRoot\installed\x64-windows\lib"
+$pluginDirs = @()
+$pluginDirs += Get-ChildItem "$UsdBinPath\usd" -Directory -ErrorAction SilentlyContinue |
     ForEach-Object { $_.FullName + "\resources" }
+$pluginDirs += Get-ChildItem "$UsdLibPath\usd" -Directory -ErrorAction SilentlyContinue |
+    ForEach-Object { $_.FullName + "\resources" }
+$pluginDirs = $pluginDirs | Select-Object -Unique
 $env:PXR_PLUGINPATH_NAME = $pluginDirs -join ";"
 
 Write-Host "USD + OIDN environment configured:" -ForegroundColor Green

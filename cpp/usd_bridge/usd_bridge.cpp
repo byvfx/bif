@@ -33,6 +33,8 @@
 #include <pxr/base/gf/vec3f.h>
 #include <pxr/base/gf/quath.h>
 #include <pxr/base/vt/array.h>
+#include <pxr/base/plug/registry.h>
+#include <pxr/base/plug/plugin.h>
 #include <pxr/base/tf/pathUtils.h>
 #include <pxr/base/tf/diagnostic.h>
 #include <pxr/usd/sdf/layer.h>
@@ -1714,9 +1716,151 @@ static std::string get_materialx_texture_path(const UsdShadeInput& input) {
     return "";
 }
 
+/// Resolve a MaterialX shader input's value by following interface connections.
+/// usdMtlx composes .mtlx files with all shader inputs connected to Material
+/// interface inputs (e.g., shader.inputs:base_color -> Material.inputs:base_color).
+/// Scalar values are authored on the Material prim, not on the shader prim.
+template <typename T>
+static bool resolve_mtlx_input(const UsdShadeInput& input, T* value) {
+    // Try direct authored value first
+    if (input.Get(value)) return true;
+
+    // Follow connection to Material interface input
+    SdfPathVector connections;
+    input.GetRawConnectedSourcePaths(&connections);
+    if (connections.empty()) return false;
+
+    UsdStagePtr stage = input.GetPrim().GetStage();
+    for (const auto& conn_path : connections) {
+        SdfPath prim_path = conn_path.GetPrimPath();
+        UsdPrim connected_prim = stage->GetPrimAtPath(prim_path);
+        if (!connected_prim) continue;
+
+        // Connection name is the full property name (e.g., "inputs:base_metalness").
+        // Read the attribute directly from the connected prim.
+        std::string prop_name = conn_path.GetName();
+        UsdAttribute attr = connected_prim.GetAttribute(TfToken(prop_name));
+        if (attr && attr.Get(value)) return true;
+    }
+    return false;
+}
+
+/// Extract MaterialX PBR properties (standard_surface or OpenPBR) from a shader prim.
+/// Shared by both the mtlx:surface path and the surface-output path.
+static void extract_materialx_properties(const UsdShadeShader& shader, CachedMaterial& cached) {
+    cached.is_materialx = true;
+    UsdShadeInput input;
+
+    // base_color
+    input = shader.GetInput(TfToken("base_color"));
+    if (input) {
+        GfVec3f color;
+        if (resolve_mtlx_input(input, &color)) {
+            cached.diffuse_color[0] = color[0];
+            cached.diffuse_color[1] = color[1];
+            cached.diffuse_color[2] = color[2];
+        }
+        cached.diffuse_texture = get_materialx_texture_path(input);
+    }
+
+    // standard_surface: "metalness", OpenPBR: "base_metalness"
+    input = shader.GetInput(TfToken("metalness"));
+    if (!input) input = shader.GetInput(TfToken("base_metalness"));
+    if (input) {
+        resolve_mtlx_input(input, &cached.metallic);
+        cached.metallic_texture = get_materialx_texture_path(input);
+    }
+
+    // specular_roughness
+    input = shader.GetInput(TfToken("specular_roughness"));
+    if (input) {
+        resolve_mtlx_input(input, &cached.roughness);
+        cached.roughness_texture = get_materialx_texture_path(input);
+    }
+
+    // specular_weight (OpenPBR) / specular (standard_surface)
+    input = shader.GetInput(TfToken("specular_weight"));
+    if (!input) input = shader.GetInput(TfToken("specular"));
+    if (input) {
+        resolve_mtlx_input(input, &cached.specular);
+    }
+
+    // OpenPBR: "transmission_weight", standard_surface: "transmission"
+    input = shader.GetInput(TfToken("transmission_weight"));
+    if (!input) input = shader.GetInput(TfToken("transmission"));
+    if (input) {
+        resolve_mtlx_input(input, &cached.transmission);
+    }
+
+    // specular_IOR (OpenPBR) / specular_ior (standard_surface)
+    input = shader.GetInput(TfToken("specular_ior"));
+    if (!input) input = shader.GetInput(TfToken("specular_IOR"));
+    if (input) {
+        resolve_mtlx_input(input, &cached.specular_ior);
+    }
+
+    // standard_surface: "opacity", OpenPBR: "geometry_opacity"
+    input = shader.GetInput(TfToken("opacity"));
+    if (!input) input = shader.GetInput(TfToken("geometry_opacity"));
+    if (input) {
+        GfVec3f opacity_vec;
+        if (resolve_mtlx_input(input, &opacity_vec)) {
+            cached.opacity = (opacity_vec[0] + opacity_vec[1] + opacity_vec[2]) / 3.0f;
+        } else {
+            float opacity_scalar;
+            if (resolve_mtlx_input(input, &opacity_scalar)) {
+                cached.opacity = opacity_scalar;
+            }
+        }
+        cached.opacity_texture = get_materialx_texture_path(input);
+    }
+
+    // emission_color * emission intensity
+    input = shader.GetInput(TfToken("emission_color"));
+    if (input) {
+        GfVec3f emissive;
+        if (resolve_mtlx_input(input, &emissive)) {
+            float emission = 0.0f;
+            UsdShadeInput emission_input = shader.GetInput(TfToken("emission_luminance"));
+            if (!emission_input) emission_input = shader.GetInput(TfToken("emission"));
+            if (emission_input) {
+                resolve_mtlx_input(emission_input, &emission);
+            }
+            cached.emissive_color[0] = emissive[0] * emission;
+            cached.emissive_color[1] = emissive[1] * emission;
+            cached.emissive_color[2] = emissive[2] * emission;
+        }
+        cached.emissive_texture = get_materialx_texture_path(input);
+    }
+
+    // standard_surface: "normal", OpenPBR: "geometry_normal"
+    input = shader.GetInput(TfToken("normal"));
+    if (!input) input = shader.GetInput(TfToken("geometry_normal"));
+    if (input) {
+        cached.normal_texture = get_materialx_texture_path(input);
+    }
+}
+
 /// Cache all material data from the stage
 static void cache_material_data(UsdBridgeStage* bridge) {
     if (bridge->materials_cached) return;
+
+    // One-time check: is the usdMtlx file format plugin available?
+    static bool mtlx_plugin_checked = false;
+    if (!mtlx_plugin_checked) {
+        mtlx_plugin_checked = true;
+        auto& registry = PlugRegistry::GetInstance();
+        PlugPluginPtr mtlx_plugin = registry.GetPluginWithName("usdMtlx");
+        if (!mtlx_plugin) {
+            std::cerr << "[USD_BRIDGE] WARNING: usdMtlx plugin not found — "
+                      << "materials referencing .mtlx files will be empty. "
+                      << "Rebuild USD with MaterialX: vcpkg install usd[materialx]:x64-windows"
+                      << std::endl;
+        } else {
+            std::cout << "[USD_BRIDGE] usdMtlx plugin available (MaterialX file format support)"
+                      << std::endl;
+        }
+    }
 
     bridge->materials.clear();
 
@@ -1797,7 +1941,7 @@ static void cache_material_data(UsdBridgeStage* bridge) {
             }
         }
 
-        // If no mtlx:surface, search children for standard_surface or OpenPBR
+        // If no mtlx:surface, search children by name for standard_surface or OpenPBR
         if (!mtlx_shader) {
             for (const UsdPrim& child : prim.GetChildren()) {
                 std::string child_name = child.GetName().GetString();
@@ -1814,97 +1958,48 @@ static void cache_material_data(UsdBridgeStage* bridge) {
             }
         }
 
-        // If we found a MaterialX shader, use it
+        // Deep search: usdMtlx may nest shaders inside NodeGraphs at arbitrary depth.
+        // Use info:id (authoritative) instead of prim name matching.
+        if (!mtlx_shader) {
+            for (const UsdPrim& desc : prim.GetDescendants()) {
+                UsdShadeShader potential_shader(desc);
+                if (!potential_shader) continue;
+
+                TfToken shader_id;
+                potential_shader.GetIdAttr().Get(&shader_id);
+                if (is_materialx_pbr_shader(shader_id)) {
+                    mtlx_shader = potential_shader;
+                    if (g_log_textures) {
+                        std::cout << "[BIF_TEX] material=" << mat_path
+                                  << " found MaterialX shader via deep search: "
+                                  << desc.GetPath().GetString()
+                                  << " id=" << shader_id.GetString() << std::endl;
+                    }
+                    break;
+                }
+            }
+        }
+
+        // Diagnostic: warn if material has no children/outputs (likely unresolved .mtlx ref)
+        if (!mtlx_shader) {
+            auto children = prim.GetChildren();
+            bool has_children = (children.begin() != children.end());
+            bool has_mtlx_output = static_cast<bool>(mtlx_surface);
+            bool has_surface_output = static_cast<bool>(material.GetSurfaceOutput());
+
+            if (!has_children && !has_mtlx_output && !has_surface_output) {
+                std::cerr << "[USD_BRIDGE] WARNING: Material " << mat_path
+                          << " has no children or outputs — possibly unresolved .mtlx reference. "
+                          << "Ensure usdMtlx plugin is loaded via PXR_PLUGINPATH_NAME."
+                          << std::endl;
+            }
+        }
+
+        // If we found a MaterialX shader, extract properties and continue
         if (mtlx_shader) {
-            cached.is_materialx = true;
             if (g_log_textures) std::cout << "[BIF_TEX] material=" << mat_path
                       << " type=MaterialX(mtlx:surface)" << std::endl;
-            UsdShadeInput input;
-
-            // MaterialX standard_surface / OpenPBR parameter names
-            input = mtlx_shader.GetInput(TfToken("base_color"));
-            if (input) {
-                GfVec3f color;
-                if (input.Get(&color)) {
-                    cached.diffuse_color[0] = color[0];
-                    cached.diffuse_color[1] = color[1];
-                    cached.diffuse_color[2] = color[2];
-                }
-                cached.diffuse_texture = get_materialx_texture_path(input);
-            }
-
-            // standard_surface: "metalness", OpenPBR: "base_metalness"
-            input = mtlx_shader.GetInput(TfToken("metalness"));
-            if (!input) input = mtlx_shader.GetInput(TfToken("base_metalness"));
-            if (input) {
-                input.Get(&cached.metallic);
-                cached.metallic_texture = get_materialx_texture_path(input);
-            }
-
-            input = mtlx_shader.GetInput(TfToken("specular_roughness"));
-            if (input) {
-                input.Get(&cached.roughness);
-                cached.roughness_texture = get_materialx_texture_path(input);
-            }
-
-            input = mtlx_shader.GetInput(TfToken("specular"));
-            if (input) {
-                input.Get(&cached.specular);
-            }
-
-            // OpenPBR uses "transmission_weight", standard_surface uses "transmission"
-            input = mtlx_shader.GetInput(TfToken("transmission_weight"));
-            if (!input) {
-                input = mtlx_shader.GetInput(TfToken("transmission"));
-            }
-            if (input) {
-                input.Get(&cached.transmission);
-            }
-
-            input = mtlx_shader.GetInput(TfToken("specular_IOR"));
-            if (input) {
-                input.Get(&cached.specular_ior);
-            }
-
-            // standard_surface: "opacity", OpenPBR: "geometry_opacity"
-            input = mtlx_shader.GetInput(TfToken("opacity"));
-            if (!input) input = mtlx_shader.GetInput(TfToken("geometry_opacity"));
-            if (input) {
-                GfVec3f opacity_vec;
-                if (input.Get(&opacity_vec)) {
-                    cached.opacity = (opacity_vec[0] + opacity_vec[1] + opacity_vec[2]) / 3.0f;
-                } else {
-                    float opacity_scalar;
-                    if (input.Get(&opacity_scalar)) {
-                        cached.opacity = opacity_scalar;
-                    }
-                }
-                cached.opacity_texture = get_materialx_texture_path(input);
-            }
-
-            input = mtlx_shader.GetInput(TfToken("emission_color"));
-            if (input) {
-                GfVec3f emissive;
-                if (input.Get(&emissive)) {
-                    float emission = 0.0f;
-                    UsdShadeInput emission_input = mtlx_shader.GetInput(TfToken("emission"));
-                    if (emission_input) {
-                        emission_input.Get(&emission);
-                    }
-                    cached.emissive_color[0] = emissive[0] * emission;
-                    cached.emissive_color[1] = emissive[1] * emission;
-                    cached.emissive_color[2] = emissive[2] * emission;
-                }
-                cached.emissive_texture = get_materialx_texture_path(input);
-            }
-
-            // standard_surface: "normal", OpenPBR: "geometry_normal"
-            input = mtlx_shader.GetInput(TfToken("normal"));
-            if (!input) input = mtlx_shader.GetInput(TfToken("geometry_normal"));
-            if (input) {
-                cached.normal_texture = get_materialx_texture_path(input);
-            }
-
+            extract_materialx_properties(mtlx_shader, cached);
             bridge->materials.push_back(std::move(cached));
             continue;
         }
@@ -1941,105 +2036,12 @@ static void cache_material_data(UsdBridgeStage* bridge) {
         TfToken shader_id;
         shader.GetIdAttr().Get(&shader_id);
 
-        // Check for MaterialX standard_surface first
+        // Check for MaterialX standard_surface / OpenPBR first
         if (is_materialx_pbr_shader(shader_id)) {
-            cached.is_materialx = true;
             if (g_log_textures) std::cout << "[BIF_TEX] material=" << mat_path
                       << " type=MaterialX(surface) shader_id=" << shader_id.GetString()
                       << std::endl;
-            UsdShadeInput input;
-
-            // MaterialX standard_surface uses different parameter names:
-            // base_color (not diffuseColor)
-            input = shader.GetInput(TfToken("base_color"));
-            if (input) {
-                GfVec3f color;
-                if (input.Get(&color)) {
-                    cached.diffuse_color[0] = color[0];
-                    cached.diffuse_color[1] = color[1];
-                    cached.diffuse_color[2] = color[2];
-                }
-                cached.diffuse_texture = get_materialx_texture_path(input);
-            }
-
-            // standard_surface: "metalness", OpenPBR: "base_metalness"
-            input = shader.GetInput(TfToken("metalness"));
-            if (!input) input = shader.GetInput(TfToken("base_metalness"));
-            if (input) {
-                input.Get(&cached.metallic);
-                cached.metallic_texture = get_materialx_texture_path(input);
-            }
-
-            // specular_roughness (not roughness)
-            input = shader.GetInput(TfToken("specular_roughness"));
-            if (input) {
-                input.Get(&cached.roughness);
-                cached.roughness_texture = get_materialx_texture_path(input);
-            }
-
-            // specular
-            input = shader.GetInput(TfToken("specular"));
-            if (input) {
-                input.Get(&cached.specular);
-            }
-
-            // OpenPBR uses "transmission_weight", standard_surface uses "transmission"
-            input = shader.GetInput(TfToken("transmission_weight"));
-            if (!input) {
-                input = shader.GetInput(TfToken("transmission"));
-            }
-            if (input) {
-                input.Get(&cached.transmission);
-            }
-
-            // specular_IOR
-            input = shader.GetInput(TfToken("specular_IOR"));
-            if (input) {
-                input.Get(&cached.specular_ior);
-            }
-
-            // standard_surface: "opacity", OpenPBR: "geometry_opacity"
-            input = shader.GetInput(TfToken("opacity"));
-            if (!input) input = shader.GetInput(TfToken("geometry_opacity"));
-            if (input) {
-                GfVec3f opacity_vec;
-                if (input.Get(&opacity_vec)) {
-                    // MaterialX uses vec3 for opacity, take average
-                    cached.opacity = (opacity_vec[0] + opacity_vec[1] + opacity_vec[2]) / 3.0f;
-                } else {
-                    float opacity_scalar;
-                    if (input.Get(&opacity_scalar)) {
-                        cached.opacity = opacity_scalar;
-                    }
-                }
-                cached.opacity_texture = get_materialx_texture_path(input);
-            }
-
-            // emission_color + emission (multiply for intensity)
-            input = shader.GetInput(TfToken("emission_color"));
-            if (input) {
-                GfVec3f emissive;
-                if (input.Get(&emissive)) {
-                    // Check emission intensity
-                    float emission = 0.0f;
-                    UsdShadeInput emission_input = shader.GetInput(TfToken("emission"));
-                    if (emission_input) {
-                        emission_input.Get(&emission);
-                    }
-                    cached.emissive_color[0] = emissive[0] * emission;
-                    cached.emissive_color[1] = emissive[1] * emission;
-                    cached.emissive_color[2] = emissive[2] * emission;
-                }
-                cached.emissive_texture = get_materialx_texture_path(input);
-            }
-
-            // standard_surface: "normal", OpenPBR: "geometry_normal"
-            input = shader.GetInput(TfToken("normal"));
-            if (!input) input = shader.GetInput(TfToken("geometry_normal"));
-            if (input) {
-                cached.normal_texture = get_materialx_texture_path(input);
-            }
-
+            extract_materialx_properties(shader, cached);
             bridge->materials.push_back(std::move(cached));
             continue;
         }
