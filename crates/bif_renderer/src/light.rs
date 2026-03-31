@@ -22,9 +22,9 @@ pub struct LightSample {
     pub is_delta: bool,
 }
 
-/// Rec.709 luminance from linear RGB.
+/// Rec.709 luminance from linear RGB, clamped non-negative.
 fn luminance(c: Vec3) -> f32 {
-    0.2126 * c.x + 0.7152 * c.y + 0.0722 * c.z
+    (0.2126 * c.x + 0.7152 * c.y + 0.0722 * c.z).max(0.0)
 }
 
 /// Trait for light sources that can be sampled for NEE.
@@ -115,7 +115,7 @@ impl Light for DistantLight {
     }
 
     fn power(&self) -> f32 {
-        luminance(self.color) * self.intensity
+        luminance(self.color) * self.intensity.max(0.0)
     }
 }
 
@@ -206,7 +206,12 @@ impl Light for SphereLight {
     }
 
     fn power(&self) -> f32 {
-        luminance(self.color) * self.intensity
+        let base = luminance(self.color) * self.intensity.max(0.0);
+        if self.radius > 0.0 {
+            base * 4.0 * std::f32::consts::PI * self.radius * self.radius
+        } else {
+            base
+        }
     }
 }
 
@@ -340,7 +345,7 @@ impl Light for RectLight {
 
     fn power(&self) -> f32 {
         let area = self.u_axis.length() * self.v_axis.length() * 4.0;
-        luminance(self.color) * self.intensity * area
+        luminance(self.color) * self.intensity.max(0.0) * area
     }
 }
 
@@ -584,9 +589,14 @@ mod tests {
 
     #[test]
     fn power_sphere_light() {
-        let light = SphereLight::new(Vec3::ZERO, Vec3::new(1.0, 0.0, 0.0), 10.0, 0.5);
-        // luminance(1,0,0) = 0.2126, * 10.0 = 2.126
-        assert!((light.power() - 2.126).abs() < 1e-4);
+        // Point light (radius=0): no area factor
+        let point = SphereLight::new(Vec3::ZERO, Vec3::new(1.0, 0.0, 0.0), 10.0, 0.0);
+        assert!((point.power() - 2.126).abs() < 1e-4); // luminance(1,0,0)=0.2126 * 10
+
+        // Sphere light (radius=0.5): includes 4*PI*r^2
+        let sphere = SphereLight::new(Vec3::ZERO, Vec3::new(1.0, 0.0, 0.0), 10.0, 0.5);
+        let expected = 2.126 * 4.0 * std::f32::consts::PI * 0.25; // 0.2126 * 10 * 4*PI*0.25
+        assert!((sphere.power() - expected).abs() < 1e-3);
     }
 
     #[test]
@@ -753,5 +763,41 @@ mod tests {
             (combined_pdf - bright_pdf).abs() < 1e-4,
             "combined pdf should ~equal bright light's weighted pdf"
         );
+    }
+
+    #[test]
+    fn sample_pdf_matches_eval_pdf() {
+        let mut list = LightList::new();
+        list.add(Box::new(SphereLight::new(
+            Vec3::new(0.0, 5.0, 0.0),
+            Vec3::ONE,
+            10.0,
+            1.0,
+        )));
+        list.add(Box::new(SphereLight::new(
+            Vec3::new(5.0, 0.0, 0.0),
+            Vec3::ONE,
+            1.0,
+            1.0,
+        )));
+
+        let mut rng = test_rng();
+        let point = Vec3::ZERO;
+        for _ in 0..100 {
+            let (sample, idx) = list.sample_one(point, &mut rng).unwrap();
+            let eval_pdf = list.pdf_for_light(idx, point, sample.direction);
+            assert!(
+                (sample.pdf - eval_pdf).abs() < 0.01 * sample.pdf.max(1e-6),
+                "sample pdf {:.6} != eval pdf {:.6} for light {idx}",
+                sample.pdf,
+                eval_pdf
+            );
+        }
+    }
+
+    #[test]
+    fn negative_color_clamps_to_zero_power() {
+        let light = DistantLight::new(Vec3::NEG_Y, Vec3::new(-1.0, -1.0, -1.0), 5.0, 0.53);
+        assert_eq!(light.power(), 0.0);
     }
 }
