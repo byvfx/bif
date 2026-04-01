@@ -17,6 +17,16 @@ for month_dir in "$REPO_ROOT"/devlog/20*/; do
     cp "$month_dir"/*.md "$SITE_SRC/devlog/$month/" 2>/dev/null || true
 done
 
+# --- Copy UI mockup assets (for devlog image references) ---
+if [ -d "$REPO_ROOT/assets/stitch_bif_ui" ]; then
+    mkdir -p "$SITE_SRC/assets"
+    cp -r "$REPO_ROOT/assets/stitch_bif_ui" "$SITE_SRC/assets/"
+fi
+if [ -d "$REPO_ROOT/assets/stitch_bif_ui_01" ]; then
+    mkdir -p "$SITE_SRC/assets"
+    cp -r "$REPO_ROOT/assets/stitch_bif_ui_01" "$SITE_SRC/assets/"
+fi
+
 # --- Copy USD reference docs ---
 cp "$REPO_ROOT"/docs/usd/*.md "$SITE_SRC/reference/usd/"
 
