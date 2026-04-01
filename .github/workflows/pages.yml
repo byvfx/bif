@@ -8,6 +8,8 @@ on:
       - 'docs/**'
       - 'site/**'
       - 'scripts/generate-site.sh'
+      - 'assets/stitch_bif_ui/**'
+      - 'assets/stitch_bif_ui_01/**'
       - 'README.md'
       - 'CHANGELOG.md'
       - 'MILESTONES.md'
@@ -29,6 +31,8 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          lfs: true
 
       - name: Install mdBook
         run: |
