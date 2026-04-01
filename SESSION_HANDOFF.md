@@ -1,6 +1,6 @@
-# Session Handoff - March 31, 2026
+# Session Handoff - April 1, 2026
 
-**Last Updated:** MaterialX (.mtlx) file format support
+**Last Updated:** Qt UI design spec consolidation + Stitch mockup review
 **Current Version:** v0.13.0-dev (Pipeline Foundation)
 **Project:** BIF - VFX Scene Assembler & Renderer
 
@@ -19,6 +19,15 @@
 ---
 
 ## Recent Work
+
+### Qt UI Design Spec Consolidation (Apr 1, 2026)
+
+- `docs/ux/UI_DESIGN.md` promoted to single authoritative Qt UI spec (16 sections, ~730 lines)
+- UX Architect + UX Researcher reviews conducted on batch 0 Stitch mockups, findings incorporated
+- 14 Stitch mockups across 2 batches covering all 4 workspaces + first launch screen
+- Key additions: Bjorn asset manager, active layer safety system, vertical code split layout (preferred), opinion encoding table, command palette details, Render workspace (renamed from Review), first launch onboarding
+- 4 remaining mockup gaps: context menu, error states, 15+ node graph, tooltip design
+- Doc hierarchy: UI_DESIGN.md (spec) + DCC_UI_RESEARCH.md (research) + DESIGN.md (tokens) + reviews (audit trail)
 
 ### MaterialX File Format Support (Mar 31, 2026)
 

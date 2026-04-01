@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>BIF | Assembly Workspace</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=Manrope:wght@700;800&amp;family=JetBrains+Mono&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            colors: {
+              "surface-tint": "#a4c9ff",
+              "on-surface-variant": "#c0c7d4",
+              "primary-fixed-dim": "#a4c9ff",
+              "on-tertiary-container": "#53106f",
+              "secondary": "#5dd9d0",
+              "on-tertiary-fixed": "#320047",
+              "on-secondary": "#003734",
+              "outline": "#8a919e",
+              "on-error-container": "#ffdad6",
+              "surface-container-highest": "#353535",
+              "surface-container-low": "#1b1b1b",
+              "surface-container": "#20201f",
+              "tertiary-fixed": "#f8d8ff",
+              "secondary-fixed": "#7cf6ec",
+              "tertiary": "#ebb2ff",
+              "primary": "#a4c9ff",
+              "on-secondary-container": "#00302d",
+              "inverse-surface": "#e5e2e1",
+              "primary-fixed": "#d4e3ff",
+              "on-background": "#e5e2e1",
+              "on-tertiary": "#500a6c",
+              "tertiary-container": "#c681e1",
+              "on-primary-container": "#003463",
+              "on-primary": "#00315d",
+              "surface-bright": "#393939",
+              "surface": "#131313",
+              "on-secondary-fixed": "#00201e",
+              "primary-container": "#4a9eff",
+              "surface-container-lowest": "#0e0e0e",
+              "surface-container-high": "#2a2a2a",
+              "tertiary-fixed-dim": "#ebb2ff",
+              "secondary-fixed-dim": "#5dd9d0",
+              "surface-dim": "#131313",
+              "secondary-container": "#00a29a",
+              "on-primary-fixed": "#001c39",
+              "inverse-primary": "#005fad",
+              "error-container": "#93000a",
+              "on-secondary-fixed-variant": "#00504c",
+              "on-primary-fixed-variant": "#004884",
+              "on-tertiary-fixed-variant": "#692984",
+              "inverse-on-surface": "#313030",
+              "on-error": "#690005",
+              "error": "#ffb4ab",
+              "outline-variant": "#414752",
+              "on-surface": "#e5e2e1",
+              "surface-variant": "#353535",
+              "background": "#131313"
+            },
+            fontFamily: {
+              "headline": ["Manrope"],
+              "body": ["Inter"],
+              "label": ["Inter"],
+              "mono": ["JetBrains Mono"]
+            },
+            borderRadius: {"DEFAULT": "0.125rem", "lg": "0.25rem", "xl": "0.5rem", "full": "0.75rem"},
+          },
+        },
+      }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 20;
+            font-size: 18px;
+        }
+        .scrolling-hide::-webkit-scrollbar { display: none; }
+        .usd-stripe-teal { border-left: 3px solid #5dd9d0; }
+        .usd-stripe-purple { border-left: 3px solid #ebb2ff; }
+        .node-grid {
+            background-image: radial-gradient(circle, #2a2a2a 1px, transparent 1px);
+            background-size: 24px 24px;
+        }
+    </style>
+</head>
+<body class="bg-surface text-on-surface font-body overflow-hidden h-screen flex flex-col">
+<!-- TopNavBar (Shared Component) -->
+<header class="bg-[#131313] text-[#a4c9ff] font-['Manrope'] tracking-wider text-[0.6875rem] uppercase border-b border-[#0e0e0e] flex justify-between items-center w-full px-4 h-12 z-50">
+<div class="flex items-center space-x-8">
+<span class="text-xl font-black text-[#e5e2e1]">BIF</span>
+<nav class="flex space-x-6 items-center h-full">
+<a class="text-[#a4c9ff] border-b-2 border-[#a4c9ff] pb-1 h-full flex items-center" href="#">Assembly</a>
+<a class="text-[#8a919e] hover:bg-[#2a2a2a] transition-colors px-2 py-1 rounded" href="#">Lighting</a>
+<a class="text-[#8a919e] hover:bg-[#2a2a2a] transition-colors px-2 py-1 rounded" href="#">Materials</a>
+<a class="text-[#8a919e] hover:bg-[#2a2a2a] transition-colors px-2 py-1 rounded" href="#">Review</a>
+</nav>
+</div>
+<div class="flex items-center space-x-4">
+<div class="bg-surface-container-lowest flex items-center px-3 py-1 rounded-lg">
+<span class="material-symbols-outlined text-outline mr-2" data-icon="search">search</span>
+<input class="bg-transparent border-none focus:ring-0 text-[0.6875rem] w-48" placeholder="Search Assets..." type="text"/>
+</div>
+<span class="material-symbols-outlined text-outline cursor-pointer" data-icon="notifications">notifications</span>
+<span class="material-symbols-outlined text-outline cursor-pointer" data-icon="settings">settings</span>
+<div class="w-6 h-6 rounded-full bg-primary-container overflow-hidden">
+<img alt="User profile" data-alt="professional portrait of a technical artist in a modern studio environment with neutral lighting" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCBzvB7KaB4udD1iRsuOetzXFE6nPwqRM-8OMslOHzGGPUeHCxGiE3g5QrFsWMJ5nHO4wVWB1wBxEbFObabhnZaoZvgtVM5DP_jZ8DYbRFDbJm-KgX13HRtyYvc7jXBr8A7JIqbe6sELQPoU_Q6flxcMx7GES7u44HB02zIQ1NjAD_b_1TTCVva38Yus8gUmBR5GF31uvlrX3P5HLAcD1JKyxXnkj3YEXC5cLelUOr6lC0oEyYK09sdpRqCmmRNOvHwW56Xv2NvOH9b"/>
+</div>
+</div>
+</header>
+<main class="flex-1 flex overflow-hidden">
+<!-- SideNavBar (Shared Component) -->
+<aside class="bg-[#20201f] text-[#a4c9ff] font-['Inter'] text-xs shadow-[1px_0_0_0_#0e0e0e] flex flex-col items-center py-4 space-y-6 w-16">
+<div class="flex flex-col items-center mb-4">
+<div class="w-10 h-10 bg-surface-container-high rounded-xl flex items-center justify-center mb-1">
+<span class="material-symbols-outlined text-primary" data-icon="account_tree">account_tree</span>
+</div>
+<span class="text-[8px] text-outline uppercase font-bold tracking-tighter">Alpha</span>
+</div>
+<div class="flex flex-col space-y-4 w-full">
+<div class="text-[#a4c9ff] bg-[#1b1b1b] w-full flex flex-col items-center py-3 cursor-pointer">
+<span class="material-symbols-outlined" data-icon="account_tree">account_tree</span>
+</div>
+<div class="text-[#8a919e] hover:text-[#e5e2e1] w-full flex flex-col items-center py-3 cursor-pointer">
+<span class="material-symbols-outlined" data-icon="inventory_2">inventory_2</span>
+</div>
+<div class="text-[#8a919e] hover:text-[#e5e2e1] w-full flex flex-col items-center py-3 cursor-pointer">
+<span class="material-symbols-outlined" data-icon="layers">layers</span>
+</div>
+<div class="text-[#8a919e] hover:text-[#e5e2e1] w-full flex flex-col items-center py-3 cursor-pointer">
+<span class="material-symbols-outlined" data-icon="lightbulb">lightbulb</span>
+</div>
+<div class="text-[#8a919e] hover:text-[#e5e2e1] w-full flex flex-col items-center py-3 cursor-pointer">
+<span class="material-symbols-outlined" data-icon="videocam">videocam</span>
+</div>
+</div>
+</aside>
+<!-- Main Content Area: T-Layout -->
+<div class="flex-1 flex flex-col min-w-0">
+<!-- Top Section: Panels + Viewport -->
+<div class="flex-1 flex min-h-0">
+<!-- Left Panel: Scene Tree & Layer Stack -->
+<section class="w-72 bg-surface-container flex flex-col shadow-[1px_0_0_0_#0e0e0e]">
+<!-- Scene Tree -->
+<div class="flex-1 flex flex-col min-h-0">
+<div class="px-4 py-3 flex justify-between items-center border-b border-surface-container-lowest">
+<span class="text-[0.6875rem] font-bold uppercase tracking-widest text-outline">Scene Tree</span>
+<span class="material-symbols-outlined text-outline text-sm" data-icon="filter_list">filter_list</span>
+</div>
+<div class="flex-1 overflow-y-auto p-2 space-y-0.5 scrolling-hide">
+<div class="group flex items-center px-2 py-1.5 rounded-lg hover:bg-surface-container-high cursor-pointer usd-stripe-teal">
+<span class="material-symbols-outlined text-outline text-xs mr-2" data-icon="expand_more">expand_more</span>
+<span class="material-symbols-outlined text-primary text-xs mr-2" data-icon="language">language</span>
+<span class="text-xs font-mono">/world</span>
+</div>
+<div class="group flex items-center px-2 py-1.5 rounded-lg bg-primary-container/20 text-primary border border-primary/20 usd-stripe-teal ml-4">
+<span class="material-symbols-outlined text-primary text-xs mr-2" data-icon="expand_more">expand_more</span>
+<span class="material-symbols-outlined text-xs mr-2" data-icon="person">person</span>
+<span class="text-xs font-mono font-semibold">hero_char</span>
+<div class="ml-auto w-1.5 h-1.5 rounded-full bg-secondary"></div>
+</div>
+<div class="group flex items-center px-2 py-1.5 rounded-lg hover:bg-surface-container-high cursor-pointer usd-stripe-teal ml-8">
+<span class="material-symbols-outlined text-outline text-xs mr-2" data-icon="chevron_right">chevron_right</span>
+<span class="material-symbols-outlined text-outline text-xs mr-2" data-icon="body_system">body_system</span>
+<span class="text-xs font-mono">skeleton</span>
+</div>
+<div class="group flex items-center px-2 py-1.5 rounded-lg hover:bg-surface-container-high cursor-pointer usd-stripe-teal ml-8">
+<span class="material-symbols-outlined text-outline text-xs mr-2" data-icon="chevron_right">chevron_right</span>
+<span class="material-symbols-outlined text-outline text-xs mr-2" data-icon="checkroom">checkroom</span>
+<span class="text-xs font-mono">mesh</span>
+</div>
+<div class="group flex items-center px-2 py-1.5 rounded-lg hover:bg-surface-container-high cursor-pointer usd-stripe-purple ml-4">
+<span class="material-symbols-outlined text-outline text-xs mr-2" data-icon="chevron_right">chevron_right</span>
+<span class="material-symbols-outlined text-outline text-xs mr-2" data-icon="landscape">landscape</span>
+<span class="text-xs font-mono">environment</span>
+</div>
+</div>
+</div>
+<!-- Layer Stack -->
+<div class="h-48 bg-surface-container-low border-t border-surface-container-lowest flex flex-col">
+<div class="px-4 py-2 flex justify-between items-center bg-surface-container">
+<span class="text-[0.6875rem] font-bold uppercase tracking-widest text-outline">Layer Stack</span>
+<span class="material-symbols-outlined text-outline text-sm" data-icon="add">add</span>
+</div>
+<div class="flex-1 overflow-y-auto p-2 space-y-1">
+<div class="flex items-center px-2 py-1 bg-primary/10 rounded border border-primary/30">
+<span class="material-symbols-outlined text-primary text-xs mr-2" data-icon="edit" data-weight="fill" style="font-variation-settings: 'FILL' 1;">edit</span>
+<span class="text-xs font-mono text-on-surface">lighting.usd</span>
+<div class="ml-auto flex space-x-2">
+<span class="material-symbols-outlined text-outline text-xs" data-icon="visibility">visibility</span>
+<span class="material-symbols-outlined text-outline text-xs" data-icon="lock_open">lock_open</span>
+</div>
+</div>
+<div class="flex items-center px-2 py-1 hover:bg-surface-container-high rounded opacity-70">
+<span class="material-symbols-outlined text-outline text-xs mr-2" data-icon="layers">layers</span>
+<span class="text-xs font-mono text-outline">layout.usd</span>
+<div class="ml-auto flex space-x-2">
+<span class="material-symbols-outlined text-outline text-xs" data-icon="visibility">visibility</span>
+<span class="material-symbols-outlined text-outline text-xs" data-icon="lock">lock</span>
+</div>
+</div>
+<div class="flex items-center px-2 py-1 hover:bg-surface-container-high rounded opacity-50">
+<span class="material-symbols-outlined text-outline text-xs mr-2" data-icon="base_station">charging_station</span>
+<span class="text-xs font-mono text-outline">shot_010.usd</span>
+</div>
+</div>
+</div>
+</section>
+<!-- Center: 3D Viewport -->
+<section class="flex-1 relative bg-surface-container-lowest flex flex-col">
+<!-- Breadcrumbs Overlay -->
+<div class="absolute top-4 left-4 z-10 flex items-center space-x-2 bg-surface-container/80 backdrop-blur-md px-3 py-1.5 rounded-full shadow-lg border border-white/5">
+<span class="text-[10px] text-outline font-mono">shot_010.usd</span>
+<span class="material-symbols-outlined text-outline text-[10px]" data-icon="chevron_right">chevron_right</span>
+<span class="text-[10px] text-secondary font-mono">layout.usd</span>
+<span class="material-symbols-outlined text-outline text-[10px]" data-icon="chevron_right">chevron_right</span>
+<span class="text-[10px] text-on-surface font-mono font-bold">/world/hero_char</span>
+</div>
+<!-- Viewport Tools -->
+<div class="absolute top-4 right-4 z-10 flex flex-col space-y-2">
+<div class="bg-surface-container/80 backdrop-blur-md p-1.5 rounded-xl border border-white/5 flex flex-col space-y-2">
+<button class="w-8 h-8 flex items-center justify-center rounded-lg bg-primary text-on-primary shadow-lg"><span class="material-symbols-outlined" data-icon="open_with">open_with</span></button>
+<button class="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-surface-container-high text-outline transition-colors"><span class="material-symbols-outlined" data-icon="rotate_left">rotate_left</span></button>
+<button class="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-surface-container-high text-outline transition-colors"><span class="material-symbols-outlined" data-icon="straighten">straighten</span></button>
+</div>
+</div>
+<!-- Main Viewport Area -->
+<div class="flex-1 w-full h-full overflow-hidden flex items-center justify-center relative">
+<img alt="3D Viewport Content" class="w-full h-full object-cover" data-alt="cinematic 3D viewport rendering of a futuristic character model in a minimalist sci-fi environment with moody blue and teal atmospheric lighting" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDXneYMP2pO3mGwiFW0Z5T32Mdu9N3DSj9piFoGVj0zlJFX9JuLUzk6SvHjjBLgfGK4g7XdGstaLDTZAXtdCZX_1RsnF3sW9eSYPwr-FqLEfgOuA8HDrw332LDYjQ3nCw-8jtYIRal5rUE5sogwJ_LJfYkeiKb-mjG0Dcn8MYhhe729c6HwCPq2z21x7vVkM0B1Svuz7cBwGeBFKzJramEt7BYYZ2cZGoBdOY5j0GoLi3HCQOjZFb7E-3EbUs8m9GA-4cA3dVHYKG3K"/>
+<!-- Axis Gizmo Overlay -->
+<div class="absolute bottom-6 left-6 w-12 h-12">
+<div class="relative w-full h-full">
+<div class="absolute bottom-0 left-0 w-8 h-[2px] bg-red-500 rounded-full origin-left rotate-0"></div>
+<div class="absolute bottom-0 left-0 w-8 h-[2px] bg-green-500 rounded-full origin-left -rotate-90"></div>
+<div class="absolute bottom-0 left-0 w-8 h-[2px] bg-blue-500 rounded-full origin-left -rotate-45"></div>
+</div>
+</div>
+</div>
+<!-- Bottom NavBar (Shared Component) -->
+<div class="bg-[#131313] text-[#a4c9ff] font-['Inter'] font-medium text-[10px] uppercase tracking-tighter border-t border-[#0e0e0e] flex justify-start items-center px-4 h-10 w-full">
+<div class="flex items-center space-x-1 mr-4">
+<span class="flex flex-col items-center justify-center bg-[#2a2a2a] text-[#a4c9ff] rounded-t-lg px-6 py-1 cursor-pointer">
+<span class="material-symbols-outlined text-[14px] mb-0.5" data-icon="schema">schema</span>
+<span>Node Graph</span>
+</span>
+<span class="flex flex-col items-center justify-center text-[#8a919e] px-6 py-1 hover:bg-[#1b1b1b] cursor-pointer">
+<span class="material-symbols-outlined text-[14px] mb-0.5" data-icon="code">code</span>
+<span>USDA Preview</span>
+</span>
+<span class="flex flex-col items-center justify-center text-[#8a919e] px-6 py-1 hover:bg-[#1b1b1b] cursor-pointer">
+<span class="material-symbols-outlined text-[14px] mb-0.5" data-icon="terminal">terminal</span>
+<span>Render Log</span>
+</span>
+</div>
+<div class="ml-auto flex items-center space-x-4 text-outline font-mono uppercase text-[9px]">
+<span>FPS: 24.00</span>
+<span>GPU: 12GB / 40%</span>
+</div>
+</div>
+</section>
+<!-- Right Panel: Property Inspector -->
+<section class="w-80 bg-surface-container flex flex-col shadow-[-1px_0_0_0_#0e0e0e]">
+<div class="px-4 py-3 flex justify-between items-center border-b border-surface-container-lowest">
+<span class="text-[0.6875rem] font-bold uppercase tracking-widest text-outline">Inspector</span>
+<div class="flex space-x-2">
+<span class="material-symbols-outlined text-outline text-sm" data-icon="history">history</span>
+<span class="material-symbols-outlined text-outline text-sm" data-icon="more_vert">more_vert</span>
+</div>
+</div>
+<div class="flex-1 overflow-y-auto p-4 space-y-6 scrolling-hide">
+<!-- Transform Section -->
+<div class="space-y-3">
+<div class="flex items-center justify-between">
+<span class="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">Transform</span>
+<span class="text-[8px] bg-secondary/10 text-secondary px-1.5 py-0.5 rounded border border-secondary/20">Layout Layer</span>
+</div>
+<div class="space-y-2 border-l-2 border-secondary pl-3">
+<div class="grid grid-cols-4 gap-2 items-center">
+<span class="text-[10px] text-outline font-mono">Translate</span>
+<input class="col-span-1 bg-surface-container-lowest border-none text-[11px] font-mono text-on-surface rounded-md h-7 focus:ring-1 focus:ring-primary-container text-center" type="text" value="12.45"/>
+<input class="col-span-1 bg-surface-container-lowest border-none text-[11px] font-mono text-on-surface rounded-md h-7 focus:ring-1 focus:ring-primary-container text-center" type="text" value="0.00"/>
+<input class="col-span-1 bg-surface-container-lowest border-none text-[11px] font-mono text-on-surface rounded-md h-7 focus:ring-1 focus:ring-primary-container text-center" type="text" value="-4.21"/>
+</div>
+<div class="grid grid-cols-4 gap-2 items-center">
+<span class="text-[10px] text-outline font-mono">Rotate</span>
+<input class="col-span-1 bg-surface-container-lowest border-none text-[11px] font-mono text-on-surface rounded-md h-7 focus:ring-1 focus:ring-primary-container text-center" type="text" value="0.00"/>
+<input class="col-span-1 bg-surface-container-lowest border-none text-[11px] font-mono text-on-surface rounded-md h-7 focus:ring-1 focus:ring-primary-container text-center" type="text" value="90.00"/>
+<input class="col-span-1 bg-surface-container-lowest border-none text-[11px] font-mono text-on-surface rounded-md h-7 focus:ring-1 focus:ring-primary-container text-center" type="text" value="0.00"/>
+</div>
+<div class="grid grid-cols-4 gap-2 items-center">
+<span class="text-[10px] text-outline font-mono">Scale</span>
+<input class="col-span-1 bg-surface-container-lowest border-none text-[11px] font-mono text-on-surface rounded-md h-7 focus:ring-1 focus:ring-primary-container text-center" type="text" value="1.00"/>
+<input class="col-span-1 bg-surface-container-lowest border-none text-[11px] font-mono text-on-surface rounded-md h-7 focus:ring-1 focus:ring-primary-container text-center" type="text" value="1.00"/>
+<input class="col-span-1 bg-surface-container-lowest border-none text-[11px] font-mono text-on-surface rounded-md h-7 focus:ring-1 focus:ring-primary-container text-center" type="text" value="1.00"/>
+</div>
+</div>
+</div>
+<!-- Visibility Section -->
+<div class="space-y-3">
+<div class="flex items-center justify-between">
+<span class="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">Visibility</span>
+<span class="text-[8px] bg-secondary/10 text-secondary px-1.5 py-0.5 rounded border border-secondary/20">Layout Layer</span>
+</div>
+<div class="flex items-center space-x-4 border-l-2 border-secondary pl-3">
+<div class="flex-1 flex items-center space-x-2">
+<span class="text-[10px] text-outline font-mono">Purpose</span>
+<div class="flex-1 bg-surface-container-lowest rounded-md h-7 px-2 flex items-center justify-between cursor-pointer">
+<span class="text-[10px] text-on-surface">default</span>
+<span class="material-symbols-outlined text-[12px] text-outline" data-icon="unfold_more">unfold_more</span>
+</div>
+</div>
+<div class="flex items-center space-x-2">
+<span class="text-[10px] text-outline font-mono">State</span>
+<div class="w-8 h-4 bg-primary rounded-full relative cursor-pointer shadow-inner">
+<div class="absolute right-0.5 top-0.5 w-3 h-3 bg-white rounded-full"></div>
+</div>
+</div>
+</div>
+</div>
+<!-- USD Metadata Section -->
+<div class="space-y-3">
+<span class="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">Prim Metadata</span>
+<div class="bg-surface-container-low p-3 rounded-xl space-y-2 border border-white/5">
+<div class="flex justify-between">
+<span class="text-[9px] text-outline">Type</span>
+<span class="text-[9px] text-primary font-mono">UsdGeomXform</span>
+</div>
+<div class="flex justify-between">
+<span class="text-[9px] text-outline">Path</span>
+<span class="text-[9px] text-on-surface font-mono">/world/hero_char</span>
+</div>
+<div class="flex justify-between">
+<span class="text-[9px] text-outline">Composition</span>
+<div class="flex space-x-1">
+<div class="w-1.5 h-1.5 rounded-full bg-secondary"></div>
+<div class="w-1.5 h-1.5 rounded-full bg-tertiary"></div>
+<div class="w-1.5 h-1.5 rounded-full bg-primary"></div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</section>
+</div>
+<!-- Bottom Section: Node Graph -->
+<section class="h-64 bg-surface-container border-t border-surface-container-lowest relative flex flex-col">
+<div class="px-4 py-2 flex justify-between items-center bg-surface-container border-b border-surface-container-lowest">
+<div class="flex items-center space-x-4">
+<span class="text-[0.6875rem] font-bold uppercase tracking-widest text-outline">Node Graph</span>
+<div class="flex bg-surface-container-lowest rounded-lg p-0.5">
+<button class="px-3 py-1 text-[9px] bg-surface-container-high rounded-md text-primary font-bold">Assembly</button>
+<button class="px-3 py-1 text-[9px] text-outline hover:text-on-surface transition-colors">Materials</button>
+<button class="px-3 py-1 text-[9px] text-outline hover:text-on-surface transition-colors">Output</button>
+</div>
+</div>
+<div class="flex space-x-2">
+<button class="w-6 h-6 flex items-center justify-center text-outline hover:bg-surface-container-high rounded"><span class="material-symbols-outlined text-[16px]" data-icon="search">search</span></button>
+<button class="w-6 h-6 flex items-center justify-center text-outline hover:bg-surface-container-high rounded"><span class="material-symbols-outlined text-[16px]" data-icon="grid_on">grid_on</span></button>
+</div>
+</div>
+<div class="flex-1 node-grid relative overflow-hidden">
+<!-- Node 1: UsdRead -->
+<div class="absolute top-10 left-12 w-40 bg-surface-container-high rounded-lg shadow-xl border border-white/5 overflow-hidden">
+<div class="bg-primary/20 px-3 py-1 border-b border-white/5 flex justify-between items-center">
+<span class="text-[9px] font-bold text-primary tracking-wider">UsdRead</span>
+<span class="material-symbols-outlined text-[12px] text-primary" data-icon="description">description</span>
+</div>
+<div class="p-3 space-y-2">
+<div class="flex justify-between items-center">
+<div class="w-2 h-2 rounded-full bg-outline-variant -ml-4"></div>
+<span class="text-[9px] text-on-surface-variant font-mono">Stage</span>
+<div class="w-2 h-2 rounded-full bg-secondary -mr-4"></div>
+</div>
+</div>
+</div>
+<!-- Wire: UsdRead -> Xform -->
+<svg class="absolute top-0 left-0 w-full h-full pointer-events-none">
+<path d="M 212 118 C 240 118, 250 118, 280 118" fill="none" stroke="#4a9eff" stroke-width="2"></path>
+<path d="M 440 118 C 470 118, 480 118, 510 118" fill="none" stroke="#4a9eff" stroke-width="2"></path>
+</svg>
+<!-- Node 2: Xform -->
+<div class="absolute top-10 left-64 w-40 bg-surface-container-high rounded-lg shadow-xl border border-primary/40 overflow-hidden ring-1 ring-primary/20">
+<div class="bg-primary px-3 py-1 flex justify-between items-center">
+<span class="text-[9px] font-bold text-on-primary tracking-wider">Xform</span>
+<span class="material-symbols-outlined text-[12px] text-on-primary" data-icon="open_with">open_with</span>
+</div>
+<div class="p-3 space-y-2">
+<div class="flex justify-between items-center">
+<div class="w-2 h-2 rounded-full bg-secondary -ml-4"></div>
+<span class="text-[9px] text-on-surface-variant font-mono">Input</span>
+<div class="w-2 h-2 rounded-full bg-secondary -mr-4"></div>
+</div>
+</div>
+</div>
+<!-- Node 3: Primitive -->
+<div class="absolute top-10 left-[460px] w-40 bg-surface-container-high rounded-lg shadow-xl border border-white/5 overflow-hidden">
+<div class="bg-tertiary/20 px-3 py-1 border-b border-white/5 flex justify-between items-center">
+<span class="text-[9px] font-bold text-tertiary tracking-wider">Primitive</span>
+<span class="material-symbols-outlined text-[12px] text-tertiary" data-icon="category">category</span>
+</div>
+<div class="p-3 space-y-2">
+<div class="flex justify-between items-center">
+<div class="w-2 h-2 rounded-full bg-secondary -ml-4"></div>
+<span class="text-[9px] text-on-surface-variant font-mono">Target</span>
+<div class="w-2 h-2 rounded-full bg-secondary -mr-4"></div>
+</div>
+</div>
+</div>
+<!-- MiniMap HUD -->
+<div class="absolute bottom-4 right-4 w-32 h-20 bg-surface-container-lowest/80 backdrop-blur border border-white/5 rounded-lg opacity-60">
+<div class="w-4 h-2 bg-primary/40 absolute top-4 left-4 rounded-sm"></div>
+<div class="w-4 h-2 bg-primary/40 absolute top-4 left-10 rounded-sm"></div>
+<div class="w-4 h-2 bg-tertiary/40 absolute top-4 left-16 rounded-sm"></div>
+</div>
+</div>
+</section>
+</div>
+</main>
+</body></html>

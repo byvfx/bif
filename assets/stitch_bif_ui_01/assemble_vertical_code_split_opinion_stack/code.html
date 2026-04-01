@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&amp;family=JetBrains+Mono:wght@400;500&amp;family=Manrope:wght@400;500;600;700;800&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">
+    tailwind.config = {
+      darkMode: "class",
+      theme: {
+        extend: {
+          colors: {
+            "inverse-primary": "#005fad",
+            "secondary-container": "#00a29a",
+            "surface-dim": "#131313",
+            "error-container": "#93000a",
+            "primary-container": "#4a9eff",
+            "error": "#ffb4ab",
+            "tertiary-fixed-dim": "#ebb2ff",
+            "on-secondary": "#003734",
+            "surface-container": "#20201f",
+            "inverse-on-surface": "#313030",
+            "on-surface": "#e5e2e1",
+            "on-primary-fixed-variant": "#004884",
+            "surface-container-low": "#1b1b1b",
+            "on-secondary-fixed": "#00201e",
+            "on-tertiary": "#500a6c",
+            "secondary-fixed": "#7cf6ec",
+            "inverse-surface": "#e5e2e1",
+            "on-tertiary-fixed": "#320047",
+            "surface-container-highest": "#353535",
+            "on-tertiary-fixed-variant": "#692984",
+            "secondary": "#5dd9d0",
+            "background": "#131313",
+            "on-primary-container": "#003463",
+            "surface-variant": "#353535",
+            "surface-container-lowest": "#0e0e0e",
+            "on-surface-variant": "#c0c7d4",
+            "on-primary": "#00315d",
+            "on-primary-fixed": "#001c39",
+            "surface-container-high": "#2a2a2a",
+            "on-error": "#690005",
+            "on-secondary-container": "#00302d",
+            "tertiary-fixed": "#f8d8ff",
+            "secondary-fixed-dim": "#5dd9d0",
+            "primary-fixed-dim": "#a4c9ff",
+            "outline-variant": "#414752",
+            "tertiary-container": "#c681e1",
+            "surface-tint": "#a4c9ff",
+            "on-secondary-fixed-variant": "#00504c",
+            "primary": "#a4c9ff",
+            "on-background": "#e5e2e1",
+            "surface-bright": "#393939",
+            "outline": "#8a919e",
+            "on-tertiary-container": "#53106f",
+            "primary-fixed": "#d4e3ff",
+            "tertiary": "#ebb2ff",
+            "surface": "#131313",
+            "on-error-container": "#ffdad6"
+          },
+          fontFamily: {
+            "headline": ["Manrope"],
+            "body": ["Inter"],
+            "label": ["Inter"],
+            "mono": ["JetBrains Mono"]
+          },
+          borderRadius: {
+            "DEFAULT": "0.375rem",
+            "lg": "0.25rem",
+            "xl": "0.5rem",
+            "full": "0.75rem"
+          },
+        },
+      },
+    }
+  </script>
+<style>
+    .material-symbols-outlined {
+      font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+      font-size: 20px;
+    }
+    .custom-scrollbar::-webkit-scrollbar { width: 4px; }
+    .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+    .custom-scrollbar::-webkit-scrollbar-thumb { background: #353535; border-radius: 10px; }
+    .optical-gutter { box-shadow: 0 0 0 1px #0e0e0e; }
+  </style>
+</head>
+<body class="bg-background text-on-surface font-body selection:bg-primary-container selection:text-on-primary-container overflow-hidden h-screen flex flex-col">
+<!-- TopAppBar -->
+<header class="bg-[#20201f] dark:bg-[#20201f] border-b border-[#0e0e0e] flex justify-between items-center w-full px-6 h-14 z-50">
+<div class="flex items-center gap-8">
+<div class="text-xl font-bold tracking-tighter text-[#e5e2e1]">BIF</div>
+<nav class="flex gap-6 h-full items-center">
+<a class="Manrope headline-sm font-medium tracking-tight text-[#a4c9ff] border-b-2 border-[#a4c9ff] pb-1" href="#">Assemble</a>
+<a class="Manrope headline-sm font-medium tracking-tight text-[#c0c7d4] hover:text-[#a4c9ff] transition-colors" href="#">Materials</a>
+<a class="Manrope headline-sm font-medium tracking-tight text-[#c0c7d4] hover:text-[#a4c9ff] transition-colors" href="#">Light</a>
+<a class="Manrope headline-sm font-medium tracking-tight text-[#c0c7d4] hover:text-[#a4c9ff] transition-colors" href="#">Render</a>
+</nav>
+</div>
+<div class="flex items-center gap-4">
+<button class="text-[#c0c7d4] hover:text-[#a4c9ff] transition-all active:scale-[0.99] active:opacity-80">
+<span class="material-symbols-outlined">settings</span>
+</button>
+<button class="text-[#c0c7d4] hover:text-[#a4c9ff] transition-all active:scale-[0.99] active:opacity-80">
+<span class="material-symbols-outlined">account_circle</span>
+</button>
+</div>
+</header>
+<div class="flex-1 flex overflow-hidden">
+<!-- Left Panel: Outliner & Layers -->
+<aside class="w-72 bg-[#131313] border-r border-[#0e0e0e] flex flex-col z-40">
+<!-- Scene Tree -->
+<section class="flex-1 flex flex-col min-h-0">
+<div class="px-4 py-3 flex items-center justify-between">
+<h2 class="Inter label-sm uppercase tracking-widest text-[#8a919e] text-[10px] font-bold">Scene Tree</h2>
+<span class="material-symbols-outlined text-outline text-sm">filter_list</span>
+</div>
+<div class="flex-1 overflow-y-auto custom-scrollbar px-2 space-y-1">
+<div class="flex items-center gap-2 px-2 py-1.5 rounded bg-surface-container-high text-primary">
+<span class="material-symbols-outlined text-sm">expand_more</span>
+<span class="material-symbols-outlined text-sm">view_in_ar</span>
+<span class="text-xs font-mono">Kitchen_Set</span>
+</div>
+<div class="ml-4 flex items-center gap-2 px-2 py-1.5 rounded hover:bg-surface-container-low transition-colors text-on-surface-variant">
+<span class="material-symbols-outlined text-sm">expand_more</span>
+<span class="material-symbols-outlined text-sm">category</span>
+<span class="text-xs font-mono">Arch_Group</span>
+</div>
+<div class="ml-8 flex items-center gap-2 px-2 py-1.5 rounded bg-primary/10 text-primary border-l-2 border-primary">
+<span class="material-symbols-outlined text-sm" style="font-variation-settings: 'FILL' 1;">pentagon</span>
+<span class="text-xs font-mono">Countertop_Mesh</span>
+</div>
+<div class="ml-8 flex items-center gap-2 px-2 py-1.5 rounded hover:bg-surface-container-low transition-colors text-on-surface-variant">
+<span class="material-symbols-outlined text-sm">lightbulb</span>
+<span class="text-xs font-mono">Point_Light_01</span>
+</div>
+</div>
+</section>
+<!-- Layer Stack -->
+<section class="h-1/3 bg-surface-container border-t border-surface-container-lowest flex flex-col">
+<div class="px-4 py-3 border-b border-surface-container-lowest">
+<h2 class="Inter label-sm uppercase tracking-widest text-[#8a919e] text-[10px] font-bold">Layer Stack</h2>
+</div>
+<div class="flex-1 overflow-y-auto custom-scrollbar">
+<div class="flex items-center px-4 py-2 hover:bg-surface-container-high cursor-pointer group">
+<div class="w-1 h-4 bg-tertiary mr-3 rounded-full"></div>
+<div class="flex-1">
+<div class="text-[11px] font-mono text-on-surface">lighting.usd</div>
+<div class="text-[9px] text-outline uppercase tracking-tighter">Sublayer • Over Key</div>
+</div>
+<span class="material-symbols-outlined text-sm text-outline opacity-0 group-hover:opacity-100">visibility</span>
+</div>
+<div class="flex items-center px-4 py-2 bg-surface-container-high border-l-4 border-secondary cursor-pointer">
+<div class="w-1 h-4 bg-secondary mr-2 rounded-full hidden"></div>
+<div class="flex-1">
+<div class="text-[11px] font-mono text-secondary">layout.usd</div>
+<div class="text-[9px] text-secondary/60 uppercase tracking-tighter">Active Target Layer</div>
+</div>
+<span class="material-symbols-outlined text-sm text-secondary">edit</span>
+</div>
+<div class="flex items-center px-4 py-2 hover:bg-surface-container-high cursor-pointer">
+<div class="w-1 h-4 bg-outline-variant mr-3 rounded-full"></div>
+<div class="flex-1">
+<div class="text-[11px] font-mono text-on-surface-variant">base_geometry.usd</div>
+<div class="text-[9px] text-outline uppercase tracking-tighter">Root Layer</div>
+</div>
+</div>
+</div>
+</section>
+</aside>
+<!-- Center Workspace -->
+<main class="flex-1 flex flex-col min-w-0 bg-surface-container-lowest">
+<div class="flex-1 flex overflow-hidden">
+<!-- 3D Viewport -->
+<section class="flex-1 relative bg-[#0e0e0e] group">
+<div class="absolute inset-0 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-surface-container-low to-background opacity-40"></div>
+<!-- Mock Viewport Content -->
+<div class="absolute inset-0 flex items-center justify-center pointer-events-none">
+<img class="w-full h-full object-cover opacity-60 mix-blend-screen grayscale" data-alt="Technical 3D wireframe render of an architectural kitchen countertop with mesh topology highlighted in cyan and orange gizmo handles" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAOaqig9N2UHWygKlBQYiUtCK5kDdmwLaWxuzOM40NC7b1GOQqzvUwkohTzX6Pm8uO5PE_2DgEK0XPATbM2aXUPxTIH7R5Zh0_KwzHu8RwJJ7_uV-gQWx89yM5Ru0H87gGd6U_b1t6a_NYl_oEZOos_0Yzr0h8wi-mEtpGaltNq6--EvMTq7gdaghnwzSnXlntIljIx50MhgazU_wIYdamNbE4SM856QHDCOvMQIQ1174GKcR00w7lxxW2Cywtgfi61AVQLj33Pnw60"/>
+<!-- Selected Object Overlay (Visual representation) -->
+<div class="absolute inset-0 border-2 border-primary/20 pointer-events-none"></div>
+</div>
+<!-- Viewport HUDs -->
+<div class="absolute top-4 left-4 flex gap-2">
+<div class="bg-surface-container/70 backdrop-blur-xl px-3 py-1.5 rounded flex items-center gap-3 border border-outline-variant/10">
+<span class="text-[10px] font-bold tracking-widest text-outline uppercase">Persp</span>
+<div class="w-[1px] h-3 bg-outline-variant/30"></div>
+<span class="text-[10px] font-bold tracking-widest text-outline uppercase">Textured</span>
+</div>
+</div>
+<!-- Viewport Status Bar -->
+<div class="absolute bottom-0 left-0 right-0 bg-surface-container-lowest/80 backdrop-blur-md px-4 py-1.5 flex justify-between items-center border-t border-white/5">
+<div class="flex items-center gap-2">
+<div class="w-2 h-2 rounded-full bg-secondary animate-pulse"></div>
+<span class="text-[10px] font-mono font-bold text-secondary uppercase tracking-wider">ACTIVE LAYER: LAYOUT.USD</span>
+</div>
+<div class="flex items-center gap-4">
+<span class="text-[9px] font-mono text-outline">FPS: 60.0</span>
+<span class="text-[9px] font-mono text-outline">MEM: 1.2GB</span>
+</div>
+</div>
+</section>
+<!-- Vertical Divider (Visual Only) -->
+<div class="w-[2px] bg-surface-container-lowest"></div>
+<!-- USDA Code Preview -->
+<section class="w-[450px] bg-surface border-l border-[#0e0e0e] flex flex-col">
+<div class="px-4 py-3 border-b border-surface-container-lowest flex items-center justify-between">
+<h2 class="Inter label-sm uppercase tracking-widest text-[#8a919e] text-[10px] font-bold">USDA Code Preview</h2>
+<div class="flex gap-2">
+<span class="material-symbols-outlined text-sm text-outline">content_copy</span>
+<span class="material-symbols-outlined text-sm text-outline">open_in_new</span>
+</div>
+</div>
+<div class="flex-1 font-mono text-[13px] p-4 overflow-y-auto custom-scrollbar bg-surface-container-lowest/30 leading-relaxed">
+<div class="text-outline-variant">#usda 1.0</div>
+<div class="text-outline-variant">(</div>
+<div class="ml-4 text-outline-variant">subLayers = [</div>
+<div class="ml-8 text-primary">@./lighting.usd@,</div>
+<div class="ml-8 text-secondary">@./layout.usd@,</div>
+<div class="ml-8 text-outline-variant">@./base_geometry.usd@</div>
+<div class="ml-4 text-outline-variant">]</div>
+<div class="text-outline-variant">)</div>
+<br/>
+<div class="text-outline-variant">def Xform "Kitchen_Set"</div>
+<div class="text-outline-variant">{</div>
+<div class="ml-4 text-outline-variant">def "Arch_Group"</div>
+<div class="ml-4 text-outline-variant">{</div>
+<div class="ml-8 text-primary">def Mesh "Countertop_Mesh" (</div>
+<div class="ml-12 text-primary">kind = "component"</div>
+<div class="ml-8 text-primary">)</div>
+<div class="ml-8 text-primary">{</div>
+<div class="ml-12 text-secondary">float3 xformOp:translate = (45.2, 0, -12.5)</div>
+<div class="ml-12 text-outline-variant">float3 xformOp:rotateXYZ = (0, 90, 0)</div>
+<div class="ml-12 text-outline-variant">uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ"]</div>
+<div class="ml-8 text-primary">}</div>
+<div class="ml-4 text-outline-variant">}</div>
+<div class="text-outline-variant">}</div>
+</div>
+</section>
+</div>
+<!-- Timeline / Animation (Space Placeholder) -->
+<div class="h-10 bg-surface-container border-t border-surface-container-lowest flex items-center px-4 justify-between">
+<div class="flex items-center gap-4">
+<span class="material-symbols-outlined text-outline">play_arrow</span>
+<div class="h-1 w-64 bg-surface-container-lowest rounded-full relative">
+<div class="absolute inset-y-0 left-0 w-1/3 bg-primary rounded-full"></div>
+</div>
+</div>
+<div class="text-[10px] font-mono text-outline">FRAME: 0024 / 0240</div>
+</div>
+</main>
+<!-- Right Panel: Property Inspector -->
+<aside class="w-80 bg-[#131313] border-l border-[#0e0e0e] flex flex-col z-40">
+<div class="px-4 py-3 border-b border-surface-container-lowest">
+<h2 class="Inter label-sm uppercase tracking-widest text-[#8a919e] text-[10px] font-bold">Inspector</h2>
+</div>
+<div class="flex-1 overflow-y-auto custom-scrollbar">
+<!-- Object Header -->
+<div class="p-4 bg-surface-container-low mb-1">
+<div class="flex items-center gap-3 mb-2">
+<span class="material-symbols-outlined text-primary">pentagon</span>
+<h3 class="text-sm font-semibold text-on-surface">Countertop_Mesh</h3>
+</div>
+<div class="text-[10px] text-outline font-mono">/Kitchen_Set/Arch_Group/Countertop_Mesh</div>
+</div>
+<!-- Transform Section -->
+<div class="px-4 py-2 bg-surface-container-high/50 flex items-center justify-between cursor-pointer">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-xs">expand_more</span>
+<span class="text-[11px] font-bold uppercase tracking-wider text-on-surface-variant">Transform</span>
+</div>
+<span class="material-symbols-outlined text-xs text-outline">more_horiz</span>
+</div>
+<div class="p-4 space-y-4">
+<!-- Position Property -->
+<div class="space-y-2">
+<div class="flex justify-between items-center">
+<label class="text-[11px] text-outline-variant font-medium">Translation</label>
+<span class="text-[9px] px-1.5 py-0.5 bg-secondary/10 text-secondary border border-secondary/20 rounded-sm">L</span>
+</div>
+<div class="grid grid-cols-3 gap-1">
+<div class="flex items-center bg-surface-container-lowest rounded overflow-hidden">
+<span class="px-2 text-[9px] text-error bg-surface-container-low font-bold">X</span>
+<input class="w-full bg-transparent border-none text-[12px] font-mono text-on-surface focus:ring-0 py-1" type="text" value="45.20"/>
+</div>
+<div class="flex items-center bg-surface-container-lowest rounded overflow-hidden">
+<span class="px-2 text-[9px] text-secondary bg-surface-container-low font-bold">Y</span>
+<input class="w-full bg-transparent border-none text-[12px] font-mono text-on-surface focus:ring-0 py-1" type="text" value="0.00"/>
+</div>
+<div class="flex items-center bg-surface-container-lowest rounded overflow-hidden">
+<span class="px-2 text-[9px] text-primary bg-surface-container-low font-bold">Z</span>
+<input class="w-full bg-transparent border-none text-[12px] font-mono text-on-surface focus:ring-0 py-1" type="text" value="-12.50"/>
+</div>
+</div>
+</div>
+<!-- Opinion Stack (Requested Detail) -->
+<div class="mt-4 pt-4 border-t border-outline-variant/10">
+<div class="flex items-center gap-2 mb-3">
+<span class="material-symbols-outlined text-xs text-tertiary">layers</span>
+<span class="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">Opinion Stack</span>
+</div>
+<div class="space-y-0.5">
+<!-- Layer: lighting.usd (Winning) -->
+<div class="flex items-center gap-3 px-3 py-2 bg-surface-container-high rounded-md border border-tertiary/20">
+<div class="w-1.5 h-1.5 rounded-full bg-tertiary"></div>
+<div class="flex-1 flex justify-between items-center">
+<span class="text-[11px] font-bold text-on-surface font-mono">lighting.usd</span>
+<span class="text-[9px] text-tertiary font-bold uppercase">Winning</span>
+</div>
+</div>
+<!-- Layer: layout.usd (Overridden) -->
+<div class="flex items-center gap-3 px-3 py-2 bg-surface-container-low opacity-60 rounded-md">
+<div class="w-1.5 h-1.5 rounded-full bg-secondary"></div>
+<div class="flex-1 flex justify-between items-center">
+<span class="text-[11px] text-on-surface-variant font-mono">layout.usd</span>
+<span class="text-[9px] text-outline uppercase">Overridden</span>
+</div>
+</div>
+<!-- Layer: default (Fallback) -->
+<div class="flex items-center gap-3 px-3 py-2 bg-surface-container-low/30 opacity-40 rounded-md">
+<div class="w-1.5 h-1.5 rounded-full bg-outline-variant"></div>
+<div class="flex-1 flex justify-between items-center">
+<span class="text-[11px] text-outline line-through font-mono">default</span>
+<span class="text-[9px] text-outline uppercase italic">Fallback</span>
+</div>
+</div>
+</div>
+</div>
+</div>
+<!-- Material Section -->
+<div class="px-4 py-2 bg-surface-container-high/50 flex items-center justify-between cursor-pointer border-t border-surface-container-lowest mt-2">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-xs">expand_more</span>
+<span class="text-[11px] font-bold uppercase tracking-wider text-on-surface-variant">Material Binding</span>
+</div>
+<span class="material-symbols-outlined text-xs text-outline">link</span>
+</div>
+<div class="p-4">
+<div class="flex items-center justify-between p-2 bg-surface-container-lowest rounded">
+<div class="flex items-center gap-2">
+<div class="w-6 h-6 rounded bg-gradient-to-br from-gray-700 to-gray-900 border border-white/5"></div>
+<span class="text-xs font-mono text-outline">Marble_Black_01</span>
+</div>
+<span class="material-symbols-outlined text-sm text-outline">chevron_right</span>
+</div>
+</div>
+</div>
+</aside>
+</div>
+<!-- Bottom Navigation Shell (Supressed for focus, using Viewport Status Bar and Layout Logic) -->
+</body></html>

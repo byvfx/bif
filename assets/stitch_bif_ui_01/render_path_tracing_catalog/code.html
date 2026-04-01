@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700;800&amp;family=Inter:wght@400;500;600&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            colors: {
+              "secondary-container": "#00a29a",
+              "secondary": "#5dd9d0",
+              "on-tertiary-container": "#53106f",
+              "surface-bright": "#393939",
+              "on-tertiary-fixed": "#320047",
+              "on-primary-container": "#003463",
+              "error": "#ffb4ab",
+              "secondary-fixed-dim": "#5dd9d0",
+              "on-tertiary-fixed-variant": "#692984",
+              "secondary-fixed": "#7cf6ec",
+              "primary": "#a4c9ff",
+              "on-error-container": "#ffdad6",
+              "tertiary": "#ebb2ff",
+              "surface-variant": "#353535",
+              "on-primary-fixed": "#001c39",
+              "on-error": "#690005",
+              "surface-container-highest": "#353535",
+              "tertiary-fixed-dim": "#ebb2ff",
+              "outline": "#8a919e",
+              "primary-container": "#4a9eff",
+              "on-secondary": "#003734",
+              "tertiary-fixed": "#f8d8ff",
+              "on-primary-fixed-variant": "#004884",
+              "on-surface-variant": "#c0c7d4",
+              "inverse-on-surface": "#313030",
+              "surface-container": "#20201f",
+              "on-background": "#e5e2e1",
+              "inverse-primary": "#005fad",
+              "tertiary-container": "#c681e1",
+              "surface-container-lowest": "#0e0e0e",
+              "surface": "#131313",
+              "on-primary": "#00315d",
+              "primary-fixed": "#d4e3ff",
+              "surface-tint": "#a4c9ff",
+              "on-secondary-container": "#00302d",
+              "inverse-surface": "#e5e2e1",
+              "outline-variant": "#414752",
+              "on-tertiary": "#500a6c",
+              "surface-dim": "#131313",
+              "on-secondary-fixed-variant": "#00504c",
+              "on-secondary-fixed": "#00201e",
+              "surface-container-high": "#2a2a2a",
+              "error-container": "#93000a"
+            },
+            fontFamily: {
+              "headline": ["Manrope"],
+              "body": ["Inter"],
+              "label": ["Inter"],
+              "mono": ["JetBrains Mono"]
+            },
+            borderRadius: {"DEFAULT": "0.125rem", "lg": "0.25rem", "xl": "0.375rem", "full": "0.75rem"},
+          },
+        },
+      }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        .usd-accent-pink { border-left: 3px solid #ebb2ff; }
+        .optical-gap { box-shadow: 0 0 0 1px #0e0e0e; }
+    </style>
+</head>
+<body class="bg-surface text-on-surface font-body overflow-hidden h-screen flex flex-col">
+<!-- TopNavBar -->
+<header class="bg-[#131313] w-full h-12 border-b border-[#0e0e0e] flex items-center justify-between px-6 z-50">
+<div class="flex items-center gap-8">
+<span class="text-lg font-bold text-[#e5e2e1] tracking-tighter">BIF</span>
+<nav class="flex items-center gap-6">
+<a class="font-['Manrope'] uppercase tracking-widest text-[0.6875rem] font-semibold text-[#8a919e] hover:text-[#e5e2e1] transition-colors duration-200" href="#">Assembly</a>
+<a class="font-['Manrope'] uppercase tracking-widest text-[0.6875rem] font-semibold text-[#8a919e] hover:text-[#e5e2e1] transition-colors duration-200" href="#">Lighting</a>
+<a class="font-['Manrope'] uppercase tracking-widest text-[0.6875rem] font-semibold text-[#8a919e] hover:text-[#e5e2e1] transition-colors duration-200" href="#">Materials</a>
+<a class="font-['Manrope'] uppercase tracking-widest text-[0.6875rem] font-semibold text-[#8a919e] hover:text-[#e5e2e1] transition-colors duration-200" href="#">Review</a>
+<a class="font-['Manrope'] uppercase tracking-widest text-[0.6875rem] font-semibold text-[#a4c9ff] border-b-2 border-[#a4c9ff] pb-1" href="#">Render</a>
+</nav>
+</div>
+<div class="flex items-center gap-4">
+<button class="text-[#8a919e] hover:bg-[#2a2a2a] p-1.5 rounded-md transition-colors duration-200 active:bg-[#353535]">
+<span class="material-symbols-outlined text-[20px]" data-icon="settings">settings</span>
+</button>
+<button class="text-[#8a919e] hover:bg-[#2a2a2a] p-1.5 rounded-md transition-colors duration-200 active:bg-[#353535]">
+<span class="material-symbols-outlined text-[20px]" data-icon="help">help</span>
+</button>
+</div>
+</header>
+<main class="flex-1 flex overflow-hidden">
+<!-- SideNavBar -->
+<aside class="bg-[#20201f] h-full w-16 flex flex-col border-r border-[#0e0e0e] z-40">
+<div class="flex flex-col items-center py-4 gap-6">
+<button class="text-[#8a919e] hover:text-[#e5e2e1] hover:bg-[#2a2a2a] p-3 rounded-md transition-all ease-in-out duration-150">
+<span class="material-symbols-outlined" data-icon="account_tree">account_tree</span>
+</button>
+<button class="text-[#8a919e] hover:text-[#e5e2e1] hover:bg-[#2a2a2a] p-3 rounded-md transition-all ease-in-out duration-150">
+<span class="material-symbols-outlined" data-icon="layers">layers</span>
+</button>
+<button class="text-[#8a919e] hover:text-[#e5e2e1] hover:bg-[#2a2a2a] p-3 rounded-md transition-all ease-in-out duration-150">
+<span class="material-symbols-outlined" data-icon="inventory_2">inventory_2</span>
+</button>
+<button class="text-[#8a919e] hover:text-[#e5e2e1] hover:bg-[#2a2a2a] p-3 rounded-md transition-all ease-in-out duration-150">
+<span class="material-symbols-outlined" data-icon="history">history</span>
+</button>
+<button class="text-[#a4c9ff] bg-[#1b1b1b] border-l-2 border-[#a4c9ff] p-3 w-full flex justify-center">
+<span class="material-symbols-outlined" data-icon="manage_search">manage_search</span>
+</button>
+</div>
+<div class="mt-auto flex flex-col items-center py-4 gap-6">
+<button class="text-[#8a919e] hover:text-[#e5e2e1] hover:bg-[#2a2a2a] p-3 rounded-md">
+<span class="material-symbols-outlined" data-icon="terminal">terminal</span>
+</button>
+<button class="text-[#8a919e] hover:text-[#e5e2e1] hover:bg-[#2a2a2a] p-3 rounded-md">
+<span class="material-symbols-outlined" data-icon="dns">dns</span>
+</button>
+</div>
+</aside>
+<!-- Central Viewport -->
+<section class="flex-1 flex flex-col relative bg-surface-container-lowest overflow-hidden">
+<!-- Viewport Canvas -->
+<div class="flex-1 relative group">
+<img class="w-full h-full object-cover opacity-90" data-alt="cinematic 3D architectural interior with soft volumetric lighting and realistic path-traced materials in obsidian graphite tones" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDCkmEXsGU4OKT_4oHg-QJC7hO5QTozUknd8M0wBInklSG7G1HzorTyAfRF8XNdbA8g-JckojtmacPUeyP7ybVPUZilBstcQmrvaiNVXtp6v43iQBPzYxsm3Lr8YiAVD0T-R1ZwQbQK9o-cvaZALQXhz4NCOSj0jk7K3BaOU7reorskP4LG_InIdjIpcMIjTGHdYkexY_rEJ0pAXFvH4kww-1tQA-pZlzV3Nn_rMl64M6UlFns4LYRUBXxrZcxZ5kRAxrFSAZHaVXdT"/>
+<!-- Viewport HUD Overlay -->
+<div class="absolute inset-0 p-4 pointer-events-none flex flex-col justify-between">
+<div class="flex justify-between items-start">
+<div class="bg-surface-variant/70 backdrop-blur-xl px-3 py-1.5 rounded-xl border border-outline-variant/15 pointer-events-auto">
+<span class="font-mono text-[11px] text-primary">IVAR RENDERER v2.4</span>
+<div class="text-[10px] text-outline mt-0.5">Sample: 412/1024 • Time: 00:04:12</div>
+</div>
+<div class="bg-surface-variant/70 backdrop-blur-xl px-2 py-1.5 rounded-xl border border-outline-variant/15 pointer-events-auto flex gap-2">
+<button class="text-on-surface-variant hover:text-on-surface"><span class="material-symbols-outlined text-[18px]" data-icon="videocam">videocam</span></button>
+<button class="text-on-surface-variant hover:text-on-surface"><span class="material-symbols-outlined text-[18px]" data-icon="grid_on">grid_on</span></button>
+</div>
+</div>
+<!-- Playback Controls -->
+<div class="flex justify-center pointer-events-auto">
+<div class="bg-surface-variant/70 backdrop-blur-xl p-2 rounded-xl border border-outline-variant/15 flex items-center gap-4 shadow-2xl">
+<button class="p-2 text-on-surface-variant hover:bg-surface-container-high rounded-md transition-colors"><span class="material-symbols-outlined" data-icon="play_arrow">play_arrow</span></button>
+<button class="p-2 text-on-surface-variant hover:bg-surface-container-high rounded-md transition-colors"><span class="material-symbols-outlined" data-icon="pause">pause</span></button>
+<div class="w-px h-6 bg-outline-variant/30"></div>
+<button class="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-primary to-primary-container text-on-primary font-semibold text-xs rounded-lg transition-transform active:scale-95 shadow-lg shadow-primary/20">
+<span class="material-symbols-outlined text-sm" data-icon="camera">camera</span>
+                                CAPTURE
+                            </button>
+</div>
+</div>
+</div>
+</div>
+<!-- Viewport Status Bar -->
+<div class="h-8 bg-surface-container flex items-center px-4 gap-4 optical-gap">
+<div class="flex items-center gap-2">
+<div class="w-2 h-2 rounded-full bg-tertiary"></div>
+<span class="text-[11px] font-medium text-on-surface-variant">Active Layer: <span class="text-on-surface">review.usd</span></span>
+</div>
+<div class="h-3 w-px bg-outline-variant/20"></div>
+<span class="text-[11px] font-mono text-outline">FPS: 24.0 (Stable)</span>
+</div>
+<!-- Console Tab Area (Bottom Dock) -->
+<div class="h-48 bg-surface-container border-t border-surface-container-lowest flex flex-col">
+<div class="flex items-center px-4 bg-surface-container-high h-9 border-b border-surface-container-lowest">
+<div class="flex h-full">
+<button class="px-4 text-[11px] font-semibold text-primary border-b-2 border-primary bg-surface-container flex items-center">CONSOLE</button>
+<button class="px-4 text-[11px] font-semibold text-outline hover:text-on-surface transition-colors flex items-center">DIAGNOSTICS</button>
+<button class="px-4 text-[11px] font-semibold text-outline hover:text-on-surface transition-colors flex items-center">NODE GRAPH</button>
+</div>
+</div>
+<div class="flex-1 p-3 font-mono text-[12px] overflow-y-auto bg-surface-container-lowest/50 text-on-surface-variant/80 space-y-1">
+<div>[09:12:44] <span class="text-secondary">INFO:</span> Initializing Ivar Render Core...</div>
+<div>[09:12:45] <span class="text-secondary">INFO:</span> Loading USD Scenegraph (2.4M primitives)</div>
+<div>[09:12:46] <span class="text-tertiary">WARN:</span> Material 'Alum_Brush' has legacy UV mapping.</div>
+<div>[09:12:48] <span class="text-secondary">INFO:</span> Path Tracing started (Target: 1024 SPP)</div>
+<div>[09:13:02] <span class="text-primary">EXEC:</span> Buffering slot A for comparison...</div>
+<div class="animate-pulse">_</div>
+</div>
+</div>
+</section>
+<!-- Right Panel: Render Catalog -->
+<aside class="w-72 bg-surface-container border-l border-[#0e0e0e] flex flex-col shadow-xl">
+<div class="p-4 border-b border-surface-container-lowest">
+<div class="flex items-center justify-between">
+<h2 class="text-[11px] font-bold uppercase tracking-wider text-outline">Render Catalog</h2>
+<span class="material-symbols-outlined text-outline text-[18px]" data-icon="filter_list">filter_list</span>
+</div>
+</div>
+<div class="flex-1 overflow-y-auto p-2 space-y-2">
+<!-- Slot A (Active/Selected) -->
+<div class="bg-surface-container-high rounded-xl p-3 border border-primary/30 relative group cursor-pointer transition-all hover:bg-surface-variant">
+<div class="absolute top-2 right-2 flex gap-1">
+<div class="bg-primary/20 text-primary text-[9px] px-1.5 py-0.5 rounded border border-primary/30">SLOT A</div>
+</div>
+<div class="w-full aspect-video rounded-lg overflow-hidden mb-3 bg-surface-container-lowest">
+<img class="w-full h-full object-cover" data-alt="high quality architectural render detail of obsidian textured surface with blue light reflections" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBIh-VB6ght78WvSD1Qk9EFsOvI1xUuZGliPwYF9EPwQNPiNeeJ22q5RyEKi_iRjLRPNl2NmzRGbqaeXAZmEu-KVb7BZa-ssxf05pvANqlC5Jol08mUA4RNIhPL9Nx5lp9qQ8PUfRIlDI94HIrN9OyBTusy5qUyU2BehhiHUQ9pi_i03WGe16uZNmAijF9U9WHD1NiPnDj50wUWtvlVu5SvZ-MZdj_DXKwoKtgKtzbSf2IFoKbxnVwz4wCMxtZ_cuMxDEONE-hTtR4m"/>
+</div>
+<div class="space-y-1.5">
+<div class="flex justify-between items-center">
+<span class="text-xs font-semibold text-on-surface">Final_Hero_v03</span>
+<span class="text-[10px] text-outline">4m 12s</span>
+</div>
+<div class="grid grid-cols-2 gap-2 text-[10px] font-mono text-outline-variant">
+<div class="bg-surface-container-lowest p-1 rounded flex justify-between">
+<span>RES</span><span class="text-on-surface-variant">4K</span>
+</div>
+<div class="bg-surface-container-lowest p-1 rounded flex justify-between">
+<span>SPP</span><span class="text-on-surface-variant">2048</span>
+</div>
+</div>
+</div>
+</div>
+<!-- Slot B -->
+<div class="bg-surface-container-low rounded-xl p-3 hover:bg-surface-container-high transition-all cursor-pointer group">
+<div class="flex gap-3">
+<div class="w-20 h-14 rounded-lg overflow-hidden bg-surface-container-lowest flex-shrink-0">
+<img class="w-full h-full object-cover opacity-60 group-hover:opacity-100 transition-opacity" data-alt="minimalist abstract 3d rendering with soft graphite shadows" src="https://lh3.googleusercontent.com/aida-public/AB6AXuD6uwqWOawwbFh-noU4LWbr8BUJZmFIJefM5z-i2Vk4uJu1dQ6cex1BpnrlUT0vB5XhswOXMlNpCPKiWbbeRAAlvbD2rnlsXKKGR280Lmvg6KbBVNlrYfhsSL6jZCdoD9kCHQgw0TSJAuiamwbwDn2oG1Q8TvoSRJN-pT_nb6G50pHyohbPc4eNY96CKuUyvZ9N-pnV-KYql1_XN-DTZsVIxVn2AjzjpIU6abs_XsYDzFdXacrTJzccnhPvSOB1-WAkZsdIDYkSyrDE"/>
+</div>
+<div class="flex-1 min-w-0">
+<div class="flex justify-between">
+<span class="text-[11px] font-medium text-on-surface-variant truncate">Draft_Iter_02</span>
+<span class="text-[9px] text-outline font-mono">SLOT B</span>
+</div>
+<div class="mt-2 text-[10px] text-outline-variant font-mono">
+                                1920x1080 • 512 SPP
+                            </div>
+</div>
+</div>
+</div>
+<!-- Slot C -->
+<div class="bg-surface-container-low rounded-xl p-3 hover:bg-surface-container-high transition-all cursor-pointer group">
+<div class="flex gap-3">
+<div class="w-20 h-14 rounded-lg overflow-hidden bg-surface-container-lowest flex-shrink-0">
+<img class="w-full h-full object-cover opacity-60 group-hover:opacity-100 transition-opacity" data-alt="abstract procedural geometry in dark moody lighting" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAcSAv7P_xw_lGiKCPSu9XaPbhjfG_KsTTNpeFme2GTlZIL29liLRFGHC1SCHtmtCMrAa8DA7ZIMjQAmynVCGQrD1hbgKZWhhCH1NoJJuMr9KX_tKkj_PNhzG5pWBxgFV221HWPMjKdhL9dQZylfS4UMi3IdfyAGBar11vq_HcgxqT05prp6CHFcUfGmnB6VrDp5lOs11eBy_OZG2cgr-QdNU0CFZRmuTw3zDOz8lDeaHbbSDV65XHJagxrld6EJY1FHOUb62XG5miq"/>
+</div>
+<div class="flex-1 min-w-0">
+<div class="flex justify-between">
+<span class="text-[11px] font-medium text-on-surface-variant truncate">Legacy_View_01</span>
+<span class="text-[9px] text-outline font-mono">SLOT C</span>
+</div>
+<div class="mt-2 text-[10px] text-outline-variant font-mono">
+                                1280x720 • 256 SPP
+                            </div>
+</div>
+</div>
+</div>
+</div>
+<div class="p-4 bg-surface-container-low border-t border-surface-container-lowest">
+<button class="w-full py-2 rounded-lg bg-surface-container-highest text-on-surface-variant text-[11px] font-bold uppercase tracking-wider flex items-center justify-center gap-2 hover:bg-surface-bright transition-colors">
+<span class="material-symbols-outlined text-sm" data-icon="compare">compare</span>
+                    Compare A / B
+                </button>
+</div>
+</aside>
+</main>
+<!-- BottomNavBar -->
+<footer class="bg-[#131313] fixed bottom-0 left-0 w-full z-50 h-14 border-t border-[#0e0e0e] flex items-center justify-center gap-8 px-12">
+<button class="flex flex-col items-center gap-1 text-[#c0c7d4] hover:bg-[#353535] px-4 py-1 rounded transition-all">
+<span class="material-symbols-outlined" data-icon="play_arrow">play_arrow</span>
+<span class="font-['JetBrains_Mono'] text-[10px]">Play</span>
+</button>
+<button class="flex flex-col items-center gap-1 text-[#c0c7d4] hover:bg-[#353535] px-4 py-1 rounded transition-all">
+<span class="material-symbols-outlined" data-icon="stop">stop</span>
+<span class="font-['JetBrains_Mono'] text-[10px]">Stop</span>
+</button>
+<button class="flex flex-col items-center gap-1 text-[#c0c7d4] hover:bg-[#353535] px-4 py-1 rounded transition-all">
+<span class="material-symbols-outlined" data-icon="fiber_manual_record" style="color: #ffb4ab;">fiber_manual_record</span>
+<span class="font-['JetBrains_Mono'] text-[10px]">Record</span>
+</button>
+<div class="h-6 w-px bg-outline-variant/20 mx-2"></div>
+<button class="bg-[#4a9eff] text-[#00315d] rounded-md px-4 py-1 flex flex-col items-center gap-0.5">
+<span class="material-symbols-outlined" data-icon="numbers">numbers</span>
+<span class="font-['JetBrains_Mono'] text-[10px]">1024</span>
+</button>
+<button class="flex flex-col items-center gap-1 text-[#c0c7d4] hover:bg-[#353535] px-4 py-1 rounded transition-all">
+<span class="material-symbols-outlined" data-icon="chevron_right">chevron_right</span>
+<span class="font-['JetBrains_Mono'] text-[10px]">0</span>
+</button>
+</footer>
+</body></html>

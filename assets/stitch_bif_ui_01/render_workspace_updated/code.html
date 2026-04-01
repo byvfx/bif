@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700;800&amp;family=Inter:wght@400;500;600&amp;family=JetBrains+Mono&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            colors: {
+              "on-tertiary-container": "#53106f",
+              "primary-fixed": "#d4e3ff",
+              "tertiary": "#ebb2ff",
+              "surface": "#131313",
+              "on-error-container": "#ffdad6",
+              "surface-bright": "#393939",
+              "outline": "#8a919e",
+              "primary": "#a4c9ff",
+              "on-background": "#e5e2e1",
+              "outline-variant": "#414752",
+              "tertiary-container": "#c681e1",
+              "surface-tint": "#a4c9ff",
+              "on-secondary-fixed-variant": "#00504c",
+              "on-secondary-container": "#00302d",
+              "tertiary-fixed": "#f8d8ff",
+              "secondary-fixed-dim": "#5dd9d0",
+              "primary-fixed-dim": "#a4c9ff",
+              "surface-container-high": "#2a2a2a",
+              "on-error": "#690005",
+              "on-primary-container": "#003463",
+              "surface-variant": "#353535",
+              "surface-container-lowest": "#0e0e0e",
+              "on-surface-variant": "#c0c7d4",
+              "on-primary": "#00315d",
+              "on-primary-fixed": "#001c39",
+              "surface-container-highest": "#353535",
+              "on-tertiary-fixed-variant": "#692984",
+              "secondary": "#5dd9d0",
+              "background": "#131313",
+              "inverse-surface": "#e5e2e1",
+              "on-tertiary-fixed": "#320047",
+              "secondary-fixed": "#7cf6ec",
+              "surface-container-low": "#1b1b1b",
+              "on-secondary-fixed": "#00201e",
+              "on-tertiary": "#500a6c",
+              "on-surface": "#e5e2e1",
+              "on-primary-fixed-variant": "#004884",
+              "tertiary-fixed-dim": "#ebb2ff",
+              "on-secondary": "#003734",
+              "surface-container": "#20201f",
+              "inverse-on-surface": "#313030",
+              "primary-container": "#4a9eff",
+              "error": "#ffb4ab",
+              "secondary-container": "#00a29a",
+              "surface-dim": "#131313",
+              "error-container": "#93000a",
+              "inverse-primary": "#005fad"
+            },
+            fontFamily: {
+              "headline": ["Manrope"],
+              "body": ["Inter"],
+              "label": ["Inter"],
+              "mono": ["JetBrains Mono"]
+            },
+            borderRadius: {"DEFAULT": "0.125rem", "lg": "0.25rem", "xl": "0.5rem", "full": "0.75rem"},
+          },
+        },
+      }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        .usd-stripe-pink { border-left: 3px solid #ebb2ff; }
+        .glass-panel {
+            background: rgba(53, 53, 53, 0.7);
+            backdrop-filter: blur(20px);
+        }
+        .optical-gutter { box-shadow: 1px 0 0 0 #0e0e0e; }
+    </style>
+</head>
+<body class="bg-surface text-on-surface font-body overflow-hidden h-screen flex flex-col">
+<!-- TopNavBar -->
+<header class="bg-[#131313] border-b border-[#0e0e0e] flex justify-between items-center w-full px-6 h-14 z-50">
+<div class="flex items-center gap-8">
+<span class="text-lg font-bold tracking-tighter text-[#e5e2e1] font-headline uppercase">BIF</span>
+<nav class="flex gap-6 items-center h-full">
+<a class="font-['Manrope'] tracking-wide uppercase text-xs font-semibold text-[#8a919e] hover:text-[#e5e2e1] transition-colors duration-200" href="#">Assemble</a>
+<a class="font-['Manrope'] tracking-wide uppercase text-xs font-semibold text-[#8a919e] hover:text-[#e5e2e1] transition-colors duration-200" href="#">Materials</a>
+<a class="font-['Manrope'] tracking-wide uppercase text-xs font-semibold text-[#8a919e] hover:text-[#e5e2e1] transition-colors duration-200" href="#">Light</a>
+<a class="font-['Manrope'] tracking-wide uppercase text-xs font-semibold text-[#a4c9ff] border-b-2 border-[#a4c9ff] pb-1" href="#">Render</a>
+</nav>
+</div>
+<div class="flex items-center gap-2">
+<button class="p-2 text-[#8a919e] hover:bg-[#2a2a2a] transition-colors duration-200 rounded scale-95 active:scale-90 transition-transform">
+<span class="material-symbols-outlined">settings</span>
+</button>
+<button class="p-2 text-[#8a919e] hover:bg-[#2a2a2a] transition-colors duration-200 rounded scale-95 active:scale-90 transition-transform">
+<span class="material-symbols-outlined">help</span>
+</button>
+<button class="p-2 text-[#8a919e] hover:bg-[#2a2a2a] transition-colors duration-200 rounded scale-95 active:scale-90 transition-transform">
+<span class="material-symbols-outlined">account_circle</span>
+</button>
+</div>
+</header>
+<div class="flex flex-1 overflow-hidden">
+<!-- SideNavBar -->
+<aside class="fixed left-0 top-14 bottom-0 flex flex-col items-center py-4 bg-[#20201f] border-r border-[#0e0e0e] shadow-[1px_0_0_0_rgba(14,14,14,1)] w-20 z-40">
+<div class="flex flex-col gap-1 w-full">
+<div class="text-[#8a919e] flex flex-col items-center justify-center gap-1 py-4 hover:text-[#e5e2e1] hover:bg-[#1b1b1b] transition-all duration-150 ease-in-out cursor-pointer font-['Inter'] text-[11px] uppercase tracking-[0.05em]">
+<span class="material-symbols-outlined">account_tree</span>
+<span>Explorer</span>
+</div>
+<div class="text-[#8a919e] flex flex-col items-center justify-center gap-1 py-4 hover:text-[#e5e2e1] hover:bg-[#1b1b1b] transition-all duration-150 ease-in-out cursor-pointer font-['Inter'] text-[11px] uppercase tracking-[0.05em]">
+<span class="material-symbols-outlined">layers</span>
+<span>Layers</span>
+</div>
+<div class="text-[#8a919e] flex flex-col items-center justify-center gap-1 py-4 hover:text-[#e5e2e1] hover:bg-[#1b1b1b] transition-all duration-150 ease-in-out cursor-pointer font-['Inter'] text-[11px] uppercase tracking-[0.05em]">
+<span class="material-symbols-outlined">theater_comedy</span>
+<span>Stages</span>
+</div>
+<div class="text-[#8a919e] flex flex-col items-center justify-center gap-1 py-4 hover:text-[#e5e2e1] hover:bg-[#1b1b1b] transition-all duration-150 ease-in-out cursor-pointer font-['Inter'] text-[11px] uppercase tracking-[0.05em]">
+<span class="material-symbols-outlined">inventory_2</span>
+<span>Assets</span>
+</div>
+<!-- History Active for Render Workspace context -->
+<div class="text-[#a4c9ff] bg-[#2a2a2a] relative after:absolute after:left-0 after:top-0 after:h-full after:w-[3px] after:bg-[#a4c9ff] flex flex-col items-center justify-center gap-1 py-4 cursor-pointer font-['Inter'] text-[11px] uppercase tracking-[0.05em]">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">history</span>
+<span>History</span>
+</div>
+</div>
+</aside>
+<!-- Main Content Area -->
+<main class="ml-20 flex-1 flex flex-col relative bg-surface overflow-hidden">
+<!-- Viewport Section -->
+<section class="flex-1 relative group">
+<!-- Background Image: Path Traced Render -->
+<div class="absolute inset-0 bg-cover bg-center" data-alt="Hyper-realistic 3D abstract architectural render with dramatic path-traced lighting, soft volumetric shadows, and premium metallic textures in a minimalist space." style="background-image: url('https://lh3.googleusercontent.com/aida-public/AB6AXuCO14qV6ecAA_7WXsVp7Nt5SxVhY1_jGNHcsrZl5bOPiTkbrlJieJdzHbdZoMOwZleAPWRm0D4jNSthHhH-FPhg1c5RVrfzo2agjolL3TPiWQIKqEwWz83LYPZTaP8ifQaXgmU3SGcNabiTZzGK0oDrNs_z6d2XvGEngWxhEZLAj_mD9SLP87bBWiZnCNtgZLtAAgz31xoUz1ldPvQVwdSq_zwzkQqeSi8OduJE4_QN0HLtJPC2gvVNWFcKwb_oFfcUN-7jvdFiKipH')">
+</div>
+<!-- HUD Overlays -->
+<div class="absolute top-4 left-4 flex gap-4 pointer-events-none">
+<div class="glass-panel px-3 py-1.5 rounded-lg border border-white/5 flex items-center gap-3">
+<span class="text-secondary text-[10px] font-bold uppercase tracking-widest">Path Tracing</span>
+<div class="h-3 w-[1px] bg-white/20"></div>
+<span class="text-white/80 font-mono text-[11px]">SPP: 2048 / 4096</span>
+</div>
+<div class="glass-panel px-3 py-1.5 rounded-lg border border-white/5 flex items-center gap-2">
+<span class="material-symbols-outlined text-white/60 text-sm">videocam</span>
+<span class="text-white/80 font-mono text-[11px]">Shot_010_CAM</span>
+</div>
+</div>
+<!-- Render Controls (Floating Bottom) -->
+<div class="absolute bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-2 glass-panel p-2 rounded-xl border border-white/10 shadow-2xl">
+<button class="w-10 h-10 flex items-center justify-center rounded-lg bg-primary text-on-primary hover:brightness-110 transition-all">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">play_arrow</span>
+</button>
+<button class="w-10 h-10 flex items-center justify-center rounded-lg text-white hover:bg-white/10 transition-all">
+<span class="material-symbols-outlined">pause</span>
+</button>
+<div class="w-[1px] h-6 bg-white/10 mx-1"></div>
+<button class="px-4 h-10 flex items-center justify-center rounded-lg bg-gradient-to-r from-primary to-primary-container text-on-primary font-bold text-xs uppercase tracking-widest shadow-lg shadow-primary/20">
+                        Capture Render
+                    </button>
+</div>
+</section>
+<!-- Bottom Console/Log Area -->
+<footer class="h-48 bg-surface-container border-t border-[#0e0e0e] flex flex-col">
+<div class="flex items-center px-4 h-9 bg-surface-container-lowest gap-6">
+<button class="text-[#a4c9ff] border-b-2 border-[#a4c9ff] h-full px-2 text-[10px] uppercase font-bold tracking-wider flex items-center gap-2">
+                        Console
+                        <span class="w-1.5 h-1.5 rounded-full bg-secondary"></span>
+</button>
+<button class="text-outline hover:text-on-surface h-full px-2 text-[10px] uppercase font-bold tracking-wider flex items-center gap-2">
+                        Log
+                    </button>
+<button class="text-outline hover:text-on-surface h-full px-2 text-[10px] uppercase font-bold tracking-wider flex items-center gap-2">
+                        Diagnostics
+                    </button>
+<div class="ml-auto flex items-center gap-4">
+<div class="flex items-center gap-2 px-2 py-0.5 rounded bg-[#2a2a2a] usd-stripe-pink">
+<span class="text-[10px] text-tertiary font-mono">Active Layer: review.usd</span>
+</div>
+</div>
+</div>
+<div class="flex-1 overflow-y-auto p-4 font-mono text-[12px] text-on-surface-variant space-y-1">
+<div class="flex gap-4 opacity-50">
+<span class="text-outline">[14:20:01]</span>
+<span class="text-secondary-fixed-dim">INFO</span>
+<span>USD Runtime initialized successfully.</span>
+</div>
+<div class="flex gap-4">
+<span class="text-outline">[14:20:05]</span>
+<span class="text-primary">STAGE</span>
+<span>Loading heavy_asset_main_v004.usd... done (2.4s)</span>
+</div>
+<div class="flex gap-4">
+<span class="text-outline">[14:21:12]</span>
+<span class="text-tertiary">RENDER</span>
+<span>Path Tracing session started. Device: RTX 4090.</span>
+</div>
+<div class="flex gap-4 opacity-80">
+<span class="text-outline">[14:21:45]</span>
+<span class="text-secondary">SUCCESS</span>
+<span>Denoising pass applied to viewport buffers.</span>
+</div>
+<div class="flex gap-4 animate-pulse">
+<span class="text-outline">[14:22:10]</span>
+<span class="text-primary-container">SYSTEM</span>
+<span class="text-on-surface">Memory Usage: 14.2GB / 24.0GB</span>
+</div>
+</div>
+</footer>
+</main>
+<!-- Right Side: Render Catalog (A/B Comparison) -->
+<aside class="w-72 bg-surface-container-low border-l border-[#0e0e0e] flex flex-col">
+<div class="p-4 border-b border-[#0e0e0e] flex justify-between items-center">
+<span class="text-[11px] font-bold uppercase tracking-[0.1em] text-on-surface-variant">Render Catalog</span>
+<span class="material-symbols-outlined text-outline text-sm">grid_view</span>
+</div>
+<div class="flex-1 overflow-y-auto p-3 space-y-4">
+<!-- Catalog Item 1 (Selected for A) -->
+<div class="group cursor-pointer">
+<div class="relative aspect-video rounded-lg overflow-hidden border-2 border-primary shadow-lg shadow-primary/10">
+<img class="w-full h-full object-cover grayscale group-hover:grayscale-0 transition-all duration-300" data-alt="3D render thumbnail of high-tech geometric objects with glowing neon accents and dramatic top-down lighting." src="https://lh3.googleusercontent.com/aida-public/AB6AXuCsjUQIt7rZTqQCjLb6u1O2kKWbl-FF_EOT97o_0aEOeJWkgw1yuLBIXYaHfJnTrRn4GzfX-98nVGjmGWZhn9uFXRoC69IqzafS8PgaBhlo4oaU2hXG90J-FWaiBLh0QdaMzDugdx17FXf09r19egzKIaRRK7yLXSAIWQ82K7zZjrhMSeIpmjYAZ66fruIREp9WmqhyoCBvkuMCrm1Q1OAU3e_WFaWjcosdjCX6KKUeSbtF3KVO0kAaJphRxqkAsYlnUADsKEH4hZXP"/>
+<div class="absolute top-2 left-2 bg-primary text-on-primary text-[9px] font-bold px-1.5 py-0.5 rounded">SLOT A</div>
+<div class="absolute inset-0 bg-primary/10 group-hover:bg-transparent transition-colors"></div>
+</div>
+<div class="mt-2 flex justify-between items-start">
+<div>
+<p class="text-[11px] font-semibold text-on-surface">v008_LightingRef</p>
+<p class="text-[9px] text-outline font-mono">14:02 | 4k | 1024spp</p>
+</div>
+</div>
+</div>
+<!-- Catalog Item 2 (Selected for B) -->
+<div class="group cursor-pointer">
+<div class="relative aspect-video rounded-lg overflow-hidden border-2 border-secondary shadow-lg shadow-secondary/10">
+<img class="w-full h-full object-cover" data-alt="3D render of abstract fluid shapes with iridescent surface material and soft rim lighting." src="https://lh3.googleusercontent.com/aida-public/AB6AXuBp4QgvzPnJHjquqFhySyRGyuwI0lVeFGxvUwrr9Wi0jcuEivi9REu4No2tShxI-YHoDyBYMKbBwvbn_Qa393es467V_GljkBA_apNN6o1J8aJKwCeCXpn7-Qtdngo05msXisl3UFf-CgSXr_JkfRMLKiQyQh0Pe80FVPZgQd58-1Z_3ORk6sBviwW45isKbi0eADorSPgwuvuSGO__m4eag8lJ1hwJB145ItGvBRFmdlWIAbcyo73g-F5DLYnhnIaA8K_ynE-mI4B7"/>
+<div class="absolute top-2 left-2 bg-secondary text-on-secondary text-[9px] font-bold px-1.5 py-0.5 rounded">SLOT B</div>
+</div>
+<div class="mt-2 flex justify-between items-start">
+<div>
+<p class="text-[11px] font-semibold text-on-surface">v007_MaterialTest</p>
+<p class="text-[9px] text-outline font-mono">13:55 | 4k | 512spp</p>
+</div>
+</div>
+</div>
+<!-- Catalog Item 3 -->
+<div class="group cursor-pointer">
+<div class="relative aspect-video rounded-lg overflow-hidden bg-surface-container-lowest border border-white/5">
+<img class="w-full h-full object-cover opacity-60 group-hover:opacity-100 transition-opacity" data-alt="3D rendering of complex mechanical parts with matte black finish and subtle orange light reflections." src="https://lh3.googleusercontent.com/aida-public/AB6AXuDGk9u8YnQvaWidfElgUZOC6ModKplELdTqPvB4W1bJGTnLgWZht-knRqywAGhJJIdatt9VyMT1z7TJTyh9OGDgc0xTEd5QKtwlMFjR6iR5u27OoWzaxVvb_ZyJctPKq4c8xjUxtV4tvfKKsVGQd0zm20uer0VGb54AZwUR00v29wE0gyxWdP6UtStXz_wJKuIg0ne3x7QloOIKAsYfbXipC8PLiO1YaSJUvAMqFYHB-g4l8cwpK1PdKWr3tbgYe6fDHUImRLyiR6P6"/>
+<div class="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+<button class="bg-surface-container-highest/80 backdrop-blur text-white text-[10px] px-3 py-1 rounded-full border border-white/10 uppercase tracking-tighter">Compare</button>
+</div>
+</div>
+<div class="mt-2 flex justify-between items-start">
+<div>
+<p class="text-[11px] font-semibold text-on-surface-variant group-hover:text-on-surface">v006_BaseComp</p>
+<p class="text-[9px] text-outline font-mono">12:30 | 2k | 256spp</p>
+</div>
+</div>
+</div>
+</div>
+<!-- Side Footer Actions -->
+<div class="p-4 bg-surface-container-lowest flex gap-2">
+<button class="flex-1 py-2 bg-surface-container-high rounded border border-white/5 text-[10px] font-bold uppercase tracking-wider text-outline hover:text-on-surface transition-colors">
+                    Export All
+                </button>
+<button class="flex-1 py-2 bg-surface-container-high rounded border border-white/5 text-[10px] font-bold uppercase tracking-wider text-outline hover:text-on-surface transition-colors">
+                    Clear
+                </button>
+</div>
+</aside>
+</div>
+</body></html>

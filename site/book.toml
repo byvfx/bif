@@ -12,6 +12,11 @@ default-theme = "ayu"
 preferred-dark-theme = "ayu"
 git-repository-url = "https://github.com/byvfx/bif"
 edit-url-template = "https://github.com/byvfx/bif/edit/main/{path}"
+additional-js = ["theme/devlog-fold.js"]
+
+[output.html.fold]
+enable = true
+level = 0
 
 [output.html.search]
 enable = true

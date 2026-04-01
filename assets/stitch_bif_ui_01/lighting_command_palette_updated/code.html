@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&amp;family=Manrope:wght@400;600;700;800&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            colors: {
+              "on-tertiary-container": "#53106f",
+              "primary-fixed": "#d4e3ff",
+              "tertiary": "#ebb2ff",
+              "surface": "#131313",
+              "on-error-container": "#ffdad6",
+              "surface-bright": "#393939",
+              "outline": "#8a919e",
+              "primary": "#a4c9ff",
+              "on-background": "#e5e2e1",
+              "outline-variant": "#414752",
+              "tertiary-container": "#c681e1",
+              "surface-tint": "#a4c9ff",
+              "on-secondary-fixed-variant": "#00504c",
+              "on-secondary-container": "#00302d",
+              "tertiary-fixed": "#f8d8ff",
+              "secondary-fixed-dim": "#5dd9d0",
+              "primary-fixed-dim": "#a4c9ff",
+              "surface-container-high": "#2a2a2a",
+              "on-error": "#690005",
+              "on-primary-container": "#003463",
+              "surface-variant": "#353535",
+              "surface-container-lowest": "#0e0e0e",
+              "on-surface-variant": "#c0c7d4",
+              "on-primary": "#00315d",
+              "on-primary-fixed": "#001c39",
+              "surface-container-highest": "#353535",
+              "on-tertiary-fixed-variant": "#692984",
+              "secondary": "#5dd9d0",
+              "background": "#131313",
+              "inverse-surface": "#e5e2e1",
+              "on-tertiary-fixed": "#320047",
+              "secondary-fixed": "#7cf6ec",
+              "surface-container-low": "#1b1b1b",
+              "on-secondary-fixed": "#00201e",
+              "on-tertiary": "#500a6c",
+              "on-surface": "#e5e2e1",
+              "on-primary-fixed-variant": "#004884",
+              "tertiary-fixed-dim": "#ebb2ff",
+              "on-secondary": "#003734",
+              "surface-container": "#20201f",
+              "inverse-on-surface": "#313030",
+              "primary-container": "#4a9eff",
+              "error": "#ffb4ab",
+              "secondary-container": "#00a29a",
+              "surface-dim": "#131313",
+              "error-container": "#93000a",
+              "inverse-primary": "#005fad"
+            },
+            fontFamily: {
+              "headline": ["Manrope"],
+              "body": ["Inter"],
+              "label": ["Inter"],
+              "mono": ["JetBrains Mono"]
+            },
+            borderRadius: {"DEFAULT": "0.125rem", "lg": "0.25rem", "xl": "0.5rem", "full": "0.75rem"},
+          },
+        },
+      }
+    </script>
+<style>
+      .material-symbols-outlined {
+        font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        font-size: 20px;
+      }
+      .custom-scrollbar::-webkit-scrollbar { width: 4px; height: 4px; }
+      .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+      .custom-scrollbar::-webkit-scrollbar-thumb { background: #353535; border-radius: 10px; }
+      .glass-hud {
+        background: rgba(53, 53, 53, 0.7);
+        backdrop-filter: blur(20px);
+      }
+    </style>
+</head>
+<body class="bg-surface text-on-surface font-body overflow-hidden h-screen flex flex-col">
+<!-- TopNavBar -->
+<nav class="flex justify-between items-center w-full px-6 h-14 bg-[#131313] border-b border-[#0e0e0e] z-50">
+<div class="flex items-center gap-8">
+<span class="text-lg font-bold tracking-tighter text-[#e5e2e1] font-headline">BIF</span>
+<div class="flex gap-6 items-center"><a class="font-['Manrope'] tracking-wide uppercase text-xs font-semibold text-[#8a919e] hover:text-[#e5e2e1] transition-colors duration-200" href="#">Assemble</a>
+<a class="font-['Manrope'] tracking-wide uppercase text-xs font-semibold text-[#8a919e] hover:text-[#e5e2e1] transition-colors duration-200" href="#">Materials</a>
+<a class="font-['Manrope'] tracking-wide uppercase text-xs font-semibold text-[#a4c9ff] border-b-2 border-[#a4c9ff] pb-1" href="#">Light</a>
+<a class="font-['Manrope'] tracking-wide uppercase text-xs font-semibold text-[#8a919e] hover:text-[#e5e2e1] transition-colors duration-200" href="#">Render</a></div>
+</div>
+<div class="flex items-center gap-4">
+<button class="p-2 text-[#8a919e] hover:bg-[#2a2a2a] transition-all duration-200 rounded-md scale-95 active:scale-90">
+<span class="material-symbols-outlined">settings</span>
+</button>
+<button class="p-2 text-[#8a919e] hover:bg-[#2a2a2a] transition-all duration-200 rounded-md scale-95 active:scale-90">
+<span class="material-symbols-outlined">help</span>
+</button>
+<div class="w-8 h-8 rounded-full overflow-hidden border border-outline-variant/30">
+<img class="w-full h-full object-cover" data-alt="professional portrait of a technical artist in a modern studio environment" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDKKy4EzRJlCNUawJ5tf0Mr-Xc8pz8k-A8JOv796JXXyHP4twTBzGqNdA_VZLWdS8KUw8rQN80BC5ExlUwErbZf0jiX9ZBNayWpzTHLrnTmyJE4t1XcCz-HPC-TdM9ORuYwK9pq1_QR1uep4UQM6nFDaaCwcsXfn0Rgyte11_44Cg1oJAie_TlVmGrK-TQ4sy9GY1SCaRM4wR35nocSKwcMnUyV5QoJoJ_upMeWsMEAIn00IX75x1Bt-zmS5VozDmMDh3s5yxwoyG4C"/>
+</div>
+</div>
+</nav>
+<div class="flex flex-1 overflow-hidden relative">
+<!-- SideNavBar -->
+<aside class="fixed left-0 top-14 bottom-0 flex flex-col items-center py-4 bg-[#20201f] w-20 border-r border-[#0e0e0e] shadow-[1px_0_0_0_rgba(14,14,14,1)] z-40">
+<div class="flex flex-col w-full gap-2">
+<button class="flex flex-col items-center justify-center gap-1 py-4 text-[#8a919e] hover:text-[#e5e2e1] hover:bg-[#1b1b1b] transition-all duration-150 ease-in-out font-['Inter'] text-[11px] uppercase tracking-[0.05em]">
+<span class="material-symbols-outlined">account_tree</span>
+<span>Explorer</span>
+</button>
+<button class="flex flex-col items-center justify-center gap-1 py-4 text-[#8a919e] hover:text-[#e5e2e1] hover:bg-[#1b1b1b] transition-all duration-150 ease-in-out font-['Inter'] text-[11px] uppercase tracking-[0.05em]">
+<span class="material-symbols-outlined">layers</span>
+<span>Layers</span>
+</button>
+<button class="flex flex-col items-center justify-center gap-1 py-4 text-[#a4c9ff] bg-[#2a2a2a] relative after:absolute after:left-0 after:top-0 after:h-full after:w-[3px] after:bg-[#a4c9ff] transition-all duration-150 ease-in-out font-['Inter'] text-[11px] uppercase tracking-[0.05em]">
+<span class="material-symbols-outlined">theater_comedy</span>
+<span>Stages</span>
+</button>
+<button class="flex flex-col items-center justify-center gap-1 py-4 text-[#8a919e] hover:text-[#e5e2e1] hover:bg-[#1b1b1b] transition-all duration-150 ease-in-out font-['Inter'] text-[11px] uppercase tracking-[0.05em]">
+<span class="material-symbols-outlined">inventory_2</span>
+<span>Assets</span>
+</button>
+<button class="flex flex-col items-center justify-center gap-1 py-4 text-[#8a919e] hover:text-[#e5e2e1] hover:bg-[#1b1b1b] transition-all duration-150 ease-in-out font-['Inter'] text-[11px] uppercase tracking-[0.05em]">
+<span class="material-symbols-outlined">history</span>
+<span>History</span>
+</button>
+</div>
+</aside>
+<!-- Main Workspace Canvas -->
+<main class="ml-20 flex-1 flex flex-col relative bg-surface-container-lowest">
+<!-- Viewport Section -->
+<section class="flex-1 relative overflow-hidden">
+<!-- 3D Viewport Content Placeholder -->
+<div class="absolute inset-0 z-0">
+<img class="w-full h-full object-cover opacity-60 grayscale-[0.2]" data-alt="cinematic 3D render of a futuristic interior with dramatic blue and orange lighting and volumetric fog" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAalQLPc8FAjIadQITeBWqH6FTLfNbB_2l5lR0frlsIITGUpDqY2h8jLJ6xD1uqK7KYUysrQNK6Ls78_KAZUeuH_ngBngvWHDyKXIw73XFqjammiYJisRcecaQXIBNv64zB1eJWAJbuYbjTla4Nir4CBKloZ3ugvrRPuusm6WiNtn3pExEjZoFpD1lX_cDVv7m343KMcTRxgGr7qXX5DGfb5eN2-1mN_5Dzzl6rhh1Q-Dg7SVOvEaYlxG_ux0dN8Bd53P16fUknRPKJ"/>
+<div class="absolute inset-0 bg-gradient-to-t from-surface via-transparent to-transparent"></div>
+</div>
+<!-- HUD Overlays -->
+<div class="absolute top-4 left-4 z-10 flex flex-col gap-2">
+<div class="glass-hud px-3 py-1.5 rounded-lg flex items-center gap-3">
+<span class="text-[10px] uppercase font-bold tracking-widest text-outline">Camera</span>
+<span class="text-sm font-medium text-on-surface">shot_cam_v04</span>
+<span class="material-symbols-outlined text-outline scale-75">videocam</span>
+</div>
+</div>
+<div class="absolute top-4 right-4 z-10 flex flex-col gap-2">
+<div class="glass-hud p-2 rounded-lg flex flex-col gap-3">
+<button class="w-10 h-10 flex items-center justify-center hover:bg-surface-container-highest transition-colors rounded-md text-on-surface-variant">
+<span class="material-symbols-outlined">grid_on</span>
+</button>
+<button class="w-10 h-10 flex items-center justify-center hover:bg-surface-container-highest transition-colors rounded-md text-on-surface-variant">
+<span class="material-symbols-outlined">lightbulb</span>
+</button>
+<button class="w-10 h-10 flex items-center justify-center hover:bg-surface-container-highest transition-colors rounded-md text-on-surface-variant">
+<span class="material-symbols-outlined">exposure</span>
+</button>
+</div>
+</div>
+<!-- Command Palette Overlay -->
+<div class="absolute inset-0 z-50 flex items-center justify-center pointer-events-none">
+<div class="w-[540px] glass-hud rounded-xl shadow-2xl border border-outline-variant/10 overflow-hidden pointer-events-auto">
+<div class="flex items-center px-4 py-3 bg-surface-container-highest/50 border-b border-outline-variant/20">
+<span class="material-symbols-outlined text-primary mr-3">terminal</span>
+<input autofocus="" class="bg-transparent border-none focus:ring-0 text-on-surface placeholder:text-outline w-full text-sm font-medium" placeholder="Search prims or commands..." type="text" value="Lgt_"/>
+</div>
+<div class="max-h-64 overflow-y-auto custom-scrollbar py-2">
+<div class="px-2 py-1.5 mx-2 rounded-lg bg-primary-container/20 flex justify-between items-center group cursor-pointer">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-primary">flare</span>
+<span class="text-sm font-medium text-on-surface">Lgt_Rim_Key_01</span>
+<span class="text-[10px] text-outline px-1.5 py-0.5 border border-outline-variant rounded">USD Lux</span>
+</div>
+<span class="text-[10px] text-primary font-mono opacity-0 group-hover:opacity-100 transition-opacity">Select</span>
+</div>
+<div class="px-2 py-1.5 mx-2 rounded-lg hover:bg-surface-container-highest transition-colors flex justify-between items-center group cursor-pointer">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-outline">highlight</span>
+<span class="text-sm font-medium text-on-surface">Lgt_Fill_Interior</span>
+<span class="text-[10px] text-outline px-1.5 py-0.5 border border-outline-variant rounded">USD Lux</span>
+</div>
+</div>
+<div class="px-2 py-1.5 mx-2 rounded-lg hover:bg-surface-container-highest transition-colors flex justify-between items-center group cursor-pointer">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-outline">settings_brightness</span>
+<span class="text-sm font-medium text-on-surface">Lgt_Exposure_Global</span>
+<span class="text-[10px] text-outline px-1.5 py-0.5 border border-outline-variant rounded">Override</span>
+</div>
+</div>
+</div>
+<div class="px-4 py-2 border-t border-outline-variant/20 flex justify-between items-center bg-surface-container-lowest/30">
+<div class="flex gap-4">
+<div class="flex items-center gap-1.5">
+<kbd class="px-1.5 py-0.5 bg-surface-container-highest rounded text-[10px] text-outline font-mono">↑↓</kbd>
+<span class="text-[10px] text-outline uppercase tracking-wider">Navigate</span>
+</div>
+<div class="flex items-center gap-1.5">
+<kbd class="px-1.5 py-0.5 bg-surface-container-highest rounded text-[10px] text-outline font-mono">ENTER</kbd>
+<span class="text-[10px] text-outline uppercase tracking-wider">Execute</span>
+</div>
+</div>
+<span class="text-[10px] text-outline font-mono italic">Fuzzy matching active</span>
+</div>
+</div>
+</div>
+<!-- Bottom Status Bar -->
+<div class="absolute bottom-0 left-0 right-0 h-8 bg-surface-container border-t border-[#0e0e0e] flex items-center px-4 justify-between z-10">
+<div class="flex items-center gap-4">
+<div class="flex items-center gap-2">
+<span class="w-2 h-2 rounded-full bg-secondary"></span>
+<span class="text-[11px] font-medium text-on-surface-variant tracking-tight">Active Layer: <span class="text-[#FFD700] font-bold">lighting.usd</span></span>
+</div>
+<div class="h-4 w-px bg-outline-variant/30"></div>
+<span class="text-[11px] text-outline">Render Delegate: Storm</span>
+</div>
+<div class="flex items-center gap-3">
+<span class="text-[10px] font-mono text-outline">FPS: 24.0</span>
+<span class="text-[10px] font-mono text-outline">Tri: 1.2M</span>
+</div>
+</div>
+</section>
+<!-- Bottom Dock Area (USDA Preview) -->
+<section class="h-64 bg-surface-container-lowest border-t border-[#0e0e0e] flex flex-col">
+<div class="flex bg-surface-container h-9 items-center border-b border-[#0e0e0e]">
+<button class="px-6 h-full flex items-center gap-2 text-outline text-[11px] uppercase tracking-wider hover:bg-surface-container-low transition-colors">
+<span class="material-symbols-outlined text-[16px]">terminal</span>
+                        Console
+                    </button>
+<div class="px-6 h-full flex items-center gap-2 bg-surface-container-lowest text-primary text-[11px] uppercase tracking-wider border-t border-primary">
+<span class="material-symbols-outlined text-[16px]">description</span>
+                        USDA Preview
+                    </div>
+<button class="px-6 h-full flex items-center gap-2 text-outline text-[11px] uppercase tracking-wider hover:bg-surface-container-low transition-colors">
+<span class="material-symbols-outlined text-[16px]">timeline</span>
+                        Graph
+                    </button>
+</div>
+<div class="flex-1 p-4 font-mono text-[13px] overflow-y-auto custom-scrollbar bg-surface-container-lowest">
+<pre class="leading-relaxed"><span class="text-[#8a919e]">#usda 1.0</span>
+<span class="text-[#8a919e]">(</span>
+<span class="text-[#8a919e]">    defaultPrim = "World"</span>
+<span class="text-[#8a919e]">    upAxis = "Y"</span>
+<span class="text-[#8a919e]">)</span>
+
+<span class="text-[#8a919e]">def Xform "World"</span>
+<span class="text-[#8a919e]">{</span>
+<span class="text-[#8a919e]">    def Xform "Lighting"</span>
+<span class="text-[#8a919e]">    {</span>
+<span class="text-[#a4c9ff]">        def DistantLight "KeyLight" (</span>
+<span class="text-[#a4c9ff]">            prepend apiSchemas = ["ShapingAPI"]</span>
+<span class="text-[#a4c9ff]">        )</span>
+<span class="text-[#a4c9ff]">        {</span>
+<span class="text-[#a4c9ff]">            color3f inputs:color = (0.9, 0.9, 1.0)</span>
+<span class="text-[#a4c9ff]">            float inputs:exposure = 2.5</span>
+<span class="text-[#a4c9ff]">            float inputs:intensity = 1.0</span>
+<span class="text-[#a4c9ff]">            float inputs:shaping:cone:angle = 45</span>
+<span class="text-[#a4c9ff]">            matrix4d xformOp:transform = ( (0.7, 0.2, -0.6, 0), (-0.1, 0.9, 0.2, 0), (0.7, 0, 0.7, 0), (0, 10, 0, 1) )</span>
+<span class="text-[#a4c9ff]">            uniform token[] xformOpOrder = ["xformOp:transform"]</span>
+<span class="text-[#a4c9ff]">        }</span>
+
+<span class="text-[#a4c9ff]">        def RectLight "FillLight"</span>
+<span class="text-[#a4c9ff]">        {</span>
+<span class="text-[#a4c9ff]">            float inputs:exposure = 0.5</span>
+<span class="text-[#a4c9ff]">            float inputs:height = 2</span>
+<span class="text-[#a4c9ff]">            float inputs:width = 2</span>
+<span class="text-[#a4c9ff]">            color3f inputs:color = (1.0, 0.8, 0.7)</span>
+<span class="text-[#a4c9ff]">        }</span>
+<span class="text-[#8a919e]">    }</span>
+<span class="text-[#8a919e]">}</span>
+                    </pre>
+</div>
+</section>
+</main>
+<!-- Right Side Inspector Panels -->
+<aside class="w-80 bg-[#20201f] border-l border-[#0e0e0e] flex flex-col z-40 overflow-y-auto custom-scrollbar">
+<!-- Outliner Mini Header -->
+<div class="px-4 py-3 flex justify-between items-center border-b border-[#0e0e0e]">
+<h3 class="text-[11px] font-bold uppercase tracking-[0.05em] text-[#a4c9ff]">Inspector</h3>
+<span class="material-symbols-outlined text-outline scale-75">dock_to_right</span>
+</div>
+<!-- Transform Panel -->
+<div class="p-4 border-b border-[#0e0e0e]">
+<div class="flex items-center gap-2 mb-3">
+<span class="material-symbols-outlined text-[16px] text-outline">open_with</span>
+<span class="text-[10px] font-bold uppercase tracking-wider text-on-surface-variant">Transform</span>
+</div>
+<div class="grid grid-cols-3 gap-2">
+<div class="flex flex-col gap-1">
+<span class="text-[9px] text-outline font-mono">Translate X</span>
+<div class="bg-surface-container-lowest h-7 rounded flex items-center px-2 font-mono text-[11px]">0.00</div>
+</div>
+<div class="flex flex-col gap-1">
+<span class="text-[9px] text-outline font-mono">Y</span>
+<div class="bg-surface-container-lowest h-7 rounded flex items-center px-2 font-mono text-[11px]">10.0</div>
+</div>
+<div class="flex flex-col gap-1">
+<span class="text-[9px] text-outline font-mono">Z</span>
+<div class="bg-surface-container-lowest h-7 rounded flex items-center px-2 font-mono text-[11px]">0.00</div>
+</div>
+</div>
+</div>
+<!-- Light Attributes Panel -->
+<div class="p-4 border-b border-[#0e0e0e]">
+<div class="flex items-center gap-2 mb-3">
+<span class="material-symbols-outlined text-[16px] text-outline">light_mode</span>
+<span class="text-[10px] font-bold uppercase tracking-wider text-on-surface-variant">Light Parameters</span>
+</div>
+<div class="flex flex-col gap-4">
+<div class="flex items-center justify-between">
+<span class="text-[11px] text-on-surface-variant">Exposure</span>
+<div class="w-32 flex items-center gap-2">
+<div class="flex-1 h-1 bg-surface-container-lowest rounded-full relative">
+<div class="absolute left-0 top-0 bottom-0 bg-primary w-[65%] rounded-full"></div>
+</div>
+<span class="text-[11px] font-mono">2.5</span>
+</div>
+</div>
+<div class="flex items-center justify-between">
+<span class="text-[11px] text-on-surface-variant">Intensity</span>
+<div class="w-32 flex items-center gap-2">
+<div class="flex-1 h-1 bg-surface-container-lowest rounded-full relative">
+<div class="absolute left-0 top-0 bottom-0 bg-primary w-[30%] rounded-full"></div>
+</div>
+<span class="text-[11px] font-mono">1.0</span>
+</div>
+</div>
+<div class="flex items-center justify-between">
+<span class="text-[11px] text-on-surface-variant">Light Color</span>
+<div class="flex items-center gap-2">
+<div class="w-6 h-4 bg-[#e5f0ff] rounded border border-outline-variant/30"></div>
+<span class="text-[10px] font-mono text-outline">#E5F0FF</span>
+</div>
+</div>
+</div>
+</div>
+<!-- Shadow Attributes Panel -->
+<div class="p-4">
+<div class="flex items-center gap-2 mb-3">
+<span class="material-symbols-outlined text-[16px] text-outline">wb_shade</span>
+<span class="text-[10px] font-bold uppercase tracking-wider text-on-surface-variant">Shadows</span>
+</div>
+<div class="flex flex-col gap-3">
+<div class="flex items-center justify-between">
+<span class="text-[11px] text-on-surface-variant">Enable Shadows</span>
+<div class="w-8 h-4 bg-primary rounded-full relative p-0.5 flex items-center justify-end">
+<div class="w-3 h-3 bg-on-primary rounded-full"></div>
+</div>
+</div>
+<div class="flex items-center justify-between opacity-50">
+<span class="text-[11px] text-on-surface-variant">Shadow Color</span>
+<div class="w-6 h-4 bg-[#000000] rounded border border-outline-variant/30"></div>
+</div>
+</div>
+</div>
+<!-- Primary Action Button -->
+<div class="mt-auto p-4 border-t border-[#0e0e0e]">
+<button class="w-full h-10 bg-gradient-to-r from-primary to-primary-container text-on-primary font-bold text-sm rounded-md shadow-lg shadow-primary/10 transition-transform active:scale-95 flex items-center justify-center gap-2">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">play_circle</span>
+                    Render Preview
+                </button>
+</div>
+</aside>
+</div>
+</body></html>

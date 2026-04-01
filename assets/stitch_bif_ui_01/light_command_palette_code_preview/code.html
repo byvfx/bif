@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Technical Atelier USD - BIF Light Workspace</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&amp;family=Manrope:wght@400;500;600;700;800&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            colors: {
+              "secondary-container": "#00a29a",
+              "secondary": "#5dd9d0",
+              "on-tertiary-container": "#53106f",
+              "surface-bright": "#393939",
+              "on-tertiary-fixed": "#320047",
+              "on-primary-container": "#003463",
+              "error": "#ffb4ab",
+              "secondary-fixed-dim": "#5dd9d0",
+              "on-surface": "#e5e2e1",
+              "background": "#131313",
+              "surface-container-low": "#1b1b1b",
+              "primary-fixed-dim": "#a4c9ff",
+              "on-tertiary-fixed-variant": "#692984",
+              "secondary-fixed": "#7cf6ec",
+              "primary": "#a4c9ff",
+              "on-error-container": "#ffdad6",
+              "tertiary": "#ebb2ff",
+              "surface-variant": "#353535",
+              "on-primary-fixed": "#001c39",
+              "on-error": "#690005",
+              "surface-container-highest": "#353535",
+              "tertiary-fixed-dim": "#ebb2ff",
+              "outline": "#8a919e",
+              "primary-container": "#4a9eff",
+              "on-secondary": "#003734",
+              "tertiary-fixed": "#f8d8ff",
+              "on-primary-fixed-variant": "#004884",
+              "on-surface-variant": "#c0c7d4",
+              "inverse-on-surface": "#313030",
+              "surface-container": "#20201f",
+              "on-background": "#e5e2e1",
+              "inverse-primary": "#005fad",
+              "tertiary-container": "#c681e1",
+              "surface-container-lowest": "#0e0e0e",
+              "surface": "#131313",
+              "on-primary": "#00315d",
+              "primary-fixed": "#d4e3ff",
+              "surface-tint": "#a4c9ff",
+              "on-secondary-container": "#00302d",
+              "inverse-surface": "#e5e2e1",
+              "outline-variant": "#414752",
+              "on-tertiary": "#500a6c",
+              "surface-dim": "#131313",
+              "on-secondary-fixed-variant": "#00504c",
+              "on-secondary-fixed": "#00201e",
+              "surface-container-high": "#2a2a2a",
+              "error-container": "#93000a"
+            },
+            fontFamily: {
+              "headline": ["Manrope"],
+              "body": ["Inter"],
+              "label": ["Inter"],
+              "mono": ["JetBrains Mono"]
+            },
+            borderRadius: {"DEFAULT": "0.125rem", "lg": "0.375rem", "xl": "0.5rem", "full": "0.75rem"},
+          },
+        },
+      }
+    </script>
+<style>
+      .material-symbols-outlined {
+        font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+      }
+      .glass-hud {
+        background: rgba(53, 53, 53, 0.7);
+        backdrop-filter: blur(20px);
+      }
+      .usd-stripe {
+        position: relative;
+      }
+      .usd-stripe::before {
+        content: '';
+        position: absolute;
+        left: 0;
+        top: 4px;
+        bottom: 4px;
+        width: 3px;
+        background-color: #5dd9d0;
+        border-radius: 2px;
+      }
+      ::-webkit-scrollbar {
+        width: 4px;
+        height: 4px;
+      }
+      ::-webkit-scrollbar-track {
+        background: transparent;
+      }
+      ::-webkit-scrollbar-thumb {
+        background: #353535;
+        border-radius: 10px;
+      }
+    </style>
+</head>
+<body class="bg-background text-on-surface font-body overflow-hidden h-screen flex flex-col">
+<!-- TopNavBar Component -->
+<header class="bg-[#131313] text-[#a4c9ff] border-b border-[#0e0e0e] flex justify-between items-center w-full px-6 h-14 shrink-0 z-50">
+<div class="flex items-center gap-8">
+<span class="text-lg font-bold tracking-tighter text-[#e5e2e1]">BIF</span>
+<nav class="flex items-center gap-6 h-full">
+<a class="font-['Manrope'] tracking-wide uppercase text-xs font-semibold text-[#8a919e] hover:text-[#e5e2e1] transition-colors duration-200" href="#">Assemble</a>
+<a class="font-['Manrope'] tracking-wide uppercase text-xs font-semibold text-[#8a919e] hover:text-[#e5e2e1] transition-colors duration-200" href="#">Materials</a>
+<a class="font-['Manrope'] tracking-wide uppercase text-xs font-semibold text-[#a4c9ff] border-b-2 border-[#a4c9ff] pb-1" href="#">Light</a>
+<a class="font-['Manrope'] tracking-wide uppercase text-xs font-semibold text-[#8a919e] hover:text-[#e5e2e1] transition-colors duration-200" href="#">Render</a>
+</nav>
+</div>
+<div class="flex items-center gap-4">
+<button class="p-2 hover:bg-[#2a2a2a] transition-colors duration-200 scale-95 active:scale-90 transition-transform">
+<span class="material-symbols-outlined text-[#8a919e]">settings</span>
+</button>
+<button class="p-2 hover:bg-[#2a2a2a] transition-colors duration-200 scale-95 active:scale-90 transition-transform">
+<span class="material-symbols-outlined text-[#8a919e]">help</span>
+</button>
+<button class="w-8 h-8 rounded-full bg-surface-container-highest flex items-center justify-center overflow-hidden border border-outline-variant">
+<span class="material-symbols-outlined text-[#e5e2e1]">account_circle</span>
+</button>
+</div>
+</header>
+<main class="flex-1 flex overflow-hidden">
+<!-- SideNavBar Component -->
+<aside class="bg-[#20201f] border-r border-[#0e0e0e] w-20 flex flex-col items-center py-4 shrink-0 shadow-[1px_0_0_0_rgba(14,14,14,1)] z-40">
+<div class="flex flex-col gap-2 w-full">
+<div class="text-[#8a919e] flex flex-col items-center justify-center gap-1 py-4 hover:text-[#e5e2e1] hover:bg-[#1b1b1b] transition-all duration-150 ease-in-out cursor-pointer">
+<span class="material-symbols-outlined">account_tree</span>
+<span class="font-['Inter'] text-[11px] uppercase tracking-[0.05em]">Explorer</span>
+</div>
+<div class="text-[#8a919e] flex flex-col items-center justify-center gap-1 py-4 hover:text-[#e5e2e1] hover:bg-[#1b1b1b] transition-all duration-150 ease-in-out cursor-pointer">
+<span class="material-symbols-outlined">layers</span>
+<span class="font-['Inter'] text-[11px] uppercase tracking-[0.05em]">Layers</span>
+</div>
+<div class="text-[#8a919e] flex flex-col items-center justify-center gap-1 py-4 hover:text-[#e5e2e1] hover:bg-[#1b1b1b] transition-all duration-150 ease-in-out cursor-pointer">
+<span class="material-symbols-outlined">theater_comedy</span>
+<span class="font-['Inter'] text-[11px] uppercase tracking-[0.05em]">Stages</span>
+</div>
+<div class="text-[#a4c9ff] bg-[#2a2a2a] relative after:absolute after:left-0 after:top-0 after:h-full after:w-[3px] after:bg-[#a4c9ff] flex flex-col items-center justify-center gap-1 py-4 cursor-pointer">
+<span class="material-symbols-outlined">inventory_2</span>
+<span class="font-['Inter'] text-[11px] uppercase tracking-[0.05em]">Assets</span>
+</div>
+<div class="text-[#8a919e] flex flex-col items-center justify-center gap-1 py-4 hover:text-[#e5e2e1] hover:bg-[#1b1b1b] transition-all duration-150 ease-in-out cursor-pointer">
+<span class="material-symbols-outlined">history</span>
+<span class="font-['Inter'] text-[11px] uppercase tracking-[0.05em]">History</span>
+</div>
+</div>
+</aside>
+<!-- Main Workspace -->
+<section class="flex-1 flex flex-col relative bg-surface">
+<!-- 3D Viewport Area -->
+<div class="flex-1 relative overflow-hidden">
+<img class="w-full h-full object-cover" data-alt="Cinematic 3D interior architecture scene with dramatic rim lighting and volumetric atmosphere in a dark minimalist studio setting" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCtyUOEIV6VuuJl15L9pfTMm95dLeVadL-AW98z4iGb4wtNEAvNyOOZCObQ-ou_q-MKHTBoQ8Xz3dyUur_eIsErhpIWV8QenvUF8PEXWQjqUTTDXRoi00Y-_xCwU8VYcHKwwEud4Tcrz-0FZsSOvejLBi5BO8USAZFIktcQKZ4sJWuBRsDmDVHBCOy22s1YnpWLb0FG0y76ofIa4HFNupCtK0J4NqnQd39CaLWVaGUQe7mFAOCVqD_AtwM3z36Q_QiJrJXo0sd9XEeh"/>
+<!-- Command Palette Overlay -->
+<div class="absolute inset-0 flex items-center justify-center pointer-events-none">
+<div class="w-[540px] glass-hud rounded-xl border border-outline-variant/20 shadow-2xl pointer-events-auto overflow-hidden">
+<div class="p-4 border-b border-outline-variant/10 flex items-center gap-3">
+<span class="material-symbols-outlined text-primary">search</span>
+<input autofocus="" class="bg-transparent border-none focus:ring-0 text-on-surface font-mono text-lg flex-1" type="text" value="Lgt_"/>
+<span class="text-[10px] bg-surface-container px-2 py-1 rounded border border-outline-variant/30 text-outline font-mono uppercase">⌘ K</span>
+</div>
+<div class="max-h-72 overflow-y-auto py-2">
+<div class="px-4 py-3 flex items-center justify-between hover:bg-primary/10 group cursor-pointer">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-secondary scale-90" style="font-variation-settings: 'FILL' 1;">wb_sunny</span>
+<div>
+<div class="text-on-surface font-mono text-sm">Lgt_Rim_Key_01</div>
+<div class="text-[10px] text-outline uppercase tracking-wider">USD Lux · Rect Light</div>
+</div>
+</div>
+<span class="material-symbols-outlined text-outline/30 group-hover:text-primary transition-colors">keyboard_return</span>
+</div>
+<div class="px-4 py-3 flex items-center justify-between hover:bg-primary/10 group cursor-pointer bg-primary/5">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-secondary scale-90" style="font-variation-settings: 'FILL' 1;">light_mode</span>
+<div>
+<div class="text-on-surface font-mono text-sm">Lgt_Fill_Interior</div>
+<div class="text-[10px] text-outline uppercase tracking-wider">USD Lux · Cylinder Light</div>
+</div>
+</div>
+<span class="material-symbols-outlined text-outline/30 group-hover:text-primary transition-colors">keyboard_return</span>
+</div>
+<div class="px-4 py-3 flex items-center justify-between hover:bg-primary/10 group cursor-pointer">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-tertiary scale-90" style="font-variation-settings: 'FILL' 1;">exposure</span>
+<div>
+<div class="text-on-surface font-mono text-sm">Lgt_Exposure_Global</div>
+<div class="text-[10px] text-outline uppercase tracking-wider">Override · Render Settings</div>
+</div>
+</div>
+<span class="material-symbols-outlined text-outline/30 group-hover:text-primary transition-colors">keyboard_return</span>
+</div>
+</div>
+<div class="p-2 bg-surface-container-lowest/50 flex justify-between items-center px-4">
+<span class="text-[10px] text-outline-variant font-medium uppercase tracking-[0.1em]">3 Results Found</span>
+<div class="flex gap-4">
+<span class="text-[10px] text-outline-variant"><span class="font-bold text-outline">↑↓</span> Navigate</span>
+<span class="text-[10px] text-outline-variant"><span class="font-bold text-outline">ESC</span> Close</span>
+</div>
+</div>
+</div>
+</div>
+<!-- Status Bar -->
+<div class="absolute bottom-4 left-4 right-4 flex justify-between items-center px-4 h-10 glass-hud rounded-lg border border-outline-variant/10">
+<div class="flex items-center gap-2">
+<span class="w-2 h-2 rounded-full bg-secondary shadow-[0_0_8px_#5dd9d0]"></span>
+<span class="text-[11px] font-medium text-on-surface uppercase tracking-wider">Active Layer: <span class="text-secondary">lighting.usd</span></span>
+</div>
+<div class="flex items-center gap-6">
+<div class="flex items-center gap-1 text-[10px] text-outline font-mono">
+<span class="material-symbols-outlined text-xs">grid_on</span> 512 SPP
+                        </div>
+<div class="flex items-center gap-1 text-[10px] text-outline font-mono">
+<span class="material-symbols-outlined text-xs">timer</span> 14.2ms
+                        </div>
+<div class="flex items-center gap-1 text-[10px] text-outline font-mono">
+<span class="material-symbols-outlined text-xs">memory</span> 4.2GB VRAM
+                        </div>
+</div>
+</div>
+</div>
+<!-- Bottom Dock / Code Editor -->
+<div class="h-64 bg-surface-container-lowest border-t border-[#0e0e0e] flex flex-col">
+<div class="flex h-10 border-b border-[#0e0e0e] px-4 items-center bg-surface-container">
+<div class="flex gap-1 h-full">
+<button class="px-4 h-full flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-primary border-b-2 border-primary">
+<span class="material-symbols-outlined text-sm">code</span>
+                            USDA Preview
+                        </button>
+<button class="px-4 h-full flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-outline hover:bg-surface-container-high">
+<span class="material-symbols-outlined text-sm">description</span>
+                            Composition
+                        </button>
+</div>
+<div class="ml-auto flex items-center gap-2">
+<button class="p-1 hover:bg-surface-container-high rounded text-outline">
+<span class="material-symbols-outlined text-sm">content_copy</span>
+</button>
+<button class="p-1 hover:bg-surface-container-high rounded text-outline">
+<span class="material-symbols-outlined text-sm">fullscreen</span>
+</button>
+</div>
+</div>
+<div class="flex-1 overflow-auto p-4 font-mono text-[13px] leading-relaxed select-text">
+<div class="flex gap-4">
+<div class="text-outline-variant text-right pr-4 border-r border-outline-variant/10 select-none">
+                            01<br/>02<br/>03<br/>04<br/>05<br/>06<br/>07<br/>08<br/>09<br/>10<br/>11<br/>12
+                        </div>
+<div class="flex-1">
+<div class="text-outline">#usda 1.0</div>
+<div class="text-tertiary">def <span class="text-on-surface">Xform</span> "Lights" (</div>
+<div class="pl-4 text-outline">kind = "assembly"</div>
+<div class="text-tertiary">) {</div>
+<div class="pl-4 text-tertiary">def <span class="text-on-surface">RectLight</span> "Lgt_Rim_Key_01" {</div>
+<div class="pl-8 text-primary">float <span class="text-secondary">intensity</span> = 45000</div>
+<div class="pl-8 text-primary">color3f <span class="text-secondary">inputs:color</span> = (0.8, 0.9, 1.0)</div>
+<div class="pl-8 text-outline">float <span class="text-outline">inputs:exposure</span> = 1.5 <span class="text-outline-variant italic">// inherited from base.usd</span></div>
+<div class="pl-8 text-primary">float <span class="text-secondary">inputs:width</span> = 120.0</div>
+<div class="pl-4 text-tertiary">}</div>
+<div class="pl-4 text-tertiary">def <span class="text-on-surface">CylinderLight</span> "Lgt_Fill_Interior" {</div>
+<div class="pl-8 text-primary">float <span class="text-secondary">intensity</span> = 12000</div>
+<div class="text-tertiary">}</div>
+</div>
+</div>
+</div>
+</div>
+</section>
+<!-- Right Inspector Panel (Tonal Architecture) -->
+<aside class="w-80 bg-surface-container border-l border-[#0e0e0e] flex flex-col shrink-0">
+<div class="p-4 border-b border-[#0e0e0e]">
+<h3 class="text-[11px] font-bold uppercase tracking-[0.1em] text-outline mb-4">Properties</h3>
+<div class="space-y-4">
+<div class="space-y-1">
+<label class="text-[10px] text-outline-variant uppercase">Transformation</label>
+<div class="grid grid-cols-3 gap-1">
+<div class="bg-surface-container-lowest p-2 rounded flex flex-col">
+<span class="text-[9px] text-outline">X</span>
+<span class="text-xs font-mono">14.02</span>
+</div>
+<div class="bg-surface-container-lowest p-2 rounded flex flex-col">
+<span class="text-[9px] text-outline">Y</span>
+<span class="text-xs font-mono">-5.20</span>
+</div>
+<div class="bg-surface-container-lowest p-2 rounded flex flex-col">
+<span class="text-[9px] text-outline">Z</span>
+<span class="text-xs font-mono">221.8</span>
+</div>
+</div>
+</div>
+<div class="space-y-1">
+<label class="text-[10px] text-outline-variant uppercase">Light Intensity</label>
+<div class="flex items-center gap-3">
+<div class="flex-1 h-1.5 bg-surface-container-lowest rounded-full relative">
+<div class="absolute inset-y-0 left-0 w-3/4 bg-primary rounded-full"></div>
+<div class="absolute top-1/2 -translate-y-1/2 left-3/4 w-3 h-3 bg-on-surface border-2 border-primary rounded-full"></div>
+</div>
+<span class="text-xs font-mono text-primary w-12 text-right">45k</span>
+</div>
+</div>
+<div class="space-y-1">
+<label class="text-[10px] text-outline-variant uppercase">Color Temperature</label>
+<div class="h-8 rounded bg-gradient-to-r from-orange-300 via-white to-blue-300 border border-outline-variant/20 flex items-center justify-center">
+<span class="text-[10px] font-bold text-surface mix-blend-difference">6500 K</span>
+</div>
+</div>
+</div>
+</div>
+<div class="flex-1 flex flex-col p-4 gap-4">
+<h3 class="text-[11px] font-bold uppercase tracking-[0.1em] text-outline">Layers (Hierarchical)</h3>
+<div class="space-y-0.5">
+<div class="usd-stripe pl-4 py-1.5 flex items-center justify-between text-xs bg-surface-container-high rounded-r-md">
+<span class="text-secondary font-medium">lighting.usd</span>
+<span class="material-symbols-outlined text-sm text-secondary">visibility</span>
+</div>
+<div class="pl-8 py-1.5 flex items-center justify-between text-xs text-outline hover:text-on-surface transition-colors">
+<span>base_geo.usd</span>
+<span class="material-symbols-outlined text-sm">visibility</span>
+</div>
+<div class="pl-8 py-1.5 flex items-center justify-between text-xs text-outline hover:text-on-surface transition-colors">
+<span>materials.usd</span>
+<span class="material-symbols-outlined text-sm">visibility</span>
+</div>
+<div class="pl-12 py-1.5 flex items-center justify-between text-xs text-outline/50">
+<span>inherited_props.usd</span>
+<span class="material-symbols-outlined text-sm opacity-50">visibility</span>
+</div>
+</div>
+</div>
+<div class="p-4 mt-auto">
+<button class="w-full bg-primary py-2.5 rounded-lg text-on-primary font-bold text-xs uppercase tracking-widest flex items-center justify-center gap-2 shadow-lg shadow-primary/10">
+<span class="material-symbols-outlined text-sm">play_circle</span>
+                    Bake Lighting
+                </button>
+</div>
+</aside>
+</main>
+</body></html>

@@ -8,6 +8,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Qt UI design spec** — Consolidated UI_DESIGN.md as authoritative pre-implementation spec (16 sections, ~730 lines). 14 Stitch mockups across 2 batches. Vertical code split layout variant, Bjorn asset manager, active layer safety system, opinion encoding table, command palette details, canonical component specs, workspace configs. UX Architect + UX Researcher reviews conducted and incorporated.
+- **Stitch UI mockups** — 2 batches of Google Stitch-generated mockups covering Assembly (3 variants), Lighting (2 + command palette), Materials (2 + node graph safety), Render (2 + catalog), and First Launch onboarding screen. Obsidian Graphite "Quiet Confidence" design system.
+
 - **MaterialX file format support** — usdMtlx plugin detection with startup diagnostic, `resolve_mtlx_input()` follows Material interface connections for scalar values, deep descendant shader search by `info:id`, refactored extraction into shared helper. `setup_usd_env.ps1` scans both `bin/usd` and `lib/usd` for plugin resources. Enables loading external `.mtlx` references (OpenPBR Shader Playground pattern). Requires `vcpkg install usd[materialx]:x64-windows`.
 - **Power-weighted light sampling** — `LightList` now selects lights proportional to emitted power via CDF instead of uniform 1/N. `Light` trait gains `power()` method. Foundation for future hierarchical light tree (v0.20.0). 9 new tests.
 - **Max Depth UI slider** — interactive Ivar path tracer now exposes max bounce depth (1–32) in the render settings panel, with restart on change
