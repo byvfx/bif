@@ -26,6 +26,7 @@ Last updated: 2026-03-31
 - Validate subdivision surface behavior with self-authored assets.
 - Verify proxy material fallback behavior (use display color when no material is bound).
 - Check depth usage and expose useful controls in UI.
+- Compare with Claude the Houdini USD nodes and what we could use, same as Katana. Let's build something simple but elegant.
 
 ### Architecture Notes
 
