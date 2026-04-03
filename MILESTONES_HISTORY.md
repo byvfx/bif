@@ -4,7 +4,7 @@ Complete history of BIF development milestones. For the current roadmap, see [MI
 
 ---
 
-### Milestone 0: Environment Setup ✅
+## Milestone 0: Environment Setup ✅
 
 - **Completed:** 2024-12-26
 - **Time Invested:** ~1 hour
@@ -16,7 +16,7 @@ Complete history of BIF development milestones. For the current roadmap, see [MI
 
 ---
 
-### Milestone 1: Math Library ✅
+## Milestone 1: Math Library ✅
 
 - **Completed:** 2024-12-27
 - **Time Invested:** ~4 hours
@@ -32,7 +32,7 @@ Complete history of BIF development milestones. For the current roadmap, see [MI
 
 ---
 
-### Milestone 2: wgpu Window ✅
+## Milestone 2: wgpu Window ✅
 
 - **Completed:** 2024-12-27
 - **Time Invested:** ~1 hour
@@ -48,7 +48,7 @@ Complete history of BIF development milestones. For the current roadmap, see [MI
 
 ---
 
-### Milestone 3: Triangle + Camera ✅
+## Milestone 3: Triangle + Camera ✅
 
 - **Completed:** 2024-12-27
 - **Time Invested:** ~1.5 hours
@@ -68,7 +68,7 @@ Complete history of BIF development milestones. For the current roadmap, see [MI
 
 ---
 
-### Milestone 4: Camera Controls ✅
+## Milestone 4: Camera Controls ✅
 
 - **Completed:** 2024-12-27
 - **Time Invested:** ~1 hour
@@ -85,7 +85,7 @@ Complete history of BIF development milestones. For the current roadmap, see [MI
 
 ---
 
-### Milestone 5: OBJ Mesh Loading ✅
+## Milestone 5: OBJ Mesh Loading ✅
 
 - **Completed:** 2024-12-27
 - **Time Invested:** ~2 hours
@@ -101,7 +101,7 @@ Complete history of BIF development milestones. For the current roadmap, see [MI
 
 ---
 
-### Milestone 6: Depth Testing + Enhanced Controls ✅
+## Milestone 6: Depth Testing + Enhanced Controls ✅
 
 - **Completed:** 2024-12-27
 - **Time Invested:** ~2 hours
@@ -119,7 +119,7 @@ Complete history of BIF development milestones. For the current roadmap, see [MI
 
 ---
 
-### Milestone 7: egui UI Integration ✅
+## Milestone 7: egui UI Integration ✅
 
 - **Completed:** 2024-12-27
 - **Time Invested:** ~1.5 hours
@@ -137,7 +137,7 @@ Complete history of BIF development milestones. For the current roadmap, see [MI
 
 ---
 
-### Milestone 8: GPU Instancing ✅
+## Milestone 8: GPU Instancing ✅
 
 - **Completed:** 2024-12-27
 - **Time Invested:** ~1 hour
@@ -155,7 +155,7 @@ Complete history of BIF development milestones. For the current roadmap, see [MI
 
 ---
 
-### Milestone 9: USD Import ✅
+## Milestone 9: USD Import ✅
 
 - **Completed:** 2024-12-30
 - **Time Invested:** ~4 hours
@@ -175,7 +175,7 @@ Complete history of BIF development milestones. For the current roadmap, see [MI
 
 ---
 
-### Milestone 10: CPU Path Tracer "Ivar" ✅
+## Milestone 10: CPU Path Tracer "Ivar" ✅
 
 - **Completed:** 2024-12-30
 - **Time Invested:** ~4 hours
@@ -194,7 +194,7 @@ Complete history of BIF development milestones. For the current roadmap, see [MI
 
 ---
 
-### Milestone 11: Ivar Viewport Integration ✅
+## Milestone 11: Ivar Viewport Integration ✅
 
 - **Completed:** 2024-12-30
 - **Time Invested:** ~4 hours
@@ -240,7 +240,7 @@ Complete history of BIF development milestones. For the current roadmap, see [MI
 
 ---
 
-### Milestone 12: Embree 4 Integration ✅
+## Milestone 12: Embree 4 Integration ✅
 
 - **Completed:** 2026-01-01
 - **Time Invested:** ~8 hours
@@ -260,7 +260,7 @@ Complete history of BIF development milestones. For the current roadmap, see [MI
 
 ---
 
-### Milestone 13: USD C++ Integration ✅
+## Milestone 13: USD C++ Integration ✅
 
 - **Completed:** 2026-01-04
 - **Time Invested:** ~4 hours
@@ -284,7 +284,7 @@ Complete history of BIF development milestones. For the current roadmap, see [MI
 
 ---
 
-### Milestone 13a: USD Scene Browser + Property Inspector ✅
+## Milestone 13a: USD Scene Browser + Property Inspector ✅
 
 - **Completed:** 2026-01-05
 - **Time Invested:** ~6 hours
@@ -301,7 +301,7 @@ Complete history of BIF development milestones. For the current roadmap, see [MI
 
 ---
 
-### Milestone 13b: Node Graph + Dynamic USD Loading ✅
+## Milestone 13b: Node Graph + Dynamic USD Loading ✅
 
 - **Completed:** 2026-01-06
 - **Time Invested:** ~4 hours
@@ -320,7 +320,7 @@ Complete history of BIF development milestones. For the current roadmap, see [MI
 
 ---
 
-### Milestone 14: GPU Instancing Optimization (10K+ Instances) ✅
+## Milestone 14: GPU Instancing Optimization (10K+ Instances) ✅
 
 - **Goal:** Enable massive instancing (10K+ instances) with smart LOD system
 - **Prerequisites:** Milestone 13b complete ✅, bbox culling added ✅
@@ -355,7 +355,7 @@ Complete history of BIF development milestones. For the current roadmap, see [MI
 
 ---
 
-### Milestone 15: Materials (UsdPreviewSurface + Disney BSDF) ✅
+## Milestone 15: Materials (UsdPreviewSurface + Disney BSDF) ✅
 
 - **Goal:** Import USD materials and render with proper shading
 - **Prerequisites:** Milestone 14 complete ✅
@@ -411,7 +411,7 @@ Complete history of BIF development milestones. For the current roadmap, see [MI
 
 ---
 
-### Milestone 16: MaterialX Support ✅
+## Milestone 16: MaterialX Support ✅
 
 - **Goal:** Import MaterialX materials from USD and render with proper shading
 - **Completed:** 2025-01-17
@@ -445,7 +445,7 @@ Complete history of BIF development milestones. For the current roadmap, see [MI
 
 ---
 
-### Milestone 17: Viewport PBR + Textures ✅
+## Milestone 17: Viewport PBR + Textures ✅
 
 - **Goal:** Textured PBR materials in Vulkan viewport
 - **Completed:** 2026-01-18
@@ -466,7 +466,7 @@ Complete history of BIF development milestones. For the current roadmap, see [MI
 
 ---
 
-### Milestone 17.1: OIIO + .tx Texture Pipeline ✅
+## Milestone 17.1: OIIO + .tx Texture Pipeline ✅
 
 - **Goal:** Replace image crate with OpenImageIO for industry-standard .tx support
 - **Completed:** 2026-01-21
@@ -492,7 +492,7 @@ Complete history of BIF development milestones. For the current roadmap, see [MI
 
 ---
 
-### Milestone 18: Animation + Timeline ✅
+## Milestone 18: Animation + Timeline ✅
 
 - **Completed:** 2026-01-26
 - **Goal:** Load and render time-sampled USD data
@@ -505,7 +505,7 @@ Complete history of BIF development milestones. For the current roadmap, see [MI
 
 ---
 
-### Milestone 18.1: Vertex Animation for Multi-Mesh ✅
+## Milestone 18.1: Vertex Animation for Multi-Mesh ✅
 
 - **Completed:** 2026-01-25
 - **Goal:** Fix vertex animation when multiple meshes are combined
@@ -520,7 +520,7 @@ Complete history of BIF development milestones. For the current roadmap, see [MI
 
 ---
 
-### Milestone 18.2: Thread Safety + Instance Encapsulation ✅
+## Milestone 18.2: Thread Safety + Instance Encapsulation ✅
 
 - **Completed:** 2026-01-26
 - **Goal:** Make UsdStage thread-safe for background loading
@@ -533,7 +533,7 @@ Complete history of BIF development milestones. For the current roadmap, see [MI
 
 ---
 
-### Milestone 18.3: USD Import Refinement ✅
+## Milestone 18.3: USD Import Refinement ✅
 
 - **Completed:** 2026-01-27
 - **Goal:** Fix USD files with relative references failing to load
@@ -550,7 +550,7 @@ Complete history of BIF development milestones. For the current roadmap, see [MI
 
 ---
 
-### Milestone 18.4: Multi-Prototype Ivar Fix ✅
+## Milestone 18.4: Multi-Prototype Ivar Fix ✅
 
 - **Completed:** 2026-01-31
 - **Goal:** Fix double mesh instances in Ivar rendering for multi-prototype USD scenes
@@ -567,7 +567,7 @@ Complete history of BIF development milestones. For the current roadmap, see [MI
 
 ---
 
-### Milestone 18.5: USD Implementation Polish ✅
+## Milestone 18.5: USD Implementation Polish ✅
 
 - **Completed:** 2026-02-01
 - **Goal:** Fix bugs and add timing visibility for USD loading
@@ -577,10 +577,12 @@ Complete history of BIF development milestones. For the current roadmap, see [MI
   - **Load timing:** Added instrumentation to measure stage open, mesh extract, materials, instancers, GPU buffers, textures
   - **Granular profiling:** Added breakdown timing inside `cache_stage_data()` (vertices, triangulate, subsets, normals, UVs, transforms)
 - **Performance Results:**
+
   | Scene | Before | After | Speedup |
   |-------|--------|-------|---------|
   | Spaceship (921 meshes, 3.3M verts) | 117s | 5s | **23x** |
   | Palm tree (1 mesh, 220K verts) | 2.5s | 0.37s | **7x** |
+
 - **Root Cause:** `std::cout`/`fprintf` per-mesh logging - Windows console I/O is extremely slow
 - **Key Files:**
   - `cpp/usd_bridge/usd_bridge.cpp` - C++ timing with `<chrono>`, removed verbose logging
@@ -590,7 +592,7 @@ Complete history of BIF development milestones. For the current roadmap, see [MI
 
 ---
 
-### Milestone 19: Frame Rendering ✅
+## Milestone 19: Frame Rendering ✅
 
 - **Goal:** Render animated sequences to disk
 - **Started:** January 31, 2026
@@ -660,7 +662,7 @@ Complete history of BIF development milestones. For the current roadmap, see [MI
 
 ---
 
-### Milestone 19.6: lib.rs Cleanup ✅
+## Milestone 19.6: lib.rs Cleanup ✅
 
 - **Goal:** Split monolithic lib.rs into maintainable modules
 - **Estimated Time:** 8-10 hours
@@ -674,7 +676,7 @@ Complete history of BIF development milestones. For the current roadmap, see [MI
 
 ---
 
-### Milestone 20: Scene Interactivity + Keyframing ✅
+## Milestone 20: Scene Interactivity + Keyframing ✅
 
 - **Completed:** 2026-02-06
 - **Time Invested:** ~12 hours (2 sessions)
@@ -698,7 +700,7 @@ Complete history of BIF development milestones. For the current roadmap, see [MI
 
 ---
 
-### Milestone 21: Point Instancing + Scattering ✅
+## Milestone 21: Point Instancing + Scattering ✅
 
 - **Completed:** 2026-02-13
 - **Time Invested:** ~8 hours (1 session)
@@ -721,7 +723,7 @@ Complete history of BIF development milestones. For the current roadmap, see [MI
 
 ---
 
-### Milestone 21.1: Point Instancer Node ✅
+## Milestone 21.1: Point Instancer Node ✅
 
 - **Completed:** 2026-02-15
 - **Time Invested:** ~2 hours
@@ -738,7 +740,7 @@ Complete history of BIF development milestones. For the current roadmap, see [MI
 
 ---
 
-### Milestone 21.2: Auto-Compute + Code Review Fixes ✅
+## Milestone 21.2: Auto-Compute + Code Review Fixes ✅
 
 - **Completed:** 2026-02-15
 - **Time Invested:** ~3 hours
@@ -757,7 +759,7 @@ Complete history of BIF development milestones. For the current roadmap, see [MI
 
 ---
 
-### Milestone 23: SHARC Radiance Cache ✅
+## Milestone 23: SHARC Radiance Cache ✅
 
 - **Completed:** 2026-02-20
 - **Time Invested:** ~4 hours
@@ -787,7 +789,7 @@ Complete history of BIF development milestones. For the current roadmap, see [MI
 
 ---
 
-### Milestone 26: Denoising (Intel OIDN) ✅
+## Milestone 26: Denoising (Intel OIDN) ✅
 
 - **Goal:** Production-quality denoising for faster convergence
 - **Status:** Complete
@@ -804,7 +806,7 @@ Complete history of BIF development milestones. For the current roadmap, see [MI
 
 ---
 
-### Milestone 26.1: Ivar Material Cache + Pre-warm ✅
+## Milestone 26.1: Ivar Material Cache + Pre-warm ✅
 
 - **Completed:** 2026-03-12
 - **Goal:** Cache built DisneyBSDF materials across Ivar builds; pre-warm on scene load
@@ -816,12 +818,14 @@ Complete history of BIF development milestones. For the current roadmap, see [MI
 - **Invalidation:** Materials cleared only on scene reload or material edit, NOT on camera/transform/geometry changes
 - **Batch render:** `SceneBuilderData` carries `ivar_materials` for per-frame reuse
 - **Performance:**
+
   | Scenario | Before | After |
   |----------|--------|-------|
   | First Ivar (cold) | 6.7s | 6.7s |
   | First Ivar (pre-warmed) | 6.7s | ~47ms |
   | Subsequent rebuilds | 6.7s | ~47ms |
   | Batch render per frame | 6.7s | ~47ms |
+
 - **Key Files:**
   - `crates/bif_viewport/src/lib.rs` — `ivar_materials`, `ivar_materials_receiver` fields
   - `crates/bif_viewport/src/ivar_build.rs` — cache usage, `prewarm_ivar_materials()`, `invalidate_ivar_materials()`
@@ -830,7 +834,7 @@ Complete history of BIF development milestones. For the current roadmap, see [MI
 
 ---
 
-### Milestone 29: USD Import and Export + Non-Destructive Layers ✅
+## Milestone 29: USD Import and Export + Non-Destructive Layers ✅
 
 - **Goal:** Close the pipeline loop: import → modify → render → **export**
 - **Estimated Time:** 20-25 hours
@@ -866,7 +870,7 @@ Complete history of BIF development milestones. For the current roadmap, see [MI
 
 ---
 
-### Milestone 29.5: egui UI Overhaul ✅
+## Milestone 29.5: egui UI Overhaul ✅
 
 - **Status:** Complete (Mar 23, 2026)
 - **Goal:** Modernize egui UI before Qt migration — theme, layout, discoverability
@@ -882,7 +886,7 @@ Complete history of BIF development milestones. For the current roadmap, see [MI
 
 ---
 
-### Milestone 30: Node Graph Persistence & Evaluation Modes ✅
+## Milestone 30: Node Graph Persistence & Evaluation Modes ✅
 
 - **Goal:** Save/load node graphs + Houdini-style evaluation control
 - **Estimated Time:** 15-20 hours
@@ -907,7 +911,7 @@ Complete history of BIF development milestones. For the current roadmap, see [MI
 
 ---
 
-### Milestone 31: Per-Node Scene Graph Visualization ✅
+## Milestone 31: Per-Node Scene Graph Visualization ✅
 
 - **Goal:** Click any node → see scene graph tree at that evaluation point
 - **Estimated Time:** 10-15 hours

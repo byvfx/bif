@@ -14,7 +14,7 @@ Port the Go raytracer from `legacy/go-raytracing/` to Rust, creating a fully fun
 
 Created a complete path tracing library with the following modules:
 
-```
+```text
 crates/bif_renderer/src/
 ├── lib.rs          # Crate exports
 ├── ray.rs          # Ray primitive
@@ -62,10 +62,12 @@ Implemented four material types from the Go codebase:
 ### Primitives
 
 **Sphere:**
+
 - Quadratic ray-sphere intersection
 - UV mapping for textures (spherical coordinates)
 
 **Triangle:**
+
 - Möller-Trumbore algorithm for fast intersection
 - Barycentric coordinates for UV interpolation
 
@@ -106,6 +108,7 @@ fn build(mut objects: Vec<Box<dyn Hittable + Send + Sync>>) -> Self {
 ### Camera
 
 Builder-pattern camera with:
+
 - Configurable FOV and aspect ratio
 - Depth of field (defocus blur)
 - Motion blur support via ray time
@@ -153,6 +156,7 @@ Currently single-threaded. Rayon parallel rendering is next.
 ## Tests
 
 14 unit tests covering:
+
 - Ray construction and `at()` method
 - Sphere intersection (hit/miss)
 - Triangle intersection (Möller-Trumbore)

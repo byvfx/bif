@@ -55,6 +55,7 @@ Added 7 new prim traversal APIs:
 ### PrimDataProvider Trait
 
 Abstraction allows scene browser to work with:
+
 - C++ USD bridge (full USDC support)
 - Pure Rust parser (fallback)
 - Mock data (testing)

@@ -393,7 +393,7 @@ cargo run --release
 
 ### Project Structure
 
-```
+```text
 crates/
   bif_viewport/
     src/

@@ -33,6 +33,7 @@ The implementation caches mesh and instancer data on first access for efficient 
 ### 3. CMake Integration (`build.rs`)
 
 Created a `build.rs` that:
+
 - Finds CMake (checks VS2022 bundled path)
 - Configures with vcpkg toolchain
 - Builds static library with caching
@@ -41,6 +42,7 @@ Created a `build.rs` that:
 ### 4. Rust FFI Wrapper (`cpp_bridge.rs`)
 
 ~500 LOC of safe Rust wrapper:
+
 - `UsdStage` - Handle to open stage, auto-closes on drop
 - `UsdMeshData` - Mesh vertices, indices, normals, transform
 - `UsdInstancerData` - Instancer transforms and prototype paths
@@ -74,7 +76,7 @@ rel.GetForwardedTargets(&paths);
 
 USD import libs are in `bin/` not `lib/`:
 
-```
+```text
 installed/x64-windows/
 ├── bin/           # DLLs AND import libs (.lib)
 │   ├── usd_ar.dll
@@ -110,7 +112,7 @@ cargo test --package bif_core test_load_usd -- --ignored
 
 ## Architecture
 
-```
+```text
 ┌────────────────────────────────────────────────┐
 │               Rust Application                  │
 ├─────────────────────┬──────────────────────────┤

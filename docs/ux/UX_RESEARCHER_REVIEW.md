@@ -5,6 +5,7 @@
 **Date:** 2026-03-31
 **Reviewer:** UX Researcher (AI-assisted)
 **Artifacts Reviewed:**
+
 - Assembly Workspace Detail (`assembly_workspace_detail/screen.png`)
 - Assembly Workspace Qt Implementation (`assembly_workspace_qt_implementation/screen.png`)
 - Lighting Workspace Qt Implementation (`lighting_workspace_qt_implementation/screen.png`)
@@ -14,6 +15,7 @@
 - UI Design Brainstorm (`docs/ux/UI_DESIGN.md`)
 
 **Target Users:**
+
 - (A) Senior VFX TD familiar with USD composition, layers, and pipeline tooling
 - (B) Junior artist new to scene assembly, may not understand USD opinions/layers
 - (C) Lighting artist who wants to place/tweak lights without touching the node graph
@@ -35,11 +37,13 @@ However, several usability risks emerge under close inspection, particularly aro
 Walking through the primary VFX assembly workflow against the Assembly Workspace Detail mockup:
 
 **Step 1: Open USD Stage**
+
 - Not directly visible in the mockups. The breadcrumb bar at the top shows `shot_010.usd > layout.usd > /world/hero_char`, implying the stage is already open.
 - **Gap:** No visible "Open Stage" affordance. Where does the user go to open a new file? The top-left "BIF" logo area and the workspace tabs consume the full header. There is no File menu visible.
 - **P1-01: Add a File/Stage menu or make the stage name in the breadcrumb bar a clickable entry point for open/close/recent operations.** Users from Houdini/Katana/Clarisse all expect a File menu or a prominent "Open" action.
 
 **Step 2: Browse Scene Tree**
+
 - The Scene Tree panel (left side) shows a standard hierarchy: `/world > hero_char > skeleton, mesh, environment`. Expand/collapse arrows are visible. Type icons (triangle for mesh, bone for skeleton) are present.
 - The tree is clean and readable. The layer-colored dot next to `hero_char` (blue/teal) is visible but small.
 - **Positive:** Scene tree placement matches the universal DCC convention (left side, vertical). Western reading order is respected. Persona (A) will feel at home immediately.
@@ -47,22 +51,26 @@ Walking through the primary VFX assembly workflow against the Assembly Workspace
 - **P1-02: Add a search/filter input at the top of the Scene Tree panel.** This is documented in UI_DESIGN.md's recommendations but not visible in any mockup.
 
 **Step 3: Select Prim**
+
 - Clicking `hero_char` highlights it in teal. The viewport shows the corresponding object (the bust). The Inspector panel on the right populates with Transform, Visibility, and Prim Metadata.
 - **Positive:** The selection-to-inspection flow is immediate and visible. This matches the universal DCC "click to inspect" pattern.
 - **Gap:** The viewport selection highlight is not visible in the mockup. When a user clicks a prim in the scene tree, is the corresponding geometry highlighted in the viewport? This bidirectional selection sync is critical (Clarisse, Katana, and Blender all do it).
 - **P2-01: Ensure viewport selection highlighting is visually distinct (wireframe outline, bounding box, or silhouette edge) and documented in the design system.**
 
 **Step 4: Inspect Properties**
+
 - The Inspector panel shows Transform (Translate, Rotate, Scale), Visibility (Purpose, Show toggle), and Prim Metadata (Type, Path, Composition).
 - **Positive:** Clean single-column layout. Collapsible sections. Monospace values for numerical fields. This matches Resolve's inspector pattern.
 - **Gap:** No layer attribution coloring is visible in this mockup. The UI_DESIGN.md specifies colored left-borders on property rows showing which layer set each value, and bold/gray/amber text to distinguish "your changes" from "inherited" from "overridden." None of this appears in the Assembly Workspace Detail view.
 - **P0-01: Layer attribution must be visible in the property inspector from day one.** This is BIF's primary differentiator. Without it, the inspector is just another property panel. Show colored dots, bold/gray text, or left-border stripes per UI_DESIGN.md's specification. Even a simplified version (just the layer dot) is better than nothing.
 
 **Step 5: Edit on Active Layer**
+
 - The Layer Stack panel (lower-left) shows three layers: `lighting.usd` (checked, active), `layout.usd`, and `shot_010.usd`. The active layer has a teal checkbox.
 - **Critical concern — see Section 5 (Error Prevention) for full analysis.**
 
 **Step 6: Export**
+
 - The Node Graph (bottom panel) shows an `UsdExport` node connected to the graph. Node tabs are visible: Assembly, Materials, Output.
 - **Gap:** The export operation itself is not visible. Is "Export" triggered by the orange `UsdExport` node? Is there an Export button? For Persona (C), the path from "I'm done editing" to "my changes are saved" needs to be explicit.
 - **P1-03: Add an explicit Export/Save action in the toolbar or viewport header.** The node graph is powerful but should not be the only way to trigger export. A "Save Layer" button in the Layer Stack panel or a toolbar shortcut (`Ctrl+S`) should be the primary path.
@@ -85,6 +93,7 @@ Walking through the primary VFX assembly workflow against the Assembly Workspace
 ### Where BIF Deviates From Conventions
 
 **Deviation 1: Icon sidebar on far left**
+
 - All four mockups show a vertical icon sidebar on the far left (outside the scene tree). Icons include what appear to be: cursor/select, move, rotate, scale, and several others.
 - **Problem:** This pattern is borrowed from Blender's T-panel / Figma's tool sidebar, but in DCC scene assembly tools (Clarisse, Katana, Houdini), there is typically no persistent tool sidebar. Manipulation tools (translate, rotate, scale) are accessed via keyboard shortcuts (W/E/R) or viewport gizmos.
 - **Risk:** The sidebar consumes 40-50px of horizontal space permanently. On a 1920px display, that is 2.6% of screen width taken from the viewport.
@@ -92,18 +101,21 @@ Walking through the primary VFX assembly workflow against the Assembly Workspace
 - **P1-04: Make the icon sidebar collapsible (hidden by default for expert users). Add tooltips with keyboard shortcut hints on every icon.** If icons are the only affordance (no labels), they must have excellent tooltips.
 
 **Deviation 2: Layer Stack as a persistent left-panel section (not a tab)**
+
 - In the Assembly Detail mockup, the Layer Stack is a separate section below the Scene Tree in the left panel, always visible.
 - In Photoshop, layers are their own panel (often bottom-right). In Katana, the scene graph and node graph are separate panels. No DCC tool docks the layer stack directly beneath the scene tree in the same panel.
 - **Assessment:** This deviation is well-justified. USD layers are tightly coupled to the scene tree (which prim is on which layer), so colocating them reduces eye travel. Photoshop's "layers + canvas" pairing is the closest precedent. Keep this.
 - **Positive — no change needed.**
 
 **Deviation 3: Breadcrumb bar shows file + layer + prim path**
+
 - The breadcrumb shows: `shot_010.usd > layout.usd > /world/hero_char`
 - This combines three different navigational concepts (stage file, active layer, selected prim) in one bar. Katana shows only the scene graph path. Houdini shows network path. No tool combines all three.
 - **Assessment:** Justified and potentially excellent. For Persona (A), this is a power feature — instant visibility of "where am I, what layer am I editing, what's selected." For Persona (B), it may be confusing.
 - **P2-02: Add tooltip explanations on each breadcrumb segment.** Hovering over `layout.usd` should say "Active authoring layer — edits go here." Hovering over the prim path should say "Currently selected prim."
 
 **Deviation 4: Materials workspace shows project-level tree, not stage-level**
+
 - The Materials Workspace mockup shows a left panel labeled "Project Alpha" with a tree: Materials > hero_wet, base_concrete, glass_clear; Geometry; Lights. This is a project organizer, not a USD stage tree.
 - **Problem:** This is inconsistent with the Assembly workspace, which shows a USD scene tree (`/world/...`). Switching between workspaces changes the left panel's fundamental data model, which violates the principle of consistency.
 - **P0-02: The left panel should always show the USD scene tree, regardless of workspace.** Filter or highlight material-relevant prims in the Materials workspace, but do not replace the scene tree with a project browser. Users must maintain spatial orientation when switching workspaces. If a project browser is needed, it should be a separate tab within the left panel, not a replacement.
@@ -153,6 +165,7 @@ The Lighting mockup partially achieves this (viewport is dominant, property insp
 ### Icon Sidebar
 
 The far-left icon sidebar contains approximately 8-10 icons. From the mockups, these appear to represent:
+
 - Selection/cursor tool
 - Move tool
 - Rotate tool
@@ -171,6 +184,7 @@ The four workspace tabs (ASSEMBLY, LIGHTING, MATERIALS, REVIEW) are clearly labe
 **Positive:** Text labels, not icons. Correct placement (top of window, left-aligned). Current workspace is visually distinguished (underline or highlight).
 
 **Minor gap:** The REVIEW workspace is not represented in the mockups. Users may not understand what "Review" means without trying it.
+
 - **P2-03: Consider renaming REVIEW to RENDER or RENDER REVIEW to better communicate its purpose.** "Review" is ambiguous — it could mean "code review," "peer review," or "shot review." "Render" or "Render Review" is unambiguous.
 
 ### Bottom Panel Tabs
@@ -178,6 +192,7 @@ The four workspace tabs (ASSEMBLY, LIGHTING, MATERIALS, REVIEW) are clearly labe
 All mockups show tabbed bottom panels (NODE GRAPH, USDA PREVIEW, RENDER LOG, CONSOLE). These are text-labeled tabs, which is good.
 
 **Gap in the Assembly Detail mockup:** The bottom panel tabs are small and low-contrast. In the mockup they read "NODE GRAPH | USDA PREVIEW | RENDER LOG" but the text is quite dim against the dark background.
+
 - **P1-07: Increase contrast on bottom panel tab labels.** Use `--text-primary` (#d4d4d4) for the active tab and `--text-secondary` (#888888) for inactive tabs. The current rendering appears to use something dimmer than secondary.
 
 ### Search and Command Palette
@@ -189,6 +204,7 @@ Neither a search bar nor a command palette trigger is visible in any mockup. The
 ### The "Search Assets" Field
 
 The Assembly Qt Implementation mockup shows a "HERO_ASSET_PRIM" text next to what appears to be "SEARCH ASSETS..." in the header. This is good but raises questions:
+
 - Is this a search field or a display-only breadcrumb?
 - Does it search the scene tree, the node graph, or both?
 - **P2-04: Clarify the search scope visually.** Add a magnifying glass icon and placeholder text like "Search scene... (Ctrl+P)" to make it unmistakably interactive and to hint at the keyboard shortcut.
@@ -202,18 +218,22 @@ The Assembly Qt Implementation mockup shows a "HERO_ASSET_PRIM" text next to wha
 ### Current State in Mockups
 
 **Assembly Detail mockup:**
+
 - The Layer Stack shows `lighting.usd` with a teal checkbox. The other layers (`layout.usd`, `shot_010.usd`) have no checkbox or a dimmed/unchecked state.
 - The breadcrumb bar shows `layout.usd` as part of the path.
 - The Inspector shows a small "Layout Layer" label in the upper-right corner.
 
 **Assembly Qt Implementation mockup:**
+
 - The Layer Stack shows `shot_assembly.usd` highlighted in teal/cyan, with `layout_base.001.usd` and `anim_reference.usd` below it.
 - No other active layer indicator is visible.
 
 **Lighting workspace mockup:**
+
 - No layer stack panel is visible. No active layer indicator is visible anywhere.
 
 **Materials workspace mockup:**
+
 - No layer stack panel is visible. No active layer indicator is visible.
 
 ### Problems Identified
@@ -247,6 +267,7 @@ In the Layer Stack, layers that are NOT the edit target should show a lock icon.
 
 **P0-06: The Lighting workspace must show the active layer somewhere.**
 Options (pick at least one):
+
 - A compact layer indicator in the property inspector header ("Editing on: lighting.usd")
 - The viewport status bar (recommended above)
 - A subtle colored stripe along the top or bottom edge of the viewport matching the active layer color
@@ -310,6 +331,7 @@ Options (pick at least one):
 ### Persona A: Senior VFX TD (USD Expert)
 
 **Will appreciate:**
+
 - Breadcrumb bar showing stage + layer + prim path (instant context awareness)
 - Layer stack panel with eye/lock icons (Photoshop-familiar pattern)
 - USDA code preview tab (this person will live here)
@@ -317,6 +339,7 @@ Options (pick at least one):
 - Workspace tabs for task switching
 
 **Will be frustrated by:**
+
 - Lack of opinion attribution in the inspector (P0-01). This user expects to see which layer owns each property value.
 - No command palette visible (P1-08). Power users want keyboard-driven workflows.
 - No visible keyboard shortcut hints anywhere. This user will want to learn shortcuts fast.
@@ -327,11 +350,13 @@ Options (pick at least one):
 ### Persona B: Junior Artist (New to Scene Assembly)
 
 **Will appreciate:**
+
 - Clean, unintimidating layout (the "Quiet Confidence" aesthetic works here)
 - Workspace tabs reduce confusion about "what should I be doing"
 - Viewport is dominant — they can see their work
 
 **Will be frustrated by:**
+
 - What do the left sidebar icons mean? (P0-04)
 - What is a "layer"? Why are there three? Which one am I editing? (P0-05 family)
 - The scene tree has no search (P1-02)
@@ -339,18 +364,21 @@ Options (pick at least one):
 - No onboarding experience. The DCC research recommends a first-launch walkthrough (Section 5.5), but nothing in the mockups suggests one.
 
 **Action items for Persona B:**
+
 - **P0-07: Add human-readable labels alongside USD technical names in the Inspector.** Show "Mesh" not "UsdGeomMesh." Show "Position" not "xformOp:translate." Show the technical name in a tooltip or secondary text. This is called out in the DCC research's Katana anti-patterns.
 - **P1-09: Plan a first-launch onboarding overlay (even a simple labeled screenshot tour).** This is post-Qt but should be designed now.
 
 ### Persona C: Lighting Artist
 
 **Will appreciate:**
+
 - Lighting workspace mockup is strong. Viewport dominates. Property inspector shows light-specific attributes (Intensity, Exposure, Color Temperature). Render snapshots visible.
 - The "A/B ACTIVE" button on render snapshots is excellent — lets them compare iterations.
 - "NEW SNAPSHOT" button is a clear call to action.
 - Shadows toggle and samples control are visible and relevant.
 
 **Will be frustrated by:**
+
 - No active layer indicator (P0-05/P0-06). Which layer are my light edits going to?
 - No light list. The left panel in the Lighting workspace shows the viewport tools, but no list of lights in the scene. Persona (C) needs to see all lights, select them by name, and adjust properties. Currently they must use the viewport selection or (invisible) scene tree.
 - **P1-10: Add a "Light List" panel or scene tree filter in the Lighting workspace.** Show only UsdLux prims, with type icons (rect, sphere, distant, dome). Let the user select lights from this list to populate the inspector. Clarisse and Katana both provide filtered light lists.
@@ -388,12 +416,14 @@ Checking the mockups against the "Quiet Confidence" design system in `DESIGN.md`
 ### Assembly Workspace Detail
 
 **Strengths:**
+
 - Best-realized mockup of the four. All planned panels are visible.
 - Node graph shows meaningful topology (UsdRead > Bfore > Combine > UsdExport with a Primitive and Xform branch).
 - Layer stack is colocated with scene tree (good information architecture).
 - Inspector is focused on the selected prim's core properties.
 
 **Issues:**
+
 - Node graph node labels are hard to read at this zoom level. The colored node headers (orange for "Bfore", teal for "Combine") are correct per the design system, but the text is very small.
 - The "Assembly | Materials | Output" sub-tabs on the node graph are not clearly differentiated from the main NODE GRAPH / USDA PREVIEW / RENDER LOG tabs. Two levels of tabs in the bottom panel creates ambiguity.
 - **P1-11: Clarify the tab hierarchy in the bottom panel.** The outer tabs (NODE GRAPH, USDA PREVIEW, RENDER LOG) switch the panel content. The inner tabs (Assembly, Materials, Output) filter within the node graph. Use visual differentiation (size, style, position) to make the hierarchy obvious. Consider making inner tabs a different style (pill buttons vs. underline tabs).
@@ -401,11 +431,13 @@ Checking the mockups against the "Quiet Confidence" design system in `DESIGN.md`
 ### Assembly Qt Implementation
 
 **Strengths:**
+
 - Shows a more realistic "in-progress" state with a rendering viewport ("USD MESH - REAL_GEOM").
 - Rendering stats visible at bottom of viewport ("TRI: 6142, Prims: 139, Samples: 256").
 - Layer stack shows three layers with the active one highlighted.
 
 **Issues:**
+
 - The Inspector panel appears truncated. Only "Transform" and "Attributes" sections are visible, and the Attributes section shows "schema::UsdGeomGprim" which is very technical.
 - The node graph at bottom shows colored nodes but they are quite small and hard to read.
 - The "RESOLVE COLORS" and "EXPORT GRAPH" buttons at the bottom-right are unclear. What do they do? These need clearer labels or tooltips.
@@ -414,6 +446,7 @@ Checking the mockups against the "Quiet Confidence" design system in `DESIGN.md`
 ### Lighting Workspace Qt Implementation
 
 **Strengths:**
+
 - Best workspace differentiation of all four mockups. The viewport is clearly dominant (approximately 70% of screen area).
 - Property Inspector is focused on light-specific attributes: Active Light name, Type (Rect Light), Status, Intensity, Exposure, Color Temperature, Shadows, Samples. This is excellent task-focused design.
 - Render snapshots at bottom with "RENDER A" / "RENDER B" / "A/B ACTIVE" is a great feature for iterative lighting.
@@ -422,6 +455,7 @@ Checking the mockups against the "Quiet Confidence" design system in `DESIGN.md`
 - The left sidebar shows viewport manipulation tools (move, rotate, scale, light-specific tools) which makes sense for this workspace.
 
 **Issues:**
+
 - No scene tree or light list visible. How does the user select a different light? They must click in the viewport, which does not scale to scenes with dozens of lights, especially lights that are off-screen or overlapping.
 - No active layer indicator anywhere (P0-06, critical).
 - The "VISUAL ATLAS" and "LEGACY SOURCES" tabs in the inspector are unexplained.
@@ -430,12 +464,14 @@ Checking the mockups against the "Quiet Confidence" design system in `DESIGN.md`
 ### Materials Workspace
 
 **Strengths:**
+
 - Material Parameter Sheet (right panel) is well-structured: Shading Model dropdown (OpenPBR), organized sections (BASE, SPECULAR, COAT, EMISSION).
 - The shader node graph (bottom) shows a UsdUVTexture > OpenPBR Surface > MaterialOut chain with visible connections. Yellow connection lines are clear.
 - The material preview orb (viewport overlay, bottom-right) is a nice touch for instant material feedback.
 - The "UPDATE SHADER" button (bottom-right, blue accent) is a clear primary action.
 
 **Issues:**
+
 - Left panel shows "Project Alpha" with a project-level tree, not the USD stage tree (P0-02, covered above). This breaks consistency with other workspaces.
 - The shader node graph is small. In a Materials workspace, the shader graph should have more vertical space, possibly a 50/50 split with the viewport, since material editing is a graph-heavy workflow.
 - The "UsdUVTexture" node shows "rgb" and "Colorlit" outputs but the text is very small and hard to read.

@@ -67,6 +67,7 @@ Round-trip is broken: export writes `specularLevel`, re-import reads `specularCo
 `load_payload`, `unload_payload`, and `set_variant_selection` take `&self` but cast `self.raw` to `*mut` to call C++ functions that invalidate all caches. This is semantically `&mut self` work. The comment says "the C++ side handles internal mutability" but this breaks Rust's aliasing guarantees if there are ever concurrent callers.
 
 Since BIF is single-threaded for USD access today, this is safe in practice. But consider either:
+
 - Changing these to `&mut self` (correct Rust semantics), or
 - Wrapping the raw pointer in a `Cell`/`UnsafeCell` and documenting the interior mutability contract.
 

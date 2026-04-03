@@ -63,7 +63,7 @@ cargo build --features oiio    # OpenImageIO .tx conversion
 
 ## Architecture
 
-```
+```text
 bif/
 ├── crates/
 │   ├── bif_math/       # Vec3, Ray, AABB, Camera, Transform

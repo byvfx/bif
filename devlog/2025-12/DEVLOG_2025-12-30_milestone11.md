@@ -43,6 +43,7 @@ struct IvarState {
 ### Background Bucket Rendering
 
 Ivar renders in background threads using a bucket-based approach:
+
 1. Scene divided into 64x64 pixel buckets
 2. Each bucket rendered independently via rayon thread pool
 3. Results sent via channel to main thread
@@ -89,6 +90,7 @@ def Mesh "mesh_0" {
 ```
 
 Left-handed orientation means clockwise (CW) winding when looking at front faces, opposite of the standard counter-clockwise (CCW) convention used by:
+
 - wgpu's `FrontFace::Ccw` setting
 - Cross product normal calculation (edge1 × edge2 points toward viewer for CCW)
 
@@ -176,6 +178,7 @@ All 15 `bif_core` tests pass.
 ## Milestone Complete ✅
 
 Both renderers now support:
+
 - ✅ USD mesh loading with left-handed orientation fix
 - ✅ GPU instancing (Vulkan) / Baked instancing (Ivar)
 - ✅ Render mode toggle in UI

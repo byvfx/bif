@@ -154,6 +154,7 @@ bindingAPI.Bind(collection, material, bindingName, bindingStrength)
 ### Material Purpose
 
 Bindings can target specific render contexts:
+
 - `allPurpose` (default) — used by all renderers
 - `preview` — for preview/viewport rendering
 - `full` — for final/production rendering

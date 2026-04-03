@@ -21,7 +21,7 @@ Generated via [Google Stitch](https://stitch.withgoogle.com/) in two batches.
 ### Batch 0 (`assets/stitch_bif_ui/`)
 
 | Mockup | Image | Notes |
-|--------|-------|-------|
+| -------- | ------- | ------- |
 | Assembly Workspace (Qt) | ![Assembly Qt](../../assets/stitch_bif_ui/assembly_workspace_qt_implementation/screen.png) | Initial T-layout reference |
 | Assembly Workspace (Detail) | ![Assembly Detail](../../assets/stitch_bif_ui/assembly_workspace_detail/screen.png) | Variation — inspector detail, breadcrumb bar |
 | Lighting Workspace (Qt) | ![Lighting Qt](../../assets/stitch_bif_ui/lighting_workspace_qt_implementation/screen.png) | Initial lighting layout |
@@ -31,7 +31,7 @@ Generated via [Google Stitch](https://stitch.withgoogle.com/) in two batches.
 ### Batch 1 (`assets/stitch_bif_ui_01/`) — addresses review gaps
 
 | Mockup | Image | Notes |
-|--------|-------|-------|
+| -------- | ------- | ------- |
 | Assembly + Bjorn + Opinion Stack | ![Bjorn](../../assets/stitch_bif_ui_01/assemble_bjorn_opinion_stack/screen.png) | Bjorn tab, opinion attribution in inspector, 3-layer stack |
 | **Assembly + Vertical Code Split** | ![Code Split](../../assets/stitch_bif_ui_01/assemble_vertical_code_split_opinion_stack/screen.png) | **Preferred layout** — USDA code alongside viewport, opinion stack visible |
 | Assembly Unified | ![Unified](../../assets/stitch_bif_ui_01/assemble_workspace_unified/screen.png) | Bjorn thumbnails, labeled icon sidebar, full status bar |
@@ -56,7 +56,7 @@ Generated via [Google Stitch](https://stitch.withgoogle.com/) in two batches.
 
 The workflow doc's three-panel-above-viewport is too cramped. Replace with **viewport-dominant dock layout**:
 
-```
+```text
 ┌────────────────┬──────────────────────────────────┬───────────────┐
 │                │                                  │               │
 │  SCENE TREE    │         V I E W P O R T          │  PROPERTIES   │
@@ -66,17 +66,19 @@ The workflow doc's three-panel-above-viewport is too cramped. Replace with **vie
 │  [layers tab]  │                                  │  [context-    │
 │                │                                  │   sensitive]  │
 ├────────────────┴──────────────────────────────────┴───────────────┤
-│  NODE GRAPH | BJORN (Assets) | USDA PREVIEW | CONSOLE  [tabbed]  │
-└──────────────────────────────────────────────────────────────────┘
+│  NODE GRAPH | BJORN (Assets) | USDA PREVIEW | CONSOLE  [tabbed]   │
+└────────────────────────────────────────────────────────────────── ┘
 ```
 
 **Why this beats the spec's layout:**
+
 - Viewport owns the center — this is a visual tool, not a code editor
 - Left/right docks are narrow (250-300px) — just enough for tree + properties
 - Bottom dock is **tabbed** — node graph, Bjorn asset manager, USDA preview, and console share space. You rarely need all three simultaneously
 - Matches Clarisse, Katana, Blender, Nuke — artists already know this pattern
 
 **Panel behaviors:**
+
 - All docks collapsible with single click (thin grab bar, not a button)
 - Double-click dock edge → auto-fit to content width
 - `Tab` key cycles bottom dock tabs
@@ -86,7 +88,7 @@ The workflow doc's three-panel-above-viewport is too cramped. Replace with **vie
 **Panel sizing (canonical, from mockup review):**
 
 | Panel | Min Width/Height | Default | Collapse Threshold |
-|-------|-----------------|---------|-------------------|
+| ------- | ----------------- | --------- | ------------------- |
 | Left dock (tree + layers) | 220px | 20% of window | Drag below 100px → collapse |
 | Right dock (inspector) | 280px | 25% of window | Drag below 140px → collapse |
 | Bottom dock (expanded) | 180px height | 30% of window height | — |
@@ -102,7 +104,7 @@ The workflow doc's three-panel-above-viewport is too cramped. Replace with **vie
 
 An alternative Assembly layout placing USDA Code Preview alongside the viewport. **User-preferred layout** — validated by [`assemble_vertical_code_split_opinion_stack`](../../assets/stitch_bif_ui_01/assemble_vertical_code_split_opinion_stack/screen.png).
 
-```
+```text
 ┌──────────┬──────────────────┬──────────────┬───────────┐
 │          │                  │              │           │
 │  SCENE   │  USDA CODE       │  VIEWPORT    │ INSPECTOR │
@@ -120,6 +122,7 @@ An alternative Assembly layout placing USDA Code Preview alongside the viewport.
 **Activation:** Command palette ("Split: Code + Viewport") or toolbar toggle. Bottom dock hides in this variant — its tabs (Node Graph, Bjorn, Console) move to a secondary tab bar within the code panel, or restore by collapsing the split.
 
 **Code panel features:**
+
 - Syntax-highlighted USDA with layer-colored file paths (e.g., `lighting.usd` paths in layer's teal)
 - Line numbers visible
 - Read-only in v0.15, editable in v0.16+
@@ -137,7 +140,7 @@ This is the core innovation. Three systems working together:
 Every layer gets an auto-assigned color from an 8-color palette:
 
 | Layer | Color | Hex |
-|-------|-------|-----|
+| ------- | ------- | ----- |
 | Layout | Teal | `#4ecdc4` |
 | Animation | Purple | `#9b59b6` |
 | FX | Orange | `#e67e22` |
@@ -146,6 +149,7 @@ Every layer gets an auto-assigned color from an 8-color palette:
 | Custom 1-3 | Blue/Green/Red | varies |
 
 These colors appear **everywhere** consistently:
+
 - **Scene tree**: Tiny colored dot (6px) next to each prim showing which layer has the strongest opinion
 - **Property inspector**: 3px colored left-border on each property row showing which layer set it
 - **Viewport**: Optional colored wireframe overlay showing layer ownership
@@ -158,7 +162,7 @@ These colors appear **everywhere** consistently:
 **Redundant encoding (critical for accessibility):** Never rely on color alone. Pair color with text weight so the system survives color vision deficiency (~8% of males):
 
 | State | Left Border Color | Text Weight | Text Color | When |
-|-------|-------------------|-------------|------------|------|
+| ------- | ------------------- | ------------- | ------------ | ------ |
 | Set on active layer | `secondary` (#5dd9d0) | **Bold** | `on-surface` (#e5e2e1) | Your changes |
 | From sublayer | `primary-container` (#4a9eff) | Regular | `on-surface-variant` (#c0c7d4) | Another layer's opinion |
 | Default/fallback | `outline-variant` (#414752) | Regular | `outline` (#8a919e) | No opinion, using USD default |
@@ -168,7 +172,7 @@ These colors appear **everywhere** consistently:
 **Human-readable labels:** Inspector shows friendly names with technical names in tooltip:
 
 | Show | Instead of | Tooltip |
-|------|-----------|---------|
+| ------ | ----------- | --------- |
 | Mesh | UsdGeomMesh | `UsdGeomMesh` |
 | Position | xformOp:translate | `xformOp:translate` |
 | Material | material:binding | `material:binding` |
@@ -178,7 +182,7 @@ These colors appear **everywhere** consistently:
 
 When you select a prim, the property inspector shows a **mini layer stack** per property:
 
-```
+```text
 Transform                    [gold dot] (12, 0.5, 3)
   └─ layers: lighting ■ layout ■ (2 opinions)
      click to expand ▸
@@ -191,7 +195,8 @@ Visibility                   [teal dot] inherited
 ```
 
 Expanding shows the full opinion stack:
-```
+
+```text
 Transform                    [gold dot] (12, 0.5, 3)  ← WINNING
   ├─ lighting.usd   ■ (12, 0.5, 3)    [strongest]
   ├─ layout.usd     ■ (10, 0, 3)      [weaker]
@@ -216,7 +221,7 @@ Nodes already have blue (composition) vs orange (operation) color coding from th
 **Required safeguards (must exist in ALL workspaces):**
 
 | Mechanism | Description | Location |
-|-----------|-------------|----------|
+| ----------- | ------------- | ---------- |
 | **Persistent status bar** | Layer name in layer's assigned color, always visible | Viewport bottom status bar |
 | **Layer-switch toast** | "Now editing: lighting.usd (42 opinions)" | Top-center overlay, 3s auto-dismiss |
 | **New-opinion guard** | Subtle amber icon when creating first opinion on a prim for this layer | Property row, left of value |
@@ -230,6 +235,7 @@ Nodes already have blue (composition) vs orange (operation) color coding from th
 **Bjorn** (following the Norse naming convention alongside Ivar renderer) is BIF's built-in asset browser and manager, accessible as a tab in the bottom dock alongside Node Graph, USDA Preview, and Console.
 
 **Core features:**
+
 - Browse and search USD assets on disk or from asset resolver paths
 - Drag-and-drop assets into the scene tree or node graph to create references/payloads
 - Thumbnail previews for `.usd`, `.usda`, `.usdc`, `.usdz` files
@@ -238,13 +244,15 @@ Nodes already have blue (composition) vs orange (operation) color coding from th
 - Integration with USD Asset Resolver for studio pipeline paths
 
 **Tab behavior:**
+
 - Lives in bottom dock as a peer tab to Node Graph, USDA Preview, Console
 - In Assembly workspace: frequently used (artists pulling in assets)
 - In Materials workspace: useful for browsing texture assets
 - In Lighting/Render: rarely needed, tab available but not default
 
 **Layout within tab:**
-```
+
+```text
 ┌──────────────────────────────────────────────────────┐
 │ [Path bar: /assets/characters/]  [Search...] [Filter]│
 ├──────────────┬───────────────────────────────────────┤
@@ -261,12 +269,14 @@ Nodes already have blue (composition) vs orange (operation) color coding from th
 ## 4. Progressive Disclosure (Three Tiers)
 
 ### Tier 1 — Always Visible (the "glance")
+
 - Scene tree with prim names + type icons + layer dots
 - Selected prim's key properties (transform, material, visibility)
 - Active layer indicator in viewport status bar
 - Render progress (thin bar, not a dialog)
 
 ### Tier 2 — One Click Away
+
 - Full property list for selected prim
 - Layer stack panel (tab in left dock)
 - Node graph (bottom dock tab)
@@ -274,6 +284,7 @@ Nodes already have blue (composition) vs orange (operation) color coding from th
 - Material thumbnail previews
 
 ### Tier 3 — Expert Mode
+
 - Opinion stack expansion per property
 - Composition arc visualization
 - Raw USD attribute metadata
@@ -285,7 +296,9 @@ Nodes already have blue (composition) vs orange (operation) color coding from th
 ## 5. Navigation: Command Palette + Breadcrumbs
 
 ### Command Palette (`Ctrl+P`)
+
 Fuzzy-search everything:
+
 - Prim paths: `/world/hero_char/body`
 - Commands: `assign material`, `toggle visibility`
 - Layers: `switch to lighting.usd`
@@ -295,6 +308,7 @@ Fuzzy-search everything:
 This is the #1 feature for reducing clutter — anything that would need a toolbar button or menu item is also in the palette.
 
 **Command Palette details (from lighting mockups):**
+
 - **Fuzzy search:** Typing "Lgt_" filters to matching prims/commands. Results show prim name, USD type (e.g., "USD LUX - RECT LIGHT"), and category badge.
 - **Result categories:** Each result has a type-specific icon and muted category label (USD Lux, Override, Render Settings).
 - **Mode tabs:** Bottom of palette: NAVIGATE, ENTER, EXECUTE — filter results by intent.
@@ -304,14 +318,19 @@ This is the #1 feature for reducing clutter — anything that would need a toolb
 - **Visible trigger:** "Search Assets... (Ctrl+P)" field in top bar teaches users the feature exists.
 
 ### Breadcrumb Bar (top of viewport)
+
 Shows current context:
-```
+
+```text
 shot_010.usd > lighting.usd (edit layer) > /world/hero_char (selected)
 ```
+
 Each segment is clickable (switch stage, switch layer, navigate to prim).
 
 ### Workspace Presets
+
 4 built-in layouts that reconfigure panels + payload policy:
+
 - **Assembly**: Node graph prominent, all layers visible, LoadAll, Bjorn tab available
 - **Lighting**: Viewport dominant, light properties, CameraFrustum loading, Console tab default
 - **Materials**: Material editor + lookdev viewport, material layer active, shader graph prominent
@@ -324,7 +343,8 @@ Switch via `Ctrl+1/2/3/4` or workspace tabs in top bar.
 ## 6. Visual Design Language
 
 ### Color Palette
-```
+
+```text
 Background:        #1c1c1c (not pure black — easier on eyes)
 Panel background:  #252525
 Panel border:      none — use 1px shadow gap (#111) between panels
@@ -340,7 +360,7 @@ Error:             #e74c3c
 ### Typography (refined from mockup review)
 
 | Element | Font | Size | Weight | Case | Spacing |
-|---------|------|------|--------|------|---------|
+| --------- | ------ | ------ | -------- | ------ | --------- |
 | Workspace tabs | Manrope | 24px | 700 | UPPERCASE | 0.05em |
 | Panel section headers | Inter | 11px | 700 | UPPERCASE | 0.05em |
 | Property labels | Inter | 12px | 400 | Normal | 0 |
@@ -352,6 +372,7 @@ Error:             #e74c3c
 **Key:** Workspace tabs must be visibly larger than panel section headers — establishes navigation hierarchy.
 
 ### Spacing & Shape
+
 - 6px border radius on input fields, buttons, cards
 - 8px padding inside panels
 - 4px gap between list items
@@ -361,7 +382,7 @@ Error:             #e74c3c
 ### Contrast Corrections (from mockup review)
 
 | Element | Minimum Color | Ratio vs Background |
-|---------|--------------|---------------------|
+| --------- | -------------- | --------------------- |
 | Status bar text | #8a919e | 4.5:1 (AA pass) |
 | Inactive layer items | #8a919e + regular weight | 4.5:1 (AA pass) |
 | Inactive bottom dock tabs | #8a919e | 4.5:1 (AA pass) |
@@ -372,6 +393,7 @@ Error:             #e74c3c
 **Support global UI scale** (100%, 125%, 150%) for 4K displays and accessibility.
 
 ### Micro-interactions
+
 - Panel collapse: 150ms ease-out slide
 - Selection highlight: 100ms fade-in
 - Layer dot color: instant (no animation — it's state, not action)
@@ -383,7 +405,8 @@ Error:             #e74c3c
 ## 7. Canonical Component Specs
 
 ### Layer Stack Widget (left dock tab)
-```
+
+```text
 ┌─ Layers ──────────────────────┐
 │                               │
 │  ■ lighting.usd    [eye] [✎] │  ← active (highlighted)
@@ -395,6 +418,7 @@ Error:             #e74c3c
 │  [+ Add Layer]                │
 └───────────────────────────────┘
 ```
+
 - Colored squares match the layer palette
 - Eye icon = mute/unmute (like Photoshop)
 - Pencil icon = set as edit target
@@ -402,14 +426,18 @@ Error:             #e74c3c
 - Drag reorder changes sublayer strength (with confirmation)
 
 ### Viewport Status Bar (bottom of viewport)
-```
+
+```text
 lighting.usd (edit) │ 12,847 tris │ 1.2M instances │ Ivar: 64 spp │ ██████░░ 
 ```
+
 Single line. No chrome. Just the facts.
 
 ### Material Preview Cards
+
 In property inspector when a material is selected:
-```
+
+```text
 ┌──────────────────────┐
 │  ┌──────┐            │
 │  │ orb  │  hero_wet  │
@@ -422,13 +450,14 @@ In property inspector when a material is selected:
 │  [Edit Material ▸]   │
 └──────────────────────┘
 ```
+
 Thumbnail orb render + key params. Click to expand full material editor.
 **Note (from review):** Material preview orb belongs in the inspector panel (above parameters), NOT floating in the viewport. Floating orb creates dual-attention conflict with the scene context.
 
 ### Scene Tree Items (canonical spec)
 
 | Property | Value |
-|----------|-------|
+| ---------- | ------- |
 | Row height | 22px (visual), 24px click target via padding |
 | Indentation | 16px per level |
 | Icon size | 14px, USD prim-type specific |
@@ -443,7 +472,7 @@ Thumbnail orb render + key params. Click to expand full material editor.
 ### Node Graph Nodes (canonical spec)
 
 | Property | Value |
-|----------|-------|
+| ---------- | ------- |
 | Header height | 28px |
 | Min width | 140px, snaps to 20px grid |
 | Header colors | Composition=#4a9eff, Operation=#e8a838, Material=#9b59b6, Render=#5cb85c, Primitive=#8a919e |
@@ -460,7 +489,7 @@ Thumbnail orb render + key params. Click to expand full material editor.
 ### Property Rows (type-driven formatting)
 
 | USD Type | Widget | Min Width |
-|----------|--------|-----------|
+| ---------- | -------- | ----------- |
 | GfVec3f/d (transform) | 3x input fields (X,Y,Z) | 240px |
 | float/double | Slider + value field | 200px |
 | bool | Toggle switch | 120px |
@@ -474,7 +503,7 @@ All rows: 3px left-border (opinion color), `surface_container_lowest` input bg, 
 ### Bottom Dock Tabs
 
 | Property | Value |
-|----------|-------|
+| ---------- | ------- |
 | Tab bar height | 32px |
 | Tab labels | Inter 10px, bold, UPPERCASE, 0.05em spacing |
 | Active tab | `surface_container` bg, `primary` text, 2px top border |
@@ -485,7 +514,7 @@ All rows: 3px left-border (opinion color), `surface_container_lowest` input bg, 
 ### Icon Sidebar (left rail)
 
 | Property | Value |
-|----------|-------|
+| ---------- | ------- |
 | Width | 48px collapsed, 160px expanded |
 | Icons | 32x32px touch target |
 | Active icon | `primary` color, `surface_container_high` bg |
@@ -549,6 +578,7 @@ Each workspace reconfigures panels, default tabs, and payload policies.
 - **Status bar visible** — "Active Layer: review.usd" always shown
 
 **Render Catalog behavior:**
+
 - Each capture creates a numbered slot with thumbnail, name, timestamp, resolution
 - Slots selectable for A/B comparison ("Compare A/B" button)
 - Right-click slot for export, rename, delete
@@ -606,7 +636,7 @@ Things no existing DCC does well that BIF can own:
 ## 12. Implementation Phasing
 
 | Idea | Target Release | Notes |
-|------|---------------|-------|
+| ------ | --------------- | ------- |
 | Layer color coding | v0.14 (egui proof-of-concept) → v0.15 (Qt full) | Core innovation — start early |
 | Opinion attribution (redundant encoding) | v0.14 (basic) → v0.15 (full with bold/regular) | BIF's key differentiator |
 | Opinion stack expansion | v0.14 (basic) → v0.16 (full hover) | Needs FFI for `GetPrimStack` |
@@ -631,7 +661,7 @@ Things no existing DCC does well that BIF can own:
 Status after Stitch batch 01 — 7 of 11 covered, 4 remaining:
 
 | Priority | Mockup | Status |
-|----------|--------|--------|
+| ---------- | -------- | -------- |
 | **P0** | Opinion stack expanded state | **COVERED** — `assemble_bjorn_opinion_stack`, `assemble_vertical_code_split_opinion_stack` |
 | **P0** | Active layer indicator in all 4 workspaces | **COVERED** — visible in all batch 01 mockups (gold/amber accent bar) |
 | **P1** | Command Palette overlay | **COVERED** — `lighting_command_palette_updated`, `light_command_palette_code_preview` |
@@ -649,18 +679,21 @@ Status after Stitch batch 01 — 7 of 11 covered, 4 remaining:
 ## 14. Qt Implementation Notes
 
 ### Straightforward
+
 - Shadow gaps: `QSplitter::setHandleWidth(2)` + handle styled to `#0e0e0e`
 - Gradient sliders: `QSlider::groove` stylesheet supports `qlineargradient`
 - Surface hierarchy: Single Qt stylesheet constants file
 - Font bundling: Bundle JetBrains Mono, fall back to Cascadia Code → Consolas → system mono
 
 ### Moderate Effort
+
 - Node graph: `QGraphicsView` + `QGraphicsScene`, `SmartViewportUpdate`, LOD via `levelOfDetailFromTransform()`. Budget 2-3 weeks.
 - Workspace switching: Save/restore `QSplitter` sizes per workspace. Start instant, add 200ms animation later.
 - Scene tree virtualization: Only render visible rows. Essential for 100K+ prim stages.
 - Bjorn: `QTreeView` (folders) + `QListView` with icon mode (thumbnails). `QFileSystemModel` for disk browsing, custom model for asset resolver paths.
 
 ### Complex / Progressive Enhancement
+
 - Glassmorphism blur: Offscreen buffer + blur compositing. Fall back to 85% opacity solid.
 - USDA code preview: `QScintilla` or `QPlainTextEdit` with custom syntax highlighter. Layer-aware coloring needs per-layer highlight rules.
 - Animated transitions: `QTimer`-based interpolation on `QSplitter::setSizes()`.
@@ -674,7 +707,8 @@ Status after Stitch batch 01 — 7 of 11 covered, 4 remaining:
 Full-screen modal shown on first launch or when no stage is open. Replaces the workspace entirely.
 
 ### Layout
-```
+
+```text
 ┌──────────────────────────────────────────────────┐
 │                                                  │
 │                     BIF                          │
@@ -699,7 +733,7 @@ Full-screen modal shown on first launch or when no stage is open. Replaces the w
 ### Spec
 
 | Element | Details |
-|---------|---------|
+| --------- | --------- |
 | Headline | "BIF" — Manrope, ~48px, 700 weight |
 | Subtitle | "PROFESSIONAL USD ORCHESTRATION" — uppercase, letter-spaced, `on-surface-variant` |
 | Action cards | Two side-by-side on `surface_container` bg, `md` radius. Icon + title + description. Hover: elevate to `surface_container_high` |
@@ -712,6 +746,7 @@ Full-screen modal shown on first launch or when no stage is open. Replaces the w
 | Background | `surface` (#131313) with subtle technical grid pattern (40px, 2% opacity white) |
 
 ### Design notes
+
 - Cards follow no-line rule — tonal shift, no borders
 - Headline is the largest text in the entire application
 - This screen doubles as the "no stage open" state — always available via File > Close Stage

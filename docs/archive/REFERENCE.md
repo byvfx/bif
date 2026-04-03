@@ -41,6 +41,7 @@ render_pass.draw_indexed(0..self.num_indices, 0, 0..visible_count);
 ```
 
 **Key Files:**
+
 - `crates/bif_viewport/src/lib.rs` - GPU instancing
 - `crates/bif_viewport/src/shaders/basic.wgsl` - Per-instance transforms
 
@@ -77,6 +78,7 @@ unsafe impl Send for UsdStage {}
 ```
 
 **Key Files:**
+
 - `cpp/usd_bridge/` - C++ FFI bridge
 - `crates/bif_core/src/usd/cpp_bridge.rs` - Rust wrapper
 - `crates/bif_core/build.rs` - CMake automation
@@ -130,6 +132,7 @@ let ivar_transforms = if self.use_multi_draw {
 ```
 
 **Key Files:**
+
 - `crates/bif_viewport/src/lib.rs` - Multi-draw rendering
 - `crates/bif_viewport/src/mesh_data.rs` - `combine_with_transforms()`
 
@@ -179,6 +182,7 @@ for range in &self.mesh_data.mesh_ranges {
 ```
 
 **Key Files:**
+
 - `crates/bif_core/src/scene.rs` - AnimatedTransform
 - `crates/bif_viewport/src/mesh_data.rs` - MeshRange for multi-mesh
 - `cpp/usd_bridge/usd_bridge.cpp` - Time-sampled vertex queries
@@ -224,6 +228,7 @@ fn usd_bridge_get_mesh(...) {
 ```
 
 **Key Files:**
+
 - `crates/bif_viewport/src/lib.rs` - Background scene building
 - `cpp/usd_bridge/usd_bridge.cpp` - Pre-caching pattern
 
@@ -264,6 +269,7 @@ let camera = IvarCamera::from_usd_transform(transform, fov, aspect);
 ```
 
 **Key Files:**
+
 - `crates/bif_viewport/src/batch_render.rs` - Batch render loop
 - `crates/bif_renderer/src/exr_writer.rs` - EXR output with AOVs
 - `cpp/usd_bridge/usd_bridge.cpp` - `usd_bridge_get_camera_xform_at_time()`
@@ -292,6 +298,7 @@ pub fn is_camera_locked(&self) -> bool {
 ```
 
 **Timeline UI with camera dropdown:**
+
 ```rust
 egui::ComboBox::from_id_salt("viewport_camera")
     .selected_text(self.viewport_camera_source.display_name())
@@ -316,6 +323,7 @@ egui::ComboBox::from_id_salt("viewport_camera")
 ```
 
 **Camera control locking in main.rs:**
+
 ```rust
 // Wrap all camera controls
 if !renderer.is_camera_locked() {
@@ -324,6 +332,7 @@ if !renderer.is_camera_locked() {
 ```
 
 **Key Files:**
+
 - `crates/bif_viewport/src/lib.rs` - Camera state, dropdown UI, sync
 - `crates/bif_viewer/src/main.rs` - Lock check for controls
 
@@ -367,6 +376,7 @@ impl From<&bif_core::Material> for DisneyBSDF {
 ```
 
 **Key Files:**
+
 - `cpp/usd_bridge/usd_bridge.cpp` - Material extraction
 - `crates/bif_core/src/scene.rs` - Material struct
 - `crates/bif_renderer/src/disney.rs` - Disney BSDF
@@ -414,6 +424,7 @@ fn srgb_to_linear(srgb: u8) -> f32 {
 ```
 
 **Key Files:**
+
 - `crates/bif_viewport/src/texture_loader.rs` - GPU texture upload
 - `crates/bif_core/src/texture.rs` - TextureCache with OIIO support
 
@@ -435,7 +446,8 @@ std::cout << "[USD_BRIDGE] Operation: " << time_ms << "ms" << std::endl;
 ```
 
 **Output breakdown:**
-```
+
+```text
 [USD_BRIDGE] Opening stage: scene.usd
 [USD_BRIDGE]   Resolver context: 0ms
 [USD_BRIDGE]   UsdStage::Open(): 127ms
@@ -452,6 +464,7 @@ std::cout << "[USD_BRIDGE] Operation: " << time_ms << "ms" << std::endl;
 **Key lesson:** Console I/O is extremely slow on Windows. Per-item logging caused 23x slowdown (117s → 5s after removal).
 
 **Key Files:**
+
 - `cpp/usd_bridge/usd_bridge.cpp` - C++ timing with `<chrono>`
 - `crates/bif_core/src/usd/loader.rs` - Rust timing with `std::time::Instant`
 
@@ -574,7 +587,7 @@ pxr = "25.11"  # via vcpkg
 
 ## File Structure
 
-```
+```text
 bif/
 ├── crates/
 │   ├── bif_math/       # Vec3, Ray, Aabb, Camera, Transform, Frustum
@@ -593,6 +606,7 @@ bif/
 ---
 
 **See Also:**
+
 - [MILESTONES.md](MILESTONES.md) - Complete history
 - [SESSION_HANDOFF.md](SESSION_HANDOFF.md) - Current status
 - [ARCHITECTURE.md](ARCHITECTURE.md) - Design principles

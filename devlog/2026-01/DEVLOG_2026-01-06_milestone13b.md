@@ -15,10 +15,12 @@ Implemented Nuke-style node graph for scene assembly and upgraded the Scene Brow
 ~400 LOC using egui-snarl 0.5:
 
 **Node Types:**
+
 - `UsdRead` - File path + Browse button + Load status
 - `IvarRender` - SPP slider + Render button
 
 **Features:**
+
 - Type-safe pin connections (Scene→Scene, Image→Image)
 - `NodeGraphEvent` enum for parent communication
 - Native file dialog via `rfd` crate
@@ -26,6 +28,7 @@ Implemented Nuke-style node graph for scene assembly and upgraded the Scene Brow
 - Context menu for adding nodes
 
 **Events:**
+
 ```rust
 pub enum NodeGraphEvent {
     LoadUsdFile(String),
@@ -58,6 +61,7 @@ Redesigned table layout with columns:
 ### 4. Empty Viewport Startup
 
 Modified `main.rs` to start with empty viewport when no CLI args:
+
 - No `--usda`/`--usd` flag → empty renderer
 - User adds USD Read node → Browse → loads scene
 
@@ -97,6 +101,7 @@ Node events stored in `egui::Context` data and processed after `egui_ctx.run()` 
 ## Tests
 
 All 11 tests passing:
+
 - `test_node_creation` - Node types and pin counts
 - `test_pin_types` - Pin type matching
 - `test_node_graph_state` - Default nodes

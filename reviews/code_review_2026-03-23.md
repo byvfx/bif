@@ -18,6 +18,7 @@ The most significant findings are in the **unsafe FFI boundaries** (Embree and U
 pain as the project grows.
 
 **Findings by severity:**
+
 - CRITICAL: 3 (2 memory safety, 1 production panic)
 - IMPORTANT: 12
 - NICE-TO-HAVE: 8
@@ -39,6 +40,7 @@ propagates through the renderer's accumulated color buffer.
 
 The `ray_color` function at `crates/bif_renderer/src/renderer.rs:274-282` has a NaN guard
 on throughput but **not** on the `accumulated` color returned from a cache hit at line 188:
+
 ```rust
 accumulated += throughput * cached;  // cached could be NaN from torn read
 ```
@@ -47,6 +49,7 @@ accumulated += throughput * cached;  // cached could be NaN from torn read
 
 **Suggestion:** Add a finite-value guard after cache lookup, same pattern as the throughput
 guard. Something like:
+
 ```rust
 if let Some(cached) = c.lookup(rec.p, rec.normal) {
     if cached.x.is_finite() && cached.y.is_finite() && cached.z.is_finite() {
@@ -92,6 +95,7 @@ this invariant silently.
 
 **Suggestion:** Add a comment documenting the field-order invariant, or explicitly null out
 the Embree pointers before releasing:
+
 ```rust
 // SAFETY: Embree scenes must be released before the vertex/index data they reference.
 // Rust drops fields in declaration order AFTER this Drop impl runs, which is correct
@@ -184,6 +188,7 @@ concurrently.
 **Category:** Robustness
 
 Pattern:
+
 ```rust
 if reuse_accum {
     self.accumulation_buffer.as_mut().unwrap().fill(Vec3::ZERO);
@@ -247,6 +252,7 @@ subsequent calculations produce NaN. The `get_pixel` fallback handles OOB indice
 `.get()` but NaN indices from `floor()` cast to u32 would wrap to large values.
 
 **Suggestion:** Add a NaN guard at the top of `sample()`:
+
 ```rust
 if !u.is_finite() || !v.is_finite() { return Vec3::new(1.0, 0.0, 1.0); }
 ```
@@ -276,6 +282,7 @@ Crease indices are set as pairs (`byte_stride = 8`), but there's no validation t
 `crease_indices.len() / 2`. Inconsistent data from USD could cause Embree to read OOB.
 
 **Suggestion:** Add length validation before passing to Embree:
+
 ```rust
 if sd.crease_indices.len() % 2 != 0 {
     log::warn!("Odd number of crease indices, skipping creases");
@@ -435,6 +442,7 @@ These patterns are worth calling out as well-executed:
 ## Summary of Recommendations
 
 **Immediate (before next milestone):**
+
 1. Add NaN guard after radiance cache lookup (C1)
 2. Document Embree Drop field-order invariant (C2)
 3. Replace unwraps with pattern matching in node graph (C3)

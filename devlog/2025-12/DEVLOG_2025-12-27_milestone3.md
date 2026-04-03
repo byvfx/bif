@@ -5,6 +5,7 @@
 **Status:** ✅ Complete
 
 ## Overview
+
 Implemented basic 3D rendering with a triangle, WGSL shaders, and a camera system with view-projection matrices. The triangle now renders through a proper perspective camera pipeline.
 
 ## Objectives
@@ -19,11 +20,13 @@ Implemented basic 3D rendering with a triangle, WGSL shaders, and a camera syste
 ## Technical Implementation
 
 ### 1. WGSL Shader Creation
+
 **File:** `crates/bif_render/src/shaders/basic.wgsl`
 
 Created a complete shader with:
 
 - **Camera Uniform Binding:**
+
   ```wgsl
   struct CameraUniform {
       view_proj: mat4x4<f32>,
@@ -41,9 +44,11 @@ Created a complete shader with:
   - Creates smooth RGB gradient across triangle
 
 ### 2. Camera System
+
 **File:** `crates/bif_math/src/camera.rs`
 
 Implemented full 3D camera with:
+
 ```rust
 pub struct Camera {
     position: Vec3,
@@ -74,9 +79,11 @@ pub struct Camera {
 **Tests:** 4 passing tests for creation, view matrix, projection matrix, and aspect ratio updates.
 
 ### 3. Uniform Buffer Integration
+
 **File:** `crates/bif_render/src/lib.rs`
 
 Added uniform buffer system:
+
 ```rust
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
@@ -94,6 +101,7 @@ struct CameraUniform {
 - Updated in `resize()` when aspect ratio changes
 
 ### 4. Render Pipeline Updates
+
 Modified pipeline to include:
 
 - Bind group layout for camera uniform at group 0
@@ -101,6 +109,7 @@ Modified pipeline to include:
 - Proper matrix upload to GPU before rendering
 
 **Vertex Buffer:**
+
 ```rust
 const VERTICES: &[Vertex] = &[
     Vertex { position: [0.0, 0.5, 0.0], color: [1.0, 0.0, 0.0] },   // Top (red)
@@ -141,16 +150,19 @@ const VERTICES: &[Vertex] = &[
 ## Issues Encountered
 
 ### 1. Missing Dependency
+
 **Error:** `winit` not in `bif_render` dependencies  
 **Solution:** Added `winit = { workspace = true }` to `bif_render/Cargo.toml`
 
 ### 2. Verbose wgpu Logs
+
 **Issue:** Terminal flooded with `Device::maintain` logs  
 **Solution:** Accepted as normal for development (can filter with `RUST_LOG` in production)
 
 ## Post-Milestone: Crate Rename
 
 ### Renamed bif_render → bif_viewport
+
 **Motivation:** Clarify distinction between real-time GPU viewport and future CPU path tracer
 
 **Changes Made:**
@@ -179,6 +191,7 @@ This matches industry tools like Maya/Houdini where viewport ≠ final render.
 - **Rendering:** 60 FPS (VSync enabled)
 
 ## Visual Result
+
 ✅ **Triangle renders successfully** with:
 
 - Dark blue background (0.1, 0.2, 0.3)
@@ -209,7 +222,8 @@ This matches industry tools like Maya/Houdini where viewport ≠ final render.
    - Z-fighting prevention
 
 ## Commit
-```
+
+```text
 Complete Milestone 3: Add triangle rendering with camera system
 
 - Create WGSL shaders with camera uniform binding

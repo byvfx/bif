@@ -11,6 +11,7 @@ Implement USDA (ASCII) file parsing to load `UsdGeomMesh` and `UsdGeomPointInsta
 ## Approach
 
 Chose **Option B: Custom USDA parser** over USD C++ bindings for simplicity:
+
 - No C++ dependencies or build complexity
 - Sufficient for geometry-only scope (Milestone 9)
 - Line-by-line parsing with TODO for nom/pest robustness later
@@ -53,11 +54,13 @@ pub struct Instance {
 ### USD Parser (`bif_core/usd/`)
 
 Modular structure:
+
 - `types.rs` - Intermediate USD prim representations
 - `parser.rs` - Line-by-line USDA tokenizer
 - `loader.rs` - High-level `load_usda(path) -> Result<Scene>`
 
 Supported syntax:
+
 ```usda
 def Mesh "Cube" {
     point3f[] points = [(0, 0, 0), (1, 0, 0), ...]
@@ -97,6 +100,7 @@ impl Mesh {
 ### Test Files
 
 Created three test USDA files in `assets/`:
+
 - `test_cube.usda` - Unit cube with explicit normals
 - `test_grid.usda` - 3x3 PointInstancer (9 instances of 1 prototype)
 - `test_transform.usda` - Hierarchical Xform transforms
@@ -107,7 +111,7 @@ Created three test USDA files in `assets/`:
 
 Initial parser found `[` in `point3f[]` type declaration instead of value array:
 
-```
+```text
 point3f[] points = [(0, 0, 0), ...]
         ^-- Parser found this first!
 ```
@@ -141,13 +145,14 @@ primitive: wgpu::PrimitiveState {
 **Issue:** Houdini vertex normals (per-face-corner) can cause inverted shading in BIF.
 
 **Solution:** Use **point normals** in Houdini before export:
+
 - Attribute Promote SOP: `N` from Vertex → Point, Average method
 
 **Documentation:** Created `HOUDINI_EXPORT.md` with export best practices.
 
 ## Test Results
 
-```
+```text
 running 15 tests
 test mesh::tests::test_bounds_computation ... ok
 test mesh::tests::test_compute_normals ... ok
@@ -157,7 +162,8 @@ test usd::parser::tests::test_parse_simple_mesh ... ok
 ```
 
 Example output:
-```
+
+```text
 $ cargo run --example load_usda -- assets/test_grid.usda
 
 === Scene: assets/test_grid.usda ===
@@ -208,6 +214,7 @@ Total triangles: 108
    - `--help` for usage information
 
 **Usage:**
+
 ```bash
 cargo run -p bif_viewer -- --usda assets/test_grid.usda
 cargo run -p bif_viewer -- assets/test_cube.usda
@@ -218,7 +225,7 @@ cargo run -p bif_viewer -- assets/test_cube.usda
 **Completed:**
 
 1. **Grey Placeholder Material** - Headlight-style diffuse lighting
-   - Base grey color `(0.5, 0.5, 0.5)` 
+   - Base grey color `(0.5, 0.5, 0.5)`
    - View-space normal for headlight effect (surfaces facing camera are brightest)
    - Ambient + diffuse lighting in fragment shader
 

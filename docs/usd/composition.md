@@ -54,6 +54,7 @@ prim.GetReferences().AddInternalReference('/OtherPrim')  # same stage
 ```
 
 Key behaviors:
+
 - If no target prim path specified, uses the referenced layer's `defaultPrim`
 - Multiple references on one prim: `prepend` (stronger) vs `append` (weaker)
 - Opinions in the referencing layer (Local) are stronger than referenced opinions

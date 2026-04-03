@@ -1,6 +1,7 @@
 # BIF Material Editor Design
 
 ## Status
+
 - **Author:** ArchitectUX
 - **Date:** 2026-03-30
 - **Target milestone:** v0.21.0 (MaterialX Authoring), with foundations in v0.16.0 (Edit Operations)
@@ -18,7 +19,7 @@ Materials are a **different domain**. Mixing material nodes into the scene graph
 
 **Decision: Separate material graph, same framework.**
 
-```
+```text
 Scene Graph (existing)          Material Graph (new)
 ========================        ========================
 UsdRead -> Xform -> Export      Texture -> OpenPBR -> MaterialOut
@@ -28,7 +29,7 @@ HdriEnvironment -> IvarRender   Image -> Ramp -> MtlX Standard -> MaterialOut
 
 The material graph lives in its own tab in the bottom dock, alongside the scene node graph:
 
-```
+```text
 ┌────────────────┬──────────────────────────────────┬───────────────┐
 │  SCENE TREE    │         V I E W P O R T          │  PROPERTIES   │
 │  + Layers      │                                  │  + Material   │
@@ -53,7 +54,7 @@ How you get to the material editor:
 
 Every material edit authors opinions on the **active edit target layer**. The material graph is a visual editor for UsdShade prims — not a parallel representation.
 
-```
+```text
 Material Graph Node          USD Prim Created
 ========================     ========================
 MaterialOut "hero_wet"   ->  /Materials/hero_wet  (UsdShadeMaterial)
@@ -77,7 +78,7 @@ Layer color coding applies: if you're editing on the "lookdev" layer (tagged gre
 
 When you select a material, the right-panel properties inspector shows a **compact parameter sheet**. No graph needed for simple materials.
 
-```
+```text
 ┌─────────────────────────────┐
 │  ┌───────┐                  │
 │  │  orb  │  hero_wet        │
@@ -119,6 +120,7 @@ When you select a material, the right-panel properties inspector shows a **compa
 ```
 
 **Interaction details:**
+
 - Sections auto-expand when non-default values are present
 - Texture slots: drag from asset browser or click folder icon to browse
 - Color swatches: click opens a floating HSV picker with hex input
@@ -131,7 +133,7 @@ When you select a material, the right-panel properties inspector shows a **compa
 
 Full node graph in the bottom dock tab. Same snarl-based framework as the scene graph, different node types and pin types.
 
-```
+```text
 ┌──────────────────────────────────────────────────────────────────┐
 │  Material: hero_wet [v]   Layer: lookdev [*]   [+ Node]  [Fit]  │
 │ ─────────────────────────────────────────────────────────────────│
@@ -164,6 +166,7 @@ Full node graph in the bottom dock tab. Same snarl-based framework as the scene 
 ```
 
 **Key differences from scene graph:**
+
 - Material-specific pin types (Color3f, Float, Normal3f, Token, Point2f) with distinct colors
 - Shader nodes show inline parameter values (not just in property inspector)
 - MaterialOut node has an embedded preview orb
@@ -174,7 +177,7 @@ Full node graph in the bottom dock tab. Same snarl-based framework as the scene 
 
 The two modes are **views of the same data**, not separate systems. The parameter sheet is a flattened view of the graph. Editing a slider in the parameter sheet updates the corresponding node parameter in the graph (and vice versa).
 
-```
+```text
 Parameter Sheet                  Node Graph (equivalent)
 ===================              ==========================
 Base Color: #8B4513          <-> OpenPBR node, base_color input = (0.545, 0.271, 0.075)
@@ -197,7 +200,7 @@ When you connect a texture to a parameter in the graph, the parameter sheet show
 
 A single UsdShadeMaterial can have multiple shader outputs for different render contexts:
 
-```usda
+```text
 def Material "hero_wet" {
     # BIF's native renderer uses OpenPBR
     token outputs:bif:surface.connect = </Materials/hero_wet/OpenPBR.outputs:surface>
@@ -215,7 +218,7 @@ BIF renders with OpenPBR (via Ivar path tracer). UsdPreviewSurface is exported f
 ### Shading Model Dropdown Behavior
 
 | Action | Result |
-|--------|--------|
+| -------- | -------- |
 | Select "OpenPBR" | Shows OpenPBR params. Creates/edits `outputs:bif:surface` shader. |
 | Select "UsdPreviewSurface" | Shows UsdPreview params. Creates/edits `outputs:surface` shader. |
 | Select "MaterialX" | Unlocks full node graph. Creates/edits `outputs:mtlx:surface` network. |
@@ -224,7 +227,7 @@ BIF renders with OpenPBR (via Ivar path tracer). UsdPreviewSurface is exported f
 ### Auto-Conversion Table
 
 | OpenPBR | UsdPreviewSurface | Notes |
-|---------|-------------------|-------|
+| --------- | ------------------- | ------- |
 | base_color | diffuseColor | Direct 1:1 |
 | base_metalness | metallic | Direct 1:1 |
 | specular_roughness | roughness | Direct 1:1 |
@@ -245,7 +248,7 @@ Conversion dialog: "Converting OpenPBR to UsdPreviewSurface. 3 parameters have n
 #### A. Shader Nodes (output: surface token)
 
 | Node | info:id | Parameters | Use |
-|------|---------|------------|-----|
+| ------ | --------- | ------------ | ----- |
 | **OpenPBR Surface** | `OpenPBR` | base_weight, base_color, base_metalness, base_diffuse_roughness, specular_weight, specular_color, specular_roughness, specular_ior, specular_roughness_anisotropy, coat_weight, coat_color, coat_roughness, coat_ior, fuzz_weight, fuzz_color, fuzz_roughness, subsurface_weight, emission_luminance, emission_color, transmission_weight, geometry_opacity | BIF native |
 | **UsdPreviewSurface** | `UsdPreviewSurface` | diffuseColor, emissiveColor, useSpecularWorkflow, specularColor, metallic, roughness, clearcoat, clearcoatRoughness, opacity, opacityThreshold, ior, normal, displacement, occlusion | USD standard |
 | **MtlX Standard Surface** | `ND_standard_surface_surfaceshader` | base, base_color, diffuse_roughness, metalness, specular, specular_color, specular_roughness, specular_IOR, specular_anisotropy, specular_rotation, transmission, transmission_color, transmission_depth, subsurface, subsurface_color, subsurface_radius, subsurface_scale, sheen, sheen_color, sheen_roughness, coat, coat_color, coat_roughness, coat_IOR, emission, emission_color, thin_walled | MaterialX interchange |
@@ -253,7 +256,7 @@ Conversion dialog: "Converting OpenPBR to UsdPreviewSurface. 3 parameters have n
 #### B. Texture Nodes (output: color/float/normal channels)
 
 | Node | info:id | Inputs | Outputs | Use |
-|------|---------|--------|---------|-----|
+| ------ | --------- | -------- | --------- | ----- |
 | **UsdUVTexture** | `UsdUVTexture` | file (asset), st (float2), wrapS/wrapT (token), fallback, scale, bias | rgb (color3f), r/g/b/a (float) | Texture sampling |
 | **PrimvarReader Float2** | `UsdPrimvarReader_float2` | varname (token), fallback | result (float2) | Read UVs |
 | **PrimvarReader Float** | `UsdPrimvarReader_float` | varname (token), fallback | result (float) | Read float primvar |
@@ -263,7 +266,7 @@ Conversion dialog: "Converting OpenPBR to UsdPreviewSurface. 3 parameters have n
 #### C. MaterialX Pattern Nodes (v0.21.0+, full node graph mode only)
 
 | Node | Purpose | Outputs |
-|------|---------|---------|
+| ------ | --------- | --------- |
 | **MtlX Image** | Texture with colorspace | out (color3/float) |
 | **MtlX Constant** | Constant value | out |
 | **MtlX Multiply** | A * B | out |
@@ -279,7 +282,7 @@ Conversion dialog: "Converting OpenPBR to UsdPreviewSurface. 3 parameters have n
 #### D. Utility Nodes
 
 | Node | Purpose | Outputs |
-|------|---------|---------|
+| ------ | --------- | --------- |
 | **MaterialOut** | Terminal node, connects shader to material | -- (sink) |
 | **Color Constant** | Pick a color value | out (color3f) |
 | **Float Constant** | Pick a float value | out (float) |
@@ -290,7 +293,7 @@ Conversion dialog: "Converting OpenPBR to UsdPreviewSurface. 3 parameters have n
 New `MaterialPinType` enum (separate from scene graph's `PinType`):
 
 | Pin Type | Color | Shape | Example |
-|----------|-------|-------|---------|
+| ---------- | ------- | ------- | --------- |
 | Surface | `#E8E8E8` (white) | Diamond | Shader output -> MaterialOut |
 | Color3f | `#E8D44D` (yellow) | Circle | base_color, diffuseColor |
 | Float | `#A0A0A0` (gray) | Circle | roughness, metallic, opacity |
@@ -310,7 +313,7 @@ These colors follow the Blender/Substance convention that artists already know.
 
 The sleekest approach is a **lookdev preview sphere** that floats in the main viewport — not trapped inside a tiny panel or node thumbnail.
 
-```
+```text
 ┌──────────────────────────────────────────────────┐
 │                                                  │
 │                  V I E W P O R T                 │
@@ -330,6 +333,7 @@ The sleekest approach is a **lookdev preview sphere** that floats in the main vi
 ```
 
 **Behavior:**
+
 - Appears when a material is selected (in any panel — browser, graph, properties)
 - Floats in bottom-right corner of viewport, above the bottom dock
 - Default: 192x192px sphere on neutral gray/checker background
@@ -343,7 +347,7 @@ The sleekest approach is a **lookdev preview sphere** that floats in the main vi
 Material preview uses Ivar (existing CPU path tracer) with optimizations for responsiveness:
 
 | Interaction | Preview Behavior |
-|-------------|-----------------|
+| ------------- | ----------------- |
 | Parameter drag (in progress) | 1 SPP, immediate (~16ms for 192px sphere) |
 | Parameter release | Progressive refinement: 1 -> 4 -> 16 -> 64 SPP |
 | Texture change | Show loading spinner, then progressive refinement |
@@ -384,7 +388,7 @@ The MaterialOut node thumbnail uses the same render pipeline, downsampled. It up
 
 ### 5A. Full "Materials" Workspace
 
-```
+```text
 ┌────────────────┬──────────────────────────────────┬───────────────────────┐
 │ SCENE TREE     │                                  │ MATERIAL PROPERTIES   │
 │ ───────────    │      V I E W P O R T             │ ─────────────────     │
@@ -428,7 +432,7 @@ The MaterialOut node thumbnail uses the same render pipeline, downsampled. It up
 
 For an artist who just needs to tweak a material — no graph at all:
 
-```
+```text
 ┌────────────────┬──────────────────────────────────┬───────────────────────┐
 │ SCENE TREE     │                                  │ MATERIAL PROPERTIES   │
 │                │      V I E W P O R T             │                       │
@@ -455,7 +459,7 @@ For an artist who just needs to tweak a material — no graph at all:
 
 ### 5C. MaterialX Full Graph (Power Mode)
 
-```
+```text
 ┌────────────────┬──────────────────────────────────┬───────────────────────┐
 │ SCENE TREE     │         V I E W P O R T          │ NODE PROPERTIES       │
 │                │                                  │ ─────────────────     │
@@ -497,7 +501,7 @@ For an artist who just needs to tweak a material — no graph at all:
 
 ### 5D. Material Assignment Flow
 
-```
+```text
 Step 1: Select geometry in viewport or scene tree
 Step 2: Right panel shows geometry properties with "Material" section:
 
@@ -541,7 +545,7 @@ Click the texture slot button `[base_color.exr]` or drag-drop a file:
 3. The texture slot shows the filename; `[x]` button disconnects and removes the shader prim
 4. If the file is a UDIM pattern (`base_color.<UDIM>.exr`), BIF detects it and sets the asset path accordingly
 
-```
+```text
 User action:                    USD authored:
 ========================        ========================
 Drag "base_color.exr"          def Shader "base_color_tex" {
@@ -559,7 +563,7 @@ Drag "base_color.exr"          def Shader "base_color_tex" {
 
 When working in the full node graph, texture nodes expose all controls:
 
-```
+```text
 ┌─────────────────────────┐
 │ UsdUVTexture            │
 │─────────────────────────│
@@ -596,6 +600,7 @@ BIF already has `.tx` conversion (via OIIO feature flag). The material editor ho
 ### UDIM Support
 
 BIF's renderer already handles UDIM via `UdimTileSet`. The material editor:
+
 - Detects `<UDIM>` or `.<UDIM>.` patterns in filenames
 - Shows "UDIM" badge on the texture slot
 - Texture thumbnail shows the 1001 tile
@@ -616,6 +621,7 @@ BIF's renderer already handles UDIM via `UdimTileSet`. The material editor:
 - No graph, no preview orb, no texture assignment yet
 
 **New types:**
+
 ```rust
 // bif_core/src/usd/material.rs
 pub enum ShadingModel {
@@ -676,7 +682,7 @@ pub enum MaterialParamValue {
 ## 8. Keyboard Shortcuts
 
 | Shortcut | Action |
-|----------|--------|
+| ---------- | -------- |
 | `M` | Toggle material editor focus (when material selected) |
 | `Ctrl+Shift+M` | Open Materials workspace |
 | `T` | Cycle preview shape (sphere/cube/plane) |
@@ -697,7 +703,7 @@ pub enum MaterialParamValue {
 All material editor UI follows the established BIF theme from `theme.rs`:
 
 | Element | Value | Constant |
-|---------|-------|----------|
+| --------- | ------- | ---------- |
 | Panel background | `rgb(34, 38, 44)` | `BG_PANEL` |
 | Node body | `rgb(42, 47, 54)` | `BG_SURFACE` |
 | Node header (OpenPBR) | `rgb(74, 144, 217)` | `ACCENT_PRIMARY` |
@@ -714,6 +720,7 @@ All material editor UI follows the established BIF theme from `theme.rs`:
 ### Node Header Color Coding
 
 Material nodes use header color to instantly communicate the shading model:
+
 - **Blue** = OpenPBR (BIF native) — the primary recommendation
 - **Green** = UsdPreviewSurface — USD standard, "safe for export"
 - **Gold** = MaterialX — full power mode, interchange format

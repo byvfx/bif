@@ -4,7 +4,7 @@
 **Last Updated:** 2026-03-28
 **Status:** Design specification — hybrid approach adopted (see Implementation Notes)
 
-### Implementation Notes
+## Implementation Notes
 
 **Hybrid approach (decided 2026-03-28):** BIF keeps its procedural node graph (scatter, instancer, etc.) as a differentiator while adding layer awareness underneath. This is not a full pivot to "layer editor only" — it's an evolution where edits author USD opinions continuously instead of only at export time. The existing data-flow node graph gains blue/orange color-coding (composition vs operation nodes) as a visual UX distinction, not an architectural rewrite.
 
@@ -26,7 +26,7 @@ BIF is a **layer-aware USD editor and scene assembler** — not a USD viewer, no
 
 ### Target Pipeline Position
 
-```
+```text
 Houdini/Maya (author assets as USD)
         │
         ▼
@@ -48,7 +48,7 @@ Houdini/Maya (author assets as USD)
 
 Every BIF session starts with a root USD stage file. This is the master scene file that references all departments' work through USD's composition arcs (sublayers, references, payloads, variants).
 
-```
+```text
 shot_010.usd  (master stage — opened in BIF)
 │
 ├── sublayer: layout.usd        (from Layout dept — read-only in BIF)
@@ -304,7 +304,7 @@ impl ShotTemplate {
 
 The template form is one of the first things an artist sees when creating a new shot:
 
-```
+```text
 ┌─────────────────────────────────────────────────┐
 │  New Shot from Template                         │
 ├─────────────────────────────────────────────────┤
@@ -727,7 +727,7 @@ BIF's editor shows three synchronized views of the same scene data. Each view is
 
 ### Layout
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────┐
 │  [File] [Edit] [View] [Render]    BIF - shot_010.usd           │
 ├───────────────────────┬─────────────────┬───────────────────────┤
@@ -782,7 +782,7 @@ The node graph shows **how the scene is assembled**. There are two categories of
 
 The key insight: **both node types do the same thing under the hood** — they author USD opinions. A material assignment is just `material:binding` on your layer. A transform edit is just `xformOp:translate` on your layer. The nodes are a friendlier way to visualize and build up a layer file.
 
-```
+```text
 COMPOSITION FLOW:
 
 [USD Stage Root]
@@ -872,7 +872,7 @@ BIF has two rendering modes that share the same scene but load data differently.
 
 The viewport shows a selective view of the scene for interactive work:
 
-```
+```text
 Working Mode:
   ├── Camera frustum geometry: fully loaded as prototypes
   ├── Near-camera instances: full materials, textured
@@ -910,7 +910,7 @@ pub struct RenderContext {
 
 The render flow uses BIF's prototype/instance architecture for memory efficiency:
 
-```
+```text
 Render Mode:
   ├── ALL instance bounding boxes loaded (cheap: just transforms)
   │     → Top-level Embree BVH built from bounding boxes
@@ -1089,7 +1089,7 @@ BIF can show the artist exactly what their edit layer changes compared to the co
 
 ### Diff Display
 
-```
+```text
 Layer Diff: lighting.usd vs composed base
 ──────────────────────────────────────────
 
@@ -1252,7 +1252,7 @@ Variant sets handle switchable alternatives in USD (LODs, render/proxy, seasonal
 
 Display variant sets in stage tree. Show current selection per prim. Artist switches variants via dropdown — writes a `variantSelection` opinion to the active edit layer via `UsdEditLayer` FFI.
 
-```
+```text
 Stage Tree:
   /world/hero_char
     ├── [variants: quality] → proxy | render | high  [render ▾]
@@ -1266,7 +1266,7 @@ FFI needed: `UsdPrim::GetVariantSets()`, `UsdVariantSet::GetVariantSelection()`,
 
 Dedicated variant editor panel for creating new variant sets and populating variants. E.g. artist creates "quality" variant set on `/world/hero` with variants "proxy" / "render" / "high". Each variant contains different child prims or material bindings.
 
-```
+```text
 ┌───────────────────────────────────────┐
 │  Variant Editor: /world/hero_char     │
 ├───────────────────────────────────────┤

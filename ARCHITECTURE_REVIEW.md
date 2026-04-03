@@ -8,7 +8,7 @@
 
 ## 1. Codebase Map
 
-```
+```text
 bif_math (760 LOC, 0 deps)         -- Pure math: Camera, AABB, Ray, Transform, Frustum
     |
 bif_core (5800 LOC, depends: bif_math)  -- Scene graph, USD bridge, textures, undo
@@ -65,7 +65,7 @@ self-borrow conflicts. This will get worse.
 Extract sub-structs without changing the overall architecture. The Renderer
 struct keeps ownership but delegates to typed containers:
 
-```
+```text
 GpuContext { surface, device, queue, config, pipelines, bind_groups, buffers }
 SceneState { working_scene, mesh_data, instances, materials, textures, scene_cameras }
 CameraState { camera, camera_uniform, camera_buffer, camera_source, camera_locked }
@@ -96,6 +96,7 @@ The node graph uses `egui_snarl` with a `SceneNode` enum (10 variants, one per
 node type). Each variant carries its own state as inline fields.
 
 **What works well:**
+
 - `SceneNodeViewer` implements `SnarlViewer<SceneNode>` cleanly
 - `NodeGraphEvent` enum decouples UI from execution
 - `ops.rs` has clean BFS dirty propagation (84 lines, well-factored)
@@ -145,6 +146,7 @@ enum is the right call for the next 6-12 months.
 `bif_core/src/usd/cpp_bridge.rs` -- 2601 lines, well-structured FFI layer.
 
 **Good patterns observed:**
+
 - Typed error enum `UsdBridgeError` with `thiserror` derive
 - Custom result type `UsdBridgeResult<T>` used consistently
 - Every FFI call wrapped in a safe Rust function that checks the error code
@@ -230,6 +232,7 @@ Only **6 traits** across the entire codebase:
 enables the `CompositeProvider` pattern cleanly.
 
 **Missing abstractions worth considering later:**
+
 - A `SceneDataSource` trait that unifies USD stage + procedural scene access
   for the renderer (currently tight coupling between scene_loader and
   bif_core::Scene struct)
@@ -360,7 +363,7 @@ These decisions are correct and should be preserved:
    or different location? Need to verify Drop/cleanup correctness on C++ side.
    - answer; it's in `cpp/` but the glob in build.rs only looks at `cpp/usd_bridge/`. The C++ bridge code is in `cpp/usd_bridge/` but the USD C++ source is expected to be provided by the user via environment variable (PXR_USD_PATH) and is not included in the repository. The build script compiles only the bridge code, not the USD source.
 2. `UsdStage` is `Send+Sync` but docs say "not thread-safe" -- is the current
-   single-thread access pattern enforced by anything other than convention? 
+   single-thread access pattern enforced by anything other than convention?
    - answer: not sure lets investigate further. The `unsafe impl Sync for UsdStage` is a soundness hole because it allows `UsdStage` to be shared across threads, which is not safe given that the underlying C++ USD library is not thread-safe. The current code only accesses `UsdStage` from the main thread, but this invariant is not enforced by the type system. The recommended fix is to remove `Sync` and wrap access to `UsdStage` in a `Mutex` to ensure that it cannot be accessed concurrently from multiple threads.
 3. Node graph has no serialization yet (M30) -- will `SceneNode` enum variants
    be serde-friendly or need a separate schema?

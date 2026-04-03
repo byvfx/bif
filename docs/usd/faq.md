@@ -16,6 +16,7 @@ Best practice: Use `.usd` extension in references (lets pipeline switch between 
 ### Isn't USD just another file format?
 
 No. USD is a **composition engine + scenegraph platform**. File interchange is one capability, but the key differentiators are:
+
 - **Composition engine** — weaves many files into a single scenegraph via arcs (references, sublayers, variants, etc.)
 - **High-performance scenegraph** — efficient traversal, value resolution, change notification
 - **Non-destructive editing** — overrides in separate layers, never modifying source assets
@@ -67,6 +68,7 @@ By LIVRPS ordering, Local > Variants. If you author a value directly on a prim (
 ### Can I edit prims inside a native instance?
 
 Not directly. The subtree beneath an instanceable prim is shared and read-only. To customize per-instance:
+
 1. Use composition arcs (variants, overrides in stronger layers)
 2. Switch to point instancing for per-instance transforms
 3. Remove `instanceable = true` to break sharing (at memory cost)
@@ -80,6 +82,7 @@ Sdf maintains a global registry of opened layers by identifier. `FindOrOpen()` r
 ### What are anonymous layers for?
 
 In-memory-only layers with no file backing. Useful for:
+
 - Session layers (temporary overrides during interactive editing)
 - Procedurally generated scene description
 - Scratch layers for undo/redo systems

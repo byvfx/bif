@@ -1,9 +1,11 @@
 # Development Log - December 31, 2025
 
 ## Session Duration
+
 ~6 hours (continued from previous session context)
 
 ## Goals
+
 Fix the 4-second UI freeze when switching to Ivar rendering mode by implementing instance-aware BVH architecture with background threading.
 
 ---
@@ -11,6 +13,7 @@ Fix the 4-second UI freeze when switching to Ivar rendering mode by implementing
 ## What I Did
 
 ### Problem Analysis
+
 - **Issue:** Switching to Ivar mode froze UI for ~4 seconds
 - **Root Cause:** Building 28M triangles (100 instances × 280,556 triangles) on main thread
 - **Location:** `build_ivar_scene()` in [lib.rs:1631-1679](d:\__projects\_programming\rust\bif\crates\bif_viewport\src\lib.rs#L1631-L1679)
@@ -30,14 +33,17 @@ Fix the 4-second UI freeze when switching to Ivar rendering mode by implementing
 **Created:** [crates/bif_math/src/transform.rs](d:\__projects\_programming\rust\bif\crates\bif_math\src\transform.rs)
 
 Added `Mat4Ext` trait with:
+
 - `transform_vector3(Vec3) -> Vec3` - Transform direction vectors (w=0, no translation)
 - `transform_aabb(Aabb) -> Aabb` - Transform bounding boxes via 8 corners
 
 **Key Insight:** Separate point vs vector transforms because:
+
 - Points have w=1 (translation applies) - use glam's `transform_point3()`
 - Vectors have w=0 (rotation/scale only) - use custom `transform_vector3()`
 
 **Tests:** 8 unit tests passing
+
 - Identity transform
 - Translation (points affected, vectors not)
 - Rotation (90° Z-axis)
@@ -45,6 +51,7 @@ Added `Mat4Ext` trait with:
 - Matrix inverse round-trip
 
 **Files Modified:**
+
 - Created `crates/bif_math/src/transform.rs`
 - Updated `crates/bif_math/src/lib.rs` to export `Mat4Ext`
 
@@ -55,6 +62,7 @@ Added `Mat4Ext` trait with:
 **Created:** [crates/bif_renderer/src/instanced_geometry.rs](d:\__projects\_programming\rust\bif\crates\bif_renderer\src\instanced_geometry.rs)
 
 **Architecture:**
+
 ```rust
 pub struct InstancedGeometry<M: Material + Clone> {
     prototype_bvh: Arc<BvhNode>,        // ONE BVH in local space
@@ -66,6 +74,7 @@ pub struct InstancedGeometry<M: Material + Clone> {
 ```
 
 **Key Algorithm:** Per-ray instance testing
+
 1. For each instance:
    - Transform ray to local space (using `inv_transform`)
    - Test against prototype BVH
@@ -73,11 +82,13 @@ pub struct InstancedGeometry<M: Material + Clone> {
    - Track closest hit
 
 **Performance:**
+
 - Build time: O(P log P) where P = 280K triangles (NOT O(I×P) = 28M!)
 - Ray traversal: O(I × log P) where I = 100 instances
 - Trade-off: 100x faster build, 3x slower rendering (acceptable for 100 instances)
 
 **Tests:** 5 unit tests passing
+
 - Single instance with identity transform matches non-instanced
 - Multiple instances (closest wins)
 - Translation transform correctness
@@ -85,6 +96,7 @@ pub struct InstancedGeometry<M: Material + Clone> {
 - Instance count reporting
 
 **Challenges Solved:**
+
 1. **Missing `Clone` on Lambertian:** Added `#[derive(Clone)]` to `material.rs:38`
 2. **Missing `log` dependency:** Added to `bif_renderer/Cargo.toml`
 3. **Rotation test failure:** Fixed ray position from (0.5, 0.5) to (0.3, -0.3)
@@ -96,6 +108,7 @@ pub struct InstancedGeometry<M: Material + Clone> {
 **Modified:** [crates/bif_viewport/src/lib.rs:1651-1736](d:\__projects\_programming\rust\bif\crates\bif_viewport\src\lib.rs#L1651-L1736)
 
 **Before (BAD):**
+
 ```rust
 for transform in &self.instance_transforms {
     for triangle in prototype_mesh {
@@ -107,6 +120,7 @@ let world = BvhNode::new(objects);  // 4-second BVH build
 ```
 
 **After (GOOD):**
+
 ```rust
 // Build local-space triangles ONCE (280K triangles)
 let mut local_triangles = Vec::new();
@@ -134,6 +148,7 @@ let world = Arc::new(BvhNode::new(vec![Box::new(instanced_geo)]));
 **Modified:** [crates/bif_viewport/src/lib.rs](d:\__projects\_programming\rust\bif\crates\bif_viewport\src\lib.rs)
 
 **Added BuildStatus enum** (lines 38-50):
+
 ```rust
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum BuildStatus {
@@ -146,12 +161,14 @@ pub enum BuildStatus {
 ```
 
 **Added to IvarState** (lines 116-119):
+
 ```rust
 pub build_status: BuildStatus,
 pub build_receiver: Option<mpsc::Receiver<Arc<BvhNode>>>,
 ```
 
 **Background build pattern:**
+
 ```rust
 let (tx, rx) = mpsc::channel();
 self.ivar_state.build_receiver = Some(rx);
@@ -168,6 +185,7 @@ std::thread::spawn(move || {
 ```
 
 **Poll in render loop** (added `poll_scene_build()` at lines 1766-1769):
+
 ```rust
 if let Ok(world) = receiver.try_recv() {
     self.ivar_state.world = Some(world);
@@ -177,6 +195,7 @@ if let Ok(world) = receiver.try_recv() {
 ```
 
 **Rust Patterns Learned:**
+
 - `mpsc::channel()` - Multi-producer, single-consumer channel (like Go channels)
 - `try_recv()` - Non-blocking receive (vs `recv()` which blocks)
 - `move ||` - Closure takes ownership of cloned data
@@ -189,6 +208,7 @@ if let Ok(world) = receiver.try_recv() {
 **Modified:** [lib.rs:1951-2025](d:\__projects\_programming\rust\bif\crates\bif_viewport\src\lib.rs#L1951-L2025)
 
 Added build status display in egui panel:
+
 ```rust
 match self.ivar_state.build_status {
     BuildStatus::NotStarted => {
@@ -218,6 +238,7 @@ match self.ivar_state.build_status {
 ### Step 6: Rebuild Scene Button (~1 hour)
 
 **Added invalidation method** (lines 1738-1764):
+
 ```rust
 pub fn invalidate_ivar_scene(&mut self) {
     self.ivar_state.world = None;
@@ -231,6 +252,7 @@ pub fn invalidate_ivar_scene(&mut self) {
 ```
 
 **UI Button** (lines 2021-2023):
+
 ```rust
 if ui.button("Rebuild Scene").clicked() {
     ctx.data_mut(|d| d.insert_temp(egui::Id::new("rebuild_scene_requested"), true));
@@ -261,6 +283,7 @@ if rebuild_requested {
 | **Render speed** | Baseline | ~3x slower | Acceptable trade-off |
 
 **Why rendering is slower:**
+
 - Linear search through 100 instances per ray: O(100)
 - Each instance tests against BVH: O(log 280K)
 - Total: O(100 × log 280K) ≈ 1800 operations
@@ -280,14 +303,17 @@ if rebuild_requested {
    - Used `Arc<BvhNode>` to share BVH across threads
 
 2. **Trait Bounds with Generics:**
+
    ```rust
    impl<M: Material + Clone + 'static> Hittable for InstancedGeometry<M>
    ```
+
    - `Material` - Must implement Material trait
    - `Clone` - Must be cloneable for thread safety
    - `'static` - Must live for entire program (no borrowed references)
 
 3. **Channels for Thread Communication:**
+
    ```rust
    let (tx, rx) = mpsc::channel();
    std::thread::spawn(move || { let _ = tx.send(data); });
@@ -295,10 +321,12 @@ if rebuild_requested {
    ```
 
 4. **Extension Traits Pattern:**
+
    ```rust
    pub trait Mat4Ext { fn transform_vector3(&self, v: Vec3) -> Vec3; }
    impl Mat4Ext for Mat4 { /* implementation */ }
    ```
+
    - Add methods to external types (glam's Mat4)
    - Clean separation of concerns
 
@@ -378,12 +406,14 @@ if rebuild_requested {
 ## Next Session
 
 ### Immediate Testing
+
 - Load teapot.usda (100 Lucy instances)
 - Switch to Ivar mode
 - Verify: No freeze, ~40ms build, spinner shows, correct rendering
 - Compare output to baseline (should match within FP precision)
 
 ### Phase 2 (Optional, Future)
+
 - Intel Embree integration
 - Sub-millisecond builds
 - Two-level BVH: O(log instances + log primitives)
@@ -391,6 +421,7 @@ if rebuild_requested {
 - Feature flag: `--features embree`
 
 ### OR Start Phase 2 Features
+
 - Qt 6 UI integration
 - USD references (`@path@</prim>`)
 - UsdShade materials (PBR)

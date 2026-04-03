@@ -129,6 +129,7 @@
 ## Strengths (Keep Doing)
 
 All three reviewers independently praised:
+
 - **Clean crate dependency graph** — 5-layer acyclic, no circular deps
 - **FFI safety documentation** — Both USD and Embree unsafe blocks well-commented
 - **EventBus pattern** — Typed, frame-scoped, Qt-migration ready
@@ -143,6 +144,7 @@ All three reviewers independently praised:
 ## Recommended Priority Order
 
 **Immediate (before next feature work):**
+
 1. #1 OpenPBR energy conservation (~10 lines)
 2. #3 Shadow ray shading normal (~5 lines)
 3. #4 Distant light degrees/radians (verify + fix)

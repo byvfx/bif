@@ -295,7 +295,7 @@ fn classify_materialx(mtlx: &MaterialX) -> MaterialXPattern {
 
 Required for production USD import/export:
 
-```
+```text
 ┌─────────────────────┐
 │   BIF (Rust)        │
 └──────────┬──────────┘
@@ -380,6 +380,7 @@ pub fn export_scene(
 The scene browser merges the loaded USD hierarchy with BIF-generated procedural prims into a unified tree view.
 
 **Key types:**
+
 - `CachedSceneGraph` — cached tree of USD prim hierarchy, rebuilt on dirty flag
 - `ProceduralPrimKind` — enum for BIF-generated prims (ScatterPoints, PointInstancer, Primitive, etc.)
 - `CompositeProvider` — merges USD stage tree + procedural prims for the scene browser UI
@@ -481,7 +482,7 @@ fn trace_ray(ray: Ray, scene: &Scene, depth: u32) -> Color {
 
 ## File Structure
 
-```
+```text
 bif/
 ├── Cargo.toml                  # Rust workspace
 ├── crates/
@@ -579,6 +580,7 @@ bif/
 **Document Status:** Living document — updated for M0-23 complete, M29 in progress
 
 **See Also:**
+
 - [MILESTONES.md](MILESTONES.md) - Complete milestone history and roadmap
 - [SESSION_HANDOFF.md](SESSION_HANDOFF.md) - Current status and next steps
 - [REFERENCE.md](REFERENCE.md) - Code patterns and best practices

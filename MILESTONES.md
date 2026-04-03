@@ -42,6 +42,7 @@ Roadmap organized by semantic version. Each release is testable, demoable, and g
 ### v0.13.0 — Pipeline Foundation *(in progress)*
 
 M29.5 (UI overhaul), M30 (persistence + eval modes), M31 (per-node viz), unreleased perf fixes. **Last egui feature release.** Ship current work.
+
 - Subdivision surfaces: crease indices/lengths/sharpnesses, corner sharpnesses, interpolateBoundary, faceVaryingLinearInterpolation
 - OpenSubdiv evaluation (CPU-side, limit surface tessellation for catmullClark/loop/bilinear meshes)
 - Displacement mapping: UsdPreviewSurface `displacement` input → vertex displacement along normals
@@ -50,6 +51,7 @@ M29.5 (UI overhaul), M30 (persistence + eval modes), M31 (per-node viz), unrelea
 ### v0.13.5 — UsdSkel Import
 
 Skeletal animation import + CPU skinning for rendering characters in assembled scenes.
+
 - C++ bridge: UsdSkelCache, UsdSkelSkeletonQuery, UsdSkelSkinningQuery
 - Read skeleton topology (joints, bind transforms, rest transforms)
 - Read skin weights + joint indices per-vertex
@@ -61,6 +63,7 @@ Skeletal animation import + CPU skinning for rendering characters in assembled s
 ### v0.14.0 — Layer-Aware Stage
 
 Merges workflow Phase 1 + old M32/M33. BIF starts understanding USD layers. **Last release on egui UI** — logic is UI-agnostic for Qt port.
+
 - FFI expansion: minimal subset — `SdfLayer` read, `GetEditTarget`, `GetPrimStack`, payload load/unload
 - Open USD stage → parse sublayer stack → display layer list in UI
 - Select working layer → layer isolation mode (edit layer writable, others locked)
@@ -78,6 +81,7 @@ Merges workflow Phase 1 + old M32/M33. BIF starts understanding USD layers. **La
 ### v0.15.0 — Qt Migration
 
 M28 (Qt 6 UI framework). **The pivot — everything after is Qt-native.** Target: viewport-dominant T-layout (see [UI Design](docs/ux/UI_DESIGN.md)).
+
 - Port scene browser, property inspector, node graph, viewport
 - **T-layout:** Viewport-dominant center, left dock (scene tree + layers), right dock (properties), tabbed bottom dock (node graph | USDA preview | render log)
 - **Layer color coding (full):** Colors flow through all panels — tree dots, property borders, node badges, USDA syntax highlighting
@@ -93,6 +97,7 @@ M28 (Qt 6 UI framework). **The pivot — everything after is Qt-native.** Target
 ### v0.16.0 — Edit Operations + Save
 
 Workflow Phase 2. BIF becomes a real editor.
+
 - `EditOperation` enum with `to_usda()` for core types (Transform, MaterialAssign, Visibility, MaterialParamOverride)
 - `EditHistory` with undo/redo (builds on existing `EditState` + `UndoStack`)
 - Save to layer file on disk (Ctrl+S writes active layer only)
@@ -112,6 +117,7 @@ Workflow Phase 2. BIF becomes a real editor.
 ### v0.17.0 — Viewport Performance
 
 M22 (Vulkan 1.3, lazy loading, GPU-driven rendering) + deferred loading from workflow doc.
+
 - `PayloadPolicy::CameraFrustum` and `PayloadPolicy::Manual`
 - `RenderContext` with on-demand prototype loading
 - `PrototypeState` enum (BoundingBox / Loaded / Deferred)
@@ -122,6 +128,7 @@ M22 (Vulkan 1.3, lazy loading, GPU-driven rendering) + deferred loading from wor
 ### v0.18.0 — AI Integration
 
 New `bif_ai` crate (feature-gated `--features ai`). Three AI-assisted workflows: material creation from text, scene building from natural language, ComfyUI render post-processing. Provider-agnostic (Ollama default, OpenAI, Anthropic). Async bridge via channels — zero async contagion. AI produces inert data, viewport executes. Ships independently across 5 phases.
+
 - Phase 1: Material creator (text → OpenPBR params, validated)
 - Phase 2: Provider breadth (OpenAI + Anthropic + config UI)
 - Phase 3: Scene builder (text → SceneAction plan → preview/confirm → node graph)
@@ -136,6 +143,7 @@ M39 (Assembly/Materials/Animation contexts, multi-graph). Built in Qt. Highest a
 ### v0.20.0 — Scene Authoring + Layer Diff
 
 M37 (lights) + M38 (materials) + workflow Phase 7. "Create content + see what you changed."
+
 - Layer diff panel: semantic diff of edit layer vs composed base
 - Point edit mode with soft-select (vertex nudging, `points` override)
 - `AnimKey` operation for simple keyframe overrides (`timeSamples` output)
@@ -151,6 +159,7 @@ M37 (lights) + M38 (materials) + workflow Phase 7. "Create content + see what yo
 ### v0.21.0 — MaterialX Authoring
 
 M40 (standard_surface graph, XML round-trip, node previews). Built on context system in Materials context. Full node-based material editor. See [Material Editor Design](docs/ux/MATERIAL_EDITOR_DESIGN.md).
+
 - **Full material node graph** in bottom dock tab (separate from scene graph, same framework)
 - MtlX Standard Surface node + MaterialX pattern nodes (Image, Noise, Mix, Ramp, NormalMap, Math ops)
 - MaterialX XML round-trip (import/export .mtlx files)

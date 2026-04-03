@@ -191,6 +191,7 @@ translated, rotated, degenerate), AABB hit (axis-aligned rays, miss, NaN directi
 frustum culling (orthographic, behind-camera), `is_click` boundary, negative frame paths.
 
 **Missing coverage for:**
+
 - `SphereLight` solid-angle falloff (no rendering test verifying energy conservation)
 - `Texture::sample_channel` with 0-size texture (related to S6)
 - `needs_redraw` returning false when it should return true

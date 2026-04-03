@@ -9,6 +9,7 @@
 ## Objective
 
 Add interactive camera controls to make the viewport navigable:
+
 - Mouse orbit controls (left-click drag)
 - Keyboard movement (WASD + QE)
 - Goal: Emulate Houdini viewport paradigm (tumble/track/dolly)
@@ -22,6 +23,7 @@ Add interactive camera controls to make the viewport navigable:
 **File:** `crates/bif_math/src/camera.rs`
 
 Added orbit control state to Camera:
+
 ```rust
 pub struct Camera {
     // ... existing fields ...
@@ -35,6 +37,7 @@ pub struct Camera {
 ```
 
 **Key Methods Added:**
+
 - `orbit(&mut self, delta_yaw, delta_pitch)` - Rotate camera around target
   - Clamps pitch to prevent gimbal lock
   - Updates position from spherical coordinates
@@ -52,6 +55,7 @@ pub struct Camera {
 **File:** `crates/bif_viewer/src/main.rs`
 
 Extended App struct with input state:
+
 ```rust
 struct App {
     // ... existing fields ...
@@ -65,6 +69,7 @@ struct App {
 ```
 
 **Event Handlers:**
+
 - `WindowEvent::MouseInput` - Track left button state
 - `WindowEvent::CursorMoved` - Calculate mouse delta, call `camera.orbit()`
 - `WindowEvent::KeyboardInput` - Track WASD + QE key state
@@ -75,6 +80,7 @@ struct App {
 **File:** `crates/bif_viewport/src/lib.rs`
 
 Added `update_camera()` method:
+
 ```rust
 pub fn update_camera(&mut self) {
     self.camera_uniform.update_view_proj(&self.camera);
@@ -116,6 +122,7 @@ Called after any camera modification to sync GPU state.
 ### Spherical Coordinates
 
 Camera position calculated from target using:
+
 ```rust
 x = distance * pitch.cos() * yaw.cos()
 y = distance * pitch.sin()
@@ -130,6 +137,7 @@ Pitch clamped to `[-π/2 + 0.01, π/2 - 0.01]` to avoid singularity at poles.
 ### Delta Time
 
 Movement uses delta time for frame-rate-independent speed:
+
 ```rust
 let speed = camera.move_speed * delta_time;
 movement = direction * speed;
@@ -140,12 +148,14 @@ movement = direction * speed;
 ## Testing
 
 ### Manual Testing
+
 - ✅ Mouse orbit rotates around triangle smoothly
 - ✅ WASD movement navigates 3D space
 - ✅ Camera maintains distance during orbit
 - ✅ No gimbal lock at extreme pitch angles
 
 ### Automated Tests
+
 - All 26 existing tests pass
 - No new unit tests needed (control logic is integration-level)
 
@@ -158,6 +168,7 @@ movement = direction * speed;
 **Performance:** 60 FPS maintained (VSync) with real-time input.
 
 **Code Stats:**
+
 - Camera methods: ~50 LOC
 - Input handling: ~80 LOC
 - Total added: ~130 LOC
@@ -167,11 +178,13 @@ movement = direction * speed;
 ## Next Steps
 
 ### Immediate (Milestone 5)
+
 1. **Depth Testing** - Add depth buffer for proper 3D rendering
 2. **Multiple Objects** - Render several triangles at different depths
 3. **Camera Testing** - Verify Z-ordering with orbit controls
 
 ### Future Enhancements
+
 1. **Middle-click Track** - Pan camera and target together
 2. **Scroll Wheel Dolly** - Zoom in/out smoothly
 3. **Camera Presets** - Front/Top/Side/Perspective views

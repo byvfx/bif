@@ -186,9 +186,10 @@
 
 ## Next Session
 
-### ✅ Milestone 1 Complete!
+### ✅ Milestone 1 Complete
 
 All math primitives ported from Go:
+
 - ✅ Ray struct (6 tests)
 - ✅ Interval helper (10 tests)
 - ✅ AABB struct (6 tests)

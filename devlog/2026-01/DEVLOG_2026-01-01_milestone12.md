@@ -13,17 +13,19 @@ Replace instance-aware BVH with Intel Embree 4 for high-performance ray tracing 
 ### Embree Setup
 
 Installed Embree 4.4.0 via vcpkg (24-minute build including TBB):
+
 ```powershell
 vcpkg install embree:x64-windows
 ```
 
 Created manual FFI bindings instead of using bindgen (avoids libclang dependency, educational for learning FFI):
+
 - `crates/bif_renderer/src/embree.rs` - ~600 LOC
 - `crates/bif_renderer/build.rs` - Links embree4.lib
 
 ### Two-Level BVH Architecture
 
-```
+```text
 Top-Level Scene (TLAS)
 ├── Instance 0 → Prototype Scene
 ├── Instance 1 → Prototype Scene
@@ -62,12 +64,14 @@ pub struct EmbreeScene<M: Material + Clone + 'static> {
 **Symptom:** `rtcSetSharedGeometryBuffer` returned error 3 (INVALID_OPERATION)
 
 **Root Cause:** Guessed enum values instead of reading Embree headers:
+
 - `RTCFormat::Float3` was 12, should be 0x9003
 - `RTCFormat::UInt3` was 9, should be 0x5003
 - `RTCGeometryType::Triangle` was 1, should be 0
 - `RTCGeometryType::Instance` was 8, should be 121
 
 **Fix:** Read actual values from `vcpkg/installed/x64-windows/include/embree4/rtcore_common.h`:
+
 ```rust
 enum RTCFormat {
     UInt3 = 0x5003,
@@ -90,6 +94,7 @@ enum RTCGeometryType {
 **Root Cause:** Tried non-indexed triangles, but Embree triangle meshes require both vertex AND index buffers.
 
 **Fix:** Added proper index buffer setup:
+
 ```rust
 rtcSetSharedGeometryBuffer(
     geom,
@@ -113,6 +118,7 @@ rtcSetSharedGeometryBuffer(
 **Root Cause:** Passed `0` for buffer type thinking it was `RTC_BUFFER_TYPE_VERTEX`, but 0 = INDEX, 1 = VERTEX.
 
 **Fix:** Use typed enum with explicit cast:
+
 ```rust
 RTCBufferType::Vertex as u32  // 1, not 0
 ```
@@ -124,6 +130,7 @@ RTCBufferType::Vertex as u32  // 1, not 0
 **Root Cause:** Used hardcoded `23` for transform format (old Embree 3 value), should be `0x9244` for Embree 4.
 
 **Fix:**
+
 ```rust
 rtcSetGeometryTransform(
     inst_geom,
@@ -138,6 +145,7 @@ rtcSetGeometryTransform(
 **Symptom:** Access violation when rendering
 
 **Root Cause:** Embree 4 changed `rtcIntersect1` signature:
+
 ```c
 // Embree 3:
 rtcIntersect1(scene, &context, &rayhit);
@@ -155,6 +163,7 @@ rtcIntersect1(scene, &rayhit, NULL);  // context moved to optional args
 **Root Cause:** Released prototype scene after creating instances, but instances hold references to it.
 
 **Fix:** Keep prototype_scene alive for entire EmbreeScene lifetime:
+
 ```rust
 impl<M: Material + Clone + 'static> Drop for EmbreeScene<M> {
     fn drop(&mut self) {
@@ -192,6 +201,7 @@ The 28ms build time for 100 instances with 280K triangles is excellent. Embree's
 ## Tests
 
 Embree integration is validated by:
+
 - Scene build without errors (error checking after each Embree call)
 - Scene bounds correctly computed
 - Ray hits detected (HIT_COUNT > 0 in debug builds)

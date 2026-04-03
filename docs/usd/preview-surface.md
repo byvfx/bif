@@ -66,7 +66,8 @@ Reads and samples a texture file.
 ### Normal Map Pattern
 
 For normal maps, use `scale` and `bias` to remap [0,1] → [-1,1]:
-```
+
+```text
 scale = (2, 2, 2, 1)
 bias = (-1, -1, -1, 0)
 sourceColorSpace = "raw"

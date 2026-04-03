@@ -74,6 +74,7 @@ Roles assign semantic meaning to underlying numeric types. They share storage wi
 ## Array Types
 
 Every scalar type has an array counterpart (VtArray in C++):
+
 - `float[]`, `int[]`, `point3f[]`, `token[]`, etc.
 - Arrays are the primary way to store per-vertex, per-face, and per-instance data
 

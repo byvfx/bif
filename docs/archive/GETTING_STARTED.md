@@ -1541,7 +1541,7 @@ When asking for help, provide:
 
 Rust compiler errors are detailed:
 
-```
+```text
 error[E0382]: borrow of moved value: `mesh`
   --> src/main.rs:10:5
    |

@@ -2,7 +2,7 @@
 
 ## Class Hierarchy
 
-```
+```text
 UsdGeomImageable
 ├── UsdGeomXformable
 │   ├── UsdGeomGprim (base for geometric primitives)
@@ -23,6 +23,7 @@ UsdGeomImageable
 ## UsdGeomImageable
 
 Base for anything that might be rendered. Provides:
+
 - **visibility** (`inherited` | `invisible`) — inherited down hierarchy
 - **purpose** (`default` | `render` | `proxy` | `guide`) — partitions scene for different consumers
 - `ComputeVisibility()`, `ComputeWorldBound()`

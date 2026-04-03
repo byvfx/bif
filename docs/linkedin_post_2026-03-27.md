@@ -34,23 +34,27 @@ Here's 6 weeks of progress on BIF — a DCC tool inspired by Clarisse and Houdin
 What shipped:
 
 USD Round-Trip Pipeline
+
 - Full USD export with sublayer composition
 - Materials (OpenPBR + UsdPreviewSurface), lights, cameras, visibility
 - Import curves, points, implicit geometry, subdivision surfaces
 - 8 USD spec compliance sessions covering the full read/write surface
 
 Node Graph Evolution
+
 - 4 new node types: Xform, UsdPrim, GraftBranches, Cache
 - Houdini-style evaluation modes (Auto / Manual / OnMouseRelease)
 - Display flag gating for render and export
 - Per-node scene graph visualization with prim count badges
 
 Project Persistence
+
 - Save/load .bif project files (binary + human-readable JSON)
 - File menu with New/Open/Save/Recent Files
 - Dirty tracking, unsaved changes prompt
 
 Rendering Quality
+
 - VNDF GGX sampling (2-4x convergence on rough metals)
 - Glass/transmission with Snell's law refraction
 - Blue noise sampling + pixel reconstruction filters
@@ -59,17 +63,20 @@ Rendering Quality
 - DomeLight with live HDRI rotation + color temperature
 
 Performance
+
 - USD loading 8.3x faster
 - Texture pipeline 60x faster (125s to 2s)
 - Ivar scene builds 140x faster with material cache
 - UDIM per-tile loading eliminates atlas stitching
 
 UI Overhaul
+
 - Centralized theme system
 - Menu bar, viewport stats overlay, property inspector
 - Welcome screen, tooltips, node selection highlighting
 
 Architecture
+
 - EventBus replacing ad-hoc string messaging
 - Renderer decomposed into focused subsystems
 - 160+ tests, 3 code reviews, 50+ new tests this period
@@ -78,4 +85,4 @@ Architecture
 
 Built with Rust, wgpu, Embree, USD (C++ bridge), MaterialX, OIDN, and egui.
 
-#rust #vfx #usd #rendering #gamedev #cgi #opensource #pathtracing
+# rust #vfx #usd #rendering #gamedev #cgi #opensource #pathtracing

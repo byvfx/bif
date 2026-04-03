@@ -64,6 +64,7 @@ Set up mdBook-based site with auto-deployed dev diary (85 entries) + manual (USD
 ### PointInstancer Loading Fixes (Mar 30, 2026)
 
 Fixed two bugs preventing time-sampled PointInstancer files (e.g., Pixar's PointInstancedMedCity.usd) from loading:
+
 1. C++ bridge now uses stage startTimeCode / first sample instead of Default when reading instancer attrs
 2. Rust loader maps parent Xform paths in prototype_map for instancer prototype resolution
 
@@ -72,6 +73,7 @@ Test file: `assets/PointInstancedMedCity.usd` (40K instances, 8 prototypes)
 ### Architecture Deepening: Phase 1 FFI Bridge Split (Mar 28-29, 2026)
 
 Split monolithic `cpp_bridge.rs` (4,542 LOC) into 3 modules:
+
 - `ffi_raw.rs` (898 lines) — `#[repr(C)]` types + `extern "C"` block
 - `ffi_convert.rs` (2,054 lines) — 17 conversion functions + 44 tests (no C++ DLLs needed)
 - `cpp_bridge.rs` slimmed to 3,651 lines (-20%)
@@ -83,6 +85,7 @@ Also created `ARCHITECTURE_REFACTORS.md` (5-phase plan) and `BIF_USD_WORKFLOW.md
 ### Documentation Overhaul (Mar 27, 2026)
 
 Reworked project documentation to correlate milestones with semantic versioning:
+
 - **MILESTONES.md** — rewritten as lean semver roadmap (v0.13.0 through v0.23.0+)
 - **MILESTONES_HISTORY.md** — new file, all completed milestones (M0-M31) moved here
 - **ROADMAP_DETAIL.md** — new file, per-version task lists + acceptance criteria
@@ -93,6 +96,7 @@ Reworked project documentation to correlate milestones with semantic versioning:
 - **vfx-code-reviewer agent** — added version scope awareness
 
 Key decisions informed by software architect + engineer reviews:
+
 - Qt migration (v0.15.0) promoted before context system — avoids building UI twice
 - M22/M25/M27 no longer deferred — all scheduled in roadmap
 - 1.0 criteria defined (10 gates)

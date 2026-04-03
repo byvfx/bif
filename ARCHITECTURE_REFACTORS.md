@@ -35,7 +35,7 @@ Architectural deepening plan for testability, cross-platform support, and alignm
 
 ### Dependency Graph (Clean)
 
-```
+```text
 bif_math (leaf — zero internal deps)
     ↑
 bif_core (depends on bif_math)
@@ -58,6 +58,7 @@ bif_viewer (depends on bif_viewport + bif_core + bif_math)
 ### Problem
 
 `crates/bif_core/src/usd/cpp_bridge.rs` — 4,542 LOC in one file:
+
 - 21 pub structs + 15 pub enums
 - `#[repr(C)]` raw FFI types mixed with safe Rust domain types
 - `UsdStage` wrapper with unsafe pointer→Vec conversion inline in every method
@@ -76,7 +77,8 @@ Split into 3 files in `crates/bif_core/src/usd/`:
 | `cpp_bridge.rs` (slimmed) | `UsdStage` wrapper + public domain types | `pub` |
 
 **Refactor pattern:**
-```
+
+```text
 Before: UsdStage::get_mesh() — unsafe deref + 50-line conversion inline
 After:  UsdStage::get_mesh() → slice_raw_mesh() [ffi_raw] → convert_mesh_data() [ffi_convert]
 ```
@@ -91,6 +93,7 @@ After:  UsdStage::get_mesh() → slice_raw_mesh() [ffi_raw] → convert_mesh_dat
 ### Test Targets
 
 All tests run without C++ DLLs:
+
 - `convert_mesh_data` — vertices, normals, UVs, face materials
 - `convert_instancer_data` — transforms, prototype indices
 - `convert_material_data` — texture paths, PBR params
@@ -152,11 +155,13 @@ Medium. Build system changes are finicky. OIIO bridge section (build.rs:252-397)
 ### Problem
 
 `node_graph/mod.rs` (1,370 LOC) — eval logic, UI, and scene mutation in one module:
+
 - `evaluate()` takes `&mut` borrows of scene, materials, transforms simultaneously
 - Auto-compute logic embedded in egui `show_body()` callbacks in viewer.rs
 - 0 tests because evaluation requires an egui context
 
 Per `BIF_USD_WORKFLOW.md`, the node graph splits into:
+
 - **Composition nodes (blue):** structural — what's in the scene
 - **Operation nodes (orange):** edits — author `EditOperation`s on the working layer
 
@@ -199,6 +204,7 @@ pub fn topological_order(
 ### Test Targets
 
 Tests create `Snarl<SceneNode>` directly (no egui):
+
 - `test_dirty_propagation_linear_chain` — A→B→C dirty propagation
 - `test_topological_order` — correct ordering with branches
 - `test_composition_vs_operation_ordering` — blue before orange
@@ -221,6 +227,7 @@ Medium. Auto-compute logic in viewer.rs is interleaved with UI rendering. Must c
 ### Problem
 
 `scene_loader.rs` (2,350 LOC) + `ivar_build.rs` (1,214 LOC):
+
 - `finalize_usd_scene()` — 180-line method creating GPU buffers, material tables, instances, textures, bounds, camera, culling, Embree scene, and mesh_data simultaneously
 - All methods are `impl Renderer`, untestable without GPU device
 - 0 tests on 3,564 lines
@@ -266,6 +273,7 @@ Scene_loader.rs becomes: compute result → upload to GPU.
 ### Test Targets
 
 Tests create `bif_core::Scene` directly (no GPU):
+
 - `test_single_prototype_no_instances`
 - `test_multi_prototype_material_table`
 - `test_payload_policy_filtering`
@@ -321,6 +329,7 @@ Medium. Moving `impl Renderer` blocks between files requires visibility adjustme
 ## Rollback Strategy
 
 Every phase follows the same pattern:
+
 1. New files are additive (create `ffi_convert.rs`, `eval.rs`, `scene_pipeline.rs`)
 2. Old code delegates to new code
 3. Tests verify the new code independently
@@ -333,12 +342,14 @@ No destructive refactoring. Partial completion is still valuable.
 ## Cross-Platform Notes
 
 ### Good Patterns Found
+
 - `std::path::Path` / `PathBuf` used consistently (not manual string concatenation)
 - FFI bindings properly abstracted in `embree_ffi.rs`
 - `cfg!(windows)` guards used correctly for platform-specific code
 - OIDN feature properly gated behind `#[cfg(feature = "oidn")]`
 
 ### Work Required for Linux
+
 1. Platform-detect CMake generator in build.rs
 2. Platform-aware vcpkg paths and triplets
 3. Create `setup_usd_env.sh`

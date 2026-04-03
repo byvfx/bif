@@ -8,7 +8,7 @@ USD organizes scene description into a hierarchy of **prims** (primitives) conta
 
 The outermost container. Opens a root layer, recursively composes all referenced/sublayered layers via the composition engine, and presents the result as a single scenegraph.
 
-```
+```text
 # Python
 stage = Usd.Stage.Open('scene.usd')      # Open existing
 stage = Usd.Stage.CreateNew('scene.usda') # Create new
@@ -16,6 +16,7 @@ stage.Save()                               # Save all dirty non-session layers
 ```
 
 Key operations:
+
 - `GetPrimAtPath(SdfPath)` — retrieve a composed prim
 - `Traverse()` — depth-first iteration over active, defined, loaded, concrete prims
 - `GetRootLayer()` / `GetSessionLayer()` — access underlying layers
@@ -27,7 +28,7 @@ Key operations:
 
 A persistent (file) or in-memory (anonymous) container of scene description. Layers hold **specs** (PrimSpecs, PropertySpecs) — the raw, uncomposed opinions.
 
-```
+```text
 layer = Sdf.Layer.FindOrOpen('asset.usd')
 layer = Sdf.Layer.CreateNew('new.usda')
 layer = Sdf.Layer.CreateAnonymous()        # In-memory only
@@ -36,6 +37,7 @@ layer.Export('output.usdc')                 # Save to different file/format
 ```
 
 Key concepts:
+
 - Layers are **cached** by identifier — `FindOrOpen` returns existing if already open
 - Client must retain the `SdfLayerRefPtr`; the registry holds only weak refs
 - Layers reached by composition arcs are retained by the stage automatically
@@ -45,7 +47,7 @@ Key concepts:
 
 The sole persistent scenegraph object on a stage. Contains properties and child prims.
 
-```
+```text
 prim = stage.GetPrimAtPath('/World/Mesh')
 prim.GetTypeName()    # e.g. 'Mesh'
 prim.GetChildren()    # child prims
@@ -72,12 +74,14 @@ prim.GetRelationship('material:binding')
 Base class for Attributes and Relationships.
 
 **Attribute (UsdAttribute):**
+
 - Has a typed value (see datatypes.md) that can vary over time
 - Value sources: default value, time samples, or connections
 - `attr.Set(value)` / `attr.Set(value, timeCode)` / `attr.Get()`
 - Created via schema API or `prim.CreateAttribute(name, typeName)`
 
 **Relationship (UsdRelationship):**
+
 - Multi-target pointer to other prims/properties
 - Targets are automatically remapped when namespaces change via composition
 - `rel.SetTargets([path1, path2])` / `rel.GetTargets()`
@@ -86,6 +90,7 @@ Base class for Attributes and Relationships.
 ### Metadata
 
 Non-time-varying data on prims, properties, or layers. Examples:
+
 - `active`, `hidden`, `documentation`, `comment`
 - `kind` (model hierarchy classification)
 - `customData` (arbitrary user dictionary)
@@ -94,6 +99,7 @@ Non-time-varying data on prims, properties, or layers. Examples:
 ## Value Resolution
 
 When reading an attribute value, USD resolves through the composition in strength order:
+
 1. Time samples (strongest animated source wins)
 2. Default value (if no time samples)
 3. Fallback value from schema (if nothing authored)
@@ -112,7 +118,7 @@ USD defines a **kind** taxonomy for organizing scenes:
 | `component` | Terminal model — no child models allowed |
 | `subcomponent` | Articulable sub-parts within a component |
 
-```
+```text
 Usd.ModelAPI(prim).SetKind(Kind.Tokens.component)
 Usd.ModelAPI(prim).GetKind()
 ```

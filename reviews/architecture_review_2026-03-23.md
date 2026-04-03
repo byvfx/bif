@@ -14,7 +14,7 @@ Key risks for upcoming milestones center on: (1) the `render.rs` `run_egui_frame
 
 ### Dependency Graph
 
-```
+```text
 bif_math          (leaf - no internal deps)
    |
 bif_core          (depends on: bif_math)
@@ -234,6 +234,7 @@ Each crate defines domain-specific error types using `thiserror`:
 | bif_viewport | Uses `anyhow::Result` | Top-level error handling |
 
 **Verdict: GOOD.** The pattern is consistent:
+
 - Library crates (bif_core, bif_renderer) use `thiserror` for typed errors
 - Application crate (bif_viewport) uses `anyhow` for aggregation
 - Each error type covers one subsystem
@@ -248,7 +249,7 @@ Each crate defines domain-specific error types using `thiserror`:
 
 ### Application State Flow
 
-```
+```text
 User Input (winit events)
     |
     v
@@ -275,6 +276,7 @@ Renderer (bif_viewport/lib.rs)
 **One concern:** The `run_egui_frame` method (Phase 3) directly mutates `self` fields alongside emitting events. This creates two state-mutation paths: direct mutation inside egui closures AND deferred mutation via `dispatch_events`. This dual path makes it harder to reason about state transitions.
 
 **Example from render.rs:189:**
+
 ```rust
 // Direct mutation inside egui closure:
 ui.checkbox(&mut self.show_grid, "Grid");
@@ -325,6 +327,7 @@ The `show_grid` toggle mutates directly; the stage correction emits an event. Th
 | bif_viewer | 15 | CLI arg parsing tests | Thorough for what it tests |
 
 **Verdict: REASONABLE for the project stage.** The test strategy is sound:
+
 - Pure logic modules (math, materials, BVH) have high coverage
 - State managers have basic tests (SceneManager, SelectionManager, EventBus)
 - GPU-dependent code is harder to test and appropriately has fewer tests
@@ -430,15 +433,15 @@ Current process (estimated from code):
 
 ### Phase 2: Before M33 (Qt Migration Planning) -- ~4-5 sessions
 
-3. **I1: Per-panel state extraction** -- Continue the `StatsPanelParams` pattern for the property inspector, timeline, and node graph panels. Each panel gets a params struct built by Renderer and consumed by the UI layer.
+1. **I1: Per-panel state extraction** -- Continue the `StatsPanelParams` pattern for the property inspector, timeline, and node graph panels. Each panel gets a params struct built by Renderer and consumed by the UI layer.
 
-4. **N1 + N2: Renderer cleanup** -- Extract `GpuMaterialState`, `GpuTextureState`, and move type definitions out of lib.rs.
+2. **N1 + N2: Renderer cleanup** -- Extract `GpuMaterialState`, `GpuTextureState`, and move type definitions out of lib.rs.
 
 ### Phase 3: Ongoing
 
-5. **I3: Extract testable logic** -- When touching Renderer methods, check if the core logic can be a free function taking `&mut SceneManager` or similar. Gradually increase testable surface area.
+1. **I3: Extract testable logic** -- When touching Renderer methods, check if the core logic can be a free function taking `&mut SceneManager` or similar. Gradually increase testable surface area.
 
-6. **I4: Document state mutation convention** -- Add a comment in render.rs explaining when direct mutation vs EventBus is appropriate.
+2. **I4: Document state mutation convention** -- Add a comment in render.rs explaining when direct mutation vs EventBus is appropriate.
 
 ---
 
@@ -463,7 +466,8 @@ Current process (estimated from code):
 ## Appendix A: File-Level Map
 
 ### bif_math (8 files)
-```
+
+```text
 src/lib.rs          - Re-exports, 2 trivial tests
 src/ray.rs          - Ray struct
 src/interval.rs     - Interval struct
@@ -475,7 +479,8 @@ src/basis.rs        - Orthonormal basis construction
 ```
 
 ### bif_core (17 files)
-```
+
+```text
 src/lib.rs          - Module declarations, re-exports
 src/scene.rs        - Scene, Prototype, Instance, Material, Transform, Animation
 src/mesh.rs         - Mesh struct
@@ -496,7 +501,8 @@ src/usd/validate.rs - USD validation
 ```
 
 ### bif_renderer (21 files)
-```
+
+```text
 src/lib.rs           - Module declarations, re-exports
 src/renderer.rs      - render(), ray_color(), RenderConfig
 src/camera.rs        - Render camera (separate from viewport camera)
@@ -521,7 +527,8 @@ src/pick_scene.rs    - Embree-based viewport picking
 ```
 
 ### bif_viewport (34 files)
-```
+
+```text
 src/lib.rs              - Renderer struct, constructor, utility methods
 src/render.rs           - render() 5-phase loop, UI frame, event dispatch
 src/render_ui.rs        - Stats panel UI (egui)
@@ -559,7 +566,8 @@ src/curve_preview.rs    - Curve/points preview renderer
 ```
 
 ### bif_viewer (2 files)
-```
+
+```text
 src/main.rs  - App struct, winit event loop, CLI parsing
 ```
 

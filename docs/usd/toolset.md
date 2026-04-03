@@ -17,6 +17,7 @@ usdcat a.usd b.usd -o merged.usda  # Concatenate multiple files
 ```
 
 Flags:
+
 - `--flatten` — compose all layers into one, resolve all arcs
 - `--flattenLayerStack` — flatten sublayers only (keep references/payloads)
 - `--skipSourceFileComment` — omit source file comment in output
@@ -44,6 +45,7 @@ usdview scene.usd --renderer GL      # Force renderer
 ```
 
 Features:
+
 - 3D viewport with orbit/pan/zoom
 - Prim browser with property inspector
 - Embedded Python interpreter (press `i`)

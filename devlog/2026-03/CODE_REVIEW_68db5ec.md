@@ -10,6 +10,7 @@
 ## 1. Critical Issues (must fix)
 
 **None found.** The mechanical refactoring is correct. All ~465 access sites were properly migrated, verified by:
+
 - `cargo check` and `cargo clippy -- -D warnings` both pass cleanly
 - `cargo fmt --check` passes cleanly
 - Automated regex scan of all 6 source files for bare `self.device`, `self.queue`, `self.camera_uniform`, `self.ivar_state`, `self.node_graph_state` etc. returns **zero** unmigrated hits across 8,098 total lines

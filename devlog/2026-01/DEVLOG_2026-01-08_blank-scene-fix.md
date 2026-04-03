@@ -13,11 +13,13 @@ Fixed bug where lucy_low.obj was auto-loading when starting bif_viewer without C
 ### Changes to Renderer::new()
 
 **Removed (~40 lines):**
+
 - lucy_low.obj file path and loading
 - 10x10 grid instance generation
 - Mesh-based camera positioning
 
 **Replaced with:**
+
 ```rust
 // Empty mesh data
 let mesh_data = MeshData {
@@ -52,6 +54,7 @@ num_instances: 0,
 ### Log Message Update
 
 **main.rs line 193:**
+
 ```rust
 log::info!("Starting with blank scene (load USD via node graph)");
 ```
@@ -78,7 +81,8 @@ bif_viewer --usd test_cube.usda    # ✅ Loads cube
 ```
 
 **Logs (blank scene):**
-```
+
+```text
 [INFO] Starting with blank scene (load USD via node graph)
 [INFO] Initializing blank scene (no default geometry)
 [INFO] Camera positioned at Vec3(0.0, 10.0, 50.0), looking at Vec3(0.0, 0.0, 0.0)

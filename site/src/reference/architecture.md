@@ -2,7 +2,7 @@
 
 ## Crate Structure
 
-```
+```text
 bif/
 ├── crates/
 │   ├── bif_math/       # Vec3, Ray, AABB, Camera, Transform

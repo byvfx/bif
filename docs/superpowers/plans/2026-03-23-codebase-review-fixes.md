@@ -17,6 +17,7 @@
 ### Task 1.1: OpenPBR Diffuse Energy Conservation
 
 **Files:**
+
 - Modify: `crates/bif_renderer/src/openpbr.rs:474` (bsdf)
 - Modify: `crates/bif_renderer/src/openpbr.rs:646` (scatter_diffuse_textured)
 
@@ -65,6 +66,7 @@ fn schlick_scalar(f0: f32, cos_theta: f32) -> f32 {
 ### Task 1.2: Shadow Ray Shading Normal Offset
 
 **Files:**
+
 - Modify: `crates/bif_renderer/src/renderer.rs:203`
 
 - [ ] **Step 1: Use shading normal for shadow ray origin**
@@ -83,13 +85,15 @@ let shadow_origin = rec.p + shading_n * 0.001;
 ### Task 1.3: Distant Light Degrees-to-Radians
 
 **Files:**
+
 - Modify: `crates/bif_renderer/src/light.rs:58` (constructor)
 - Modify: `crates/bif_renderer/src/light.rs:67,77,90` (usage sites already use `self.angle` directly)
 
 The `DistantLight` constructor receives `angle` in degrees from `scene.rs:452` ("Angular diameter in degrees"). The `sample()` and `pdf()` methods use `(1.0 - self.angle * 0.5).cos()` which treats the value as if it's a fraction, not degrees or radians. This formula is actually wrong for both units.
 
 For a distant light with angular diameter `d` degrees, the correct `cos_max` is:
-```
+
+```text
 cos_max = cos(d_radians / 2)
 ```
 
@@ -115,6 +119,7 @@ let cos_max = half_angle.cos();
 ### Task 1.4: Normal Matrix Zero-Scale Guard
 
 **Files:**
+
 - Modify: `crates/bif_renderer/src/embree.rs:438-441`
 
 - [ ] **Step 1: Add determinant check before inverse**
@@ -139,6 +144,7 @@ let normal_matrices: Vec<Mat3> = transforms
 ### Task 1.5: SHARC NaN Guard After Cache Lookup
 
 **Files:**
+
 - Modify: `crates/bif_renderer/src/renderer.rs:187-189`
 
 - [ ] **Step 1: Add finite check on cached value**
@@ -157,6 +163,7 @@ if let Some(cached) = c.lookup(rec.p, rec.normal) {
 ### Task 1.6: Point Light Epsilon Fix
 
 **Files:**
+
 - Modify: `crates/bif_renderer/src/light.rs:156`
 
 - [ ] **Step 1: Replace additive epsilon with `max()`**
@@ -180,6 +187,7 @@ let falloff = 1.0 / (distance * distance).max(0.001);
 ### Task 2.1: Embree Drop Safety Comment
 
 **Files:**
+
 - Modify: `crates/bif_renderer/src/embree.rs:1130-1155`
 
 - [ ] **Step 1: Add field-order invariant comment**
@@ -210,6 +218,7 @@ impl Drop for EmbreeScene {
 ### Task 2.2: Node Graph Unwrap to Let-Else
 
 **Files:**
+
 - Modify: `crates/bif_viewport/src/node_graph/viewer.rs:639-640`
 
 - [ ] **Step 1: Replace unwraps with let-else**
@@ -228,6 +237,7 @@ let (Some(points_source), Some(proto_source)) = (points_node, proto_node) else {
 ### Task 2.3: Crease Data Validation
 
 **Files:**
+
 - Modify: `crates/bif_renderer/src/embree.rs:620`
 
 - [ ] **Step 1: Validate crease data before passing to Embree**
@@ -251,6 +261,7 @@ if !sd.crease_indices.is_empty() && !sd.crease_sharpnesses.is_empty() {
 ### Task 2.4: NaN Guard — HDR direction_to_uv
 
 **Files:**
+
 - Modify: `crates/bif_core/src/hdr.rs:123-124`
 
 - [ ] **Step 1: Guard against zero-length direction**
@@ -267,6 +278,7 @@ pub fn direction_to_uv(dir: [f32; 3], rotation: f32) -> (f32, f32) {
 ### Task 2.5: NaN Guard — Texture Sample
 
 **Files:**
+
 - Modify: `crates/bif_core/src/texture.rs:187-188`
 
 - [ ] **Step 1: Guard against NaN UV inputs**
@@ -285,6 +297,7 @@ pub fn sample(&self, u: f32, v: f32) -> Vec3 {
 ### Task 2.6: UsdBridgeError from(Success) — Safe Fallback
 
 **Files:**
+
 - Modify: `crates/bif_core/src/usd/cpp_bridge.rs:951`
 
 - [ ] **Step 1: Replace unreachable with safe error**
@@ -300,6 +313,7 @@ UsdBridgeErrorCode::Success => UsdBridgeError::Unknown("unexpected Success code"
 ### Task 2.7: Replace `is_multiple_of` with Modulo
 
 **Files:**
+
 - Modify: `crates/bif_core/src/usd/loader.rs:52`
 
 - [ ] **Step 1: Replace nightly-only method**
@@ -315,6 +329,7 @@ if i > 0 && (s.len() - i) % 3 == 0 {
 ### Task 2.8: Box Filter Half-Open Interval
 
 **Files:**
+
 - Modify: `crates/bif_renderer/src/filter.rs:101-107`
 
 - [ ] **Step 1: Use half-open interval**
@@ -344,6 +359,7 @@ fn eval_box(dx: f32, dy: f32) -> f32 {
 ### Task 3.1: Fix `is_delta()` for Transmission
 
 **Files:**
+
 - Modify: `crates/bif_renderer/src/openpbr.rs:521-524`
 
 - [ ] **Step 1: Include transmission in delta check**
@@ -358,6 +374,7 @@ fn is_delta(&self) -> bool {
 ```
 
 Simplified (since outer condition already checks roughness < 0.001):
+
 ```rust
 fn is_delta(&self) -> bool {
     self.specular_roughness < 0.001
@@ -368,6 +385,7 @@ fn is_delta(&self) -> bool {
 ### Task 3.2: Per-Vertex Tangent Accumulation
 
 **Files:**
+
 - Modify: `crates/bif_renderer/src/embree.rs:390-428` (unindexed path tangents)
 
 The current code computes one tangent per triangle. To get per-vertex tangents, accumulate tangents at each vertex and normalize. For the unindexed path (where each triangle has its own vertices), per-triangle tangents ARE per-vertex, so this is already correct for that path. The indexed path in `from_indexed` needs per-vertex accumulation.
@@ -382,6 +400,7 @@ For each triangle, compute tangent from UV deltas. Add tangent to each of the 3 
 ### Task 3.3: VNDF GGX Sampling
 
 **Files:**
+
 - Modify: `crates/bif_renderer/src/openpbr.rs` (add `sample_ggx_vndf` function)
 
 - [ ] **Step 1: Implement VNDF sampling (Heitz 2018)**
@@ -430,6 +449,7 @@ fn sample_ggx_vndf(wo: Vec3, alpha_x: f32, alpha_y: f32, rng: &mut dyn RngCore) 
 ### Task 4.1: EXR Color Space Metadata
 
 **Files:**
+
 - Modify: `crates/bif_renderer/src/exr_writer.rs:239-241`
 
 - [ ] **Step 1: Add render metadata to layer attributes**
@@ -449,6 +469,7 @@ attrs.other.insert(
 ### Task 4.2: Embree Device Sharing
 
 **Files:**
+
 - Modify: `crates/bif_renderer/src/embree.rs` (add `new_with_device` / `from_indexed_with_device`)
 
 - [ ] **Step 1: Add device parameter variants**
@@ -461,6 +482,7 @@ Add `RTCDevice` parameter to constructors, keep existing `new()`/`from_indexed()
 ### Task 4.3: Orthonormal Basis Dedup
 
 **Files:**
+
 - Modify: `crates/bif_renderer/src/light.rs:474-482`
 
 - [ ] **Step 1: Replace local `orthonormal_basis` with `bif_math::build_orthonormal_basis`**
@@ -480,6 +502,7 @@ let (u, v) = build_orthonormal_basis(axis);
 ### Task 4.4: SHARC TOCTOU Race Documentation
 
 **Files:**
+
 - Modify: `crates/bif_renderer/src/radiance_cache.rs:444` (add comment)
 
 - [ ] **Step 1: Document the known race condition**
@@ -489,6 +512,7 @@ Add a comment block explaining the TOCTOU race in the EMA blend path, that it's 
 ### Task 4.5: HDRI Pole Clamp — Resolution-Dependent
 
 **Files:**
+
 - Modify: `crates/bif_renderer/src/hdri.rs:157`
 
 - [ ] **Step 1: Replace fixed epsilon with resolution-dependent clamp**
@@ -513,6 +537,7 @@ let v_clamped = v.clamp(half_texel, 1.0 - half_texel);
 ### Task 5.1: Strengthen Mesh Dedup Hash
 
 **Files:**
+
 - Modify: `crates/bif_core/src/usd/loader.rs:153-186`
 
 - [ ] **Step 1: Increase sample count and add normal/UV sampling**
@@ -539,6 +564,7 @@ if !mesh_data.normals.is_empty() {
 ### Task 5.2: `add_instance` Returns Index
 
 **Files:**
+
 - Modify: `crates/bif_core/src/scene.rs:620-637,667-676`
 - Modify: all callers of `add_instance` and `set_last_instance_purpose`
 
@@ -569,6 +595,7 @@ pub fn set_instance_purpose(&mut self, index: usize, purpose: Purpose) {
 ### Task 5.3: Derive Copy on Transform
 
 **Files:**
+
 - Modify: `crates/bif_core/src/scene.rs:322`
 
 - [ ] **Step 1: Add Copy derive**
@@ -583,6 +610,7 @@ pub struct Transform {
 ### Task 5.4: HdrImage::downscale_to_max_dim — Return Option
 
 **Files:**
+
 - Modify: `crates/bif_core/src/hdr.rs:221-225`
 - Modify: callers
 
@@ -603,6 +631,7 @@ pub fn downscale_to_max_dim(&self, max_dim: u32) -> Option<Self> {
 ### Task 5.5: Remove Redundant Prototype::bounds
 
 **Files:**
+
 - Modify: `crates/bif_core/src/scene.rs:181,187-194`
 - Modify: all references to `prototype.bounds`
 
@@ -613,6 +642,7 @@ pub fn downscale_to_max_dim(&self, max_dim: u32) -> Option<Self> {
 ### Task 5.6: IBL [f32;3] to Vec3
 
 **Files:**
+
 - Modify: `crates/bif_core/src/ibl.rs` (replace local math helpers)
 
 - [ ] **Step 1: Replace local `normalize`, `dot`, `cross` with `Vec3` operations**
@@ -631,6 +661,7 @@ pub fn downscale_to_max_dim(&self, max_dim: u32) -> Option<Self> {
 ### Task 6.1: Define GraphNodeId Type
 
 **Files:**
+
 - Create: `crates/bif_viewport/src/node_graph/node_id.rs`
 
 - [ ] **Step 1: Create framework-agnostic node ID**
@@ -653,6 +684,7 @@ impl From<egui_snarl::NodeId> for GraphNodeId {
 ### Task 6.2: Replace NodeId in NodeGraphContext
 
 **Files:**
+
 - Modify: `crates/bif_viewport/src/lib.rs:302-315`
 - Modify: `crates/bif_viewport/src/node_graph/mod.rs`
 
@@ -662,6 +694,7 @@ impl From<egui_snarl::NodeId> for GraphNodeId {
 ### Task 6.3: Update All Consumers
 
 **Files:**
+
 - Modify: `crates/bif_viewport/src/render.rs`
 - Modify: `crates/bif_viewport/src/scene_loader.rs`
 
@@ -677,6 +710,7 @@ impl From<egui_snarl::NodeId> for GraphNodeId {
 ### Task 7.1: Extract GpuMaterialState
 
 **Files:**
+
 - Modify: `crates/bif_viewport/src/lib.rs`
 
 - [ ] **Step 1: Create sub-struct for material GPU state**
@@ -688,6 +722,7 @@ Move `material_uniform`, `material_buffer`, `material_bind_group_layout`, `mater
 ### Task 7.2: Extract GpuTextureState
 
 **Files:**
+
 - Modify: `crates/bif_viewport/src/lib.rs`
 
 - [ ] **Step 1: Create sub-struct for texture GPU state**
@@ -699,6 +734,7 @@ Move `gpu_textures`, `texture_sampler`, `texture_bind_group_layout`, `texture_bi
 ### Task 7.3: Move Type Definitions Out of lib.rs
 
 **Files:**
+
 - Create: `crates/bif_viewport/src/types.rs`
 - Modify: `crates/bif_viewport/src/lib.rs`
 
@@ -708,6 +744,7 @@ Move `gpu_textures`, `texture_sampler`, `texture_bind_group_layout`, `texture_bi
 ### Task 7.4: Document State Mutation Convention
 
 **Files:**
+
 - Modify: `crates/bif_viewport/src/render.rs` (add module-level doc comment)
 
 - [ ] **Step 1: Add convention documentation**

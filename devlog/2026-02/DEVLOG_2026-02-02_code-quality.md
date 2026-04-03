@@ -1,9 +1,11 @@
 # Development Log - 2026-02-02 (M19.4)
 
 ## Session Duration
+
 ~1.5 hours
 
 ## Goals
+
 - Address VFX code review findings
 - Convert Embree panics to proper error handling
 - Start decomposing monolithic Renderer struct
@@ -11,6 +13,7 @@
 ## What I Did
 
 ### Stage 1: Embree Error Handling
+
 - Added `thiserror` dependency to bif_renderer
 - Created `EmbreeError` enum with variants:
   - `DeviceCreation` - Embree DLL not found
@@ -24,14 +27,17 @@
 - Added proper cleanup (release device/scene) before each error return
 
 ### Stage 2: Materials Validation
+
 - Added validation at start of `new()`: `if materials.is_empty() { return Err(NoMaterials) }`
 - Added `debug_assert!` in `hit()` as belt-and-suspenders check
 - Prevents underflow when computing `mat_id.min(self.materials.len() - 1)`
 
 ### Stage 3: Light Limit Increase
+
 - Changed `MAX_VIEWPORT_LIGHTS` from 8 to 32
 - Updated shader `LightsUniform` array size to match
 - Added warning log when scene exceeds limit:
+
   ```rust
   if scene_lights.len() > MAX_VIEWPORT_LIGHTS {
       log::warn!("Scene has {} lights, viewport limited to {}", ...);
@@ -39,7 +45,9 @@
   ```
 
 ### Stage 4: Extract LightsManager
+
 Created `crates/bif_viewport/src/lights.rs`:
+
 ```rust
 pub struct LightsManager {
     pub uniform: LightsUniform,
@@ -49,6 +57,7 @@ pub struct LightsManager {
     pub scene_lights: Vec<bif_core::Light>,
 }
 ```
+
 - `new()` - creates all GPU resources
 - `update()` - updates uniform from scene lights
 - `bind_group_layout()` - returns layout for pipeline creation
@@ -56,7 +65,9 @@ pub struct LightsManager {
 Removed ~91 lines from Renderer struct.
 
 ### Stage 5: Extract GnomonRenderer
+
 Created `crates/bif_viewport/src/gnomon.rs`:
+
 ```rust
 pub struct GnomonRenderer {
     pipeline: wgpu::RenderPipeline,
@@ -67,6 +78,7 @@ pub struct GnomonRenderer {
     pub size: u32,
 }
 ```
+
 - `new()` - creates pipeline, buffers, bind groups
 - `update_from_camera()` - updates uniform from camera rotation
 - `render()` - draws the gnomon
@@ -74,7 +86,9 @@ pub struct GnomonRenderer {
 Removed ~213 lines of duplicated gnomon code (was in two constructors).
 
 ### Stage 6: Thread Safety Documentation
+
 Expanded UsdStage Send+Sync safety comment:
+
 ```rust
 // SAFETY: UsdStage is Send + Sync because:
 // 1. All USD data is pre-cached at load time
@@ -87,11 +101,13 @@ Expanded UsdStage Send+Sync safety comment:
 ```
 
 ### Stage 7: Documentation
+
 - Added M19.4 section to MILESTONES.md
 - Updated SESSION_HANDOFF.md with completion summary
 - Documented future extraction candidates
 
 ## Commits (7 total)
+
 1. `53f7efc` - Convert Embree panics to Result<T, EmbreeError>
 2. `8f1ed6b` - Add materials vector validation
 3. `2368e2a` - Increase viewport light limit to 32
@@ -103,7 +119,9 @@ Expanded UsdStage Send+Sync safety comment:
 ## Learnings
 
 ### thiserror is great for FFI error handling
+
 Simple derive macro gives you Display, Error trait, and nice error messages:
+
 ```rust
 #[derive(Debug, Error)]
 pub enum EmbreeError {
@@ -113,7 +131,9 @@ pub enum EmbreeError {
 ```
 
 ### Rust requires explicit cleanup before error returns
+
 Unlike C++ RAII or Go defer, Rust needs manual cleanup in FFI code:
+
 ```rust
 if device.is_null() {
     return Err(EmbreeError::DeviceCreation);
@@ -126,6 +146,7 @@ if scene.is_null() {
 ```
 
 ### Module extraction pattern
+
 1. Create new file with struct + impl
 2. Add `pub mod` to lib.rs
 3. Add `pub use` for re-export
@@ -134,11 +155,13 @@ if scene.is_null() {
 6. Update all `self.field` to `self.module.field` or method calls
 
 ## Next Session
+
 - Fix timeline playback animation (M19.3 debugging)
 - Instance transform animation per frame
 - Consider extracting EnvironmentManager, CullingManager
 
 ## Files Changed
+
 - `crates/bif_renderer/Cargo.toml` - add thiserror
 - `crates/bif_renderer/src/embree.rs` - EmbreeError, Result returns
 - `crates/bif_viewport/src/gpu_types.rs` - MAX_VIEWPORT_LIGHTS 32

@@ -3,6 +3,7 @@
 ## Overview
 
 Sdf provides the low-level data model for USD scene description. While most work should use the higher-level `Usd` API (which handles composition), Sdf is essential for:
+
 - Direct layer manipulation (creating/editing specs without a stage)
 - Understanding how data is stored before composition
 - Working with file format plugins and asset resolution
@@ -159,6 +160,7 @@ relSpec.targetPathList.explicitItems = [Sdf.Path('/Target')]
 ## File Format Plugins
 
 Sdf's `SdfFileFormat` plugin mechanism allows:
+
 - **Translating** other formats into USD on-the-fly (e.g., Alembic → USD)
 - **Procedural generation** — a plugin that generates scene description dynamically
 - Extension-based registry: `.abc` → AlembicFileFormat, `.usd`/`.usda`/`.usdc` → native

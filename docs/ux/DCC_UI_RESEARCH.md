@@ -1,4 +1,4 @@
-# DCC Tool UI/UX Research for BIF
+﻿# DCC Tool UI/UX Research for BIF
 
 **Date:** 2026-03-30
 **Purpose:** Inform BIF's Qt migration (v0.15.0) and layer-aware UI (v0.14.0) with evidence-based design patterns from industry-leading VFX and creative tools.
@@ -36,6 +36,7 @@
 - **Weak undo feedback.** Undo/redo gives minimal visual feedback about what changed. Easy to lose track.
 
 **What BIF should borrow:**
+
 - Scene browser as primary navigation (already planned)
 - Spreadsheet bulk editor for properties (future milestone)
 - Context/scoping system for large scenes
@@ -61,6 +62,7 @@
 - **Dark-on-dark readability.** Default theme has low contrast in some areas. Parameter labels can be hard to read against the background.
 
 **What BIF should borrow:**
+
 - TAB/fuzzy-search node creation menu
 - Node type color-coding by category (blue=composition, orange=operations already planned)
 - Network LOD (simplified view when zoomed out)
@@ -68,6 +70,7 @@
 - Parameter grouping with collapsible folders
 
 **What BIF should avoid:**
+
 - Showing all parameters by default (use progressive disclosure)
 - Deep nesting without strong location awareness
 - Mixing old and new UI paradigms
@@ -91,6 +94,7 @@
 - **Limited panel customization.** Nuke's panel layout is less flexible than Houdini's. You can rearrange but the options are more constrained.
 
 **What BIF should borrow:**
+
 - Clean knob/property panel design with minimal visible parameters
 - Node "solo" viewing — inspect any node's output in the viewport
 - Backdrop nodes for graph organization
@@ -116,12 +120,14 @@
 - **No inline code preview.** Katana doesn't show you the underlying USD. You need to export and inspect externally. BIF's USDA code preview panel is a genuine differentiator.
 
 **What BIF should borrow:**
+
 - Opinion/attribution indicators on properties (color-coded by source layer)
 - Render catalog for comparing iterations
 - Material drag-and-drop assignment
 - Scene graph "live location" indicators
 
 **What BIF should avoid:**
+
 - Clinical, cold visual design
 - Assuming deep technical knowledge for basic tasks
 
@@ -145,6 +151,7 @@
 - **Keymap learning curve.** Despite improvements, Blender still relies heavily on keyboard shortcuts. BIF should ensure all common operations are discoverable without memorization.
 
 **What BIF should borrow:**
+
 - Workspace tabs for task switching (Lighting, Layout, Material, Assembly)
 - N-panel progressive disclosure sidebar
 - Command palette (F3 / Ctrl+P style search)
@@ -170,6 +177,7 @@
 - **Fusion node graph feels separate.** The Fusion page feels like a different application grafted onto Resolve. Integration is visual but not deep. BIF's node graph should feel native, not bolted on.
 
 **What BIF should borrow:**
+
 - Tight, restrained color palette (2-3 background shades, 1 accent color)
 - Page/workspace paradigm for task-focused UI
 - Micro-animations for polish (hover, transitions, disclosure)
@@ -187,7 +195,7 @@
 
 The most effective arrangement across all studied tools:
 
-```
+```text
 +---------------------------------------------------+
 |  Toolbar / Workspace Tabs                         |
 +------------+------------------------+-------------+
@@ -203,12 +211,14 @@ The most effective arrangement across all studied tools:
 ```
 
 **Evidence:**
+
 - Clarisse, Katana, Blender all use left-tree, center-viewport, right-properties
 - Nuke, Houdini, Resolve put the node graph below the viewport
 - The scene tree is always on the left (Western reading order: scan left-to-right, hierarchy first)
 - Properties/inspector is always on the right (detail view after selection)
 
 **BIF recommendation:** Default to this T-layout. The four panels map to BIF's "three views of one truth" plus the scene browser:
+
 1. **Left:** Scene browser (USD stage tree)
 2. **Center-top:** 3D viewport (and/or Ivar render view)
 3. **Center-bottom:** Node graph (or USDA code preview, tabbed)
@@ -217,6 +227,7 @@ The most effective arrangement across all studied tools:
 **Critical detail:** The center-bottom space should be TABBED between node graph and USDA code preview. Showing both simultaneously is too dense. Let artists switch between "visual flow" (node graph) and "ground truth" (USDA code) with a single click.
 
 **Panel sizing heuristic:**
+
 - Scene tree: 15-20% width
 - Viewport: 45-55% width
 - Inspector: 25-30% width
@@ -229,7 +240,7 @@ The most effective arrangement across all studied tools:
 Studied tools and their approaches:
 
 | Tool | Layer Visualization | Override Indicator | Source Attribution |
-|------|-------------------|-------------------|-------------------|
+| ------ | ------------------- | ------------------- | ------------------- |
 | Photoshop | Vertical stack, thumbnails, eye icon for visibility | Bold layer name | Layers panel shows active layer in blue |
 | After Effects | Vertical stack with transform columns | Override switch per property | Property links show expression icons |
 | Katana | Scene graph with inherited/set/overridden colors | White=set, gray=inherited, yellow=overridden | Node name in tooltip |
@@ -240,6 +251,7 @@ Studied tools and their approaches:
 **Best-in-class: Katana + Photoshop hybrid.**
 
 BIF should combine:
+
 1. **Photoshop's layer stack panel** for the sublayer list (vertical, reorderable, eye icons for muting, lock icons for read-only)
 2. **Katana's attribute coloring** for the property inspector:
    - **Bold white text** = set on current edit layer (your changes)
@@ -250,7 +262,7 @@ BIF should combine:
 
 **Layer stack panel design:**
 
-```
+```text
 +----------------------------------+
 |  Layer Stack                [+]  |
 +----------------------------------+
@@ -272,7 +284,7 @@ The `*` indicator and blue highlight mark the active edit layer. The `[Diff]` bu
 **Three-tier disclosure pattern** (observed across Blender, Resolve, Nuke):
 
 | Tier | Visibility | Content | Example |
-|------|-----------|---------|---------|
+| ------ | ----------- | --------- | --------- |
 | **Always visible** | Default | Core properties (name, transform, material) | Blender's header row |
 | **One click away** | Collapsed section | Secondary properties (display, render settings) | Blender's N-panel |
 | **Expert mode** | Hidden until toggled | Advanced/debug properties (primvar overrides, custom attributes) | Houdini's "Edit Parameter Interface" |
@@ -294,7 +306,7 @@ The `*` indicator and blue highlight mark the active edit layer. The `[Diff]` bu
 **How top tools handle task modes:**
 
 | Tool | Mechanism | Transition Speed | Customizable? |
-|------|-----------|-----------------|---------------|
+| ------ | ----------- | ----------------- | --------------- |
 | Blender | Workspace tabs (top bar) | Instant | Yes, save custom |
 | Resolve | Pages (bottom bar) | ~200ms fade | No (fixed pages) |
 | Houdini | Desktop presets (menu) | Instant | Yes, save custom |
@@ -324,6 +336,7 @@ The `*` indicator and blue highlight mark the active edit layer. The `[Diff]` bu
    - Render catalog prominent for A/B comparison
 
 **Transition behavior:** Switching workspace should:
+
 - Animate panel resize (200ms ease-out, not instant -- feels more intentional)
 - Preserve scroll positions in each panel
 - Remember the last selection in each workspace independently
@@ -336,7 +349,7 @@ The `*` indicator and blue highlight mark the active edit layer. The `[Diff]` bu
 **Analysis of code-adjacent UIs in creative tools:**
 
 | Tool | Code View | Target Audience | Key Design Choices |
-|------|-----------|----------------|-------------------|
+| ------ | ----------- | ---------------- | ------------------- |
 | VS Code | Full IDE | Developers | Syntax color, minimap, breadcrumb, folding |
 | Houdini VEX editor | Embedded code editor | Technical artists | Syntax color, auto-complete, error highlighting |
 | Nuke expression editor | Inline text field | Compositors | Minimal, shows result alongside expression |
@@ -413,7 +426,7 @@ The `*` indicator and blue highlight mark the active edit layer. The `[Diff]` bu
 2. **Text contrast tiers (against #1c1c1c background):**
 
    | Text Purpose | Color | Contrast Ratio | Notes |
-   |-------------|-------|---------------|-------|
+   | ------------- | ------- | --------------- | ------- |
    | Primary text (labels) | `#d4d4d4` | 10.5:1 | Comfortable for extended reading |
    | Secondary text (metadata) | `#888888` | 4.5:1 | Minimum AA, use sparingly |
    | Disabled text | `#555555` | 2.5:1 | Below AA, acceptable for disabled state |
@@ -458,7 +471,7 @@ The `*` indicator and blue highlight mark the active edit layer. The `[Diff]` bu
 These are UI decisions needed before the layer awareness features land:
 
 | Item | Recommendation | Reference Tool |
-|------|---------------|---------------|
+| ------ | --------------- | --------------- |
 | Layer stack panel | Vertical list with eye/lock/edit-target icons | Photoshop + Katana |
 | Opinion attribution | Color-coded property values (bold=yours, gray=inherited, amber=overridden) | Katana |
 | Layer diff view | "Show changes" button filters scene tree to only prims modified on active layer | Git diff concept (novel for DCC tools) |
@@ -469,7 +482,7 @@ These are UI decisions needed before the layer awareness features land:
 These require Qt's richer widget toolkit:
 
 | Item | Recommendation | Reference Tool |
-|------|---------------|---------------|
+| ------ | --------------- | --------------- |
 | T-layout default | Left tree, center viewport+graph, right inspector | Nuke/Blender |
 | Workspace tabs | 4 presets: Assembly, Lighting, Materials, Review | Blender + Resolve |
 | USDA code preview | Syntax-highlighted, folded, context-filtered, read-only | VS Code |
@@ -481,7 +494,7 @@ These require Qt's richer widget toolkit:
 ### Priority 3: Post v0.15.0
 
 | Item | Recommendation | Reference Tool |
-|------|---------------|---------------|
+| ------ | --------------- | --------------- |
 | Spreadsheet editor | Bulk property editing for lights, materials, instances | Clarisse |
 | Render catalog | History of renders with A/B comparison | Katana |
 | Workspace customization | Save/load custom workspace layouts | Houdini/Nuke |
@@ -493,22 +506,27 @@ These require Qt's richer widget toolkit:
 ## 4. Anti-Patterns to Avoid
 
 ### From Houdini
+
 - **Parameter overload.** Never show 50+ parameters without progressive disclosure. Default to collapsed sections, expand on demand.
 - **Inconsistent UI age.** When migrating to Qt, ensure ALL panels get the new styling. No legacy egui panels left behind.
 - **Deep nesting without breadcrumbs.** If BIF's node graph supports dive-in, always show a visible breadcrumb trail with click-to-jump-back.
 
 ### From Clarisse
+
 - **Tiny icons without labels.** Every toolbar button needs a text label. Icons supplement, they don't replace.
 - **No node graph.** BIF's hybrid approach (graph + tree) is the right call. Don't lose the graph.
 
 ### From Katana
+
 - **Assuming technical knowledge.** Not every user knows USD. Property labels should use human-readable names ("Position" not "xformOp:translate") with technical names available on hover.
 - **Cold, clinical aesthetic.** Add warmth through slightly rounded elements, generous spacing, and subtle hover animations.
 
 ### From Nuke
+
 - **Plugin UI inconsistency.** If BIF ever has plugins, enforce a style API that constrains plugin UIs to the BIF design language.
 
 ### General Anti-Patterns
+
 - **Modal dialogs for common operations.** Preference changes, export settings, and render settings should be panels, not blocking dialogs.
 - **Undo without visual feedback.** Show a brief toast notification ("Undo: moved light_key to [0, 5, 0]") so artists know what changed.
 - **Settings buried in menus.** Frequently-changed settings (viewport quality, render samples, display options) should be accessible from the viewport header, not Edit > Preferences > Viewport > Display.
@@ -522,6 +540,7 @@ These are areas where existing tools are weak and BIF can differentiate:
 ### 5.1 Live USDA Code Preview (No Current Tool Has This Well)
 
 BIF's "three views of one truth" concept -- where the node graph, scene tree, and USDA code all show the same data -- is genuinely novel. No current production tool lets you:
+
 1. Select a prim in the 3D viewport
 2. See it highlighted in the scene tree
 3. See its USDA definition in a code panel
@@ -533,6 +552,7 @@ BIF's "three views of one truth" concept -- where the node graph, scene tree, an
 ### 5.2 Layer Diff View
 
 No current DCC tool shows "what changed on this layer" as a first-class view. Git-style diff visualization applied to USD layers:
+
 - Green highlights for new prims/properties added on this layer
 - Blue highlights for properties overridden on this layer
 - Red highlights for prims deactivated (USD deactivation) on this layer
@@ -543,6 +563,7 @@ This would be enormously valuable for pipeline TDs reviewing artist work.
 ### 5.3 Intelligent Payload Loading Tied to Workspace
 
 No tool currently ties scene loading strategy to the artist's task. BIF's PayloadPolicy + Workspace combination means:
+
 - Switch to "Lighting" workspace: auto-load camera frustum geometry, lights, skip distant unlit geometry
 - Switch to "Assembly" workspace: load bounding boxes for everything, full geo for nothing
 - Switch to "Materials" workspace: load only the selected asset at full resolution
@@ -552,6 +573,7 @@ This reduces memory usage AND cognitive load simultaneously.
 ### 5.4 Command Palette with USD Awareness
 
 Go beyond VS Code's command palette. BIF's should understand USD:
+
 - Type "find light" to locate all UsdLux prims in the stage
 - Type "override material on /world/hero" to create a material override on the active layer
 - Type "load payload /world/env" to load a specific payload
@@ -562,6 +584,7 @@ This bridges the gap between GUI and CLI workflows that TDs need.
 ### 5.5 Onboarding Without Dumbing Down
 
 Ship a "first launch" experience that:
+
 1. Shows the T-layout with labeled panel purposes ("This is your scene tree", "This is where you edit properties")
 2. Opens a sample USD file (included with BIF) that has multiple layers, materials, lights
 3. Walks through one task: "Select the key light, adjust its intensity, see the change in the code preview"
@@ -576,7 +599,8 @@ No VFX tool does this well. Most assume you'll read documentation or attend a tr
 For implementation reference during Qt migration.
 
 ### Background Colors
-```
+
+```text
 --bg-viewport:     #141414    /* Viewport and code panel background */
 --bg-panel:        #1c1c1c    /* Main panel backgrounds */
 --bg-header:       #282828    /* Panel headers, section headers */
@@ -587,7 +611,8 @@ For implementation reference during Qt migration.
 ```
 
 ### Text Colors
-```
+
+```text
 --text-primary:    #d4d4d4    /* Default label text */
 --text-secondary:  #888888    /* Metadata, hints, secondary info */
 --text-disabled:   #555555    /* Disabled controls */
@@ -596,7 +621,8 @@ For implementation reference during Qt migration.
 ```
 
 ### Accent Colors
-```
+
+```text
 --accent-blue:     #4C8BF5    /* Selection, edit-layer indicator, links */
 --accent-blue-dim: #2A4B85    /* Inactive state of blue elements */
 --accent-orange:   #E8A838    /* Warnings, operation nodes, override indicators */
@@ -605,7 +631,8 @@ For implementation reference during Qt migration.
 ```
 
 ### Layer Attribution Colors (Property Inspector)
-```
+
+```text
 --layer-own:       #ffffff    /* Property set on active edit layer (bold weight) */
 --layer-inherited: #888888    /* Property inherited from weaker layer */
 --layer-overridden:#E8A838    /* Property overridden by stronger layer */
@@ -613,7 +640,8 @@ For implementation reference during Qt migration.
 ```
 
 ### Node Graph Colors
-```
+
+```text
 --node-composition:#4C8BF5    /* Blue: UsdRead, UsdPrim, GraftBranches, UsdExport */
 --node-operation:  #E8A838    /* Orange: Scatter, Xform, PointInstancer */
 --node-material:   #9B59B6    /* Purple: Material nodes (future) */
@@ -625,7 +653,7 @@ For implementation reference during Qt migration.
 
 ## Appendix: Typography Specification
 
-```
+```text
 --font-ui:         "Segoe UI", system-ui, sans-serif    /* Windows default */
 --font-mono:       "Cascadia Code", "JetBrains Mono", "Consolas", monospace
 
@@ -643,7 +671,7 @@ For implementation reference during Qt migration.
 
 ## Appendix: Spacing Specification
 
-```
+```text
 --spacing-panel-padding:     12px    /* Inside panel edges */
 --spacing-section-gap:        8px    /* Between collapsible sections */
 --spacing-property-row:       4px    /* Between property label-value rows */
