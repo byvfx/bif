@@ -42,6 +42,7 @@ Based on the diff above:
  txt```
 
 ### 4. Update Documentation and Devlog
+
 - Update `CHANGELOG.md`: add entries under `## [Unreleased]` in the appropriate section (Added/Changed/Fixed). Keep entries concise (one line each). Do NOT create a new version heading — that happens at release time.
 - Update `MILESTONES.md` if a version's status changed (e.g., mark version complete, update in-progress)
 - Update `ROADMAP_DETAIL.md` if tasks within the current version were completed

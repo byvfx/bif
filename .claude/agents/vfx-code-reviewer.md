@@ -82,6 +82,7 @@ Structure your review as:
    - Trade-offs to discuss
 
 For each issue, provide:
+
 - What's wrong
 - Why it matters (especially for VFX production)
 - How to fix it (with code example if helpful)
