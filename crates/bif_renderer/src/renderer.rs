@@ -43,6 +43,8 @@ pub struct RenderConfig {
     pub hdri_rotation: Option<f32>,
     /// Override HDRI intensity. When set, used instead of the value baked into the environment.
     pub hdri_intensity: Option<f32>,
+    /// Whether to show HDRI as visible background (false = use solid background but keep HDRI lighting).
+    pub hdri_show_background: bool,
     /// SHARC radiance cache for secondary bounce reuse.
     pub radiance_cache: Option<Arc<RadianceCache>>,
     /// Pixel reconstruction filter for sample weighting.
@@ -152,7 +154,10 @@ pub fn ray_color_with_aovs(
 
         if !world.hit(&current_ray, Interval::new(0.001, f32::INFINITY), &mut rec) {
             // Ray escaped - sample environment/background
-            let bg = if let Some((env, rotation, intensity)) = env_params.as_ref() {
+            // Camera rays respect hdri_show_background; bounced rays always sample HDRI for lighting
+            let use_hdri = env_params.is_some() && (config.hdri_show_background || !first_hit);
+            let bg = if use_hdri {
+                let (env, rotation, intensity) = env_params.as_ref().unwrap();
                 let dir = current_ray.direction().normalize();
                 let emission = env.sample_with_params(dir, *rotation, *intensity);
                 if last_was_delta {
@@ -609,6 +614,7 @@ mod tests {
             pass_number: 0,
             hdri_rotation: None,
             hdri_intensity: None,
+            hdri_show_background: true,
             radiance_cache: None,
             pixel_filter: PixelFilterConfig::default(),
             sampler_mode: SamplerMode::default(),

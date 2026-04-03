@@ -545,14 +545,7 @@ impl Renderer {
             self.culling.visible_count = 0;
             self.culling.mark_dirty();
             self.pick_scene = None;
-            self.scene.mesh_data = MeshData {
-                vertices: vec![],
-                indices: vec![],
-                bounds_min: Vec3::ZERO,
-                bounds_max: Vec3::ZERO,
-                triangle_material_ids: None,
-                mesh_ranges: None,
-            };
+            self.scene.mesh_data = MeshData::default();
             // Invalidate Ivar
             self.ivar.ivar_state.invalidate_scene();
             return Ok(());
@@ -2108,6 +2101,15 @@ impl Renderer {
         // Reset scene browser selection
         self.selection.selected_prim_path = None;
         self.selection.selected_prim_properties = None;
+
+        // Reset camera source to viewport (clear stale USD camera selection from previous scene)
+        self.cam.viewport_camera_source = crate::ivar_state::CameraSource::Viewport;
+        self.cam.selected_usd_camera = None;
+        self.cam.camera_locked = false;
+
+        // Reset batch render camera source to viewport
+        self.ivar.ivar_state.batch_settings.camera_source =
+            crate::ivar_state::CameraSource::default();
 
         // Update camera to frame the scene
         self.cam.camera.target = mesh_center;

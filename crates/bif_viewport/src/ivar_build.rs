@@ -253,6 +253,9 @@ impl Renderer {
             )
         };
 
+        // Clone subdivision data for Embree limit-surface evaluation
+        let subdiv_info = self.scene.mesh_data.subdiv_info.clone();
+
         // Create channel for build completion (returns BVH + materials for caching)
         let (tx, rx) = mpsc::channel();
         self.ivar.ivar_state.build_receiver = Some(rx);
@@ -321,16 +324,39 @@ impl Renderer {
             // Clone materials for cache return (cheap Arc bumps)
             let materials_for_cache = materials.clone();
 
+            // Build SubdivData from SubdivInfo if available
+            let subd = subdiv_info.as_ref().map(|si| bif_renderer::SubdivData {
+                face_vertex_counts: &si.face_vertex_counts,
+                polygon_indices: &si.polygon_indices,
+                crease_indices: &si.crease_indices,
+                crease_lengths: &si.crease_lengths,
+                crease_sharpnesses: &si.crease_sharpnesses,
+            });
+
+            // For subdivision, use original shared positions instead of triangulated vertices
+            let (subd_positions, subd_ref) = if let Some(ref si) = subdiv_info {
+                let pos: Vec<[f32; 3]> = si.positions.iter().map(|p| [p.x, p.y, p.z]).collect();
+                log::info!(
+                    "Using subdiv positions: {} shared verts (vs {} triangulated)",
+                    pos.len(),
+                    positions.len()
+                );
+                (Some(pos), subd.as_ref())
+            } else {
+                (None, None)
+            };
+            let effective_positions = subd_positions.as_deref().unwrap_or(&positions);
+
             // Use from_indexed() — keeps shared vertices, builds hit data in parallel
             let world = if let Some(embree_scene) = EmbreeScene::try_from_indexed(
-                &positions,
+                effective_positions,
                 &normals_soa,
                 &uvs_soa,
                 &indices,
                 transforms,
                 materials,
                 &tri_mat_ids,
-                None,
+                subd_ref,
             ) {
                 log::info!("Using Embree (indexed) for hardware-accelerated ray tracing");
                 let objects: Vec<Box<dyn Hittable + Send + Sync>> = vec![Box::new(embree_scene)];
@@ -808,6 +834,7 @@ impl Renderer {
             pass_number,
             hdri_rotation: Some(self.ivar.ivar_state.hdri_rotation),
             hdri_intensity: Some(self.ivar.ivar_state.hdri_intensity),
+            hdri_show_background: self.ivar.ivar_state.hdri_show_background,
             radiance_cache: self.ivar.ivar_state.radiance_cache.clone(),
             pixel_filter: self.ivar.ivar_state.pixel_filter,
             sampler_mode: self.ivar.ivar_state.sampler_mode,

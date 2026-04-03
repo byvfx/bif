@@ -412,6 +412,7 @@ fn batch_render_loop(
         pass_number: 0,
         hdri_rotation: scene.hdri_rotation,
         hdri_intensity: scene.hdri_intensity,
+        hdri_show_background: true,
         radiance_cache: batch_cache.clone(),
         pixel_filter: settings.pixel_filter,
         sampler_mode: settings.sampler_mode,

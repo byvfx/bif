@@ -344,14 +344,7 @@ impl Renderer {
         log::info!("Initializing blank scene (no default geometry)");
 
         // Create empty mesh data
-        let mesh_data = MeshData {
-            vertices: vec![],
-            indices: vec![],
-            bounds_min: Vec3::new(0.0, 0.0, 0.0),
-            bounds_max: Vec3::new(0.0, 0.0, 0.0),
-            triangle_material_ids: None,
-            mesh_ranges: None,
-        };
+        let mesh_data = MeshData::default();
 
         // Create camera at default position looking at origin
         let aspect = size.width as f32 / size.height as f32;
@@ -966,6 +959,7 @@ impl Renderer {
         // Sync to Ivar state for live CPU path tracer updates
         self.ivar.ivar_state.hdri_rotation = rotation;
         self.ivar.ivar_state.hdri_intensity = intensity;
+        self.ivar.ivar_state.hdri_show_background = show_background;
     }
 
     /// Update lights uniform buffer from scene lights.

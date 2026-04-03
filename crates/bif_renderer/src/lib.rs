@@ -35,7 +35,7 @@ pub use bucket::{
 pub use bvh::BvhNode;
 pub use camera::Camera;
 pub use denoise::{denoise_beauty, DenoiseError, DenoiseResult};
-pub use embree::EmbreeScene;
+pub use embree::{EmbreeScene, SubdivData};
 pub use exr_writer::{format_frame_path, write_exr, ExrCompression, ExrError, ExrOutput};
 pub use filter::{PixelFilter, PixelFilterConfig};
 pub use hdri::HdriEnvironment;

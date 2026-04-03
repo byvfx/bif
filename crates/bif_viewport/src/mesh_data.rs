@@ -18,6 +18,24 @@ pub struct MeshRange {
     pub vertex_count: u32,     // Number of vertices
 }
 
+/// Original polygon topology for Embree subdivision surface evaluation.
+/// Stored alongside the triangulated MeshData when the source mesh uses subdivision.
+#[derive(Clone, Debug)]
+pub struct SubdivInfo {
+    /// Original shared vertex positions (before UV-seam duplication)
+    pub positions: Vec<Vec3>,
+    /// Per-face vertex counts (polygon sizes, e.g. [4,4,4] for all quads)
+    pub face_vertex_counts: Vec<i32>,
+    /// Polygon vertex indices referencing into `positions`
+    pub polygon_indices: Vec<i32>,
+    /// Crease edge vertex index pairs
+    pub crease_indices: Vec<i32>,
+    /// Crease chain lengths
+    pub crease_lengths: Vec<i32>,
+    /// Crease sharpnesses (one per chain)
+    pub crease_sharpnesses: Vec<f32>,
+}
+
 /// GPU-ready mesh data with vertices, indices, and bounds.
 #[derive(Clone)]
 pub struct MeshData {
@@ -29,6 +47,8 @@ pub struct MeshData {
     pub triangle_material_ids: Option<Vec<u32>>,
     /// Per-mesh vertex ranges for multi-mesh combined buffers (for vertex animation).
     pub mesh_ranges: Option<Vec<MeshRange>>,
+    /// Subdivision surface data for Embree (when source mesh is subdiv).
+    pub subdiv_info: Option<SubdivInfo>,
 }
 
 impl Default for MeshData {
@@ -40,6 +60,7 @@ impl Default for MeshData {
             bounds_max: Vec3::ZERO,
             triangle_material_ids: None,
             mesh_ranges: None,
+            subdiv_info: None,
         }
     }
 }
@@ -302,6 +323,7 @@ impl MeshData {
             bounds_max: max,
             triangle_material_ids: None,
             mesh_ranges: None,
+            subdiv_info: None,
         }
     }
 
@@ -424,6 +446,7 @@ impl MeshData {
             bounds_max,
             triangle_material_ids: None,
             mesh_ranges: None,
+            subdiv_info: None,
         })
     }
 
@@ -478,6 +501,34 @@ impl MeshData {
             face_mat_ids.clone()
         });
 
+        // Preserve subdivision data for Embree limit-surface evaluation
+        let subdiv_info = if mesh.subdivision_scheme != bif_core::usd::SubdivisionScheme::None {
+            match (&mesh.face_vertex_counts, &mesh.polygon_indices) {
+                (Some(fvc), Some(pi)) => {
+                    log::info!(
+                        "Preserving subdiv data: {} faces, {} polygon indices, scheme={:?}",
+                        fvc.len(),
+                        pi.len(),
+                        mesh.subdivision_scheme
+                    );
+                    Some(SubdivInfo {
+                        positions: mesh.positions.clone(),
+                        face_vertex_counts: fvc.clone(),
+                        polygon_indices: pi.clone(),
+                        crease_indices: mesh.crease_indices.clone().unwrap_or_default(),
+                        crease_lengths: mesh.crease_lengths.clone().unwrap_or_default(),
+                        crease_sharpnesses: mesh.crease_sharpnesses.clone().unwrap_or_default(),
+                    })
+                }
+                _ => {
+                    log::warn!("Subdiv mesh missing face_vertex_counts or polygon_indices");
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
         Self {
             vertices,
             indices: mesh.indices.clone(),
@@ -485,6 +536,7 @@ impl MeshData {
             bounds_max,
             triangle_material_ids,
             mesh_ranges: None,
+            subdiv_info,
         }
     }
 
@@ -585,6 +637,28 @@ impl MeshData {
             Some(all_triangle_material_ids)
         };
 
+        // Preserve subdiv info only for single-mesh scenes (can't combine polygon topologies)
+        let subdiv_info = if meshes.len() == 1 {
+            let (mesh, _, _, _) = &meshes[0];
+            if mesh.subdivision_scheme != bif_core::usd::SubdivisionScheme::None {
+                match (&mesh.face_vertex_counts, &mesh.polygon_indices) {
+                    (Some(fvc), Some(pi)) => Some(SubdivInfo {
+                        positions: mesh.positions.clone(),
+                        face_vertex_counts: fvc.clone(),
+                        polygon_indices: pi.clone(),
+                        crease_indices: mesh.crease_indices.clone().unwrap_or_default(),
+                        crease_lengths: mesh.crease_lengths.clone().unwrap_or_default(),
+                        crease_sharpnesses: mesh.crease_sharpnesses.clone().unwrap_or_default(),
+                    }),
+                    _ => None,
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         Self {
             vertices: all_vertices,
             indices: all_indices,
@@ -592,6 +666,7 @@ impl MeshData {
             bounds_max,
             triangle_material_ids,
             mesh_ranges: Some(mesh_ranges),
+            subdiv_info,
         }
     }
 }

@@ -1563,7 +1563,7 @@ pub(crate) fn render_node_properties(
                 params_changed = true;
             }
 
-            if params_changed && *is_loaded {
+            if params_changed {
                 events.push(NodeGraphEvent::UpdateHdriParams {
                     rotation: *rotation,
                     intensity: *intensity,

@@ -395,6 +395,8 @@ pub struct IvarState {
     pub hdri_rotation: f32,
     /// Current HDRI intensity override for live updates.
     pub hdri_intensity: f32,
+    /// Whether to show HDRI as background in renders.
+    pub hdri_show_background: bool,
     /// Batch render settings.
     pub batch_settings: BatchRenderSettings,
     /// Batch render status.
@@ -468,6 +470,7 @@ impl Default for IvarState {
             environment: None,
             hdri_rotation: 0.0,
             hdri_intensity: 1.0,
+            hdri_show_background: true,
             batch_settings: BatchRenderSettings::default(),
             batch_status: BatchRenderStatus::default(),
             preview_aov: AovChannel::default(),
