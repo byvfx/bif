@@ -8,6 +8,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Subdivision surface wiring** — `SubdivInfo` preserves original polygon topology (face_vertex_counts, polygon_indices, creases) through MeshData pipeline. Ivar path tracer now passes `SubdivData` to Embree for Catmull-Clark limit surface evaluation. Re-exported `SubdivData` from bif_renderer.
+- **HDRI show_background for Ivar** — `hdri_show_background` field on IvarState/RenderConfig. Camera rays respect toggle (solid bg when off), bounced rays always sample HDRI for correct lighting.
 - **Markdown linting** — `.markdownlint.json` config + all 235 `.md` files linted/fixed. `pre-commit` framework with `markdownlint-fix` and `cargo fmt` runs on every commit.
 - **Qt UI design spec** — Consolidated UI_DESIGN.md as authoritative pre-implementation spec (16 sections, ~730 lines). 14 Stitch mockups across 2 batches. Vertical code split layout variant, Bjorn asset manager, active layer safety system, opinion encoding table, command palette details, canonical component specs, workspace configs. UX Architect + UX Researcher reviews conducted and incorporated.
 - **Stitch UI mockups** — 2 batches of Google Stitch-generated mockups covering Assembly (3 variants), Lighting (2 + command palette), Materials (2 + node graph safety), Render (2 + catalog), and First Launch onboarding screen. Obsidian Graphite "Quiet Confidence" design system.
@@ -35,6 +37,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **Camera persistence bug** — reset viewport/batch camera source on new scene load; stale USD camera from previous scene no longer persists
+- **HDRI background toggle** — removed `is_loaded` guard on UpdateHdriParams so params propagate for auto-loaded DomeLight HDRIs; background now correctly hides when unchecked
 - **PointInstancer time-sampled data** — C++ bridge now falls back to stage startTimeCode or first time sample when Default yields empty arrays (fixes Pixar PointInstancedMedCity.usd and similar files with no default values)
 - **PointInstancer Xform prototype resolution** — prototype_map now includes parent Xform paths so instancer targets like `/Prototypes/proto_0` resolve to child mesh `/Prototypes/proto_0/mesh_0`
 - **bif_perf code review fixes** — stable Rust compat (`count % 2` over nightly `is_multiple_of`), safe `u64::try_from` for duration stats, sample stddev (N-1), metadata surfaced in reports, iterations>=1 guard, CSV field escaping, `CARGO_MANIFEST_DIR` workspace root, `serde_yml` replacing deprecated `serde_yaml`, removed unused `csv` dep

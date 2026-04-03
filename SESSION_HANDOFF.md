@@ -1,7 +1,7 @@
-# Session Handoff - April 1, 2026
+# Session Handoff - April 2, 2026
 
-**Last Updated:** Qt UI design spec consolidation + Stitch mockup review
-**Current Version:** v0.13.0-dev (Pipeline Foundation)
+**Last Updated:** v0.13.0 scope expansion + Phase 1 bug fixes + subdivision wiring
+**Current Version:** v0.13.0-dev (Open Any USD Scene)
 **Project:** BIF - VFX Scene Assembler & Renderer
 
 ---
@@ -11,14 +11,23 @@
 | Status | Details |
 |--------|---------|
 | Released | v0.1.0, v0.11.0, v0.12.0 |
-| Current | v0.13.0-dev — M29.5, M30, M31 complete, architecture refactors in progress |
-| Next | Phase 1 complete (FFI split), Phase 2 (Linux), then v0.14.0 (layer-aware stage) |
-| Tests | 400+ total across all crates (44 new ffi_convert tests) |
+| Current | v0.13.0-dev — "open any USD scene" push: Phase 1 bugs fixed, subdiv wired to Embree |
+| Next | Phase 2 (camera import, viewport textures, displacement), Phase 3 (variants, curves), Phase 4 (OpenVDB) |
+| Tests | 400+ total across all crates (103 renderer pass, 6 pre-existing HDRI failures) |
 | Performance | 60 FPS viewport, 100K instances with LOD, Ivar build ~185ms |
 
 ---
 
 ## Recent Work
+
+### v0.13.0 Phase 1: Bug Fixes + Subdivision Wiring (Apr 2, 2026)
+
+- **v0.13.0 scope expanded** — from subdiv+displacement to full USD compatibility including OpenVDB. 5-phase plan (~70-108 hrs, target late May-mid June)
+- **Camera persistence bug fixed** — reset viewport/batch camera source on new scene load
+- **HDRI background toggle fixed** — removed is_loaded guard (blocked auto-loaded DomeLight HDRIs), added hdri_show_background to IvarState/RenderConfig/renderer
+- **OCIO ACES** — verified already active in shader (Hill/Narkowicz approx), full OCIO deferred
+- **Subdivision wired to Embree** — SubdivInfo preserves polygon topology through MeshData pipeline, Ivar passes SubdivData for Catmull-Clark limit surface. Single-mesh scenes only for now.
+- **Plan file:** `.claude/plans/sharded-moseying-hickey.md`
 
 ### Qt UI Design Spec Consolidation (Apr 1, 2026)
 
