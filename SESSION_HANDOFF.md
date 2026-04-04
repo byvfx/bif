@@ -1,6 +1,6 @@
-# Session Handoff - April 2, 2026
+# Session Handoff - April 4, 2026
 
-**Last Updated:** v0.13.0 scope expansion + Phase 1 bug fixes + subdivision wiring
+**Last Updated:** Phase 1-2 complete, subdiv rendering, attribute inspector, display color, variant UI, displacement foundation, wireframe selection (WIP)
 **Current Version:** v0.13.0-dev (Open Any USD Scene)
 **Project:** BIF - VFX Scene Assembler & Renderer
 
@@ -11,14 +11,39 @@
 | Status | Details |
 |--------|---------|
 | Released | v0.1.0, v0.11.0, v0.12.0 |
-| Current | v0.13.0-dev — "open any USD scene" push: Phase 1 bugs fixed, subdiv wired to Embree |
-| Next | Phase 2 (camera import, viewport textures, displacement), Phase 3 (variants, curves), Phase 4 (OpenVDB) |
+| Current | v0.13.0-dev — Phase 1-2 done, Phase 3 in progress |
+| Next | Fix wireframe selection visibility, curves in Ivar, Embree displacement dicing, OpenVDB |
 | Tests | 400+ total across all crates (103 renderer pass, 6 pre-existing HDRI failures) |
 | Performance | 60 FPS viewport, 100K instances with LOD, Ivar build ~185ms |
 
 ---
 
 ## Recent Work
+
+### v0.13.0 Sessions Apr 2-4: Subdiv, Inspector, Display Color, Variants, Selection (Apr 4, 2026)
+
+**Completed:**
+
+- **Subdivision rendering** — Embree 4 Catmull-Clark with smooth limit-surface normals via rtcInterpolate (dPdu×dPdv). Tessellation rate 8. Fixed RTCBufferType enum values. Pre-UV-split positions via `vertices_orig` FFI.
+- **USD attribute inspector** — Attributes tab in property panel, C++ bridge `usd_bridge_get_prim_attributes()`, primvars with interpolation.
+- **Display color** — `primvars:displayColor` flows through pipeline to vertex color. ShadingMode toggle (Textured/DisplayColor).
+- **Variant set UI** — Dropdowns in Attributes tab, `set_variant_selection()` + scene reload on change.
+- **Selection sync** — Tree click maps prim_path → instance_index for viewport highlight. F to frame selected.
+- **Displacement foundation** — Texture path + scale flows through FFI/Material. No vertex displacement yet.
+- **Bug fixes** — Camera persistence, HDRI show_background, UNC path stripping, code review fixes (4 critical).
+
+**WIP / Known Issues:**
+
+- **Wireframe selection overlay** — Pipeline created (`PolygonMode::Line` + depth bias), but wireframe lines still not clearly visible. Needs investigation: may need a dedicated wireframe shader (solid color, no material lookup) or stencil-based approach.
+- **Viewport click → tree sync** — Not yet wired (pick scene exists but result not connected to tree).
+- **Variant reload** — Currently does full file reload instead of re-extracting from live stage. Works but slow on large scenes. UNC path fix applied.
+
+**Next priorities:**
+
+1. Fix wireframe selection visibility (dedicated shader or stencil approach)
+2. Curves in Ivar (ribbon tessellation for BasisCurves)
+3. Embree displacement dicing (`rtcSetGeometryDisplacementFunction` callback)
+4. OpenVDB volume rendering
 
 ### v0.13.0 Phase 1: Bug Fixes + Subdivision Wiring (Apr 2, 2026)
 
