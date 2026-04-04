@@ -317,6 +317,8 @@ pub(crate) unsafe fn convert_mesh(raw: &UsdBridgeMeshDataRaw) -> UsdMeshData {
         )
     };
 
+    let vertices_orig = f32_ptr_to_opt_vec3s(raw.vertices_orig, raw.vertex_count_orig);
+
     UsdMeshData {
         path,
         vertices,
@@ -339,6 +341,7 @@ pub(crate) unsafe fn convert_mesh(raw: &UsdBridgeMeshDataRaw) -> UsdMeshData {
         crease_indices,
         crease_lengths,
         crease_sharpnesses,
+        vertices_orig,
     }
 }
 
@@ -858,6 +861,8 @@ mod tests {
             crease_length_count: 0,
             crease_sharpnesses: ptr::null(),
             crease_sharpness_count: 0,
+            vertices_orig: ptr::null(),
+            vertex_count_orig: 0,
         };
 
         let result = unsafe { convert_mesh(&raw) };
@@ -916,6 +921,8 @@ mod tests {
             crease_length_count: 0,
             crease_sharpnesses: ptr::null(),
             crease_sharpness_count: 0,
+            vertices_orig: ptr::null(),
+            vertex_count_orig: 0,
         };
 
         let result = unsafe { convert_mesh(&raw) };
@@ -970,6 +977,8 @@ mod tests {
             crease_length_count: 0,
             crease_sharpnesses: ptr::null(),
             crease_sharpness_count: 0,
+            vertices_orig: ptr::null(),
+            vertex_count_orig: 0,
         };
 
         let result = unsafe { convert_mesh(&raw) };
@@ -1039,6 +1048,8 @@ mod tests {
             crease_length_count: 2,
             crease_sharpnesses: crease_sharp.as_ptr(),
             crease_sharpness_count: 2,
+            vertices_orig: ptr::null(),
+            vertex_count_orig: 0,
         };
 
         let result = unsafe { convert_mesh(&raw) };
@@ -1094,6 +1105,8 @@ mod tests {
             crease_length_count: 0,
             crease_sharpnesses: ptr::null(),
             crease_sharpness_count: 0,
+            vertices_orig: ptr::null(),
+            vertex_count_orig: 0,
         };
 
         let result = unsafe { convert_mesh(&raw) };
@@ -1140,6 +1153,8 @@ mod tests {
             crease_length_count: 0,
             crease_sharpnesses: ptr::null(),
             crease_sharpness_count: 0,
+            vertices_orig: ptr::null(),
+            vertex_count_orig: 0,
         };
         let result = unsafe { convert_mesh(&raw) };
         assert_eq!(result.subdivision_scheme, SubdivisionScheme::Loop);

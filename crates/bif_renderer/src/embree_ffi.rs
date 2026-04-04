@@ -32,9 +32,9 @@ pub enum RTCBufferType {
     Index = 0,
     Vertex = 1,
     VertexAttribute = 2,
-    Face = 7,
-    EdgeCreaseIndex = 8,
-    EdgeCreaseWeight = 9,
+    Face = 16,
+    EdgeCreaseIndex = 18,
+    EdgeCreaseWeight = 19,
 }
 
 #[repr(C)]
@@ -44,6 +44,7 @@ pub enum RTCFormat {
     UInt = 0x5001,
     UInt3 = 0x5003,
     Float = 0x9001,
+    Float2 = 0x9002,
     Float3 = 0x9003,
     Float4x4ColumnMajor = 0x9244,
 }
@@ -186,5 +187,28 @@ extern "C" {
         mode: RTCSubdivisionMode,
     );
 
+    pub fn rtcSetGeometryTessellationRate(geom: RTCGeometry, rate: f32);
+
     pub fn rtcIntersect1(scene: RTCScene, rayhit: *mut RTCRayHit, args: *const std::ffi::c_void);
+
+    /// Interpolate vertex data at (u,v) on a primitive (supports subdivision surfaces).
+    pub fn rtcInterpolate(args: *const RTCInterpolateArguments);
+}
+
+/// Arguments for rtcInterpolate.
+#[repr(C)]
+pub struct RTCInterpolateArguments {
+    pub geometry: RTCGeometry,
+    pub prim_id: u32,
+    pub u: f32,
+    pub v: f32,
+    pub buffer_type: u32,
+    pub buffer_slot: u32,
+    pub p: *mut f32,
+    pub dp_du: *mut f32,
+    pub dp_dv: *mut f32,
+    pub ddp_dudu: *mut f32,
+    pub ddp_dvdv: *mut f32,
+    pub ddp_dudv: *mut f32,
+    pub value_count: u32,
 }

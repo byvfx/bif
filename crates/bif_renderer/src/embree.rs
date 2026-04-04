@@ -134,6 +134,11 @@ pub struct EmbreeScene {
     _subd_index_data: Vec<u32>,
     _crease_index_data: Vec<u32>,
     _crease_weight_data: Vec<f32>,
+    _subd_uv_data: Vec<[f32; 2]>,
+
+    // Subdivision state
+    is_subdiv: bool,
+    prototype_geom: RTCGeometry,
 
     // Per-triangle UV, normal, and tangent data for interpolation (3 entries per triangle).
     // Used by the old `new()` path. Empty when using indexed path.
@@ -472,6 +477,9 @@ impl EmbreeScene {
                 _subd_index_data: vec![],
                 _crease_index_data: vec![],
                 _crease_weight_data: vec![],
+                _subd_uv_data: vec![],
+                is_subdiv: false,
+                prototype_geom: std::ptr::null_mut(),
                 uv_data,
                 normal_data,
                 tangent_data,
@@ -579,14 +587,33 @@ impl EmbreeScene {
             let mut _subd_index_data: Vec<u32> = Vec::new();
             let mut _crease_index_data: Vec<u32> = Vec::new();
             let mut _crease_weight_data: Vec<f32> = Vec::new();
+            let mut _subd_uv_data: Vec<[f32; 2]> = Vec::new();
+            let mut is_subdiv = false;
 
             let geom = if let Some(sd) = subd {
                 // Subdivision geometry — Embree evaluates limit surface
+                log::info!(
+                    "Embree subdiv setup: {} positions, {} faces, {} polygon_indices, {} creases",
+                    positions.len(),
+                    sd.face_vertex_counts.len(),
+                    sd.polygon_indices.len(),
+                    sd.crease_sharpnesses.len()
+                );
                 let geom = rtcNewGeometry(device, RTCGeometryType::Subdivision);
                 if geom.is_null() {
                     rtcReleaseScene(prototype_scene);
                     rtcReleaseDevice(device);
                     return Err(EmbreeError::GeometryCreation);
+                }
+
+                // Validate polygon indices are within vertex buffer range
+                let max_idx = sd.polygon_indices.iter().max().copied().unwrap_or(0);
+                if max_idx as usize >= positions.len() {
+                    log::error!(
+                        "Subdiv polygon_indices max ({}) >= position count ({})",
+                        max_idx,
+                        positions.len()
+                    );
                 }
 
                 // Vertex buffer (same as triangle path)
@@ -600,6 +627,10 @@ impl EmbreeScene {
                     16,
                     positions.len(),
                 );
+                let err = rtcGetDeviceError(device);
+                if err != 0 {
+                    log::error!("Embree subdiv error after vertex buffer: {}", err);
+                }
 
                 // Face buffer (number of vertices per face)
                 _face_data = sd.face_vertex_counts.iter().map(|&c| c as u32).collect();
@@ -613,6 +644,10 @@ impl EmbreeScene {
                     4,
                     _face_data.len(),
                 );
+                let err = rtcGetDeviceError(device);
+                if err != 0 {
+                    log::error!("Embree subdiv error after face buffer: {}", err);
+                }
 
                 // Index buffer (polygon vertex indices, NOT triangulated)
                 // Stored in _subd_index_data to keep alive for Embree pointer
@@ -626,6 +661,32 @@ impl EmbreeScene {
                     0,
                     4,
                     _subd_index_data.len(),
+                );
+                let err = rtcGetDeviceError(device);
+                if err != 0 {
+                    log::error!("Embree subdiv error after index buffer: {}", err);
+                }
+
+                // Validate face topology
+                let total_indices: i64 = sd.face_vertex_counts.iter().map(|&c| c as i64).sum();
+                if total_indices != sd.polygon_indices.len() as i64 {
+                    log::error!(
+                        "Subdiv topology mismatch: sum(face_vertex_counts)={} != polygon_indices.len()={}",
+                        total_indices,
+                        sd.polygon_indices.len()
+                    );
+                }
+                // Check for invalid face sizes or negative indices
+                let min_fvc = sd.face_vertex_counts.iter().min().copied().unwrap_or(0);
+                let max_fvc = sd.face_vertex_counts.iter().max().copied().unwrap_or(0);
+                let min_idx = sd.polygon_indices.iter().min().copied().unwrap_or(0);
+                let max_idx_signed = sd.polygon_indices.iter().max().copied().unwrap_or(0);
+                log::info!(
+                    "Subdiv validation: face sizes [{},{}], index range [{},{}]",
+                    min_fvc,
+                    max_fvc,
+                    min_idx,
+                    max_idx_signed
                 );
 
                 // Crease edges (optional)
@@ -671,14 +732,59 @@ impl EmbreeScene {
 
                 // Set Catmull-Clark mode with pin-corners boundary
                 rtcSetGeometrySubdivisionMode(geom, 0, RTCSubdivisionMode::PinCorners);
+                // Tessellation rate: subdivisions per original edge for BVH construction.
+                // Higher = more micro-triangles = better BVH accuracy but slower build.
+                // Normals come from rtcInterpolate (limit surface derivatives), not tessellation,
+                // so this mainly affects ray intersection precision. 8 is a good default;
+                // 4 is faster for preview, 16+ for production quality.
+                rtcSetGeometryTessellationRate(geom, 8.0);
+                let err = rtcGetDeviceError(device);
+                if err != 0 {
+                    log::error!(
+                        "Embree subdiv error after subdivision mode/tess rate: {}",
+                        err
+                    );
+                }
+
+                // UV vertex attribute buffer for rtcInterpolate.
+                // Only set if UV count matches position count (per-vertex interpolation).
+                // faceVarying UVs (common for subdiv) need a separate topology — skip for now.
+                if !uvs.is_empty() && uvs.len() == positions.len() {
+                    _subd_uv_data = uvs.to_vec();
+                    rtcSetGeometryVertexAttributeCount(geom, 1);
+                    rtcSetSharedGeometryBuffer(
+                        geom,
+                        RTCBufferType::VertexAttribute as u32,
+                        0,
+                        RTCFormat::Float2 as u32,
+                        _subd_uv_data.as_ptr() as *const std::ffi::c_void,
+                        0,
+                        8, // stride: 2 floats = 8 bytes
+                        _subd_uv_data.len(),
+                    );
+                } else if !uvs.is_empty() {
+                    log::info!(
+                        "Skipping subdiv UV attribute: {} UVs != {} positions (faceVarying UVs not yet supported for subdiv)",
+                        uvs.len(),
+                        positions.len()
+                    );
+                }
 
                 log::info!(
-                    "Embree: subdivision geometry with {} faces, {} polygon indices, {} creases",
+                    "Embree: subdivision geometry with {} faces, {} polygon indices, {} creases, {} UV verts",
                     _face_data.len(),
                     sd.polygon_indices.len(),
-                    _crease_weight_data.len()
+                    _crease_weight_data.len(),
+                    _subd_uv_data.len()
                 );
 
+                // Check for Embree errors after subdiv setup
+                let err = rtcGetDeviceError(device);
+                if err != 0 {
+                    log::error!("Embree subdiv geometry error after setup: code {}", err);
+                }
+
+                is_subdiv = true;
                 geom
             } else {
                 // Triangle geometry (default path)
@@ -761,7 +867,15 @@ impl EmbreeScene {
                 )));
             }
 
-            rtcReleaseGeometry(geom);
+            // Keep geometry handle alive for subdiv rtcInterpolate calls
+            let prototype_geom = if is_subdiv {
+                geom
+            } else {
+                std::ptr::null_mut()
+            };
+            if !is_subdiv {
+                rtcReleaseGeometry(geom);
+            }
             rtcCommitScene(prototype_scene);
             let bvh_ms = t0.elapsed().as_secs_f64() * 1000.0;
 
@@ -906,6 +1020,9 @@ impl EmbreeScene {
                 _subd_index_data,
                 _crease_index_data,
                 _crease_weight_data,
+                _subd_uv_data,
+                is_subdiv,
+                prototype_geom,
                 uv_data: vec![],
                 normal_data: vec![],
                 tangent_data,
@@ -1065,8 +1182,89 @@ impl Hittable for EmbreeScene {
             let bary_v = rayhit.hit.v;
             let bary_w = 1.0 - bary_u - bary_v;
 
-            // Look up per-vertex UVs and normals — indexed path uses per-vertex
-            // arrays with index buffer lookup, old path uses pre-expanded per-triangle arrays.
+            if self.is_subdiv && !self.prototype_geom.is_null() {
+                // Subdivision path: use rtcInterpolate for smooth limit surface UVs,
+                // and Ng from the hit for geometric normal (Embree computes limit normals)
+                let mut uv = [0.0f32; 2];
+                if !self._subd_uv_data.is_empty() {
+                    let args = RTCInterpolateArguments {
+                        geometry: self.prototype_geom,
+                        prim_id: rayhit.hit.prim_id,
+                        u: bary_u,
+                        v: bary_v,
+                        buffer_type: RTCBufferType::VertexAttribute as u32,
+                        buffer_slot: 0,
+                        p: uv.as_mut_ptr(),
+                        dp_du: std::ptr::null_mut(),
+                        dp_dv: std::ptr::null_mut(),
+                        ddp_dudu: std::ptr::null_mut(),
+                        ddp_dvdv: std::ptr::null_mut(),
+                        ddp_dudv: std::ptr::null_mut(),
+                        value_count: 2,
+                    };
+                    rtcInterpolate(&args);
+                }
+                rec.u = uv[0];
+                rec.v = uv[1];
+
+                // Compute smooth normal from limit surface partial derivatives (dPdu × dPdv)
+                let mut _p = [0.0f32; 3];
+                let mut dpdu = [0.0f32; 3];
+                let mut dpdv = [0.0f32; 3];
+                let normal_args = RTCInterpolateArguments {
+                    geometry: self.prototype_geom,
+                    prim_id: rayhit.hit.prim_id,
+                    u: bary_u,
+                    v: bary_v,
+                    buffer_type: RTCBufferType::Vertex as u32,
+                    buffer_slot: 0,
+                    p: _p.as_mut_ptr(),
+                    dp_du: dpdu.as_mut_ptr(),
+                    dp_dv: dpdv.as_mut_ptr(),
+                    ddp_dudu: std::ptr::null_mut(),
+                    ddp_dvdv: std::ptr::null_mut(),
+                    ddp_dudv: std::ptr::null_mut(),
+                    value_count: 3,
+                };
+                rtcInterpolate(&normal_args);
+                let du = Vec3::new(dpdu[0], dpdu[1], dpdu[2]);
+                let dv = Vec3::new(dpdv[0], dpdv[1], dpdv[2]);
+                let cross = du.cross(dv);
+                let interp_normal = if cross.length_squared() > 1e-12 {
+                    cross
+                } else {
+                    // Fallback to Ng if derivatives are degenerate
+                    let ng = Vec3::new(rayhit.hit.ng_x, rayhit.hit.ng_y, rayhit.hit.ng_z);
+                    if ng.length_squared() > 1e-12 {
+                        ng
+                    } else {
+                        Vec3::Y
+                    }
+                };
+
+                // Transform normal to world space
+                let inst_id = rayhit.hit.inst_id[0] as usize;
+                let normal = if inst_id < self.normal_matrices.len() {
+                    (self.normal_matrices[inst_id] * interp_normal).normalize()
+                } else {
+                    interp_normal.normalize()
+                };
+                rec.normal = normal;
+
+                // Build tangent frame from normal
+                let (tangent, bitangent) = bif_math::build_orthonormal_basis(normal);
+                rec.tangent = tangent;
+                rec.bitangent = bitangent;
+
+                // Material: use first material for single-material subdiv meshes
+                let mat_id = 0usize.min(self.materials.len().saturating_sub(1));
+                rec.material = &*self.materials[mat_id];
+
+                rec.set_face_normal(ray, normal);
+                return true;
+            }
+
+            // Triangle geometry path (unchanged)
             let (uv0, uv1, uv2, n0, n1, n2) = if !self.per_vertex_uvs.is_empty() {
                 // Indexed path: look up via index buffer
                 let idx_base = prim_id * 3;
@@ -1194,6 +1392,9 @@ impl Drop for EmbreeScene {
         // AFTER device/scene/prototype_scene so they outlive the Embree pointers.
         // Reordering struct fields will cause use-after-free.
         unsafe {
+            if !self.prototype_geom.is_null() {
+                rtcReleaseGeometry(self.prototype_geom);
+            }
             rtcReleaseScene(self.scene);
             rtcReleaseScene(self.prototype_scene);
             rtcReleaseDevice(self.device);

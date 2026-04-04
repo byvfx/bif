@@ -505,14 +505,31 @@ impl MeshData {
         let subdiv_info = if mesh.subdivision_scheme != bif_core::usd::SubdivisionScheme::None {
             match (&mesh.face_vertex_counts, &mesh.polygon_indices) {
                 (Some(fvc), Some(pi)) => {
+                    // Use original pre-UV-split positions from C++ bridge when available.
+                    // mesh.positions may be reordered/expanded by UV seam splitting.
+                    let subdiv_positions = if let Some(ref orig) = mesh.vertices_orig {
+                        orig.clone()
+                    } else {
+                        // Fallback: truncate to max polygon index + 1
+                        let original_vert_count =
+                            pi.iter().map(|&i| i as usize + 1).max().unwrap_or(0);
+                        if original_vert_count <= mesh.positions.len() {
+                            mesh.positions[..original_vert_count].to_vec()
+                        } else {
+                            mesh.positions.clone()
+                        }
+                    };
                     log::info!(
-                        "Preserving subdiv data: {} faces, {} polygon indices, scheme={:?}",
+                        "Preserving subdiv data: {} faces, {} polygon indices, {} positions (orig={}, mesh={}), scheme={:?}",
                         fvc.len(),
                         pi.len(),
+                        subdiv_positions.len(),
+                        mesh.vertices_orig.as_ref().map_or(0, |v| v.len()),
+                        mesh.positions.len(),
                         mesh.subdivision_scheme
                     );
                     Some(SubdivInfo {
-                        positions: mesh.positions.clone(),
+                        positions: subdiv_positions,
                         face_vertex_counts: fvc.clone(),
                         polygon_indices: pi.clone(),
                         crease_indices: mesh.crease_indices.clone().unwrap_or_default(),
@@ -642,14 +659,26 @@ impl MeshData {
             let (mesh, _, _, _) = &meshes[0];
             if mesh.subdivision_scheme != bif_core::usd::SubdivisionScheme::None {
                 match (&mesh.face_vertex_counts, &mesh.polygon_indices) {
-                    (Some(fvc), Some(pi)) => Some(SubdivInfo {
-                        positions: mesh.positions.clone(),
-                        face_vertex_counts: fvc.clone(),
-                        polygon_indices: pi.clone(),
-                        crease_indices: mesh.crease_indices.clone().unwrap_or_default(),
-                        crease_lengths: mesh.crease_lengths.clone().unwrap_or_default(),
-                        crease_sharpnesses: mesh.crease_sharpnesses.clone().unwrap_or_default(),
-                    }),
+                    (Some(fvc), Some(pi)) => {
+                        let subdiv_positions = if let Some(ref orig) = mesh.vertices_orig {
+                            orig.clone()
+                        } else {
+                            let n = pi.iter().map(|&i| i as usize + 1).max().unwrap_or(0);
+                            if n <= mesh.positions.len() {
+                                mesh.positions[..n].to_vec()
+                            } else {
+                                mesh.positions.clone()
+                            }
+                        };
+                        Some(SubdivInfo {
+                            positions: subdiv_positions,
+                            face_vertex_counts: fvc.clone(),
+                            polygon_indices: pi.clone(),
+                            crease_indices: mesh.crease_indices.clone().unwrap_or_default(),
+                            crease_lengths: mesh.crease_lengths.clone().unwrap_or_default(),
+                            crease_sharpnesses: mesh.crease_sharpnesses.clone().unwrap_or_default(),
+                        })
+                    }
                     _ => None,
                 }
             } else {

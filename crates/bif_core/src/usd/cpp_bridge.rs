@@ -191,6 +191,9 @@ pub struct UsdMeshData {
 
     /// Crease sharpnesses (one per chain)
     pub crease_sharpnesses: Option<Vec<f32>>,
+
+    /// Original vertex positions before UV seam splitting (for subdivision surfaces)
+    pub vertices_orig: Option<Vec<Vec3>>,
 }
 
 /// Native instance data — references a prototype mesh with a unique transform.
@@ -933,6 +936,8 @@ impl UsdStage {
             crease_length_count: 0,
             crease_sharpnesses: ptr::null(),
             crease_sharpness_count: 0,
+            vertices_orig: ptr::null(),
+            vertex_count_orig: 0,
         };
 
         let result = unsafe { usd_bridge_get_mesh(self.raw, index, &mut raw_data) };

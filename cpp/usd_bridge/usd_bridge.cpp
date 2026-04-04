@@ -107,6 +107,10 @@ struct CachedMesh {
     std::vector<int32_t> face_vertex_counts_orig;
     std::vector<int32_t> face_vertex_indices_orig;
 
+    // Original vertex positions before UV seam splitting (for subdivision surfaces)
+    std::vector<float> vertices_orig;
+    size_t vertex_count_orig = 0;
+
     // Crease data (for subdivision surfaces)
     std::vector<int32_t> crease_indices;
     std::vector<int32_t> crease_lengths;
@@ -727,6 +731,10 @@ static void extract_mesh_geometry(
     if (is_subd) {
         cached.face_vertex_counts_orig.assign(face_vertex_counts.begin(), face_vertex_counts.end());
         cached.face_vertex_indices_orig.assign(face_vertex_indices.begin(), face_vertex_indices.end());
+
+        // Save original vertex positions before UV seam splitting
+        cached.vertices_orig = cached.vertices;
+        cached.vertex_count_orig = cached.vertices.size() / 3;
 
         // Read crease data
         VtArray<int> creaseIndices, creaseLengths;
@@ -2766,6 +2774,7 @@ void usd_bridge_free_mesh_geometry(UsdBridgeStage* stage) {
         mesh.face_material_ids.clear(); mesh.face_material_ids.shrink_to_fit();
         mesh.face_vertex_counts_orig.clear(); mesh.face_vertex_counts_orig.shrink_to_fit();
         mesh.face_vertex_indices_orig.clear(); mesh.face_vertex_indices_orig.shrink_to_fit();
+        mesh.vertices_orig.clear(); mesh.vertices_orig.shrink_to_fit();
         mesh.crease_indices.clear(); mesh.crease_indices.shrink_to_fit();
         mesh.crease_lengths.clear(); mesh.crease_lengths.shrink_to_fit();
         mesh.crease_sharpnesses.clear(); mesh.crease_sharpnesses.shrink_to_fit();
@@ -2900,6 +2909,10 @@ UsdBridgeError usd_bridge_get_mesh(
     out_data->crease_length_count = mesh.crease_lengths.size();
     out_data->crease_sharpnesses = mesh.crease_sharpnesses.empty() ? nullptr : mesh.crease_sharpnesses.data();
     out_data->crease_sharpness_count = mesh.crease_sharpnesses.size();
+
+    // Original positions before UV seam splitting (for subdivision Embree geometry)
+    out_data->vertices_orig = mesh.vertices_orig.empty() ? nullptr : mesh.vertices_orig.data();
+    out_data->vertex_count_orig = mesh.vertex_count_orig;
 
     return USD_BRIDGE_SUCCESS;
 }

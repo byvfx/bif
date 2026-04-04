@@ -76,6 +76,8 @@ pub(crate) struct UsdBridgeMeshDataRaw {
     pub(crate) crease_length_count: usize,
     pub(crate) crease_sharpnesses: *const f32,
     pub(crate) crease_sharpness_count: usize,
+    pub(crate) vertices_orig: *const f32,
+    pub(crate) vertex_count_orig: usize,
 }
 
 /// Native instance data from C API

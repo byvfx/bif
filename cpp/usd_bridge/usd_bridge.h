@@ -420,6 +420,11 @@ typedef struct UsdBridgeMeshData {
     /// Crease sharpnesses (one per crease chain)
     const float* crease_sharpnesses;
     size_t crease_sharpness_count;
+
+    /// Original vertex positions before UV seam splitting (for subdivision surfaces)
+    /// NULL if no UV splitting occurred or subdivisionScheme is "none"
+    const float* vertices_orig;
+    size_t vertex_count_orig;
 } UsdBridgeMeshData;
 
 /// Get mesh data by index.

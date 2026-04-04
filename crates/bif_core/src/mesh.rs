@@ -51,6 +51,9 @@ pub struct Mesh {
 
     /// Crease sharpnesses (one per chain)
     pub crease_sharpnesses: Option<Vec<f32>>,
+
+    /// Original vertex positions before UV seam splitting (for subdivision Embree geometry)
+    pub vertices_orig: Option<Vec<Vec3>>,
 }
 
 impl Mesh {
@@ -73,6 +76,7 @@ impl Mesh {
             crease_indices: None,
             crease_lengths: None,
             crease_sharpnesses: None,
+            vertices_orig: None,
         }
     }
 
@@ -97,6 +101,7 @@ impl Mesh {
             crease_indices: None,
             crease_lengths: None,
             crease_sharpnesses: None,
+            vertices_orig: None,
         }
     }
 
@@ -122,6 +127,7 @@ impl Mesh {
             crease_indices: None,
             crease_lengths: None,
             crease_sharpnesses: None,
+            vertices_orig: None,
         }
     }
 

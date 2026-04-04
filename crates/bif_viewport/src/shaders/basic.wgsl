@@ -316,8 +316,12 @@ fn fs_main(
         base_color = tex_sample.rgb;
     }
 
-    let normal = normalize(in.normal_ws);
+    var normal = normalize(in.normal_ws);
     let view_dir = normalize(camera.camera_position.xyz - in.world_pos);
+    // Two-sided lighting: flip normal if facing away from camera
+    if (dot(normal, view_dir) < 0.0) {
+        normal = -normal;
+    }
     let n_dot_v = max(dot(normal, view_dir), 0.0);
 
     // IOR-based F0: ((ior-1)/(ior+1))^2 for dielectrics, base_color for metals

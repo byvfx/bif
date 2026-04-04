@@ -29,3 +29,4 @@ Last updated: 2026-04-01
 ## UX
 
 - Remove the extra USD file loading window.
+- NEED a way to see the USD primvars and values.

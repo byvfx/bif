@@ -228,6 +228,7 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
             mesh.crease_indices = mesh_data.crease_indices.clone();
             mesh.crease_lengths = mesh_data.crease_lengths.clone();
             mesh.crease_sharpnesses = mesh_data.crease_sharpnesses.clone();
+            mesh.vertices_orig = mesh_data.vertices_orig.clone();
 
             let mesh_arc = Arc::new(mesh);
             let proto_id = scene.add_prototype(mesh_arc, mesh_data.path.clone());
