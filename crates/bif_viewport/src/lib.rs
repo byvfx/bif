@@ -645,10 +645,14 @@ impl Renderer {
             },
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: wgpu::TextureFormat::Depth24Plus,
-                depth_write_enabled: false, // Don't write depth (overlay on top)
-                depth_compare: wgpu::CompareFunction::LessEqual, // Draw on existing depth
+                depth_write_enabled: false,
+                depth_compare: wgpu::CompareFunction::LessEqual,
                 stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
+                bias: wgpu::DepthBiasState {
+                    constant: -2, // Push wireframe toward camera to avoid z-fighting
+                    slope_scale: -2.0,
+                    clamp: 0.0,
+                },
             }),
             multisample: wgpu::MultisampleState {
                 count: 1,
