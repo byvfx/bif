@@ -8,6 +8,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Display color + shading mode** — `primvars:displayColor` flows from C++ bridge through Mesh to vertex color. Viewport shader uses it as fallback when no texture. `ShadingMode` enum (Textured/DisplayColor) with GPU uniform and UI dropdown in Display settings.
 - **USD prim attribute inspector** — "Attributes" tab in property panel shows all prim attributes and primvars with types, values, and interpolation modes. C++ bridge `usd_bridge_get_prim_attributes()` enumerates by path. Arrays show count, scalars show value. Primvars color-coded with interpolation indicator.
 - **Subdivision surface rendering** — Full Catmull-Clark subdivision via Embree 4. `SubdivInfo` preserves original polygon topology through MeshData pipeline. `vertices_orig` FFI passes pre-UV-split positions from C++ bridge. `rtcInterpolate` computes smooth limit-surface normals (dPdu×dPdv). Tessellation rate 8 for BVH accuracy. Fixed `RTCBufferType` enum values (Face=16, EdgeCreaseIndex=18, EdgeCreaseWeight=19). Test asset: `pig_subDivCrease_test.usd`.
 - **Two-sided viewport lighting** — Viewport shader auto-flips normals facing away from camera, fixing dark surfaces on meshes with inconsistent winding.
