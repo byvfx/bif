@@ -564,6 +564,8 @@ typedef struct UsdBridgeMaterialData {
     const char* normal_texture;
     const char* emissive_texture;
     const char* opacity_texture;
+    const char* displacement_texture;
+    float displacement_scale;
 
     /// Material source type (1=MaterialX, 0=UsdPreviewSurface or default)
     int is_materialx;

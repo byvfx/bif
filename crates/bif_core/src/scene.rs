@@ -100,6 +100,12 @@ pub struct Material {
     /// Path to geometry opacity texture
     pub geometry_opacity_texture: Option<Arc<str>>,
 
+    /// Path to displacement texture (UsdPreviewSurface displacement input)
+    pub displacement_texture: Option<Arc<str>>,
+
+    /// Displacement scale factor (default 1.0)
+    pub displacement_scale: f32,
+
     /// Directory of the USD file this material was loaded from (for relative texture paths)
     pub source_dir: Option<PathBuf>,
 
@@ -126,6 +132,8 @@ impl Default for Material {
             normal_texture: None,
             emission_texture: None,
             geometry_opacity_texture: None,
+            displacement_texture: None,
+            displacement_scale: 1.0,
             source_dir: None,
             double_sided: false,
         }

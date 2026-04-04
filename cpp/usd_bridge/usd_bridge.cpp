@@ -232,6 +232,8 @@ struct CachedMaterial {
     std::string normal_texture;
     std::string emissive_texture;
     std::string opacity_texture;
+    std::string displacement_texture;
+    float displacement_scale;
     std::string material_path_for_mesh;  // Per-mesh material binding
     bool is_materialx;  // True if material is from MaterialX, false for UsdPreviewSurface
 };
@@ -2141,6 +2143,13 @@ static void cache_material_data(UsdBridgeStage* bridge) {
             cached.normal_texture = get_texture_path(input);
         }
 
+        // Displacement
+        input = shader.GetInput(TfToken("displacement"));
+        if (input) {
+            input.Get(&cached.displacement_scale);
+            cached.displacement_texture = get_texture_path(input);
+        }
+
         bridge->materials.push_back(std::move(cached));
     }
 
@@ -3034,6 +3043,8 @@ UsdBridgeError usd_bridge_get_material(
     out_data->normal_texture = mat.normal_texture.empty() ? nullptr : mat.normal_texture.c_str();
     out_data->emissive_texture = mat.emissive_texture.empty() ? nullptr : mat.emissive_texture.c_str();
     out_data->opacity_texture = mat.opacity_texture.empty() ? nullptr : mat.opacity_texture.c_str();
+    out_data->displacement_texture = mat.displacement_texture.empty() ? nullptr : mat.displacement_texture.c_str();
+    out_data->displacement_scale = mat.displacement_scale;
     out_data->is_materialx = mat.is_materialx ? 1 : 0;
 
     return USD_BRIDGE_SUCCESS;

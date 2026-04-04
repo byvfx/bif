@@ -336,6 +336,12 @@ pub struct UsdMaterialData {
     /// Path to geometry opacity texture (if any)
     pub geometry_opacity_texture: Option<String>,
 
+    /// Path to displacement texture (if any)
+    pub displacement_texture: Option<String>,
+
+    /// Displacement scale factor
+    pub displacement_scale: f32,
+
     /// True if material is from MaterialX, false for UsdPreviewSurface
     pub is_materialx: bool,
 }
@@ -1101,6 +1107,8 @@ impl UsdStage {
             normal_texture: ptr::null(),
             emissive_texture: ptr::null(),
             opacity_texture: ptr::null(),
+            displacement_texture: ptr::null(),
+            displacement_scale: 1.0,
             is_materialx: 0,
         };
 

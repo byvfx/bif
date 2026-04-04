@@ -383,6 +383,8 @@ pub(crate) struct UsdBridgeMaterialDataRaw {
     pub(crate) normal_texture: *const c_char,
     pub(crate) emissive_texture: *const c_char,
     pub(crate) opacity_texture: *const c_char,
+    pub(crate) displacement_texture: *const c_char,
+    pub(crate) displacement_scale: f32,
     pub(crate) is_materialx: i32,
 }
 

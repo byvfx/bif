@@ -430,6 +430,8 @@ pub(crate) unsafe fn convert_material(raw: &UsdBridgeMaterialDataRaw) -> UsdMate
         normal_texture: c_str_to_opt_string(raw.normal_texture),
         emission_texture: c_str_to_opt_string(raw.emissive_texture),
         geometry_opacity_texture: c_str_to_opt_string(raw.opacity_texture),
+        displacement_texture: c_str_to_opt_string(raw.displacement_texture),
+        displacement_scale: raw.displacement_scale,
         is_materialx: raw.is_materialx != 0,
     }
 }

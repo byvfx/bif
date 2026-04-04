@@ -357,6 +357,8 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
             normal_texture: mat_data.normal_texture.as_deref().map(Arc::from),
             emission_texture: mat_data.emission_texture.as_deref().map(Arc::from),
             geometry_opacity_texture: mat_data.geometry_opacity_texture.as_deref().map(Arc::from),
+            displacement_texture: mat_data.displacement_texture.as_deref().map(Arc::from),
+            displacement_scale: mat_data.displacement_scale,
             source_dir: path.parent().map(|p| p.to_path_buf()),
             double_sided: false,
         };
