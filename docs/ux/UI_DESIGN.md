@@ -367,7 +367,7 @@ Error:             #e74c3c
 | Property values | JetBrains Mono | 13px | 400 | Normal | 0 |
 | Tree items | Inter | 11px | 400 | Normal | 0 |
 | Status bar | JetBrains Mono | 10px | 300 | Normal | 0.02em |
-| Node labels | Inter | 10px | 700 | UPPERCASE | 0.02em |
+| Node labels | Inter | 12px | 700 | UPPERCASE | 0.02em |
 
 **Key:** Workspace tabs must be visibly larger than panel section headers — establishes navigation hierarchy.
 
@@ -377,7 +377,7 @@ Error:             #e74c3c
 - 8px padding inside panels
 - 4px gap between list items
 - No visible panel borders — shadow gaps only (Resolve style)
-- 24px minimum click target (accessibility)
+- 32px minimum click target for interactive rows; 44px for toolbar buttons (Wacom stylus users have lower tap precision — 24px is insufficient; see TODO in §17)
 
 ### Contrast Corrections (from mockup review)
 
@@ -458,7 +458,7 @@ Thumbnail orb render + key params. Click to expand full material editor.
 
 | Property | Value |
 | ---------- | ------- |
-| Row height | 22px (visual), 24px click target via padding |
+| Row height | 22px (visual), 32px click target via padding |
 | Indentation | 16px per level |
 | Icon size | 14px, USD prim-type specific |
 | Layer dot | 6px circle, 4px left of prim icon |
@@ -768,3 +768,345 @@ Full-screen modal shown on first launch or when no stage is open. Replaces the w
 ---
 
 *This document is the authoritative UI spec. When implementing Qt UI, reference this + [DESIGN.md](../../assets/stitch_bif_ui/obsidian_graphite/DESIGN.md) for tokens. When creating new Stitch mockups, validate against this spec.*
+
+---
+
+## 17. Context Menus
+
+Context menus are the **primary discoverability surface** in the scene tree and viewport — every DCC operation the user can't remember a shortcut for lives here.
+
+### Scene Tree — Right-Click on Prim
+
+Items are prim-type-aware (schema-driven). Core items always present; extras gated by prim type.
+
+| Item | Condition | Notes |
+|------|-----------|-------|
+| Add Child Prim… | Always | Opens prim type picker |
+| Add Reference… | Always | File browser → `.usd` |
+| Add Payload… | Always | File browser → `.usd` |
+| Add Variant Set… | Always | Opens name dialog |
+| ─── | — | Separator |
+| Override on \<active layer\> | Always | Creates opinion on active layer |
+| Mute / Unmute | Non-root | Toggles prim visibility |
+| ─── | — | Separator |
+| Isolate | Non-root | Hides all other prims in viewport |
+| Select in Viewport | Has geometry | Syncs 3D selection |
+| ─── | — | Separator |
+| Copy Path | Always | Copies SdfPath to clipboard |
+| Rename… | Non-root | Only if prim is on active layer |
+| Delete | Non-root | Only if prim is on active layer; confirm dialog |
+
+**Layer-awareness rules:**
+
+- Items that would write to a non-active layer are **grayed** with tooltip "Switch to \<layer\> to enable"
+- "Delete" is hidden entirely if prim originates from a reference or sublayer not in the edit target
+- Active layer name shown in relevant items: "Override on `lighting.usd`"
+
+**Keyboard shortcut echo:** Show shortcut right-aligned in the menu item (e.g., `Copy Path  Ctrl+Shift+C`).
+
+### Viewport — Right-Click on Prim
+
+Subset of tree menu + viewport-specific:
+
+| Item | Notes |
+|------|-------|
+| Select in Scene Tree | Syncs tree selection |
+| Override on \<active layer\> | Same as tree |
+| Add Light… | Only in Lighting workspace |
+| Frame Selection | `F` shortcut echo |
+| Isolate | Same as tree |
+
+### Layer Stack — Right-Click on Layer
+
+| Item | Condition |
+|------|-----------|
+| Set as Edit Target | Non-active layers |
+| Mute / Unmute | All layers |
+| Move Up / Move Down | Reorder sublayer stack |
+| Remove from Stage | Shows sublayer count warning |
+| Open in External Editor | Opens `.usd` file in $EDITOR |
+
+---
+
+## 18. Multi-Select Behavior
+
+### Scene Tree Selection
+
+| Gesture | Result |
+|---------|--------|
+| Click | Select single prim, deselect others |
+| `Ctrl+Click` | Toggle prim in/out of selection |
+| `Shift+Click` | Range-select from anchor to clicked row |
+| `Ctrl+A` | Select all visible prims |
+| `Escape` | Clear selection |
+
+### Property Inspector with Multi-Select
+
+When multiple prims are selected, the inspector shows **only properties common to all selected prims**:
+
+- Values that are **identical** across all: shown normally
+- Values that **differ**: display `—` (em dash) placeholder; editing sets all to the new value
+- Properties only on some prims: hidden entirely
+- Header shows: "3 prims selected" in `on-surface-variant` text
+
+**Qt impl note:** Populate inspector from intersection of selected prim schemas; use `QVariant` invalid state for differing values.
+
+### Viewport Marquee Select
+
+- Left-drag in empty viewport area creates selection rectangle
+- Selects prims whose bounds intersect the rectangle
+- `Ctrl` held: add to existing selection; `Shift` held: toggle
+
+---
+
+## 19. Undo / Redo Feedback
+
+The undo stack must be **visible** — silent undo is a source of corruption errors.
+
+### Status Bar Flash
+
+After every undo or redo, the status bar shows a timed message:
+
+```text
+Undo: Set xformOp:translate on /World/hero     [Ctrl+Z]
+Redo: Set xformOp:translate on /World/hero     [Ctrl+Shift+Z]
+```
+
+- Duration: 2 seconds, then returns to normal status
+- Font: JetBrains Mono 10px, `on-surface-variant` color
+- Operation name: derived from the `SdfChangeBlock` description string
+
+### Title Bar Unsaved State
+
+```text
+BIF — lighting.usd *         ← asterisk = unsaved changes
+BIF — lighting.usd           ← no asterisk = clean
+```
+
+- Asterisk uses `warning` color (`#f1c40f`) if possible in the window title
+- Removed on save or undo-to-clean-state
+
+### Undo Limit
+
+- Default: 100 undo steps
+- Warn user in settings if they reduce below 20
+
+---
+
+## 20. Long-Operation Progress
+
+Three tiers based on estimated duration:
+
+| Duration | UI Response |
+|----------|-------------|
+| < 100ms | Nothing — appears instant |
+| 100ms – 2s | Spinner icon in status bar (right side), operation name |
+| > 2s | Progress bar replaces status bar text, **Cancel** button appears |
+
+### Progress Bar Spec
+
+```text
+[████████░░░░░░░░░░░░]  Loading stage...  42%     [Cancel]
+```
+
+- Bar: `primary` (#4a9eff) fill on `surface_container` track, full status bar width
+- Text: JetBrains Mono 10px centered
+- **Cancel** button: only for cancellable operations (USD load, render). Export is non-cancellable — show spinner only.
+- On completion: progress bar fades out in 200ms, returns to normal status bar
+
+### Operations by Tier
+
+| Operation | Tier | Cancellable |
+|-----------|------|-------------|
+| USD stage load | >2s | Yes |
+| Render (Ivar) | >2s | Yes |
+| USD export | >2s | No |
+| Thumbnail generation (Bjorn) | 100ms–2s | No |
+| Property read | <100ms | — |
+
+**Qt impl note:** Use `QProgressBar` embedded in `QStatusBar`. Run stage loads on a `QThread`; emit `progressChanged(int)` signals.
+
+---
+
+## 21. Accessibility: Motion
+
+Qt has no native `prefers-reduced-motion` equivalent. Implement manually.
+
+### Settings Flag
+
+```rust
+pub struct AppSettings {
+    pub reduced_motion: bool,  // default: false; read from OS if possible
+    // ...
+}
+```
+
+On Windows, query `SystemParametersInfo(SPI_GETCLIENTAREAANIMATION)` to set the default.
+
+### Animation Gating
+
+All `QPropertyAnimation` instances must check before starting:
+
+```cpp
+if (!settings->reducedMotion()) {
+    auto* anim = new QPropertyAnimation(panel, "geometry");
+    anim->setDuration(150);
+    anim->start(QAbstractAnimation::DeleteWhenStopped);
+} else {
+    panel->setGeometry(targetGeometry);  // instant
+}
+```
+
+**Affected animations:**
+
+| Animation | Duration | Reduced-Motion |
+|-----------|----------|----------------|
+| Panel collapse/expand | 150ms ease-out | Instant |
+| Workspace switch | 200ms | Instant |
+| Layer-switch toast | 300ms fade | Instant show/hide |
+| Tooltip appear | 400ms delay | 150ms delay |
+| Selection highlight | 100ms fade | Instant |
+
+**Settings location:** Preferences > Accessibility > Reduce Motion (checkbox).
+
+---
+
+## 22. Scene Tree: Search / Filter
+
+Large USD stages (10K+ prims) require filtering. The scene tree is unusable without it.
+
+### Filter Bar
+
+- **Location:** Inline at top of the Scene Tree panel, below the "SCENE" header
+- **Activation:** `Ctrl+F` focuses the filter input; clicking the panel's search icon also focuses
+- **Default state:** Collapsed to a single search icon (16px). Expands on activation, showing full-width input with `✕` clear button
+
+```text
+┌─────────────────────────────────┐
+│ 🔍  Filter prims...          ✕  │
+└─────────────────────────────────┘
+```
+
+### Filter Behavior
+
+| Mode | Behavior |
+|------|----------|
+| **Highlight** (default) | All prims visible; matching rows highlighted in `primary` tint; non-matches dimmed to 30% opacity |
+| **Collapse** | Non-matching prims hidden entirely; matching prims' ancestors expanded automatically |
+
+Toggle between modes via a small `[H/C]` pill button in the filter bar.
+
+### Filter Matching
+
+- Matches against: prim name (last path component), full SdfPath, prim type
+- Case-insensitive substring match
+- Prefix `/` to force path match: `/World/lights` only matches path, not name
+- Prefix `type:` to filter by schema: `type:Mesh` shows only UsdGeomMesh prims
+
+### Performance
+
+- Debounce: 150ms after last keystroke before filtering (avoid thrashing on fast typing)
+- Virtualized tree must skip hidden rows — no layout cost for collapsed prims
+- Filter results count shown: "14 of 2,847 prims"
+
+---
+
+## 23. Error States in Scene Tree
+
+USD stages regularly have composition errors, missing references, and schema violations. These must be visible without disrupting workflow.
+
+### Error Badge System
+
+Each prim row can show a badge on the right edge:
+
+| Badge | Color | Meaning |
+|-------|-------|---------|
+| `⚠` warning dot | Amber `#f1c40f` | Composition warning (e.g., variant not found) |
+| `✕` error dot | Red `#e74c3c` | Hard error (missing reference, failed load) |
+| `?` question dot | `outline` gray | Unresolvable asset path |
+
+- Badge is 8px filled circle, right-aligned in the row
+- Hover tooltip: full error message from `UsdPrim::GetCompositionErrors()`
+- Badge on ancestor prims if any descendant has an error (summary indicator)
+
+### Error Panel
+
+Bottom dock has a **Console** tab. USD composition errors surface there too:
+
+```text
+[ERROR] /World/hero: Could not open asset @./hero_v12.usd@
+[WARN]  /World/lights/key: Variant 'studio' not found in 'lighting_rig'
+```
+
+- Clicking a Console error selects the prim in the scene tree
+- Error count badge on Console tab: `Console (3)` in red when errors present
+
+### Missing Reference Placeholder
+
+When a reference fails to load, the prim still appears in the tree with:
+
+- Italic name
+- Red error dot
+- Greyed icon
+- Right-click → "Locate Missing Asset…" opens file browser to re-path
+
+---
+
+## 24. Workspace Layout Storage
+
+### Storage Hierarchy
+
+| Data | Location | Format |
+|------|----------|--------|
+| Window geometry (size/position) | Global: `%APPDATA%\bif\config.toml` | TOML |
+| Default workspace proportions | Global: `%APPDATA%\bif\config.toml` | TOML |
+| Per-project workspace overrides | Project: `<stage_dir>/.bif/layout.toml` | TOML |
+| Active workspace tab | Session only (not persisted) | — |
+
+### Global Config Keys
+
+```toml
+[workspace.assembly]
+left_width_pct = 20
+right_width_pct = 25
+bottom_height_pct = 30
+
+[workspace.lighting]
+left_width_pct = 18
+right_width_pct = 28
+bottom_height_pct = 35
+```
+
+### Per-Project Override
+
+When a project `.bif/layout.toml` exists, it overrides global defaults for that stage only. This lets pipeline-specific stages open with the right proportions for their asset size.
+
+**Qt impl note:** Save/restore via `QSettings` for global; read TOML manually for per-project. On `QSplitter::splitterMoved`, debounce 1s then write.
+
+---
+
+## 25. Qt Binding: cxx-qt
+
+**Decision:** Use [`cxx-qt`](https://github.com/KDAB/cxx-qt) for all Qt/Rust interop.
+
+### Rationale
+
+- Native signals/slots via Rust `#[qobject]` macros — no manual FFI marshaling
+- C++ codegen keeps Qt's own type system intact (QVariant, QModelIndex, etc.)
+- Actively maintained by KDAB; best Qt 6 coverage of any Rust binding
+- `QObject` subclassing is idiomatic — required for `QAbstractItemModel` (scene tree)
+
+### Key cxx-qt Patterns for BIF
+
+| Widget | Pattern |
+|--------|---------|
+| Scene tree | Custom `QAbstractItemModel` via `#[qobject]` |
+| Property inspector | `QAbstractTableModel` via `#[qobject]` |
+| Node graph | `QGraphicsScene` + `QGraphicsItem` (C++ side, thin Rust bridge) |
+| Signals from renderer | `Q_EMIT progressChanged(int)` via cxx-qt bridge |
+| Settings | `QSettings` accessed via cxx-qt `extern "C++"` block |
+
+### Out of Scope for v0.15.0
+
+- Drag-and-drop (prim parenting, layer reorder) → v0.16.0
+- Wacom/stylus pressure sensitivity → post-v0.15.0 TODO
