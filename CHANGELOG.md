@@ -8,6 +8,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Wireframe selection overlay** — `POLYGON_MODE_LINE` pipeline renders selected prim wireframe over the solid pass. `VariantChanged` and `FrameSelected` `AppEvent` variants for UI→renderer dispatch.
+- **Qt UI spec §17-25** — context menus, multi-select, undo/redo feedback, long-op progress tiers, reduced-motion accessibility, scene tree filter/search, error state badges, workspace layout storage (global + per-project TOML), `cxx-qt` binding decision. Click targets 24px→32px rows; node labels 10px→12px.
 - **Displacement texture pipeline** — UsdPreviewSurface `displacement` input + scale extracted in C++ bridge, flows through FFI to Material struct. Foundation for CPU vertex displacement.
 - **Display color + shading mode** — `primvars:displayColor` flows from C++ bridge through Mesh to vertex color. Viewport shader uses it as fallback when no texture. `ShadingMode` enum (Textured/DisplayColor) with GPU uniform and UI dropdown in Display settings.
 - **USD prim attribute inspector** — "Attributes" tab in property panel shows all prim attributes and primvars with types, values, and interpolation modes. C++ bridge `usd_bridge_get_prim_attributes()` enumerates by path. Arrays show count, scalars show value. Primvars color-coded with interpolation indicator.

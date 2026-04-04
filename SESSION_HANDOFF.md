@@ -29,6 +29,13 @@
 - **Subdivision wired to Embree** — SubdivInfo preserves polygon topology through MeshData pipeline, Ivar passes SubdivData for Catmull-Clark limit surface. Single-mesh scenes only for now.
 - **Plan file:** `.claude/plans/sharded-moseying-hickey.md`
 
+### Qt UI Spec §17-25 + Wireframe Selection (Apr 4, 2026)
+
+- `UI_DESIGN.md` extended from 16→25 sections: context menus, multi-select, undo feedback, long-op progress, reduced-motion accessibility, tree filter, error states, workspace storage, cxx-qt decision
+- Click target spec corrected (24px→32px rows, 44px toolbar); node label 10px→12px
+- `cxx-qt` decided as Qt/Rust binding strategy; drag-and-drop deferred to v0.16.0
+- Wireframe selection overlay committed — `POLYGON_MODE_LINE` pipeline + `VariantChanged`/`FrameSelected` `AppEvent` variants
+
 ### Qt UI Design Spec Consolidation (Apr 1, 2026)
 
 - `docs/ux/UI_DESIGN.md` promoted to single authoritative Qt UI spec (16 sections, ~730 lines)
