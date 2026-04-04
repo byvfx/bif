@@ -69,6 +69,8 @@
 #include <cfloat>
 #include <mutex>
 #include <atomic>
+#include <sstream>
+#include <iomanip>
 
 PXR_NAMESPACE_USING_DIRECTIVE
 
@@ -5455,4 +5457,167 @@ UsdBridgeError usd_bridge_write_invisible_ids(
         TF_WARN("usd_bridge_write_invisible_ids: %s", e.what());
         return USD_BRIDGE_ERROR_UNKNOWN;
     }
+}
+
+// ============================================================================
+// Prim Attribute Inspection
+// ============================================================================
+
+/// Helper: format a USD VtValue as a display string.
+/// Arrays show "[count]", scalars show actual value.
+static std::string format_vt_value(const VtValue& val, const SdfValueTypeName& typeName) {
+    if (!val.IsHolding<VtValue>() && val.IsEmpty()) {
+        return "(empty)";
+    }
+
+    // Array types: show element count
+    if (val.IsArrayValued()) {
+        size_t count = val.GetArraySize();
+        return "[" + std::to_string(count) + "]";
+    }
+
+    // Scalar types: show actual value
+    std::ostringstream oss;
+    if (val.IsHolding<TfToken>()) {
+        oss << "\"" << val.UncheckedGet<TfToken>().GetString() << "\"";
+    } else if (val.IsHolding<std::string>()) {
+        oss << "\"" << val.UncheckedGet<std::string>() << "\"";
+    } else if (val.IsHolding<bool>()) {
+        oss << (val.UncheckedGet<bool>() ? "true" : "false");
+    } else if (val.IsHolding<int>()) {
+        oss << val.UncheckedGet<int>();
+    } else if (val.IsHolding<float>()) {
+        oss << std::fixed << std::setprecision(4) << val.UncheckedGet<float>();
+    } else if (val.IsHolding<double>()) {
+        oss << std::fixed << std::setprecision(4) << val.UncheckedGet<double>();
+    } else if (val.IsHolding<GfVec2f>()) {
+        auto v = val.UncheckedGet<GfVec2f>();
+        oss << "(" << v[0] << ", " << v[1] << ")";
+    } else if (val.IsHolding<GfVec3f>()) {
+        auto v = val.UncheckedGet<GfVec3f>();
+        oss << "(" << v[0] << ", " << v[1] << ", " << v[2] << ")";
+    } else if (val.IsHolding<GfVec4f>()) {
+        auto v = val.UncheckedGet<GfVec4f>();
+        oss << "(" << v[0] << ", " << v[1] << ", " << v[2] << ", " << v[3] << ")";
+    } else if (val.IsHolding<GfVec3d>()) {
+        auto v = val.UncheckedGet<GfVec3d>();
+        oss << "(" << v[0] << ", " << v[1] << ", " << v[2] << ")";
+    } else if (val.IsHolding<GfMatrix4d>()) {
+        oss << "(4x4 matrix)";
+    } else if (val.IsHolding<SdfAssetPath>()) {
+        oss << "\"" << val.UncheckedGet<SdfAssetPath>().GetAssetPath() << "\"";
+    } else {
+        oss << val.GetTypeName();
+    }
+    return oss.str();
+}
+
+UsdBridgeError usd_bridge_get_prim_attributes(
+    const UsdBridgeStage* stage,
+    const char* prim_path,
+    UsdBridgeAttributeData** out_attributes,
+    size_t* out_count
+) {
+    if (!stage || !prim_path || !out_attributes || !out_count) {
+        return USD_BRIDGE_ERROR_NULL_POINTER;
+    }
+    *out_attributes = nullptr;
+    *out_count = 0;
+
+    try {
+        auto prim = stage->stage->GetPrimAtPath(SdfPath(prim_path));
+        if (!prim.IsValid()) {
+            return USD_BRIDGE_ERROR_INVALID_PRIM;
+        }
+
+        auto attributes = prim.GetAttributes();
+        if (attributes.empty()) {
+            return USD_BRIDGE_SUCCESS;
+        }
+
+        // Build attribute list
+        struct AttrEntry {
+            std::string name;
+            std::string type_name;
+            std::string value_str;
+            bool is_primvar;
+            std::string interpolation;
+            bool is_authored;
+        };
+        std::vector<AttrEntry> entries;
+        entries.reserve(attributes.size());
+
+        UsdGeomPrimvarsAPI primvarsAPI(prim);
+
+        for (const auto& attr : attributes) {
+            AttrEntry entry;
+            entry.name = attr.GetName().GetString();
+
+            // Skip primvar :indices attributes (internal to USD, causes API warnings)
+            if (entry.name.find(":indices") != std::string::npos) {
+                continue;
+            }
+
+            entry.is_authored = attr.HasAuthoredValue();
+
+            // Get type name
+            auto typeName = attr.GetTypeName();
+            entry.type_name = typeName.GetAsToken().GetString();
+
+            // Get value
+            VtValue val;
+            if (attr.Get(&val)) {
+                entry.value_str = format_vt_value(val, typeName);
+            } else {
+                entry.value_str = "(no value)";
+            }
+
+            // Check if primvar
+            UsdGeomPrimvar pv = primvarsAPI.GetPrimvar(attr.GetName());
+            if (pv.IsDefined()) {
+                entry.is_primvar = true;
+                TfToken interp = pv.GetInterpolation();
+                entry.interpolation = interp.GetString();
+            } else {
+                entry.is_primvar = false;
+            }
+
+            entries.push_back(std::move(entry));
+        }
+
+        // Allocate output array
+        size_t count = entries.size();
+        auto* data = new UsdBridgeAttributeData[count];
+
+        for (size_t i = 0; i < count; ++i) {
+            data[i].name = strdup(entries[i].name.c_str());
+            data[i].type_name = strdup(entries[i].type_name.c_str());
+            data[i].value_str = strdup(entries[i].value_str.c_str());
+            data[i].is_primvar = entries[i].is_primvar ? 1 : 0;
+            data[i].interpolation = strdup(entries[i].interpolation.c_str());
+            data[i].is_authored = entries[i].is_authored ? 1 : 0;
+        }
+
+        *out_attributes = data;
+        *out_count = count;
+        return USD_BRIDGE_SUCCESS;
+
+    } catch (const std::exception& e) {
+        TF_WARN("usd_bridge_get_prim_attributes: %s", e.what());
+        return USD_BRIDGE_ERROR_UNKNOWN;
+    }
+}
+
+void usd_bridge_free_prim_attributes(
+    UsdBridgeAttributeData* attributes,
+    size_t count
+) {
+    if (!attributes) return;
+    for (size_t i = 0; i < count; ++i) {
+        free(const_cast<char*>(attributes[i].name));
+        free(const_cast<char*>(attributes[i].type_name));
+        free(const_cast<char*>(attributes[i].value_str));
+        free(const_cast<char*>(attributes[i].interpolation));
+    }
+    delete[] attributes;
 }

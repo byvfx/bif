@@ -196,6 +196,23 @@ pub struct UsdMeshData {
     pub vertices_orig: Option<Vec<Vec3>>,
 }
 
+/// A USD prim attribute with name, type, and value.
+#[derive(Clone, Debug)]
+pub struct UsdAttributeData {
+    /// Attribute name (e.g., "points", "primvars:st")
+    pub name: String,
+    /// USD type name (e.g., "point3f[]", "token", "float")
+    pub type_name: String,
+    /// Value as display string (scalars: actual value, arrays: "[count]")
+    pub value: String,
+    /// Whether this is a primvar (has interpolation)
+    pub is_primvar: bool,
+    /// Primvar interpolation ("constant", "uniform", "vertex", "faceVarying") or empty
+    pub interpolation: String,
+    /// Whether the attribute has an authored value
+    pub is_authored: bool,
+}
+
 /// Native instance data — references a prototype mesh with a unique transform.
 #[derive(Clone, Debug)]
 pub struct UsdNativeInstance {
@@ -2055,6 +2072,46 @@ impl UsdStage {
     fn convert_prim_info(raw: &UsdBridgePrimInfoRaw) -> UsdBridgeResult<UsdPrimInfo> {
         // SAFETY: raw populated by FFI call in caller; pointers valid while stage is open
         Ok(unsafe { super::ffi_convert::convert_prim_info(raw) })
+    }
+
+    /// Get all attributes for a prim by path.
+    pub fn get_prim_attributes(&self, prim_path: &str) -> UsdBridgeResult<Vec<UsdAttributeData>> {
+        let c_path = std::ffi::CString::new(prim_path)
+            .map_err(|_| UsdBridgeError::InvalidPrim("invalid path".to_string()))?;
+
+        let mut raw_ptr: *mut UsdBridgeAttributeDataRaw = std::ptr::null_mut();
+        let mut count: usize = 0;
+
+        let result = unsafe {
+            usd_bridge_get_prim_attributes(self.raw, c_path.as_ptr(), &mut raw_ptr, &mut count)
+        };
+
+        if result != UsdBridgeErrorCode::Success {
+            return Err(result.into());
+        }
+
+        if raw_ptr.is_null() || count == 0 {
+            return Ok(Vec::new());
+        }
+
+        let attributes = unsafe {
+            let raw_slice = std::slice::from_raw_parts(raw_ptr, count);
+            let attrs: Vec<UsdAttributeData> = raw_slice
+                .iter()
+                .map(|raw| UsdAttributeData {
+                    name: super::ffi_convert::c_str_to_string(raw.name),
+                    type_name: super::ffi_convert::c_str_to_string(raw.type_name),
+                    value: super::ffi_convert::c_str_to_string(raw.value_str),
+                    is_primvar: raw.is_primvar != 0,
+                    interpolation: super::ffi_convert::c_str_to_string(raw.interpolation),
+                    is_authored: raw.is_authored != 0,
+                })
+                .collect();
+            usd_bridge_free_prim_attributes(raw_ptr, count);
+            attrs
+        };
+
+        Ok(attributes)
     }
 }
 

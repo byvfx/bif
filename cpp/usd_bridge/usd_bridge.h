@@ -1579,6 +1579,41 @@ UsdBridgeError usd_bridge_write_invisible_ids(
     size_t count
 );
 
+// ============================================================================
+// Prim Attribute Inspection
+// ============================================================================
+
+/// A single USD attribute/primvar with name, type, and value as string.
+typedef struct UsdBridgeAttributeData {
+    const char* name;        // Attribute name (e.g., "points", "primvars:st")
+    const char* type_name;   // USD type (e.g., "point3f[]", "token", "float")
+    const char* value_str;   // Value as string (scalars: actual value, arrays: "[count]")
+    int is_primvar;          // 1 if this is a primvar, 0 if regular attribute
+    const char* interpolation; // Primvar interpolation ("constant", "uniform", "vertex", "faceVarying") or ""
+    int is_authored;         // 1 if authored (has opinion), 0 if fallback/default
+} UsdBridgeAttributeData;
+
+/// Get all attributes for a prim by path.
+/// Caller must call usd_bridge_free_prim_attributes() to free the returned data.
+///
+/// @param stage Stage handle
+/// @param prim_path USD prim path (e.g., "/World/Mesh")
+/// @param out_attributes Pointer to receive attribute array
+/// @param out_count Pointer to receive attribute count
+/// @return USD_BRIDGE_SUCCESS on success
+UsdBridgeError usd_bridge_get_prim_attributes(
+    const UsdBridgeStage* stage,
+    const char* prim_path,
+    UsdBridgeAttributeData** out_attributes,
+    size_t* out_count
+);
+
+/// Free attribute data returned by usd_bridge_get_prim_attributes.
+void usd_bridge_free_prim_attributes(
+    UsdBridgeAttributeData* attributes,
+    size_t count
+);
+
 #ifdef __cplusplus
 }
 #endif

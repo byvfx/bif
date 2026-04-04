@@ -43,9 +43,9 @@ pub mod validate;
 pub use cpp_bridge::{
     CameraProperties, CurveBasis, CurveType, CurveWrap, MeshPurpose, NormalsInterpolation,
     PrimvarInterpolation, PrimvarType, SubdivisionScheme, TransformSample,
-    UsdAnimatedInstancerData, UsdAnimatedMeshData, UsdBridgeError, UsdCurvesData, UsdEditLayer,
-    UsdInstancerData, UsdKind, UsdLightData, UsdLightShaping, UsdLightType, UsdMeshData,
-    UsdNativeInstance, UsdPointsData, UsdPrimType, UsdPrimvarData, UsdSkeletonData,
+    UsdAnimatedInstancerData, UsdAnimatedMeshData, UsdAttributeData, UsdBridgeError, UsdCurvesData,
+    UsdEditLayer, UsdInstancerData, UsdKind, UsdLightData, UsdLightShaping, UsdLightType,
+    UsdMeshData, UsdNativeInstance, UsdPointsData, UsdPrimType, UsdPrimvarData, UsdSkeletonData,
     UsdSkinBindingData, UsdSpecifier, UsdStage, UsdTimelineData, UsdVolumeData,
 };
 pub use export::{AuthoredPrim, ExportConfig, ExportResult};

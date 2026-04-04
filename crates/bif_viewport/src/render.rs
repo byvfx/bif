@@ -1143,6 +1143,23 @@ impl Renderer {
                                 }
                             }
                         }
+                        // Query USD prim attributes for inspector display
+                        if let Some(ref stage) = self.scene.usd_stage {
+                            match stage.get_prim_attributes(&prim_path) {
+                                Ok(attrs) if !attrs.is_empty() => {
+                                    props.usd_attributes = attrs;
+                                }
+                                Err(e) => {
+                                    log::debug!(
+                                        "Failed to query attributes for {}: {:?}",
+                                        prim_path,
+                                        e
+                                    );
+                                }
+                                _ => {}
+                            }
+                        }
+
                         self.selection.selected_prim_properties = Some(props);
                     } else {
                         self.selection.selected_prim_properties = Some(PrimProperties {

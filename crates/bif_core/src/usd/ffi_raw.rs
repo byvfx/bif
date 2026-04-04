@@ -80,6 +80,17 @@ pub(crate) struct UsdBridgeMeshDataRaw {
     pub(crate) vertex_count_orig: usize,
 }
 
+/// Prim attribute data from C API (returned by usd_bridge_get_prim_attributes)
+#[repr(C)]
+pub(crate) struct UsdBridgeAttributeDataRaw {
+    pub(crate) name: *const c_char,
+    pub(crate) type_name: *const c_char,
+    pub(crate) value_str: *const c_char,
+    pub(crate) is_primvar: i32,
+    pub(crate) interpolation: *const c_char,
+    pub(crate) is_authored: i32,
+}
+
 /// Native instance data from C API
 #[repr(C)]
 pub(crate) struct UsdNativeInstanceDataRaw {
@@ -897,4 +908,16 @@ extern "C" {
         ids: *const i64,
         count: usize,
     ) -> UsdBridgeErrorCode;
+
+    pub(crate) fn usd_bridge_get_prim_attributes(
+        stage: *const UsdBridgeStageRaw,
+        prim_path: *const c_char,
+        out_attributes: *mut *mut UsdBridgeAttributeDataRaw,
+        out_count: *mut usize,
+    ) -> UsdBridgeErrorCode;
+
+    pub(crate) fn usd_bridge_free_prim_attributes(
+        attributes: *mut UsdBridgeAttributeDataRaw,
+        count: usize,
+    );
 }

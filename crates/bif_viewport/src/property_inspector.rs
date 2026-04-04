@@ -38,6 +38,9 @@ pub struct PrimProperties {
 
     /// Bound material (if available)
     pub bound_material: Option<Arc<bif_core::Material>>,
+
+    /// USD prim attributes (from stage query)
+    pub usd_attributes: Vec<bif_core::usd::UsdAttributeData>,
 }
 
 /// Event emitted when user edits a transform in the property inspector.
@@ -58,6 +61,7 @@ pub struct TransformEdit {
 enum PropertyTab {
     #[default]
     Value,
+    Attributes,
     MetaData,
 }
 
@@ -108,6 +112,7 @@ impl PrimProperties {
             bounds_max: None,
             attributes: vec![("Children".to_string(), info.child_count.to_string())],
             bound_material: None,
+            usd_attributes: Vec::new(),
         }
     }
 
@@ -431,9 +436,14 @@ pub fn render_property_inspector(
 
             // -- Bottom: tabbed detail panel --
             ui.horizontal(|ui| {
-                for tab in [PropertyTab::Value, PropertyTab::MetaData] {
+                for tab in [
+                    PropertyTab::Value,
+                    PropertyTab::Attributes,
+                    PropertyTab::MetaData,
+                ] {
                     let label = match tab {
                         PropertyTab::Value => "Value",
+                        PropertyTab::Attributes => "Attributes",
                         PropertyTab::MetaData => "Meta Data",
                     };
                     if ui.selectable_label(active_tab == tab, label).clicked() {
@@ -455,6 +465,9 @@ pub fn render_property_inspector(
                         } else {
                             ui.label("Select a property above");
                         }
+                    }
+                    PropertyTab::Attributes => {
+                        render_attributes_tab(ui, props);
                     }
                     PropertyTab::MetaData => {
                         render_metadata_tab(ui, props);
@@ -522,6 +535,83 @@ fn render_property_detail(ui: &mut egui::Ui, row: &PropertyRow) {
                 ui.colored_label(theme::STATUS_ERROR, "No");
             }
         }
+    }
+}
+
+/// Render the Attributes tab — USD prim attributes and primvars.
+fn render_attributes_tab(ui: &mut egui::Ui, props: &PrimProperties) {
+    if props.usd_attributes.is_empty() {
+        ui.label("No USD attributes (select a USD prim)");
+        return;
+    }
+
+    // Separate primvars from regular attributes
+    let (primvars, regular): (Vec<_>, Vec<_>) =
+        props.usd_attributes.iter().partition(|a| a.is_primvar);
+
+    // Regular attributes
+    if !regular.is_empty() {
+        ui.strong("Attributes");
+        egui::Grid::new("usd_attrs_grid")
+            .num_columns(3)
+            .striped(true)
+            .spacing([8.0, 2.0])
+            .show(ui, |ui| {
+                for attr in &regular {
+                    let name_color = if attr.is_authored {
+                        theme::STATUS_OK
+                    } else {
+                        theme::TEXT_SECONDARY
+                    };
+                    ui.label(
+                        egui::RichText::new(&attr.name)
+                            .color(name_color)
+                            .monospace(),
+                    );
+                    ui.label(
+                        egui::RichText::new(&attr.type_name)
+                            .color(theme::TEXT_SECONDARY)
+                            .small(),
+                    );
+                    ui.label(egui::RichText::new(&attr.value).monospace());
+                    ui.end_row();
+                }
+            });
+    }
+
+    if !primvars.is_empty() {
+        ui.add_space(4.0);
+        ui.strong("Primvars");
+        egui::Grid::new("usd_primvars_grid")
+            .num_columns(4)
+            .striped(true)
+            .spacing([8.0, 2.0])
+            .show(ui, |ui| {
+                for pv in &primvars {
+                    let name_color = if pv.is_authored {
+                        theme::PIN_SCENE
+                    } else {
+                        theme::TEXT_SECONDARY
+                    };
+                    ui.label(egui::RichText::new(&pv.name).color(name_color).monospace());
+                    ui.label(
+                        egui::RichText::new(&pv.type_name)
+                            .color(theme::TEXT_SECONDARY)
+                            .small(),
+                    );
+                    if !pv.interpolation.is_empty() {
+                        ui.label(
+                            egui::RichText::new(&pv.interpolation)
+                                .color(theme::STATUS_WARNING)
+                                .small(),
+                        );
+                    } else {
+                        ui.label("");
+                    }
+                    ui.label(egui::RichText::new(&pv.value).monospace());
+                    ui.end_row();
+                }
+            });
     }
 }
 
