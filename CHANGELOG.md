@@ -8,7 +8,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-- **Subdivision surface wiring** — `SubdivInfo` preserves original polygon topology (face_vertex_counts, polygon_indices, creases) through MeshData pipeline. Ivar path tracer now passes `SubdivData` to Embree for Catmull-Clark limit surface evaluation. Re-exported `SubdivData` from bif_renderer.
+- **Subdivision surface rendering** — Full Catmull-Clark subdivision via Embree 4. `SubdivInfo` preserves original polygon topology through MeshData pipeline. `vertices_orig` FFI passes pre-UV-split positions from C++ bridge. `rtcInterpolate` computes smooth limit-surface normals (dPdu×dPdv). Tessellation rate 8 for BVH accuracy. Fixed `RTCBufferType` enum values (Face=16, EdgeCreaseIndex=18, EdgeCreaseWeight=19). Test asset: `pig_subDivCrease_test.usd`.
+- **Two-sided viewport lighting** — Viewport shader auto-flips normals facing away from camera, fixing dark surfaces on meshes with inconsistent winding.
 - **HDRI show_background for Ivar** — `hdri_show_background` field on IvarState/RenderConfig. Camera rays respect toggle (solid bg when off), bounced rays always sample HDRI for correct lighting.
 - **Markdown linting** — `.markdownlint.json` config + all 235 `.md` files linted/fixed. `pre-commit` framework with `markdownlint-fix` and `cargo fmt` runs on every commit.
 - **Qt UI design spec** — Consolidated UI_DESIGN.md as authoritative pre-implementation spec (16 sections, ~730 lines). 14 Stitch mockups across 2 batches. Vertical code split layout variant, Bjorn asset manager, active layer safety system, opinion encoding table, command palette details, canonical component specs, workspace configs. UX Architect + UX Researcher reviews conducted and incorporated.
