@@ -117,6 +117,18 @@ pub struct SubdivData<'a> {
     pub crease_sharpnesses: &'a [f32],
 }
 
+/// Compute the inverse-transpose Mat3 for normal transformation, with degenerate matrix guard.
+/// Falls back to identity for zero-scale axes to avoid NaN from singular matrix inverse.
+fn safe_normal_matrix(transform: &Mat4) -> Mat3 {
+    let m = Mat3::from_mat4(*transform);
+    let det = m.determinant();
+    if det.abs() < 1e-10 {
+        Mat3::IDENTITY
+    } else {
+        m.inverse().transpose()
+    }
+}
+
 pub struct EmbreeScene {
     device: RTCDevice,
     scene: RTCScene,
@@ -441,20 +453,7 @@ impl EmbreeScene {
             };
 
             let t0 = Instant::now();
-            let normal_matrices: Vec<Mat3> = transforms
-                .iter()
-                .map(|t| {
-                    let m = Mat3::from_mat4(*t);
-                    let det = m.determinant();
-                    if det.abs() < 1e-10 {
-                        // Degenerate transform (zero-scale axis) — fall back to
-                        // identity to avoid NaN from singular matrix inverse
-                        Mat3::IDENTITY
-                    } else {
-                        m.inverse().transpose()
-                    }
-                })
-                .collect();
+            let normal_matrices: Vec<Mat3> = transforms.iter().map(safe_normal_matrix).collect();
             let normat_ms = t0.elapsed().as_secs_f64() * 1000.0;
 
             let total_ms = total_start.elapsed().as_secs_f64() * 1000.0;
@@ -986,18 +985,8 @@ impl EmbreeScene {
 
             // 7. Normal matrices (parallel)
             let t0 = Instant::now();
-            let normal_matrices: Vec<Mat3> = transforms
-                .par_iter()
-                .map(|t| {
-                    let m = Mat3::from_mat4(*t);
-                    let det = m.determinant();
-                    if det.abs() < 1e-10 {
-                        Mat3::IDENTITY
-                    } else {
-                        m.inverse().transpose()
-                    }
-                })
-                .collect();
+            let normal_matrices: Vec<Mat3> =
+                transforms.par_iter().map(safe_normal_matrix).collect();
             let normat_ms = t0.elapsed().as_secs_f64() * 1000.0;
 
             let total_ms = total_start.elapsed().as_secs_f64() * 1000.0;
@@ -1113,10 +1102,7 @@ impl EmbreeScene {
         self._transform_data = new_data;
 
         // Recompute normal matrices for correct shading normals
-        self.normal_matrices = transforms
-            .iter()
-            .map(|t| Mat3::from_mat4(*t).inverse().transpose())
-            .collect();
+        self.normal_matrices = transforms.iter().map(safe_normal_matrix).collect();
 
         true
     }
@@ -1256,11 +1242,26 @@ impl Hittable for EmbreeScene {
                 rec.tangent = tangent;
                 rec.bitangent = bitangent;
 
-                // Material: use first material for single-material subdiv meshes
-                let mat_id = 0usize.min(self.materials.len().saturating_sub(1));
+                // Material lookup: use triangle_material_ids if available (maps face → material)
+                let mat_id = if !self.triangle_material_ids.is_empty() {
+                    let id = if prim_id < self.triangle_material_ids.len() {
+                        self.triangle_material_ids[prim_id] as usize
+                    } else {
+                        0
+                    };
+                    id.min(self.materials.len().saturating_sub(1))
+                } else {
+                    0
+                };
                 rec.material = &*self.materials[mat_id];
 
                 rec.set_face_normal(ray, normal);
+
+                // Flip bitangent for back faces (matches triangle path)
+                if !rec.front_face {
+                    rec.bitangent = -rec.bitangent;
+                }
+
                 return true;
             }
 
@@ -1385,12 +1386,13 @@ impl Drop for EmbreeScene {
             self.instance_count,
             self.triangle_count
         );
-        // SAFETY: Release order matters. Top-level scene references prototype_scene
-        // via Embree instances, so release top-level first. Device must be last.
-        // After drop() returns, Rust drops remaining fields in declaration order.
-        // The _vertex_data, _index_data, _transform_data fields MUST be declared
-        // AFTER device/scene/prototype_scene so they outlive the Embree pointers.
-        // Reordering struct fields will cause use-after-free.
+        // SAFETY: Release order matters — this manual Drop releases Embree handles
+        // before Rust's auto-drop frees the backing data (_vertex_data, _index_data, etc.).
+        // 1. Release prototype_geom (if subdiv) — needs prototype_scene alive
+        // 2. Release top-level scene — references prototype_scene via instances
+        // 3. Release prototype_scene — geometry data still valid
+        // 4. Release device — must be last
+        // After drop() returns, Rust auto-drops remaining fields (Vec data) in declaration order.
         unsafe {
             if !self.prototype_geom.is_null() {
                 rtcReleaseGeometry(self.prototype_geom);

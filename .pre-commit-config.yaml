@@ -3,7 +3,7 @@ repos:
     rev: v0.44.0
     hooks:
       - id: markdownlint-fix
-        args: ["--ignore", "target/"]
+        args: ["--ignore", "target/", "--ignore", ".kilo/"]
 
   - repo: https://github.com/doublify/pre-commit-rust
     rev: v1.0
