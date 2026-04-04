@@ -7,9 +7,9 @@ struct CameraUniform {
     camera_position: vec4<f32>,
     inv_view_proj: mat4x4<f32>,
     selected_instance_id: u32,
+    shading_mode: u32,       // 0 = textured, 1 = display color
     _pad0: u32,
     _pad1: u32,
-    _pad2: u32,
 }
 
 struct MaterialUniform {
@@ -110,6 +110,7 @@ struct VertexOutput {
     @location(3) @interpolate(flat) instance_material_id: u32,
     @location(4) @interpolate(flat) instance_idx: u32,
     @location(5) @interpolate(flat) tri_mat_offset: u32,
+    @location(6) vertex_color: vec3<f32>,  // Display color (primvars:displayColor)
 }
 
 @vertex
@@ -134,6 +135,7 @@ fn vs_main(in: VertexInput, @builtin(instance_index) instance_index: u32) -> Ver
     out.instance_material_id = in.instance_material_id;
     out.instance_idx = instance_index;
     out.tri_mat_offset = in.tri_mat_offset;
+    out.vertex_color = in.color;
 
     return out;
 }
@@ -310,10 +312,18 @@ fn fs_main(
     }
 
     var base_color = mat.base_color.rgb;
-    let diffuse_tex_index = mat.texture_indices.x;
-    if (diffuse_tex_index != 0u) {
-        let tex_sample = textureSample(textures[diffuse_tex_index + tex_offset], texture_sampler, sample_uv);
-        base_color = tex_sample.rgb;
+    if (camera.shading_mode == 1u) {
+        // Display Color mode: always use vertex color (primvars:displayColor)
+        base_color = in.vertex_color;
+    } else {
+        // Textured mode: use texture if available, then display color, then material
+        let diffuse_tex_index = mat.texture_indices.x;
+        if (diffuse_tex_index != 0u) {
+            let tex_sample = textureSample(textures[diffuse_tex_index + tex_offset], texture_sampler, sample_uv);
+            base_color = tex_sample.rgb;
+        } else if (in.vertex_color.r > 0.001 || in.vertex_color.g > 0.001 || in.vertex_color.b > 0.001) {
+            base_color = in.vertex_color;
+        }
     }
 
     var normal = normalize(in.normal_ws);

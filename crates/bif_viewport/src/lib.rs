@@ -934,8 +934,9 @@ impl Renderer {
     /// Update camera uniform buffer (call after modifying camera)
     pub fn update_camera(&mut self) {
         self.cam.camera_uniform.update_view_proj(&self.cam.camera);
-        // Sync selection state into uniform
+        // Sync selection + shading mode into uniform
         self.cam.camera_uniform.selected_instance_id = self.selection.gpu_highlight_id();
+        self.cam.camera_uniform.shading_mode = self.display_settings.shading_mode.as_u32();
         self.gpu.queue.write_buffer(
             &self.cam.camera_buffer,
             0,

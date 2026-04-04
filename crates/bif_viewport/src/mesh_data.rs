@@ -475,7 +475,20 @@ impl MeshData {
                 .copied()
                 .unwrap_or(default_uv);
 
-            let color = [normal.x.abs(), normal.y.abs(), normal.z.abs()];
+            // Use display color (primvars:displayColor) if available, else default grey
+            let color = if let Some(ref dc) = mesh.display_color {
+                if dc.len() == 1 {
+                    // Single color for entire mesh
+                    [dc[0].x, dc[0].y, dc[0].z]
+                } else if let Some(c) = dc.get(i) {
+                    // Per-vertex color
+                    [c.x, c.y, c.z]
+                } else {
+                    [0.8, 0.8, 0.8]
+                }
+            } else {
+                [0.8, 0.8, 0.8]
+            };
 
             vertices.push(Vertex {
                 position: [pos.x, pos.y, pos.z],
@@ -609,11 +622,18 @@ impl MeshData {
                 let normal_matrix = bif_math::Mat3::from_mat4(*transform).inverse().transpose();
                 let transformed_normal = (normal_matrix * *normal).normalize();
 
-                let color = [
-                    transformed_normal.x.abs(),
-                    transformed_normal.y.abs(),
-                    transformed_normal.z.abs(),
-                ];
+                // Use display color if available, else default grey
+                let color = if let Some(ref dc) = mesh.display_color {
+                    if dc.len() == 1 {
+                        [dc[0].x, dc[0].y, dc[0].z]
+                    } else if let Some(c) = dc.get(i) {
+                        [c.x, c.y, c.z]
+                    } else {
+                        [0.8, 0.8, 0.8]
+                    }
+                } else {
+                    [0.8, 0.8, 0.8]
+                };
 
                 all_vertices.push(Vertex {
                     position: [transformed_pos.x, transformed_pos.y, transformed_pos.z],

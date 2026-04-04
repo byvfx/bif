@@ -54,6 +54,9 @@ pub struct Mesh {
 
     /// Original vertex positions before UV seam splitting (for subdivision Embree geometry)
     pub vertices_orig: Option<Vec<Vec3>>,
+
+    /// Display color (primvars:displayColor — per-vertex or single color, fallback when no material)
+    pub display_color: Option<Vec<Vec3>>,
 }
 
 impl Mesh {
@@ -77,6 +80,7 @@ impl Mesh {
             crease_lengths: None,
             crease_sharpnesses: None,
             vertices_orig: None,
+            display_color: None,
         }
     }
 
@@ -102,6 +106,7 @@ impl Mesh {
             crease_lengths: None,
             crease_sharpnesses: None,
             vertices_orig: None,
+            display_color: None,
         }
     }
 
@@ -128,6 +133,7 @@ impl Mesh {
             crease_lengths: None,
             crease_sharpnesses: None,
             vertices_orig: None,
+            display_color: None,
         }
     }
 

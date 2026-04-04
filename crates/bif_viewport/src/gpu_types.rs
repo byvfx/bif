@@ -28,7 +28,9 @@ pub struct CameraUniform {
     pub inv_view_proj: [[f32; 4]; 4],
     /// Selected instance ID for highlight tint (0xFFFFFFFF = no selection).
     pub selected_instance_id: u32,
-    pub _pad_selection: [u32; 3],
+    /// Shading mode: 0 = textured (default), 1 = display color only
+    pub shading_mode: u32,
+    pub _pad_selection: [u32; 2],
 }
 
 impl CameraUniform {
@@ -39,7 +41,8 @@ impl CameraUniform {
             camera_position: [0.0, 0.0, 5.0, 1.0],
             inv_view_proj: Mat4::IDENTITY.to_cols_array_2d(),
             selected_instance_id: NO_SELECTION,
-            _pad_selection: [0; 3],
+            shading_mode: 0,
+            _pad_selection: [0; 2],
         }
     }
 

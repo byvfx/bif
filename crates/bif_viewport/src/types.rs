@@ -36,6 +36,25 @@ impl PurposeMode {
     }
 }
 
+/// Viewport shading mode — controls how surfaces are colored.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum ShadingMode {
+    /// Full material with textures (default)
+    Textured,
+    /// Display color only (primvars:displayColor, ignores textures)
+    DisplayColor,
+}
+
+impl ShadingMode {
+    /// GPU uniform value (matches shader constants).
+    pub fn as_u32(self) -> u32 {
+        match self {
+            Self::Textured => 0,
+            Self::DisplayColor => 1,
+        }
+    }
+}
+
 /// Framework-agnostic display settings — UI layer reads/writes these.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct DisplaySettings {
@@ -43,6 +62,8 @@ pub struct DisplaySettings {
     pub purpose_mode: PurposeMode,
     /// Whether the built-in box-LOD system is enabled.
     pub lod_enabled: bool,
+    /// Viewport shading mode (textured vs display color).
+    pub shading_mode: ShadingMode,
 }
 
 impl Default for DisplaySettings {
@@ -50,6 +71,7 @@ impl Default for DisplaySettings {
         Self {
             purpose_mode: PurposeMode::Render,
             lod_enabled: true,
+            shading_mode: ShadingMode::Textured,
         }
     }
 }

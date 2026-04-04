@@ -1,7 +1,7 @@
 use crate::app_event::{AppEvent, EventBus};
 use crate::ivar_state::{self, BuildStatus, RenderMode};
 use crate::theme;
-use crate::{DisplaySettings, PurposeMode};
+use crate::{DisplaySettings, PurposeMode, ShadingMode};
 
 /// All data the left render-settings panel needs, passed by value or reference
 /// to avoid borrowing `self` inside the closure.
@@ -428,6 +428,30 @@ pub(crate) fn render_stats_panel(
                 })
                 .response
                 .on_hover_text("USD display purpose filter — controls which prims are shown");
+        });
+        ui.horizontal(|ui| {
+            ui.label("Shading:");
+            egui::ComboBox::from_id_salt("shading_mode")
+                .selected_text(match p.display_settings.shading_mode {
+                    ShadingMode::Textured => "Textured",
+                    ShadingMode::DisplayColor => "Display Color",
+                })
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(
+                        &mut p.display_settings.shading_mode,
+                        ShadingMode::Textured,
+                        "Textured",
+                    );
+                    ui.selectable_value(
+                        &mut p.display_settings.shading_mode,
+                        ShadingMode::DisplayColor,
+                        "Display Color",
+                    );
+                })
+                .response
+                .on_hover_text(
+                    "Textured: full materials. Display Color: primvars:displayColor only",
+                );
         });
     });
 
