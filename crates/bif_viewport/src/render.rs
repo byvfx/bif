@@ -236,6 +236,10 @@ impl Renderer {
             {
                 event_bus.emit(crate::app_event::AppEvent::ProjectSaveAs);
             }
+            // F to frame selected instance
+            if ctx.input(|i| i.key_pressed(egui::Key::F) && !i.modifiers.command) {
+                event_bus.emit(crate::app_event::AppEvent::FrameSelected);
+            }
 
             let top_panel = egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
                 egui::menu::bar(ui, |ui| {
@@ -1091,6 +1095,13 @@ impl Renderer {
                 }
                 AppEvent::PrimSelected(prim_path) => {
                     self.selection.selected_prim_path = Some(prim_path.clone());
+                    // Map prim path → instance index for viewport highlight
+                    self.selection.selected_instance_index = self
+                        .scene
+                        .instances
+                        .prim_paths
+                        .iter()
+                        .position(|p| &**p == prim_path.as_str());
                     reset_property_inspector_cache(&self.egui_ctx);
                     let composite = CompositeProvider::new(
                         self.scene
@@ -1143,7 +1154,7 @@ impl Renderer {
                                 }
                             }
                         }
-                        // Query USD prim attributes for inspector display
+                        // Query USD prim attributes and variant sets for inspector display
                         if let Some(ref stage) = self.scene.usd_stage {
                             match stage.get_prim_attributes(&prim_path) {
                                 Ok(attrs) if !attrs.is_empty() => {
@@ -1157,6 +1168,22 @@ impl Renderer {
                                     );
                                 }
                                 _ => {}
+                            }
+                            // Query variant sets
+                            if let Ok(set_names) = stage.get_variant_set_names(&prim_path) {
+                                for set_name in &set_names {
+                                    let variants = stage
+                                        .get_variant_names(&prim_path, set_name)
+                                        .unwrap_or_default();
+                                    let selection = stage
+                                        .get_variant_selection(&prim_path, set_name)
+                                        .unwrap_or_default();
+                                    props.variant_sets.push((
+                                        set_name.clone(),
+                                        variants,
+                                        selection,
+                                    ));
+                                }
                             }
                         }
 
@@ -1273,6 +1300,62 @@ impl Renderer {
                 AppEvent::ProjectOpenRecent(path) => {
                     if self.save_if_needed_then_proceed("Open Recent") {
                         self.open_project(&path);
+                    }
+                }
+                AppEvent::FrameSelected => {
+                    if let Some(idx) = self.selection.selected_instance_index {
+                        if let Some(transform) = self.scene.instances.current.get(idx) {
+                            let proto_id = self
+                                .scene
+                                .instances
+                                .prototype_ids
+                                .get(idx)
+                                .copied()
+                                .unwrap_or(0);
+                            let aabb = self
+                                .scene
+                                .working_scene
+                                .prototypes
+                                .get(proto_id)
+                                .map(|p| p.mesh.bounds);
+                            let center = aabb.map(|a| a.centroid()).unwrap_or(bif_math::Vec3::ZERO);
+                            let world_center = (*transform
+                                * bif_math::Vec4::new(center.x, center.y, center.z, 1.0))
+                            .truncate();
+                            let size = aabb
+                                .map(|a| (a.max_point() - a.min_point()).length())
+                                .unwrap_or(1.0);
+                            self.cam.camera.target = world_center;
+                            self.cam.camera.distance = size * 2.0;
+                            self.cam.camera.near = size * 0.01;
+                            self.cam.camera.far = size * 40.0;
+                            self.cam.camera.update_position_from_angles();
+                            self.update_camera();
+                            self.ivar.ivar_state.invalidate_scene();
+                        }
+                    }
+                }
+                AppEvent::VariantChanged(prim_path, variant_set, variant_name) => {
+                    log::info!(
+                        "Variant changed: {} / {} = {}",
+                        prim_path,
+                        variant_set,
+                        variant_name
+                    );
+                    if let Some(ref stage) = self.scene.usd_stage {
+                        if let Err(e) =
+                            stage.set_variant_selection(&prim_path, &variant_set, &variant_name)
+                        {
+                            log::error!("Failed to set variant: {:?}", e);
+                        } else {
+                            // Reload scene after variant change (full rebuild)
+                            if let Some(ref path) = self.scene.loaded_usd_path {
+                                let path = path.clone();
+                                if let Err(e) = self.load_usd_scene(std::path::Path::new(&path)) {
+                                    log::error!("Failed to reload after variant change: {:?}", e);
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -1647,6 +1730,99 @@ impl Renderer {
                         self.grid
                             .render(&mut render_pass, &self.cam.camera_bind_group);
                     }
+                }
+
+                // Wireframe selection overlay (selected instance only)
+                if let Some(sel_idx) = self.selection.selected_instance_index {
+                    if let Some(proto_id) = self.scene.instances.prototype_ids.get(sel_idx) {
+                        if let Some(proto_gpu) = self.multi_draw.prototype_gpu_data.get(*proto_id) {
+                            // Set shading_mode=2 (wireframe gold) temporarily
+                            self.cam.camera_uniform.shading_mode = 2;
+                            self.gpu.queue.write_buffer(
+                                &self.cam.camera_buffer,
+                                0,
+                                bytemuck::cast_slice(&[self.cam.camera_uniform]),
+                            );
+
+                            // Build single-instance data for selected instance
+                            let transform = self
+                                .scene
+                                .instances
+                                .current
+                                .get(sel_idx)
+                                .copied()
+                                .unwrap_or(bif_math::Mat4::IDENTITY);
+                            let mat_id = self
+                                .scene
+                                .instances
+                                .material_ids
+                                .get(sel_idx)
+                                .copied()
+                                .unwrap_or(0);
+                            let sel_instance = InstanceData {
+                                model_matrix: transform.to_cols_array_2d(),
+                                material_id: mat_id,
+                                tri_mat_offset: 0,
+                            };
+                            self.gpu.queue.write_buffer(
+                                &self.instance_buffer,
+                                0,
+                                bytemuck::cast_slice(&[sel_instance]),
+                            );
+
+                            let mut wf_pass =
+                                encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                                    label: Some("Wireframe Selection Pass"),
+                                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                                        view: &view,
+                                        resolve_target: None,
+                                        ops: wgpu::Operations {
+                                            load: wgpu::LoadOp::Load,
+                                            store: wgpu::StoreOp::Store,
+                                        },
+                                    })],
+                                    depth_stencil_attachment: Some(
+                                        wgpu::RenderPassDepthStencilAttachment {
+                                            view: &self.depth_view,
+                                            depth_ops: Some(wgpu::Operations {
+                                                load: wgpu::LoadOp::Load,
+                                                store: wgpu::StoreOp::Store,
+                                            }),
+                                            stencil_ops: None,
+                                        },
+                                    ),
+                                    timestamp_writes: None,
+                                    occlusion_query_set: None,
+                                });
+
+                            let (vp_x, vp_y, vp_w, vp_h) = self.viewport_rect();
+                            let (sx, sy, sw, sh) = self.viewport_scissor();
+                            wf_pass.set_viewport(vp_x, vp_y, vp_w, vp_h, 0.0, 1.0);
+                            wf_pass.set_scissor_rect(sx, sy, sw, sh);
+                            wf_pass.set_pipeline(&self.wireframe_pipeline);
+                            wf_pass.set_bind_group(0, &self.cam.camera_bind_group, &[]);
+                            wf_pass.set_bind_group(1, &self.materials.bind_group, &[]);
+                            wf_pass.set_bind_group(2, &self.textures.bind_group, &[]);
+                            wf_pass.set_bind_group(3, self.environment.bind_group(), &[]);
+                            wf_pass.set_bind_group(4, &self.lights.bind_group, &[]);
+                            wf_pass.set_vertex_buffer(0, proto_gpu.vertex_buffer.slice(..));
+                            wf_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
+                            wf_pass.set_index_buffer(
+                                proto_gpu.index_buffer.slice(..),
+                                wgpu::IndexFormat::Uint32,
+                            );
+                            wf_pass.draw_indexed(0..proto_gpu.num_indices, 0, 0..1);
+                        }
+                    }
+
+                    // Restore shading_mode
+                    self.cam.camera_uniform.shading_mode =
+                        self.display_settings.shading_mode.as_u32();
+                    self.gpu.queue.write_buffer(
+                        &self.cam.camera_buffer,
+                        0,
+                        bytemuck::cast_slice(&[self.cam.camera_uniform]),
+                    );
                 }
 
                 // Render gnomon in bottom-right corner

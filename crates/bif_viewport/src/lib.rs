@@ -174,6 +174,7 @@ pub struct Renderer {
     pub(crate) gpu: GpuContext,
     pub size: (u32, u32),
     pub(crate) pipeline: wgpu::RenderPipeline,
+    pub(crate) wireframe_pipeline: wgpu::RenderPipeline,
     pub(crate) vertex_buffer: wgpu::Buffer,
     pub(crate) index_buffer: wgpu::Buffer,
     pub(crate) num_indices: u32,
@@ -305,7 +306,8 @@ impl Renderer {
                     label: Some("BIF Device"),
                     required_features: wgpu::Features::TEXTURE_BINDING_ARRAY
                         | wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING
-                        | wgpu::Features::SHADER_PRIMITIVE_INDEX,
+                        | wgpu::Features::SHADER_PRIMITIVE_INDEX
+                        | wgpu::Features::POLYGON_MODE_LINE,
                     required_limits: wgpu::Limits {
                         max_sampled_textures_per_shader_stage: MAX_VIEWPORT_TEXTURES as u32,
                         max_buffer_size: 1 << 30, // 1GB for large meshes
@@ -612,6 +614,51 @@ impl Renderer {
             cache: None,
         });
 
+        // Wireframe pipeline for selection overlay (same shader, PolygonMode::Line)
+        let wireframe_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Wireframe Selection Pipeline"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: "vs_main",
+                buffers: &[Vertex::desc(), InstanceData::desc()],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: "fs_main",
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: config.format,
+                    blend: Some(wgpu::BlendState::REPLACE),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: None, // No culling for wireframe (see back edges)
+                polygon_mode: wgpu::PolygonMode::Line,
+                unclipped_depth: false,
+                conservative: false,
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth24Plus,
+                depth_write_enabled: false, // Don't write depth (overlay on top)
+                depth_compare: wgpu::CompareFunction::LessEqual, // Draw on existing depth
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState {
+                count: 1,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+            multiview: None,
+            cache: None,
+        });
+
         // Create empty vertex and index buffers (will be populated when USD loads)
         // Note: wgpu requires non-zero buffer sizes, so we use a dummy vertex/index
         let dummy_vertex = Vertex {
@@ -752,6 +799,7 @@ impl Renderer {
             },
             size: (size.width, size.height),
             pipeline,
+            wireframe_pipeline,
             vertex_buffer,
             index_buffer,
             num_indices: 0, // Empty scene - no indices

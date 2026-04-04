@@ -59,6 +59,10 @@ pub enum AppEvent {
     ProjectSaveAs,
     /// File > Recent Files — open a specific recent file.
     ProjectOpenRecent(PathBuf),
+    /// Variant selection changed — (prim_path, variant_set, variant_name)
+    VariantChanged(String, String, String),
+    /// Frame selected prim (F key)
+    FrameSelected,
 }
 
 /// Frame-scoped event bus. UI pushes events, render loop drains them.

@@ -274,6 +274,11 @@ fn fs_main(
     in: VertexOutput,
     @builtin(primitive_index) primitive_id: u32,
 ) -> @location(0) vec4<f32> {
+    // Wireframe selection overlay: solid gold, no lighting
+    if (camera.shading_mode == 2u) {
+        return vec4<f32>(1.0, 0.84, 0.0, 1.0); // Gold (#FFD700)
+    }
+
     // Material lookup
     var material_id = triangle_materials[primitive_id + in.tri_mat_offset];
     if (material_id == 0xFFFFFFFFu) {
@@ -400,9 +405,9 @@ fn fs_main(
         lit_color = ambient + dielectric_contrib * 0.7 + metal_contrib * 0.5;
     }
 
-    // Selection highlight: warm tint that scales with brightness
+    // Selection highlight: subtle warm tint (wireframe overlay provides main highlight)
     if (in.instance_idx == camera.selected_instance_id) {
-        lit_color = mix(lit_color, lit_color * vec3<f32>(1.3, 1.1, 0.8), 0.35);
+        lit_color = mix(lit_color, lit_color * vec3<f32>(1.2, 1.1, 0.9), 0.15);
     }
 
     return vec4<f32>(linear_to_srgb(aces_tonemap(lit_color)), 1.0);

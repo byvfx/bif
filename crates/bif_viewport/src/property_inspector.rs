@@ -41,6 +41,9 @@ pub struct PrimProperties {
 
     /// USD prim attributes (from stage query)
     pub usd_attributes: Vec<bif_core::usd::UsdAttributeData>,
+
+    /// Variant sets: (set_name, variants, current_selection)
+    pub variant_sets: Vec<(String, Vec<String>, String)>,
 }
 
 /// Event emitted when user edits a transform in the property inspector.
@@ -113,6 +116,7 @@ impl PrimProperties {
             attributes: vec![("Children".to_string(), info.child_count.to_string())],
             bound_material: None,
             usd_attributes: Vec::new(),
+            variant_sets: Vec::new(),
         }
     }
 
@@ -467,7 +471,7 @@ pub fn render_property_inspector(
                         }
                     }
                     PropertyTab::Attributes => {
-                        render_attributes_tab(ui, props);
+                        render_attributes_tab(ui, props, event_bus);
                     }
                     PropertyTab::MetaData => {
                         render_metadata_tab(ui, props);
@@ -538,10 +542,47 @@ fn render_property_detail(ui: &mut egui::Ui, row: &PropertyRow) {
     }
 }
 
-/// Render the Attributes tab — USD prim attributes and primvars.
-fn render_attributes_tab(ui: &mut egui::Ui, props: &PrimProperties) {
-    if props.usd_attributes.is_empty() {
+/// Render the Attributes tab — USD prim attributes, primvars, and variant sets.
+fn render_attributes_tab(
+    ui: &mut egui::Ui,
+    props: &PrimProperties,
+    event_bus: &mut crate::app_event::EventBus,
+) {
+    // Variant sets (if any)
+    if !props.variant_sets.is_empty() {
+        ui.strong("Variant Sets");
+        for (set_name, variants, current) in &props.variant_sets {
+            ui.horizontal(|ui| {
+                ui.label(
+                    egui::RichText::new(set_name)
+                        .color(theme::STATUS_INFO)
+                        .monospace(),
+                );
+                let mut selected = current.clone();
+                egui::ComboBox::from_id_salt(format!("variant_{}", set_name))
+                    .selected_text(&selected)
+                    .show_ui(ui, |ui| {
+                        for variant in variants {
+                            ui.selectable_value(&mut selected, variant.clone(), variant);
+                        }
+                    });
+                if selected != *current {
+                    event_bus.emit(crate::app_event::AppEvent::VariantChanged(
+                        props.path.clone(),
+                        set_name.clone(),
+                        selected,
+                    ));
+                }
+            });
+        }
+        ui.add_space(4.0);
+    }
+
+    if props.usd_attributes.is_empty() && props.variant_sets.is_empty() {
         ui.label("No USD attributes (select a USD prim)");
+        return;
+    }
+    if props.usd_attributes.is_empty() {
         return;
     }
 

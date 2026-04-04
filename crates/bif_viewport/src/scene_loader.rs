@@ -2086,17 +2086,21 @@ impl Renderer {
         }
 
         self.scene.usd_stage = Some(stage);
-        // Canonicalize and strip Windows UNC \\?\ prefix (USD can't resolve it)
+        // Canonicalize and strip Windows extended-length prefix.
+        // canonicalize() returns \\?\C:\... for local paths and \\?\UNC\server\... for UNC paths.
+        // Strip \\?\UNC\ → \\  (network path) or \\?\ → (local path).
         let canonical = std::fs::canonicalize(path)
             .unwrap_or_else(|_| path.to_path_buf())
             .display()
             .to_string();
-        self.scene.loaded_usd_path = Some(
+        let clean_path = if let Some(unc) = canonical.strip_prefix(r"\\?\UNC\") {
+            format!(r"\\{}", unc)
+        } else if let Some(local) = canonical.strip_prefix(r"\\?\") {
+            local.to_string()
+        } else {
             canonical
-                .strip_prefix(r"\\?\")
-                .unwrap_or(&canonical)
-                .to_string(),
-        );
+        };
+        self.scene.loaded_usd_path = Some(clean_path);
 
         // Reset scene browser selection
         self.selection.selected_prim_path = None;
