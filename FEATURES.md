@@ -5,7 +5,7 @@ Last updated: 2026-04-01
 ## Rendering
 
 - Add lights to the node graph and viewport, with support for USD light types (point, directional, spot, area).
-- Add OpenSubdiv support with GPU-accelerated subdivision.
+- Add GPU-accelerated subdivision via OpenSubdiv (CPU-side Catmull-Clark via Embree 4 already implemented).
 - Add camera safe-area overlay.
 - Add viewport display modes: textured, display color, and unlit.
 - Add IBL disk caching and reload to avoid recomputing each session keep file in the same area as the usd, and lets have a housekeeping mechanism that deletes old ones after a certain amount of time or disk usage.
@@ -29,4 +29,3 @@ Last updated: 2026-04-01
 ## UX
 
 - Remove the extra USD file loading window.
-- NEED a way to see the USD primvars and values.

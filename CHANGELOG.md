@@ -53,10 +53,6 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **bif_perf code review fixes** — stable Rust compat (`count % 2` over nightly `is_multiple_of`), safe `u64::try_from` for duration stats, sample stddev (N-1), metadata surfaced in reports, iterations>=1 guard, CSV field escaping, `CARGO_MANIFEST_DIR` workspace root, `serde_yml` replacing deprecated `serde_yaml`, removed unused `csv` dep
 - **Audit review fixes** — AlembicUsageCheck→Skip (prim paths don't contain file refs), InstanceUsageCheck now includes native instances, PayloadUsageCheck uses root prim count, run_audit runs path-only checks before payload load, `result()` helper on AuditCheck trait, 5 unit tests
 
-### Changed
-
-- **Async texture loading for all paths** — working scene rebuild and legacy loader now use async placeholders + streaming instead of blocking sync load. Viewport interactive immediately on scene load.
-
 ### Fixed
 
 - **OIDN denoiser using geometric normals** — switched to shading normals for better edge preservation on normal-mapped surfaces
@@ -141,6 +137,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- **Async texture loading for all paths** — working scene rebuild and legacy loader now use async placeholders + streaming instead of blocking sync load. Viewport interactive immediately on scene load.
 - **Copy on Transform** — derive Copy on Transform struct, removing redundant .clone() calls across codebase
 - **HdrImage::downscale_to_max_dim** — returns Option<Self> to avoid cloning when no downscale needed
 - **Prototype::bounds removed** — redundant field, use mesh.bounds directly
