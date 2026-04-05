@@ -95,7 +95,7 @@ pub trait Material: Send + Sync {
 
 /// Power heuristic for Multiple Importance Sampling (beta=2).
 #[inline]
-pub(crate) fn power_heuristic(pdf_a: f32, pdf_b: f32) -> f32 {
+pub fn power_heuristic(pdf_a: f32, pdf_b: f32) -> f32 {
     let a2 = pdf_a * pdf_a;
     let b2 = pdf_b * pdf_b;
     a2 / (a2 + b2).max(1e-10)
@@ -109,14 +109,14 @@ pub(crate) fn power_heuristic(pdf_a: f32, pdf_b: f32) -> f32 {
 ///
 /// This is needed because `dyn RngCore` can't use `Rng::gen()` directly.
 #[inline]
-pub(crate) fn gen_f32(rng: &mut dyn RngCore) -> f32 {
+pub fn gen_f32(rng: &mut dyn RngCore) -> f32 {
     let bits = rng.next_u32();
     (bits >> 8) as f32 * (1.0 / (1u32 << 24) as f32)
 }
 
 /// Generic version of gen_f32 for monomorphization (avoids vtable dispatch).
 #[inline]
-pub(crate) fn gen_f32_generic<R: RngCore + ?Sized>(rng: &mut R) -> f32 {
+pub fn gen_f32_generic<R: RngCore + ?Sized>(rng: &mut R) -> f32 {
     let bits = rng.next_u32();
     (bits >> 8) as f32 * (1.0 / (1u32 << 24) as f32)
 }
@@ -345,13 +345,13 @@ impl Material for DiffuseLight {
 
 /// Reflect a vector about a normal.
 #[inline]
-pub(crate) fn reflect(v: Vec3, n: Vec3) -> Vec3 {
+pub fn reflect(v: Vec3, n: Vec3) -> Vec3 {
     v - 2.0 * v.dot(n) * n
 }
 
 /// Refract a vector through a surface.
 #[inline]
-pub(crate) fn refract(uv: Vec3, n: Vec3, etai_over_etat: f32) -> Vec3 {
+pub fn refract(uv: Vec3, n: Vec3, etai_over_etat: f32) -> Vec3 {
     let cos_theta = (-uv).dot(n).min(1.0);
     let r_out_perp = etai_over_etat * (uv + cos_theta * n);
     let r_out_parallel = -(1.0 - r_out_perp.length_squared()).abs().sqrt() * n;
@@ -359,7 +359,7 @@ pub(crate) fn refract(uv: Vec3, n: Vec3, etai_over_etat: f32) -> Vec3 {
 }
 
 /// Generate a random unit vector on the unit sphere.
-pub(crate) fn random_unit_vector(rng: &mut dyn RngCore) -> Vec3 {
+pub fn random_unit_vector(rng: &mut dyn RngCore) -> Vec3 {
     // Use rejection sampling for uniform distribution on sphere
     loop {
         let v = Vec3::new(
@@ -375,7 +375,7 @@ pub(crate) fn random_unit_vector(rng: &mut dyn RngCore) -> Vec3 {
 }
 
 /// Generate a random vector in the hemisphere around a normal (uniform).
-pub(crate) fn random_in_hemisphere(normal: Vec3, rng: &mut dyn RngCore) -> Vec3 {
+pub fn random_in_hemisphere(normal: Vec3, rng: &mut dyn RngCore) -> Vec3 {
     let unit = random_unit_vector(rng);
     if unit.dot(normal) > 0.0 {
         unit
@@ -388,7 +388,7 @@ pub(crate) fn random_in_hemisphere(normal: Vec3, rng: &mut dyn RngCore) -> Vec3 
 ///
 /// Uses Malley's method: sample uniformly on disk, project to hemisphere.
 /// PDF = cos(theta) / PI
-pub(crate) fn cosine_weighted_hemisphere(normal: Vec3, rng: &mut dyn RngCore) -> Vec3 {
+pub fn cosine_weighted_hemisphere(normal: Vec3, rng: &mut dyn RngCore) -> Vec3 {
     let r1 = gen_f32(rng);
     let r2 = gen_f32(rng);
 
