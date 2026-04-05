@@ -1,0 +1,35 @@
+{
+  "$schema": "https://app.kilo.ai/config.json",
+  "mcp": {
+    "plugin_context-mode": {
+      "type": "local",
+      "command": [
+        "context-mode"
+      ],
+      "enabled": true,
+      "timeout": 120000
+    }
+  },
+  "permission": {
+    "bash": {
+      "git add *": "allow",
+      "git commit *": "allow",
+      "git status *": "allow",
+      "git diff *": "allow",
+      "git branch *": "allow",
+      "git log *": "allow",
+      "cargo build *": "allow",
+      "cargo clippy *": "allow",
+      "cargo test *": "allow",
+      "cargo fmt *": "allow",
+      "find *": "allow",
+      "head *": "allow"
+    },
+    "webfetch": "allow",
+    "skill": {
+      "bif-commit": "allow"
+    },
+    "plugin_context-mode_*": "allow",
+    "mcp__plugin_context-mode_*": "allow"
+  }
+}
