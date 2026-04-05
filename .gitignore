@@ -7,13 +7,3 @@
 /site/src/reference/usd/
 /site/src/reference/changelog.md
 /site/src/SUMMARY.md.kilo/
-
-# Dev artifacts
-debug_output.txt
-*.ppm
-
-# OS / editor
-.DS_Store
-Thumbs.db
-.vscode/
-.idea/
