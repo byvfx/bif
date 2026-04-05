@@ -430,7 +430,7 @@ fn sky_gradient(ray: &Ray) -> Color {
 
 /// Apply gamma correction (gamma = 2.0).
 #[inline]
-pub fn linear_to_gamma(linear: f32) -> f32 {
+pub(crate) fn linear_to_gamma(linear: f32) -> f32 {
     if linear > 0.0 {
         linear.sqrt()
     } else {
@@ -440,7 +440,7 @@ pub fn linear_to_gamma(linear: f32) -> f32 {
 
 /// Clamp a value to [0, 1] range.
 #[inline]
-pub fn clamp_01(x: f32) -> f32 {
+pub(crate) fn clamp_01(x: f32) -> f32 {
     x.clamp(0.0, 1.0)
 }
 
