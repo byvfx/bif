@@ -55,6 +55,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- **Documentation test count sync** — Updated test counts to 516 total (was stale 160+/400+). Per-crate: bif_math (74), bif_core (163), bif_renderer (111), bif_viewport (149), bif_viewer (19). Phase 1 FFI split marked complete in ARCHITECTURE_REFACTORS.md.
 - **Async texture loading for all paths** — working scene rebuild and legacy loader now use async placeholders + streaming instead of blocking sync load. Viewport interactive immediately on scene load.
 
 ### Fixed
