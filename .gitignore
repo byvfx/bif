@@ -1,6 +1,16 @@
 /target
 /assets/palm_coconut_field_2
 
+# Debug/dev artifacts
+debug_output.txt
+*.ppm
+
+# OS/editor artifacts
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
 # mdBook generated content (rebuilt by scripts/generate-site.sh)
 /site/book/
 /site/src/devlog/
