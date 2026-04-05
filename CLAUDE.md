@@ -29,7 +29,7 @@ You Create a new DCC that is inspired by Clarisse / Houdini, focused on VFX scen
 - **Export:** `export_scene()` in `bif_core/src/usd/export.rs`
 - **Materials:** OpenPBR Surface v1.1 (`OpenPbrSurface` in bif_renderer, IOR-based Fresnel)
 - **Renderer:** `Renderer` struct (~75 fields, God object — cleanup deferred)
-- **160+ tests** across crates (95+ without USD env, full suite needs `setup_usd_env.ps1`)
+- **516 tests** across crates (353 without USD env, full suite needs `setup_usd_env.ps1`)
 
 ## Quick Commands
 
@@ -40,11 +40,12 @@ cargo build --features oiio    # With OpenImageIO
 cargo build --features oidn    # With Intel OIDN denoising
 
 # Test
-cargo test -p bif_math         # 41 tests (no deps)
-cargo test -p bif_renderer     # 68+ tests (includes denoise, materials)
-cargo test -p bif_viewport     # 24 tests
+cargo test -p bif_math         # 74 tests (no deps)
+cargo test -p bif_renderer     # 111 tests (includes denoise, materials)
+cargo test -p bif_viewport     # 149 tests
+cargo test -p bif_viewer       # 19 tests
 . .\setup_usd_env.ps1          # Required before bif_core tests
-cargo test -p bif_core -- --test-threads=1  # 27+ tests (needs USD DLLs)
+cargo test -p bif_core -- --test-threads=1  # 163 tests (needs USD DLLs)
 
 # Run
 cargo run -p bif_viewer
