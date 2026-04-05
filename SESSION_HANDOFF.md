@@ -13,7 +13,7 @@
 | Released | v0.1.0, v0.11.0, v0.12.0 |
 | Current | v0.13.0-dev — Phase 1-2 done, Phase 3 in progress |
 | Next | Fix wireframe selection visibility, curves in Ivar, Embree displacement dicing, OpenVDB |
-| Tests | 400+ total across all crates (103 renderer pass, 6 pre-existing HDRI failures) |
+| Tests | 516 total across all crates (103 renderer pass, 6 pre-existing HDRI failures) |
 | Performance | 60 FPS viewport, 100K instances with LOD, Ivar build ~185ms |
 
 ---
