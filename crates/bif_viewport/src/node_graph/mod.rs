@@ -1068,17 +1068,22 @@ pub fn render_node_graph(
             .selected_text(match state.eval_mode {
                 EvalMode::Auto => "Auto",
                 EvalMode::Manual => "Manual",
-                EvalMode::OnMouseRelease => "On Release (TODO)",
+                EvalMode::OnMouseRelease => "On Release",
             })
             .width(90.0)
             .show_ui(ui, |ui| {
                 ui.selectable_value(&mut state.eval_mode, EvalMode::Auto, "Auto");
                 ui.selectable_value(&mut state.eval_mode, EvalMode::Manual, "Manual");
-                ui.selectable_value(
-                    &mut state.eval_mode,
-                    EvalMode::OnMouseRelease,
-                    "On Release (TODO)",
-                );
+                if ui
+                    .selectable_value(
+                        &mut state.eval_mode,
+                        EvalMode::OnMouseRelease,
+                        "On Release",
+                    )
+                    .clicked()
+                {
+                    log::info!("EvalMode::OnMouseRelease selected; not yet implemented, behaves like Auto");
+                }
             });
 
         if state.eval_mode == EvalMode::Manual {
