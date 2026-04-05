@@ -270,7 +270,7 @@ impl Camera {
         let z_basis = Vec3::new(matrix.z_axis.x, matrix.z_axis.y, matrix.z_axis.z);
         let y_basis = Vec3::new(matrix.y_axis.x, matrix.y_axis.y, matrix.y_axis.z);
         if z_basis.length_squared() < 1e-12 || y_basis.length_squared() < 1e-12 {
-            eprintln!("set_from_matrix: degenerate matrix (zero-scale basis), skipping update");
+            log::warn!("set_from_matrix: degenerate matrix (zero-scale basis), skipping update");
             return;
         }
 
