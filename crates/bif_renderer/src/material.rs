@@ -121,6 +121,17 @@ pub fn gen_f32_generic<R: RngCore + ?Sized>(rng: &mut R) -> f32 {
     (bits >> 8) as f32 * (1.0 / (1u32 << 24) as f32)
 }
 
+/// Material properties for optimization hints.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct MaterialProperties {
+    /// True if the material is perfectly specular (mirror, glass)
+    pub is_pure_specular: bool,
+    /// True if the material emits light
+    pub is_emissive: bool,
+    /// True if the material can use Next Event Estimation
+    pub can_use_nee: bool,
+}
+
 /// Lambertian (diffuse) material.
 #[derive(Clone)]
 pub struct Lambertian {
@@ -133,6 +144,14 @@ impl Lambertian {
         Self { albedo }
     }
 
+    /// Get the material properties.
+    pub fn properties() -> MaterialProperties {
+        MaterialProperties {
+            is_pure_specular: false,
+            is_emissive: false,
+            can_use_nee: true,
+        }
+    }
 }
 
 impl Material for Lambertian {
