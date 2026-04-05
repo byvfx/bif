@@ -52,13 +52,6 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **PointInstancer Xform prototype resolution** — prototype_map now includes parent Xform paths so instancer targets like `/Prototypes/proto_0` resolve to child mesh `/Prototypes/proto_0/mesh_0`
 - **bif_perf code review fixes** — stable Rust compat (`count % 2` over nightly `is_multiple_of`), safe `u64::try_from` for duration stats, sample stddev (N-1), metadata surfaced in reports, iterations>=1 guard, CSV field escaping, `CARGO_MANIFEST_DIR` workspace root, `serde_yml` replacing deprecated `serde_yaml`, removed unused `csv` dep
 - **Audit review fixes** — AlembicUsageCheck→Skip (prim paths don't contain file refs), InstanceUsageCheck now includes native instances, PayloadUsageCheck uses root prim count, run_audit runs path-only checks before payload load, `result()` helper on AuditCheck trait, 5 unit tests
-
-### Changed
-
-- **Async texture loading for all paths** — working scene rebuild and legacy loader now use async placeholders + streaming instead of blocking sync load. Viewport interactive immediately on scene load.
-
-### Fixed
-
 - **OIDN denoiser using geometric normals** — switched to shading normals for better edge preservation on normal-mapped surfaces
 - **Zombie process on close** — `process::exit(0)` after event loop prevents native DLL teardown deadlock on Windows
 - **Unsaved changes dialog not showing** — `mark_dirty()` added to gizmo drag, undo, redo, keyframe operations
@@ -71,11 +64,32 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - UDIM capacity check before allocating — skip sets that won't fit in texture array
 - Validate UDIM ID range (1001-1200) in `UdimGridLayout::from_tiles`
 - `#[must_use]` on `grid_slots()`, negative UV test, clamping behavior documented
+- **M30 review fixes (13 items)** — SavePromptResult enum fixes "Yes" = silent cancel data loss; eval_mode now persists round-trip; reset_project clears scene/instances/stage/selection; cached recent files (was per-frame disk I/O); pub FORMAT_VERSION const; Cache node dirty propagation; path canonicalization for recent files; compute nodes marked dirty on project load; OnMouseRelease labeled TODO; SelectNode no longer sets dirty flag; bincode fragility documented; title bar cached; save_recent_files logs warnings
+- **OpenPBR energy conservation** — diffuse attenuated by (1-F_specular) to prevent energy creation at grazing angles
+- **Shadow ray shading normal** — offset uses shading normal instead of geometric normal, fixing dark bands with normal maps
+- **Distant light angle units** — convert degrees→radians in constructor, fix cos_max formula for correct soft shadows
+- **Normal matrix zero-scale guard** — fallback to identity for degenerate transforms (prevents NaN on hidden USD instances)
+- **SHARC cache NaN guard** — filter non-finite values from lock-free cache torn reads
+- **Point light falloff** — use max() instead of additive epsilon for correct near-light energy
+- **OpenPBR is_delta()** — any transmission with roughness<0.001 treated as delta (saves wasted shadow rays)
+- **Crease data validation** — validate index/sharpness counts before Embree FFI
+- **NaN guards** — HDR direction_to_uv zero-length, texture sample non-finite UV inputs
+- **UsdBridgeError Success** — safe fallback instead of unreachable!() panic
+- **Box filter boundary** — half-open interval avoids double-counting at bucket edges
+- **Embree Drop safety** — documented field-order invariant preventing use-after-free
+- **Node graph unwrap** — let-else pattern match prevents potential panic on disconnect
+- **Mesh dedup hash** — 10→50 vertex/index samples + normal hashing reduces collision risk
+- **u32 overflow in triangle count display** — use u64 for large scene stats (607M tris × 13K instances)
+- **Normals lost on meshes without UVs** — deferred normals copy was inside UV block; meshes with normals but no UVs got flat shading
+- **UV seam split hash collisions** — PairHash uses bit mixing instead of MSVC identity hash
 
 ### Removed
 
 - UDIM atlas stitching, disk cache (UdimCacheMeta, cache dir/key/load/save/clear), scale_pixels_box, ClearUdimCache UI, serde_json dep from bif_core
 - `create_gpu_textures_for_scene` sync loader (replaced by async path)
+- Dead `show_ui` toggle (field + early return, never wired to keybinding)
+- Emoji prim type icons (replaced with colored Unicode geometric shapes)
+- 35+ inline Color32 literals (replaced with theme constants)
 
 - **M31: Per-node scene graph visualization** — source_node tagging on ProceduralPrim, prim count `[N]` badges on node headers, Scene/Node tab bar with NodeFilteredProvider for upstream-filtered browsing, row highlighting for selected node's prims in full scene browser. 4 new tests.
 - **M30 Phase 6: Cache node** — SceneNode::Cache with bypass toggle, visual indicators (Cached/Stale/Bypassed), property inspector, CacheToggleBypass/CacheClear events. Data serialization deferred.
@@ -112,35 +126,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **OpenPBR MaterialX import** — C++ bridge recognizes `ND_open_pbr_surface` with fallback input names (`base_metalness`, `geometry_normal`, `geometry_opacity`)
 - **Shading normal AOV** — `Ns` layer in EXR + "Shading Normal" in viewport AOV dropdown; shows normal-mapped normals vs geometric `N`
 
-### Removed
-
-- Dead `show_ui` toggle (field + early return, never wired to keybinding)
-- Emoji prim type icons (replaced with colored Unicode geometric shapes)
-- 35+ inline Color32 literals (replaced with theme constants)
-
-### Fixed
-
-- **M30 review fixes (13 items)** — SavePromptResult enum fixes "Yes" = silent cancel data loss; eval_mode now persists round-trip; reset_project clears scene/instances/stage/selection; cached recent files (was per-frame disk I/O); pub FORMAT_VERSION const; Cache node dirty propagation; path canonicalization for recent files; compute nodes marked dirty on project load; OnMouseRelease labeled TODO; SelectNode no longer sets dirty flag; bincode fragility documented; title bar cached; save_recent_files logs warnings
-- **OpenPBR energy conservation** — diffuse attenuated by (1-F_specular) to prevent energy creation at grazing angles
-- **Shadow ray shading normal** — offset uses shading normal instead of geometric normal, fixing dark bands with normal maps
-- **Distant light angle units** — convert degrees→radians in constructor, fix cos_max formula for correct soft shadows
-- **Normal matrix zero-scale guard** — fallback to identity for degenerate transforms (prevents NaN on hidden USD instances)
-- **SHARC cache NaN guard** — filter non-finite values from lock-free cache torn reads
-- **Point light falloff** — use max() instead of additive epsilon for correct near-light energy
-- **OpenPBR is_delta()** — any transmission with roughness<0.001 treated as delta (saves wasted shadow rays)
-- **Crease data validation** — validate index/sharpness counts before Embree FFI
-- **NaN guards** — HDR direction_to_uv zero-length, texture sample non-finite UV inputs
-- **UsdBridgeError Success** — safe fallback instead of unreachable!() panic
-- **Box filter boundary** — half-open interval avoids double-counting at bucket edges
-- **Embree Drop safety** — documented field-order invariant preventing use-after-free
-- **Node graph unwrap** — let-else pattern match prevents potential panic on disconnect
-- **Mesh dedup hash** — 10→50 vertex/index samples + normal hashing reduces collision risk
-- **u32 overflow in triangle count display** — use u64 for large scene stats (607M tris × 13K instances)
-- **Normals lost on meshes without UVs** — deferred normals copy was inside UV block; meshes with normals but no UVs got flat shading
-- **UV seam split hash collisions** — PairHash uses bit mixing instead of MSVC identity hash
-
 ### Changed
 
+- **Async texture loading for all paths** — working scene rebuild and legacy loader now use async placeholders + streaming instead of blocking sync load. Viewport interactive immediately on scene load.
 - **Copy on Transform** — derive Copy on Transform struct, removing redundant .clone() calls across codebase
 - **HdrImage::downscale_to_max_dim** — returns Option<Self> to avoid cloning when no downscale needed
 - **Prototype::bounds removed** — redundant field, use mesh.bounds directly
