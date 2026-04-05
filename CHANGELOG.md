@@ -40,6 +40,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Historical results storage** — `--save` flag auto-saves YAML to `benchmarks/results/` with timestamp + `latest_{target}.yaml`
 - **Asset download helper** — `download` subcommand shows missing official assets with download URLs (Kitchen Set, ALab, Moore Lane)
 - **Per-tile UDIM loading** — UdimTileSet/UdimGridLayout types in bif_core, per-tile sampling (CPU+GPU), contiguous texture array blocks with shader tile offset. Eliminates atlas stitching (~3s/set). Unified CPU/GPU path ready for material editor.
+- **Box SubDiv crease test assets** — `box_subDivCrease_test.usd/usda` for subdivision surface crease weight validation.
+- **Kilo config** — `kilo.jsonc` with MCP context-mode plugin and bash/skill permission presets.
+- **Site SUMMARY.md** — updated mdBook nav index covering full devlog history (Jan 2025 – Apr 2026).
 
 ### Fixed
 
