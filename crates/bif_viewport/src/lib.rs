@@ -697,6 +697,7 @@ impl Renderer {
 
         // Preallocate instance buffer for up to MAX_INSTANCES (100K)
         // Uses COPY_DST for dynamic per-frame updates during frustum culling
+        const MAX_INSTANCES: u32 = 100_000;
         let instance_buffer_size = (MAX_INSTANCES as usize) * std::mem::size_of::<InstanceData>();
         let instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Instance Buffer (Dynamic)"),
