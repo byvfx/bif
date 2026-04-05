@@ -966,26 +966,6 @@ fn sample_ggx_vndf(wo_local: Vec3, alpha: f32, rng: &mut dyn RngCore) -> Vec3 {
     Vec3::new(alpha * n.x, alpha * n.y, n.z.max(1e-6)).normalize()
 }
 
-/// Sample GGX microfacet normal in world space (classic NDF sampling).
-#[allow(dead_code)]
-fn sample_ggx_ndf(n: Vec3, alpha: f32, rng: &mut dyn RngCore) -> Vec3 {
-    let u1 = gen_f32(rng).clamp(0.0001, 0.9999);
-    let u2 = gen_f32(rng);
-
-    let theta = (alpha * u1.sqrt() / (1.0 - u1).sqrt()).atan();
-    let phi = 2.0 * PI * u2;
-
-    let sin_theta = theta.sin();
-    let cos_theta = theta.cos();
-    let sin_phi = phi.sin();
-    let cos_phi = phi.cos();
-
-    let h_local = Vec3::new(sin_theta * cos_phi, sin_theta * sin_phi, cos_theta);
-
-    let (tangent, bitangent) = build_orthonormal_basis(n);
-    h_local.x * tangent + h_local.y * bitangent + h_local.z * n
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

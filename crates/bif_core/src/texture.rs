@@ -1091,17 +1091,6 @@ fn srgb_to_linear_lut() -> &'static [f32; 256] {
     })
 }
 
-/// Convert sRGB byte value to linear float.
-#[allow(dead_code)]
-fn srgb_to_linear(value: u8) -> f32 {
-    let v = value as f32 / 255.0;
-    if v <= 0.04045 {
-        v / 12.92
-    } else {
-        ((v + 0.055) / 1.055).powf(2.4)
-    }
-}
-
 /// Load a texture treating all channels as linear data (no sRGB conversion).
 fn load_texture_linear(path: &Path) -> TextureResult<Texture> {
     let img = image::open(path).map_err(|e| {
