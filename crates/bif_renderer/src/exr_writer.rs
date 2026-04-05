@@ -84,20 +84,43 @@ pub struct ExrOutput {
 }
 
 /// Error type for EXR operations.
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug)]
 pub enum ExrError {
     /// IO error during file write.
-    #[error("IO error: {0}")]
-    Io(#[from] std::io::Error),
+    Io(std::io::Error),
     /// EXR library error.
-    #[error("EXR error: {0}")]
     Exr(String),
     /// Invalid dimensions.
-    #[error("Invalid dimensions: {width}x{height}")]
     InvalidDimensions { width: u32, height: u32 },
     /// Buffer size mismatch.
-    #[error("Buffer size mismatch: expected {expected}, got {actual}")]
     BufferSizeMismatch { expected: usize, actual: usize },
+}
+
+impl std::fmt::Display for ExrError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ExrError::Io(e) => write!(f, "IO error: {}", e),
+            ExrError::Exr(e) => write!(f, "EXR error: {}", e),
+            ExrError::InvalidDimensions { width, height } => {
+                write!(f, "Invalid dimensions: {}x{}", width, height)
+            }
+            ExrError::BufferSizeMismatch { expected, actual } => {
+                write!(
+                    f,
+                    "Buffer size mismatch: expected {}, got {}",
+                    expected, actual
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for ExrError {}
+
+impl From<std::io::Error> for ExrError {
+    fn from(e: std::io::Error) -> Self {
+        ExrError::Io(e)
+    }
 }
 
 /// Create encoding with specified compression.
