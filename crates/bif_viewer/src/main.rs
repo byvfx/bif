@@ -350,12 +350,9 @@ impl ApplicationHandler for App {
                                 renderer.selection.gizmo_state.active_axis =
                                     bif_viewport::gizmo::GizmoAxis::None;
                             } else if is_click(self.mouse_drag_distance) {
-                                // Click detection: pick instance
+                                // Click detection: pick instance + sync tree/inspector
                                 if let Some(pos) = self.mouse_press_pos {
-                                    let picked =
-                                        renderer.pick_instance_at(pos.0 as f32, pos.1 as f32);
-                                    renderer.selection.selected_instance_index = picked;
-                                    renderer.selection.gizmo_state.reset();
+                                    renderer.select_at_screen(pos.0 as f32, pos.1 as f32);
                                 }
                             }
                         }

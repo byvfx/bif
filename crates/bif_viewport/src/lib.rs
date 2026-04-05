@@ -168,6 +168,24 @@ pub(crate) struct NodeGraphContext {
     pub node_prim_counts: std::collections::HashMap<node_graph::GraphNodeId, usize>,
 }
 
+/// Convert a synthetic `/BIF/{real_path}/{idx}` instance path back to the real path.
+///
+/// `resolve_prim_path` generates synthetic paths when an instance has no USD prim path
+/// set; this undoes that transformation so selection events use real USD paths that
+/// the tree browser can match.
+fn denormalize_synthetic_path(prim_path: &str) -> String {
+    if let Some(stripped) = prim_path.strip_prefix("/BIF/") {
+        if let Some(last_slash) = stripped.rfind('/') {
+            let suffix = &stripped[last_slash + 1..];
+            if suffix.parse::<usize>().is_ok() {
+                return stripped[..last_slash].to_string();
+            }
+        }
+        return stripped.to_string();
+    }
+    prim_path.to_string()
+}
+
 /// Core renderer managing wgpu state
 pub struct Renderer {
     pub(crate) window: std::sync::Arc<winit::window::Window>,
@@ -175,6 +193,8 @@ pub struct Renderer {
     pub size: (u32, u32),
     pub(crate) pipeline: wgpu::RenderPipeline,
     pub(crate) wireframe_pipeline: wgpu::RenderPipeline,
+    pub(crate) wireframe_cam_buffer: wgpu::Buffer,
+    pub(crate) wireframe_cam_bind_group: wgpu::BindGroup,
     pub(crate) vertex_buffer: wgpu::Buffer,
     pub(crate) index_buffer: wgpu::Buffer,
     pub(crate) num_indices: u32,
@@ -557,6 +577,11 @@ impl Renderer {
             source: wgpu::ShaderSource::Wgsl(include_str!("shaders/basic.wgsl").into()),
         });
 
+        let outline_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Outline Shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/outline.wgsl").into()),
+        });
+
         // Create render pipeline
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Render Pipeline Layout"),
@@ -614,18 +639,20 @@ impl Renderer {
             cache: None,
         });
 
-        // Wireframe pipeline for selection overlay (same shader, PolygonMode::Line)
+        // Outline pipeline for selection highlight — normal-expanded back-face silhouette.
+        // Uses outline.wgsl: expands vertices along normals in clip space, renders back
+        // faces only so only the protruding rim (silhouette) passes depth test.
         let wireframe_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Wireframe Selection Pipeline"),
+            label: Some("Selection Outline Pipeline"),
             layout: Some(&pipeline_layout),
             vertex: wgpu::VertexState {
-                module: &shader,
+                module: &outline_shader,
                 entry_point: "vs_main",
                 buffers: &[Vertex::desc(), InstanceData::desc()],
                 compilation_options: Default::default(),
             },
             fragment: Some(wgpu::FragmentState {
-                module: &shader,
+                module: &outline_shader,
                 entry_point: "fs_main",
                 targets: &[Some(wgpu::ColorTargetState {
                     format: config.format,
@@ -638,21 +665,19 @@ impl Renderer {
                 topology: wgpu::PrimitiveTopology::TriangleList,
                 strip_index_format: None,
                 front_face: wgpu::FrontFace::Ccw,
-                cull_mode: None, // No culling for wireframe (see back edges)
-                polygon_mode: wgpu::PolygonMode::Line,
+                cull_mode: Some(wgpu::Face::Front), // Back faces only — rim protrudes beyond original
+                polygon_mode: wgpu::PolygonMode::Fill,
                 unclipped_depth: false,
                 conservative: false,
             },
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: wgpu::TextureFormat::Depth24Plus,
                 depth_write_enabled: false,
+                // LessEqual: expanded back faces behind the original fail (hidden inside mesh),
+                // only the protruding rim passes, giving a clean silhouette outline.
                 depth_compare: wgpu::CompareFunction::LessEqual,
                 stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState {
-                    constant: -2, // Push wireframe toward camera to avoid z-fighting
-                    slope_scale: -2.0,
-                    clamp: 0.0,
-                },
+                bias: wgpu::DepthBiasState::default(),
             }),
             multisample: wgpu::MultisampleState {
                 count: 1,
@@ -661,6 +686,27 @@ impl Renderer {
             },
             multiview: None,
             cache: None,
+        });
+
+        // Wireframe camera buffer — same layout as camera_buffer, shading_mode=2 always set.
+        // Needed because queue.write_buffer calls all execute before any render pass, so
+        // we can't temporarily set shading_mode=2 on the shared camera buffer mid-frame.
+        let wf_cam_uniform = CameraUniform {
+            shading_mode: 2,
+            ..CameraUniform::default()
+        };
+        let wireframe_cam_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Wireframe Camera Buffer"),
+            contents: bytemuck::cast_slice(&[wf_cam_uniform]),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+        let wireframe_cam_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Wireframe Camera Bind Group"),
+            layout: &wireframe_pipeline.get_bind_group_layout(0),
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wireframe_cam_buffer.as_entire_binding(),
+            }],
         });
 
         // Create empty vertex and index buffers (will be populated when USD loads)
@@ -804,6 +850,8 @@ impl Renderer {
             size: (size.width, size.height),
             pipeline,
             wireframe_pipeline,
+            wireframe_cam_buffer,
+            wireframe_cam_bind_group,
             vertex_buffer,
             index_buffer,
             num_indices: 0, // Empty scene - no indices
@@ -993,6 +1041,15 @@ impl Renderer {
             &self.cam.camera_buffer,
             0,
             bytemuck::cast_slice(&[self.cam.camera_uniform]),
+        );
+
+        // Keep wireframe camera buffer in sync (same view/proj, shading_mode=2 always)
+        let mut wf_uniform = self.cam.camera_uniform;
+        wf_uniform.shading_mode = 2;
+        self.gpu.queue.write_buffer(
+            &self.wireframe_cam_buffer,
+            0,
+            bytemuck::cast_slice(&[wf_uniform]),
         );
 
         // Update gnomon uniform with camera rotation
@@ -1227,6 +1284,37 @@ impl Renderer {
     /// Converts screen coords to a world-space ray via inverse view-projection,
     /// then casts into the Embree pick scene.
     ///
+    /// Handle a viewport click: pick instance, update selection, emit PrimSelected for tree sync.
+    ///
+    /// Combines pick + selection state update + event emission so the tree and property
+    /// inspector stay in sync with the viewport. Sets selected_instance_index immediately
+    /// (outline appears same frame); PrimSelected is processed next frame for full sync.
+    pub fn select_at_screen(&mut self, screen_x: f32, screen_y: f32) {
+        // Ignore clicks on UI panels — only act when cursor is inside the 3D viewport.
+        let (vp_x, vp_y, vp_w, vp_h) = self.viewport_rect();
+        if screen_x < vp_x || screen_x > vp_x + vp_w || screen_y < vp_y || screen_y > vp_y + vp_h {
+            return;
+        }
+
+        let picked = self.pick_instance_at(screen_x, screen_y);
+        self.selection.selected_instance_index = picked;
+        self.selection.gizmo_state.reset();
+        if let Some(idx) = picked {
+            if let Some(prim_path) = self.scene.instances.prim_paths.get(idx) {
+                // Normalize synthetic /BIF/{usd_path}/{idx} back to the real USD path
+                // so the tree (which shows USD paths) can highlight the matching row.
+                let display_path = denormalize_synthetic_path(prim_path);
+                self.event_bus
+                    .emit(app_event::AppEvent::PrimSelected(display_path));
+            }
+        } else {
+            // Click on empty space — deselect everything
+            self.selection.selected_prim_path = None;
+            self.selection.selected_prim_properties = None;
+            self.selection.scene_browser_state.clear_selection();
+        }
+    }
+
     /// Returns the instance index if hit, or None if click hit empty space.
     pub fn pick_instance_at(&self, screen_x: f32, screen_y: f32) -> Option<usize> {
         let pick_scene = self.pick_scene.as_ref()?;

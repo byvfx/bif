@@ -46,6 +46,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **Selection outline rendering** — replaced broken `PolygonMode::Line` + `shading_mode` `queue.write_buffer` hack (DX12 depth bias + write ordering made lines invisible) with a normal-expanded back-face silhouette pipeline (`outline.wgsl`) and a dedicated `wireframe_cam_bind_group`. Clean silhouette outline (no internal edges) on selected prims.
+- **Bidirectional tree ↔ viewport selection sync** — viewport click → tree row highlights (via new `select_at_screen()` + `denormalize_synthetic_path()`), tree click → outline appears on corresponding mesh (prefix + synthetic `/BIF/{path}/{idx}` fallbacks in `PrimSelected` handler). Tree auto-expands ancestors so selected rows become visible. Click on empty viewport space deselects; clicks on UI panels preserve selection.
 - **Camera persistence bug** — reset viewport/batch camera source on new scene load; stale USD camera from previous scene no longer persists
 - **HDRI background toggle** — removed `is_loaded` guard on UpdateHdriParams so params propagate for auto-loaded DomeLight HDRIs; background now correctly hides when unchecked
 - **PointInstancer time-sampled data** — C++ bridge now falls back to stage startTimeCode or first time sample when Default yields empty arrays (fixes Pixar PointInstancedMedCity.usd and similar files with no default values)
@@ -55,6 +57,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- **Tree browser selection visuals** — removed node-source row tinting (green/blue); only the selected row paints a background. Selection color now uses `from_rgba_unmultiplied(74, 144, 217, 75)` (was premultiplied which produced near-additive blending against dark panel). `selectable_label` passed `false` to avoid double-painting on top of manual row bg.
 - **Documentation test count sync** — Updated test counts to 516 total (was stale 160+/400+). Per-crate: bif_math (74), bif_core (163), bif_renderer (111), bif_viewport (149), bif_viewer (19). Phase 1 FFI split marked complete in ARCHITECTURE_REFACTORS.md.
 - **Async texture loading for all paths** — working scene rebuild and legacy loader now use async placeholders + streaming instead of blocking sync load. Viewport interactive immediately on scene load.
 

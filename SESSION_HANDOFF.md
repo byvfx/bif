@@ -1,6 +1,6 @@
-# Session Handoff - April 4, 2026
+# Session Handoff - April 5, 2026
 
-**Last Updated:** Phase 1-2 complete, subdiv rendering, attribute inspector, display color, variant UI, displacement foundation, wireframe selection (WIP)
+**Last Updated:** Selection outline (silhouette) + bidirectional tree/viewport sync + dark-theme tree polish
 **Current Version:** v0.13.0-dev (Open Any USD Scene)
 **Project:** BIF - VFX Scene Assembler & Renderer
 
@@ -12,13 +12,30 @@
 |--------|---------|
 | Released | v0.1.0, v0.11.0, v0.12.0 |
 | Current | v0.13.0-dev — Phase 1-2 done, Phase 3 in progress |
-| Next | Fix wireframe selection visibility, curves in Ivar, Embree displacement dicing, OpenVDB |
+| Next | Embree displacement dicing, curves in Ivar (BasisCurves), OpenVDB |
 | Tests | 516 total across all crates (111 renderer pass, 6 pre-existing HDRI failures) |
 | Performance | 60 FPS viewport, 100K instances with LOD, Ivar build ~185ms |
 
 ---
 
 ## Recent Work
+
+### v0.13.0 Apr 5: Selection Outline + Tree/Viewport Sync (Apr 5, 2026)
+
+**Completed:**
+
+- **Selection outline rendering** — Replaced buggy `PolygonMode::Line` + `shading_mode` `queue.write_buffer` hack with dedicated `shaders/outline.wgsl`: normal-expanded back-face silhouette. Pipeline uses `cull_mode: Front` + `depth_compare: LessEqual` so only protruding rim passes depth test → clean Houdini-style silhouette. Dedicated `wireframe_cam_bind_group` with `shading_mode=2` baked in, updated per-frame.
+- **Bidirectional tree ↔ viewport sync** — New `Renderer::select_at_screen()` handles viewport click flow (pick + set index + emit `PrimSelected` + reset gizmo + deselect on empty). `PrimSelected` handler now updates both `selected_prim_path` AND `scene_browser_state`, calls `expand_to_path()` to auto-reveal collapsed branches.
+- **Robust prim_path lookup** — 3 fallbacks in `PrimSelected` handler: exact match → descendant prefix (parent Xform clicks) → synthetic `/BIF/{path}` prefix (handles empty `inst.prim_path` cases where `resolve_prim_path` synthesizes paths from proto names). `denormalize_synthetic_path()` strips `/BIF/` prefix + numeric `/{idx}` suffix for viewport → tree direction.
+- **Viewport bounds guard** — `select_at_screen` early-returns on UI panel clicks so tree row clicks don't trigger deselect.
+- **Dark-theme tree polish** — Removed green node-source highlight; only selected row painted. Fixed premultiplied-vs-unmultiplied alpha bug (`from_rgba_unmultiplied(74, 144, 217, 75)`). `selectable_label(false, ...)` prevents double-painting.
+
+**Next priorities:**
+
+1. Embree displacement dicing (`rtcSetGeometryDisplacementFunction` callback)
+2. Curves in Ivar (ribbon tessellation for BasisCurves)
+3. OpenVDB volume rendering
+4. Proper fix for empty `inst.prim_path` in USD loader (synthetic fallback is workaround)
 
 ### v0.13.0 Sessions Apr 2-4: Subdiv, Inspector, Display Color, Variants, Selection (Apr 4, 2026)
 
@@ -34,16 +51,8 @@
 
 **WIP / Known Issues:**
 
-- **Wireframe selection overlay** — Pipeline created (`PolygonMode::Line` + depth bias), but wireframe lines still not clearly visible. Needs investigation: may need a dedicated wireframe shader (solid color, no material lookup) or stencil-based approach.
-- **Viewport click → tree sync** — Not yet wired (pick scene exists but result not connected to tree).
 - **Variant reload** — Currently does full file reload instead of re-extracting from live stage. Works but slow on large scenes. UNC path fix applied.
-
-**Next priorities:**
-
-1. Fix wireframe selection visibility (dedicated shader or stencil approach)
-2. Curves in Ivar (ribbon tessellation for BasisCurves)
-3. Embree displacement dicing (`rtcSetGeometryDisplacementFunction` callback)
-4. OpenVDB volume rendering
+- **USD loader leaves `inst.prim_path` empty** for some load paths (observed on lucy.usd) — workaround via synthetic `/BIF/` path fallbacks in selection handler.
 
 ### v0.13.0 Phase 1: Bug Fixes + Subdivision Wiring (Apr 2, 2026)
 

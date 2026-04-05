@@ -395,6 +395,7 @@ struct ColumnWidths {
 }
 
 /// Recursively render a prim row and its children in table format.
+#[allow(clippy::only_used_in_recursion)] // highlight_node kept for future use (node-contribution tinting)
 fn render_prim_row(
     ui: &mut egui::Ui,
     state: &mut SceneBrowserState,
@@ -423,14 +424,10 @@ fn render_prim_row(
     let is_selected = state.selected_path.as_ref() == Some(&info.path);
     let is_expanded = state.is_expanded(&info.path);
 
-    // Row background color (selection > node highlight > transparent)
-    let is_highlighted = highlight_node.is_some()
-        && info.source_node.is_some()
-        && info.source_node == highlight_node;
+    // Only the selected row gets a background — no node-source tinting.
     let row_bg = if is_selected {
-        theme::ACCENT_DIM
-    } else if is_highlighted {
-        egui::Color32::from_rgba_premultiplied(40, 120, 80, 40)
+        // Dim accent blue — readable white text on dark BG_PANEL.
+        egui::Color32::from_rgba_unmultiplied(74, 144, 217, 75)
     } else {
         egui::Color32::TRANSPARENT
     };
@@ -476,7 +473,9 @@ fn render_prim_row(
                     egui::RichText::new(&info.name).color(theme::TEXT_DISABLED)
                 };
 
-                let name_response = ui.selectable_label(is_selected, name_text);
+                // Pass false — row bg is painted manually above; passing is_selected causes
+                // egui to double-paint its own selection fill on top of our custom color.
+                let name_response = ui.selectable_label(false, name_text);
                 if name_response.clicked() {
                     state.select(&info.path);
                     selection_changed = Some(info.path.clone());

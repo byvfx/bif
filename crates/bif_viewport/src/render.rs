@@ -1095,13 +1095,40 @@ impl Renderer {
                 }
                 AppEvent::PrimSelected(prim_path) => {
                     self.selection.selected_prim_path = Some(prim_path.clone());
-                    // Map prim path → instance index for viewport highlight
+                    // Sync tree visual: expand ancestors so the row is visible, then select.
+                    // Handles viewport clicks landing on prims inside collapsed branches.
+                    self.selection
+                        .scene_browser_state
+                        .expand_to_path(&prim_path);
+                    self.selection.scene_browser_state.select(&prim_path);
+                    // Map prim path → instance index. Tries in order:
+                    //  1. exact match (normal case)
+                    //  2. descendant prefix (clicking a parent Xform when instance is at child mesh)
+                    //  3. synthetic /BIF/{path}/{idx} fallback (loader left inst.prim_path empty
+                    //     and resolve_prim_path generated /BIF/{proto_name}/{idx} where proto_name
+                    //     is often the real USD path)
                     self.selection.selected_instance_index = self
                         .scene
                         .instances
                         .prim_paths
                         .iter()
-                        .position(|p| &**p == prim_path.as_str());
+                        .position(|p| p.as_str() == prim_path.as_str())
+                        .or_else(|| {
+                            let prefix = format!("{}/", prim_path);
+                            self.scene
+                                .instances
+                                .prim_paths
+                                .iter()
+                                .position(|p| p.starts_with(&prefix))
+                        })
+                        .or_else(|| {
+                            let synth_prefix = format!("/BIF/{}", prim_path);
+                            self.scene
+                                .instances
+                                .prim_paths
+                                .iter()
+                                .position(|p| p.starts_with(&synth_prefix))
+                        });
                     reset_property_inspector_cache(&self.egui_ctx);
                     let composite = CompositeProvider::new(
                         self.scene
@@ -1736,14 +1763,6 @@ impl Renderer {
                 if let Some(sel_idx) = self.selection.selected_instance_index {
                     if let Some(proto_id) = self.scene.instances.prototype_ids.get(sel_idx) {
                         if let Some(proto_gpu) = self.multi_draw.prototype_gpu_data.get(*proto_id) {
-                            // Set shading_mode=2 (wireframe gold) temporarily
-                            self.cam.camera_uniform.shading_mode = 2;
-                            self.gpu.queue.write_buffer(
-                                &self.cam.camera_buffer,
-                                0,
-                                bytemuck::cast_slice(&[self.cam.camera_uniform]),
-                            );
-
                             // Build single-instance data for selected instance
                             let transform = self
                                 .scene
@@ -1800,7 +1819,7 @@ impl Renderer {
                             wf_pass.set_viewport(vp_x, vp_y, vp_w, vp_h, 0.0, 1.0);
                             wf_pass.set_scissor_rect(sx, sy, sw, sh);
                             wf_pass.set_pipeline(&self.wireframe_pipeline);
-                            wf_pass.set_bind_group(0, &self.cam.camera_bind_group, &[]);
+                            wf_pass.set_bind_group(0, &self.wireframe_cam_bind_group, &[]);
                             wf_pass.set_bind_group(1, &self.materials.bind_group, &[]);
                             wf_pass.set_bind_group(2, &self.textures.bind_group, &[]);
                             wf_pass.set_bind_group(3, self.environment.bind_group(), &[]);
@@ -1814,15 +1833,6 @@ impl Renderer {
                             wf_pass.draw_indexed(0..proto_gpu.num_indices, 0, 0..1);
                         }
                     }
-
-                    // Restore shading_mode
-                    self.cam.camera_uniform.shading_mode =
-                        self.display_settings.shading_mode.as_u32();
-                    self.gpu.queue.write_buffer(
-                        &self.cam.camera_buffer,
-                        0,
-                        bytemuck::cast_slice(&[self.cam.camera_uniform]),
-                    );
                 }
 
                 // Render gnomon in bottom-right corner
