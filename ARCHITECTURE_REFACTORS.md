@@ -3,7 +3,7 @@
 Architectural deepening plan for testability, cross-platform support, and alignment with the USD editor workflow (`BIF_USD_WORKFLOW.md`).
 
 **Created:** 2026-03-28
-**Status:** Approved, not started
+**Status:** Phase 1 complete, Phases 2-5 not started
 **Estimated:** 13-18 weeks at 10-20 hrs/week (~45-65 new tests)
 
 ---
@@ -14,10 +14,10 @@ Architectural deepening plan for testability, cross-platform support, and alignm
 
 | Crate | LOC | Modules | Tests | Role |
 |-------|-----|---------|-------|------|
-| bif_math | ~2,000 | 8 | 41 | Pure geometry/transforms (leaf) |
-| bif_core | ~13,900 | 17 | 27+ | USD bridge, scene, textures, scatter |
-| bif_renderer | ~10,000 | 21 | 68+ | CPU path tracer, materials, Embree |
-| bif_viewport | ~14,000+ | 37 | 24 | GPU viewport, UI, node graph |
+| bif_math | ~2,000 | 8 | 74 | Pure geometry/transforms (leaf) |
+| bif_core | ~13,900 | 17 | 163 | USD bridge, scene, textures, scatter |
+| bif_renderer | ~10,000 | 21 | 111 | CPU path tracer, materials, Embree |
+| bif_viewport | ~14,000+ | 37 | 149 | GPU viewport, UI, node graph |
 | bif_viewer | ~800 | 1 | 0 | Entry point (thin) |
 | bif_maketx | ~200 | 1 | 0 | Texture conversion tool |
 
@@ -51,7 +51,7 @@ bif_viewer (depends on bif_viewport + bif_core + bif_math)
 
 ## Phase 1: C++ FFI Bridge Split
 
-- **Status:** Not started
+- **Status:** Complete (Mar 28-29, 2026)
 - **Scope:** Medium (2-3 weeks)
 - **Target Tests:** 15-20
 
