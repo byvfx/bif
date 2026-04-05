@@ -11,7 +11,7 @@ mod bvh;
 mod camera;
 pub mod denoise;
 mod embree;
-pub mod embree_ffi;
+pub(crate) mod embree_ffi;
 pub mod exr_writer;
 pub mod filter;
 pub mod hdri;
@@ -42,11 +42,7 @@ pub use hdri::HdriEnvironment;
 pub use hittable::{HitRecord, Hittable, HittableList};
 pub use instanced_geometry::InstancedGeometry;
 pub use light::{DistantLight, Light, LightList, LightSample, RectLight, SphereLight};
-pub use material::{
-    cosine_weighted_hemisphere, gen_f32, gen_f32_generic, power_heuristic, random_in_hemisphere,
-    random_unit_vector, Color, Dielectric, DiffuseLight, Lambertian, Material, Metal,
-    ScatterResult,
-};
+pub use material::{Color, Dielectric, DiffuseLight, Lambertian, Material, Metal, ScatterResult};
 pub use openpbr::OpenPbrSurface;
 pub use pick_scene::{EmbreePickScene, PickError, PickResult};
 pub use radiance_cache::{RadianceCache, RadianceCacheConfig};
