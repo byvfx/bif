@@ -137,6 +137,12 @@ impl Mesh {
         }
     }
 
+    /// Recompute the AABB from current positions. Call after mutating `positions`
+    /// (e.g. after displacement) so frustum culling and camera framing stay correct.
+    pub fn recompute_bounds(&mut self) {
+        self.bounds = Self::compute_bounds(&self.positions);
+    }
+
     /// Compute axis-aligned bounding box from positions.
     fn compute_bounds(positions: &[Vec3]) -> Aabb {
         if positions.is_empty() {

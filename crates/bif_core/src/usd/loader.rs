@@ -765,6 +765,15 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
     );
     log::info!("  Total:      {:>7.1}ms", total_time.as_secs_f64() * 1000.0);
 
+    // Apply CPU vertex displacement (UsdPreviewSurface `displacement` input).
+    // Modifies meshes in place via Arc::make_mut — both viewport and Ivar see
+    // the displaced positions automatically. Skipped silently for meshes
+    // without a displacement texture.
+    let displaced = crate::usd::displacement::apply_displacement_to_scene(&mut scene);
+    if displaced > 0 {
+        log::info!("  Displaced:  {} mesh(es)", displaced);
+    }
+
     Ok((scene, stage))
 }
 

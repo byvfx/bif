@@ -2012,6 +2012,34 @@ static void cache_material_data(UsdBridgeStage* bridge) {
             if (g_log_textures) std::cout << "[BIF_TEX] material=" << mat_path
                       << " type=MaterialX(mtlx:surface)" << std::endl;
             extract_materialx_properties(mtlx_shader, cached);
+
+            // MaterialX extraction doesn't handle displacement yet.
+            // Fall back to UsdPreviewSurface's displacement input if the
+            // material also has an auto-generated preview shader (Houdini
+            // creates one alongside MaterialX).
+            if (cached.displacement_texture.empty()) {
+                UsdShadeOutput surf_out = material.GetSurfaceOutput();
+                if (surf_out) {
+                    SdfPathVector conns;
+                    surf_out.GetRawConnectedSourcePaths(&conns);
+                    if (!conns.empty()) {
+                        UsdPrim pv_prim = bridge->stage->GetPrimAtPath(conns[0].GetPrimPath());
+                        if (pv_prim) {
+                            UsdShadeShader pv_shader(pv_prim);
+                            TfToken sid;
+                            pv_shader.GetIdAttr().Get(&sid);
+                            if (sid == TfToken("UsdPreviewSurface")) {
+                                UsdShadeInput disp_in = pv_shader.GetInput(TfToken("displacement"));
+                                if (disp_in) {
+                                    disp_in.Get(&cached.displacement_scale);
+                                    cached.displacement_texture = get_texture_path(disp_in);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             bridge->materials.push_back(std::move(cached));
             continue;
         }

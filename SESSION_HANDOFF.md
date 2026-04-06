@@ -1,6 +1,6 @@
 # Session Handoff - April 5, 2026
 
-**Last Updated:** Selection outline (silhouette) + bidirectional tree/viewport sync + dark-theme tree polish
+**Last Updated:** CPU vertex displacement + selection outline + tree/viewport sync
 **Current Version:** v0.13.0-dev (Open Any USD Scene)
 **Project:** BIF - VFX Scene Assembler & Renderer
 
@@ -12,13 +12,28 @@
 |--------|---------|
 | Released | v0.1.0, v0.11.0, v0.12.0 |
 | Current | v0.13.0-dev — Phase 1-2 done, Phase 3 in progress |
-| Next | Embree displacement dicing, curves in Ivar (BasisCurves), OpenVDB |
+| Next | Dome light bug, native MaterialX displacement, Embree dicing, curves in Ivar, OpenVDB |
 | Tests | 516 total across all crates (111 renderer pass, 6 pre-existing HDRI failures) |
 | Performance | 60 FPS viewport, 100K instances with LOD, Ivar build ~185ms |
 
 ---
 
 ## Recent Work
+
+### v0.13.0 Apr 5: CPU Displacement + Selection Outline + Sync (Apr 5, 2026)
+
+**Session 2 — CPU Vertex Displacement:**
+
+- **CPU vertex displacement** — `displacement.rs` module: post-load pass samples heightmap per vertex, offsets along normal (USD 0.5 neutral). Bilinear sampling, sync image loader (PNG/JPG/EXR/TIF), `Mesh::recompute_bounds()`. Works in both viewport + Ivar. 14 unit tests.
+- **C++ bridge MaterialX displacement fallback** — after MaterialX extraction, checks `GetSurfaceOutput()` for UsdPreviewSurface `inputs:displacement`. Handles Houdini's auto-generated preview shaders.
+- **Test asset** — `displacement_test.usda` with manually patched UsdPreviewSurface displacement wiring (Houdini only generates MaterialX side).
+
+**Known issues:**
+
+- Dome light from Houdini USD not detected (needs investigation)
+- MaterialX `ND_displacement_float/vector3` not natively extracted (workaround: UsdPreviewSurface fallback)
+
+**Session 1 — Selection Outline + Tree/Viewport Sync:**
 
 ### v0.13.0 Apr 5: Selection Outline + Tree/Viewport Sync (Apr 5, 2026)
 

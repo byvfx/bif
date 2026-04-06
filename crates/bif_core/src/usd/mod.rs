@@ -33,6 +33,7 @@
 //! ```
 
 pub mod cpp_bridge;
+pub mod displacement;
 pub mod export;
 pub(crate) mod ffi_convert;
 pub(crate) mod ffi_raw;

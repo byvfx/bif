@@ -1313,6 +1313,8 @@ mod tests {
             emissive_texture: ptr::null(),
             opacity_texture: ptr::null(),
             is_materialx: 0,
+            displacement_texture: ptr::null(),
+            displacement_scale: 1.0,
         };
 
         let result = unsafe { convert_material(&raw) };
@@ -1356,6 +1358,8 @@ mod tests {
             emissive_texture: emis_tex.as_ptr(),
             opacity_texture: opac_tex.as_ptr(),
             is_materialx: 1,
+            displacement_texture: ptr::null(),
+            displacement_scale: 1.0,
         };
 
         let result = unsafe { convert_material(&raw) };
@@ -1403,6 +1407,8 @@ mod tests {
             emissive_texture: ptr::null(),
             opacity_texture: ptr::null(),
             is_materialx: 0,
+            displacement_texture: ptr::null(),
+            displacement_scale: 1.0,
         };
 
         let result = unsafe { convert_material(&raw) };
