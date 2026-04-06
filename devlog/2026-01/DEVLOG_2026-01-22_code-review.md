@@ -56,3 +56,7 @@
 
 - Visual regression test with normal maps + opacity scene
 - Consider OIIO path for `load_linear` (currently only image crate path)
+
+## Wiki Links
+
+- [[crate-structure|Crate Structure]] — code quality review across crates

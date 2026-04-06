@@ -174,3 +174,9 @@ The commit message says "30 fields" extracted. With the original ~99, that leave
 This is a clean mechanical refactoring that moves the Renderer god object in the right direction. The sub-struct groupings are domain-appropriate, the visibility layering (`pub` only for `CameraState` which `main.rs` needs, `pub(crate)` for everything else) is correct, and the migration of ~465 access sites was done without introducing any bugs (verified by build + clippy + grep audit). The bif_math re-export cleanup and thiserror conversion are nice quick wins bundled in.
 
 The main actionable feedback is: tighten `CameraState` field visibility (2a), extract the duplicated `ivar_state` reset into a method (2b), and plan the next decomposition pass to continue reducing the field count (3b).
+
+## Wiki Links
+
+- [[crate-structure|Crate Structure]] — code review of crate organization
+- [[wgpu-pipeline|wgpu Pipeline]] — viewport rendering review
+- [[egui-snarl]] — egui UI code quality

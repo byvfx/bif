@@ -104,3 +104,8 @@ bif_viewer --usd test_cube.usda    # ✅ Loads cube
 
 - Milestone 14: MaterialX integration
 - Node graph: Add more node types (Merge, Transform)
+
+## Wiki Links
+
+- [[node-graph-system|Node Graph System]] — blank scene startup for node graph workflow
+- [[wgpu-pipeline|wgpu Pipeline]] — empty vertex/index buffer initialization

@@ -232,3 +232,9 @@ These are manually defined. If they don't match the actual Embree 4 header value
 **Key architectural concern:** EmbreeScene struct growing in complexity. The three mutually exclusive geometry paths (unindexed triangles, indexed triangles, subdivision) should eventually become an enum to make illegal states unrepresentable.
 
 **Scope alignment:** All changes fit within v0.13.0's "Pipeline Foundation" theme. Subdivision surfaces are explicitly listed. Attribute inspector is reasonable scope for "open any USD scene" goal.
+
+## Wiki Links
+
+- [[crate-structure|Crate Structure]] — code review of crate architecture
+- [[bif-usd-integration|BIF USD Integration]] — C++ bridge code review
+- [[egui-snarl]] — egui UI code quality

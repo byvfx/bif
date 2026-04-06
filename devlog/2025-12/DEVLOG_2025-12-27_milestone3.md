@@ -236,3 +236,8 @@ Complete Milestone 3: Add triangle rendering with camera system
 ---
 **Total Development Time (All Milestones):** ~2.5 hours  
 **Milestones Completed:** 3/∞
+
+## Wiki Links
+
+- [[wgpu-pipeline|wgpu Pipeline]] — WGSL shaders, uniform buffers, bind groups, render pipeline
+- [[crate-structure|Crate Structure]] — bif_render renamed to bif_viewport, bif_renderer for CPU path tracer

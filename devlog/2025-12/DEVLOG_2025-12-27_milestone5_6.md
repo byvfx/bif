@@ -390,3 +390,8 @@ Current implementation uses duplicate vertex/index buffers for second Lucy insta
 **Milestones 5 & 6: Complete ✅**
 
 Next: **Milestone 7: egui UI Integration** - Add side panel with scene stats and camera controls.
+
+## Wiki Links
+
+- [[wgpu-pipeline|wgpu Pipeline]] — depth buffer, render pipeline configuration, mesh loading
+- [[geometry-schemas|Geometry Schemas]] — OBJ mesh loading, normal computation, AABB bounds

@@ -233,3 +233,9 @@ Embree integration is validated by:
 - Milestone 13: USD C++ Integration for USDC binary format and references
 - Consider: Feature flag for Embree (fallback to instance-aware BVH for systems without Embree)
 - Consider: Benchmark with 1K and 10K instances
+
+## Wiki Links
+
+- [[bvh|BVH]] — Embree 4 integration replacing instance-aware BVH, two-level acceleration
+- [[bif-usd-integration|BIF USD Integration]] — C++ bridge FFI for Embree, CMake build integration
+- [[crate-structure|Crate Structure]] — bif_renderer Embree feature flag architecture

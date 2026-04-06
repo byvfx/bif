@@ -212,3 +212,7 @@ movement = direction * speed;
 ---
 
 **Milestone 4: Complete ✅**
+
+## Wiki Links
+
+- [[wgpu-pipeline|wgpu Pipeline]] — camera uniform buffer updates, GPU state sync

@@ -411,3 +411,9 @@ crates/
 **Coffee Consumed:** 2 cups ☕☕  
 **Bugs Fixed:** 5 (egui params, borrow checker, lifetime issues)  
 **Satisfying Moments:** Seeing 100 Lucy models render at 60 FPS! 🎉
+
+## Wiki Links
+
+- [[wgpu-pipeline|wgpu Pipeline]] — GPU instancing with per-instance model matrices, WGSL shader updates
+- [[egui-snarl]] — egui UI integration with side panel, collapsible sections
+- [[point-instancer|Point Instancer]] — GPU instancing pattern for 100 instances via single draw call

@@ -143,3 +143,10 @@ The UsdPreviewSurface export correctly wires up texture readers for diffuse, rou
 The overall architecture is solid. The FFI layer follows a safe, consistent pattern with good null checks and error propagation. The one critical bug (subd index use-after-free) is currently unreachable but will bite hard when subdivision rendering is enabled. The specular read/write mismatch breaks round-trip fidelity. The remaining items are about robustness and code hygiene.
 
 Recommended priority: Fix #1 (subd UAF) and #2 (specular mismatch) before any code touches the subdivision or material export paths.
+
+## Wiki Links
+
+- [[bif-usd-integration|BIF USD Integration]] — USD spec compliance review
+- [[openpbr-surface|OpenPBR Surface]] — OpenPBR material compliance
+- [[materialx-bridge|MaterialX Bridge]] — MaterialX export compliance
+- [[point-instancer|Point Instancer]] — instancer spec compliance

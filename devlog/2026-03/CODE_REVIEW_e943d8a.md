@@ -213,3 +213,9 @@ frustum culling (orthographic, behind-camera), `is_click` boundary, negative fra
 The commit is net-positive and safe to keep. The blocker is low-risk (waste, not
 corruption) but should be cleaned up promptly since it signals the function may not be
 doing what the author intended.
+
+## Wiki Links
+
+- [[crate-structure|Crate Structure]] — code review across crates
+- [[bif-usd-integration|BIF USD Integration]] — C++ bridge review
+- [[wgpu-pipeline|wgpu Pipeline]] — viewport rendering review

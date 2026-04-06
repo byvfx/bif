@@ -72,6 +72,22 @@ cargo fmt --check
 - [MILESTONES.md](MILESTONES.md) - architecture, roadmap
 - [SESSION_HANDOFF.md](SESSION_HANDOFF.md) - current state
 
+## Knowledge Base (Obsidian Wiki)
+
+- **Location:** [`wiki/`](wiki/) — Obsidian vault, open as vault in Obsidian
+- **Entry point:** `wiki/_index.md` — LLM reads this first to navigate
+- **Sections:** architecture, usd, rendering, concepts, rust, ui-ux, journal, raw
+- **42 articles** covering architecture decisions (ADRs), USD integration, rendering pipeline, atomic concept notes
+- **Templates:** `wiki/templates/` — concept, adr, journal, article
+
+### Wiki Maintenance
+
+- After learning something non-obvious, create/update a wiki concept note
+- After making an architecture decision, create an ADR in `wiki/architecture/adr/`
+- Keep section `_index.md` files updated when adding articles
+- Use Obsidian wikilinks `[[Article Name]]` for cross-references
+- Frontmatter: every article needs title, type, tags, created, updated
+
 ## USD Reference
 
 - **Local curated docs:** [`docs/usd/`](docs/usd/) — AI-optimized reference covering core concepts, composition, all major schemas, datatypes, toolset, and common gotchas

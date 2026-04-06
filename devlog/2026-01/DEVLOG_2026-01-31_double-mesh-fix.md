@@ -54,3 +54,8 @@ When loading USD files with multiple prototypes, the viewport uses a **combined 
 
 - Continue M19 geometry animation per frame
 - Test with more complex multi-prototype scenes
+
+## Wiki Links
+
+- [[geometry-schemas|Geometry Schemas]] — double mesh rendering fix, multi-prototype scenes
+- [[wgpu-pipeline|wgpu Pipeline]] — viewport mesh rendering corrections

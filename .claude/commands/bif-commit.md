@@ -68,7 +68,14 @@ Based on the diff above:
 - Check if `devlog/DEVLOG_YYYY-MM-DD.md` exists for today, if one exists, append to it; if not, create it with today's date
 - Append session summary if exists, create if not
 
-### 6. Verify
+### 6. Wiki Links
+
+- Add `## Wiki Links` section to any new or updated devlog entries with Obsidian wikilinks to relevant wiki articles
+- If new concepts, architecture decisions, or domain knowledge were learned this session, create/update articles in `wiki/`
+- Update the relevant section `_index.md` if new wiki articles were added
+- Use `[[Article Name]]` wikilink format with a brief reason for each link
+
+### 7. Verify
 
 - Run `git status` to confirm commit succeeded
 

@@ -195,3 +195,8 @@ if let Err(e) = renderer.render(clear_color) {
 ---
 
 **Milestone 2 complete!** Window system working, ready for graphics programming.
+
+## Wiki Links
+
+- [[wgpu-pipeline|wgpu Pipeline]] — wgpu instance, surface, device, queue setup and render loop
+- [[crate-structure|Crate Structure]] — bif_render and bif_viewer crate roles

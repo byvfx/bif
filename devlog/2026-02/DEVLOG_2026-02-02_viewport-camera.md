@@ -63,3 +63,7 @@ Added new state to Renderer:
 - Continue debugging play button animation
 - Investigate rapid redraw causing tiny delta_time
 - Consider accumulating delta or different timing approach
+
+## Wiki Links
+
+- [[wgpu-pipeline|wgpu Pipeline]] — viewport camera system refactor

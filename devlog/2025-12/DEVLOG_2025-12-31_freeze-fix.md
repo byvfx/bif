@@ -469,3 +469,9 @@ if rebuild_requested {
 - **Ready for testing:** All code changes complete and tested
 
 **This was a significant architectural improvement that makes the application much more responsive!**
+
+## Wiki Links
+
+- [[bvh|BVH]] — instance-aware BVH architecture, 100x build speedup via ray-space instancing
+- [[point-instancer|Point Instancer]] — InstancedGeometry with per-ray instance testing pattern
+- [[crate-structure|Crate Structure]] — bif_math transform.rs, bif_renderer instanced_geometry.rs

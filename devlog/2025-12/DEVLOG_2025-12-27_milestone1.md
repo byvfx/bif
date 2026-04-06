@@ -247,3 +247,8 @@ All math primitives ported from Go:
 ---
 
 **Next session starts with:** Copying Go code to legacy/ and porting Ray struct.
+
+## Wiki Links
+
+- [[crate-structure|Crate Structure]] — initial workspace setup with bif_math, bif_core, bif_render, bif_viewer
+- [[bvh|BVH]] — AABB ray-box intersection test ported from Go

@@ -70,3 +70,8 @@ All tests pass, clippy clean
 ## Next Session
 
 - M19 Frame Rendering
+
+## Wiki Links
+
+- [[bif-usd-integration|BIF USD Integration]] — USD import refinement, mesh data extraction
+- [[geometry-schemas|Geometry Schemas]] — mesh handling improvements for USD scenes

@@ -172,3 +172,10 @@ if scene.is_null() {
 - `crates/bif_core/src/usd/cpp_bridge.rs` - expanded safety docs
 - `MILESTONES.md` - M19.4 section
 - `SESSION_HANDOFF.md` - completion summary
+
+## Wiki Links
+
+- [[wgpu-pipeline|wgpu Pipeline]] — viewport code quality improvements
+- [[bif-usd-integration|BIF USD Integration]] — C++ bridge code cleanup
+- [[crate-structure|Crate Structure]] — crate code quality audit
+- [[stage-layer-prim|Stage, Layer, Prim]] — USD stage/layer/prim

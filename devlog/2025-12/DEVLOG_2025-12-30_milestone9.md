@@ -258,3 +258,10 @@ cargo run -p bif_viewer -- assets/test_cube.usda
 - **Test coverage:** 15 unit tests
 - **Build time:** <3s incremental
 - **Dependencies added:** 0 (uses existing thiserror, log)
+
+## Wiki Links
+
+- [[bif-usd-integration|BIF USD Integration]] — custom USDA parser, USD scene loading into BIF
+- [[stage-layer-prim|Stage, Layer, Prim]] — USD prim types parsed (Mesh, PointInstancer, Xform)
+- [[geometry-schemas|Geometry Schemas]] — UsdGeomMesh parsing, face vertex triangulation, normals
+- [[point-instancer|Point Instancer]] — UsdGeomPointInstancer parsing with prototype meshes

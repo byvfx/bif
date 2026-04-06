@@ -117,3 +117,10 @@ All 11 tests passing:
 - After pressing render the Ivar Render node still says rendering even after render is complete
 - The lucy instance scene does not load on startup when no CLI args are provided
 - Improve error handling for USD loading
+
+## Wiki Links
+
+- [[node-graph-system|Node Graph System]] — node graph with UsdRead, IvarRender node types
+- [[egui-snarl]] — egui-snarl node graph UI implementation
+- [[bif-usd-integration|BIF USD Integration]] — dynamic USD loading triggered from node graph
+- [[point-instancer|Point Instancer]] — instancing support through node graph pipeline

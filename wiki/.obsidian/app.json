@@ -1,0 +1,9 @@
+{
+  "alwaysUpdateLinks": true,
+  "newFileLocation": "folder",
+  "newFileFolderPath": "concepts",
+  "attachmentFolderPath": "raw/attachments",
+  "showLineNumber": true,
+  "strictLineBreaks": false,
+  "readableLineLength": true
+}

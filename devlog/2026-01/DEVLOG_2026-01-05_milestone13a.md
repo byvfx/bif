@@ -81,3 +81,10 @@ Single selection synced between browser and inspector. Future: Gaffer-style focu
 - Milestone 13b: Node Graph for scene assembly
 - Table layout like Houdini Scene Graph Tree
 - Dynamic USD loading from node graph
+
+## Wiki Links
+
+- [[scene-browser|Scene Browser]] — USD scene browser and property inspector implementation
+- [[bif-usd-integration|BIF USD Integration]] — USD stage traversal for browser display
+- [[stage-layer-prim|Stage, Layer, Prim]] — prim hierarchy display in scene browser
+- [[egui-snarl]] — egui-based scene browser UI

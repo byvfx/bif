@@ -184,3 +184,10 @@ Both renderers now support:
 - ✅ Render mode toggle in UI
 - ✅ Progressive bucket rendering display
 - ✅ Camera sync between modes
+
+## Wiki Links
+
+- [[bif-usd-integration|BIF USD Integration]] — USD orientation/winding order handling for Houdini exports
+- [[bvh|BVH]] — BVH scene build from instanced mesh data
+- [[point-instancer|Point Instancer]] — instance-aware rendering in both Vulkan and CPU path tracer
+- [[wgpu-pipeline|wgpu Pipeline]] — render mode switching between Vulkan GPU and Ivar CPU

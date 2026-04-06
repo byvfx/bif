@@ -149,3 +149,10 @@ cargo test --package bif_core test_load_usd -- --ignored
 - UsdPreviewSurface material parsing
 - Texture file loading
 - Material assignment to meshes
+
+## Wiki Links
+
+- [[bif-usd-integration|BIF USD Integration]] — USD C++ bridge via CMake/FFI for binary .usdc loading
+- [[004-cpp-bridge-for-usd|ADR 004: C++ Bridge for USD]] — C++ bridge architecture decision and implementation
+- [[stage-layer-prim|Stage, Layer, Prim]] — USD stage traversal, prim hierarchy loading
+- [[point-instancer|Point Instancer]] — UsdGeomPointInstancer support via C++ bridge

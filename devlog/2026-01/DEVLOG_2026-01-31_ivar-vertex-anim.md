@@ -63,3 +63,8 @@
 - M19.2: Instance transform animation per frame
 - Evaluate instance matrices at each frame time
 - Potentially cheaper than full BVH rebuild for transform-only animation
+
+## Wiki Links
+
+- [[bvh|BVH]] — BVH rebuild considerations for vertex animation
+- [[geometry-schemas|Geometry Schemas]] — vertex displacement animation in Ivar renderer

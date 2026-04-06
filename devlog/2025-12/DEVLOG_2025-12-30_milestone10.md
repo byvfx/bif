@@ -197,3 +197,8 @@ image = "0.24"
 - [ ] Triangle mesh support (integrate with bif_core)
 - [ ] HDRI environment maps
 - [ ] Multiple Importance Sampling (MIS)
+
+## Wiki Links
+
+- [[bvh|BVH]] — BVH acceleration structure ported from Go, simplified sort-based build
+- [[crate-structure|Crate Structure]] — new bif_renderer crate for CPU path tracing

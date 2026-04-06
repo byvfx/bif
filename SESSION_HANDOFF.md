@@ -1,6 +1,6 @@
-# Session Handoff - April 5, 2026
+# Session Handoff - April 6, 2026
 
-**Last Updated:** CPU vertex displacement + selection outline + tree/viewport sync
+**Last Updated:** Obsidian knowledge base wiki/ + devlog backlinks
 **Current Version:** v0.13.0-dev (Open Any USD Scene)
 **Project:** BIF - VFX Scene Assembler & Renderer
 
@@ -19,6 +19,13 @@
 ---
 
 ## Recent Work
+
+### v0.13.0 Apr 6: Obsidian Knowledge Base (Apr 6, 2026)
+
+- **wiki/ vault** — 42 articles across 8 sections (architecture, USD, rendering, concepts, rust, ui-ux, journal, raw). LLM-optimized indexes for Q&A. 4 templates (concept, adr, journal, article).
+- **Devlog backlinks** — 92 devlog entries get `## Wiki Links` sections with Obsidian wikilinks
+- **bif-commit updated** — Step 6 maintains wiki on each commit
+- **CLAUDE.md updated** — Knowledge Base section with conventions
 
 ### v0.13.0 Apr 5: CPU Displacement + Selection Outline + Sync (Apr 5, 2026)
 
