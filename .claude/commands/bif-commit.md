@@ -41,7 +41,15 @@ Based on the diff above:
 
  txt```
 
-### 4. Update Documentation and Devlog
+### 4. BUGLIST Check
+
+- Read `BUGLIST.md` and compare against the changes being committed:
+  - Were any **active bugs fixed** by this work? → Move them to the `## Fixed` section with a date note.
+  - Were any **new bugs discovered** during this session? → Add them to `## Active Bugs`.
+  - Were any **investigate items resolved** or invalidated? → Update or remove them.
+- If no BUGLIST changes are needed, skip silently (don't add noise).
+
+### 5. Update Documentation and Devlog
 
 - Update `CHANGELOG.md`: add entries under `## [Unreleased]` in the appropriate section (Added/Changed/Fixed). Keep entries concise (one line each). Do NOT create a new version heading — that happens at release time.
 - Update `MILESTONES.md` if a version's status changed (e.g., mark version complete, update in-progress)
@@ -60,7 +68,7 @@ Based on the diff above:
 - Check if `devlog/DEVLOG_YYYY-MM-DD.md` exists for today, if one exists, append to it; if not, create it with today's date
 - Append session summary if exists, create if not
 
-### 5. Verify
+### 6. Verify
 
 - Run `git status` to confirm commit succeeded
 

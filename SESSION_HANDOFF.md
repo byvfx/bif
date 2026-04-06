@@ -13,7 +13,7 @@
 | Released | v0.1.0, v0.11.0, v0.12.0 |
 | Current | v0.13.0-dev — Phase 1-2 done, Phase 3 in progress |
 | Next | Dome light bug, native MaterialX displacement, Embree dicing, curves in Ivar, OpenVDB |
-| Tests | 516 total across all crates (111 renderer pass, 6 pre-existing HDRI failures) |
+| Tests | 530 total across all crates (14 new displacement, 111 renderer pass, 6 pre-existing HDRI failures) |
 | Performance | 60 FPS viewport, 100K instances with LOD, Ivar build ~185ms |
 
 ---
@@ -35,10 +35,6 @@
 
 **Session 1 — Selection Outline + Tree/Viewport Sync:**
 
-### v0.13.0 Apr 5: Selection Outline + Tree/Viewport Sync (Apr 5, 2026)
-
-**Completed:**
-
 - **Selection outline rendering** — Replaced buggy `PolygonMode::Line` + `shading_mode` `queue.write_buffer` hack with dedicated `shaders/outline.wgsl`: normal-expanded back-face silhouette. Pipeline uses `cull_mode: Front` + `depth_compare: LessEqual` so only protruding rim passes depth test → clean Houdini-style silhouette. Dedicated `wireframe_cam_bind_group` with `shading_mode=2` baked in, updated per-frame.
 - **Bidirectional tree ↔ viewport sync** — New `Renderer::select_at_screen()` handles viewport click flow (pick + set index + emit `PrimSelected` + reset gizmo + deselect on empty). `PrimSelected` handler now updates both `selected_prim_path` AND `scene_browser_state`, calls `expand_to_path()` to auto-reveal collapsed branches.
 - **Robust prim_path lookup** — 3 fallbacks in `PrimSelected` handler: exact match → descendant prefix (parent Xform clicks) → synthetic `/BIF/{path}` prefix (handles empty `inst.prim_path` cases where `resolve_prim_path` synthesizes paths from proto names). `denormalize_synthetic_path()` strips `/BIF/` prefix + numeric `/{idx}` suffix for viewport → tree direction.
@@ -47,10 +43,11 @@
 
 **Next priorities:**
 
-1. Embree displacement dicing (`rtcSetGeometryDisplacementFunction` callback)
-2. Curves in Ivar (ribbon tessellation for BasisCurves)
-3. OpenVDB volume rendering
-4. Proper fix for empty `inst.prim_path` in USD loader (synthetic fallback is workaround)
+1. Dome light bug — Houdini USD dome light not detected by C++ bridge
+2. Native MaterialX displacement in C++ bridge (`ND_displacement_float/vector3`)
+3. Embree displacement dicing (`rtcSetGeometryDisplacementFunction` callback)
+4. Curves in Ivar (ribbon tessellation for BasisCurves)
+5. OpenVDB volume rendering
 
 ### v0.13.0 Sessions Apr 2-4: Subdiv, Inspector, Display Color, Variants, Selection (Apr 4, 2026)
 
