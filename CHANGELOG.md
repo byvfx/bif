@@ -6,6 +6,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased] (targeting v0.13.0)
 
+### Removed
+
+- **Welcome overlay** — removed centered "Open USD File..." dialog from empty viewport (still accessible via File menu)
+
 ### Added
 
 - **Wireframe selection overlay** — `POLYGON_MODE_LINE` pipeline renders selected prim wireframe over the solid pass. `VariantChanged` and `FrameSelected` `AppEvent` variants for UI→renderer dispatch.

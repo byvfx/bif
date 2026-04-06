@@ -870,36 +870,6 @@ impl Renderer {
                 });
             bottom_panel_height = node_graph_panel.response.rect.height() + timeline_height;
 
-            // First-launch empty state (centered welcome when no scene loaded)
-            if self.scene.usd_stage.is_none() && self.scene.instances.transforms.is_empty() {
-                egui::Area::new(egui::Id::new("welcome"))
-                    .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-                    .interactable(true)
-                    .show(ctx, |ui| {
-                        egui::Frame::none()
-                            .fill(theme::BG_OVERLAY_BACKDROP)
-                            .inner_margin(egui::Margin::same(24.0))
-                            .rounding(8.0)
-                            .show(ui, |ui| {
-                                ui.vertical_centered(|ui| {
-                                    ui.heading("BIF");
-                                    ui.colored_label(theme::TEXT_SECONDARY, "VFX Scene Assembly");
-                                    ui.add_space(12.0);
-                                    if ui.button("Open USD File...").clicked() {
-                                        open_usd_file_dialog(
-                                            &mut self.nodes.node_graph_state.snarl,
-                                            &mut event_bus,
-                                        );
-                                    }
-                                    ui.colored_label(
-                                        theme::TEXT_DISABLED,
-                                        "or add a USD Read node in the graph below",
-                                    );
-                                });
-                            });
-                    });
-            }
-
             // Viewport stats overlay (top-left of viewport area)
             {
                 let overlay_offset = egui::pos2(left_panel_width + 8.0, top_panel_height + 8.0);
