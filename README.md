@@ -1,6 +1,6 @@
 # BIF
 
-> Lightweight VFX scene assembler and renderer. Load USD. Instance massively. Render.
+> USD Orchestration Tool for VFX. Compose layers. Instance massively. Render.
 
 <!-- TODO: add hero render image -->
 <!-- ![BIF Render](renders/hero.png) -->
@@ -9,11 +9,11 @@
 
 ## What is BIF?
 
-BIF is a focused scene assembly tool for VFX, inspired by Clarisse and Gaffer. It does one thing well: take USD scenes, scatter and instance geometry at scale, and render production-quality images.
+BIF is a USD orchestration tool for VFX — open a USD stage, browse the layer stack, pick your working layer, scatter and instance geometry, override materials, and render production-quality images. All edits author clean USD opinions directly.
 
-Built from scratch in Rust with a USD-native pipeline.
+Built from scratch in Rust with a USD-native pipeline. Inspired by Katana's layer awareness and Houdini's procedural power, in one tool.
 
-**BIF is not** a general-purpose 3D package. It doesn't model, rig, or animate. It assembles scenes authored in Houdini, Maya, or Blender and renders them.
+**BIF is not** a general-purpose 3D package. It doesn't model, rig, or animate. It orchestrates scenes authored in Houdini, Maya, or Blender — composing, overriding, instancing, and rendering them.
 
 ---
 

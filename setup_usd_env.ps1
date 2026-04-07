@@ -5,9 +5,9 @@
 #
 # Or source it in your PowerShell profile for permanent setup.
 
-$VcpkgRoot = "D:\__projects\_programming\vcpkg"
+$VcpkgRoot = "G:\__projects\_programming\vcpkg"
 $UsdBinPath = "$VcpkgRoot\installed\x64-windows\bin"
-$OidnRoot = "D:\__projects\_programming\oidn-2.4.1.x64.windows"
+$OidnRoot = "G:\__projects\_programming\oidn-2.4.1.x64.windows"
 
 # Add vcpkg bin and OIDN bin to PATH for DLLs
 $env:PATH = "$UsdBinPath;$OidnRoot\bin;$env:PATH"

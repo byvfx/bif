@@ -2,7 +2,7 @@
 
 **Last Updated:** Obsidian knowledge base wiki/ + devlog backlinks
 **Current Version:** v0.13.0-dev (Open Any USD Scene)
-**Project:** BIF - VFX Scene Assembler & Renderer
+**Project:** BIF - USD Orchestration Tool for VFX
 
 ---
 

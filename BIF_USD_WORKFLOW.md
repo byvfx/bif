@@ -6,7 +6,7 @@
 
 ## Implementation Notes
 
-**Hybrid approach (decided 2026-03-28):** BIF keeps its procedural node graph (scatter, instancer, etc.) as a differentiator while adding layer awareness underneath. This is not a full pivot to "layer editor only" — it's an evolution where edits author USD opinions continuously instead of only at export time. The existing data-flow node graph gains blue/orange color-coding (composition vs operation nodes) as a visual UX distinction, not an architectural rewrite.
+**Hybrid approach (decided 2026-03-28):** BIF is a **USD Orchestration Tool** — it keeps its procedural node graph (scatter, instancer, etc.) as a differentiator while adding layer awareness underneath. Edits author USD opinions continuously instead of only at export time. The existing data-flow node graph uses blue/orange color-coding (composition vs operation nodes) as a visual UX distinction, not an architectural rewrite. Orchestration scope: arrange, compose, override, instance. Not: model, rig, animate, simulate.
 
 **Shot templates:** Implemented as JSON-configurable presets stored in `~/.bif/templates/`. Users can add/edit/remove templates by editing JSON. Studios can override via `BIF_TEMPLATE_DIR` env var. Built-in presets (feature_film, commercial, lookdev) ship as defaults.
 
@@ -14,7 +14,7 @@
 
 ## Overview
 
-BIF is a **layer-aware USD editor and scene assembler** — not a USD viewer, not a version control system, not a modeling tool. BIF fills a gap in the VFX pipeline: no tool today lets an artist open a master USD stage, see the layer stack, pick their working layer, selectively load only what they need, make edits that author clean USD opinions, and save back to disk — all with a visual node graph and live USDA preview.
+BIF is a **USD Orchestration Tool** — not a USD viewer, not a version control system, not a modeling tool. BIF fills a gap in the VFX pipeline: no tool today lets an artist open a master USD stage, see the layer stack, pick their working layer, selectively load only what they need, make edits that author clean USD opinions, and save back to disk — all with a visual node graph and live USDA preview.
 
 ### Design Philosophy
 

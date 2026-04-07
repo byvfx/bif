@@ -24,7 +24,7 @@ fn vcpkg_triplet() -> &'static str {
 fn vcpkg_fallback_paths() -> Vec<String> {
     if cfg!(windows) {
         vec![
-            r"D:\__projects\_programming\vcpkg".to_string(),
+            r"G:\__projects\_programming\vcpkg".to_string(),
             r"C:\vcpkg".to_string(),
         ]
     } else {
