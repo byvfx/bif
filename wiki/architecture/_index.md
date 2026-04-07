@@ -9,10 +9,11 @@ sources: [ARCHITECTURE.md, ARCHITECTURE_REVIEW.md, ARCHITECTURE_REFACTORS.md, MI
 
 # Architecture
 
-BIF is a VFX scene assembler and renderer built in Rust, targeting USD-based pipelines. The architecture prioritizes clean crate layering, prototype/instance scalability, and dual rendering (GPU viewport + CPU path tracer).
+BIF is a USD Orchestration Tool for VFX built in Rust — layer-aware USD editing + procedural scene assembly + integrated rendering. The architecture prioritizes clean crate layering, prototype/instance scalability, and dual rendering (GPU viewport + CPU path tracer).
 
 ## Articles
 
+- [[project-identity|Project Identity: USD Orchestration Tool]] — Identity, scope fence, competitive positioning, business model direction
 - [[crate-structure|Crate Structure]] — The 6-crate workspace, responsibilities, and dependency flow
 - [[node-graph-system|Node Graph System]] — egui-snarl based node graph with 10 node types and dirty-propagation evaluation
 - [[scene-browser|Scene Browser]] — CompositeProvider merging USD stage hierarchy with procedural prims
