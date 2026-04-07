@@ -1,6 +1,6 @@
 # Session Handoff - April 6, 2026
 
-**Last Updated:** Obsidian knowledge base wiki/ + devlog backlinks
+**Last Updated:** Identity rebrand + D:→G: migration
 **Current Version:** v0.13.0-dev (Open Any USD Scene)
 **Project:** BIF - USD Orchestration Tool for VFX
 
