@@ -27,6 +27,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 
 - **SceneQuery trait** — read-only query API in bif_core abstracting Scene field access. 15 methods covering prototypes, instances, materials, cameras, lights, timeline, metadata. `find_instance_by_prim_path` encapsulates the 3-strategy prim path lookup (exact, prefix, synthetic /BIF/ fallback). 9 tests. Enables future LayerAwareScene for M32 opinion trace without viewport changes.
+- **Dispatch split** — extracted `render_dispatch.rs`, `selection_dispatch.rs`, `project_dispatch.rs` from monolithic `dispatch_events()` in render.rs. 20 AppEvent match arms → individual handler methods following `node_dispatch.rs` pattern. `dispatch_events()` is now a thin router.
 
 ### Fixed
 

@@ -8,24 +8,19 @@
 //! undo/redo, node graph operations). Events are drained in `dispatch_events()`
 //! for predictable ordering.
 
-use anyhow::Result;
-use std::sync::atomic::Ordering;
-
 use crate::batch_render::BatchMessage;
 use crate::environment_manager::IblResult;
 use crate::gpu_types::InstanceData;
 use crate::ivar_state::{BatchRenderStatus, BuildStatus, CameraSource, RenderMode};
 use crate::node_graph::ops::collect_upstream_nodes;
 use crate::node_graph::{render_node_graph, GraphNodeId, NodeGraphEvent, SceneNode};
-use crate::property_inspector::{
-    render_property_inspector, reset_property_inspector_cache, PrimProperties,
-};
+use crate::property_inspector::{render_property_inspector, reset_property_inspector_cache};
 use crate::scene_browser::{
-    self, CompositeProvider, NodeFilteredProvider, PrimDataProvider, ProceduralPrimKind,
-    SceneBrowserViewMode,
+    self, CompositeProvider, NodeFilteredProvider, PrimDataProvider, SceneBrowserViewMode,
 };
 use crate::theme;
 use crate::Renderer;
+use anyhow::Result;
 
 /// Open a USD file dialog and load into the first UsdRead node in the graph.
 fn open_usd_file_dialog(
@@ -1026,207 +1021,17 @@ impl Renderer {
         let events = self.event_bus.drain();
         for event in events {
             match event {
-                AppEvent::RenderModeChanged => {
-                    if self.ivar.ivar_state.mode == RenderMode::Ivar {
-                        log::info!("Switched to Ivar mode - starting render");
-                        self.ivar.ivar_state.current_scale = 1;
-                        self.ivar.ivar_state.last_interaction_time = None;
-                        self.start_ivar_render();
-                    }
-                }
-                AppEvent::RebuildScene => {
-                    log::info!("Manual scene rebuild requested");
-                    self.invalidate_ivar_scene();
-                }
-                AppEvent::DenoiseRequested => {
-                    self.denoise_ivar_result();
-                }
-                AppEvent::FilterChanged => {
-                    if self.ivar.ivar_state.mode == RenderMode::Ivar {
-                        self.ivar.ivar_state.current_scale = 1;
-                        self.ivar.ivar_state.last_interaction_time = None;
-                        self.start_ivar_render();
-                    }
-                }
-                AppEvent::StartBatchRender => {
-                    self.start_batch_render();
-                }
-                AppEvent::CancelBatchRender => {
-                    if let Some(ref flag) = self.async_channels.batch_cancel_flag {
-                        flag.store(true, Ordering::Relaxed);
-                    }
-                }
-                AppEvent::SyncUsdCamera(camera_path) => {
-                    self.sync_viewport_to_usd_camera(&camera_path);
-                }
-                AppEvent::SyncSceneCamera(cam_idx) => {
-                    self.sync_viewport_to_scene_camera(cam_idx as usize);
-                }
-                AppEvent::PrimSelected(prim_path) => {
-                    self.selection.selected_prim_path = Some(prim_path.clone());
-                    // Sync tree visual: expand ancestors so the row is visible, then select.
-                    // Handles viewport clicks landing on prims inside collapsed branches.
-                    self.selection
-                        .scene_browser_state
-                        .expand_to_path(&prim_path);
-                    self.selection.scene_browser_state.select(&prim_path);
-                    // Map prim path → instance index. Tries in order:
-                    //  1. exact match (normal case)
-                    //  2. descendant prefix (clicking a parent Xform when instance is at child mesh)
-                    //  3. synthetic /BIF/{path}/{idx} fallback (loader left inst.prim_path empty
-                    //     and resolve_prim_path generated /BIF/{proto_name}/{idx} where proto_name
-                    //     is often the real USD path)
-                    self.selection.selected_instance_index = self
-                        .scene
-                        .instances
-                        .prim_paths
-                        .iter()
-                        .position(|p| p.as_str() == prim_path.as_str())
-                        .or_else(|| {
-                            let prefix = format!("{}/", prim_path);
-                            self.scene
-                                .instances
-                                .prim_paths
-                                .iter()
-                                .position(|p| p.starts_with(&prefix))
-                        })
-                        .or_else(|| {
-                            let synth_prefix = format!("/BIF/{}", prim_path);
-                            self.scene
-                                .instances
-                                .prim_paths
-                                .iter()
-                                .position(|p| p.starts_with(&synth_prefix))
-                        });
-                    reset_property_inspector_cache(&self.egui_ctx);
-                    let stage_guard = self.scene.usd_stage.as_ref().map(|s| s.lock().unwrap());
-                    let composite = CompositeProvider::new(
-                        stage_guard.as_deref().map(|s| s as &dyn PrimDataProvider),
-                        &self.nodes.cached_scene_graph,
-                    );
-                    if let Some(info) = composite.get_prim_info(&prim_path) {
-                        let mut props = PrimProperties::from_display_info(&info);
-                        if let Some(proc_data) = composite.get_procedural_data(&prim_path) {
-                            match &proc_data.kind {
-                                ProceduralPrimKind::Mesh {
-                                    vertex_count,
-                                    triangle_count,
-                                } => {
-                                    props = props
-                                        .with_attribute("Vertices", &vertex_count.to_string())
-                                        .with_attribute("Triangles", &triangle_count.to_string());
-                                }
-                                ProceduralPrimKind::PointInstancer {
-                                    point_count,
-                                    prototype_refs,
-                                } => {
-                                    props =
-                                        props.with_attribute("Points", &point_count.to_string());
-                                    if !prototype_refs.is_empty() {
-                                        props = props.with_attribute(
-                                            "Prototypes",
-                                            &prototype_refs.join(", "),
-                                        );
-                                    }
-                                }
-                                ProceduralPrimKind::Scope => {}
-                            }
-                        }
-                        // Look up bound material: prim_path → instance → prototype
-                        if let Some(inst) = self
-                            .scene
-                            .working_scene
-                            .instances()
-                            .iter()
-                            .find(|i| i.prim_path.as_ref() == prim_path.as_str())
-                        {
-                            if let Some(proto) =
-                                self.scene.working_scene.prototypes.get(inst.prototype_id)
-                            {
-                                if let Some(mat) = &proto.material {
-                                    props = props.with_material(mat.clone());
-                                }
-                            }
-                        }
-                        // Query USD prim attributes and variant sets for inspector display
-                        if let Some(ref stage_mtx) = self.scene.usd_stage {
-                            let stage = stage_mtx.lock().unwrap();
-                            match stage.get_prim_attributes(&prim_path) {
-                                Ok(attrs) if !attrs.is_empty() => {
-                                    props.usd_attributes = attrs;
-                                }
-                                Err(e) => {
-                                    log::debug!(
-                                        "Failed to query attributes for {}: {:?}",
-                                        prim_path,
-                                        e
-                                    );
-                                }
-                                _ => {}
-                            }
-                            // Query variant sets
-                            if let Ok(set_names) = stage.get_variant_set_names(&prim_path) {
-                                for set_name in &set_names {
-                                    let variants = stage
-                                        .get_variant_names(&prim_path, set_name)
-                                        .unwrap_or_default();
-                                    let selection = stage
-                                        .get_variant_selection(&prim_path, set_name)
-                                        .unwrap_or_default();
-                                    props.variant_sets.push((
-                                        set_name.clone(),
-                                        variants,
-                                        selection,
-                                    ));
-                                }
-                            }
-                        }
+                // Render events → render_dispatch.rs
+                AppEvent::RenderModeChanged => self.handle_render_mode_changed(),
+                AppEvent::RebuildScene => self.handle_rebuild_scene(),
+                AppEvent::DenoiseRequested => self.handle_denoise_requested(),
+                AppEvent::FilterChanged => self.handle_filter_changed(),
+                AppEvent::StartBatchRender => self.handle_start_batch_render(),
+                AppEvent::CancelBatchRender => self.handle_cancel_batch_render(),
 
-                        self.selection.selected_prim_properties = Some(props);
-                    } else {
-                        self.selection.selected_prim_properties = Some(PrimProperties {
-                            path: prim_path,
-                            ..Default::default()
-                        });
-                    }
-                }
-                AppEvent::TransformEdit(edit) => {
-                    if edit.committed {
-                        self.project.mark_dirty();
-                        self.push_transform_command(
-                            edit.instance_index,
-                            edit.old_transform,
-                            edit.new_transform,
-                        );
-                    } else {
-                        let idx = edit.instance_index;
-                        let mat = edit.new_transform.to_matrix();
-                        if idx < self.scene.instances.current.len() {
-                            self.scene.instances.current[idx] = mat;
-                            self.culling.mark_dirty();
-                            self.update_visible_instances();
-                            if self.ivar.ivar_state.mode == RenderMode::Ivar {
-                                if self.ivar.ivar_state.should_restart()
-                                    && self.ivar.ivar_state.world.is_some()
-                                {
-                                    self.restart_ivar_at_scale(
-                                        self.ivar.ivar_state.interaction_scale(),
-                                    );
-                                }
-                                self.ivar.ivar_state.last_interaction_time =
-                                    Some(std::time::Instant::now());
-                            }
-                        }
-                    }
-                }
-                AppEvent::StageCorrectionsChanged => {
-                    if let Err(e) = self.reload_working_scene() {
-                        log::error!("Failed to reload after stage correction toggle: {}", e);
-                    }
-                }
-                AppEvent::SetKeyframe(instance_index) => {
-                    self.set_keyframe(instance_index as usize);
-                }
+                // Camera (thin, stays here)
+                AppEvent::SyncUsdCamera(path) => self.sync_viewport_to_usd_camera(&path),
+                AppEvent::SyncSceneCamera(idx) => self.sync_viewport_to_scene_camera(idx as usize),
                 AppEvent::CameraProjectionChange(proj) => {
                     match proj {
                         crate::app_event::CameraProjection::Perspective => {
@@ -1243,13 +1048,17 @@ impl Renderer {
                     }
                     self.update_camera();
                 }
-                AppEvent::ExportEditLayer(path) => {
-                    let path_str = path.display().to_string();
-                    match self.export_edit_layer(&path_str) {
-                        Ok(()) => log::info!("Edit layer exported to {}", path_str),
-                        Err(e) => log::error!("Failed to export edit layer: {}", e),
-                    }
-                }
+
+                // Selection events → selection_dispatch.rs
+                AppEvent::PrimSelected(path) => self.handle_prim_selected(path),
+                AppEvent::TransformEdit(edit) => self.handle_transform_edit(edit),
+                AppEvent::StageCorrectionsChanged => self.handle_stage_corrections_changed(),
+                AppEvent::SetKeyframe(idx) => self.handle_set_keyframe(idx),
+                AppEvent::ExportEditLayer(path) => self.handle_export_edit_layer(path),
+                AppEvent::FrameSelected => self.handle_frame_selected(),
+                AppEvent::VariantChanged(p, s, v) => self.handle_variant_changed(p, s, v),
+
+                // Node graph → node_dispatch.rs
                 AppEvent::NodeGraph(node_events) => {
                     let has_mutation = node_events.iter().any(|e| {
                         !matches!(
@@ -1264,101 +1073,13 @@ impl Renderer {
                         self.handle_node_graph_event(event);
                     }
                 }
-                AppEvent::ProjectNew => {
-                    if self.save_if_needed_then_proceed("New Project") {
-                        self.reset_project();
-                    }
-                }
-                AppEvent::ProjectOpen => {
-                    if self.save_if_needed_then_proceed("Open Project") {
-                        let path = self.with_dialog_focus(|| {
-                            rfd::FileDialog::new()
-                                .add_filter("BIF Project", &["bif", "bifa"])
-                                .pick_file()
-                        });
-                        if let Some(path) = path {
-                            self.open_project(&path);
-                        }
-                    }
-                }
-                AppEvent::ProjectSave => {
-                    if let Some(path) = self.project.file_path.clone() {
-                        self.save_project_to(&path);
-                    } else {
-                        // No path yet — trigger Save As
-                        self.save_project_as();
-                    }
-                }
-                AppEvent::ProjectSaveAs => {
-                    self.save_project_as();
-                }
-                AppEvent::ProjectOpenRecent(path) => {
-                    if self.save_if_needed_then_proceed("Open Recent") {
-                        self.open_project(&path);
-                    }
-                }
-                AppEvent::FrameSelected => {
-                    if let Some(idx) = self.selection.selected_instance_index {
-                        if let Some(transform) = self.scene.instances.current.get(idx) {
-                            let proto_id = self
-                                .scene
-                                .instances
-                                .prototype_ids
-                                .get(idx)
-                                .copied()
-                                .unwrap_or(0);
-                            let aabb = self
-                                .scene
-                                .working_scene
-                                .prototypes
-                                .get(proto_id)
-                                .map(|p| p.mesh.bounds);
-                            let center = aabb.map(|a| a.centroid()).unwrap_or(bif_math::Vec3::ZERO);
-                            let world_center = (*transform
-                                * bif_math::Vec4::new(center.x, center.y, center.z, 1.0))
-                            .truncate();
-                            let size = aabb
-                                .map(|a| (a.max_point() - a.min_point()).length())
-                                .unwrap_or(1.0);
-                            self.cam.camera.target = world_center;
-                            self.cam.camera.distance = size * 2.0;
-                            self.cam.camera.near = size * 0.01;
-                            self.cam.camera.far = size * 40.0;
-                            self.cam.camera.update_position_from_angles();
-                            self.update_camera();
-                            self.ivar.ivar_state.invalidate_scene();
-                        }
-                    }
-                }
-                AppEvent::VariantChanged(prim_path, variant_set, variant_name) => {
-                    log::info!(
-                        "Variant changed: {} / {} = {}",
-                        prim_path,
-                        variant_set,
-                        variant_name
-                    );
-                    // Lock, set variant, release lock before reload (which needs &mut self)
-                    let set_result = self.scene.usd_stage.as_ref().map(|s| {
-                        s.lock().unwrap().set_variant_selection(
-                            &prim_path,
-                            &variant_set,
-                            &variant_name,
-                        )
-                    });
-                    match set_result {
-                        Some(Err(e)) => log::error!("Failed to set variant: {:?}", e),
-                        Some(Ok(())) => {
-                            // Reload scene after variant change (full rebuild)
-                            if let Some(ref path) = self.scene.loaded_usd_path {
-                                let path = path.clone();
-                                if let Err(e) = self.load_usd_scene(std::path::Path::new(&path)) {
-                                    log::error!("Failed to reload after variant change: {:?}", e);
-                                }
-                            }
-                        }
-                        None => {}
-                    }
-                }
+
+                // Project events → project_dispatch.rs
+                AppEvent::ProjectNew => self.handle_project_new(),
+                AppEvent::ProjectOpen => self.handle_project_open(),
+                AppEvent::ProjectSave => self.handle_project_save(),
+                AppEvent::ProjectSaveAs => self.handle_project_save_as(),
+                AppEvent::ProjectOpenRecent(path) => self.handle_project_open_recent(path),
             }
         }
 
