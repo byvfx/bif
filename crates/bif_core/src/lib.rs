@@ -25,6 +25,7 @@ pub mod point_cloud;
 pub mod primitives;
 pub mod scatter;
 pub mod scene;
+pub mod scene_query;
 pub mod texture;
 pub mod undo;
 pub mod usd;
@@ -41,6 +42,7 @@ pub use scene::{
     AnimatedTransform, Instance, Light, Material, Prototype, Purpose, Scene, SceneCamera,
     TimelineInfo, Transform, TransformKeyframe,
 };
+pub use scene_query::SceneQuery;
 pub use texture::{Texture, TextureCache, TextureError, TextureResult};
 pub use undo::{
     CreatePrimitiveCommand, DeletePrimitiveCommand, EditState, KeyframeCommand, ScatterCommand,

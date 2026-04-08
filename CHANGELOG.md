@@ -24,6 +24,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Obsidian knowledge base** — `wiki/` vault with 42 articles (architecture, USD, rendering, concepts, ADRs, UI/UX), 4 templates, LLM-optimized indexes. 92 devlog entries get `## Wiki Links` backlink sections. `bif-commit` skill updated to maintain wiki on each commit.
 - **Markdown linting** — `.markdownlint.json` config + all 235 `.md` files linted/fixed. `pre-commit` framework with `markdownlint-fix` and `cargo fmt` runs on every commit.
 
+### Added
+
+- **SceneQuery trait** — read-only query API in bif_core abstracting Scene field access. 15 methods covering prototypes, instances, materials, cameras, lights, timeline, metadata. `find_instance_by_prim_path` encapsulates the 3-strategy prim path lookup (exact, prefix, synthetic /BIF/ fallback). 9 tests. Enables future LayerAwareScene for M32 opinion trace without viewport changes.
+
 ### Fixed
 
 - **UsdStage thread-safety soundness hole** — removed `unsafe impl Sync for UsdStage`, wrapped in `Arc<Mutex<UsdStage>>` across 10 files. Prevents potential data races from concurrent C++ stage access (set_variant_selection mutates through `&self`). Batch render and animation paths lock before each FFI call.
