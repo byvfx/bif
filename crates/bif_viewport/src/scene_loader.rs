@@ -2073,7 +2073,11 @@ impl Renderer {
         let stage = Arc::new(Mutex::new(stage));
 
         // Log available cameras for batch render
-        match stage.lock().unwrap().camera_paths() {
+        match stage
+            .lock()
+            .expect("UsdStage mutex poisoned")
+            .camera_paths()
+        {
             Ok(paths) if !paths.is_empty() => {
                 log::info!("Found {} USD camera(s): {:?}", paths.len(), paths);
             }
@@ -2147,7 +2151,7 @@ impl Renderer {
             let mut max_time = f64::MIN;
 
             if let Some(ref usd_stage_mtx) = self.scene.usd_stage {
-                let usd_stage = usd_stage_mtx.lock().unwrap();
+                let usd_stage = usd_stage_mtx.lock().expect("UsdStage mutex poisoned");
                 for &mesh_idx in &self.scene.vertex_animated_meshes {
                     if let Ok(times) = usd_stage.get_mesh_vertex_animation_times(mesh_idx) {
                         for &t in &times {

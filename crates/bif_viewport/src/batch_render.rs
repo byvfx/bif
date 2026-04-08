@@ -183,7 +183,7 @@ impl SceneBuilderData {
         if let Some(ref ranges) = self.mesh_ranges {
             let mut updated = self.vertices.clone();
             let stage_mtx = self.stage.as_ref()?;
-            let stage = stage_mtx.lock().unwrap();
+            let stage = stage_mtx.lock().expect("UsdStage mutex poisoned");
 
             for &mesh_idx in &self.vertex_animated_meshes {
                 let range = match ranges.iter().find(|r| r.usd_mesh_index == mesh_idx) {
@@ -219,7 +219,7 @@ impl SceneBuilderData {
             let mesh_idx = self.vertex_animated_meshes[0];
             match self.stage.as_ref().and_then(|s| {
                 s.lock()
-                    .unwrap()
+                    .expect("UsdStage mutex poisoned")
                     .get_mesh_vertices_at_time(mesh_idx, time)
                     .ok()
             }) {
@@ -579,7 +579,7 @@ fn build_camera_for_frame(
             if let Some(ref stage_mtx) = scene.stage {
                 match stage_mtx
                     .lock()
-                    .unwrap()
+                    .expect("UsdStage mutex poisoned")
                     .get_camera_xform_at_time(path, time)
                 {
                     Ok(xform) => {

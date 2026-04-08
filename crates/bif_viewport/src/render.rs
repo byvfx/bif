@@ -437,8 +437,11 @@ impl Renderer {
                             .id_salt("scene_browser_scroll")
                             .max_height(browser_height)
                             .show(ui, |ui| {
-                                let stage_guard =
-                                    self.scene.usd_stage.as_ref().map(|s| s.lock().unwrap());
+                                let stage_guard = self
+                                    .scene
+                                    .usd_stage
+                                    .as_ref()
+                                    .map(|s| s.lock().expect("UsdStage mutex poisoned"));
                                 let composite = CompositeProvider::new(
                                     stage_guard.as_deref().map(|s| s as &dyn PrimDataProvider),
                                     &self.nodes.cached_scene_graph,
@@ -654,7 +657,11 @@ impl Renderer {
                                 }
                                 // USD cameras from stage
                                 if let Some(ref stage_mtx) = self.scene.usd_stage {
-                                    if let Ok(paths) = stage_mtx.lock().unwrap().camera_paths() {
+                                    if let Ok(paths) = stage_mtx
+                                        .lock()
+                                        .expect("UsdStage mutex poisoned")
+                                        .camera_paths()
+                                    {
                                         for path in paths {
                                             let is_selected = matches!(
                                                 &self.cam.viewport_camera_source,

@@ -1,30 +1,26 @@
 //! Selection event dispatch — prim selection, transforms, variants, framing.
 
+use bif_core::SceneQuery;
+
 use crate::ivar_state::RenderMode;
 use crate::property_inspector::{reset_property_inspector_cache, PrimProperties, TransformEdit};
 use crate::scene_browser::{CompositeProvider, PrimDataProvider, ProceduralPrimKind};
 use crate::Renderer;
 
 impl Renderer {
-    pub(crate) fn handle_prim_selected(&mut self, prim_path: String) {
-        self.selection.selected_prim_path = Some(prim_path.clone());
-        // Sync tree visual: expand ancestors so the row is visible, then select.
-        self.selection
-            .scene_browser_state
-            .expand_to_path(&prim_path);
-        self.selection.scene_browser_state.select(&prim_path);
-        // Map prim path → instance index. Tries in order:
-        //  1. exact match (normal case)
-        //  2. descendant prefix (clicking a parent Xform when instance is at child mesh)
-        //  3. synthetic /BIF/{path}/{idx} fallback (loader left inst.prim_path empty
-        //     and resolve_prim_path generated /BIF/{proto_name}/{idx} where proto_name
-        //     is often the real USD path)
-        self.selection.selected_instance_index = self
-            .scene
+    /// Resolve a prim path to an instance index in the viewport's SceneInstances.
+    ///
+    /// Uses 3-strategy lookup (same logic as `SceneQuery::find_instance_by_prim_path`
+    /// but against the viewport's parallel prim_paths array):
+    /// 1. Exact match
+    /// 2. Descendant prefix (`{path}/...`)
+    /// 3. Synthetic `/BIF/` fallback (loader-generated paths)
+    fn resolve_instance_index(&self, prim_path: &str) -> Option<usize> {
+        self.scene
             .instances
             .prim_paths
             .iter()
-            .position(|p| p.as_str() == prim_path.as_str())
+            .position(|p| p.as_str() == prim_path)
             .or_else(|| {
                 let prefix = format!("{}/", prim_path);
                 self.scene
@@ -34,92 +30,120 @@ impl Renderer {
                     .position(|p| p.starts_with(&prefix))
             })
             .or_else(|| {
-                let synth_prefix = format!("/BIF/{}", prim_path);
+                let trimmed = prim_path.strip_prefix('/').unwrap_or(prim_path);
+                let synth_prefix = format!("/BIF/{}", trimmed);
                 self.scene
                     .instances
                     .prim_paths
                     .iter()
                     .position(|p| p.starts_with(&synth_prefix))
-            });
-        reset_property_inspector_cache(&self.egui_ctx);
-        let stage_guard = self.scene.usd_stage.as_ref().map(|s| s.lock().unwrap());
+            })
+    }
+
+    /// Build prim properties for the property inspector from scene + USD data.
+    fn build_prim_properties(
+        &self,
+        prim_path: &str,
+        stage_guard: &Option<std::sync::MutexGuard<'_, bif_core::usd::UsdStage>>,
+    ) -> PrimProperties {
         let composite = CompositeProvider::new(
             stage_guard.as_deref().map(|s| s as &dyn PrimDataProvider),
             &self.nodes.cached_scene_graph,
         );
-        if let Some(info) = composite.get_prim_info(&prim_path) {
-            let mut props = PrimProperties::from_display_info(&info);
-            if let Some(proc_data) = composite.get_procedural_data(&prim_path) {
-                match &proc_data.kind {
-                    ProceduralPrimKind::Mesh {
-                        vertex_count,
-                        triangle_count,
-                    } => {
-                        props = props
-                            .with_attribute("Vertices", &vertex_count.to_string())
-                            .with_attribute("Triangles", &triangle_count.to_string());
-                    }
-                    ProceduralPrimKind::PointInstancer {
-                        point_count,
-                        prototype_refs,
-                    } => {
-                        props = props.with_attribute("Points", &point_count.to_string());
-                        if !prototype_refs.is_empty() {
-                            props = props.with_attribute("Prototypes", &prototype_refs.join(", "));
-                        }
-                    }
-                    ProceduralPrimKind::Scope => {}
+        let Some(info) = composite.get_prim_info(prim_path) else {
+            return PrimProperties {
+                path: prim_path.to_string(),
+                ..Default::default()
+            };
+        };
+
+        let mut props = PrimProperties::from_display_info(&info);
+
+        // Procedural prim stats
+        if let Some(proc_data) = composite.get_procedural_data(prim_path) {
+            match &proc_data.kind {
+                ProceduralPrimKind::Mesh {
+                    vertex_count,
+                    triangle_count,
+                } => {
+                    props = props
+                        .with_attribute("Vertices", &vertex_count.to_string())
+                        .with_attribute("Triangles", &triangle_count.to_string());
                 }
+                ProceduralPrimKind::PointInstancer {
+                    point_count,
+                    prototype_refs,
+                } => {
+                    props = props.with_attribute("Points", &point_count.to_string());
+                    if !prototype_refs.is_empty() {
+                        props = props.with_attribute("Prototypes", &prototype_refs.join(", "));
+                    }
+                }
+                ProceduralPrimKind::Scope => {}
             }
-            // Look up bound material: prim_path → instance → prototype
-            if let Some(inst) = self
+        }
+
+        // Look up bound material via SceneQuery: prim_path → instance → prototype
+        if let Some(idx) = self
+            .scene
+            .working_scene
+            .find_instance_by_prim_path(prim_path)
+        {
+            let inst = &self.scene.working_scene.instances()[idx];
+            if let Some(mat) = self
                 .scene
                 .working_scene
-                .instances()
-                .iter()
-                .find(|i| i.prim_path.as_ref() == prim_path.as_str())
+                .material_for_prototype(inst.prototype_id)
             {
-                if let Some(proto) = self.scene.working_scene.prototypes.get(inst.prototype_id) {
-                    if let Some(mat) = &proto.material {
-                        props = props.with_material(mat.clone());
-                    }
-                }
+                props = props.with_material(mat.clone());
             }
-            // Query USD prim attributes and variant sets for inspector display
-            // Reuse stage_guard from CompositeProvider (avoid re-locking same Mutex)
-            if let Some(ref stage) = stage_guard {
-                match stage.get_prim_attributes(&prim_path) {
-                    Ok(attrs) if !attrs.is_empty() => {
-                        props.usd_attributes = attrs;
-                    }
-                    Err(e) => {
-                        log::debug!("Failed to query attributes for {}: {:?}", prim_path, e);
-                    }
-                    _ => {}
-                }
-                // Query variant sets
-                if let Ok(set_names) = stage.get_variant_set_names(&prim_path) {
-                    for set_name in &set_names {
-                        let variants = stage
-                            .get_variant_names(&prim_path, set_name)
-                            .unwrap_or_default();
-                        let selection = stage
-                            .get_variant_selection(&prim_path, set_name)
-                            .unwrap_or_default();
-                        props
-                            .variant_sets
-                            .push((set_name.clone(), variants, selection));
-                    }
-                }
-            }
-
-            self.selection.selected_prim_properties = Some(props);
-        } else {
-            self.selection.selected_prim_properties = Some(PrimProperties {
-                path: prim_path,
-                ..Default::default()
-            });
         }
+
+        // USD prim attributes and variant sets
+        if let Some(ref stage) = stage_guard {
+            match stage.get_prim_attributes(prim_path) {
+                Ok(attrs) if !attrs.is_empty() => {
+                    props.usd_attributes = attrs;
+                }
+                Err(e) => {
+                    log::debug!("Failed to query attributes for {}: {:?}", prim_path, e);
+                }
+                _ => {}
+            }
+            if let Ok(set_names) = stage.get_variant_set_names(prim_path) {
+                for set_name in &set_names {
+                    let variants = stage
+                        .get_variant_names(prim_path, set_name)
+                        .unwrap_or_default();
+                    let selection = stage
+                        .get_variant_selection(prim_path, set_name)
+                        .unwrap_or_default();
+                    props
+                        .variant_sets
+                        .push((set_name.clone(), variants, selection));
+                }
+            }
+        }
+
+        props
+    }
+
+    pub(crate) fn handle_prim_selected(&mut self, prim_path: String) {
+        self.selection.selected_prim_path = Some(prim_path.clone());
+        self.selection
+            .scene_browser_state
+            .expand_to_path(&prim_path);
+        self.selection.scene_browser_state.select(&prim_path);
+        self.selection.selected_instance_index = self.resolve_instance_index(&prim_path);
+        reset_property_inspector_cache(&self.egui_ctx);
+
+        let stage_guard = self
+            .scene
+            .usd_stage
+            .as_ref()
+            .map(|s| s.lock().expect("UsdStage mutex poisoned"));
+        self.selection.selected_prim_properties =
+            Some(self.build_prim_properties(&prim_path, &stage_guard));
     }
 
     pub(crate) fn handle_transform_edit(&mut self, edit: TransformEdit) {
@@ -215,13 +239,12 @@ impl Renderer {
         // Lock, set variant, release lock before reload (which needs &mut self)
         let set_result = self.scene.usd_stage.as_ref().map(|s| {
             s.lock()
-                .unwrap()
+                .expect("UsdStage mutex poisoned")
                 .set_variant_selection(&prim_path, &variant_set, &variant_name)
         });
         match set_result {
             Some(Err(e)) => log::error!("Failed to set variant: {:?}", e),
             Some(Ok(())) => {
-                // Reload scene after variant change (full rebuild)
                 if let Some(ref path) = self.scene.loaded_usd_path {
                     let path = path.clone();
                     if let Err(e) = self.load_usd_scene(std::path::Path::new(&path)) {

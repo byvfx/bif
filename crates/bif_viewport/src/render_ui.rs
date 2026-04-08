@@ -474,7 +474,11 @@ pub(crate) fn render_stats_panel(
                     );
                     // List USD cameras if stage available
                     if let Some(ref stage_mtx) = p.usd_stage {
-                        if let Ok(paths) = stage_mtx.lock().unwrap().camera_paths() {
+                        if let Ok(paths) = stage_mtx
+                            .lock()
+                            .expect("UsdStage mutex poisoned")
+                            .camera_paths()
+                        {
                             for path in paths {
                                 let is_selected = matches!(
                                     &settings.camera_source,

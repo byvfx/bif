@@ -160,16 +160,11 @@ impl Renderer {
         // prototype_gpu_data buffers, not the combined self.vertex_buffer
         if self.multi_draw.enabled {
             let vertex_animated = self.scene.vertex_animated_meshes.clone();
+            let stage_guard = stage.lock().expect("UsdStage mutex poisoned");
             self.multi_draw.update_vertex_animation(
                 &self.gpu.queue,
                 &vertex_animated,
-                |mesh_idx, f| {
-                    stage
-                        .lock()
-                        .unwrap()
-                        .get_mesh_vertices_at_time(mesh_idx, f)
-                        .ok()
-                },
+                |mesh_idx, f| stage_guard.get_mesh_vertices_at_time(mesh_idx, f).ok(),
                 frame,
             );
             return;
@@ -179,6 +174,7 @@ impl Renderer {
         // (only used when NOT in multi-draw mode)
         if let Some(ref ranges) = self.scene.mesh_data.mesh_ranges {
             let mut updated_any = false;
+            let stage_guard = stage.lock().expect("UsdStage mutex poisoned");
 
             for &mesh_idx in &self.scene.vertex_animated_meshes {
                 let range = match ranges.iter().find(|r| r.usd_mesh_index == mesh_idx) {
@@ -186,11 +182,7 @@ impl Renderer {
                     None => continue,
                 };
 
-                let positions = match stage
-                    .lock()
-                    .unwrap()
-                    .get_mesh_vertices_at_time(mesh_idx, frame)
-                {
+                let positions = match stage_guard.get_mesh_vertices_at_time(mesh_idx, frame) {
                     Ok(p) => p,
                     Err(_) => continue,
                 };
@@ -234,7 +226,7 @@ impl Renderer {
         }
 
         let mesh_idx = self.scene.vertex_animated_meshes[0];
-        let stage_guard = stage.lock().unwrap();
+        let stage_guard = stage.lock().expect("UsdStage mutex poisoned");
         if let Ok(positions) = stage_guard.get_mesh_vertices_at_time(mesh_idx, frame) {
             let vertex_count = positions.len() / 3;
             if vertex_count == 0 || vertex_count != self.scene.mesh_data.vertices.len() {

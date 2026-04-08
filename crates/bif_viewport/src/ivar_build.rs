@@ -387,7 +387,7 @@ impl Renderer {
         }
 
         let stage_mtx = self.scene.usd_stage.as_ref()?;
-        let stage = stage_mtx.lock().unwrap();
+        let stage = stage_mtx.lock().expect("UsdStage mutex poisoned");
 
         // Multi-mesh scene: use mesh_ranges to update each animated mesh's vertices
         if let Some(ref ranges) = self.scene.mesh_data.mesh_ranges {

@@ -1138,7 +1138,7 @@ impl Renderer {
 
         // Query stage data under lock, then drop guard before mutating self
         let (xform_result, props_result) = {
-            let stage = stage_mtx.lock().unwrap();
+            let stage = stage_mtx.lock().expect("UsdStage mutex poisoned");
             (
                 stage.get_camera_xform_at_time(camera_path, time),
                 stage.get_camera_properties(camera_path, time),

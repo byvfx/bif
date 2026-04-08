@@ -91,6 +91,10 @@ pub trait SceneQuery {
     fn has_animation(&self) -> bool;
 
     /// Look up the material bound to a prototype.
+    ///
+    /// Default impl reads `Prototype.material` directly. Override in
+    /// layer-aware implementations where material bindings may come
+    /// from opinion overrides rather than the base prototype.
     fn material_for_prototype(&self, proto_id: usize) -> Option<&Arc<Material>> {
         let proto = self.prototype(proto_id)?;
         proto.material.as_ref()
