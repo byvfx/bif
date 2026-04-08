@@ -31,6 +31,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **Houdini DomeLight_1 not detected** — C++ bridge now checks `UsdLuxDomeLight_1` (new USD Lux schema). Attribute lookup tries `inputs:texture:file` first (new schema), falls back to `texture:file` (old schema).
 - **UsdStage thread-safety soundness hole** — removed `unsafe impl Sync for UsdStage`, wrapped in `Arc<Mutex<UsdStage>>` across 10 files. Prevents potential data races from concurrent C++ stage access (set_variant_selection mutates through `&self`). Batch render and animation paths lock before each FFI call.
 - **Deadlock in handle_prim_selected** — stage_guard held lock, then re-locked same non-reentrant Mutex. Now reuses existing guard.
 - **Synthetic /BIF/ path double-slash bug** — `find_instance_by_prim_path` and `resolve_instance_index` now strip leading `/` before prepending `/BIF/`.
@@ -39,6 +40,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- **Embree feature-gated** — `bif_renderer` Embree dependency behind `embree` feature (default on). Enables Linux CI without Embree linking. `cargo check -p bif_renderer --no-default-features` now passes.
+- **Linux CI expanded** — `check-linux` job now runs clippy + tests for `bif_renderer --no-default-features` (97 non-Embree tests).
 - **setup_usd_env.sh** — added `bin/usd` plugin directory scan for parity with PS1 script (MaterialX plugin may land in either `bin/usd` or `lib/usd`).
 - **Identity pivot** — BIF reframed as "USD Orchestration Tool" (layer-aware editing + procedural assembly + rendering). Docs updated: README, BIF_USD_WORKFLOW, SESSION_HANDOFF, CLAUDE.md.
 - **Drive migration D: → G:** — vcpkg/OIDN paths updated in `build.rs`, `setup_usd_env.ps1`, `CLAUDE.md`. Repo relocated to `G:\__projects\_programming\rust\bif`.
