@@ -75,8 +75,15 @@ Based on the diff above:
 - Update the relevant section `_index.md` if new wiki articles were added
 - Use `[[Article Name]]` wikilink format with a brief reason for each link
 
-### 7. Verify
+### 7. Site Update
 
-- Run `git status` to confirm commit succeeded
+- Run `bash scripts/generate-site.sh` to regenerate the mdBook site from devlog/docs/changelog
+- Check if site/src/ has changes via `git status`
+- If site changed, stage `site/src/` and amend the commit (or create a follow-up commit)
+- If no site changes, skip silently
+
+### 8. Verify
+
+- Run `git status` to confirm commit succeeded and working tree is clean
 
 Report results concisely.
