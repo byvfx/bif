@@ -1,17 +1,18 @@
 # BUGLIST
 
-Last updated: 2026-04-05
+Last updated: 2026-04-08
 
 ## Active Bugs
 
 - OCIO ACES is not working in the viewport (Hill/Narkowicz approx active, full OCIO deferred).
-- Dome light from Houdini USD export not detected by C++ bridge (user reported, needs investigation).
+
 - MaterialX displacement not natively extracted in C++ bridge — requires manual UsdPreviewSurface `inputs:displacement` wiring as workaround. Native `ND_displacement_float/vector3` support deferred.
 - Pre-existing C++ bridge test crashes: `test_load_pointinstancer_external_prototype` (lucy_100_fixed.usda), `test_load_relative_reference_usda` (lucy_100.usda), `test_define_scope_prim` — all crash at `UsdStage::Open` with STATUS_BREAKPOINT. Not caused by recent changes.
 - `inst.prim_path` left empty for some USD load paths (observed on lucy.usd) — workaround via synthetic `/BIF/` path fallbacks in selection handler.
 
 ## Fixed (since last update)
 
+- Dome light from Houdini USD not detected — C++ bridge now checks `UsdLuxDomeLight_1` (new schema), attribute lookup tries `inputs:texture:file` first. Fixed 2026-04-08.
 - Camera persistence bug: fixed in v0.13.0-dev (reset viewport/batch camera source on new scene load).
 - HDRI properties bug: fixed in v0.13.0-dev (removed `is_loaded` guard, added `hdri_show_background`).
 

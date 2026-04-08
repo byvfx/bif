@@ -48,13 +48,13 @@ jobs:
         run: cargo fmt --check
 
       - name: Clippy (no-USD crates)
-        run: cargo clippy -p bif_math -- -D warnings
+        run: cargo clippy -p bif_math -p bif_renderer --no-default-features -- -D warnings
 
       - name: Test bif_math
         run: cargo test -p bif_math
 
-      # bif_renderer skipped on Linux — unconditionally links embree4 (Windows-only via vcpkg)
-      # TODO: feature-gate Embree linking to enable Linux bif_renderer CI
+      - name: Test bif_renderer (no Embree)
+        run: cargo test -p bif_renderer --no-default-features
 
   release:
     name: Release

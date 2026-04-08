@@ -20,6 +20,7 @@
 #include <pxr/usd/usdLux/sphereLight.h>
 #include <pxr/usd/usdLux/rectLight.h>
 #include <pxr/usd/usdLux/domeLight.h>
+#include <pxr/usd/usdLux/domeLight_1.h>
 #include <pxr/usd/usdLux/cylinderLight.h>
 #include <pxr/usd/usdLux/diskLight.h>
 #include <pxr/usd/usdLux/shapingAPI.h>
@@ -2469,15 +2470,15 @@ static void cache_light_data(UsdBridgeStage* bridge) {
             light.angle = 0.0f;
             light.radius = 0.0f;
         }
-        else if (prim.IsA<UsdLuxDomeLight>()) {
+        else if (prim.IsA<UsdLuxDomeLight>() || prim.IsA<UsdLuxDomeLight_1>()) {
             light.type = USD_LIGHT_DOME;
             is_light = true;
 
-            // Get texture file — try both old and new schema
+            // Get texture file — try new schema (inputs:) first, then old
             SdfAssetPath texture_path;
-            UsdAttribute texAttr = prim.GetAttribute(TfToken("texture:file"));
-            if (!texAttr || !texAttr.IsAuthored())
-                texAttr = prim.GetAttribute(TfToken("inputs:texture:file"));
+            UsdAttribute texAttr = prim.GetAttribute(TfToken("inputs:texture:file"));
+            if (!texAttr || !texAttr.Get(&texture_path))
+                texAttr = prim.GetAttribute(TfToken("texture:file"));
             if (texAttr && texAttr.Get(&texture_path)) {
                 light.texture_path = texture_path.GetResolvedPath().empty()
                     ? texture_path.GetAssetPath()
