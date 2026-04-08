@@ -86,8 +86,8 @@ impl Renderer {
                 }
             }
             // Query USD prim attributes and variant sets for inspector display
-            if let Some(ref stage_mtx) = self.scene.usd_stage {
-                let stage = stage_mtx.lock().unwrap();
+            // Reuse stage_guard from CompositeProvider (avoid re-locking same Mutex)
+            if let Some(ref stage) = stage_guard {
                 match stage.get_prim_attributes(&prim_path) {
                     Ok(attrs) if !attrs.is_empty() => {
                         props.usd_attributes = attrs;
