@@ -836,26 +836,18 @@ pub struct UsdStage {
     raw: *mut UsdBridgeStageRaw,
 }
 
-// SAFETY: UsdStage is Send + Sync because:
-// 1. All USD data is pre-cached at load time in usd_bridge_open_stage().
-//    The C++ side populates caches (mesh vertices, normals, UVs, xforms)
-//    during open and all subsequent reads go through these immutable caches.
-// 2. All getter FFI functions take the stage pointer as const — no mutation
-//    occurs through &self methods on the Rust side.
-// 3. usd_bridge_get_mesh_vertices_at_time() uses thread_local storage for
-//    its return buffer — each thread gets its own buffer, avoiding data races.
-// 4. Rust immediately copies the data via to_vec() before the thread_local
-//    buffer can be reused by a subsequent call on the same thread.
-// 5. The underlying UsdStageRefPtr is read-only after caching; no USD
-//    composition or layer mutations are performed through this type.
-// 6. Rust's type system enforces that &UsdStage (shared ref) is the only
-//    way to access the stage after construction — no &mut self methods exist.
+// SAFETY: UsdStage is Send because:
+// 1. The raw pointer is exclusively owned — only one UsdStage wraps a given
+//    UsdBridgeStageRaw at a time, and Drop releases it.
+// 2. Moving the UsdStage to another thread transfers ownership cleanly.
 //
-// Usage pattern: Arc<UsdStage> is shared across threads in batch_render.rs
-// for parallel bucket rendering, where each thread reads mesh data at
-// potentially different animation times.
+// UsdStage is NOT Sync because:
+// - set_variant_selection() and load/unload_payload() mutate C++ state
+//   through &self via raw pointer casts. Concurrent &UsdStage access from
+//   multiple threads could cause data races in the C++ layer.
+// - Use Arc<Mutex<UsdStage>> for shared access across threads. The Mutex
+//   serializes all access, preventing concurrent C++ mutations.
 unsafe impl Send for UsdStage {}
-unsafe impl Sync for UsdStage {}
 
 impl UsdStage {
     /// Open a USD stage from a file path.

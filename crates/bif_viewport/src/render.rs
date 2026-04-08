@@ -439,68 +439,67 @@ impl Renderer {
 
                     let view_mode = self.selection.scene_browser_state.view_mode;
                     egui::ScrollArea::vertical()
-                        .id_salt("scene_browser_scroll")
-                        .max_height(browser_height)
-                        .show(ui, |ui| {
-                            let composite = CompositeProvider::new(
-                                self.scene
-                                    .usd_stage
-                                    .as_ref()
-                                    .map(|s| s.as_ref() as &dyn PrimDataProvider),
-                                &self.nodes.cached_scene_graph,
-                            );
+                            .id_salt("scene_browser_scroll")
+                            .max_height(browser_height)
+                            .show(ui, |ui| {
+                                let stage_guard =
+                                    self.scene.usd_stage.as_ref().map(|s| s.lock().unwrap());
+                                let composite = CompositeProvider::new(
+                                    stage_guard.as_deref().map(|s| s as &dyn PrimDataProvider),
+                                    &self.nodes.cached_scene_graph,
+                                );
 
-                            let highlight = self.nodes.node_graph_state.selected_node;
-                            match view_mode {
-                                SceneBrowserViewMode::FullScene => {
-                                    let provider: &dyn PrimDataProvider = &composite;
-                                    if let Some(new_selection) =
-                                        scene_browser::render_scene_browser(
-                                            ui,
-                                            &mut self.selection.scene_browser_state,
-                                            provider,
-                                            highlight,
-                                        )
-                                    {
-                                        event_bus.emit(
-                                            crate::app_event::AppEvent::PrimSelected(
-                                                new_selection,
-                                            ),
+                                let highlight = self.nodes.node_graph_state.selected_node;
+                                match view_mode {
+                                    SceneBrowserViewMode::FullScene => {
+                                        let provider: &dyn PrimDataProvider = &composite;
+                                        if let Some(new_selection) =
+                                            scene_browser::render_scene_browser(
+                                                ui,
+                                                &mut self.selection.scene_browser_state,
+                                                provider,
+                                                highlight,
+                                            )
+                                        {
+                                            event_bus.emit(
+                                                crate::app_event::AppEvent::PrimSelected(
+                                                    new_selection,
+                                                ),
+                                            );
+                                        }
+                                    }
+                                    SceneBrowserViewMode::NodeContribution(node_id) => {
+                                        let snarl_id = egui_snarl::NodeId::from(node_id);
+                                        let upstream = collect_upstream_nodes(
+                                            snarl_id,
+                                            &self.nodes.node_graph_state.snarl,
                                         );
+                                        let upstream_gids: std::collections::HashSet<GraphNodeId> =
+                                            upstream.into_iter().map(GraphNodeId::from).collect();
+                                        let filtered = NodeFilteredProvider::new(
+                                            &composite,
+                                            &self.nodes.cached_scene_graph,
+                                            node_id,
+                                            &upstream_gids,
+                                        );
+                                        let provider: &dyn PrimDataProvider = &filtered;
+                                        if let Some(new_selection) =
+                                            scene_browser::render_scene_browser(
+                                                ui,
+                                                &mut self.selection.scene_browser_state,
+                                                provider,
+                                                Some(node_id),
+                                            )
+                                        {
+                                            event_bus.emit(
+                                                crate::app_event::AppEvent::PrimSelected(
+                                                    new_selection,
+                                                ),
+                                            );
+                                        }
                                     }
                                 }
-                                SceneBrowserViewMode::NodeContribution(node_id) => {
-                                    let snarl_id = egui_snarl::NodeId::from(node_id);
-                                    let upstream = collect_upstream_nodes(
-                                        snarl_id,
-                                        &self.nodes.node_graph_state.snarl,
-                                    );
-                                    let upstream_gids: std::collections::HashSet<GraphNodeId> =
-                                        upstream.into_iter().map(GraphNodeId::from).collect();
-                                    let filtered = NodeFilteredProvider::new(
-                                        &composite,
-                                        &self.nodes.cached_scene_graph,
-                                        node_id,
-                                        &upstream_gids,
-                                    );
-                                    let provider: &dyn PrimDataProvider = &filtered;
-                                    if let Some(new_selection) =
-                                        scene_browser::render_scene_browser(
-                                            ui,
-                                            &mut self.selection.scene_browser_state,
-                                            provider,
-                                            Some(node_id),
-                                        )
-                                    {
-                                        event_bus.emit(
-                                            crate::app_event::AppEvent::PrimSelected(
-                                                new_selection,
-                                            ),
-                                        );
-                                    }
-                                }
-                            }
-                        });
+                            });
 
                     ui.separator();
 
@@ -659,8 +658,8 @@ impl Renderer {
                                     );
                                 }
                                 // USD cameras from stage
-                                if let Some(ref stage) = self.scene.usd_stage {
-                                    if let Ok(paths) = stage.camera_paths() {
+                                if let Some(ref stage_mtx) = self.scene.usd_stage {
+                                    if let Ok(paths) = stage_mtx.lock().unwrap().camera_paths() {
                                         for path in paths {
                                             let is_selected = matches!(
                                                 &self.cam.viewport_camera_source,
@@ -1100,11 +1099,9 @@ impl Renderer {
                                 .position(|p| p.starts_with(&synth_prefix))
                         });
                     reset_property_inspector_cache(&self.egui_ctx);
+                    let stage_guard = self.scene.usd_stage.as_ref().map(|s| s.lock().unwrap());
                     let composite = CompositeProvider::new(
-                        self.scene
-                            .usd_stage
-                            .as_ref()
-                            .map(|s| s.as_ref() as &dyn PrimDataProvider),
+                        stage_guard.as_deref().map(|s| s as &dyn PrimDataProvider),
                         &self.nodes.cached_scene_graph,
                     );
                     if let Some(info) = composite.get_prim_info(&prim_path) {
@@ -1152,7 +1149,8 @@ impl Renderer {
                             }
                         }
                         // Query USD prim attributes and variant sets for inspector display
-                        if let Some(ref stage) = self.scene.usd_stage {
+                        if let Some(ref stage_mtx) = self.scene.usd_stage {
+                            let stage = stage_mtx.lock().unwrap();
                             match stage.get_prim_attributes(&prim_path) {
                                 Ok(attrs) if !attrs.is_empty() => {
                                     props.usd_attributes = attrs;
@@ -1339,12 +1337,17 @@ impl Renderer {
                         variant_set,
                         variant_name
                     );
-                    if let Some(ref stage) = self.scene.usd_stage {
-                        if let Err(e) =
-                            stage.set_variant_selection(&prim_path, &variant_set, &variant_name)
-                        {
-                            log::error!("Failed to set variant: {:?}", e);
-                        } else {
+                    // Lock, set variant, release lock before reload (which needs &mut self)
+                    let set_result = self.scene.usd_stage.as_ref().map(|s| {
+                        s.lock().unwrap().set_variant_selection(
+                            &prim_path,
+                            &variant_set,
+                            &variant_name,
+                        )
+                    });
+                    match set_result {
+                        Some(Err(e)) => log::error!("Failed to set variant: {:?}", e),
+                        Some(Ok(())) => {
                             // Reload scene after variant change (full rebuild)
                             if let Some(ref path) = self.scene.loaded_usd_path {
                                 let path = path.clone();
@@ -1353,6 +1356,7 @@ impl Renderer {
                                 }
                             }
                         }
+                        None => {}
                     }
                 }
             }

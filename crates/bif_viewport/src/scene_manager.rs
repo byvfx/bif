@@ -4,7 +4,7 @@
 //! previously spread across Renderer fields.
 
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use bif_core::usd::UsdStage;
 use bif_core::{AnimatedTransform, EditState, Material, SceneCamera, UndoStack};
@@ -44,8 +44,8 @@ pub struct SceneManager {
     pub mesh_data: MeshData,
 
     /// USD stage for scene browser hierarchy (None if loaded via pure Rust parser).
-    /// Wrapped in Arc for sharing with batch render thread.
-    pub usd_stage: Option<Arc<UsdStage>>,
+    /// Wrapped in Arc<Mutex> — UsdStage is not Sync (C++ mutations through &self).
+    pub usd_stage: Option<Arc<Mutex<UsdStage>>>,
     /// Path to the currently loaded USD file (for sublayer export).
     pub loaded_usd_path: Option<String>,
 

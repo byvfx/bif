@@ -10,7 +10,7 @@ pub(crate) struct StatsPanelParams<'a> {
     pub ivar_state: &'a mut crate::ivar_state::IvarState,
 
     // Read-only state refs
-    pub usd_stage: &'a Option<std::sync::Arc<bif_core::usd::UsdStage>>,
+    pub usd_stage: &'a Option<std::sync::Arc<std::sync::Mutex<bif_core::usd::UsdStage>>>,
     pub timeline_state: &'a crate::TimelineState,
 
     // Read-only display values (scalar copies)
@@ -473,8 +473,8 @@ pub(crate) fn render_stats_panel(
                         "Viewport",
                     );
                     // List USD cameras if stage available
-                    if let Some(ref stage) = p.usd_stage {
-                        if let Ok(paths) = stage.camera_paths() {
+                    if let Some(ref stage_mtx) = p.usd_stage {
+                        if let Ok(paths) = stage_mtx.lock().unwrap().camera_paths() {
                             for path in paths {
                                 let is_selected = matches!(
                                     &settings.camera_source,

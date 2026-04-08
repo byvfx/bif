@@ -32,14 +32,17 @@ export PATH="$USD_BIN_PATH:$USD_TOOLS_PATH:$PATH"
 export VCPKG_ROOT
 
 # Set USD plugin path (required for USD to find its plugins)
+# Scan both bin/usd and lib/usd — usdMtlx (MaterialX) may land in either location
 PXR_PLUGINS=""
-if [ -d "$USD_LIB_PATH/usd" ]; then
-    for dir in "$USD_LIB_PATH/usd"/*/; do
-        if [ -d "${dir}resources" ]; then
-            PXR_PLUGINS="${PXR_PLUGINS:+$PXR_PLUGINS:}${dir}resources"
-        fi
-    done
-fi
+for base in "$USD_BIN_PATH/usd" "$USD_LIB_PATH/usd"; do
+    if [ -d "$base" ]; then
+        for dir in "$base"/*/; do
+            if [ -d "${dir}resources" ]; then
+                PXR_PLUGINS="${PXR_PLUGINS:+$PXR_PLUGINS:}${dir}resources"
+            fi
+        done
+    fi
+done
 export PXR_PLUGINPATH_NAME="$PXR_PLUGINS"
 
 # OIDN (optional)

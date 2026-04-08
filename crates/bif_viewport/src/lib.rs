@@ -1126,14 +1126,23 @@ impl Renderer {
 
     /// Sync viewport camera to a USD camera at the current timeline frame
     pub fn sync_viewport_to_usd_camera(&mut self, camera_path: &str) {
-        let Some(ref stage) = self.scene.usd_stage else {
+        let Some(ref stage_mtx) = self.scene.usd_stage else {
             log::warn!("No USD stage loaded");
             return;
         };
 
         let time = self.timeline_state.current_frame;
 
-        match stage.get_camera_xform_at_time(camera_path, time) {
+        // Query stage data under lock, then drop guard before mutating self
+        let (xform_result, props_result) = {
+            let stage = stage_mtx.lock().unwrap();
+            (
+                stage.get_camera_xform_at_time(camera_path, time),
+                stage.get_camera_properties(camera_path, time),
+            )
+        };
+
+        match xform_result {
             Ok(xform) => {
                 // C++ bridge flat-copies USD row-major data; from_cols_array()
                 // implicitly transposes to glam column-vector convention:
@@ -1158,7 +1167,7 @@ impl Renderer {
                 self.cam.camera.distance = 10.0;
 
                 // Sync FOV/near/far from USD camera properties
-                if let Ok(props) = stage.get_camera_properties(camera_path, time) {
+                if let Ok(props) = props_result {
                     self.cam.camera.fov_y = props.fov_y();
                     self.cam.camera.near = props.clip_near.max(0.001);
                     self.cam.camera.far = props.clip_far.max(props.clip_near + 1.0);

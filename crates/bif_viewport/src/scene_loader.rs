@@ -1,6 +1,6 @@
 use anyhow::Result;
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use wgpu::util::DeviceExt;
@@ -2069,11 +2069,11 @@ impl Renderer {
             prototype_aabb.max_point()
         );
 
-        // Update USD stage for scene browser (wrapped in Arc for batch render sharing)
-        let stage = Arc::new(stage);
+        // Update USD stage for scene browser (wrapped in Arc<Mutex> for thread-safe sharing)
+        let stage = Arc::new(Mutex::new(stage));
 
         // Log available cameras for batch render
-        match stage.camera_paths() {
+        match stage.lock().unwrap().camera_paths() {
             Ok(paths) if !paths.is_empty() => {
                 log::info!("Found {} USD camera(s): {:?}", paths.len(), paths);
             }
@@ -2146,7 +2146,8 @@ impl Renderer {
             let mut min_time = f64::MAX;
             let mut max_time = f64::MIN;
 
-            if let Some(ref usd_stage) = self.scene.usd_stage {
+            if let Some(ref usd_stage_mtx) = self.scene.usd_stage {
+                let usd_stage = usd_stage_mtx.lock().unwrap();
                 for &mesh_idx in &self.scene.vertex_animated_meshes {
                     if let Ok(times) = usd_stage.get_mesh_vertex_animation_times(mesh_idx) {
                         for &t in &times {

@@ -24,8 +24,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Obsidian knowledge base** — `wiki/` vault with 42 articles (architecture, USD, rendering, concepts, ADRs, UI/UX), 4 templates, LLM-optimized indexes. 92 devlog entries get `## Wiki Links` backlink sections. `bif-commit` skill updated to maintain wiki on each commit.
 - **Markdown linting** — `.markdownlint.json` config + all 235 `.md` files linted/fixed. `pre-commit` framework with `markdownlint-fix` and `cargo fmt` runs on every commit.
 
+### Fixed
+
+- **UsdStage thread-safety soundness hole** — removed `unsafe impl Sync for UsdStage`, wrapped in `Arc<Mutex<UsdStage>>` across 10 files. Prevents potential data races from concurrent C++ stage access (set_variant_selection mutates through `&self`). Batch render and animation paths lock before each FFI call.
+
 ### Changed
 
+- **setup_usd_env.sh** — added `bin/usd` plugin directory scan for parity with PS1 script (MaterialX plugin may land in either `bin/usd` or `lib/usd`).
 - **Identity pivot** — BIF reframed as "USD Orchestration Tool" (layer-aware editing + procedural assembly + rendering). Docs updated: README, BIF_USD_WORKFLOW, SESSION_HANDOFF, CLAUDE.md.
 - **Drive migration D: → G:** — vcpkg/OIDN paths updated in `build.rs`, `setup_usd_env.ps1`, `CLAUDE.md`. Repo relocated to `G:\__projects\_programming\rust\bif`.
 - **Qt UI design spec** — Consolidated UI_DESIGN.md as authoritative pre-implementation spec (16 sections, ~730 lines). 14 Stitch mockups across 2 batches. Vertical code split layout variant, Bjorn asset manager, active layer safety system, opinion encoding table, command palette details, canonical component specs, workspace configs. UX Architect + UX Researcher reviews conducted and incorporated.

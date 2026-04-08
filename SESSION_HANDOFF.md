@@ -20,6 +20,13 @@
 
 ## Recent Work
 
+### v0.13.0 Apr 7: UsdStage Sync Fix + Architecture Audit (Apr 7, 2026)
+
+- **Architecture audit** — reviewed ARCHITECTURE_REVIEW.md (5/8 done) and ARCHITECTURE_REFACTORS.md (3/5 phases complete). Mapped remaining work.
+- **UsdStage Sync fix** — removed `unsafe impl Sync for UsdStage`, wrapped in `Arc<Mutex<UsdStage>>`. 10 files, ~20 callsites. Borrow-checker conflicts resolved with guard extraction and pre-extraction patterns.
+- **setup_usd_env.sh** — added bin/usd plugin scan for PS1 parity.
+- **Remaining:** SceneQuery API (bif_core trait), dispatch split (render/selection/project), Phase 2 Linux gaps.
+
 ### v0.13.0 Apr 6: Obsidian Knowledge Base (Apr 6, 2026)
 
 - **wiki/ vault** — 42 articles across 8 sections (architecture, USD, rendering, concepts, rust, ui-ux, journal, raw). LLM-optimized indexes for Q&A. 4 templates (concept, adr, journal, article).

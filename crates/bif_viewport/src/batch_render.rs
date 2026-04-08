@@ -4,7 +4,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{mpsc, Arc};
+use std::sync::{mpsc, Arc, Mutex};
 
 use bif_core::usd::cpp_bridge::UsdStage;
 use bif_math::Mat4;
@@ -163,7 +163,7 @@ pub struct SceneBuilderData {
     /// Mesh indices with vertex animation.
     pub vertex_animated_meshes: Vec<usize>,
     /// USD stage for querying animated vertices.
-    pub stage: Option<Arc<UsdStage>>,
+    pub stage: Option<Arc<Mutex<UsdStage>>>,
     /// Mesh ranges for multi-mesh scenes (vertex offset/count per mesh).
     pub mesh_ranges: Option<Vec<MeshRange>>,
     /// Cached OpenPbrSurface materials (avoids re-loading textures per frame).
@@ -182,7 +182,8 @@ impl SceneBuilderData {
 
         if let Some(ref ranges) = self.mesh_ranges {
             let mut updated = self.vertices.clone();
-            let stage = self.stage.as_ref()?;
+            let stage_mtx = self.stage.as_ref()?;
+            let stage = stage_mtx.lock().unwrap();
 
             for &mesh_idx in &self.vertex_animated_meshes {
                 let range = match ranges.iter().find(|r| r.usd_mesh_index == mesh_idx) {
@@ -216,11 +217,12 @@ impl SceneBuilderData {
 
         if self.vertex_animated_meshes.len() == 1 {
             let mesh_idx = self.vertex_animated_meshes[0];
-            match self
-                .stage
-                .as_ref()
-                .and_then(|stage| stage.get_mesh_vertices_at_time(mesh_idx, time).ok())
-            {
+            match self.stage.as_ref().and_then(|s| {
+                s.lock()
+                    .unwrap()
+                    .get_mesh_vertices_at_time(mesh_idx, time)
+                    .ok()
+            }) {
                 Some(positions) => {
                     let vertex_count = positions.len() / 3;
                     if vertex_count != self.vertices.len() {
@@ -339,7 +341,7 @@ pub struct BatchSceneData {
     /// HDRI environment for lighting (optional).
     pub environment: Option<Arc<HdriEnvironment>>,
     /// USD stage for camera and animation queries (optional).
-    pub stage: Option<Arc<UsdStage>>,
+    pub stage: Option<Arc<Mutex<UsdStage>>>,
     /// Viewport camera (used if CameraSource::Viewport).
     pub viewport_camera: bif_math::Camera,
     /// Whether the scene has animated geometry requiring per-frame BVH rebuild.
@@ -574,8 +576,12 @@ fn build_camera_for_frame(
         }
         CameraSource::UsdCamera(path) => {
             // Query USD stage for camera transform at time
-            if let Some(ref stage) = scene.stage {
-                match stage.get_camera_xform_at_time(path, time) {
+            if let Some(ref stage_mtx) = scene.stage {
+                match stage_mtx
+                    .lock()
+                    .unwrap()
+                    .get_camera_xform_at_time(path, time)
+                {
                     Ok(xform) => {
                         log::info!(
                             "USD camera '{}' at frame {}: pos={:?}",

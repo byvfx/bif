@@ -163,7 +163,13 @@ impl Renderer {
             self.multi_draw.update_vertex_animation(
                 &self.gpu.queue,
                 &vertex_animated,
-                |mesh_idx, f| stage.get_mesh_vertices_at_time(mesh_idx, f).ok(),
+                |mesh_idx, f| {
+                    stage
+                        .lock()
+                        .unwrap()
+                        .get_mesh_vertices_at_time(mesh_idx, f)
+                        .ok()
+                },
                 frame,
             );
             return;
@@ -180,7 +186,11 @@ impl Renderer {
                     None => continue,
                 };
 
-                let positions = match stage.get_mesh_vertices_at_time(mesh_idx, frame) {
+                let positions = match stage
+                    .lock()
+                    .unwrap()
+                    .get_mesh_vertices_at_time(mesh_idx, frame)
+                {
                     Ok(p) => p,
                     Err(_) => continue,
                 };
@@ -224,7 +234,8 @@ impl Renderer {
         }
 
         let mesh_idx = self.scene.vertex_animated_meshes[0];
-        if let Ok(positions) = stage.get_mesh_vertices_at_time(mesh_idx, frame) {
+        let stage_guard = stage.lock().unwrap();
+        if let Ok(positions) = stage_guard.get_mesh_vertices_at_time(mesh_idx, frame) {
             let vertex_count = positions.len() / 3;
             if vertex_count == 0 || vertex_count != self.scene.mesh_data.vertices.len() {
                 return;
