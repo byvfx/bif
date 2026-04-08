@@ -32,6 +32,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 
 - **UsdStage thread-safety soundness hole** — removed `unsafe impl Sync for UsdStage`, wrapped in `Arc<Mutex<UsdStage>>` across 10 files. Prevents potential data races from concurrent C++ stage access (set_variant_selection mutates through `&self`). Batch render and animation paths lock before each FFI call.
+- **Deadlock in handle_prim_selected** — stage_guard held lock, then re-locked same non-reentrant Mutex. Now reuses existing guard.
+- **Synthetic /BIF/ path double-slash bug** — `find_instance_by_prim_path` and `resolve_instance_index` now strip leading `/` before prepending `/BIF/`.
+- **Mutex lock diagnostics** — all 19 `.lock().unwrap()` sites replaced with `.lock().expect("UsdStage mutex poisoned")` for actionable crash messages.
+- **Animation lock granularity** — lock-per-iteration in vertex animation loop → lock-once-before-loop.
 
 ### Changed
 

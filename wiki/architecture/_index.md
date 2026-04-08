@@ -18,6 +18,10 @@ BIF is a USD Orchestration Tool for VFX built in Rust — layer-aware USD editin
 - [[node-graph-system|Node Graph System]] — egui-snarl based node graph with 10 node types and dirty-propagation evaluation
 - [[scene-browser|Scene Browser]] — CompositeProvider merging USD stage hierarchy with procedural prims
 
+- [[architecture-review|Architecture Review]] — Audit status of ARCHITECTURE_REVIEW.md and ARCHITECTURE_REFACTORS.md
+- [[scene-query-trait|SceneQuery Trait]] — Read-only query API abstracting Scene for future LayerAwareScene
+- [[event-dispatch-pattern|Event Dispatch Pattern]] — Thin router + category dispatch files for AppEvent handling
+
 ## Architecture Decision Records
 
 - [[001-openpbr-over-disney|ADR 001: OpenPBR Over Disney]] — Why BIF uses OpenPBR instead of Disney BSDF

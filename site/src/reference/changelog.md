@@ -6,13 +6,51 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased] (targeting v0.13.0)
 
-### Changed
+### Removed
 
-- **Identity pivot** — BIF reframed as "USD Orchestration Tool" (layer-aware editing + procedural assembly + rendering). Docs updated: README, BIF_USD_WORKFLOW, SESSION_HANDOFF, CLAUDE.md.
-- **Drive migration D: → G:** — vcpkg/OIDN paths updated in `build.rs`, `setup_usd_env.ps1`, `CLAUDE.md`. Repo relocated to `G:\__projects\_programming\rust\bif`.
+- **Welcome overlay** — removed centered "Open USD File..." dialog from empty viewport (still accessible via File menu)
 
 ### Added
 
+- **Wireframe selection overlay** — `POLYGON_MODE_LINE` pipeline renders selected prim wireframe over the solid pass. `VariantChanged` and `FrameSelected` `AppEvent` variants for UI→renderer dispatch.
+- **Qt UI spec §17-25** — context menus, multi-select, undo/redo feedback, long-op progress tiers, reduced-motion accessibility, scene tree filter/search, error state badges, workspace layout storage (global + per-project TOML), `cxx-qt` binding decision. Click targets 24px→32px rows; node labels 10px→12px.
+- **CPU vertex displacement** — Post-load pass samples heightmap per vertex and offsets positions along normals (USD convention: 0.5 neutral, scale factor). `displacement.rs` with bilinear sampling, sync `image` crate loader (PNG/JPG/EXR/TIF), `Mesh::recompute_bounds()` for correct framing. Works in both viewport (wgpu) and Ivar (Embree) — same displaced positions. C++ bridge MaterialX fallback reads UsdPreviewSurface displacement when MaterialX extraction skips it. 14 unit tests.
+- **Displacement texture pipeline** — UsdPreviewSurface `displacement` input + scale extracted in C++ bridge, flows through FFI to Material struct. Foundation for CPU vertex displacement.
+- **Display color + shading mode** — `primvars:displayColor` flows from C++ bridge through Mesh to vertex color. Viewport shader uses it as fallback when no texture. `ShadingMode` enum (Textured/DisplayColor) with GPU uniform and UI dropdown in Display settings.
+- **USD prim attribute inspector** — "Attributes" tab in property panel shows all prim attributes and primvars with types, values, and interpolation modes. C++ bridge `usd_bridge_get_prim_attributes()` enumerates by path. Arrays show count, scalars show value. Primvars color-coded with interpolation indicator.
+- **Subdivision surface rendering** — Full Catmull-Clark subdivision via Embree 4. `SubdivInfo` preserves original polygon topology through MeshData pipeline. `vertices_orig` FFI passes pre-UV-split positions from C++ bridge. `rtcInterpolate` computes smooth limit-surface normals (dPdu×dPdv). Tessellation rate 8 for BVH accuracy. Fixed `RTCBufferType` enum values (Face=16, EdgeCreaseIndex=18, EdgeCreaseWeight=19). Test asset: `pig_subDivCrease_test.usd`.
+- **Two-sided viewport lighting** — Viewport shader auto-flips normals facing away from camera, fixing dark surfaces on meshes with inconsistent winding.
+- **HDRI show_background for Ivar** — `hdri_show_background` field on IvarState/RenderConfig. Camera rays respect toggle (solid bg when off), bounced rays always sample HDRI for correct lighting.
+- **Obsidian knowledge base** — `wiki/` vault with 42 articles (architecture, USD, rendering, concepts, ADRs, UI/UX), 4 templates, LLM-optimized indexes. 92 devlog entries get `## Wiki Links` backlink sections. `bif-commit` skill updated to maintain wiki on each commit.
+- **Markdown linting** — `.markdownlint.json` config + all 235 `.md` files linted/fixed. `pre-commit` framework with `markdownlint-fix` and `cargo fmt` runs on every commit.
+
+### Added
+
+- **SceneQuery trait** — read-only query API in bif_core abstracting Scene field access. 15 methods covering prototypes, instances, materials, cameras, lights, timeline, metadata. `find_instance_by_prim_path` encapsulates the 3-strategy prim path lookup (exact, prefix, synthetic /BIF/ fallback). 9 tests. Enables future LayerAwareScene for M32 opinion trace without viewport changes.
+- **Dispatch split** — extracted `render_dispatch.rs`, `selection_dispatch.rs`, `project_dispatch.rs` from monolithic `dispatch_events()` in render.rs. 20 AppEvent match arms → individual handler methods following `node_dispatch.rs` pattern. `dispatch_events()` is now a thin router.
+
+### Fixed
+
+- **UsdStage thread-safety soundness hole** — removed `unsafe impl Sync for UsdStage`, wrapped in `Arc<Mutex<UsdStage>>` across 10 files. Prevents potential data races from concurrent C++ stage access (set_variant_selection mutates through `&self`). Batch render and animation paths lock before each FFI call.
+- **Deadlock in handle_prim_selected** — stage_guard held lock, then re-locked same non-reentrant Mutex. Now reuses existing guard.
+- **Synthetic /BIF/ path double-slash bug** — `find_instance_by_prim_path` and `resolve_instance_index` now strip leading `/` before prepending `/BIF/`.
+- **Mutex lock diagnostics** — all 19 `.lock().unwrap()` sites replaced with `.lock().expect("UsdStage mutex poisoned")` for actionable crash messages.
+- **Animation lock granularity** — lock-per-iteration in vertex animation loop → lock-once-before-loop.
+
+### Changed
+
+- **setup_usd_env.sh** — added `bin/usd` plugin directory scan for parity with PS1 script (MaterialX plugin may land in either `bin/usd` or `lib/usd`).
+- **Identity pivot** — BIF reframed as "USD Orchestration Tool" (layer-aware editing + procedural assembly + rendering). Docs updated: README, BIF_USD_WORKFLOW, SESSION_HANDOFF, CLAUDE.md.
+- **Drive migration D: → G:** — vcpkg/OIDN paths updated in `build.rs`, `setup_usd_env.ps1`, `CLAUDE.md`. Repo relocated to `G:\__projects\_programming\rust\bif`.
+- **Qt UI design spec** — Consolidated UI_DESIGN.md as authoritative pre-implementation spec (16 sections, ~730 lines). 14 Stitch mockups across 2 batches. Vertical code split layout variant, Bjorn asset manager, active layer safety system, opinion encoding table, command palette details, canonical component specs, workspace configs. UX Architect + UX Researcher reviews conducted and incorporated.
+- **Stitch UI mockups** — 2 batches of Google Stitch-generated mockups covering Assembly (3 variants), Lighting (2 + command palette), Materials (2 + node graph safety), Render (2 + catalog), and First Launch onboarding screen. Obsidian Graphite "Quiet Confidence" design system.
+
+- **MaterialX file format support** — usdMtlx plugin detection with startup diagnostic, `resolve_mtlx_input()` follows Material interface connections for scalar values, deep descendant shader search by `info:id`, refactored extraction into shared helper. `setup_usd_env.ps1` scans both `bin/usd` and `lib/usd` for plugin resources. Enables loading external `.mtlx` references (OpenPBR Shader Playground pattern). Requires `vcpkg install usd[materialx]:x64-windows`.
+- **Power-weighted light sampling** — `LightList` now selects lights proportional to emitted power via CDF instead of uniform 1/N. `Light` trait gains `power()` method. Foundation for future hierarchical light tree (v0.20.0). 9 new tests.
+- **Max Depth UI slider** — interactive Ivar path tracer now exposes max bounce depth (1–32) in the render settings panel, with restart on change
+- **Material roughness trait** — `Material::roughness()` method (default 1.0) implemented for Metal and OpenPbrSurface, used by SHARC cache skip logic
+- **SHARC cache roughness skip** — radiance cache reads/writes skip surfaces with roughness < 0.1 to prevent blurred reflections on glossy/mirror materials
+- **GitHub Pages site** — mdBook-based dev diary + manual at byvfx.github.io/bif. Auto-deploys on push via `scripts/generate-site.sh` (copies devlog/docs, generates SUMMARY.md) + GitHub Actions workflow. Manual sections: getting started, architecture, USD reference, changelog.
 - **FFI bridge split** — extracted `ffi_raw.rs` (898 lines, raw C types + extern block) and `ffi_convert.rs` (2,054 lines, 17 conversion functions + 44 tests) from monolithic `cpp_bridge.rs`. Conversion logic now testable without C++ DLLs. Phase 1 of architecture deepening plan.
 - **Architecture refactors plan** — `ARCHITECTURE_REFACTORS.md` documenting 5-phase plan: FFI split, Linux support, node graph eval engine, scene pipeline, renderer decomposition. 45-65 new tests targeted.
 - **Cross-platform build foundation** — platform-detect CMake generator, vcpkg triplet, lib paths in `build.rs`. Linux CI job (bif_math + bif_renderer). `setup_usd_env.sh` for Linux/macOS. Windows `process::exit(0)` guarded with `#[cfg(windows)]`.
@@ -27,9 +65,16 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Historical results storage** — `--save` flag auto-saves YAML to `benchmarks/results/` with timestamp + `latest_{target}.yaml`
 - **Asset download helper** — `download` subcommand shows missing official assets with download URLs (Kitchen Set, ALab, Moore Lane)
 - **Per-tile UDIM loading** — UdimTileSet/UdimGridLayout types in bif_core, per-tile sampling (CPU+GPU), contiguous texture array blocks with shader tile offset. Eliminates atlas stitching (~3s/set). Unified CPU/GPU path ready for material editor.
+- **Box SubDiv crease test assets** — `box_subDivCrease_test.usd/usda` for subdivision surface crease weight validation.
+- **Kilo config** — `kilo.jsonc` with MCP context-mode plugin and bash/skill permission presets.
+- **Site SUMMARY.md** — updated mdBook nav index covering full devlog history (Jan 2025 – Apr 2026).
 
 ### Fixed
 
+- **Selection outline rendering** — replaced broken `PolygonMode::Line` + `shading_mode` `queue.write_buffer` hack (DX12 depth bias + write ordering made lines invisible) with a normal-expanded back-face silhouette pipeline (`outline.wgsl`) and a dedicated `wireframe_cam_bind_group`. Clean silhouette outline (no internal edges) on selected prims.
+- **Bidirectional tree ↔ viewport selection sync** — viewport click → tree row highlights (via new `select_at_screen()` + `denormalize_synthetic_path()`), tree click → outline appears on corresponding mesh (prefix + synthetic `/BIF/{path}/{idx}` fallbacks in `PrimSelected` handler). Tree auto-expands ancestors so selected rows become visible. Click on empty viewport space deselects; clicks on UI panels preserve selection.
+- **Camera persistence bug** — reset viewport/batch camera source on new scene load; stale USD camera from previous scene no longer persists
+- **HDRI background toggle** — removed `is_loaded` guard on UpdateHdriParams so params propagate for auto-loaded DomeLight HDRIs; background now correctly hides when unchecked
 - **PointInstancer time-sampled data** — C++ bridge now falls back to stage startTimeCode or first time sample when Default yields empty arrays (fixes Pixar PointInstancedMedCity.usd and similar files with no default values)
 - **PointInstancer Xform prototype resolution** — prototype_map now includes parent Xform paths so instancer targets like `/Prototypes/proto_0` resolve to child mesh `/Prototypes/proto_0/mesh_0`
 - **bif_perf code review fixes** — stable Rust compat (`count % 2` over nightly `is_multiple_of`), safe `u64::try_from` for duration stats, sample stddev (N-1), metadata surfaced in reports, iterations>=1 guard, CSV field escaping, `CARGO_MANIFEST_DIR` workspace root, `serde_yml` replacing deprecated `serde_yaml`, removed unused `csv` dep
@@ -37,6 +82,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- **Tree browser selection visuals** — removed node-source row tinting (green/blue); only the selected row paints a background. Selection color now uses `from_rgba_unmultiplied(74, 144, 217, 75)` (was premultiplied which produced near-additive blending against dark panel). `selectable_label` passed `false` to avoid double-painting on top of manual row bg.
+- **Documentation test count sync** — Updated test counts to 516 total (was stale 160+/400+). Per-crate: bif_math (74), bif_core (163), bif_renderer (111), bif_viewport (149), bif_viewer (19). Phase 1 FFI split marked complete in ARCHITECTURE_REFACTORS.md.
 - **Async texture loading for all paths** — working scene rebuild and legacy loader now use async placeholders + streaming instead of blocking sync load. Viewport interactive immediately on scene load.
 
 ### Fixed

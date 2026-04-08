@@ -11,6 +11,7 @@ Learning notes, patterns, and idioms discovered while building BIF. Brandon come
 ## Articles
 
 - [[patterns-discovered|Patterns Discovered]] — Rust patterns learned building BIF
+- [[borrow-checker-patterns|Borrow Checker Patterns]] — MutexGuard lifetimes, pre-extraction, as_deref, lock-once patterns
 
 ## Topics to Explore
 

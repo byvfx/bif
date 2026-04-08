@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=Manrope:wght@600;700;800&amp;family=JetBrains+Mono&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            colors: {
+              "secondary": "#5dd9d0",
+              "primary-fixed-dim": "#a4c9ff",
+              "surface-container-lowest": "#0e0e0e",
+              "on-surface-variant": "#c0c7d4",
+              "surface-container-highest": "#353535",
+              "surface-bright": "#393939",
+              "on-surface": "#e5e2e1",
+              "inverse-on-surface": "#313030",
+              "secondary-fixed": "#7cf6ec",
+              "on-primary-fixed-variant": "#004884",
+              "secondary-container": "#00a29a",
+              "on-tertiary-fixed": "#320047",
+              "primary-fixed": "#d4e3ff",
+              "on-tertiary-fixed-variant": "#692984",
+              "surface-variant": "#353535",
+              "on-primary-container": "#003463",
+              "error": "#ffb4ab",
+              "tertiary": "#ebb2ff",
+              "outline": "#8a919e",
+              "tertiary-fixed": "#f8d8ff",
+              "on-tertiary-container": "#53106f",
+              "tertiary-container": "#c681e1",
+              "on-primary-fixed": "#001c39",
+              "surface-container": "#20201f",
+              "error-container": "#93000a",
+              "background": "#131313",
+              "on-secondary-fixed-variant": "#00504c",
+              "surface-container-low": "#1b1b1b",
+              "surface": "#131313",
+              "on-primary": "#00315d",
+              "outline-variant": "#414752",
+              "on-secondary-fixed": "#00201e",
+              "on-background": "#e5e2e1",
+              "tertiary-fixed-dim": "#ebb2ff",
+              "inverse-surface": "#e5e2e1",
+              "primary-container": "#4a9eff",
+              "on-secondary-container": "#00302d",
+              "surface-container-high": "#2a2a2a",
+              "surface-dim": "#131313",
+              "on-secondary": "#003734",
+              "on-error": "#690005",
+              "surface-tint": "#a4c9ff",
+              "primary": "#a4c9ff",
+              "on-tertiary": "#500a6c",
+              "secondary-fixed-dim": "#5dd9d0",
+              "on-error-container": "#ffdad6",
+              "inverse-primary": "#005fad"
+            },
+            fontFamily: {
+              "headline": ["Manrope"],
+              "body": ["Inter"],
+              "label": ["Inter"],
+              "mono": ["JetBrains Mono"]
+            },
+            borderRadius: {"DEFAULT": "0.375rem", "lg": "0.25rem", "xl": "0.5rem", "full": "0.75rem"},
+          },
+        },
+      }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+            display: inline-block;
+            line-height: 1;
+            text-transform: none;
+            letter-spacing: normal;
+            word-wrap: normal;
+            white-space: nowrap;
+            direction: ltr;
+        }
+        .technical-grid {
+            background-size: 40px 40px;
+            background-image: 
+                linear-gradient(to right, rgba(255,255,255,0.02) 1px, transparent 1px),
+                linear-gradient(to bottom, rgba(255,255,255,0.02) 1px, transparent 1px);
+        }
+        .usd-ghost {
+            mask-image: linear-gradient(to bottom, black 20%, transparent 90%);
+        }
+    </style>
+</head>
+<body class="bg-surface font-body text-on-surface min-h-screen flex flex-col overflow-hidden">
+<!-- Background Pattern -->
+<div class="fixed inset-0 technical-grid pointer-events-none"></div>
+<div class="fixed right-0 top-0 w-1/2 h-full opacity-10 pointer-events-none usd-ghost overflow-hidden pt-24 pl-12">
+<div class="flex flex-col gap-4 font-mono text-[10px] text-primary">
+<div class="flex items-center gap-2"><span class="material-symbols-outlined text-[12px]">account_tree</span> /root</div>
+<div class="ml-4 flex items-center gap-2"><span class="material-symbols-outlined text-[12px]">view_in_ar</span> world</div>
+<div class="ml-8 flex items-center gap-2"><span class="material-symbols-outlined text-[12px]">light_mode</span> lighting_rig_01</div>
+<div class="ml-8 flex items-center gap-2"><span class="material-symbols-outlined text-[12px]">videocam</span> main_camera</div>
+<div class="ml-8 flex items-center gap-2"><span class="material-symbols-outlined text-[12px]">category</span> assets</div>
+<div class="ml-12 flex items-center gap-2"><span class="material-symbols-outlined text-[12px]">layers</span> character_instance_A</div>
+<div class="ml-12 flex items-center gap-2"><span class="material-symbols-outlined text-[12px]">layers</span> environment_proxy</div>
+<div class="ml-8 flex items-center gap-2"><span class="material-symbols-outlined text-[12px]">auto_fix_high</span> fx_layer_01</div>
+</div>
+</div>
+<!-- Main Content -->
+<main class="relative z-10 flex-grow flex flex-col items-center justify-center px-6">
+<!-- Branding Section -->
+<div class="mb-16 text-center">
+<h1 class="font-headline text-6xl font-extrabold tracking-tighter text-on-surface select-none">BIF</h1>
+<p class="font-label text-[10px] uppercase tracking-[0.2em] text-outline mt-2">Professional USD Orchestration</p>
+</div>
+<!-- Action Grid -->
+<div class="grid grid-cols-1 md:grid-cols-2 gap-px bg-surface-container-lowest rounded-xl overflow-hidden shadow-[0_8px_32px_rgba(0,0,0,0.4)]">
+<!-- New Stage Card -->
+<button class="group w-80 h-64 bg-surface-container flex flex-col items-center justify-center p-8 transition-all hover:bg-surface-container-high active:scale-[0.98]">
+<div class="w-16 h-16 rounded-full bg-surface-container-low flex items-center justify-center mb-6 group-hover:bg-primary-container group-hover:text-on-primary-container transition-colors">
+<span class="material-symbols-outlined text-3xl">add</span>
+</div>
+<h3 class="font-headline text-lg font-bold text-on-surface">New Stage</h3>
+<p class="text-outline text-xs mt-2 text-center leading-relaxed">Initialize a fresh USD layer hierarchy with standard schemas.</p>
+</button>
+<!-- Open Stage Card -->
+<button class="group w-80 h-64 bg-surface-container flex flex-col items-center justify-center p-8 transition-all hover:bg-surface-container-high active:scale-[0.98]">
+<div class="w-16 h-16 rounded-full bg-surface-container-low flex items-center justify-center mb-6 group-hover:bg-secondary group-hover:text-on-secondary transition-colors">
+<span class="material-symbols-outlined text-3xl">folder_open</span>
+</div>
+<h3 class="font-headline text-lg font-bold text-on-surface">Open Stage</h3>
+<p class="text-outline text-xs mt-2 text-center leading-relaxed">Browse your filesystem for existing .usd, .usda, or .usdc files.</p>
+</button>
+</div>
+<!-- Recent Stages Section -->
+<div class="mt-16 w-full max-w-2xl">
+<div class="flex items-center justify-between mb-4 px-2">
+<h4 class="font-label text-[11px] font-bold uppercase tracking-widest text-outline">Recent Stages</h4>
+<button class="text-[11px] font-bold text-primary hover:text-primary-fixed-dim transition-colors uppercase tracking-wider">Clear History</button>
+</div>
+<div class="flex flex-col gap-[2px] bg-surface-container-lowest rounded-lg overflow-hidden">
+<!-- Recent Item 1 -->
+<div class="group flex items-center justify-between bg-surface-container-low hover:bg-surface-container-high p-4 cursor-pointer transition-colors">
+<div class="flex items-center gap-4">
+<span class="material-symbols-outlined text-outline group-hover:text-primary transition-colors">description</span>
+<div class="flex flex-col">
+<span class="font-mono text-xs text-on-surface">/projects/alpha/shot_010.usd</span>
+<span class="text-[10px] text-outline mt-1">Modified 2 hours ago</span>
+</div>
+</div>
+<span class="material-symbols-outlined text-outline opacity-0 group-hover:opacity-100 transition-opacity">arrow_forward</span>
+</div>
+<!-- Recent Item 2 -->
+<div class="group flex items-center justify-between bg-surface-container-low hover:bg-surface-container-high p-4 cursor-pointer transition-colors">
+<div class="flex items-center gap-4">
+<span class="material-symbols-outlined text-outline group-hover:text-primary transition-colors">description</span>
+<div class="flex flex-col">
+<span class="font-mono text-xs text-on-surface">/pipeline/assets/prop_hero_01/v004/main.usda</span>
+<span class="text-[10px] text-outline mt-1">Modified Yesterday</span>
+</div>
+</div>
+<span class="material-symbols-outlined text-outline opacity-0 group-hover:opacity-100 transition-opacity">arrow_forward</span>
+</div>
+<!-- Recent Item 3 -->
+<div class="group flex items-center justify-between bg-surface-container-low hover:bg-surface-container-high p-4 cursor-pointer transition-colors">
+<div class="flex items-center gap-4">
+<span class="material-symbols-outlined text-outline group-hover:text-primary transition-colors">description</span>
+<div class="flex flex-col">
+<span class="font-mono text-xs text-on-surface">/personal/sketches/lighting_study_09.usdc</span>
+<span class="text-[10px] text-outline mt-1">Modified 3 days ago</span>
+</div>
+</div>
+<span class="material-symbols-outlined text-outline opacity-0 group-hover:opacity-100 transition-opacity">arrow_forward</span>
+</div>
+</div>
+</div>
+</main>
+<!-- Footer Navigation -->
+<footer class="relative z-10 w-full h-16 flex items-center justify-center px-8">
+<nav class="flex items-center gap-8">
+<a class="font-label text-[11px] font-medium text-outline hover:text-on-surface transition-colors uppercase tracking-wider flex items-center gap-2" href="#">
+<span class="material-symbols-outlined text-sm">menu_book</span> Documentation
+            </a>
+<div class="w-[1px] h-3 bg-surface-container-highest"></div>
+<a class="font-label text-[11px] font-medium text-outline hover:text-on-surface transition-colors uppercase tracking-wider flex items-center gap-2" href="#">
+<span class="material-symbols-outlined text-sm">groups</span> Community
+            </a>
+<div class="w-[1px] h-3 bg-surface-container-highest"></div>
+<a class="font-label text-[11px] font-medium text-outline hover:text-on-surface transition-colors uppercase tracking-wider flex items-center gap-2" href="#">
+<span class="material-symbols-outlined text-sm">settings</span> Settings
+            </a>
+</nav>
+<div class="absolute right-8 flex items-center gap-2 text-[10px] text-outline font-mono">
+            v2.4.1-stable
+        </div>
+</footer>
+</body></html>

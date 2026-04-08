@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>BIF Lighting Workspace</title>
+<!-- Fonts -->
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700;800&amp;family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet"/>
+<!-- Material Icons -->
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<!-- Tailwind -->
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            colors: {
+              "primary-fixed": "#d4e3ff",
+              "primary": "#a4c9ff",
+              "primary-fixed-dim": "#a4c9ff",
+              "on-tertiary-fixed": "#320047",
+              "secondary-container": "#00a29a",
+              "on-surface-variant": "#c0c7d4",
+              "on-background": "#e5e2e1",
+              "background": "#131313",
+              "inverse-surface": "#e5e2e1",
+              "on-surface": "#e5e2e1",
+              "on-error": "#690005",
+              "surface-container-highest": "#353535",
+              "secondary": "#5dd9d0",
+              "on-primary-fixed-variant": "#004884",
+              "tertiary-fixed-dim": "#ebb2ff",
+              "on-tertiary": "#500a6c",
+              "on-primary-container": "#003463",
+              "secondary-fixed-dim": "#5dd9d0",
+              "outline-variant": "#414752",
+              "tertiary-container": "#c681e1",
+              "on-primary-fixed": "#001c39",
+              "error-container": "#93000a",
+              "tertiary-fixed": "#f8d8ff",
+              "primary-container": "#4a9eff",
+              "tertiary": "#ebb2ff",
+              "surface-dim": "#131313",
+              "on-error-container": "#ffdad6",
+              "on-tertiary-fixed-variant": "#692984",
+              "on-secondary-container": "#00302d",
+              "on-secondary": "#003734",
+              "on-secondary-fixed": "#00201e",
+              "surface-container-lowest": "#0e0e0e",
+              "surface-container-high": "#2a2a2a",
+              "surface-bright": "#393939",
+              "on-primary": "#00315d",
+              "surface-container-low": "#1b1b1b",
+              "surface": "#131313",
+              "surface-container": "#20201f",
+              "surface-variant": "#353535",
+              "outline": "#8a919e",
+              "inverse-on-surface": "#313030",
+              "inverse-primary": "#005fad",
+              "secondary-fixed": "#7cf6ec",
+              "error": "#ffb4ab",
+              "surface-tint": "#a4c9ff",
+              "on-tertiary-container": "#53106f",
+              "on-secondary-fixed-variant": "#00504c"
+            },
+            fontFamily: {
+              "headline": ["Manrope", "sans-serif"],
+              "body": ["Inter", "sans-serif"],
+              "label": ["Inter", "sans-serif"],
+              "mono": ["JetBrains Mono", "monospace"]
+            },
+            borderRadius: {"DEFAULT": "0.125rem", "lg": "0.25rem", "xl": "0.5rem", "full": "0.75rem"},
+          },
+        },
+      }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+            font-size: 18px;
+        }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        .optical-gap-x { margin-right: 1px; background-color: #0e0e0e; height: 100%; }
+        .optical-gap-y { margin-bottom: 1px; background-color: #0e0e0e; width: 100%; }
+    </style>
+</head>
+<body class="bg-background text-on-surface font-body overflow-hidden h-screen flex flex-col">
+<!-- TopNavBar -->
+<header class="bg-[#131313] w-full h-12 flex items-center justify-between px-6 z-50">
+<div class="flex items-center gap-8">
+<span class="text-xl font-bold tracking-tighter text-[#e5e2e1] font-headline">BIF</span>
+<nav class="flex gap-6">
+<a class="font-manrope text-sm font-semibold tracking-wide uppercase text-[#8a919e] hover:text-[#e5e2e1] transition-colors duration-200 cursor-pointer active:opacity-80" href="#">Assembly</a>
+<a class="font-manrope text-sm font-semibold tracking-wide uppercase text-[#a4c9ff] border-b-2 border-[#a4c9ff] pb-1 cursor-pointer active:opacity-80" href="#">Lighting</a>
+<a class="font-manrope text-sm font-semibold tracking-wide uppercase text-[#8a919e] hover:text-[#e5e2e1] transition-colors duration-200 cursor-pointer active:opacity-80" href="#">Materials</a>
+<a class="font-manrope text-sm font-semibold tracking-wide uppercase text-[#8a919e] hover:text-[#e5e2e1] transition-colors duration-200 cursor-pointer active:opacity-80" href="#">Review</a>
+</nav>
+</div>
+<div class="flex items-center gap-4">
+<div class="bg-[#1b1b1b] px-3 py-1 rounded flex items-center gap-2">
+<span class="material-symbols-outlined text-outline" data-icon="search">search</span>
+<input class="bg-transparent border-none focus:ring-0 text-xs w-48 font-label" placeholder="Search Scene..." type="text"/>
+</div>
+<span class="material-symbols-outlined text-outline cursor-pointer hover:bg-[#2a2a2a] p-1.5 rounded-md transition-colors" data-icon="settings">settings</span>
+<span class="material-symbols-outlined text-outline cursor-pointer hover:bg-[#2a2a2a] p-1.5 rounded-md transition-colors" data-icon="account_circle">account_circle</span>
+</div>
+</header>
+<div class="bg-[#0e0e0e] h-[1px] w-full"></div>
+<!-- Main Workspace Layout -->
+<main class="flex flex-1 overflow-hidden">
+<!-- SideNavBar -->
+<aside class="bg-[#20201f] h-full w-16 flex flex-col items-center py-4 shadow-[4px_0_12px_rgba(0,0,0,0.3)] z-40">
+<div class="flex flex-col gap-6 items-center flex-1">
+<div class="p-2 text-[#8a919e] hover:bg-[#1b1b1b] hover:text-[#e5e2e1] transition-all scale-95 active:scale-90 cursor-pointer">
+<span class="material-symbols-outlined" data-icon="videocam">videocam</span>
+</div>
+<div class="p-2 text-[#8a919e] hover:bg-[#1b1b1b] hover:text-[#e5e2e1] transition-all scale-95 active:scale-90 cursor-pointer">
+<span class="material-symbols-outlined" data-icon="account_tree">account_tree</span>
+</div>
+<div class="p-2 text-[#a4c9ff] bg-[#2a2a2a] rounded-md transition-all scale-95 active:scale-90 cursor-pointer">
+<span class="material-symbols-outlined" data-icon="tune">tune</span>
+</div>
+<div class="p-2 text-[#8a919e] hover:bg-[#1b1b1b] hover:text-[#e5e2e1] transition-all scale-95 active:scale-90 cursor-pointer">
+<span class="material-symbols-outlined" data-icon="layers">layers</span>
+</div>
+<div class="p-2 text-[#8a919e] hover:bg-[#1b1b1b] hover:text-[#e5e2e1] transition-all scale-95 active:scale-90 cursor-pointer">
+<span class="material-symbols-outlined" data-icon="folder_open">folder_open</span>
+</div>
+</div>
+<div class="flex flex-col gap-4 items-center">
+<button class="bg-primary-container text-on-primary-container px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider scale-95 active:scale-90 transition-all">Render</button>
+<div class="p-2 text-[#8a919e] hover:bg-[#1b1b1b] transition-all cursor-pointer">
+<span class="material-symbols-outlined" data-icon="terminal">terminal</span>
+</div>
+</div>
+</aside>
+<div class="optical-gap-x"></div>
+<!-- Content Area -->
+<div class="flex-1 flex flex-col min-w-0">
+<div class="flex-1 flex min-h-0">
+<!-- Viewport (60%+) -->
+<section class="flex-[3] relative bg-surface-container-lowest overflow-hidden group">
+<div class="absolute inset-0 bg-cover bg-center" data-alt="High-fidelity 3D scene of a cyberpunk laboratory with cinematic path-traced lighting, neon reflections, and floating light-source gizmos." style="background-image: url('https://lh3.googleusercontent.com/aida-public/AB6AXuAOh0isEfxC1MsZjv6s0K7bUwVIUpn0u4yIjby8fsbENHX0tJGH0s4KGjswk_6drr3esm8eKNYG3MZV3wfgOHj_lBkTzSafE0fW0lPAiQY0gQ3SHfNsFHQ2yEKlc469E73EB8N3jVc8VjxBEZlhpr-UAsqowvcIcpGvOm7QSitr9MDwe84s1ybNbqV76gWe7He4voNDH9fr2N1KprKPLLV8TpGLSpv6CqybbTZ1_J_0MZ6c_qkYsumih8JZG9hctwRpiFq-H_2eww4Z')"></div>
+<!-- Viewport Overlay HUD -->
+<div class="absolute top-4 left-4 flex gap-2">
+<div class="bg-surface-variant/70 backdrop-blur-xl px-3 py-1.5 rounded-lg border border-outline-variant/20 flex items-center gap-3">
+<span class="text-[10px] font-bold text-secondary uppercase tracking-[0.05em]">Perspective</span>
+<div class="w-[1px] h-3 bg-outline-variant/30"></div>
+<span class="text-[10px] font-bold text-on-surface uppercase tracking-[0.05em]">Path Traced (1024 Samples)</span>
+</div>
+</div>
+<!-- Light Gizmo Indicators -->
+<div class="absolute top-1/3 left-1/4 w-8 h-8 rounded-full border-2 border-primary-container/50 bg-primary/20 backdrop-blur-sm flex items-center justify-center cursor-move">
+<span class="material-symbols-outlined text-primary-fixed-dim" data-icon="light_mode" style="font-variation-settings: 'FILL' 1;">light_mode</span>
+</div>
+<div class="absolute bottom-1/3 right-1/3 w-6 h-6 rounded-full border border-secondary/40 bg-secondary-container/20 backdrop-blur-sm flex items-center justify-center cursor-move">
+<span class="material-symbols-outlined text-secondary text-xs" data-icon="highlight">highlight</span>
+</div>
+<!-- Toolbar -->
+<div class="absolute bottom-4 left-1/2 -translate-x-1/2 bg-surface-container-highest/80 backdrop-blur-md px-4 py-2 rounded-xl flex gap-4 items-center shadow-2xl">
+<span class="material-symbols-outlined text-on-surface cursor-pointer" data-icon="videocam">videocam</span>
+<span class="material-symbols-outlined text-on-surface cursor-pointer" data-icon="light_mode">light_mode</span>
+<span class="material-symbols-outlined text-on-surface cursor-pointer" data-icon="photo_camera">photo_camera</span>
+<div class="w-[1px] h-4 bg-outline-variant/30"></div>
+<span class="material-symbols-outlined text-on-surface cursor-pointer" data-icon="grid_on">grid_on</span>
+</div>
+</section>
+<div class="optical-gap-x"></div>
+<!-- Right Dock: Property Inspector -->
+<aside class="flex-1 w-80 bg-surface-container flex flex-col">
+<div class="p-4 border-b border-surface-container-lowest">
+<h2 class="text-[11px] font-bold text-on-surface-variant uppercase tracking-[0.1em] flex items-center gap-2">
+<span class="w-1.5 h-1.5 rounded-full bg-secondary"></span>
+                            Property Inspector
+                        </h2>
+</div>
+<div class="flex-1 overflow-y-auto no-scrollbar p-4 space-y-6">
+<!-- Object Info -->
+<div class="space-y-3">
+<div class="flex items-center justify-between">
+<span class="text-[10px] text-outline uppercase font-bold tracking-wider">Active Light</span>
+<span class="text-[11px] font-mono text-primary bg-primary/10 px-2 py-0.5 rounded">Key_Light_01</span>
+</div>
+<div class="grid grid-cols-2 gap-2">
+<div class="bg-surface-container-low p-2 rounded">
+<span class="block text-[9px] text-outline uppercase font-semibold">Type</span>
+<span class="text-xs">Rect Light</span>
+</div>
+<div class="bg-surface-container-low p-2 rounded">
+<span class="block text-[9px] text-outline uppercase font-semibold">Status</span>
+<span class="text-xs text-secondary">Active</span>
+</div>
+</div>
+</div>
+<!-- Light Attributes -->
+<div class="space-y-4">
+<h3 class="text-[10px] text-outline uppercase font-bold tracking-widest border-l-2 border-primary pl-2">Attributes</h3>
+<div class="space-y-4">
+<div class="space-y-2">
+<div class="flex justify-between text-xs">
+<label class="text-on-surface-variant">Intensity</label>
+<span class="font-mono text-primary">450.00 cd</span>
+</div>
+<div class="h-1.5 bg-surface-container-lowest rounded-full relative">
+<div class="absolute left-0 top-0 h-full w-[65%] bg-primary rounded-full"></div>
+</div>
+</div>
+<div class="space-y-2">
+<div class="flex justify-between text-xs">
+<label class="text-on-surface-variant">Exposure</label>
+<span class="font-mono text-primary">12.5 EV</span>
+</div>
+<div class="h-1.5 bg-surface-container-lowest rounded-full relative">
+<div class="absolute left-0 top-0 h-full w-[40%] bg-primary rounded-full"></div>
+</div>
+</div>
+<div class="space-y-2">
+<div class="flex justify-between text-xs">
+<label class="text-on-surface-variant">Color Temperature</label>
+<span class="font-mono text-primary">6500 K</span>
+</div>
+<div class="h-4 w-full rounded bg-gradient-to-r from-orange-400 via-white to-blue-300"></div>
+</div>
+<div class="grid grid-cols-2 gap-4">
+<div class="space-y-1">
+<label class="text-[10px] text-outline uppercase">Shadows</label>
+<div class="flex items-center gap-2">
+<div class="w-8 h-4 bg-primary rounded-full relative flex items-center">
+<div class="absolute right-0.5 w-3 h-3 bg-on-primary rounded-full"></div>
+</div>
+<span class="text-xs">Enabled</span>
+</div>
+</div>
+<div class="space-y-1">
+<label class="text-[10px] text-outline uppercase">Samples</label>
+<input class="w-full bg-surface-container-lowest border-none text-xs font-mono py-1 rounded" type="text" value="32"/>
+</div>
+</div>
+</div>
+</div>
+<!-- Metadata/Attribution -->
+<div class="pt-4 border-t border-surface-container-lowest flex gap-4">
+<div class="flex items-center gap-2">
+<span class="w-1 h-3 bg-secondary rounded-full"></span>
+<span class="text-[9px] uppercase text-outline">Teal Atlas</span>
+</div>
+<div class="flex items-center gap-2">
+<span class="w-1 h-3 bg-yellow-500 rounded-full"></span>
+<span class="text-[9px] uppercase text-outline">Legacy Source</span>
+</div>
+</div>
+</div>
+</aside>
+</div>
+<div class="optical-gap-y"></div>
+<!-- BottomNavBar & Render Catalog -->
+<footer class="h-48 bg-surface flex flex-col">
+<div class="flex-1 flex overflow-x-auto no-scrollbar p-3 gap-3">
+<!-- Render History Items -->
+<div class="flex-shrink-0 w-64 h-full bg-surface-container-low rounded-lg overflow-hidden relative border-t-2 border-secondary group cursor-pointer">
+<img class="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity" data-alt="3D render thumbnail of a laboratory interior with heavy blue key light." src="https://lh3.googleusercontent.com/aida-public/AB6AXuBtv8juielPBmpmFeeczvVXc4-eTIwBYY27plaqgDlan__rDqkcazWkimJtEBLI32KTmSH3gz4nZxvYGcuGBRSE3X8DbEfUDm37Ut_gTr0RT5D4RXFR64zRK_uSHIDiXL2kcxHVDXhuGV2m_dnxzX2sWCHy4ofSuK9BPHe4g0URaqSPYSXIOaVEpLtdrziJMAlQRKYJET9AnOMbwF_vWg86VJZwgoJ3MmXAROzfjW-n-I31ZYE8WyIyf8MdQ8Nhr_I5WO1LuDRoaRbN"/>
+<div class="absolute top-2 left-2 bg-secondary text-on-secondary px-2 py-0.5 rounded text-[9px] font-bold uppercase">Render A</div>
+<div class="absolute bottom-0 inset-x-0 bg-black/60 p-2 text-[10px] font-mono flex justify-between">
+<span>04:12:33</span>
+<span>Done</span>
+</div>
+</div>
+<div class="flex-shrink-0 w-64 h-full bg-surface-container-low rounded-lg overflow-hidden relative group cursor-pointer">
+<img class="w-full h-full object-cover opacity-60 group-hover:opacity-100 transition-opacity" data-alt="3D render thumbnail of the same laboratory scene but with warm golden hour lighting and long shadows." src="https://lh3.googleusercontent.com/aida-public/AB6AXuCB6Xl-vk7MEn6q5q5OaxF-1TedRrHAToFfpxSA4KvIEdGZC6zkx7F9cLqohwqUHKGlEDz6gl_frgqK8PBjkuARmhi76NUQlFpYav7Z7y06qmbVdCWoJJ2HQ_4RrDIOKKsvo8lnuiJ3V-DPUDYzx1LcrEdXUrY5ZM4Dx8854hbre8U28T20nDwBscMsmG0U2FvYiNZmC1mfLBUthHesp8g7ee6InXMnvVqNymXBCVTLPbBWyrXB-Y1bcJtgEyrBxCq7xq-HlF0RtRjG"/>
+<div class="absolute top-2 left-2 bg-surface-variant text-on-surface px-2 py-0.5 rounded text-[9px] font-bold uppercase">Render B</div>
+<div class="absolute top-2 right-2 bg-primary text-on-primary px-2 py-0.5 rounded text-[9px] font-bold uppercase">A/B Active</div>
+<div class="absolute bottom-0 inset-x-0 bg-black/60 p-2 text-[10px] font-mono flex justify-between">
+<span>04:08:12</span>
+<span>Saved</span>
+</div>
+</div>
+<div class="flex-shrink-0 w-64 h-full bg-surface-container-low rounded-lg border-2 border-dashed border-outline-variant/30 flex flex-col items-center justify-center hover:bg-surface-container-high transition-colors cursor-pointer">
+<span class="material-symbols-outlined text-outline mb-1" data-icon="add_a_photo">add_a_photo</span>
+<span class="text-[10px] font-bold uppercase text-outline tracking-widest">New Snapshot</span>
+</div>
+</div>
+<!-- Footer Tab Shell -->
+<div class="h-10 bg-[#131313] flex items-center px-4 border-t border-[#0e0e0e]">
+<div class="flex items-center gap-1 h-full">
+<div class="bg-[#1b1b1b] text-[#8a919e] px-4 h-full flex items-center hover:bg-[#1b1b1b] cursor-pointer transition-all duration-150 group">
+<span class="material-symbols-outlined mr-2 text-[16px]" data-icon="hub">hub</span>
+<span class="font-inter text-[10px] font-bold uppercase tracking-[0.05em] group-hover:text-[#e5e2e1]">Node Graph</span>
+</div>
+<div class="bg-[#1b1b1b] text-[#8a919e] px-4 h-full flex items-center hover:bg-[#1b1b1b] cursor-pointer transition-all duration-150 group">
+<span class="material-symbols-outlined mr-2 text-[16px]" data-icon="code">code</span>
+<span class="font-inter text-[10px] font-bold uppercase tracking-[0.05em] group-hover:text-[#e5e2e1]">USDA Preview</span>
+</div>
+<div class="bg-[#20201f] text-[#a4c9ff] px-4 h-full flex items-center border-t-2 border-[#4a9eff] cursor-pointer transition-all duration-150">
+<span class="material-symbols-outlined mr-2 text-[16px]" data-icon="terminal">terminal</span>
+<span class="font-inter text-[10px] font-bold uppercase tracking-[0.05em]">Console</span>
+</div>
+</div>
+<div class="ml-auto flex items-center gap-4 text-[10px] font-mono text-outline">
+<span>FPS: 24.00</span>
+<span>GPU: 42°C</span>
+<span>Mem: 6.4GB</span>
+</div>
+</div>
+</footer>
+</div>
+</main>
+</body></html>

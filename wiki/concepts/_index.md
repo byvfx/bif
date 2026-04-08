@@ -22,6 +22,10 @@ Atomic notes on key technical concepts used in BIF. Each note covers one idea �
 - [[ior-fresnel|IOR Fresnel]] — Index of refraction based Fresnel reflectance
 - [[bvh|BVH]] — Bounding Volume Hierarchy acceleration structure
 
+## Concurrency & FFI
+
+- [[usdstage-thread-safety|UsdStage Thread Safety]] — Send vs Sync for C++ FFI types, Arc<Mutex> pattern
+
 ## Tools & Libraries
 
 - [[wgpu]] — Rust WebGPU graphics API implementation

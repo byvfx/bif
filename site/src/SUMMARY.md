@@ -1,4 +1,3 @@
-<!-- markdownlint-disable MD025 MD042 -->
 # Summary
 
 [Introduction](introduction.md)
@@ -22,7 +21,17 @@
 
 # Dev Diary
 
+- [April 2026]()
+  - [2026-04-07](devlog/2026-04/DEVLOG_2026-04-07.md)
+  - [2026-04-06](devlog/2026-04/DEVLOG_2026-04-06.md)
+  - [2026-04-05](devlog/2026-04/DEVLOG_2026-04-05.md)
+  - [2026-04-04](devlog/2026-04/DEVLOG_2026-04-04.md)
+  - [2026-04-03](devlog/2026-04/DEVLOG_2026-04-03.md)
+  - [2026-04-02](devlog/2026-04/DEVLOG_2026-04-02.md)
+  - [2026-04-01](devlog/2026-04/DEVLOG_2026-04-01.md)
+  - [Code Review: 2026-04-02 Session (ff57752..HEAD)](devlog/2026-04/CODE_REVIEW_2026-04-02.md)
 - [March 2026]()
+  - [2026-03-31](devlog/2026-03/DEVLOG_2026-03-31.md)
   - [2026-03-30](devlog/2026-03/DEVLOG_2026-03-30.md)
   - [2026-03-29](devlog/2026-03/DEVLOG_2026-03-29.md)
   - [2026-03-28](devlog/2026-03/DEVLOG_2026-03-28.md)
