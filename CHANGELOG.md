@@ -26,6 +26,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Native MaterialX displacement** — 3-tier extraction: surface shader `displacement` input, `GetDisplacementOutput()` → `ND_displacement_float/vector3` node traversal (scale + texture), UsdPreviewSurface companion fallback. No longer requires manual UsdPreviewSurface wiring.
+- **SceneQuery viewport migration** — `build_scene_graph_cache()` now takes `&dyn SceneQuery` instead of `&Scene`. Enables future LayerAwareScene drop-in for v0.14.0.
 - **SceneQuery trait** — read-only query API in bif_core abstracting Scene field access. 15 methods covering prototypes, instances, materials, cameras, lights, timeline, metadata. `find_instance_by_prim_path` encapsulates the 3-strategy prim path lookup (exact, prefix, synthetic /BIF/ fallback). 9 tests. Enables future LayerAwareScene for M32 opinion trace without viewport changes.
 - **Dispatch split** — extracted `render_dispatch.rs`, `selection_dispatch.rs`, `project_dispatch.rs` from monolithic `dispatch_events()` in render.rs. 20 AppEvent match arms → individual handler methods following `node_dispatch.rs` pattern. `dispatch_events()` is now a thin router.
 

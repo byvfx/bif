@@ -686,7 +686,7 @@ impl CachedSceneGraph {
 /// and pre-computes the parent->children index. Tags each prim with
 /// its source graph node via reverse lookups on the node maps.
 pub fn build_scene_graph_cache(
-    scene: &bif_core::Scene,
+    scene: &dyn bif_core::SceneQuery,
     node_proto_map: &HashMap<GraphNodeId, Vec<usize>>,
     node_cloud_map: &HashMap<GraphNodeId, usize>,
 ) -> CachedSceneGraph {
@@ -705,7 +705,7 @@ pub fn build_scene_graph_cache(
     let mut procedural_prims = HashMap::new();
 
     // Add ALL prototypes as Mesh prims
-    for (proto_idx, proto) in scene.prototypes.iter().enumerate() {
+    for (proto_idx, proto) in scene.prototypes().iter().enumerate() {
         let path = if proto.name.starts_with('/') {
             proto.name.to_string()
         } else {
@@ -726,7 +726,7 @@ pub fn build_scene_graph_cache(
     }
 
     // Add point clouds as PointInstancer prims
-    for (cloud_idx, cloud) in scene.point_clouds.iter().enumerate() {
+    for (cloud_idx, cloud) in scene.point_clouds().iter().enumerate() {
         if cloud.positions.is_empty() || cloud.name.is_empty() {
             continue;
         }
@@ -739,7 +739,7 @@ pub fn build_scene_graph_cache(
             .prototype_ids
             .iter()
             .filter_map(|&pid| {
-                scene.prototypes.get(pid).map(|p| {
+                scene.prototype(pid).map(|p| {
                     if p.name.starts_with('/') {
                         p.name.to_string()
                     } else {

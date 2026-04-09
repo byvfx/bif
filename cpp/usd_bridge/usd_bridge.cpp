@@ -1852,6 +1852,13 @@ static void extract_materialx_properties(const UsdShadeShader& shader, CachedMat
     if (input) {
         cached.normal_texture = get_materialx_texture_path(input);
     }
+
+    // displacement — surface shader may have a displacement input directly
+    input = shader.GetInput(TfToken("displacement"));
+    if (input) {
+        resolve_mtlx_input(input, &cached.displacement_scale);
+        cached.displacement_texture = get_materialx_texture_path(input);
+    }
 }
 
 /// Cache all material data from the stage
@@ -2014,10 +2021,37 @@ static void cache_material_data(UsdBridgeStage* bridge) {
                       << " type=MaterialX(mtlx:surface)" << std::endl;
             extract_materialx_properties(mtlx_shader, cached);
 
-            // MaterialX extraction doesn't handle displacement yet.
-            // Fall back to UsdPreviewSurface's displacement input if the
-            // material also has an auto-generated preview shader (Houdini
-            // creates one alongside MaterialX).
+            // Native MaterialX displacement via Material's displacement output.
+            // Walks: Material → displacementshader output → ND_displacement_float/vector3
+            //   → inputs:displacement (texture) + inputs:scale (float)
+            if (cached.displacement_texture.empty()) {
+                UsdShadeOutput disp_out = material.GetDisplacementOutput();
+                if (disp_out) {
+                    SdfPathVector disp_conns;
+                    disp_out.GetRawConnectedSourcePaths(&disp_conns);
+                    for (const auto& dc : disp_conns) {
+                        UsdPrim disp_prim = bridge->stage->GetPrimAtPath(dc.GetPrimPath());
+                        if (!disp_prim) continue;
+                        UsdShadeShader disp_shader(disp_prim);
+                        if (!disp_shader) continue;
+
+                        // Extract scale from the displacement node
+                        UsdShadeInput scale_in = disp_shader.GetInput(TfToken("scale"));
+                        if (scale_in) {
+                            scale_in.Get(&cached.displacement_scale);
+                        }
+
+                        // Extract texture from the displacement node's "displacement" input
+                        UsdShadeInput disp_tex_in = disp_shader.GetInput(TfToken("displacement"));
+                        if (disp_tex_in) {
+                            cached.displacement_texture = get_materialx_texture_path(disp_tex_in);
+                        }
+                        if (!cached.displacement_texture.empty()) break;
+                    }
+                }
+            }
+
+            // Last resort: UsdPreviewSurface companion (Houdini auto-generates one)
             if (cached.displacement_texture.empty()) {
                 UsdShadeOutput surf_out = material.GetSurfaceOutput();
                 if (surf_out) {
