@@ -188,6 +188,12 @@ extern "C" {
     );
 
     pub fn rtcSetGeometryTessellationRate(geom: RTCGeometry, rate: f32);
+    pub fn rtcSetGeometryTopologyCount(geom: RTCGeometry, topology_count: u32);
+    pub fn rtcSetGeometryVertexAttributeTopology(
+        geom: RTCGeometry,
+        vertex_attribute_id: u32,
+        topology_id: u32,
+    );
 
     pub fn rtcIntersect1(scene: RTCScene, rayhit: *mut RTCRayHit, args: *const std::ffi::c_void);
 

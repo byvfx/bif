@@ -229,6 +229,8 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
             mesh.crease_lengths = mesh_data.crease_lengths.clone();
             mesh.crease_sharpnesses = mesh_data.crease_sharpnesses.clone();
             mesh.vertices_orig = mesh_data.vertices_orig.clone();
+            mesh.facevarying_uvs = mesh_data.facevarying_uvs.clone();
+            mesh.facevarying_uv_indices = mesh_data.facevarying_uv_indices.clone();
             mesh.display_color = mesh_data.display_color.clone();
 
             let mesh_arc = Arc::new(mesh);

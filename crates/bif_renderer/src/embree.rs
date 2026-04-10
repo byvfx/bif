@@ -115,6 +115,10 @@ pub struct SubdivData<'a> {
     pub crease_lengths: &'a [i32],
     /// Crease sharpnesses (one per chain)
     pub crease_sharpnesses: &'a [f32],
+    /// FaceVarying UV values (unique UV positions, u/v pairs)
+    pub facevarying_uvs: Option<&'a [[f32; 2]]>,
+    /// FaceVarying UV indices (per face-vertex, same count as polygon_indices)
+    pub facevarying_uv_indices: Option<&'a [i32]>,
 }
 
 /// Compute the inverse-transpose Mat3 for normal transformation, with degenerate matrix guard.
@@ -147,6 +151,7 @@ pub struct EmbreeScene {
     _crease_index_data: Vec<u32>,
     _crease_weight_data: Vec<f32>,
     _subd_uv_data: Vec<[f32; 2]>,
+    _subd_fv_uv_indices: Vec<u32>,
 
     // Subdivision state
     is_subdiv: bool,
@@ -477,6 +482,7 @@ impl EmbreeScene {
                 _crease_index_data: vec![],
                 _crease_weight_data: vec![],
                 _subd_uv_data: vec![],
+                _subd_fv_uv_indices: vec![],
                 is_subdiv: false,
                 prototype_geom: std::ptr::null_mut(),
                 uv_data,
@@ -587,6 +593,7 @@ impl EmbreeScene {
             let mut _crease_index_data: Vec<u32> = Vec::new();
             let mut _crease_weight_data: Vec<f32> = Vec::new();
             let mut _subd_uv_data: Vec<[f32; 2]> = Vec::new();
+            let mut _subd_fv_uv_indices: Vec<u32> = Vec::new();
             let mut is_subdiv = false;
 
             let geom = if let Some(sd) = subd {
@@ -745,12 +752,33 @@ impl EmbreeScene {
                     );
                 }
 
-                // UV vertex attribute buffer for rtcInterpolate.
-                // Only set if UV count matches position count (per-vertex interpolation).
-                // faceVarying UVs (common for subdiv) need a separate topology — skip for now.
-                if !uvs.is_empty() && uvs.len() == positions.len() {
-                    _subd_uv_data = uvs.to_vec();
+                // UV attribute for subdivision surfaces.
+                // FaceVarying UVs use a separate topology (topology 1) with their own index buffer.
+                // Per-vertex UVs use the default topology (topology 0).
+                if let (Some(fv_uvs), Some(fv_indices)) =
+                    (sd.facevarying_uvs, sd.facevarying_uv_indices)
+                {
+                    // FaceVarying topology: topology 0 = vertex, topology 1 = faceVarying
+                    _subd_uv_data = fv_uvs.to_vec();
+                    _subd_fv_uv_indices = fv_indices.iter().map(|&i| i as u32).collect();
+
+                    rtcSetGeometryTopologyCount(geom, 2);
                     rtcSetGeometryVertexAttributeCount(geom, 1);
+                    rtcSetGeometryVertexAttributeTopology(geom, 0, 1); // UV attr → topology 1
+
+                    // FaceVarying index buffer on topology 1
+                    rtcSetSharedGeometryBuffer(
+                        geom,
+                        RTCBufferType::Index as u32,
+                        1, // topology slot 1
+                        RTCFormat::UInt as u32,
+                        _subd_fv_uv_indices.as_ptr() as *const std::ffi::c_void,
+                        0,
+                        4, // stride: 1 u32 = 4 bytes
+                        _subd_fv_uv_indices.len(),
+                    );
+
+                    // UV values as vertex attribute
                     rtcSetSharedGeometryBuffer(
                         geom,
                         RTCBufferType::VertexAttribute as u32,
@@ -761,9 +789,29 @@ impl EmbreeScene {
                         8, // stride: 2 floats = 8 bytes
                         _subd_uv_data.len(),
                     );
+
+                    log::info!(
+                        "Embree subdiv: faceVarying UVs with {} unique values, {} indices",
+                        _subd_uv_data.len(),
+                        _subd_fv_uv_indices.len()
+                    );
+                } else if !uvs.is_empty() && uvs.len() == positions.len() {
+                    // Per-vertex UVs (default topology)
+                    _subd_uv_data = uvs.to_vec();
+                    rtcSetGeometryVertexAttributeCount(geom, 1);
+                    rtcSetSharedGeometryBuffer(
+                        geom,
+                        RTCBufferType::VertexAttribute as u32,
+                        0,
+                        RTCFormat::Float2 as u32,
+                        _subd_uv_data.as_ptr() as *const std::ffi::c_void,
+                        0,
+                        8,
+                        _subd_uv_data.len(),
+                    );
                 } else if !uvs.is_empty() {
                     log::info!(
-                        "Skipping subdiv UV attribute: {} UVs != {} positions (faceVarying UVs not yet supported for subdiv)",
+                        "Skipping subdiv UV attribute: {} UVs != {} positions (no faceVarying data available)",
                         uvs.len(),
                         positions.len()
                     );
@@ -1010,6 +1058,7 @@ impl EmbreeScene {
                 _crease_index_data,
                 _crease_weight_data,
                 _subd_uv_data,
+                _subd_fv_uv_indices,
                 is_subdiv,
                 prototype_geom,
                 uv_data: vec![],

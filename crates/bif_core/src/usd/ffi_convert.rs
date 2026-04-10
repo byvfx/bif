@@ -319,6 +319,32 @@ pub(crate) unsafe fn convert_mesh(raw: &UsdBridgeMeshDataRaw) -> UsdMeshData {
 
     let vertices_orig = f32_ptr_to_opt_vec3s(raw.vertices_orig, raw.vertex_count_orig);
 
+    // FaceVarying UV data for subdivision surfaces
+    let facevarying_uvs = if !raw.facevarying_uvs.is_null() && raw.facevarying_uv_count > 0 {
+        let slice = unsafe {
+            std::slice::from_raw_parts(raw.facevarying_uvs, raw.facevarying_uv_count * 2)
+        };
+        Some(
+            slice
+                .chunks_exact(2)
+                .map(|c| [c[0], c[1]])
+                .collect::<Vec<_>>(),
+        )
+    } else {
+        None
+    };
+
+    let facevarying_uv_indices = if !raw.facevarying_uv_indices.is_null()
+        && raw.facevarying_uv_index_count > 0
+    {
+        let slice = unsafe {
+            std::slice::from_raw_parts(raw.facevarying_uv_indices, raw.facevarying_uv_index_count)
+        };
+        Some(slice.to_vec())
+    } else {
+        None
+    };
+
     UsdMeshData {
         path,
         vertices,
@@ -342,6 +368,8 @@ pub(crate) unsafe fn convert_mesh(raw: &UsdBridgeMeshDataRaw) -> UsdMeshData {
         crease_lengths,
         crease_sharpnesses,
         vertices_orig,
+        facevarying_uvs,
+        facevarying_uv_indices,
     }
 }
 
@@ -865,6 +893,10 @@ mod tests {
             crease_sharpness_count: 0,
             vertices_orig: ptr::null(),
             vertex_count_orig: 0,
+            facevarying_uvs: ptr::null(),
+            facevarying_uv_count: 0,
+            facevarying_uv_indices: ptr::null(),
+            facevarying_uv_index_count: 0,
         };
 
         let result = unsafe { convert_mesh(&raw) };
@@ -925,6 +957,10 @@ mod tests {
             crease_sharpness_count: 0,
             vertices_orig: ptr::null(),
             vertex_count_orig: 0,
+            facevarying_uvs: ptr::null(),
+            facevarying_uv_count: 0,
+            facevarying_uv_indices: ptr::null(),
+            facevarying_uv_index_count: 0,
         };
 
         let result = unsafe { convert_mesh(&raw) };
@@ -981,6 +1017,10 @@ mod tests {
             crease_sharpness_count: 0,
             vertices_orig: ptr::null(),
             vertex_count_orig: 0,
+            facevarying_uvs: ptr::null(),
+            facevarying_uv_count: 0,
+            facevarying_uv_indices: ptr::null(),
+            facevarying_uv_index_count: 0,
         };
 
         let result = unsafe { convert_mesh(&raw) };
@@ -1052,6 +1092,10 @@ mod tests {
             crease_sharpness_count: 2,
             vertices_orig: ptr::null(),
             vertex_count_orig: 0,
+            facevarying_uvs: ptr::null(),
+            facevarying_uv_count: 0,
+            facevarying_uv_indices: ptr::null(),
+            facevarying_uv_index_count: 0,
         };
 
         let result = unsafe { convert_mesh(&raw) };
@@ -1109,6 +1153,10 @@ mod tests {
             crease_sharpness_count: 0,
             vertices_orig: ptr::null(),
             vertex_count_orig: 0,
+            facevarying_uvs: ptr::null(),
+            facevarying_uv_count: 0,
+            facevarying_uv_indices: ptr::null(),
+            facevarying_uv_index_count: 0,
         };
 
         let result = unsafe { convert_mesh(&raw) };
@@ -1157,6 +1205,10 @@ mod tests {
             crease_sharpness_count: 0,
             vertices_orig: ptr::null(),
             vertex_count_orig: 0,
+            facevarying_uvs: ptr::null(),
+            facevarying_uv_count: 0,
+            facevarying_uv_indices: ptr::null(),
+            facevarying_uv_index_count: 0,
         };
         let result = unsafe { convert_mesh(&raw) };
         assert_eq!(result.subdivision_scheme, SubdivisionScheme::Loop);

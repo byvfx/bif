@@ -331,6 +331,8 @@ impl Renderer {
                 crease_indices: &si.crease_indices,
                 crease_lengths: &si.crease_lengths,
                 crease_sharpnesses: &si.crease_sharpnesses,
+                facevarying_uvs: si.facevarying_uvs.as_deref(),
+                facevarying_uv_indices: si.facevarying_uv_indices.as_deref(),
             });
 
             // For subdivision, use original shared positions instead of triangulated vertices

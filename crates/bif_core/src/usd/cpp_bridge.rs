@@ -194,6 +194,12 @@ pub struct UsdMeshData {
 
     /// Original vertex positions before UV seam splitting (for subdivision surfaces)
     pub vertices_orig: Option<Vec<Vec3>>,
+
+    /// FaceVarying UV values for subdivision surfaces (pre-split, for Embree topology)
+    pub facevarying_uvs: Option<Vec<[f32; 2]>>,
+
+    /// FaceVarying UV indices for subdivision surfaces (per face-vertex)
+    pub facevarying_uv_indices: Option<Vec<i32>>,
 }
 
 /// A USD prim attribute with name, type, and value.
@@ -953,6 +959,10 @@ impl UsdStage {
             crease_sharpness_count: 0,
             vertices_orig: ptr::null(),
             vertex_count_orig: 0,
+            facevarying_uvs: ptr::null(),
+            facevarying_uv_count: 0,
+            facevarying_uv_indices: ptr::null(),
+            facevarying_uv_index_count: 0,
         };
 
         let result = unsafe { usd_bridge_get_mesh(self.raw, index, &mut raw_data) };

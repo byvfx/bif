@@ -114,6 +114,11 @@ struct CachedMesh {
     std::vector<float> vertices_orig;
     size_t vertex_count_orig = 0;
 
+    // FaceVarying UV data for subdivision surfaces (pre-split, for Embree topology)
+    std::vector<float> facevarying_uvs;           // Unique UV values (u,v pairs)
+    std::vector<int32_t> facevarying_uv_indices;  // Per face-vertex UV indices
+    size_t facevarying_uv_count = 0;              // Number of unique UV positions
+
     // Crease data (for subdivision surfaces)
     std::vector<int32_t> crease_indices;
     std::vector<int32_t> crease_lengths;
@@ -886,6 +891,27 @@ static void extract_mesh_geometry(
 
         if (stPrimvar.Get(&uvs, timeCode)) {
             if (interpolation == UsdGeomTokens->faceVarying) {
+                // For subdiv meshes: preserve raw faceVarying UV data before the
+                // vertex split below (Embree needs the original topology).
+                if (is_subd) {
+                    cached.facevarying_uvs.reserve(uvs.size() * 2);
+                    for (const auto& uv : uvs) {
+                        cached.facevarying_uvs.push_back(uv[0]);
+                        cached.facevarying_uvs.push_back(uv[1]);
+                    }
+                    cached.facevarying_uv_count = uvs.size();
+
+                    if (hasIndices && !uvIndices.empty()) {
+                        cached.facevarying_uv_indices.assign(uvIndices.begin(), uvIndices.end());
+                    } else {
+                        // Unindexed: identity mapping (0, 1, 2, ...)
+                        cached.facevarying_uv_indices.resize(uvs.size());
+                        for (size_t i = 0; i < uvs.size(); ++i) {
+                            cached.facevarying_uv_indices[i] = static_cast<int32_t>(i);
+                        }
+                    }
+                }
+
                 // faceVarying: one UV per face-vertex. Split vertices at UV seams.
                 // Map (original_vertex, uv) -> new_vertex_index
                 struct PairHash {
@@ -2987,6 +3013,12 @@ UsdBridgeError usd_bridge_get_mesh(
     // Original positions before UV seam splitting (for subdivision Embree geometry)
     out_data->vertices_orig = mesh.vertices_orig.empty() ? nullptr : mesh.vertices_orig.data();
     out_data->vertex_count_orig = mesh.vertex_count_orig;
+
+    // FaceVarying UV data for subdivision surfaces
+    out_data->facevarying_uvs = mesh.facevarying_uvs.empty() ? nullptr : mesh.facevarying_uvs.data();
+    out_data->facevarying_uv_count = mesh.facevarying_uv_count;
+    out_data->facevarying_uv_indices = mesh.facevarying_uv_indices.empty() ? nullptr : mesh.facevarying_uv_indices.data();
+    out_data->facevarying_uv_index_count = mesh.facevarying_uv_indices.size();
 
     return USD_BRIDGE_SUCCESS;
 }

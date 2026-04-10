@@ -267,6 +267,8 @@ mod tests {
             crease_lengths: None,
             crease_sharpnesses: None,
             vertices_orig: None,
+            facevarying_uvs: None,
+            facevarying_uv_indices: None,
             display_color: None,
         }
     }

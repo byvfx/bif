@@ -34,6 +34,10 @@ pub struct SubdivInfo {
     pub crease_lengths: Vec<i32>,
     /// Crease sharpnesses (one per chain)
     pub crease_sharpnesses: Vec<f32>,
+    /// FaceVarying UV values (pre-split, for Embree faceVarying topology)
+    pub facevarying_uvs: Option<Vec<[f32; 2]>>,
+    /// FaceVarying UV indices (per face-vertex)
+    pub facevarying_uv_indices: Option<Vec<i32>>,
 }
 
 /// GPU-ready mesh data with vertices, indices, and bounds.
@@ -548,6 +552,8 @@ impl MeshData {
                         crease_indices: mesh.crease_indices.clone().unwrap_or_default(),
                         crease_lengths: mesh.crease_lengths.clone().unwrap_or_default(),
                         crease_sharpnesses: mesh.crease_sharpnesses.clone().unwrap_or_default(),
+                        facevarying_uvs: mesh.facevarying_uvs.clone(),
+                        facevarying_uv_indices: mesh.facevarying_uv_indices.clone(),
                     })
                 }
                 _ => {
@@ -697,6 +703,8 @@ impl MeshData {
                             crease_indices: mesh.crease_indices.clone().unwrap_or_default(),
                             crease_lengths: mesh.crease_lengths.clone().unwrap_or_default(),
                             crease_sharpnesses: mesh.crease_sharpnesses.clone().unwrap_or_default(),
+                            facevarying_uvs: mesh.facevarying_uvs.clone(),
+                            facevarying_uv_indices: mesh.facevarying_uv_indices.clone(),
                         })
                     }
                     _ => None,

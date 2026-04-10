@@ -78,6 +78,10 @@ pub(crate) struct UsdBridgeMeshDataRaw {
     pub(crate) crease_sharpness_count: usize,
     pub(crate) vertices_orig: *const f32,
     pub(crate) vertex_count_orig: usize,
+    pub(crate) facevarying_uvs: *const f32,
+    pub(crate) facevarying_uv_count: usize,
+    pub(crate) facevarying_uv_indices: *const i32,
+    pub(crate) facevarying_uv_index_count: usize,
 }
 
 /// Prim attribute data from C API (returned by usd_bridge_get_prim_attributes)

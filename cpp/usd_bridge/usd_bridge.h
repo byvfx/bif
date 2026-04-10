@@ -425,6 +425,13 @@ typedef struct UsdBridgeMeshData {
     /// NULL if no UV splitting occurred or subdivisionScheme is "none"
     const float* vertices_orig;
     size_t vertex_count_orig;
+
+    /// FaceVarying UV data for subdivision surfaces (pre-split, for Embree topology)
+    /// NULL if UVs are per-vertex or mesh is not a subdivision surface
+    const float* facevarying_uvs;          ///< Unique UV values (u,v pairs)
+    size_t facevarying_uv_count;           ///< Number of unique UV positions
+    const int32_t* facevarying_uv_indices; ///< Per face-vertex UV indices
+    size_t facevarying_uv_index_count;     ///< Count (= sum of face_vertex_counts)
 } UsdBridgeMeshData;
 
 /// Get mesh data by index.

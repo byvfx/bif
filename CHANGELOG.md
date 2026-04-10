@@ -33,6 +33,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **Subdiv faceVarying UVs** — Full pipeline: C++ bridge preserves raw faceVarying UV data before vertex split, flows through FFI to Embree which sets up dual topology (vertex + faceVarying) via `rtcSetGeometryTopologyCount`/`rtcSetGeometryVertexAttributeTopology`. Fixes broken textures on subdivision surfaces.
 - **Houdini DomeLight_1 not detected** — C++ bridge now checks `UsdLuxDomeLight_1` (new USD Lux schema). Attribute lookup tries `inputs:texture:file` first (new schema), falls back to `texture:file` (old schema).
 - **UsdStage thread-safety soundness hole** — removed `unsafe impl Sync for UsdStage`, wrapped in `Arc<Mutex<UsdStage>>` across 10 files. Prevents potential data races from concurrent C++ stage access (set_variant_selection mutates through `&self`). Batch render and animation paths lock before each FFI call.
 - **Deadlock in handle_prim_selected** — stage_guard held lock, then re-locked same non-reentrant Mutex. Now reuses existing guard.

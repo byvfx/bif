@@ -55,6 +55,12 @@ pub struct Mesh {
     /// Original vertex positions before UV seam splitting (for subdivision Embree geometry)
     pub vertices_orig: Option<Vec<Vec3>>,
 
+    /// FaceVarying UV values for subdivision surfaces (pre-split, for Embree topology)
+    pub facevarying_uvs: Option<Vec<[f32; 2]>>,
+
+    /// FaceVarying UV indices for subdivision surfaces (per face-vertex)
+    pub facevarying_uv_indices: Option<Vec<i32>>,
+
     /// Display color (primvars:displayColor — per-vertex or single color, fallback when no material)
     pub display_color: Option<Vec<Vec3>>,
 }
@@ -80,6 +86,8 @@ impl Mesh {
             crease_lengths: None,
             crease_sharpnesses: None,
             vertices_orig: None,
+            facevarying_uvs: None,
+            facevarying_uv_indices: None,
             display_color: None,
         }
     }
@@ -106,6 +114,8 @@ impl Mesh {
             crease_lengths: None,
             crease_sharpnesses: None,
             vertices_orig: None,
+            facevarying_uvs: None,
+            facevarying_uv_indices: None,
             display_color: None,
         }
     }
@@ -133,6 +143,8 @@ impl Mesh {
             crease_lengths: None,
             crease_sharpnesses: None,
             vertices_orig: None,
+            facevarying_uvs: None,
+            facevarying_uv_indices: None,
             display_color: None,
         }
     }
