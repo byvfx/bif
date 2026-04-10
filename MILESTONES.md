@@ -13,6 +13,7 @@ Roadmap organized by semantic version. Each release is testable, demoable, and g
 | v0.1.0 | Initial Release | 2026-03-12 | Viewport, instancing, USD C++, Embree, materials, MaterialX, animation, batch render, node graph, scatter, SHARC cache, OIDN denoising |
 | v0.11.0 | Ivar Cache | 2026-03-13 | Ivar material cache + pre-warm, Embree indexed geometry |
 | v0.12.0 | USD Export | 2026-03-21 | USD export pipeline, OpenPBR migration, subsystem extraction, curves/points import, UDIM atlas |
+| v0.13.0 | Pipeline Foundation | 2026-04-09 | M29.5 UI overhaul, M30 persistence + eval modes, M31 per-node viz, subdiv + CPU displacement, faceVarying UVs, native MaterialX displacement, DomeLight_1, SceneQuery trait, Embree feature gate |
 
 ---
 
@@ -20,7 +21,6 @@ Roadmap organized by semantic version. Each release is testable, demoable, and g
 
 | Version | Theme | Est. Hours | Key Milestones |
 |---------|-------|-----------|----------------|
-| **v0.13.0** | **Pipeline Foundation** | — | M29.5, M30, M31, subdiv, displacement *(in progress)* |
 | v0.13.5 | UsdSkel Import | 20-30h | Skeleton eval, skinning, bind pose + anim playback |
 | v0.14.0 | Layer-Aware Stage | 35-50h | M32, M33 + workflow Phase 1 |
 | v0.15.0 | Qt Migration | 50-60h | M28 (T-layout, command palette, theme) |
@@ -38,15 +38,6 @@ Roadmap organized by semantic version. Each release is testable, demoable, and g
 **Total estimated:** ~418-564h remaining to 1.0
 
 ---
-
-### v0.13.0 — Pipeline Foundation *(in progress)*
-
-M29.5 (UI overhaul), M30 (persistence + eval modes), M31 (per-node viz), unreleased perf fixes. **Last egui feature release.** Ship current work.
-
-- Subdivision surfaces: crease indices/lengths/sharpnesses, corner sharpnesses, interpolateBoundary, faceVaryingLinearInterpolation
-- OpenSubdiv evaluation (CPU-side, limit surface tessellation for catmullClark/loop/bilinear meshes)
-- Displacement mapping: UsdPreviewSurface `displacement` input → vertex displacement along normals
-- **Validation**: Load subdivided mesh from Houdini, verify smooth surface matches usdview; displacement visible on dense mesh
 
 ### v0.13.5 — UsdSkel Import
 

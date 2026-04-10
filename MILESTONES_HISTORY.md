@@ -926,6 +926,27 @@ Complete history of BIF development milestones. For the current roadmap, see [MI
 
 ---
 
+## v0.13.0 Release: Pipeline Foundation ✅
+
+- **Released:** 2026-04-09
+- **Theme:** Last egui feature release — ship current work before Qt migration
+- **Rolls up:** M29.5 (UI overhaul), M30 (persistence + eval modes), M31 (per-node viz)
+- **Additional work beyond milestones:**
+  - **Subdivision surfaces** — Embree 4 Catmull-Clark with smooth limit-surface normals via `rtcInterpolate`, crease data pipeline, `vertices_orig` FFI for pre-UV-split positions
+  - **FaceVarying UV support** — C++ bridge preserves raw faceVarying UVs before vertex split, Embree dual topology (`rtcSetGeometryTopologyCount`, `rtcSetGeometryVertexAttributeTopology`) fixes broken subdiv texturing
+  - **CPU vertex displacement** — `displacement.rs` heightmap sampling along normals, works in viewport + Ivar
+  - **Native MaterialX displacement** — 3-tier extraction via `GetDisplacementOutput()` walking `ND_displacement_float/vector3` nodes
+  - **DomeLight_1 schema** — fix for Houdini 20+ dome light detection
+  - **SceneQuery trait** — read-only query API decoupling viewport from `Scene` field layout (v0.14.0 LayerAwareScene readiness)
+  - **Dispatch split** — `render_dispatch.rs`, `selection_dispatch.rs`, `project_dispatch.rs` from monolithic `dispatch_events()`
+  - **UsdStage thread-safety** — removed `unsafe impl Sync`, wrapped in `Arc<Mutex<UsdStage>>`
+  - **Embree feature gate** — `bif_renderer --no-default-features` compiles, Linux CI expanded
+  - **Obsidian wiki** — 42-article knowledge base vault
+- **Test count:** 530+ across all crates
+- **Devlog span:** 2026-03-22 through 2026-04-09
+
+---
+
 ## Summary Statistics (as of M19.4)
 
 | Metric | Value |
@@ -1017,5 +1038,5 @@ These are the original principles used during development, before the semver tra
 
 ---
 
-**Last Updated:** March 27, 2026
-**Milestones Archived:** M0 through M31, plus Freeze Fix, M26, M26.1
+**Last Updated:** April 9, 2026
+**Milestones Archived:** M0 through M31, plus Freeze Fix, M26, M26.1, v0.13.0 Pipeline Foundation

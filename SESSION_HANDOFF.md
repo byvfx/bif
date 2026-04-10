@@ -1,7 +1,7 @@
-# Session Handoff - April 6, 2026
+# Session Handoff - April 9, 2026
 
-**Last Updated:** Identity rebrand + D:→G: migration
-**Current Version:** v0.13.0-dev (Open Any USD Scene)
+**Last Updated:** v0.13.0 SHIPPED
+**Current Version:** v0.13.0 released → v0.13.5-dev
 **Project:** BIF - USD Orchestration Tool for VFX
 
 ---
@@ -10,10 +10,10 @@
 
 | Status | Details |
 |--------|---------|
-| Released | v0.1.0, v0.11.0, v0.12.0 |
-| Current | v0.13.0-dev — Phase 1-2 done, Phase 3 in progress |
-| Next | Dome light bug, native MaterialX displacement, Embree dicing, curves in Ivar, OpenVDB |
-| Tests | 530 total across all crates (14 new displacement, 111 renderer pass, 6 pre-existing HDRI failures) |
+| Released | v0.1.0, v0.11.0, v0.12.0, **v0.13.0 (2026-04-09)** |
+| Current | v0.13.5-dev — UsdSkel import planning |
+| Next | v0.13.5 UsdSkel, then v0.14.0 Layer-Aware Stage (M32/M33, SdfLayer FFI, opinion inspector) |
+| Tests | 530+ total across all crates (6 pre-existing HDRI failures unrelated) |
 | Performance | 60 FPS viewport, 100K instances with LOD, Ivar build ~185ms |
 
 ---
@@ -193,6 +193,6 @@ egui UI overhaul — centralized theme, panel restructure, property inspector, m
 
 ## Next Steps
 
-1. **v0.13.0 release** — final validation, version bump, ship current work
-2. **v0.14.0 planning** — USD composition inspector + opinion trace (M32, M33)
-3. **v0.15.0 research** — Qt 6 Rust bindings evaluation (cxx, ritual, qt-build-utils)
+1. **v0.13.5 (UsdSkel Import)** — C++ bridge: UsdSkelCache, skeleton topology, skin weights, CPU LBS, blend shapes
+2. **v0.14.0 planning** — USD composition inspector + opinion trace (M32, M33), SdfLayer FFI, LayerAwareScene
+3. **v0.15.0 research** — Qt 6 Rust bindings evaluation (cxx-qt decided, eval qt-build-utils)
