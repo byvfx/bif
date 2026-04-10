@@ -755,9 +755,36 @@ impl EmbreeScene {
                 // UV attribute for subdivision surfaces.
                 // FaceVarying UVs use a separate topology (topology 1) with their own index buffer.
                 // Per-vertex UVs use the default topology (topology 0).
-                if let (Some(fv_uvs), Some(fv_indices)) =
-                    (sd.facevarying_uvs, sd.facevarying_uv_indices)
-                {
+                let fv_valid = match (sd.facevarying_uvs, sd.facevarying_uv_indices) {
+                    (Some(fv_uvs), Some(fv_indices)) => {
+                        // Validate: count must match polygon_indices and all indices must be
+                        // non-negative and in bounds of the UV array.
+                        let uv_count = fv_uvs.len();
+                        let count_ok = fv_indices.len() == sd.polygon_indices.len();
+                        let bounds_ok = fv_indices
+                            .iter()
+                            .all(|&i| i >= 0 && (i as usize) < uv_count);
+                        if !count_ok {
+                            log::warn!(
+                                "Subdiv faceVarying UVs disabled: index count {} != polygon_indices count {}",
+                                fv_indices.len(),
+                                sd.polygon_indices.len()
+                            );
+                        }
+                        if !bounds_ok {
+                            log::warn!(
+                                "Subdiv faceVarying UVs disabled: found negative or out-of-bounds indices (uv_count={})",
+                                uv_count
+                            );
+                        }
+                        count_ok && bounds_ok
+                    }
+                    _ => false,
+                };
+
+                if fv_valid {
+                    let fv_uvs = sd.facevarying_uvs.unwrap();
+                    let fv_indices = sd.facevarying_uv_indices.unwrap();
                     // FaceVarying topology: topology 0 = vertex, topology 1 = faceVarying
                     _subd_uv_data = fv_uvs.to_vec();
                     _subd_fv_uv_indices = fv_indices.iter().map(|&i| i as u32).collect();

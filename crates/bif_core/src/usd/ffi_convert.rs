@@ -321,9 +321,11 @@ pub(crate) unsafe fn convert_mesh(raw: &UsdBridgeMeshDataRaw) -> UsdMeshData {
 
     // FaceVarying UV data for subdivision surfaces
     let facevarying_uvs = if !raw.facevarying_uvs.is_null() && raw.facevarying_uv_count > 0 {
-        let slice = unsafe {
-            std::slice::from_raw_parts(raw.facevarying_uvs, raw.facevarying_uv_count * 2)
-        };
+        let float_count = raw
+            .facevarying_uv_count
+            .checked_mul(2)
+            .expect("facevarying_uv_count overflow");
+        let slice = unsafe { std::slice::from_raw_parts(raw.facevarying_uvs, float_count) };
         Some(
             slice
                 .chunks_exact(2)

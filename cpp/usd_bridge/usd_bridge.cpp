@@ -1879,12 +1879,9 @@ static void extract_materialx_properties(const UsdShadeShader& shader, CachedMat
         cached.normal_texture = get_materialx_texture_path(input);
     }
 
-    // displacement — surface shader may have a displacement input directly
-    input = shader.GetInput(TfToken("displacement"));
-    if (input) {
-        resolve_mtlx_input(input, &cached.displacement_scale);
-        cached.displacement_texture = get_materialx_texture_path(input);
-    }
+    // Note: displacement is NOT a surface shader input in MaterialX standard_surface/OpenPBR.
+    // Native MaterialX displacement lives on the Material as a separate displacementshader
+    // output, which is handled via material.GetDisplacementOutput() in cache_material_data().
 }
 
 /// Cache all material data from the stage
@@ -2060,6 +2057,17 @@ static void cache_material_data(UsdBridgeStage* bridge) {
                         if (!disp_prim) continue;
                         UsdShadeShader disp_shader(disp_prim);
                         if (!disp_shader) continue;
+
+                        // Diagnostic: log node def ID. Downstream displacement.rs only handles
+                        // scalar heightmaps, so warn if we encounter the vector3 variant.
+                        TfToken node_id;
+                        disp_shader.GetIdAttr().Get(&node_id);
+                        if (node_id == TfToken("ND_displacement_vector3")) {
+                            std::cerr << "[USD_BRIDGE] WARNING: Material " << mat_path
+                                      << " uses ND_displacement_vector3 (vector displacement). "
+                                      << "BIF currently only supports scalar heightmap displacement — "
+                                      << "result may be incorrect." << std::endl;
+                        }
 
                         // Extract scale from the displacement node
                         UsdShadeInput scale_in = disp_shader.GetInput(TfToken("scale"));
@@ -2469,12 +2477,12 @@ static void cache_mesh_primvars(UsdBridgeStage* bridge) {
 // then inputs:-prefixed (new schema). Returns true if value was read.
 template<typename T>
 static bool get_light_attr(const UsdPrim& prim, const char* name, T& value) {
-    // Try non-prefixed first (old schema, e.g. ALab)
-    UsdAttribute attr = prim.GetAttribute(TfToken(name));
-    if (attr && attr.IsAuthored() && attr.Get(&value)) return true;
-    // Fall back to inputs: prefix (new schema)
+    // Try inputs: prefix first (new schema, USD 21.11+, Houdini 20+ default)
     std::string inputsName = std::string("inputs:") + name;
-    attr = prim.GetAttribute(TfToken(inputsName));
+    UsdAttribute attr = prim.GetAttribute(TfToken(inputsName));
+    if (attr && attr.IsAuthored() && attr.Get(&value)) return true;
+    // Fall back to non-prefixed (legacy schema, e.g. ALab)
+    attr = prim.GetAttribute(TfToken(name));
     if (attr && attr.Get(&value)) return true;
     return false;
 }
