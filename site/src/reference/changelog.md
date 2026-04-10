@@ -33,6 +33,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **Code review hardening (v0.13.0 ship prep)** — Validated faceVarying UV indices (count match, non-negative, in-bounds) with fallback to per-vertex path. Removed misleading top-level `displacement` input check in `extract_materialx_properties()` that could clobber scale on standard_surface materials. Added `checked_mul` overflow guard in FFI conversion. Added `ND_displacement_vector3` diagnostic warning (downstream only handles scalar). Flipped `get_light_attr` lookup order to try `inputs:` prefix first (new schema default).
 - **Subdiv faceVarying UVs** — Full pipeline: C++ bridge preserves raw faceVarying UV data before vertex split, flows through FFI to Embree which sets up dual topology (vertex + faceVarying) via `rtcSetGeometryTopologyCount`/`rtcSetGeometryVertexAttributeTopology`. Fixes broken textures on subdivision surfaces.
 - **Houdini DomeLight_1 not detected** — C++ bridge now checks `UsdLuxDomeLight_1` (new USD Lux schema). Attribute lookup tries `inputs:texture:file` first (new schema), falls back to `texture:file` (old schema).
 - **UsdStage thread-safety soundness hole** — removed `unsafe impl Sync for UsdStage`, wrapped in `Arc<Mutex<UsdStage>>` across 10 files. Prevents potential data races from concurrent C++ stage access (set_variant_selection mutates through `&self`). Batch render and animation paths lock before each FFI call.
