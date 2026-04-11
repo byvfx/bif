@@ -1,0 +1,7 @@
+V1    2019/04/10   Initial version, HumanFemale
+V2    2020/01/07   Added blend shapes for HumanFemale facial animation
+V3    2020/01/27   Fixed behavior when HumanFemale is unloaded
+V4    2020/09/08   Eliminated deprecation warnings by applying 
+                   UsdSkelBindingsAPI on all needful prims.
+V5    2020/09/08   Updated relevant prims having material:binding relationship
+                   to apply MaterialBindingAPI schema
