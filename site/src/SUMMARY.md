@@ -22,6 +22,9 @@
 # Dev Diary
 
 - [April 2026]()
+  - [BIF v0.13.5 Announcement — LinkedIn + Instagram](devlog/2026-04/v0.13.5_announcement.md)
+  - [BIF v0.13.0 Announcement — LinkedIn + Instagram](devlog/2026-04/v0.13.0_announcement.md)
+  - [2026-04-11](devlog/2026-04/DEVLOG_2026-04-11.md)
   - [2026-04-10](devlog/2026-04/DEVLOG_2026-04-10.md)
   - [2026-04-09](devlog/2026-04/DEVLOG_2026-04-09.md)
   - [2026-04-08](devlog/2026-04/DEVLOG_2026-04-08.md)

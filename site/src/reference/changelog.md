@@ -6,6 +6,15 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Architecture refactor campaign closed** — `ARCHITECTURE_REFACTORS.md` and `ARCHITECTURE_REVIEW.md` updated to reflect that all 5 phases (FFI split, cross-platform, node graph eval engine, scene pipeline, renderer hub decomposition) and 7 of 8 prioritized review items have shipped across v0.13.0 → v0.13.5. §10 table now carries a Status column with commit references. `scene_loader.rs` shrinkage logged as a deferred Phase 4.5 follow-up pending v0.14.0 layer-aware rewrite.
+- **Node graph extension checklist** — `wiki/architecture/node-graph-system.md` now has a concrete 10-step "Adding a New Node Type" reference card covering the eval engine wiring, persistence round-trip, and `node_dispatch.rs` event handler.
+
+### Fixed
+
+- **`persistence.rs` path-relativization tests now cross-platform** — `path_relativization_*` tests used to hardcode `D:\\projects\\...` literals. Rewrote with `#[cfg(windows)]` / `#[cfg(not(windows))]` constants so the tests exercise the same logic on both targets. `sample_project()` `file_path` dropped its `D:\\` prefix (round-trip serde test doesn't hit the filesystem).
+
 ## [0.13.5] - 2026-04-10
 
 ### Added
