@@ -446,7 +446,8 @@ mod tests {
         let read_id = graph.insert_node(
             egui::pos2(100.0, 200.0),
             SceneNode::UsdRead {
-                file_path: "D:\\projects\\scene.usda".into(),
+                // Relative literal — round-trip serde test doesn't touch the filesystem.
+                file_path: "scene.usda".into(),
                 is_loaded: true,
                 error: None,
             },
@@ -529,24 +530,46 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    // Platform-appropriate absolute paths for path-relativization tests.
+    // `Path::components()` is separator-sensitive, so Windows tests use `D:\\...`
+    // and Unix tests use `/...`. The tests below exercise string manipulation
+    // only — no filesystem I/O — so we just swap the literals per target.
+    #[cfg(windows)]
+    const TEST_BASE: &str = "D:\\projects\\my_scene";
+    #[cfg(windows)]
+    const TEST_ABS_CHILD: &str = "D:\\projects\\my_scene\\assets\\model.usda";
+    #[cfg(windows)]
+    const TEST_EXPECTED_REL: &str = "assets\\model.usda";
+    #[cfg(windows)]
+    const TEST_ABS_SIBLING: &str = "D:\\projects\\shared\\textures\\env.hdr";
+    #[cfg(windows)]
+    const TEST_BASE_SHORT: &str = "D:\\projects";
+
+    #[cfg(not(windows))]
+    const TEST_BASE: &str = "/projects/my_scene";
+    #[cfg(not(windows))]
+    const TEST_ABS_CHILD: &str = "/projects/my_scene/assets/model.usda";
+    #[cfg(not(windows))]
+    const TEST_EXPECTED_REL: &str = "assets/model.usda";
+    #[cfg(not(windows))]
+    const TEST_ABS_SIBLING: &str = "/projects/shared/textures/env.hdr";
+    #[cfg(not(windows))]
+    const TEST_BASE_SHORT: &str = "/projects";
+
     #[test]
     fn path_relativization_round_trip() {
-        let base = Path::new("D:\\projects\\my_scene");
-        let abs = "D:\\projects\\my_scene\\assets\\model.usda";
-
-        let rel = make_relative(abs, base);
-        assert_eq!(rel, "assets\\model.usda");
+        let base = Path::new(TEST_BASE);
+        let rel = make_relative(TEST_ABS_CHILD, base);
+        assert_eq!(rel, TEST_EXPECTED_REL);
 
         let back = make_absolute(&rel, base);
-        assert_eq!(back, "D:\\projects\\my_scene\\assets\\model.usda");
+        assert_eq!(back, TEST_ABS_CHILD);
     }
 
     #[test]
     fn path_relativization_parent_dir() {
-        let base = Path::new("D:\\projects\\my_scene");
-        let abs = "D:\\projects\\shared\\textures\\env.hdr";
-
-        let rel = make_relative(abs, base);
+        let base = Path::new(TEST_BASE);
+        let rel = make_relative(TEST_ABS_SIBLING, base);
         assert!(rel.contains(".."), "should have .. for parent: {}", rel);
 
         let back = make_absolute(&rel, base);
@@ -556,7 +579,7 @@ mod tests {
 
     #[test]
     fn path_relativization_empty() {
-        let base = Path::new("D:\\projects");
+        let base = Path::new(TEST_BASE_SHORT);
         assert_eq!(make_relative("", base), "");
         assert_eq!(make_absolute("", base), "");
     }

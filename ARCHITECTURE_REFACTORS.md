@@ -3,8 +3,9 @@
 Architectural deepening plan for testability, cross-platform support, and alignment with the USD editor workflow (`BIF_USD_WORKFLOW.md`).
 
 **Created:** 2026-03-28
-**Status:** Approved, Phase 1 complete
-**Estimated:** 13-18 weeks at 10-20 hrs/week (~45-65 new tests)
+**Closed:** 2026-04-11
+**Status:** Complete — all 5 phases landed v0.13.0 → v0.13.5. This doc is now an archive; commit refs inline below.
+**Result:** ~79 new tests (44 ffi_convert + 19 eval + 16 scene_pipeline), 4 dispatch files, typed sub-structs, Linux CI job, Arc<Mutex<UsdStage>>.
 
 ---
 
@@ -51,9 +52,10 @@ bif_viewer (depends on bif_viewport + bif_core + bif_math)
 
 ## Phase 1: C++ FFI Bridge Split
 
-- **Status:** Complete (ffi_raw.rs, ffi_convert.rs, cpp_bridge.rs — 44 tests in ffi_convert)
+- **Status:** Complete — commits `7ae09e5` (split) + `5a4b890` (wire UsdStage methods through ffi_convert, -863 LOC inline conversion)
+- **Result:** `ffi_raw.rs` 942 LOC (repr(C) + extern "C"), `ffi_convert.rs` 2118 LOC (pure Rust conversion, **44 tests**), `cpp_bridge.rs` 3177 LOC (UsdStage wrapper, slimmed)
 - **Scope:** Medium (2-3 weeks)
-- **Target Tests:** 15-20
+- **Target Tests:** 15-20 — exceeded (44)
 
 ### Problem
 
@@ -108,7 +110,8 @@ Low. Pure mechanical refactoring. No API changes. Public types unchanged. Rollba
 
 ## Phase 2: Cross-Platform / Linux Foundation
 
-- **Status:** Not started
+- **Status:** Complete — commits `76f751b` (foundation), `f575a6c` (Embree gate for Linux CI)
+- **Result:** `build.rs` uses `cmake_generator_args()` + `vcpkg_fallback_paths()` with `cfg!(windows)` branches (triplets: `x64-windows` / Linux / `x64-osx`); `setup_usd_env.sh` mirrors the PowerShell script; `.github/workflows/ci.yml` has a `check-linux` job on `ubuntu-latest`; `main.rs:796` `process::exit(0)` guarded with `#[cfg(windows)]` (DLL teardown deadlock workaround, Linux/macOS clean up naturally); Embree feature-gated off Linux builds.
 - **Scope:** Medium-Large (3-4 weeks)
 - **Depends on:** Phase 1 (build.rs is in bif_core)
 
@@ -148,9 +151,10 @@ Medium. Build system changes are finicky. OIIO bridge section (build.rs:252-397)
 
 ## Phase 3: Node Graph Eval Engine
 
-- **Status:** Not started
+- **Status:** Complete — commit `21235b9` (add eval engine), `4e7037b` (changelog/devlog)
+- **Result:** `crates/bif_viewport/src/node_graph/eval.rs` — 725 LOC, **19 tests**. Pure compute logic decoupled from egui. `EvalCommand` enum + `evaluate_dirty_nodes()` + `topological_order()`. Tests create `Snarl<SceneNode>` directly without an egui context.
 - **Scope:** Medium (2-3 weeks)
-- **Target Tests:** 10-15
+- **Target Tests:** 10-15 — exceeded (19)
 
 ### Problem
 
@@ -220,9 +224,10 @@ Medium. Auto-compute logic in viewer.rs is interleaved with UI rendering. Must c
 
 ## Phase 4: Scene Loading Pipeline
 
-- **Status:** Not started
+- **Status:** Complete — commit `c5b62a2` (add scene_pipeline.rs)
+- **Result:** `crates/bif_viewport/src/scene_pipeline.rs` — 585 LOC, **16 tests**. Pure scene computation (no GPU, no Renderer). Note: `scene_loader.rs` did **not** shrink (2035 → 2413 LOC) — the pipeline layer is **additive**. The loader still owns GPU buffer uploads, Embree scene construction, and texture pipeline orchestration. This is intentional: pure-compute split is the testable surface; GPU upload is the untestable one. See Phase 4.5 (follow-up) below.
 - **Scope:** Large (3-4 weeks)
-- **Target Tests:** 15-20
+- **Target Tests:** 15-20 — met (16)
 
 ### Problem
 
@@ -288,11 +293,22 @@ Medium-High. `reload_working_scene()` reads from `self.nodes.*` maps. Exact para
 
 ---
 
+## Phase 4.5: scene_loader.rs Shrinkage (Follow-up)
+
+- **Status:** Deferred
+- **Observation:** After Phase 4 landed, `scene_loader.rs` grew from 2035 → 2413 LOC rather than shrinking. `scene_pipeline.rs` was added as the pure-compute layer, but the loader still owns finalize_usd_scene (180+ lines), GPU buffer creation, material table upload, Embree scene construction, texture orchestration, and the async load finalizer.
+- **Scope:** Audit `scene_loader.rs` for code that could move into `scene_pipeline.rs` (or a sibling pure-compute module). Specifically: anything that doesn't touch `wgpu::Device`, `wgpu::Queue`, or Embree.
+- **Trigger to resume:** When v0.14.0 layer-aware work starts modifying `finalize_usd_scene()` for PayloadPolicy / layer isolation. That rewrite creates a natural moment to re-slice the file.
+- **Risk of doing it now:** Medium — requires disentangling the render hot path from the loader. No immediate payoff.
+
+---
+
 ## Phase 5: Renderer Hub Decomposition
 
-- **Status:** Not started
+- **Status:** Complete — commit `7a95329` (sub-struct extraction), `6b0440b` (split dispatch_events), `d3d8f79` (extract handle_node_graph_event)
+- **Result:** `Renderer` struct now holds typed containers: `GpuContext`, `IvarContext`, `SceneManager`, `SelectionManager`, `NodeGraphContext`, `EnvironmentManager`, `LightsManager`, `CullingManager`, `MultiDrawState`, `EventBus`, `TimelineState`, `DisplaySettings`, `ProjectState`, `UiLayout`. Direct pub fields down from 99 → ~12 top-level. Dispatch split into `render_dispatch.rs` (44 LOC, thin router), `node_dispatch.rs` (798 LOC, was 726-line inline match), `selection_dispatch.rs` (258 LOC), `project_dispatch.rs` (45 LOC). `render.rs:1025 fn dispatch_events` is now a dumb router.
 - **Scope:** Large (3-4 weeks)
-- **Target Tests:** 5-10
+- **Target Tests:** 5-10 — not directly tested; self-borrow conflicts resolved as side effect
 - **Depends on:** Phases 3 + 4
 
 ### Problem

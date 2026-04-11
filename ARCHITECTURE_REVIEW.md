@@ -1,6 +1,8 @@
 # BIF Architecture Review
 
 **Date:** 2026-03-15
+**Closed:** 2026-04-11
+**Status:** Archived — 7 of 8 prioritized items shipped, #4 (node graph extension checklist) moved to `wiki/architecture/node-graph-system.md`. See §10 Status column and section callouts for commit refs.
 **Scope:** Full codebase, all 6 crates, ~35K lines of Rust + C++ bridge
 **Goal:** Identify structural issues, rank by impact/effort, suggest pragmatic improvements
 
@@ -28,6 +30,8 @@ depends on layers below it. This is the most important thing to preserve.
 ---
 
 ## 2. The Renderer God Object
+
+> **Update 2026-04-11 — RESOLVED.** Sub-structs extracted in commit `7a95329`: `GpuContext`, `IvarContext`, `SceneManager`, `SelectionManager`, `NodeGraphContext`, `EnvironmentManager`, `LightsManager`, `CullingManager`, `MultiDrawState`, `EventBus`, `TimelineState`, `DisplaySettings`, `ProjectState`. Dispatch logic split across `node_dispatch.rs` / `selection_dispatch.rs` / `project_dispatch.rs` / `render_dispatch.rs` (commits `6b0440b`, `d3d8f79`). Direct pub fields collapsed from 99 → ~12 top-level. Self-borrow conflicts resolved as a side effect; `StatsPanelParams` stayed as a one-off (see §12 Q4). Section below preserved for historical context.
 
 ### Diagnosis
 
@@ -140,6 +144,8 @@ enum is the right call for the next 6-12 months.
 ---
 
 ## 4. USD/C++ Bridge
+
+> **Update 2026-04-11 — RESOLVED.** `unsafe impl Sync for UsdStage` removed in commit `3338f26`; `UsdStage` now wraps in `Arc<Mutex<UsdStage>>` at every shared callsite (~20 callsites across 10 files). Only `unsafe impl Send for UsdStage` / `unsafe impl Send for UsdEditLayer` remain, which is sound because ownership transfer is explicit. `cpp_bridge.rs` itself split into `ffi_raw.rs` / `ffi_convert.rs` / `cpp_bridge.rs` via Phase 1 (`7ae09e5`, `5a4b890`) — see `ARCHITECTURE_REFACTORS.md`.
 
 ### Safety Analysis
 
@@ -307,6 +313,8 @@ all at once.
 
 ## 9. Inter-Crate Boundary Issues
 
+> **Update 2026-04-11 — RESOLVED.** `SceneQuery` trait added in commit `d46f6ae` (`crates/bif_core/src/scene_query.rs` — `trait SceneQuery` + `impl SceneQuery for Scene`, 7 consumer callsites), already in use for the MaterialX displacement viewport migration (commit `d1a8599`). `bif_math` re-exports removed from `bif_renderer` in commit `7a95329` — downstream crates now import `Vec3` / `Aabb` / `Interval` directly from `bif_math`.
+
 ### bif_viewport depends on too many bif_core internals
 
 The viewport directly accesses `bif_core::Scene` fields, `UsdStage` methods,
@@ -330,16 +338,16 @@ directly.
 
 ## 10. Prioritized Recommendations
 
-| # | Item | Effort | Impact | When |
-|---|------|--------|--------|------|
-| 1 | Extract Renderer sub-structs (GpuContext, SceneState, etc.) | 4-6 hrs | High -- unblocks future features, fixes borrow fights | Before M30 |
-| 2 | Fix `unsafe impl Sync for UsdStage` -- use Mutex | 2-3 hrs | Medium -- prevents subtle threading bugs | Next session |
-| 3 | Extract pure logic from scene_loader.rs for testing | 3-4 hrs | Medium -- catches data bugs in loading pipeline | Opportunistic |
-| 4 | Document node graph extension checklist | 30 min | Low -- reduces friction for new nodes | Before next node type |
-| 5 | Remove bif_math re-exports from bif_renderer | 30 min | Low -- reduces import confusion | Anytime |
-| 6 | Add `SceneQuery` API for M32 opinion trace | 4-6 hrs | High for M32 | During M32 planning |
-| 7 | Convert DenoiseError to thiserror | 15 min | Low -- consistency | Anytime |
-| 8 | Add graph evaluation pass alongside dirty propagation | 3-4 hrs | Medium -- needed for >15 nodes | Before M31 per-node viz |
+| # | Item | Effort | Impact | When | Status |
+|---|------|--------|--------|------|--------|
+| 1 | Extract Renderer sub-structs (GpuContext, SceneState, etc.) | 4-6 hrs | High -- unblocks future features, fixes borrow fights | Before M30 | ✅ Done (`7a95329`) |
+| 2 | Fix `unsafe impl Sync for UsdStage` -- use Mutex | 2-3 hrs | Medium -- prevents subtle threading bugs | Next session | ✅ Done (`3338f26`) |
+| 3 | Extract pure logic from scene_loader.rs for testing | 3-4 hrs | Medium -- catches data bugs in loading pipeline | Opportunistic | ✅ Done (`c5b62a2` — `scene_pipeline.rs`, 16 tests; loader shrinkage deferred as Phase 4.5) |
+| 4 | Document node graph extension checklist | 30 min | Low -- reduces friction for new nodes | Before next node type | ✅ Done (`wiki/architecture/node-graph-system.md`) |
+| 5 | Remove bif_math re-exports from bif_renderer | 30 min | Low -- reduces import confusion | Anytime | ✅ Done (`7a95329`) |
+| 6 | Add `SceneQuery` API for M32 opinion trace | 4-6 hrs | High for M32 | During M32 planning | ✅ Done (`d46f6ae`, consumed in `d1a8599`) |
+| 7 | Convert DenoiseError to thiserror | 15 min | Low -- consistency | Anytime | ✅ Done (`7a95329`) |
+| 8 | Add graph evaluation pass alongside dirty propagation | 3-4 hrs | Medium -- needed for >15 nodes | Before M31 per-node viz | ✅ Done (`21235b9` — `eval.rs`, 19 tests) |
 
 ---
 
@@ -365,9 +373,11 @@ These decisions are correct and should be preserved:
 2. `UsdStage` is `Send+Sync` but docs say "not thread-safe" -- is the current
    single-thread access pattern enforced by anything other than convention?
    - answer: not sure lets investigate further. The `unsafe impl Sync for UsdStage` is a soundness hole because it allows `UsdStage` to be shared across threads, which is not safe given that the underlying C++ USD library is not thread-safe. The current code only accesses `UsdStage` from the main thread, but this invariant is not enforced by the type system. The recommended fix is to remove `Sync` and wrap access to `UsdStage` in a `Mutex` to ensure that it cannot be accessed concurrently from multiple threads.
+   - **RESOLVED 2026-04-07 (`3338f26`):** `Sync` removed, `UsdStage` now wraps in `Arc<Mutex<UsdStage>>` at every shared callsite. ~20 callsites refactored across 10 files. Borrow-checker conflicts fixed via guard extraction / pre-extraction patterns. Only `unsafe impl Send for UsdStage` and `unsafe impl Send for UsdEditLayer` remain — sound because ownership transfer is explicit and the C++ side tolerates single-threaded access across Send moves.
 3. Node graph has no serialization yet (M30) -- will `SceneNode` enum variants
    be serde-friendly or need a separate schema?
    answer: well the node graph will only need to be used for current dev work, ill be moving to Qt at somepoint so serialization is not a priority right now. For M30, we can add serde support to the `SceneNode` enum by deriving `Serialize` and `Deserialize` from the `serde` crate. This will allow us to serialize the node graph state to a file or other storage format. If we need more control over the serialization format, we can implement custom `Serialize` and `Deserialize` traits for `SceneNode`. But for now, deriving should be sufficient for basic persistence needs.
 4. `StatsPanelParams` pattern in render_ui.rs -- is this the borrow-splitting
    pattern you want to standardize, or a one-off workaround?
    -answer not sure lets do what is the best over all.
+   - **RESOLVED 2026-04-11:** kept as a one-off. Sub-struct decomposition (`7a95329`) made the pattern unnecessary for most new code — typed containers let callers borrow orthogonal sub-fields independently. `StatsPanelParams` stays where it is for a case we already have working; don't generalize. New code should reach for sub-structs first, reach for param structs only when the borrow-checker genuinely forces it.

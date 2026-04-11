@@ -1,6 +1,6 @@
-# Session Handoff - April 10, 2026
+# Session Handoff - April 11, 2026
 
-**Last Updated:** v0.13.5 SHIPPED
+**Last Updated:** Architecture refactor campaign closed
 **Current Version:** v0.13.5 released → v0.13.6-dev
 **Project:** BIF - USD Orchestration Tool for VFX
 
@@ -19,6 +19,14 @@
 ---
 
 ## Recent Work
+
+### v0.13.6-dev Apr 11: Architecture Refactor Campaign Closed (Apr 11, 2026)
+
+- **Tracking docs synced.** `ARCHITECTURE_REFACTORS.md` phases 2-5 flipped from "Not started" → Complete with commit refs. `ARCHITECTURE_REVIEW.md` §10 gained a Status column; §2/§4/§9/§12 got resolution callouts. Both docs now archival.
+- **Final state:** all 5 refactor phases + 7 of 8 review items shipped across v0.13.0-v0.13.5. ~79 new tests from the campaign (44 ffi_convert + 19 eval + 16 scene_pipeline). Remaining #4 (node graph extension checklist) shipped in `wiki/architecture/node-graph-system.md` as a terse 10-step reference card.
+- **Phase 4.5 logged as deferred:** `scene_loader.rs` grew 2035 → 2413 LOC after Phase 4 (pipeline layer was additive, not a replacement). Trigger to resume: v0.14.0 layer-aware rewrite touching `finalize_usd_scene()`.
+- **Test string cleanup:** `persistence.rs` `path_relativization_*` tests now use `#[cfg(windows)]` / `#[cfg(not(windows))]` constants instead of hardcoded `D:\\projects\\...` literals. `sample_project()` file_path dropped the `D:\\` prefix. 12/12 persistence tests green.
+- **Pre-existing clippy breakage noted:** `cargo clippy --workspace -- -D warnings` fails with 56 errors (44 bif_core + 11 bif_viewport + 1 bif_perf) from a clippy version bump (`rust-1.92.0`). Confirmed unrelated to session via stash/repro against HEAD `b61264e`. Logged as separate follow-up. `cargo build` and `cargo fmt --check` are clean.
 
 ### v0.13.5 Apr 10: UsdSkel Import Complete (Apr 10, 2026)
 
