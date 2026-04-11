@@ -326,6 +326,11 @@ struct CachedSkinBinding {
     /// when a skinned mesh sits under a non-identity sub-Xform inside its
     /// SkelRoot (e.g. buttons translated to the chest).
     float skel_root_world_xform[16];
+    /// `IsRigidlyDeformed()` mesh — `joint_indices`/`joint_weights` hold ONE
+    /// influence block (not per-vertex). The Rust loader uses this to build
+    /// a compact `SkinKind::Rigid` variant instead of broadcasting the block
+    /// to per-vertex layout (saves ~hundreds of KB for hair/buttons/etc).
+    bool is_rigid = false;
     bool valid = false;
 };
 
@@ -5459,77 +5464,73 @@ static void cache_skeleton_data(UsdBridgeStage* bridge) {
                     skinning_query.GetGeomBindTransform(UsdTimeCode::Default());
                 matrix_to_float16(geom_bind, skin.geom_bind_transform);
 
-                // Layout normalization: after this block, `skin.joint_indices`
-                // and `skin.joint_weights` are guaranteed to hold exactly
-                // `post_split_vert_count * element_size` entries in the same
-                // order as `CachedMesh::vertices`, regardless of whether the
-                // source USD mesh authored per-vertex or constant interpolation
-                // and regardless of whether UV-seam splitting inflated the
-                // vertex count. Two sources of mismatch are handled:
+                // Layout normalization. After this block:
                 //
-                // 1. **Rigidly deformed meshes** (no per-vertex `skel:jointIndices`):
-                //    `ComputeJointInfluences` returns a SINGLE block of
-                //    `element_size` influences that apply to the whole mesh.
-                //    Common for accessories: hair, buttons, teeth, eyelashes.
-                //    Without broadcasting, the Rust skinning loop iterates
-                //    verts 0..N and the per-vertex lookup bounds-checks out for
-                //    every vertex past 0, effectively dropping the mesh to the
-                //    origin and making it invisible.
+                // - **Rigid meshes** (`IsRigidlyDeformed()` true): `skin.is_rigid`
+                //   is set, and `skin.joint_indices`/`skin.joint_weights` hold
+                //   the single authored block of `element_size` values from
+                //   `ComputeJointInfluences`. The Rust loader builds a compact
+                //   `SkinKind::Rigid { joint_idx, weight }` variant from
+                //   `joint_indices[0]` + `joint_weights[0]`, skipping per-vertex
+                //   layout entirely. Hair/buttons/teeth/eyelashes — meshes that
+                //   used to broadcast to ~hundreds of KB now use ~tens of bytes.
                 //
-                // 2. **UV-seam split** (subdivision surfaces with faceVarying UVs):
-                //    The bridge duplicates verts across UV boundaries so each
-                //    seam vert can carry its own UV. `ComputeJointInfluences`
-                //    returns pre-split data; `vertex_index_map` maps each
-                //    post-split vert back to its original and we copy the
-                //    influence block accordingly.
+                // - **Per-vertex meshes**: arrays are normalized to
+                //   `post_split_vert_count * element_size` entries in the same
+                //   order as `CachedMesh::vertices`. Handles UV-seam split
+                //   inflation (subdiv meshes with faceVarying UVs duplicate
+                //   verts across UV boundaries — `ComputeJointInfluences` returns
+                //   pre-split data, `vertex_index_map` maps each post-split vert
+                //   back to its original, and we copy the influence block
+                //   accordingly).
                 const CachedMesh& cached_mesh = bridge->meshes[mesh_idx];
                 const size_t post_split_vert_count = cached_mesh.vertices.size() / 3;
                 const size_t es = skin.element_size;
 
                 if (es > 0 && post_split_vert_count > 0) {
-                    const bool is_rigid = skinning_query.IsRigidlyDeformed();
+                    skin.is_rigid = skinning_query.IsRigidlyDeformed();
 
-                    std::vector<int32_t> src_ji = std::move(skin.joint_indices);
-                    std::vector<float> src_jw = std::move(skin.joint_weights);
-                    skin.joint_indices.clear();
-                    skin.joint_weights.clear();
-                    skin.joint_indices.reserve(post_split_vert_count * es);
-                    skin.joint_weights.reserve(post_split_vert_count * es);
+                    if (!skin.is_rigid) {
+                        // Per-vertex layout normalization (handles UV-split + aligned cases).
+                        std::vector<int32_t> src_ji = std::move(skin.joint_indices);
+                        std::vector<float> src_jw = std::move(skin.joint_weights);
+                        skin.joint_indices.clear();
+                        skin.joint_weights.clear();
+                        skin.joint_indices.reserve(post_split_vert_count * es);
+                        skin.joint_weights.reserve(post_split_vert_count * es);
 
-                    auto push_block = [&](size_t src_base) {
-                        for (size_t k = 0; k < es; ++k) {
-                            const size_t src = src_base + k;
-                            if (src < src_ji.size()) {
-                                skin.joint_indices.push_back(src_ji[src]);
-                                skin.joint_weights.push_back(src_jw[src]);
-                            } else {
-                                skin.joint_indices.push_back(-1);
-                                skin.joint_weights.push_back(0.0f);
+                        auto push_block = [&](size_t src_base) {
+                            for (size_t k = 0; k < es; ++k) {
+                                const size_t src = src_base + k;
+                                if (src < src_ji.size()) {
+                                    skin.joint_indices.push_back(src_ji[src]);
+                                    skin.joint_weights.push_back(src_jw[src]);
+                                } else {
+                                    skin.joint_indices.push_back(-1);
+                                    skin.joint_weights.push_back(0.0f);
+                                }
+                            }
+                        };
+
+                        if (cached_mesh.has_uv_split &&
+                            !cached_mesh.vertex_index_map.empty()) {
+                            // Per-vertex with UV split: expand from pre-split layout.
+                            for (size_t split_idx = 0; split_idx < post_split_vert_count;
+                                 ++split_idx) {
+                                uint32_t orig_idx = cached_mesh.vertex_index_map[split_idx];
+                                push_block(static_cast<size_t>(orig_idx) * es);
+                            }
+                        } else {
+                            // Per-vertex with no UV split: already aligned. Pad if
+                            // the mesh's vertex count drifted (defensive; usually
+                            // size equals post_split_vert_count * es exactly).
+                            for (size_t v = 0; v < post_split_vert_count; ++v) {
+                                push_block(v * es);
                             }
                         }
-                    };
-
-                    if (is_rigid) {
-                        // Broadcast the one authored block to every post-split vert.
-                        for (size_t v = 0; v < post_split_vert_count; ++v) {
-                            push_block(0);
-                        }
-                    } else if (cached_mesh.has_uv_split &&
-                               !cached_mesh.vertex_index_map.empty()) {
-                        // Per-vertex with UV split: expand from pre-split layout.
-                        for (size_t split_idx = 0; split_idx < post_split_vert_count;
-                             ++split_idx) {
-                            uint32_t orig_idx = cached_mesh.vertex_index_map[split_idx];
-                            push_block(static_cast<size_t>(orig_idx) * es);
-                        }
-                    } else {
-                        // Per-vertex with no UV split: already aligned. Pad if
-                        // the mesh's vertex count drifted (defensive; usually
-                        // size equals post_split_vert_count * es exactly).
-                        for (size_t v = 0; v < post_split_vert_count; ++v) {
-                            push_block(v * es);
-                        }
                     }
+                    // Rigid case: leave skin.joint_indices/joint_weights as the
+                    // single authored block. Rust loader picks them up.
                 }
 
                 bridge->skin_bindings[mesh_idx] = std::move(skin);
@@ -5588,6 +5589,7 @@ UsdBridgeError usd_bridge_get_skin_binding(const UsdBridgeStage* stage, size_t m
     out_data->joint_indices_element_size = b.element_size;
     for (int i = 0; i < 16; ++i) out_data->geom_bind_transform[i] = b.geom_bind_transform[i];
     for (int i = 0; i < 16; ++i) out_data->skel_root_world_xform[i] = b.skel_root_world_xform[i];
+    out_data->is_rigid = b.is_rigid ? 1 : 0;
     return USD_BRIDGE_SUCCESS;
 }
 

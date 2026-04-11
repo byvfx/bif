@@ -8,26 +8,48 @@ use bif_math::{Aabb, Mat4, Vec3};
 
 use crate::usd::SubdivisionScheme;
 
+/// How a mesh's vertices are bound to the skeleton.
+///
+/// Two cases — both fall out of UsdSkel's primvar interpolation rules:
+///
+/// - **`PerVertex`** — the common case. Each vertex has its own block of
+///   `element_size` influences. `joint_indices.len() == positions.len() *
+///   element_size` and same for `joint_weights`.
+///
+/// - **`Rigid`** — the mesh has no per-vertex `skel:jointIndices` primvar
+///   (constant interpolation). Every vertex follows a single joint with
+///   uniform weight. Common for hair, buttons, teeth, eyelashes, jewelry —
+///   accessories that ride a parent bone without deforming.
+///
+/// Storing the rigid case as a compact variant instead of broadcasting the
+/// single influence block to per-vertex layout saves ~hundreds of KB per
+/// rigid mesh and lets the skinning hot path use a tighter inner loop.
+#[derive(Clone, Debug)]
+pub enum SkinKind {
+    /// Per-vertex influences. Lengths must satisfy
+    /// `joint_indices.len() == joint_weights.len() == vertex_count * element_size`.
+    PerVertex {
+        joint_indices: Vec<u32>,
+        joint_weights: Vec<f32>,
+        element_size: usize,
+    },
+    /// Single joint applied to every vertex with `weight` (typically 1.0).
+    Rigid { joint_idx: u32, weight: f32 },
+}
+
 /// Per-mesh skin binding extracted from UsdSkelBindingAPI.
 ///
-/// Points to a specific skeleton in the scene and provides the per-vertex
-/// joint indices/weights needed for CPU linear blend skinning. Bind matrices
-/// are pre-inverted at load time so skinning math only needs a multiply
-/// against the current-time joint-skel transform.
+/// Points to a specific skeleton in the scene and carries the per-vertex
+/// (or per-mesh, for rigid bindings) joint influences needed for CPU linear
+/// blend skinning. Bind matrices are pre-inverted at load time so skinning
+/// math only needs a multiply against the current-time joint-skel transform.
 #[derive(Clone, Debug)]
 pub struct SkinBinding {
     /// Prim path of the bound UsdSkelSkeleton (e.g. `/Root/Character/Skel`).
     pub skeleton_path: String,
 
-    /// Flattened joint indices, `element_size` influences per vertex.
-    /// Length == `positions.len() * element_size`.
-    pub joint_indices: Vec<u32>,
-
-    /// Joint weights parallel to `joint_indices`.
-    pub joint_weights: Vec<f32>,
-
-    /// Number of influences per vertex.
-    pub element_size: usize,
+    /// Per-vertex or rigid binding shape (see [`SkinKind`]).
+    pub kind: SkinKind,
 
     /// Transform from mesh-local space to skeleton-local space at bind time.
     pub geom_bind_transform: Mat4,

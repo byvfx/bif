@@ -29,7 +29,7 @@
 
 use bif_math::{Mat3, Mat4, Vec3};
 
-use crate::mesh::SkinBinding;
+use crate::mesh::{SkinBinding, SkinKind};
 
 /// Assemble the skinning matrix palette for the current frame.
 ///
@@ -72,6 +72,11 @@ pub fn compute_skin_matrices(bind: &SkinBinding, joint_skel_xforms: &[Mat4]) -> 
 /// Out-of-range joint indices (e.g. from a malformed skin binding) are skipped
 /// silently; their weight contribution is dropped. This keeps the renderer
 /// alive on bad data at the cost of a slight geometry error on affected verts.
+///
+/// Branches on the binding's [`SkinKind`]:
+/// - `PerVertex` runs the weighted-blend inner loop per vertex.
+/// - `Rigid` skips the inner loop entirely — every vertex gets the same single
+///   matrix multiply, which is ~`element_size`× faster on accessory meshes.
 pub fn skin_positions(
     bind: &SkinBinding,
     bind_positions: &[Vec3],
@@ -79,33 +84,57 @@ pub fn skin_positions(
     out: &mut [Vec3],
 ) {
     debug_assert_eq!(bind_positions.len(), out.len());
-    let element_size = bind.element_size;
-    if element_size == 0 || palette.is_empty() {
+    if palette.is_empty() {
         out.copy_from_slice(bind_positions);
         return;
     }
 
-    for (vert_idx, bind_pos) in bind_positions.iter().enumerate() {
-        let influence_base = vert_idx * element_size;
-        let mut accum = Vec3::ZERO;
+    match &bind.kind {
+        SkinKind::PerVertex {
+            joint_indices,
+            joint_weights,
+            element_size,
+        } => {
+            let element_size = *element_size;
+            if element_size == 0 {
+                out.copy_from_slice(bind_positions);
+                return;
+            }
 
-        for i in 0..element_size {
-            let slot = influence_base + i;
-            if slot >= bind.joint_indices.len() {
-                break;
+            for (vert_idx, bind_pos) in bind_positions.iter().enumerate() {
+                let influence_base = vert_idx * element_size;
+                let mut accum = Vec3::ZERO;
+
+                for i in 0..element_size {
+                    let slot = influence_base + i;
+                    if slot >= joint_indices.len() {
+                        break;
+                    }
+                    let weight = joint_weights[slot];
+                    if weight == 0.0 {
+                        continue;
+                    }
+                    let joint_idx = joint_indices[slot] as usize;
+                    if joint_idx >= palette.len() {
+                        continue;
+                    }
+                    accum += palette[joint_idx].transform_point3(*bind_pos) * weight;
+                }
+
+                out[vert_idx] = accum;
             }
-            let weight = bind.joint_weights[slot];
-            if weight == 0.0 {
-                continue;
-            }
-            let joint_idx = bind.joint_indices[slot] as usize;
-            if joint_idx >= palette.len() {
-                continue;
-            }
-            accum += palette[joint_idx].transform_point3(*bind_pos) * weight;
         }
-
-        out[vert_idx] = accum;
+        SkinKind::Rigid { joint_idx, weight } => {
+            let Some(palette_mat) = palette.get(*joint_idx as usize) else {
+                // Out-of-range single joint → fail soft, leave at bind pose.
+                out.copy_from_slice(bind_positions);
+                return;
+            };
+            let w = *weight;
+            for (vert_idx, bind_pos) in bind_positions.iter().enumerate() {
+                out[vert_idx] = palette_mat.transform_point3(*bind_pos) * w;
+            }
+        }
     }
 }
 
@@ -121,8 +150,7 @@ pub fn skin_positions(
 /// in Phase 3. Kept straightforward here for testability.
 pub fn skin_normals(bind: &SkinBinding, bind_normals: &[Vec3], palette: &[Mat4], out: &mut [Vec3]) {
     debug_assert_eq!(bind_normals.len(), out.len());
-    let element_size = bind.element_size;
-    if element_size == 0 || palette.is_empty() {
+    if palette.is_empty() {
         out.copy_from_slice(bind_normals);
         return;
     }
@@ -133,28 +161,56 @@ pub fn skin_normals(bind: &SkinBinding, bind_normals: &[Vec3], palette: &[Mat4],
         .map(|m| Mat3::from_mat4(*m).inverse().transpose())
         .collect();
 
-    for (vert_idx, bind_n) in bind_normals.iter().enumerate() {
-        let influence_base = vert_idx * element_size;
-        let mut accum = Vec3::ZERO;
+    match &bind.kind {
+        SkinKind::PerVertex {
+            joint_indices,
+            joint_weights,
+            element_size,
+        } => {
+            let element_size = *element_size;
+            if element_size == 0 {
+                out.copy_from_slice(bind_normals);
+                return;
+            }
 
-        for i in 0..element_size {
-            let slot = influence_base + i;
-            if slot >= bind.joint_indices.len() {
-                break;
+            for (vert_idx, bind_n) in bind_normals.iter().enumerate() {
+                let influence_base = vert_idx * element_size;
+                let mut accum = Vec3::ZERO;
+
+                for i in 0..element_size {
+                    let slot = influence_base + i;
+                    if slot >= joint_indices.len() {
+                        break;
+                    }
+                    let weight = joint_weights[slot];
+                    if weight == 0.0 {
+                        continue;
+                    }
+                    let joint_idx = joint_indices[slot] as usize;
+                    if joint_idx >= normal_mats.len() {
+                        continue;
+                    }
+                    accum += normal_mats[joint_idx].mul_vec3(*bind_n) * weight;
+                }
+
+                let len = accum.length();
+                out[vert_idx] = if len > 1e-8 { accum / len } else { *bind_n };
             }
-            let weight = bind.joint_weights[slot];
-            if weight == 0.0 {
-                continue;
-            }
-            let joint_idx = bind.joint_indices[slot] as usize;
-            if joint_idx >= normal_mats.len() {
-                continue;
-            }
-            accum += normal_mats[joint_idx].mul_vec3(*bind_n) * weight;
         }
-
-        let len = accum.length();
-        out[vert_idx] = if len > 1e-8 { accum / len } else { *bind_n };
+        SkinKind::Rigid {
+            joint_idx,
+            weight: _,
+        } => {
+            let Some(normal_mat) = normal_mats.get(*joint_idx as usize) else {
+                out.copy_from_slice(bind_normals);
+                return;
+            };
+            for (vert_idx, bind_n) in bind_normals.iter().enumerate() {
+                let n = normal_mat.mul_vec3(*bind_n);
+                let len = n.length();
+                out[vert_idx] = if len > 1e-8 { n / len } else { *bind_n };
+            }
+        }
     }
 }
 
@@ -170,9 +226,11 @@ mod tests {
     ) -> SkinBinding {
         SkinBinding {
             skeleton_path: "/test/Skel".to_string(),
-            joint_indices,
-            joint_weights,
-            element_size,
+            kind: SkinKind::PerVertex {
+                joint_indices,
+                joint_weights,
+                element_size,
+            },
             geom_bind_transform: Mat4::IDENTITY,
             inv_bind_matrices,
         }
@@ -372,9 +430,11 @@ mod tests {
 
         let bind = SkinBinding {
             skeleton_path: "/test/Skel".to_string(),
-            joint_indices: vec![0],
-            joint_weights: vec![1.0],
-            element_size: 1,
+            kind: SkinKind::PerVertex {
+                joint_indices: vec![0],
+                joint_weights: vec![1.0],
+                element_size: 1,
+            },
             geom_bind_transform: geom_bind,
             inv_bind_matrices: vec![joint0_bind_world.inverse()],
         };
@@ -416,5 +476,74 @@ mod tests {
             "case 3 (rotated joint): expected (0,1,0), got {:?}",
             out[0]
         );
+    }
+
+    /// v0.13.6: `Rigid` variant — every vertex follows a single joint with
+    /// uniform weight, no per-vertex influences. Used for hair/buttons/teeth.
+    /// Verifies the compact path produces the same result as the per-vertex
+    /// path would for an equivalent fully-broadcast binding.
+    #[test]
+    fn rigid_binding_round_trip() {
+        // 1 joint, bind at identity. Vertices on a small box that all need
+        // to follow the joint together.
+        let inv_bind = vec![Mat4::IDENTITY];
+        let rigid = SkinBinding {
+            skeleton_path: "/test/Skel".to_string(),
+            kind: SkinKind::Rigid {
+                joint_idx: 0,
+                weight: 1.0,
+            },
+            geom_bind_transform: Mat4::IDENTITY,
+            inv_bind_matrices: inv_bind,
+        };
+
+        let bind_positions = vec![
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            Vec3::new(1.0, 1.0, 1.0),
+        ];
+
+        // Joint at identity → all verts unchanged.
+        let palette = compute_skin_matrices(&rigid, &[Mat4::IDENTITY]);
+        let mut out = vec![Vec3::ZERO; 4];
+        skin_positions(&rigid, &bind_positions, &palette, &mut out);
+        for (got, want) in out.iter().zip(bind_positions.iter()) {
+            assert!(
+                (*got - *want).length() < 1e-5,
+                "identity rigid: expected {want:?}, got {got:?}"
+            );
+        }
+
+        // Joint translated +Y by 5 → all verts shifted by (0,5,0).
+        let palette =
+            compute_skin_matrices(&rigid, &[Mat4::from_translation(Vec3::new(0.0, 5.0, 0.0))]);
+        skin_positions(&rigid, &bind_positions, &palette, &mut out);
+        for (got, want) in out.iter().zip(bind_positions.iter()) {
+            let expected = *want + Vec3::new(0.0, 5.0, 0.0);
+            assert!(
+                (*got - expected).length() < 1e-5,
+                "translated rigid: expected {expected:?}, got {got:?}"
+            );
+        }
+
+        // Out-of-range joint_idx → fail soft, return bind positions.
+        let bad_rigid = SkinBinding {
+            skeleton_path: "/test/Skel".to_string(),
+            kind: SkinKind::Rigid {
+                joint_idx: 99,
+                weight: 1.0,
+            },
+            geom_bind_transform: Mat4::IDENTITY,
+            inv_bind_matrices: vec![Mat4::IDENTITY],
+        };
+        let palette = compute_skin_matrices(&bad_rigid, &[Mat4::IDENTITY]);
+        skin_positions(&bad_rigid, &bind_positions, &palette, &mut out);
+        for (got, want) in out.iter().zip(bind_positions.iter()) {
+            assert!(
+                (*got - *want).length() < 1e-5,
+                "OOB rigid joint_idx should leave verts at bind pose"
+            );
+        }
     }
 }

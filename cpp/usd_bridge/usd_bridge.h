@@ -1143,6 +1143,15 @@ typedef struct UsdBridgeSkinBindingData {
     /// math returns vertices in skel-local space, so multiplying by the
     /// SkelRoot world places them in scene space without double-offset.
     float skel_root_world_xform[16];
+
+    /// True (1) when the source mesh has no per-vertex `jointIndices` and is
+    /// instead bound rigidly to a single joint via constant interpolation
+    /// (UsdSkelSkinningQuery::IsRigidlyDeformed). In that case `joint_indices`
+    /// and `joint_weights` hold a single block of `element_size` values that
+    /// apply to every vertex — the bridge does NOT broadcast it to per-vertex
+    /// layout, so the Rust loader can construct a compact `Rigid` variant.
+    /// Use `int32_t` for stable ABI across compilers.
+    int32_t is_rigid;
 } UsdBridgeSkinBindingData;
 
 /// Get the number of UsdSkelSkeleton prims.

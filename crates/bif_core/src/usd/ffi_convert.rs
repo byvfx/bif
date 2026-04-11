@@ -669,6 +669,7 @@ pub(crate) unsafe fn convert_skin_binding(raw: &UsdBridgeSkinBindingDataRaw) -> 
         element_size: raw.joint_indices_element_size,
         geom_bind_transform: f32x16_to_mat4(&raw.geom_bind_transform),
         skel_root_world_xform: f32x16_to_mat4(&raw.skel_root_world_xform),
+        is_rigid: raw.is_rigid != 0,
     }
 }
 
@@ -1831,6 +1832,7 @@ mod tests {
             skel_root_world_xform: [
                 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
             ],
+            is_rigid: 0,
         };
 
         let result = unsafe { convert_skin_binding(&raw) };

@@ -17,7 +17,7 @@ use indexmap::IndexMap;
 
 use thiserror::Error;
 
-use crate::mesh::{Mesh, SkinBinding};
+use crate::mesh::{Mesh, SkinBinding, SkinKind};
 use crate::point_cloud::{DistributionMethod, PointAttributes, PointCloud};
 use crate::scene::{
     AnimatedTransform, CurvesPrim, Light, PointsPrim, Purpose, Scene, TimelineInfo, Transform,
@@ -261,26 +261,53 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
                     // so we don't have to .unwrap() the Option<SkinBinding> twice.
                     let log_skel_path = skin_data.skeleton_path.clone();
                     let log_element_size = skin_data.element_size;
+                    let log_kind = if skin_data.is_rigid {
+                        "rigid"
+                    } else {
+                        "per-vertex"
+                    };
 
-                    mesh.bind_positions = Some(mesh.positions.clone());
-                    mesh.skin = Some(SkinBinding {
-                        skeleton_path: skin_data.skeleton_path,
+                    // Build the variant based on the C++ bridge's `is_rigid` flag.
+                    // Rigid meshes (hair, buttons, teeth, eyelashes) compress to a
+                    // single (joint_idx, weight) pair instead of broadcasting the
+                    // influence block across every post-split vertex — saves
+                    // hundreds of KB per accessory mesh and shrinks the inner
+                    // skinning loop to a single matrix multiply per vertex.
+                    let kind = if skin_data.is_rigid {
+                        let joint_idx = skin_data
+                            .joint_indices
+                            .first()
+                            .copied()
+                            .filter(|&i| i >= 0)
+                            .map(|i| i as u32)
+                            .unwrap_or(u32::MAX);
+                        let weight = skin_data.joint_weights.first().copied().unwrap_or(1.0);
+                        SkinKind::Rigid { joint_idx, weight }
+                    } else {
                         // -1 sentinel from the C++ bridge means "no skeleton mapping
                         // for this mesh-local joint" — convert to u32::MAX so the
                         // Rust skinning code's bounds check drops the influence
                         // (otherwise cast-through-0 would silently pull joint 0).
-                        joint_indices: skin_data
-                            .joint_indices
-                            .iter()
-                            .map(|&i| if i < 0 { u32::MAX } else { i as u32 })
-                            .collect(),
-                        joint_weights: skin_data.joint_weights,
-                        element_size: skin_data.element_size,
+                        SkinKind::PerVertex {
+                            joint_indices: skin_data
+                                .joint_indices
+                                .iter()
+                                .map(|&i| if i < 0 { u32::MAX } else { i as u32 })
+                                .collect(),
+                            joint_weights: skin_data.joint_weights,
+                            element_size: skin_data.element_size,
+                        }
+                    };
+
+                    mesh.bind_positions = Some(mesh.positions.clone());
+                    mesh.skin = Some(SkinBinding {
+                        skeleton_path: skin_data.skeleton_path,
+                        kind,
                         geom_bind_transform: skin_data.geom_bind_transform,
                         inv_bind_matrices: inv_binds.clone(),
                     });
                     log::debug!(
-                        "Mesh {} bound to skeleton {} ({} influences/vertex)",
+                        "Mesh {} bound to skeleton {} ({log_kind}, {} influences/vertex)",
                         mesh_data.path,
                         log_skel_path,
                         log_element_size
@@ -1079,13 +1106,25 @@ def Xform "World" {
             assert!((*p - *bp).length() < 1e-5);
         }
 
-        // SkinBinding sanity
+        // SkinBinding sanity. The fixture has per-vertex influences (not rigid),
+        // so we expect a `PerVertex` variant.
         assert_eq!(skin.skeleton_path, "/Root/Character/Skel");
-        assert_eq!(skin.element_size, 1);
-        assert_eq!(skin.joint_indices.len(), 8);
-        assert_eq!(skin.joint_weights.len(), 8);
-        assert_eq!(&skin.joint_indices[..4], &[0, 0, 0, 0]);
-        assert_eq!(&skin.joint_indices[4..], &[1, 1, 1, 1]);
+        let crate::mesh::SkinKind::PerVertex {
+            joint_indices,
+            joint_weights,
+            element_size,
+        } = &skin.kind
+        else {
+            panic!(
+                "expected PerVertex variant for two_bone_arm fixture, got {:?}",
+                skin.kind
+            );
+        };
+        assert_eq!(*element_size, 1);
+        assert_eq!(joint_indices.len(), 8);
+        assert_eq!(joint_weights.len(), 8);
+        assert_eq!(&joint_indices[..4], &[0, 0, 0, 0]);
+        assert_eq!(&joint_indices[4..], &[1, 1, 1, 1]);
 
         // Two joints → two inverse-bind matrices
         assert_eq!(skin.inv_bind_matrices.len(), 2);

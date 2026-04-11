@@ -511,11 +511,13 @@ pub struct UsdSkinBindingData {
     pub mesh_path: String,
     /// Skeleton prim path
     pub skeleton_path: String,
-    /// Joint indices per vertex (flat, element_size per vertex)
+    /// Joint indices. When `is_rigid == false`, holds `vert_count * element_size`
+    /// per-vertex influences. When `is_rigid == true`, holds a single block
+    /// of `element_size` influences that apply to every vertex.
     pub joint_indices: Vec<i32>,
-    /// Joint weights per vertex (flat, same layout as indices)
+    /// Joint weights, parallel to `joint_indices` (same layout rules).
     pub joint_weights: Vec<f32>,
-    /// Number of influences per vertex
+    /// Number of influences per vertex (or per mesh, when rigid).
     pub element_size: usize,
     /// Geom bind transform
     pub geom_bind_transform: Mat4,
@@ -523,6 +525,11 @@ pub struct UsdSkinBindingData {
     /// skinned meshes so skel-local skinned vertices land in the right
     /// place even when the mesh prim sits under a non-identity sub-Xform.
     pub skel_root_world_xform: Mat4,
+    /// True when `UsdSkelSkinningQuery::IsRigidlyDeformed()` was true: the
+    /// mesh is bound to one joint via constant interpolation. The Rust loader
+    /// uses this to construct a compact `SkinKind::Rigid` variant instead of
+    /// broadcasting the single influence block to per-vertex layout.
+    pub is_rigid: bool,
 }
 
 /// Volume data extracted from USD (UsdVol).
@@ -1379,6 +1386,7 @@ impl UsdStage {
             skel_root_world_xform: [
                 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
             ],
+            is_rigid: 0,
         };
         let result = unsafe { usd_bridge_get_skin_binding(self.raw, mesh_index, &mut raw) };
         if result != UsdBridgeErrorCode::Success {
@@ -3065,13 +3073,15 @@ mod tests {
             .collect();
         let binding = crate::mesh::SkinBinding {
             skeleton_path: skin_data.skeleton_path,
-            joint_indices: skin_data
-                .joint_indices
-                .iter()
-                .map(|&i| i.max(0) as u32)
-                .collect(),
-            joint_weights: skin_data.joint_weights,
-            element_size: skin_data.element_size,
+            kind: crate::mesh::SkinKind::PerVertex {
+                joint_indices: skin_data
+                    .joint_indices
+                    .iter()
+                    .map(|&i| if i < 0 { u32::MAX } else { i as u32 })
+                    .collect(),
+                joint_weights: skin_data.joint_weights,
+                element_size: skin_data.element_size,
+            },
             geom_bind_transform: skin_data.geom_bind_transform,
             inv_bind_matrices: inv_binds,
         };

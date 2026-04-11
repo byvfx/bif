@@ -249,6 +249,10 @@ pub(crate) struct UsdBridgeSkinBindingDataRaw {
     pub(crate) joint_indices_element_size: usize,
     pub(crate) geom_bind_transform: [f32; 16],
     pub(crate) skel_root_world_xform: [f32; 16],
+    /// 0 = per-vertex influences, 1 = single block applies to all vertices
+    /// (i.e. `IsRigidlyDeformed()` was true on the C++ side). `i32` for ABI
+    /// stability across compilers.
+    pub(crate) is_rigid: i32,
 }
 
 /// Volume data from C API
