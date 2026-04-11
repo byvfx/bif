@@ -6,6 +6,26 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **v0.13.5 UsdSkel import + CPU linear blend skinning** — skinned characters load, render at bind pose, and deform per-frame when scrubbing the timeline.
+  - **C++ bridge refactor** — `cache_skeleton_data()` now uses `UsdSkelCache` + `UsdSkelSkeletonQuery` + `UsdSkelSkinningQuery` via `UsdSkelRoot::ComputeSkelBindings`, replacing raw attribute reads. Persistent `skel_cache` member on `UsdBridgeStage` enables per-time-code eval without re-populating. Fixed a latent SSO-related UAF in `joint_path_ptrs` fixup.
+  - **New FFI** — `usd_bridge_compute_skel_skin_xforms(stage, skel_idx, time_code, out, capacity)` evaluates cached SkeletonQuery at a time code and writes joint-skel transforms into a caller-allocated buffer. Rust wrapper `UsdStage::compute_skel_xforms(skel_idx, t)`.
+  - **`bif_core::skinning` module** — `compute_skin_matrices` assembles the palette (`joint_skel * inv_bind * geom_bind`). `skin_positions` does weighted blend per vertex. `skin_normals` uses inverse-transpose 3×3 so non-uniform-scale joints produce correct normals. Out-of-range joint indices are skipped (no panic) on malformed skins.
+  - **`Mesh::skin` + `Mesh::bind_positions`** — new `SkinBinding` struct stores skeleton path, joint indices/weights, element size, geom-bind-transform, and pre-inverted bind matrices. Loader populates these via `stage.get_skin_binding(mesh_idx)` + precomputed inv-binds per skeleton.
+  - **Viewport `update_skinning(frame)`** — extends `update_animation` hot path. For each `SkinnedMeshEntry`, evaluates joint xforms, runs CPU LBS, writes positions into `mesh_data.vertices` (single-mesh or combined-buffer mode) and re-uploads via `queue.write_buffer`. Multi-draw mode flagged as v0.13.5 limitation (one-time warning, deferred).
+  - **Scene registration** — scene loader scans loaded prototypes and registers skinned ones in `SceneManager::skinned_meshes`, snapshotting `bind_positions`, `SkinBinding`, and a per-entry scratch buffer so the hot path is allocation-free.
+  - **Test fixture** — `test_assets/skel/two_bone_arm.usda`: 2-joint rig, 8-vertex box, deterministic bind pose (identity + T(0,1,0)), used by cpp_bridge, loader, and skinning round-trip tests. `usdchecker` clean.
+  - **14 new tests** — 4 cpp_bridge (`test_load_two_bone_arm_skel`, `test_compute_skel_xforms_at_time`, `test_compute_skel_xforms_animated_character` with HumanFemale), 2 loader (`test_load_two_bone_arm_mesh_skin`), 8 skinning unit tests.
+  - **Validation asset** — Pixar's HumanFemale UsdSkel example at `assets/UsdSkelExamples/HumanFemale/HumanFemale.walk.usd`. Anim eval test asserts joint motion over the authored 101-129 time range (max delta 39.5).
+  - **Multi-draw skinning** — `MultiDrawState::update_skinning` writes skinned positions to per-prototype GPU vertex buffers (the path used for scenes with >1 prototype). Mirrors `update_vertex_animation`'s structure: build palette, run LBS into a per-entry scratch, write each prototype's `vertex_buffer`. Required to make characters with many parts (e.g. HumanFemale's 77 prototypes) actually deform.
+  - **Per-mesh joint-order remap** — when a skinned mesh authors a custom `skel:joints` primvar (subset/reordering of the skeleton's joint order), `ComputeJointInfluences` returns indices into the mesh's local order, not the skeleton's. The bridge now builds a mesh-local→skel-global lookup map and remaps each influence index. Without this, body parts pull transforms from the wrong joints and the mesh explodes.
+  - **UV-seam joint expansion** — subdivision meshes with `faceVarying` UVs duplicate vertices across UV seams in `mesh.positions` (e.g. 32890→35268), but `ComputeJointInfluences` returns one block per ORIGINAL vertex. The bridge now walks `vertex_index_map[split_idx → orig_idx]` and copies each vertex's influence block to all its post-split duplicates. Without this, every UV-seam vertex collapsed to `Vec3::ZERO`.
+  - **Rigidly-deformed mesh broadcast** — meshes without per-vertex `jointIndices` (hair, buttons, teeth, eyelashes — bound to a single joint with `IsRigidlyDeformed()`) get a single influence block from `ComputeJointInfluences`. The bridge now broadcasts that block to every post-split vertex so the Rust hot path doesn't bounds-check out and drop the mesh to origin.
+  - **SkelRoot world transform override** — for skinned meshes, the loader now uses the SkelRoot's world transform as the static instance matrix instead of the mesh prim's own world transform. Without this, mesh prims sitting under sub-Xforms (e.g. buttons translated to the chest) would double-apply the offset since the offset is also in `geomBindTransform`. New `skel_root_world_xform[16]` field on `UsdBridgeSkinBindingData` propagates the SkelRoot's xform from the C++ bridge.
+  - **Skip per-frame xform animation for skinned meshes** — meshes with skin bindings now bypass the `AnimatedTransform` keyframe path. All per-frame motion comes from the joint deformation pass; applying the prim's animated xform on top would re-introduce the double-application that the SkelRoot override fixes.
+  - Scoped out: blend shapes (→ v0.13.6), per-instance matrix re-baking for multiple non-identity instances of the same skinned prototype.
+
 ## [0.13.0] - 2026-04-09
 
 ### Removed
