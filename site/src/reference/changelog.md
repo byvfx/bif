@@ -6,6 +6,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.13.5] - 2026-04-10
+
 ### Added
 
 - **v0.13.5 UsdSkel import + CPU linear blend skinning** — skinned characters load, render at bind pose, and deform per-frame when scrubbing the timeline.
