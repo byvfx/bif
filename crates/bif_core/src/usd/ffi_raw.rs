@@ -248,6 +248,7 @@ pub(crate) struct UsdBridgeSkinBindingDataRaw {
     pub(crate) joint_weights_count: usize,
     pub(crate) joint_indices_element_size: usize,
     pub(crate) geom_bind_transform: [f32; 16],
+    pub(crate) skel_root_world_xform: [f32; 16],
 }
 
 /// Volume data from C API
@@ -880,6 +881,14 @@ extern "C" {
         stage: *const UsdBridgeStageRaw,
         mesh_index: usize,
         out_data: *mut UsdBridgeSkinBindingDataRaw,
+    ) -> UsdBridgeErrorCode;
+
+    pub(crate) fn usd_bridge_compute_skel_skin_xforms(
+        stage: *const UsdBridgeStageRaw,
+        skel_index: usize,
+        time_code: f64,
+        out_joint_skel_xforms: *mut f32,
+        out_capacity: usize,
     ) -> UsdBridgeErrorCode;
 
     // Volumes

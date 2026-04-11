@@ -15,6 +15,7 @@ BIF's core scene description is built on USD. These articles cover how USD works
 - [[shading-materials|Shading and Materials]] — UsdShade, material binding, shader connections
 - [[geometry-schemas|Geometry Schemas]] — UsdGeom mesh, xformable, point instancer, cameras
 - [[bif-usd-integration|BIF USD Integration]] — Hybrid workflow, C++ bridge, export pipeline
+- [[usdskel-import|UsdSkel Import]] — Skeletal animation + CPU LBS skinning, SkelCache, joint remap, UV-seam expansion
 
 ## Source Reference Docs
 

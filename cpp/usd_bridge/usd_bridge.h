@@ -1137,6 +1137,12 @@ typedef struct UsdBridgeSkinBindingData {
 
     /// Geom bind transform (4x4 column-major)
     float geom_bind_transform[16];
+
+    /// World-space transform of this mesh's SkelRoot ancestor (4x4 column-major).
+    /// Use this as the instance transform for skinned meshes — the skinning
+    /// math returns vertices in skel-local space, so multiplying by the
+    /// SkelRoot world places them in scene space without double-offset.
+    float skel_root_world_xform[16];
 } UsdBridgeSkinBindingData;
 
 /// Get the number of UsdSkelSkeleton prims.
@@ -1158,6 +1164,26 @@ UsdBridgeError usd_bridge_get_skin_binding(
     const UsdBridgeStage* stage,
     size_t mesh_index,
     UsdBridgeSkinBindingData* out_data
+);
+
+/// Compute joint-skel-space transforms for a skeleton at a specific time code.
+///
+/// Writes `joint_count * 16` floats into `out_joint_skel_xforms` (USD row-major
+/// convention, compatible with `matrix_to_float16`). Caller must pre-size the
+/// buffer to at least `joint_count * 16` entries; `joint_count` comes from a
+/// prior `usd_bridge_get_skeleton` call.
+///
+/// Returns:
+/// - USD_BRIDGE_SUCCESS on success
+/// - USD_BRIDGE_ERROR_NULL_POINTER if stage or out buffer is null
+/// - USD_BRIDGE_ERROR_INVALID_PRIM if skel_index out of range or no cached query
+/// - USD_BRIDGE_ERROR_INVALID_STAGE if out_capacity < joint_count * 16 or eval fails
+UsdBridgeError usd_bridge_compute_skel_skin_xforms(
+    const UsdBridgeStage* stage,
+    size_t skel_index,
+    double time_code,
+    float* out_joint_skel_xforms,
+    size_t out_capacity
 );
 
 // ============================================================================

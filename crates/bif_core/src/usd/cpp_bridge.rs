@@ -519,6 +519,10 @@ pub struct UsdSkinBindingData {
     pub element_size: usize,
     /// Geom bind transform
     pub geom_bind_transform: Mat4,
+    /// SkelRoot ancestor's world xform — use as the instance transform for
+    /// skinned meshes so skel-local skinned vertices land in the right
+    /// place even when the mesh prim sits under a non-identity sub-Xform.
+    pub skel_root_world_xform: Mat4,
 }
 
 /// Volume data extracted from USD (UsdVol).
@@ -1372,6 +1376,9 @@ impl UsdStage {
             joint_weights_count: 0,
             joint_indices_element_size: 0,
             geom_bind_transform: [0.0; 16],
+            skel_root_world_xform: [
+                1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+            ],
         };
         let result = unsafe { usd_bridge_get_skin_binding(self.raw, mesh_index, &mut raw) };
         if result != UsdBridgeErrorCode::Success {
@@ -1380,6 +1387,50 @@ impl UsdStage {
 
         // SAFETY: raw populated by FFI call above; pointers valid while stage is open
         Ok(unsafe { super::ffi_convert::convert_skin_binding(&raw) })
+    }
+
+    /// Compute joint-skel-space transforms at a specific USD time code.
+    ///
+    /// Returns one `Mat4` per joint in the skeleton, in the skeleton's
+    /// joint order (matches `UsdSkeletonData::joint_paths`). Phase 3 feeds
+    /// these to `bif_core::skinning::compute_skin_matrices` to build the
+    /// palette for CPU LBS.
+    ///
+    /// Cheap when called repeatedly at different times — the underlying
+    /// `UsdSkelSkeletonQuery` is cached inside the C++ bridge's `UsdSkelCache`,
+    /// so only the per-time topology walk + matrix compose runs each call.
+    pub fn compute_skel_xforms(
+        &self,
+        skel_index: usize,
+        time_code: f64,
+    ) -> UsdBridgeResult<Vec<Mat4>> {
+        let skel = self.get_skeleton(skel_index)?;
+        let joint_count = skel.joint_paths.len();
+        if joint_count == 0 {
+            return Ok(Vec::new());
+        }
+
+        let mut buf: Vec<f32> = vec![0.0; joint_count * 16];
+        let result = unsafe {
+            usd_bridge_compute_skel_skin_xforms(
+                self.raw,
+                skel_index,
+                time_code,
+                buf.as_mut_ptr(),
+                buf.len(),
+            )
+        };
+        if result != UsdBridgeErrorCode::Success {
+            return Err(result.into());
+        }
+
+        let mut out = Vec::with_capacity(joint_count);
+        for i in 0..joint_count {
+            let mut arr = [0.0f32; 16];
+            arr.copy_from_slice(&buf[i * 16..(i + 1) * 16]);
+            out.push(Mat4::from_cols_array(&arr));
+        }
+        Ok(out)
     }
 
     // ========================================================================
@@ -2892,5 +2943,225 @@ mod tests {
             !mesh.vertices.is_empty(),
             "Prototype mesh should have vertices from referenced lucy_low.usda"
         );
+    }
+
+    /// v0.13.5 Phase 0: load skinned fixture via UsdSkelCache path.
+    /// two_bone_arm.usda defines a 2-joint skeleton and an 8-vertex box with
+    /// per-vertex joint weights (bottom 4 to joint 0, top 4 to joint 1).
+    #[test]
+    fn test_load_two_bone_arm_skel() {
+        let path = "../../test_assets/skel/two_bone_arm.usda";
+        let stage = match UsdStage::open(path) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("Skipping test - could not open stage: {e}");
+                return;
+            }
+        };
+
+        // One skeleton
+        let skel_count = stage.skeleton_count().expect("skeleton_count failed");
+        assert_eq!(skel_count, 1, "expected 1 skeleton, got {skel_count}");
+
+        let skel = stage.get_skeleton(0).expect("get_skeleton(0) failed");
+        assert_eq!(skel.path, "/Root/Character/Skel");
+        assert_eq!(
+            skel.joint_paths,
+            vec!["Root".to_string(), "Root/Bend".to_string()]
+        );
+        assert_eq!(skel.bind_transforms.len(), 2);
+        assert_eq!(skel.rest_transforms.len(), 2);
+
+        // Joint 0 bind = identity (world-space)
+        let id = Mat4::IDENTITY;
+        let b0 = skel.bind_transforms[0];
+        assert!(
+            (b0.to_cols_array()[0] - id.to_cols_array()[0]).abs() < 1e-5,
+            "joint 0 bind should be identity"
+        );
+        // Joint 1 bind = translate(0, 1, 0). Row-major translation column = index 13
+        // in column-major layout (translation lives in .w_axis components).
+        let b1_translation = skel.bind_transforms[1].w_axis;
+        assert!(
+            (b1_translation.y - 1.0).abs() < 1e-5,
+            "joint 1 bind translation.y should be 1.0, got {b1_translation:?}"
+        );
+
+        // One mesh, with skin binding
+        let mesh_count = stage.mesh_count().expect("mesh_count failed");
+        assert_eq!(mesh_count, 1, "expected 1 mesh, got {mesh_count}");
+
+        let skin = stage
+            .get_skin_binding(0)
+            .expect("get_skin_binding(0) failed");
+        assert_eq!(skin.mesh_path, "/Root/Character/Box");
+        assert_eq!(skin.skeleton_path, "/Root/Character/Skel");
+        assert_eq!(skin.element_size, 1, "1 influence per vertex");
+        assert_eq!(skin.joint_indices.len(), 8, "8 vertices * 1 influence");
+        assert_eq!(skin.joint_weights.len(), 8);
+        // Bottom 4 verts bound to joint 0
+        assert_eq!(&skin.joint_indices[..4], &[0, 0, 0, 0]);
+        // Top 4 verts bound to joint 1
+        assert_eq!(&skin.joint_indices[4..], &[1, 1, 1, 1]);
+        // All weights 1.0
+        for w in &skin.joint_weights {
+            assert!((w - 1.0).abs() < 1e-5);
+        }
+    }
+
+    /// v0.13.5 Phase 3: evaluate skel xforms at a time code via UsdSkelSkeletonQuery.
+    /// Fixture has no authored animation — eval at any time should return bind pose.
+    #[test]
+    fn test_compute_skel_xforms_at_time() {
+        let path = "../../test_assets/skel/two_bone_arm.usda";
+        let stage = match UsdStage::open(path) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("Skipping test - could not open stage: {e}");
+                return;
+            }
+        };
+
+        // At default time
+        let xforms = stage
+            .compute_skel_xforms(0, 0.0)
+            .expect("compute_skel_xforms failed");
+        assert_eq!(xforms.len(), 2, "expected 2 joint xforms");
+
+        // Joint 0 (Root) = identity
+        let j0 = xforms[0];
+        assert!(
+            (j0 - Mat4::IDENTITY)
+                .to_cols_array()
+                .iter()
+                .all(|&x| x.abs() < 1e-5),
+            "joint 0 should be identity at default time"
+        );
+        // Joint 1 (Bend) = translate(0, 1, 0)
+        assert!(
+            (xforms[1].w_axis.y - 1.0).abs() < 1e-5,
+            "joint 1 y-translation should be 1.0"
+        );
+
+        // Eval at a different time (no animation → same result)
+        let xforms_t = stage
+            .compute_skel_xforms(0, 42.0)
+            .expect("compute_skel_xforms at t=42 failed");
+        for (a, b) in xforms.iter().zip(xforms_t.iter()) {
+            assert!(
+                (*a - *b).to_cols_array().iter().all(|&x| x.abs() < 1e-5),
+                "static fixture must return identical xforms at all times"
+            );
+        }
+
+        // Full round-trip: compute_skel_xforms → compute_skin_matrices → skin_positions
+        // Identity palette → vertices unchanged (Phase 2 invariant via Phase 3 path).
+        let skin_data = stage.get_skin_binding(0).expect("get_skin_binding failed");
+        let skel_data = stage.get_skeleton(0).expect("get_skeleton failed");
+        let inv_binds: Vec<Mat4> = skel_data
+            .bind_transforms
+            .iter()
+            .map(|m| m.inverse())
+            .collect();
+        let binding = crate::mesh::SkinBinding {
+            skeleton_path: skin_data.skeleton_path,
+            joint_indices: skin_data
+                .joint_indices
+                .iter()
+                .map(|&i| i.max(0) as u32)
+                .collect(),
+            joint_weights: skin_data.joint_weights,
+            element_size: skin_data.element_size,
+            geom_bind_transform: skin_data.geom_bind_transform,
+            inv_bind_matrices: inv_binds,
+        };
+        let palette = crate::skinning::compute_skin_matrices(&binding, &xforms);
+        let bind_positions = vec![
+            bif_math::Vec3::new(-0.5, 0.0, -0.5),
+            bif_math::Vec3::new(0.5, 0.0, -0.5),
+            bif_math::Vec3::new(0.5, 0.0, 0.5),
+            bif_math::Vec3::new(-0.5, 0.0, 0.5),
+            bif_math::Vec3::new(-0.5, 2.0, -0.5),
+            bif_math::Vec3::new(0.5, 2.0, -0.5),
+            bif_math::Vec3::new(0.5, 2.0, 0.5),
+            bif_math::Vec3::new(-0.5, 2.0, 0.5),
+        ];
+        let mut out = vec![bif_math::Vec3::ZERO; 8];
+        crate::skinning::skin_positions(&binding, &bind_positions, &palette, &mut out);
+        for (got, want) in out.iter().zip(bind_positions.iter()) {
+            assert!(
+                (*got - *want).length() < 1e-5,
+                "round-trip failed: expected {want:?}, got {got:?}"
+            );
+        }
+    }
+
+    /// v0.13.5 Phase 3: smoke-test time-varying animation eval against a real
+    /// UsdSkel character with authored joint animation (Pixar's HumanFemale).
+    /// Skipped silently when the asset is not present.
+    #[test]
+    fn test_compute_skel_xforms_animated_character() {
+        let path = "../../assets/UsdSkelExamples/HumanFemale/HumanFemale.walk.usd";
+        let stage = match UsdStage::open(path) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("Skipping test - HumanFemale asset unavailable: {e}");
+                return;
+            }
+        };
+
+        let skel_count = match stage.skeleton_count() {
+            Ok(n) => n,
+            Err(e) => {
+                eprintln!("Skipping - skeleton_count failed: {e}");
+                return;
+            }
+        };
+        if skel_count == 0 {
+            eprintln!("Skipping - no skeletons found in HumanFemale.walk.usd");
+            return;
+        }
+
+        // Query within the authored time range. USD clamps out-of-range queries
+        // to the nearest keyframe, so picking 0.0 and 20.0 (outside HumanFemale's
+        // 101-129 range) would return identical results. Use the stage timeline.
+        let timeline = stage.get_timeline().expect("get_timeline failed");
+        let start = timeline.start_time_code;
+        let end = timeline.end_time_code;
+        assert!(
+            end > start,
+            "expected authored time range, got start={start} end={end}"
+        );
+        let mid = start + (end - start) * 0.5;
+
+        let x_start = stage
+            .compute_skel_xforms(0, start)
+            .expect("eval @ start failed");
+        let x_mid = stage
+            .compute_skel_xforms(0, mid)
+            .expect("eval @ mid failed");
+        assert_eq!(
+            x_start.len(),
+            x_mid.len(),
+            "joint count must match across time"
+        );
+        assert!(x_start.len() > 1, "HumanFemale should have >1 joint");
+
+        let mut max_delta: f32 = 0.0;
+        for (a, b) in x_start.iter().zip(x_mid.iter()) {
+            let delta: f32 = (*a - *b)
+                .to_cols_array()
+                .iter()
+                .map(|x| x.abs())
+                .fold(0.0f32, f32::max);
+            if delta > max_delta {
+                max_delta = delta;
+            }
+        }
+        assert!(
+            max_delta > 1e-3,
+            "expected joint motion between frame {start} and {mid}; max delta {max_delta}"
+        );
+        eprintln!("HumanFemale joint animation max delta over [{start}, {mid}]: {max_delta}");
     }
 }

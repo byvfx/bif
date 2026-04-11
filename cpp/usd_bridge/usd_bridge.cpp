@@ -48,6 +48,10 @@
 #include <pxr/usd/usdSkel/skeleton.h>
 #include <pxr/usd/usdSkel/bindingAPI.h>
 #include <pxr/usd/usdSkel/cache.h>
+#include <pxr/usd/usdSkel/root.h>
+#include <pxr/usd/usdSkel/binding.h>
+#include <pxr/usd/usdSkel/skeletonQuery.h>
+#include <pxr/usd/usdSkel/skinningQuery.h>
 #include <pxr/usd/usdVol/volume.h>
 #include <pxr/usd/usdVol/openVDBAsset.h>
 #include <pxr/usd/usdGeom/metrics.h>
@@ -301,6 +305,9 @@ struct CachedSkeleton {
     std::vector<const char*> joint_path_ptrs;
     std::vector<float> bind_transforms;  // joint_count * 16
     std::vector<float> rest_transforms;  // joint_count * 16
+    /// Schema handle for re-evaluating at arbitrary time codes (Phase 3 anim eval).
+    /// Valid as long as the owning UsdBridgeStage (and its stage RefPtr) lives.
+    UsdSkelSkeleton skel;
 };
 
 /// Cached skin binding for a mesh
@@ -311,6 +318,14 @@ struct CachedSkinBinding {
     std::vector<float> joint_weights;
     size_t element_size = 0;
     float geom_bind_transform[16];
+    /// World-space xform of the SkelRoot ancestor at the load time. The
+    /// renderer should use THIS as the instance transform for skinned meshes
+    /// instead of the mesh's own world xform — `compute_skel_xforms` returns
+    /// joint matrices in skel-local space, so the SkelRoot world xform is
+    /// what re-anchors them in the scene. Bypasses the double-offset issue
+    /// when a skinned mesh sits under a non-identity sub-Xform inside its
+    /// SkelRoot (e.g. buttons translated to the chest).
+    float skel_root_world_xform[16];
     bool valid = false;
 };
 
@@ -335,6 +350,10 @@ struct CachedPrimvar {
 /// Internal stage representation
 struct UsdBridgeStage {
     UsdStageRefPtr stage;
+    /// Persistent UsdSkelCache — owns per-SkelRoot topology + SkeletonQuery objects.
+    /// Queried at time codes for animation eval. Must outlive any query retrieved from it;
+    /// destructs before `stage` (declared after stage, reverse destruction order).
+    UsdSkelCache skel_cache;
     std::vector<CachedMesh> meshes;
     std::vector<CachedInstancer> instancers;
     std::vector<CachedMaterial> materials;
@@ -5261,6 +5280,39 @@ UsdBridgeError usd_bridge_get_mesh_collection_material_path(
 // UsdSkel
 // ============================================================================
 
+// Populate CachedSkeleton metadata from a SkeletonQuery. Writes joint order, bind
+// transforms (world-space, per UsdSkel convention), and rest transforms (evaluated
+// at default time code — same as bind pose unless the skeleton authored rest attrs).
+static void populate_cached_skeleton(CachedSkeleton& cached,
+                                     const UsdSkelSkeletonQuery& skel_query) {
+    const VtTokenArray& joint_order = skel_query.GetJointOrder();
+    cached.joint_paths.reserve(joint_order.size());
+    for (const auto& j : joint_order) {
+        cached.joint_paths.push_back(j.GetString());
+    }
+
+    VtArray<GfMatrix4d> bind_xforms;
+    skel_query.GetJointWorldBindTransforms(&bind_xforms);
+    cached.bind_transforms.reserve(bind_xforms.size() * 16);
+    for (const auto& m : bind_xforms) {
+        float data[16];
+        matrix_to_float16(m, data);
+        for (int i = 0; i < 16; ++i) cached.bind_transforms.push_back(data[i]);
+    }
+
+    VtArray<GfMatrix4d> rest_xforms;
+    skel_query.ComputeJointSkelTransforms(&rest_xforms, UsdTimeCode::Default());
+    cached.rest_transforms.reserve(rest_xforms.size() * 16);
+    for (const auto& m : rest_xforms) {
+        float data[16];
+        matrix_to_float16(m, data);
+        for (int i = 0; i < 16; ++i) cached.rest_transforms.push_back(data[i]);
+    }
+}
+
+// Refactored for v0.13.5: use UsdSkelCache + UsdSkelRoot traversal so Phase 3 anim
+// eval can reuse the cache. Output shape (CachedSkeleton / CachedSkinBinding per mesh)
+// is preserved so existing FFI contracts are unchanged.
 static void cache_skeleton_data(UsdBridgeStage* bridge) {
     if (bridge->skeletons_cached) return;
     cache_stage_data(bridge);
@@ -5268,85 +5320,231 @@ static void cache_skeleton_data(UsdBridgeStage* bridge) {
     bridge->skeletons.clear();
     bridge->skin_bindings.clear();
     bridge->skin_bindings.resize(bridge->meshes.size());
+    bridge->skel_cache.Clear();
+
+    // mesh_path → index into bridge->meshes (and bridge->skin_bindings)
+    std::unordered_map<std::string, size_t> mesh_index_by_path;
+    mesh_index_by_path.reserve(bridge->meshes.size());
+    for (size_t i = 0; i < bridge->meshes.size(); ++i) {
+        mesh_index_by_path[bridge->meshes[i].path] = i;
+    }
+
+    // skel_path → index into bridge->skeletons (de-dupes skeletons shared across SkelRoots)
+    std::unordered_map<std::string, size_t> skel_index_by_path;
+
+    // XformCache for SkelRoot world transforms — used as the per-mesh
+    // instance transform override for skinned meshes (see CachedSkinBinding).
+    UsdGeomXformCache skel_xform_cache;
 
     for (const UsdPrim& prim : bridge->stage->Traverse(
             UsdTraverseInstanceProxies(UsdPrimDefaultPredicate))) {
-        if (prim.IsA<UsdSkelSkeleton>()) {
-            UsdSkelSkeleton skel(prim);
-            CachedSkeleton cached;
-            cached.path = prim.GetPath().GetString();
+        if (!prim.IsA<UsdSkelRoot>()) continue;
+        UsdSkelRoot root(prim);
+        bridge->skel_cache.Populate(root, UsdPrimDefaultPredicate);
 
-            VtArray<TfToken> joints;
-            skel.GetJointsAttr().Get(&joints);
-            for (const auto& j : joints) {
-                cached.joint_paths.push_back(j.GetString());
-            }
-            for (const auto& s : cached.joint_paths) {
-                cached.joint_path_ptrs.push_back(s.c_str());
+        // World xform of this SkelRoot — shared by every mesh underneath.
+        float skel_root_world_f16[16];
+        {
+            GfMatrix4d skel_root_world =
+                skel_xform_cache.GetLocalToWorldTransform(prim);
+            matrix_to_float16(skel_root_world, skel_root_world_f16);
+        }
+
+        std::vector<UsdSkelBinding> skel_bindings;
+        if (!bridge->skel_cache.ComputeSkelBindings(root, &skel_bindings,
+                                                    UsdPrimDefaultPredicate)) {
+            continue;
+        }
+
+        for (const UsdSkelBinding& sb : skel_bindings) {
+            const UsdSkelSkeleton& skel = sb.GetSkeleton();
+            if (!skel) continue;
+
+            std::string skel_path = skel.GetPrim().GetPath().GetString();
+
+            // Fetch the cached skeleton query once — needed both for one-time
+            // metadata caching (first sighting) and for the per-mesh joint-order
+            // remap below.
+            UsdSkelSkeletonQuery skel_query = bridge->skel_cache.GetSkelQuery(skel);
+            if (!skel_query) continue;
+
+            // Cache skeleton metadata once per unique skel path
+            if (skel_index_by_path.find(skel_path) == skel_index_by_path.end()) {
+                CachedSkeleton cached;
+                cached.path = skel_path;
+                cached.skel = skel;
+                populate_cached_skeleton(cached, skel_query);
+
+                skel_index_by_path[skel_path] = bridge->skeletons.size();
+                bridge->skeletons.push_back(std::move(cached));
             }
 
-            VtArray<GfMatrix4d> bindXforms;
-            skel.GetBindTransformsAttr().Get(&bindXforms);
-            cached.bind_transforms.reserve(bindXforms.size() * 16);
-            for (const auto& m : bindXforms) {
-                float data[16];
-                matrix_to_float16(m, data);
-                for (int i = 0; i < 16; ++i) cached.bind_transforms.push_back(data[i]);
+            // Attach skinning data to each bound mesh under this skeleton.
+            //
+            // UsdSkel subtlety: a skinned mesh may author its own `skel:joints`
+            // primvar as a SUBSET (or reordering) of the skeleton's joint order —
+            // common optimization so a hand mesh only carries hand joints, etc.
+            // The `jointIndices` primvar then indexes into THIS local array,
+            // NOT the skeleton's full joint list. We remap once here so the
+            // downstream Rust palette can be indexed by skeleton joint idx.
+            const VtTokenArray& skel_joint_order = skel_query.GetJointOrder();
+            std::unordered_map<TfToken, int, TfHash> skel_path_to_idx;
+            skel_path_to_idx.reserve(skel_joint_order.size());
+            for (size_t i = 0; i < skel_joint_order.size(); ++i) {
+                skel_path_to_idx[skel_joint_order[i]] = static_cast<int>(i);
             }
 
-            VtArray<GfMatrix4d> restXforms;
-            skel.GetRestTransformsAttr().Get(&restXforms);
-            cached.rest_transforms.reserve(restXforms.size() * 16);
-            for (const auto& m : restXforms) {
-                float data[16];
-                matrix_to_float16(m, data);
-                for (int i = 0; i < 16; ++i) cached.rest_transforms.push_back(data[i]);
-            }
+            for (const UsdSkelSkinningQuery& skinning_query : sb.GetSkinningTargets()) {
+                if (!skinning_query) continue;
+                UsdPrim mesh_prim = skinning_query.GetPrim();
+                std::string mesh_path = mesh_prim.GetPath().GetString();
+                auto it = mesh_index_by_path.find(mesh_path);
+                if (it == mesh_index_by_path.end()) continue;
+                size_t mesh_idx = it->second;
 
-            bridge->skeletons.push_back(std::move(cached));
+                CachedSkinBinding skin;
+                skin.valid = true;
+                skin.mesh_path = mesh_path;
+                skin.skeleton_path = skel_path;
+                for (int i = 0; i < 16; ++i) {
+                    skin.skel_root_world_xform[i] = skel_root_world_f16[i];
+                }
+
+                // Check for a custom per-mesh joint order on the SkelBindingAPI.
+                UsdSkelBindingAPI mesh_binding(mesh_prim);
+                VtTokenArray mesh_joint_order;
+                bool has_custom_order = false;
+                if (mesh_binding) {
+                    UsdAttribute joints_attr = mesh_binding.GetJointsAttr();
+                    if (joints_attr && joints_attr.HasAuthoredValue() &&
+                        joints_attr.Get(&mesh_joint_order) &&
+                        !mesh_joint_order.empty()) {
+                        has_custom_order = true;
+                    }
+                }
+
+                // Build mesh-local idx → skeleton-global idx lookup. Entries
+                // with no match land as -1 (sentinel; Rust-side treats as invalid).
+                std::vector<int> mesh_to_skel_map;
+                if (has_custom_order) {
+                    mesh_to_skel_map.reserve(mesh_joint_order.size());
+                    for (const auto& tok : mesh_joint_order) {
+                        auto sk_it = skel_path_to_idx.find(tok);
+                        mesh_to_skel_map.push_back(
+                            sk_it != skel_path_to_idx.end() ? sk_it->second : -1);
+                    }
+                }
+
+                VtIntArray ji;
+                VtFloatArray jw;
+                if (skinning_query.ComputeJointInfluences(&ji, &jw, UsdTimeCode::Default())) {
+                    if (has_custom_order) {
+                        skin.joint_indices.reserve(ji.size());
+                        for (int local_idx : ji) {
+                            int skel_idx = -1;
+                            if (local_idx >= 0 &&
+                                static_cast<size_t>(local_idx) < mesh_to_skel_map.size()) {
+                                skel_idx = mesh_to_skel_map[local_idx];
+                            }
+                            skin.joint_indices.push_back(skel_idx);
+                        }
+                    } else {
+                        skin.joint_indices.assign(ji.begin(), ji.end());
+                    }
+                    skin.joint_weights.assign(jw.begin(), jw.end());
+                }
+                skin.element_size = skinning_query.GetNumInfluencesPerComponent();
+
+                GfMatrix4d geom_bind =
+                    skinning_query.GetGeomBindTransform(UsdTimeCode::Default());
+                matrix_to_float16(geom_bind, skin.geom_bind_transform);
+
+                // Layout normalization: after this block, `skin.joint_indices`
+                // and `skin.joint_weights` are guaranteed to hold exactly
+                // `post_split_vert_count * element_size` entries in the same
+                // order as `CachedMesh::vertices`, regardless of whether the
+                // source USD mesh authored per-vertex or constant interpolation
+                // and regardless of whether UV-seam splitting inflated the
+                // vertex count. Two sources of mismatch are handled:
+                //
+                // 1. **Rigidly deformed meshes** (no per-vertex `skel:jointIndices`):
+                //    `ComputeJointInfluences` returns a SINGLE block of
+                //    `element_size` influences that apply to the whole mesh.
+                //    Common for accessories: hair, buttons, teeth, eyelashes.
+                //    Without broadcasting, the Rust skinning loop iterates
+                //    verts 0..N and the per-vertex lookup bounds-checks out for
+                //    every vertex past 0, effectively dropping the mesh to the
+                //    origin and making it invisible.
+                //
+                // 2. **UV-seam split** (subdivision surfaces with faceVarying UVs):
+                //    The bridge duplicates verts across UV boundaries so each
+                //    seam vert can carry its own UV. `ComputeJointInfluences`
+                //    returns pre-split data; `vertex_index_map` maps each
+                //    post-split vert back to its original and we copy the
+                //    influence block accordingly.
+                const CachedMesh& cached_mesh = bridge->meshes[mesh_idx];
+                const size_t post_split_vert_count = cached_mesh.vertices.size() / 3;
+                const size_t es = skin.element_size;
+
+                if (es > 0 && post_split_vert_count > 0) {
+                    const bool is_rigid = skinning_query.IsRigidlyDeformed();
+
+                    std::vector<int32_t> src_ji = std::move(skin.joint_indices);
+                    std::vector<float> src_jw = std::move(skin.joint_weights);
+                    skin.joint_indices.clear();
+                    skin.joint_weights.clear();
+                    skin.joint_indices.reserve(post_split_vert_count * es);
+                    skin.joint_weights.reserve(post_split_vert_count * es);
+
+                    auto push_block = [&](size_t src_base) {
+                        for (size_t k = 0; k < es; ++k) {
+                            const size_t src = src_base + k;
+                            if (src < src_ji.size()) {
+                                skin.joint_indices.push_back(src_ji[src]);
+                                skin.joint_weights.push_back(src_jw[src]);
+                            } else {
+                                skin.joint_indices.push_back(-1);
+                                skin.joint_weights.push_back(0.0f);
+                            }
+                        }
+                    };
+
+                    if (is_rigid) {
+                        // Broadcast the one authored block to every post-split vert.
+                        for (size_t v = 0; v < post_split_vert_count; ++v) {
+                            push_block(0);
+                        }
+                    } else if (cached_mesh.has_uv_split &&
+                               !cached_mesh.vertex_index_map.empty()) {
+                        // Per-vertex with UV split: expand from pre-split layout.
+                        for (size_t split_idx = 0; split_idx < post_split_vert_count;
+                             ++split_idx) {
+                            uint32_t orig_idx = cached_mesh.vertex_index_map[split_idx];
+                            push_block(static_cast<size_t>(orig_idx) * es);
+                        }
+                    } else {
+                        // Per-vertex with no UV split: already aligned. Pad if
+                        // the mesh's vertex count drifted (defensive; usually
+                        // size equals post_split_vert_count * es exactly).
+                        for (size_t v = 0; v < post_split_vert_count; ++v) {
+                            push_block(v * es);
+                        }
+                    }
+                }
+
+                bridge->skin_bindings[mesh_idx] = std::move(skin);
+            }
         }
     }
 
-    for (size_t i = 0; i < bridge->meshes.size(); ++i) {
-        UsdPrim prim = bridge->stage->GetPrimAtPath(SdfPath(bridge->meshes[i].path));
-        if (!prim) continue;
-
-        UsdSkelBindingAPI binding(prim);
-        if (!binding) continue;
-
-        UsdRelationship skelRel = binding.GetSkeletonRel();
-        SdfPathVector targets;
-        if (!skelRel.GetForwardedTargets(&targets) || targets.empty()) continue;
-
-        CachedSkinBinding skin;
-        skin.valid = true;
-        skin.mesh_path = bridge->meshes[i].path;
-        skin.skeleton_path = targets[0].GetString();
-
-        UsdGeomPrimvar jiPv = binding.GetJointIndicesPrimvar();
-        if (jiPv) {
-            VtArray<int> ji;
-            jiPv.Get(&ji);
-            skin.joint_indices.assign(ji.begin(), ji.end());
-            skin.element_size = jiPv.GetElementSize();
+    // Fixup joint_path_ptrs AFTER all pushes are done (vector won't reallocate
+    // further) to avoid dangling SSO buffers from intermediate moves.
+    for (CachedSkeleton& cs : bridge->skeletons) {
+        cs.joint_path_ptrs.clear();
+        cs.joint_path_ptrs.reserve(cs.joint_paths.size());
+        for (const auto& jp : cs.joint_paths) {
+            cs.joint_path_ptrs.push_back(jp.c_str());
         }
-
-        UsdGeomPrimvar jwPv = binding.GetJointWeightsPrimvar();
-        if (jwPv) {
-            VtArray<float> jw;
-            jwPv.Get(&jw);
-            skin.joint_weights.assign(jw.begin(), jw.end());
-        }
-
-        GfMatrix4d geomBind;
-        if (binding.GetGeomBindTransformAttr().Get(&geomBind)) {
-            matrix_to_float16(geomBind, skin.geom_bind_transform);
-        } else {
-            GfMatrix4d identity(1.0);
-            matrix_to_float16(identity, skin.geom_bind_transform);
-        }
-
-        bridge->skin_bindings[i] = std::move(skin);
     }
 
     bridge->skeletons_cached = true;
@@ -5389,6 +5587,45 @@ UsdBridgeError usd_bridge_get_skin_binding(const UsdBridgeStage* stage, size_t m
     out_data->joint_weights_count = b.joint_weights.size();
     out_data->joint_indices_element_size = b.element_size;
     for (int i = 0; i < 16; ++i) out_data->geom_bind_transform[i] = b.geom_bind_transform[i];
+    for (int i = 0; i < 16; ++i) out_data->skel_root_world_xform[i] = b.skel_root_world_xform[i];
+    return USD_BRIDGE_SUCCESS;
+}
+
+UsdBridgeError usd_bridge_compute_skel_skin_xforms(
+    const UsdBridgeStage* stage,
+    size_t skel_index,
+    double time_code,
+    float* out_joint_skel_xforms,
+    size_t out_capacity
+) {
+    if (!stage || !out_joint_skel_xforms) return USD_BRIDGE_ERROR_NULL_POINTER;
+    UsdBridgeStage* bridge = const_cast<UsdBridgeStage*>(stage);
+    bridge->skeletons_cached || (cache_skeleton_data(bridge), true);
+    if (skel_index >= bridge->skeletons.size()) return USD_BRIDGE_ERROR_INVALID_PRIM;
+
+    const CachedSkeleton& cached = bridge->skeletons[skel_index];
+    const size_t joint_count = cached.joint_paths.size();
+    if (out_capacity < joint_count * 16) return USD_BRIDGE_ERROR_INVALID_STAGE;
+
+    if (!cached.skel) return USD_BRIDGE_ERROR_INVALID_PRIM;
+
+    // Re-fetch the query from the persistent skel_cache. The cache returns the
+    // same cached query each call, so this is cheap; the `Compute` call does
+    // the per-time-code evaluation (joint topology walk + matrix composition).
+    UsdSkelSkeletonQuery skel_query = bridge->skel_cache.GetSkelQuery(cached.skel);
+    if (!skel_query) return USD_BRIDGE_ERROR_INVALID_PRIM;
+
+    VtArray<GfMatrix4d> xforms;
+    if (!skel_query.ComputeJointSkelTransforms(&xforms, UsdTimeCode(time_code))) {
+        return USD_BRIDGE_ERROR_INVALID_STAGE;
+    }
+    if (xforms.size() != joint_count) {
+        return USD_BRIDGE_ERROR_INVALID_STAGE;
+    }
+
+    for (size_t i = 0; i < joint_count; ++i) {
+        matrix_to_float16(xforms[i], out_joint_skel_xforms + (i * 16));
+    }
     return USD_BRIDGE_SUCCESS;
 }
 

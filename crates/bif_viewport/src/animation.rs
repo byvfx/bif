@@ -1,3 +1,5 @@
+use bif_math::Vec3;
+
 use crate::gpu_types::InstanceData;
 use crate::ivar_state::RenderMode;
 use crate::Renderer;
@@ -33,7 +35,7 @@ impl Renderer {
             self.sync_viewport_to_scene_camera(idx);
         }
 
-        // Check if we have any mesh animations (transform or vertex)
+        // Check if we have any mesh animations (transform, vertex, or skinning)
         let animated_count = self
             .scene
             .instance_animations
@@ -42,7 +44,8 @@ impl Renderer {
             .count();
         let has_transform_animations = animated_count > 0;
         let has_vertex_animations = !self.scene.vertex_animated_meshes.is_empty();
-        let has_mesh_animations = has_transform_animations || has_vertex_animations;
+        let has_skinning = !self.scene.skinned_meshes.is_empty();
+        let has_mesh_animations = has_transform_animations || has_vertex_animations || has_skinning;
 
         if !has_mesh_animations {
             self.scene.last_evaluated_frame = current_frame;
@@ -64,7 +67,147 @@ impl Renderer {
             }
         }
 
+        // Update vertex buffer for meshes with UsdSkel binding (v0.13.5 Phase 3)
+        if has_skinning {
+            self.update_skinning(eval_frame);
+            if self.ivar.ivar_state.mode == RenderMode::Ivar {
+                self.invalidate_ivar_scene();
+            }
+        }
+
         self.scene.last_evaluated_frame = current_frame;
+    }
+
+    /// Re-skin all registered skinned meshes at the given time code.
+    ///
+    /// For each entry: fetch current joint-skel xforms from the USD stage,
+    /// assemble the skinning palette, run CPU LBS against the cached bind
+    /// positions, then blit the result into the correct slice of the CPU
+    /// vertex buffer and write the buffer to the GPU.
+    ///
+    /// Two mesh buffer layouts are supported:
+    /// - **Single-mesh** (`mesh_ranges == None`): whole buffer belongs to one
+    ///   prototype. The positions in `mesh_data.vertices` are in mesh-local
+    ///   space (see `MeshData::from_core_mesh`), so skinned positions write
+    ///   through directly.
+    /// - **Combined multi-mesh** (`mesh_ranges == Some(_)`): buffer built via
+    ///   `build_combined_from_instances`, which pre-bakes the instance xform
+    ///   into each vertex. Multi-draw mode is not yet supported — logged once
+    ///   and skipped, deferred to a follow-up session.
+    fn update_skinning(&mut self, frame: f64) {
+        let stage_mtx = match &self.scene.usd_stage {
+            Some(s) => s.clone(),
+            None => return,
+        };
+
+        // Multi-draw mode: per-prototype GPU vertex buffers live in
+        // `multi_draw.prototype_gpu_data`, not in the combined `mesh_data.vertices`.
+        // Delegate to the multi-draw update path — same math, different buffer layout.
+        if self.multi_draw.enabled {
+            let stage = stage_mtx.lock().expect("UsdStage mutex poisoned");
+            let updated = self.multi_draw.update_skinning(
+                &self.gpu.queue,
+                &mut self.scene.skinned_meshes,
+                |skel_idx, f| stage.compute_skel_xforms(skel_idx, f).ok(),
+                frame,
+            );
+            drop(stage);
+            if updated && self.ivar.ivar_state.mode == RenderMode::Ivar {
+                self.invalidate_ivar_scene();
+            }
+            return;
+        }
+
+        let stage = stage_mtx.lock().expect("UsdStage mutex poisoned");
+
+        // Borrow split: we mutate mesh_data.vertices inside the loop while
+        // holding an immutable view of skinned_meshes. Index by index to sidestep.
+        let entry_count = self.scene.skinned_meshes.len();
+        let mut updated_any = false;
+
+        for entry_idx in 0..entry_count {
+            // Compute palette using a short scope so the borrow of skinned_meshes
+            // drops before we touch mesh_data.vertices.
+            let (palette, mesh_idx, vert_count) = {
+                let entry = &self.scene.skinned_meshes[entry_idx];
+                let xforms = match stage.compute_skel_xforms(entry.skel_idx, frame) {
+                    Ok(x) => x,
+                    Err(e) => {
+                        log::debug!(
+                            "compute_skel_xforms(skel={}, t={}) failed: {e}; skipping",
+                            entry.skel_idx,
+                            frame
+                        );
+                        continue;
+                    }
+                };
+                let palette = bif_core::skinning::compute_skin_matrices(&entry.skin, &xforms);
+                if palette.is_empty() {
+                    continue;
+                }
+                (palette, entry.mesh_idx, entry.bind_positions.len())
+            };
+
+            // Run LBS into the scratch buffer (owned by the entry to avoid
+            // per-frame allocation). Rust's disjoint-field borrows let us
+            // take `&skin` + `&bind_positions` alongside `&mut skinned_scratch`.
+            {
+                let entry = &mut self.scene.skinned_meshes[entry_idx];
+                if entry.skinned_scratch.len() != vert_count {
+                    entry.skinned_scratch.resize(vert_count, Vec3::ZERO);
+                }
+                bif_core::skinning::skin_positions(
+                    &entry.skin,
+                    &entry.bind_positions,
+                    &palette,
+                    &mut entry.skinned_scratch,
+                );
+            }
+
+            // Write skinned positions back into mesh_data.vertices.
+            // Single-mesh mode: whole buffer is this one mesh.
+            // Combined mode: use mesh_ranges to find the right slice.
+            let mesh_data = &mut self.scene.mesh_data;
+            let (range_start, range_len) = if let Some(ref ranges) = mesh_data.mesh_ranges {
+                match ranges.iter().find(|r| r.usd_mesh_index == mesh_idx) {
+                    Some(r) => (r.vertex_offset as usize, r.vertex_count as usize),
+                    None => {
+                        log::warn!("No mesh_range for mesh_idx {mesh_idx}; skipping skin update");
+                        continue;
+                    }
+                }
+            } else {
+                (0, mesh_data.vertices.len())
+            };
+
+            if range_len != vert_count {
+                log::warn!(
+                    "Skinned vertex count mismatch for mesh {mesh_idx}: \
+                     bind={vert_count} vs buffer range={range_len}; skipping"
+                );
+                continue;
+            }
+
+            let entry = &self.scene.skinned_meshes[entry_idx];
+            for (i, vertex) in mesh_data.vertices[range_start..range_start + range_len]
+                .iter_mut()
+                .enumerate()
+            {
+                let p = entry.skinned_scratch[i];
+                vertex.position = [p.x, p.y, p.z];
+            }
+            updated_any = true;
+        }
+
+        drop(stage);
+
+        if updated_any {
+            self.gpu.queue.write_buffer(
+                &self.vertex_buffer,
+                0,
+                bytemuck::cast_slice(&self.scene.mesh_data.vertices),
+            );
+        }
     }
 
     /// Evaluate all animated transforms at the given frame and update GPU buffer.

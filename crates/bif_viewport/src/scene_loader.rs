@@ -1984,6 +1984,71 @@ impl Renderer {
             }
         }
 
+        // Detect skinned prototypes (v0.13.5 Phase 3). Walk prototype list, match
+        // each one's skin to a stage skeleton index, and snapshot the data needed
+        // for per-frame CPU LBS so the hot path is allocation-free.
+        self.scene.skinned_meshes.clear();
+        let skel_count = stage.skeleton_count().unwrap_or(0);
+        if skel_count > 0 {
+            use std::collections::HashMap;
+            let mut skel_idx_by_path: HashMap<String, usize> = HashMap::new();
+            for i in 0..skel_count {
+                if let Ok(sk) = stage.get_skeleton(i) {
+                    skel_idx_by_path.insert(sk.path, i);
+                }
+            }
+
+            // USD mesh path → mesh_idx (matches MeshRange::usd_mesh_index)
+            let mut mesh_idx_by_path: HashMap<String, usize> = HashMap::new();
+            if let Ok(all_meshes) = stage.meshes() {
+                for (idx, md) in all_meshes.iter().enumerate() {
+                    mesh_idx_by_path.insert(md.path.clone(), idx);
+                }
+            }
+
+            for (proto_id, proto) in scene.prototypes.iter().enumerate() {
+                let Some(skin) = &proto.mesh.skin else {
+                    continue;
+                };
+                let Some(bind_positions) = &proto.mesh.bind_positions else {
+                    continue;
+                };
+                let Some(&skel_idx) = skel_idx_by_path.get(&skin.skeleton_path) else {
+                    log::warn!(
+                        "Proto '{}' references skeleton '{}' not found in stage",
+                        proto.name,
+                        skin.skeleton_path
+                    );
+                    continue;
+                };
+                let Some(&mesh_idx) = mesh_idx_by_path.get(&*proto.name) else {
+                    log::warn!(
+                        "Proto '{}' has skin binding but no matching stage mesh_idx",
+                        proto.name
+                    );
+                    continue;
+                };
+
+                let vert_count = bind_positions.len();
+                self.scene
+                    .skinned_meshes
+                    .push(crate::scene_manager::SkinnedMeshEntry {
+                        proto_id,
+                        mesh_idx,
+                        skel_idx,
+                        bind_positions: bind_positions.clone(),
+                        skin: skin.clone(),
+                        skinned_scratch: vec![bif_math::Vec3::ZERO; vert_count],
+                    });
+            }
+            if !self.scene.skinned_meshes.is_empty() {
+                log::info!(
+                    "UsdSkel: registered {} skinned prototypes for CPU LBS",
+                    self.scene.skinned_meshes.len()
+                );
+            }
+        }
+
         // Calculate world bounds for camera framing
         let world_bounds = scene.world_bounds();
         let mesh_center = Vec3::new(

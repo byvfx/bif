@@ -4,9 +4,39 @@
 //! populated from various file formats (USD, OBJ, etc.) and converted
 //! to GPU vertex buffers by the viewport.
 
-use bif_math::{Aabb, Vec3};
+use bif_math::{Aabb, Mat4, Vec3};
 
 use crate::usd::SubdivisionScheme;
+
+/// Per-mesh skin binding extracted from UsdSkelBindingAPI.
+///
+/// Points to a specific skeleton in the scene and provides the per-vertex
+/// joint indices/weights needed for CPU linear blend skinning. Bind matrices
+/// are pre-inverted at load time so skinning math only needs a multiply
+/// against the current-time joint-skel transform.
+#[derive(Clone, Debug)]
+pub struct SkinBinding {
+    /// Prim path of the bound UsdSkelSkeleton (e.g. `/Root/Character/Skel`).
+    pub skeleton_path: String,
+
+    /// Flattened joint indices, `element_size` influences per vertex.
+    /// Length == `positions.len() * element_size`.
+    pub joint_indices: Vec<u32>,
+
+    /// Joint weights parallel to `joint_indices`.
+    pub joint_weights: Vec<f32>,
+
+    /// Number of influences per vertex.
+    pub element_size: usize,
+
+    /// Transform from mesh-local space to skeleton-local space at bind time.
+    pub geom_bind_transform: Mat4,
+
+    /// Pre-computed `bind_world_xform.inverse()` per joint. Applied to each
+    /// vertex to move it from world-bind space into joint-local space before
+    /// re-transforming by the current joint-skel xform.
+    pub inv_bind_matrices: Vec<Mat4>,
+}
 
 /// A mesh consisting of vertex positions, optional normals, and triangle indices.
 ///
@@ -63,6 +93,17 @@ pub struct Mesh {
 
     /// Display color (primvars:displayColor — per-vertex or single color, fallback when no material)
     pub display_color: Option<Vec<Vec3>>,
+
+    /// UsdSkel binding (joint indices, weights, inv-bind matrices). `None` for
+    /// non-skinned meshes. When `Some`, `positions` holds the current (possibly
+    /// deformed) vertex positions and `bind_positions` holds the untouched
+    /// load-time snapshot used as input to each skinning pass.
+    pub skin: Option<SkinBinding>,
+
+    /// Bind-pose vertex positions snapshot. `Some` iff `skin.is_some()`.
+    /// Never mutated after load — skinning reads from here and writes into
+    /// `positions` each frame.
+    pub bind_positions: Option<Vec<Vec3>>,
 }
 
 impl Mesh {
@@ -89,6 +130,8 @@ impl Mesh {
             facevarying_uvs: None,
             facevarying_uv_indices: None,
             display_color: None,
+            skin: None,
+            bind_positions: None,
         }
     }
 
@@ -117,6 +160,8 @@ impl Mesh {
             facevarying_uvs: None,
             facevarying_uv_indices: None,
             display_color: None,
+            skin: None,
+            bind_positions: None,
         }
     }
 
@@ -146,6 +191,8 @@ impl Mesh {
             facevarying_uvs: None,
             facevarying_uv_indices: None,
             display_color: None,
+            skin: None,
+            bind_positions: None,
         }
     }
 

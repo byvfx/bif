@@ -668,6 +668,7 @@ pub(crate) unsafe fn convert_skin_binding(raw: &UsdBridgeSkinBindingDataRaw) -> 
         joint_weights,
         element_size: raw.joint_indices_element_size,
         geom_bind_transform: f32x16_to_mat4(&raw.geom_bind_transform),
+        skel_root_world_xform: f32x16_to_mat4(&raw.skel_root_world_xform),
     }
 }
 
@@ -1825,6 +1826,9 @@ mod tests {
             joint_weights_count: 4,
             joint_indices_element_size: 2,
             geom_bind_transform: [
+                1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+            ],
+            skel_root_world_xform: [
                 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
             ],
         };

@@ -26,6 +26,7 @@ pub mod primitives;
 pub mod scatter;
 pub mod scene;
 pub mod scene_query;
+pub mod skinning;
 pub mod texture;
 pub mod undo;
 pub mod usd;
@@ -34,7 +35,7 @@ pub mod usd;
 pub mod oiio;
 
 // Re-export commonly used types
-pub use mesh::Mesh;
+pub use mesh::{Mesh, SkinBinding};
 pub use point_cloud::{DistributionMethod, PointAttributes, PointCloud};
 pub use primitives::PrimitiveKind;
 pub use scatter::PointSource;

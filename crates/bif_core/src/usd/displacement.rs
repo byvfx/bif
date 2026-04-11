@@ -270,6 +270,8 @@ mod tests {
             facevarying_uvs: None,
             facevarying_uv_indices: None,
             display_color: None,
+            skin: None,
+            bind_positions: None,
         }
     }
 

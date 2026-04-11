@@ -17,13 +17,14 @@ use indexmap::IndexMap;
 
 use thiserror::Error;
 
-use crate::mesh::Mesh;
+use crate::mesh::{Mesh, SkinBinding};
 use crate::point_cloud::{DistributionMethod, PointAttributes, PointCloud};
 use crate::scene::{
     AnimatedTransform, CurvesPrim, Light, PointsPrim, Purpose, Scene, TimelineInfo, Transform,
     TransformKeyframe,
 };
 use crate::usd::cpp_bridge::{UsdBridgeError, UsdLightType, UsdStage};
+use bif_math::Mat4;
 
 /// Errors that can occur during USD loading.
 #[derive(Error, Debug)]
@@ -140,6 +141,23 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
     // This handles referenced meshes that appear multiple times with different transforms
     let mut mesh_dedup: HashMap<(usize, usize, u64), usize> = HashMap::new();
 
+    // Precompute inverse bind matrices per skeleton so per-mesh skin population
+    // only needs a cheap HashMap lookup. `bind_transforms` are world-space at bind
+    // time; inverting once at load amortizes the cost across every subsequent
+    // skinning eval. Skipped silently when there are no skeletons on the stage.
+    let skel_inv_binds: HashMap<String, Vec<Mat4>> = {
+        let mut map = HashMap::new();
+        if let Ok(count) = stage.skeleton_count() {
+            for i in 0..count {
+                if let Ok(skel) = stage.get_skeleton(i) {
+                    let inv: Vec<Mat4> = skel.bind_transforms.iter().map(|m| m.inverse()).collect();
+                    map.insert(skel.path, inv);
+                }
+            }
+        }
+        map
+    };
+
     // Load all meshes as prototypes (with deduplication).
     // All purposes are loaded; filtering happens at viewport culling time.
     let mesh_start = Instant::now();
@@ -233,6 +251,44 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
             mesh.facevarying_uv_indices = mesh_data.facevarying_uv_indices.clone();
             mesh.display_color = mesh_data.display_color.clone();
 
+            // UsdSkel binding (v0.13.5 Phase 1). Silently no-op for non-skinned
+            // meshes: the C++ bridge returns INVALID_PRIM, which maps to Err here.
+            // Snapshots positions into `bind_positions` before any skinning pass
+            // mutates them.
+            if let Ok(skin_data) = stage.get_skin_binding(mesh_idx) {
+                if let Some(inv_binds) = skel_inv_binds.get(&skin_data.skeleton_path) {
+                    mesh.bind_positions = Some(mesh.positions.clone());
+                    mesh.skin = Some(SkinBinding {
+                        skeleton_path: skin_data.skeleton_path,
+                        // -1 sentinel from the C++ bridge means "no skeleton mapping
+                        // for this mesh-local joint" — convert to u32::MAX so the
+                        // Rust skinning code's bounds check drops the influence
+                        // (otherwise cast-through-0 would silently pull joint 0).
+                        joint_indices: skin_data
+                            .joint_indices
+                            .iter()
+                            .map(|&i| if i < 0 { u32::MAX } else { i as u32 })
+                            .collect(),
+                        joint_weights: skin_data.joint_weights,
+                        element_size: skin_data.element_size,
+                        geom_bind_transform: skin_data.geom_bind_transform,
+                        inv_bind_matrices: inv_binds.clone(),
+                    });
+                    log::debug!(
+                        "Mesh {} bound to skeleton {} ({} influences/vertex)",
+                        mesh_data.path,
+                        mesh.skin.as_ref().unwrap().skeleton_path,
+                        mesh.skin.as_ref().unwrap().element_size
+                    );
+                } else {
+                    log::warn!(
+                        "Mesh {} references skeleton {} but no matching skeleton cached",
+                        mesh_data.path,
+                        skin_data.skeleton_path
+                    );
+                }
+            }
+
             let mesh_arc = Arc::new(mesh);
             let proto_id = scene.add_prototype(mesh_arc, mesh_data.path.clone());
             mesh_dedup.insert(dedup_key, proto_id);
@@ -263,11 +319,38 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
             proto_id
         };
 
-        // Add an instance with this mesh's world transform
-        let transform = Transform::from_matrix(mesh_data.transform);
+        // Add an instance with this mesh's world transform.
+        //
+        // For skinned meshes (v0.13.5), override with the SkelRoot's world
+        // transform. The skinning math produces vertices in skel-local space,
+        // so the instance matrix needs to re-anchor them at the SkelRoot, not
+        // at the individual mesh prim. Without this, sub-Xform offsets inside
+        // the SkelRoot (e.g. buttons translated to the chest) get applied
+        // twice — once via geom_bind_transform during skinning, once via the
+        // mesh's own world matrix — and the mesh ends up at 2x the offset.
+        //
+        // We also track `is_skinned` so we can SKIP per-frame transform
+        // keyframe animation for the instance: skinned meshes get all their
+        // per-frame motion from the joint deformation pass, and applying the
+        // mesh prim's own animated xform on top would re-introduce the same
+        // double-application that the static override is fixing.
+        let (transform, is_skinned) = if let Ok(skin_data) = stage.get_skin_binding(mesh_idx) {
+            if skel_inv_binds.contains_key(&skin_data.skeleton_path) {
+                (
+                    Transform::from_matrix(skin_data.skel_root_world_xform),
+                    true,
+                )
+            } else {
+                (Transform::from_matrix(mesh_data.transform), false)
+            }
+        } else {
+            (Transform::from_matrix(mesh_data.transform), false)
+        };
 
-        // Check for animation data
-        let animation = if scene.timeline.is_some() {
+        // Check for animation data. Skinned meshes deliberately skip the
+        // per-frame keyframe path — see the rationale on the transform block
+        // above.
+        let animation = if !is_skinned && scene.timeline.is_some() {
             match stage.get_mesh_animation(mesh_idx) {
                 Ok(anim_data) => {
                     log::debug!(
@@ -959,4 +1042,63 @@ def Xform "World" {
 
     // test_usda_and_cpp_bridge_produce_same_mesh removed — Rust parser eliminated,
     // both paths now use C++ bridge.
+
+    /// v0.13.5 Phase 1: load the two_bone_arm fixture via the full loader path
+    /// and verify skin data flows into Mesh.skin / Mesh.bind_positions.
+    #[test]
+    fn test_load_two_bone_arm_mesh_skin() {
+        let path = "../../test_assets/skel/two_bone_arm.usda";
+        let scene = match super::load_usd(path) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("Skipping test - could not load fixture: {e}");
+                return;
+            }
+        };
+
+        assert_eq!(scene.prototype_count(), 1, "expected 1 prototype");
+        let proto = &scene.prototypes[0];
+        let mesh = &proto.mesh;
+
+        // Bind pose snapshot matches current positions (no skinning applied yet)
+        let skin = mesh.skin.as_ref().expect("mesh should have a skin binding");
+        let bind_positions = mesh
+            .bind_positions
+            .as_ref()
+            .expect("mesh should have bind_positions snapshot");
+
+        assert_eq!(bind_positions.len(), 8, "8 vertices in two-bone-arm box");
+        assert_eq!(mesh.positions.len(), 8);
+        // At load, positions must equal bind_positions (no deformation yet)
+        for (p, bp) in mesh.positions.iter().zip(bind_positions.iter()) {
+            assert!((*p - *bp).length() < 1e-5);
+        }
+
+        // SkinBinding sanity
+        assert_eq!(skin.skeleton_path, "/Root/Character/Skel");
+        assert_eq!(skin.element_size, 1);
+        assert_eq!(skin.joint_indices.len(), 8);
+        assert_eq!(skin.joint_weights.len(), 8);
+        assert_eq!(&skin.joint_indices[..4], &[0, 0, 0, 0]);
+        assert_eq!(&skin.joint_indices[4..], &[1, 1, 1, 1]);
+
+        // Two joints → two inverse-bind matrices
+        assert_eq!(skin.inv_bind_matrices.len(), 2);
+        // Joint 0 inv-bind is identity (bind was identity)
+        let inv0 = skin.inv_bind_matrices[0];
+        assert!(
+            (inv0 - bif_math::Mat4::IDENTITY)
+                .to_cols_array()
+                .iter()
+                .all(|&x| x.abs() < 1e-5),
+            "joint 0 inv-bind should be identity"
+        );
+        // Joint 1 inv-bind is translate(0, -1, 0) (bind translated +1 Y)
+        let inv1 = skin.inv_bind_matrices[1];
+        assert!(
+            (inv1.w_axis.y - (-1.0)).abs() < 1e-5,
+            "joint 1 inv-bind translation.y should be -1.0, got {}",
+            inv1.w_axis.y
+        );
+    }
 }

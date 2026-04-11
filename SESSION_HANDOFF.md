@@ -1,7 +1,7 @@
-# Session Handoff - April 9, 2026
+# Session Handoff - April 10, 2026
 
-**Last Updated:** v0.13.0 SHIPPED
-**Current Version:** v0.13.0 released → v0.13.5-dev
+**Last Updated:** v0.13.5 UsdSkel functionally complete, ready for release bump
+**Current Version:** v0.13.5-dev (skinned characters validated against HumanFemale)
 **Project:** BIF - USD Orchestration Tool for VFX
 
 ---
@@ -11,14 +11,22 @@
 | Status | Details |
 |--------|---------|
 | Released | v0.1.0, v0.11.0, v0.12.0, **v0.13.0 (2026-04-09)** |
-| Current | v0.13.5-dev — UsdSkel import planning |
-| Next | v0.13.5 UsdSkel, then v0.14.0 Layer-Aware Stage (M32/M33, SdfLayer FFI, opinion inspector) |
-| Tests | 530+ total across all crates (6 pre-existing HDRI failures unrelated) |
+| Current | v0.13.5-dev — UsdSkel import functionally complete |
+| Next | v0.13.5 release bump → v0.14.0 Layer-Aware Stage (M32/M33, SdfLayer FFI, opinion inspector) |
+| Tests | 14 new skel/skinning tests (8 unit + 4 cpp_bridge + 2 loader), 530+ total |
 | Performance | 60 FPS viewport, 100K instances with LOD, Ivar build ~185ms |
 
 ---
 
 ## Recent Work
+
+### v0.13.5 Apr 10: UsdSkel Import Complete (Apr 10, 2026)
+
+- **All 4 phases done:** C++ SkelCache refactor, Mesh::skin wiring, CPU LBS module (8 unit tests), per-frame anim eval + viewport hookup. Plus 6 follow-up bugs fixed during HumanFemale validation: multi-draw skinning path, per-mesh joint-order remap, UV-seam vertex expansion, rigidly-deformed mesh broadcast, SkelRoot world xform override, and skipping per-frame xform animation for skinned meshes.
+- **HumanFemale.walk.usd** loads coherent, all 77 skinned prototypes deform, walk animation plays correctly via the joint deformation pass. Hair, buttons, shoes all in correct positions.
+- **New files:** `crates/bif_core/src/skinning.rs`, `wiki/usd/usdskel-import.md`, `test_assets/skel/two_bone_arm.usda`.
+- **Tooling:** plumbed `skel_root_world_xform[16]` through 5 layers (C++ struct → header → ffi_raw → ffi_convert → cpp_bridge wrapper → loader). Multi-draw skinning path mirrors `update_vertex_animation`'s structure.
+- **Remaining for release:** version bump `0.13.5-dev → 0.13.5`, MILESTONES.md Released section, release commit.
 
 ### v0.13.0 Apr 7: UsdStage Sync Fix + Architecture Audit (Apr 7, 2026)
 

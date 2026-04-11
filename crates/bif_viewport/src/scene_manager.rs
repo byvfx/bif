@@ -8,7 +8,35 @@ use std::sync::{Arc, Mutex};
 
 use bif_core::usd::UsdStage;
 use bif_core::{AnimatedTransform, EditState, Material, SceneCamera, UndoStack};
-use bif_math::Mat4;
+use bif_math::{Mat4, Vec3};
+
+/// A skinned prototype registered for per-frame CPU LBS re-evaluation.
+///
+/// Added in v0.13.5 Phase 3. The entry caches everything needed to run the
+/// skinning pass without re-reading from `working_scene.prototypes` each
+/// frame: the snapshot of bind-pose positions, the per-vertex joint binding,
+/// and the skeleton index into the USD stage (so `compute_skel_xforms` can
+/// be called for the current time code).
+#[derive(Clone, Debug)]
+pub struct SkinnedMeshEntry {
+    /// Prototype index in `working_scene.prototypes`.
+    pub proto_id: usize,
+    /// USD mesh index, matching `MeshRange::usd_mesh_index`. Used to locate
+    /// the correct slice of the combined vertex buffer in multi-mesh mode.
+    pub mesh_idx: usize,
+    /// Skeleton index in the USD stage's skeleton list
+    /// (as returned by `UsdStage::skeleton_count`).
+    pub skel_idx: usize,
+    /// Bind-pose positions snapshot (cloned from the prototype mesh at
+    /// registration time so the hot path avoids `Arc<Mesh>` indirection).
+    pub bind_positions: Vec<Vec3>,
+    /// Pre-inverted per-joint bind matrices (cloned from the mesh's
+    /// SkinBinding) so the update path only needs a shallow field read.
+    pub skin: bif_core::SkinBinding,
+    /// Scratch buffer for per-frame skinned positions (keeps allocation
+    /// out of the hot path).
+    pub skinned_scratch: Vec<Vec3>,
+}
 
 use crate::gpu_types::InstanceData;
 use crate::mesh_data::MeshData;
@@ -28,6 +56,8 @@ pub struct SceneManager {
     pub last_evaluated_frame: f64,
     /// Mesh indices that have vertex animation (deformation).
     pub vertex_animated_meshes: Vec<usize>,
+    /// Prototypes with a UsdSkel binding — re-skinned each frame via CPU LBS.
+    pub skinned_meshes: Vec<SkinnedMeshEntry>,
 
     /// Reusable buffers for animation evaluation (avoid per-frame allocation).
     pub anim_instances_buf: Vec<InstanceData>,
@@ -67,6 +97,7 @@ impl SceneManager {
             instance_animations: vec![],
             last_evaluated_frame: -1.0,
             vertex_animated_meshes: vec![],
+            skinned_meshes: vec![],
             anim_instances_buf: vec![],
             anim_transforms_buf: vec![],
             scene_material: Material::default(),

@@ -200,6 +200,98 @@ impl MultiDrawState {
 
         updated_any
     }
+
+    /// Update per-prototype vertex buffers for UsdSkel-bound meshes at the given frame.
+    ///
+    /// v0.13.5 Phase 3 (multi-draw path). For each `SkinnedMeshEntry`:
+    ///   1. Fetch joint-skel transforms at `frame` via the caller-supplied closure
+    ///      (typically `stage.compute_skel_xforms(skel_idx, t)`).
+    ///   2. Build the skinning palette (`joint_skel * inv_bind * geom_bind`).
+    ///   3. Run CPU LBS into the entry's scratch buffer.
+    ///   4. Write skinned positions into the matching `PrototypeGpuData.vertices`
+    ///      (found by `prototype_id`) and re-upload the vertex buffer.
+    ///
+    /// Leaves normals untouched — Phase 3 position-only pass. Blend shapes and
+    /// skinned-normal GPU upload land in v0.13.6.
+    ///
+    /// Returns true if any updates were made.
+    pub fn update_skinning(
+        &mut self,
+        queue: &wgpu::Queue,
+        skinned_meshes: &mut [crate::scene_manager::SkinnedMeshEntry],
+        get_joint_xforms: impl Fn(usize, f64) -> Option<Vec<Mat4>>,
+        frame: f64,
+    ) -> bool {
+        if !self.enabled || skinned_meshes.is_empty() {
+            return false;
+        }
+
+        let mut updated_any = false;
+
+        for entry in skinned_meshes.iter_mut() {
+            let Some(joint_xforms) = get_joint_xforms(entry.skel_idx, frame) else {
+                continue;
+            };
+
+            let palette = bif_core::skinning::compute_skin_matrices(&entry.skin, &joint_xforms);
+            if palette.is_empty() {
+                continue;
+            }
+
+            // Ensure scratch buffer matches bind positions.
+            if entry.skinned_scratch.len() != entry.bind_positions.len() {
+                entry
+                    .skinned_scratch
+                    .resize(entry.bind_positions.len(), bif_math::Vec3::ZERO);
+            }
+            bif_core::skinning::skin_positions(
+                &entry.skin,
+                &entry.bind_positions,
+                &palette,
+                &mut entry.skinned_scratch,
+            );
+
+            // Find per-prototype GPU data by prototype_id (multi-draw registers
+            // every prototype exactly once, so this is unique).
+            let Some(proto_data) = self
+                .prototype_gpu_data
+                .iter_mut()
+                .find(|p| p.prototype_id == entry.proto_id)
+            else {
+                log::warn!(
+                    "update_skinning: no PrototypeGpuData for proto_id={} (skel_idx={})",
+                    entry.proto_id,
+                    entry.skel_idx
+                );
+                continue;
+            };
+
+            let gpu_vert_count = proto_data.vertices.len();
+            let skinned_count = entry.skinned_scratch.len();
+            if gpu_vert_count != skinned_count {
+                log::warn!(
+                    "update_skinning: vertex count mismatch for proto {}: \
+                     gpu={gpu_vert_count}, skinned={skinned_count}; skipping",
+                    entry.proto_id
+                );
+                continue;
+            }
+
+            for (i, vertex) in proto_data.vertices.iter_mut().enumerate() {
+                let p = entry.skinned_scratch[i];
+                vertex.position = [p.x, p.y, p.z];
+            }
+
+            queue.write_buffer(
+                &proto_data.vertex_buffer,
+                0,
+                bytemuck::cast_slice(&proto_data.vertices),
+            );
+            updated_any = true;
+        }
+
+        updated_any
+    }
 }
 
 #[cfg(test)]
