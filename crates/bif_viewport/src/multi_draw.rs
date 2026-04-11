@@ -219,7 +219,10 @@ impl MultiDrawState {
         &mut self,
         queue: &wgpu::Queue,
         skinned_meshes: &mut [crate::scene_manager::SkinnedMeshEntry],
-        get_joint_xforms: impl Fn(usize, f64) -> Option<Vec<Mat4>>,
+        // `FnMut` so the caller can dedupe FFI calls per `skel_idx` via a
+        // captured `HashMap` cache. For HumanFemale-style scenes (77 prototypes
+        // bound to one skeleton) this collapses N FFI calls to 1 per frame.
+        mut get_joint_xforms: impl FnMut(usize, f64) -> Option<Vec<Mat4>>,
         frame: f64,
     ) -> bool {
         if !self.enabled || skinned_meshes.is_empty() {

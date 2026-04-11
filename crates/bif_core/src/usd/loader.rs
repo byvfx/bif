@@ -257,6 +257,11 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
             // mutates them.
             if let Ok(skin_data) = stage.get_skin_binding(mesh_idx) {
                 if let Some(inv_binds) = skel_inv_binds.get(&skin_data.skeleton_path) {
+                    // Pull log values from skin_data BEFORE the move into SkinBinding
+                    // so we don't have to .unwrap() the Option<SkinBinding> twice.
+                    let log_skel_path = skin_data.skeleton_path.clone();
+                    let log_element_size = skin_data.element_size;
+
                     mesh.bind_positions = Some(mesh.positions.clone());
                     mesh.skin = Some(SkinBinding {
                         skeleton_path: skin_data.skeleton_path,
@@ -277,8 +282,8 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
                     log::debug!(
                         "Mesh {} bound to skeleton {} ({} influences/vertex)",
                         mesh_data.path,
-                        mesh.skin.as_ref().unwrap().skeleton_path,
-                        mesh.skin.as_ref().unwrap().element_size
+                        log_skel_path,
+                        log_element_size
                     );
                 } else {
                     log::warn!(

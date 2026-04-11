@@ -347,4 +347,74 @@ mod tests {
         skin_positions(&bind, &bind_pos, &palette, &mut out);
         assert_eq!(out[0], Vec3::ZERO);
     }
+
+    /// v0.13.5 review follow-up: lock down palette math under non-identity
+    /// `geomBindTransform`. The reviewer's concern was that the palette order
+    /// `joint_skel * inv_bind * geom_bind` might not handle a non-trivial
+    /// `geom_bind` correctly. By matrix associativity it does — this test
+    /// proves it concretely so a future refactor can't silently break it.
+    ///
+    /// Setup: 1 vertex at (1, 0, 0) in mesh-local space. The mesh is bound
+    /// to a single joint that, at bind time, sits at world position (0, 5, 0).
+    /// The mesh's `geomBindTransform` translates mesh-local → world-bind by
+    /// the same +5 Y, so the vertex's bind-time world position is (1, 5, 0).
+    /// The joint's `inv_bind` therefore takes that world point back to
+    /// joint-local space at (1, 0, 0).
+    ///
+    /// Three sub-cases verify three pieces of the chain:
+    /// 1. Joint at identity → vertex returns to its bind world position.
+    /// 2. Joint translates +Z → vertex shifts +Z relative to its bind.
+    /// 3. Joint rotates 90° around Z → vertex rotates around the joint origin.
+    #[test]
+    fn non_identity_geom_bind_round_trip() {
+        let geom_bind = Mat4::from_translation(Vec3::new(0.0, 5.0, 0.0));
+        let joint0_bind_world = Mat4::from_translation(Vec3::new(0.0, 5.0, 0.0));
+
+        let bind = SkinBinding {
+            skeleton_path: "/test/Skel".to_string(),
+            joint_indices: vec![0],
+            joint_weights: vec![1.0],
+            element_size: 1,
+            geom_bind_transform: geom_bind,
+            inv_bind_matrices: vec![joint0_bind_world.inverse()],
+        };
+
+        let bind_positions = vec![Vec3::new(1.0, 0.0, 0.0)];
+        let mut out = vec![Vec3::ZERO];
+
+        // Case 1: identity joint → vertex back at its bind world position.
+        // Hand-trace: geom_bind * (1,0,0) = (1,5,0); inv_bind * (1,5,0) = (1,0,0);
+        // identity * (1,0,0) = (1,0,0).
+        let palette = compute_skin_matrices(&bind, &[Mat4::IDENTITY]);
+        skin_positions(&bind, &bind_positions, &palette, &mut out);
+        assert!(
+            (out[0] - Vec3::new(1.0, 0.0, 0.0)).length() < 1e-5,
+            "case 1 (identity joint): expected (1,0,0), got {:?}",
+            out[0]
+        );
+
+        // Case 2: joint translated +Z by 3 → vertex shifted by (0,0,3).
+        // Hand-trace: chain produces (1,0,0) at joint-local; T(0,0,3) takes
+        // it to (1,0,3).
+        let palette =
+            compute_skin_matrices(&bind, &[Mat4::from_translation(Vec3::new(0.0, 0.0, 3.0))]);
+        skin_positions(&bind, &bind_positions, &palette, &mut out);
+        assert!(
+            (out[0] - Vec3::new(1.0, 0.0, 3.0)).length() < 1e-5,
+            "case 2 (translated joint): expected (1,0,3), got {:?}",
+            out[0]
+        );
+
+        // Case 3: joint rotates 90° around Z → joint-local (1,0,0) becomes
+        // skel-local (0,1,0). R_z(90°) takes (x,y,z) → (−y,x,z), so
+        // (1,0,0) → (0,1,0).
+        let palette =
+            compute_skin_matrices(&bind, &[Mat4::from_rotation_z(std::f32::consts::FRAC_PI_2)]);
+        skin_positions(&bind, &bind_positions, &palette, &mut out);
+        assert!(
+            (out[0] - Vec3::new(0.0, 1.0, 0.0)).length() < 1e-5,
+            "case 3 (rotated joint): expected (0,1,0), got {:?}",
+            out[0]
+        );
+    }
 }

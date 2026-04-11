@@ -1,4 +1,6 @@
-use bif_math::Vec3;
+use std::collections::HashMap;
+
+use bif_math::{Mat4, Vec3};
 
 use crate::gpu_types::InstanceData;
 use crate::ivar_state::RenderMode;
@@ -92,8 +94,15 @@ impl Renderer {
     ///   through directly.
     /// - **Combined multi-mesh** (`mesh_ranges == Some(_)`): buffer built via
     ///   `build_combined_from_instances`, which pre-bakes the instance xform
-    ///   into each vertex. Multi-draw mode is not yet supported — logged once
-    ///   and skipped, deferred to a follow-up session.
+    ///   into each vertex.
+    /// - **Multi-draw** (`multi_draw.enabled`): per-prototype GPU buffers in
+    ///   `multi_draw.prototype_gpu_data`. Delegated to `MultiDrawState::update_skinning`.
+    ///
+    /// Per-skeleton joint xforms are deduped across all entries via a
+    /// `HashMap<skel_idx, Vec<Mat4>>` cache built once per call. For scenes
+    /// where many prototypes share one skeleton (e.g. HumanFemale's 77
+    /// prototypes bound to a single skeleton), this collapses 77 FFI calls
+    /// per frame into 1.
     fn update_skinning(&mut self, frame: f64) {
         let stage_mtx = match &self.scene.usd_stage {
             Some(s) => s.clone(),
@@ -103,12 +112,22 @@ impl Renderer {
         // Multi-draw mode: per-prototype GPU vertex buffers live in
         // `multi_draw.prototype_gpu_data`, not in the combined `mesh_data.vertices`.
         // Delegate to the multi-draw update path — same math, different buffer layout.
+        // The closure captures a per-call `xform_cache` so each unique skel_idx
+        // hits the FFI exactly once per frame.
         if self.multi_draw.enabled {
             let stage = stage_mtx.lock().expect("UsdStage mutex poisoned");
+            let mut xform_cache: HashMap<usize, Vec<Mat4>> = HashMap::new();
             let updated = self.multi_draw.update_skinning(
                 &self.gpu.queue,
                 &mut self.scene.skinned_meshes,
-                |skel_idx, f| stage.compute_skel_xforms(skel_idx, f).ok(),
+                |skel_idx, f| {
+                    if let Some(cached) = xform_cache.get(&skel_idx) {
+                        return Some(cached.clone());
+                    }
+                    let xforms = stage.compute_skel_xforms(skel_idx, f).ok()?;
+                    xform_cache.insert(skel_idx, xforms.clone());
+                    Some(xforms)
+                },
                 frame,
             );
             drop(stage);
@@ -120,6 +139,10 @@ impl Renderer {
 
         let stage = stage_mtx.lock().expect("UsdStage mutex poisoned");
 
+        // Per-skeleton xform cache for the inline (combined-buffer) path.
+        // Same dedupe rationale as the multi-draw branch above.
+        let mut xform_cache: HashMap<usize, Vec<Mat4>> = HashMap::new();
+
         // Borrow split: we mutate mesh_data.vertices inside the loop while
         // holding an immutable view of skinned_meshes. Index by index to sidestep.
         let entry_count = self.scene.skinned_meshes.len();
@@ -130,18 +153,31 @@ impl Renderer {
             // drops before we touch mesh_data.vertices.
             let (palette, mesh_idx, vert_count) = {
                 let entry = &self.scene.skinned_meshes[entry_idx];
-                let xforms = match stage.compute_skel_xforms(entry.skel_idx, frame) {
-                    Ok(x) => x,
-                    Err(e) => {
-                        log::debug!(
-                            "compute_skel_xforms(skel={}, t={}) failed: {e}; skipping",
-                            entry.skel_idx,
-                            frame
-                        );
-                        continue;
+
+                // Look up or compute joint-skel xforms for this skeleton.
+                // Use the Entry API for the cache miss path so we don't do
+                // a double-lookup (clippy::map_entry) and so we keep the
+                // FFI failure → `continue` flow on the same control branch.
+                if let std::collections::hash_map::Entry::Vacant(slot) =
+                    xform_cache.entry(entry.skel_idx)
+                {
+                    match stage.compute_skel_xforms(entry.skel_idx, frame) {
+                        Ok(x) => {
+                            slot.insert(x);
+                        }
+                        Err(e) => {
+                            log::debug!(
+                                "compute_skel_xforms(skel={}, t={}) failed: {e}; skipping",
+                                entry.skel_idx,
+                                frame
+                            );
+                            continue;
+                        }
                     }
-                };
-                let palette = bif_core::skinning::compute_skin_matrices(&entry.skin, &xforms);
+                }
+                let xforms = xform_cache.get(&entry.skel_idx).expect("inserted above");
+
+                let palette = bif_core::skinning::compute_skin_matrices(&entry.skin, xforms);
                 if palette.is_empty() {
                     continue;
                 }

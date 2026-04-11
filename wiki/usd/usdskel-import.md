@@ -79,6 +79,28 @@ Multi-draw mode is deferred — per-prototype GPU buffers live separately from `
 - **Viewport hot path**: `crates/bif_viewport/src/animation.rs` (`update_skinning`)
 - **Fixture**: `test_assets/skel/two_bone_arm.usda`
 
+## Known Limitations
+
+Surfaced by code review and HumanFemale validation but deferred to follow-up versions:
+
+- **Animated SkelRoot xform not handled.** The static instance transform we use for skinned meshes is the SkelRoot's world xform at load time. If the SkelRoot itself has time-sampled xformOps (character on a moving platform, or a Skel under an animated parent group), the character will deform in place but the whole rig will be frozen at its load-frame world position. Fix: pull `AnimatedTransform` from the SkelRoot prim, not the mesh prim, when `is_skinned`. → v0.13.6 or v0.14.0.
+
+- **Invalid joint indices silently drop their weight contribution.** The C++ bridge emits `-1` as a sentinel when a mesh's local joint index can't be remapped to a skeleton joint; the Rust loader converts that to `u32::MAX`, which the bounds check in `skin_positions` skips. The dropped influence's weight is not redistributed across remaining joints, so the affected vertex is pulled toward the origin proportional to the lost weight. Defensive vs hard-warn — current choice is silent. For VFX rigs in practice this never fires; the malformed-skin path is for robustness against bad data.
+
+- **Multi-instance non-identity transforms in combined-buffer mode.** When the renderer uses the combined vertex buffer path (one prototype, multiple instances at different transforms), the skinned positions are written once into mesh-local space. Multiple instances of the same skinned prototype with different world transforms aren't supported in this path. Multi-draw mode handles per-prototype correctly. Surfaces only with crowd-style instanced characters.
+
+- **Per-frame normal-matrix recomputation.** `skin_normals` rebuilds the per-joint inverse-transpose 3×3 matrix on every call. For per-frame normal upload, this should be hoisted into the per-frame palette and computed alongside positions. Currently dormant because Phase 3 doesn't yet upload skinned normals to the GPU per frame.
+
+- **Hand-rolled joint-order remap.** `cache_skeleton_data` builds the mesh-local → skel-global joint mapping by hand via `UsdSkelBindingAPI::GetJointsAttr` matched against `UsdSkelSkeletonQuery::GetJointOrder`. The canonical USD pattern is `UsdSkelSkinningQuery::GetJointMapper()`, which handles identity/null cases internally. Functionally equivalent today; cleanup target for v0.13.6.
+
+- **Rigidly-deformed mesh broadcast wastes memory.** Hair, buttons, eyelashes — meshes where `IsRigidlyDeformed()` is true — currently broadcast their single influence block to per-post-split-vertex layout. For HumanFemale's hair (5899 verts × 5 influences) this is ~236KB per mesh that could be 8 bytes with a `Rigid` enum variant on `SkinBinding`. Multi-MB total savings on a typical character. Cleanup target for v0.13.6.
+
+## Performance Notes
+
+- Per-skeleton joint xforms are deduped across all `SkinnedMeshEntry` iterations in `update_skinning` via a `HashMap<skel_idx, Vec<Mat4>>` cache built once per call. For HumanFemale's 77 prototypes bound to a single skeleton, this collapses 77 FFI calls per frame to 1.
+- Per-entry `skinned_scratch: Vec<Vec3>` is pre-allocated at registration time so the LBS hot path is allocation-free.
+- `inv_bind_matrices` is precomputed once per skeleton at load (`bind_world.inverse()` per joint), not recomputed per frame.
+
 ## Related
 
 - [[Stage Layer Prim]]
