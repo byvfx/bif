@@ -1,7 +1,7 @@
 ---
 title: Journal Index
 type: index
-updated: "2026-04-05"
+updated: "2026-04-11"
 ---
 
 # Learning Journal
@@ -12,7 +12,7 @@ Daily development logs live in ../../devlog/ — this section is for entries tha
 
 ## Entries
 
-*No entries yet. Use the journal template (Ctrl+T then journal) to create one.*
+- [[2026-04-11-release-positioning|2026-04-11 — Release positioning under the Qt migration constraint]] — why v0.13.x posts avoid egui UI chrome and lean on engine-agnostic visuals
 
 ## See Also
 
