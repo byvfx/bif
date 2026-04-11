@@ -39,28 +39,7 @@ Roadmap organized by semantic version. Each release is testable, demoable, and g
 
 ---
 
-### v0.13.5 — UsdSkel Import (RELEASED 2026-04-10)
-
-Skeletal animation import + CPU skinning for rendering characters in assembled scenes. **See [CHANGELOG.md](CHANGELOG.md) for full release notes.**
-
-Shipped scope:
-
-- C++ bridge: UsdSkelCache, UsdSkelSkeletonQuery, UsdSkelSkinningQuery
-- Read skeleton topology (joints, bind transforms, rest transforms)
-- Read skin weights + joint indices per-vertex (with mesh-local → skel-global remap)
-- UV-seam vertex expansion for subdivision meshes
-- Rigidly-deformed mesh broadcast (hair, buttons, accessories)
-- SkelRoot world xform override (avoids sub-Xform double-application)
-- CPU linear blend skinning (LBS) module with normal inv-transpose
-- Animated playback: evaluate skeleton at current timeline frame, re-skin per frame
-- Multi-draw skinning path
-- Validated on Pixar's HumanFemale.walk.usd (77 prototypes, full walk cycle)
-
-Deferred to v0.13.6:
-
-- Blend shapes (UsdSkelBlendShape)
-- Blend shapes (UsdSkelBlendShape): read targets + weights, apply to base mesh
-- **Validation**: Load skinned character (e.g., from Houdini/Maya), see bind pose; scrub timeline, see animation
+v0.13.5 shipped 2026-04-10. Full release notes in [CHANGELOG.md](CHANGELOG.md), archived details in [MILESTONES_HISTORY.md](MILESTONES_HISTORY.md).
 
 ### v0.14.0 — Layer-Aware Stage
 

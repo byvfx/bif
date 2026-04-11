@@ -947,6 +947,35 @@ Complete history of BIF development milestones. For the current roadmap, see [MI
 
 ---
 
+## v0.13.5 Release: UsdSkel Import ✅
+
+- **Released:** 2026-04-10
+- **Theme:** Skeletal animation import + CPU linear blend skinning so rigged characters render in assembled scenes
+- **Validation asset:** Pixar's HumanFemale.walk.usd (77 prototypes, 89 instances, 28-frame walk cycle)
+- **Phases shipped:**
+  - **Phase 0** — C++ SkelCache refactor: `cache_skeleton_data()` rewritten to use `UsdSkelCache` + `UsdSkelRoot::ComputeSkelBindings` + `UsdSkelSkeletonQuery` + `UsdSkelSkinningQuery` (was raw attribute reads). Persistent `skel_cache` member on `UsdBridgeStage` enables per-time-code eval. Fixed latent SSO UAF in `joint_path_ptrs`.
+  - **Phase 1** — `Mesh::skin` + `Mesh::bind_positions` fields. New `SkinBinding` struct stores skeleton path, joint indices/weights, element size, geom-bind, pre-inverted bind matrices. Loader populates via `stage.get_skin_binding(mesh_idx)`.
+  - **Phase 2** — `bif_core::skinning` module: `compute_skin_matrices`, `skin_positions`, `skin_normals` (correct inv-transpose 3×3 for non-uniform-scale joints). 8 unit tests including identity round-trip, translated/rotated joint, blend, normals under scale.
+  - **Phase 3** — Per-frame anim eval FFI (`usd_bridge_compute_skel_skin_xforms`), Rust wrapper (`UsdStage::compute_skel_xforms`), viewport `update_skinning(frame)` hot path + multi-draw skinning path mirroring `update_vertex_animation`. Hooks into existing `timeline_state` playback UI.
+  - **Phase 4** — Polish, devlog, wiki article, CHANGELOG.
+- **HumanFemale validation bug fixes** (caught only after running against the real asset):
+  - **Multi-draw skinning** — Phase 3 originally deferred multi-draw with a one-time warning; added `MultiDrawState::update_skinning` parallel to `update_vertex_animation` so per-prototype GPU buffers get updated.
+  - **Per-mesh joint-order remap** — `ComputeJointInfluences` returns indices into the mesh's local `skel:joints` array (a subset/reordering of the skeleton). The bridge now builds a `mesh_joint_path → skel_joint_idx` map and remaps each influence index to skeleton-global.
+  - **UV-seam vertex expansion** — subdivision meshes have `mesh.positions` inflated past the original vertex count (faceVarying UV duplication, e.g. 32890→35268). The bridge walks `vertex_index_map[split_idx → orig_idx]` to copy each pre-split vertex's influence block to all post-split duplicates.
+  - **Rigidly-deformed mesh broadcast** — meshes without per-vertex jointIndices (hair, buttons, teeth, eyelashes) return one influence block. Detected via `IsRigidlyDeformed()` and broadcast to every post-split vertex.
+  - **SkelRoot world xform override** — skinning math returns vertices in skel-local space. New `skel_root_world_xform[16]` field on `CachedSkinBinding`/`UsdBridgeSkinBindingData` propagates the SkelRoot's world xform via `UsdGeomXformCache::GetLocalToWorldTransform`. Loader uses it as the static instance transform for skinned meshes, avoiding double-application of sub-Xform offsets.
+  - **Skip per-frame xform animation for skinned meshes** — every HumanFemale mesh prim has its own keyframe sequence; without this, BIF's `AnimatedTransform` overwrote the static SkelRoot override every frame and re-introduced the double-application. Loader now tracks `is_skinned` and bypasses the keyframe path entirely for skinned meshes — all per-frame motion comes from joint deformation.
+- **New files:**
+  - `crates/bif_core/src/skinning.rs` — LBS module
+  - `test_assets/skel/two_bone_arm.usda` — deterministic 2-joint, 8-vertex fixture
+  - `wiki/usd/usdskel-import.md` — concept note
+  - `devlog/2026-04/DEVLOG_2026-04-10.md` — full session log including Phase 5 debugging arc
+- **Test count:** 14 new (8 skinning unit + 4 cpp_bridge integration + 2 loader integration)
+- **Scoped out:** blend shapes (UsdSkelBlendShape) → v0.13.6
+- **Devlog span:** 2026-04-10
+
+---
+
 ## Summary Statistics (as of M19.4)
 
 | Metric | Value |
@@ -1038,5 +1067,5 @@ These are the original principles used during development, before the semver tra
 
 ---
 
-**Last Updated:** April 9, 2026
-**Milestones Archived:** M0 through M31, plus Freeze Fix, M26, M26.1, v0.13.0 Pipeline Foundation
+**Last Updated:** April 10, 2026
+**Milestones Archived:** M0 through M31, plus Freeze Fix, M26, M26.1, v0.13.0 Pipeline Foundation, v0.13.5 UsdSkel Import
