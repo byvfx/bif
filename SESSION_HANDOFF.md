@@ -1,7 +1,7 @@
 # Session Handoff - April 10, 2026
 
-**Last Updated:** v0.13.5 UsdSkel functionally complete, ready for release bump
-**Current Version:** v0.13.5-dev (skinned characters validated against HumanFemale)
+**Last Updated:** v0.13.5 SHIPPED
+**Current Version:** v0.13.5 released → v0.13.6-dev
 **Project:** BIF - USD Orchestration Tool for VFX
 
 ---
@@ -10,9 +10,9 @@
 
 | Status | Details |
 |--------|---------|
-| Released | v0.1.0, v0.11.0, v0.12.0, **v0.13.0 (2026-04-09)** |
-| Current | v0.13.5-dev — UsdSkel import functionally complete |
-| Next | v0.13.5 release bump → v0.14.0 Layer-Aware Stage (M32/M33, SdfLayer FFI, opinion inspector) |
+| Released | v0.1.0, v0.11.0, v0.12.0, v0.13.0 (2026-04-09), **v0.13.5 (2026-04-10)** |
+| Current | v0.13.6-dev — blend shapes (UsdSkelBlendShape) planning |
+| Next | v0.13.6 blend shapes, then v0.14.0 Layer-Aware Stage (M32/M33, SdfLayer FFI, opinion inspector) |
 | Tests | 14 new skel/skinning tests (8 unit + 4 cpp_bridge + 2 loader), 530+ total |
 | Performance | 60 FPS viewport, 100K instances with LOD, Ivar build ~185ms |
 

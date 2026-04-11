@@ -14,6 +14,7 @@ Roadmap organized by semantic version. Each release is testable, demoable, and g
 | v0.11.0 | Ivar Cache | 2026-03-13 | Ivar material cache + pre-warm, Embree indexed geometry |
 | v0.12.0 | USD Export | 2026-03-21 | USD export pipeline, OpenPBR migration, subsystem extraction, curves/points import, UDIM atlas |
 | v0.13.0 | Pipeline Foundation | 2026-04-09 | M29.5 UI overhaul, M30 persistence + eval modes, M31 per-node viz, subdiv + CPU displacement, faceVarying UVs, native MaterialX displacement, DomeLight_1, SceneQuery trait, Embree feature gate |
+| v0.13.5 | UsdSkel Import | 2026-04-10 | UsdSkelCache + SkeletonQuery, CPU LBS skinning module, Mesh::skin/bind_positions, per-frame anim eval FFI, multi-draw skinning path, joint-order remap, UV-seam vertex expansion, rigid-binding broadcast, SkelRoot world xform override, validated on Pixar HumanFemale |
 
 ---
 
@@ -21,7 +22,6 @@ Roadmap organized by semantic version. Each release is testable, demoable, and g
 
 | Version | Theme | Est. Hours | Key Milestones |
 |---------|-------|-----------|----------------|
-| v0.13.5 | UsdSkel Import | 20-30h | Skeleton eval, skinning, bind pose + anim playback |
 | v0.14.0 | Layer-Aware Stage | 35-50h | M32, M33 + workflow Phase 1 |
 | v0.15.0 | Qt Migration | 50-60h | M28 (T-layout, command palette, theme) |
 | v0.16.0 | Edit Operations + Save | 30-40h | Workflow Phase 2 + material param sheet + lookdev orb |
@@ -39,15 +39,26 @@ Roadmap organized by semantic version. Each release is testable, demoable, and g
 
 ---
 
-### v0.13.5 — UsdSkel Import
+### v0.13.5 — UsdSkel Import (RELEASED 2026-04-10)
 
-Skeletal animation import + CPU skinning for rendering characters in assembled scenes.
+Skeletal animation import + CPU skinning for rendering characters in assembled scenes. **See [CHANGELOG.md](CHANGELOG.md) for full release notes.**
+
+Shipped scope:
 
 - C++ bridge: UsdSkelCache, UsdSkelSkeletonQuery, UsdSkelSkinningQuery
 - Read skeleton topology (joints, bind transforms, rest transforms)
-- Read skin weights + joint indices per-vertex
-- CPU linear blend skinning (LBS) at bind pose → bake to Mesh
+- Read skin weights + joint indices per-vertex (with mesh-local → skel-global remap)
+- UV-seam vertex expansion for subdivision meshes
+- Rigidly-deformed mesh broadcast (hair, buttons, accessories)
+- SkelRoot world xform override (avoids sub-Xform double-application)
+- CPU linear blend skinning (LBS) module with normal inv-transpose
 - Animated playback: evaluate skeleton at current timeline frame, re-skin per frame
+- Multi-draw skinning path
+- Validated on Pixar's HumanFemale.walk.usd (77 prototypes, full walk cycle)
+
+Deferred to v0.13.6:
+
+- Blend shapes (UsdSkelBlendShape)
 - Blend shapes (UsdSkelBlendShape): read targets + weights, apply to base mesh
 - **Validation**: Load skinned character (e.g., from Houdini/Maya), see bind pose; scrub timeline, see animation
 
