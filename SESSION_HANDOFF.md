@@ -1,7 +1,7 @@
-# Session Handoff - April 11, 2026
+# Session Handoff - April 12, 2026
 
-**Last Updated:** v0.13.6 UsdSkelBlendShape implementation
-**Current Version:** v0.13.6-dev (blend shapes implemented, needs validation + release)
+**Last Updated:** Rigid mesh offset bug investigation (pre-existing v0.13.5 issue)
+**Current Version:** v0.13.6-dev (blend shapes complete; rigid mesh offset bug open)
 **Project:** BIF - USD Orchestration Tool for VFX
 
 ---
@@ -11,14 +11,57 @@
 | Status | Details |
 |--------|---------|
 | Released | v0.1.0, v0.11.0, v0.12.0, v0.13.0 (2026-04-09), **v0.13.5 (2026-04-10)** |
-| Current | v0.13.6-dev — UsdSkelBlendShape CPU morph targets implemented |
-| Next | Validate on HumanFemale.walk.usd (blinks/face), then v0.13.6 release, then v0.14.0 Layer-Aware Stage |
+| Current | v0.13.6-dev — blend shapes shipped, face deformations validated on HumanFemale |
+| Bug open | Rigid mesh offset on animated characters (hair/nails/eyes displaced — pre-existing v0.13.5) |
+| Next | Investigate rigid mesh offset → fix → v0.13.6 release → v0.14.0 Layer-Aware Stage |
 | Tests | 6 new blend shape unit tests, 536+ total |
 | Performance | 60 FPS viewport, 100K instances with LOD, Ivar build ~185ms |
 
 ---
 
+## 🐛 NEXT SESSION: Rigid Mesh Offset Bug
+
+**Symptom:** Hair, fingernails, and eye components on `HumanFemale.walk.usd` display at wrong world positions. They follow the skeleton correctly (animate with joints) but are spatially offset. Screenshot: `assets/screenshots/usd_skel_error_05.png`. T-pose files unaffected.
+
+**What we know:**
+
+- **Pre-existing in v0.13.5** — confirmed via clean worktree A/B test on commit `b61264e` (v0.13.5.2). Not a v0.13.6 regression.
+- **Blend shape code ruled out** — bisection via `#if 0` showed issue persists with all v0.13.6 C++ blend shape code disabled.
+- **Loading data is correct** — verified via C++ debug logging in `cache_skeleton_data()`:
+  - All rigid meshes share single SkelRoot (`HumanFemale_Group`) at origin `sr_t=(0,0,0)`
+  - All share single skeleton (`/HumanFemale_Group/Rig/Skel`)
+  - All have identity `geom_bind_transform` and identity local transform
+  - Vertices are in skel-local space (eyes Z=119, nails X=±54/Z=95, hair Z=127)
+- **Per-vertex meshes (body) work correctly** — so the issue is specific to the `SkinKind::Rigid` path or shared code that behaves differently for rigid meshes.
+
+**Where to look next:**
+
+1. **`crates/bif_core/src/skinning.rs`** — `SkinKind::Rigid` branch of `skin_positions` (~L127). Compare against `SkinKind::PerVertex` branch. Does `palette_mat.transform_point3(*bind_pos) * w` produce different results vs per-vertex weighted blend for w=1.0?
+2. **`crates/bif_viewport/src/multi_draw.rs`** — `update_skinning()`, per-prototype GPU buffer write. HumanFemale uses multi-draw (77 prototypes). Does the per-prototype buffer write correctly for rigid meshes?
+3. **`crates/bif_core/src/skinning.rs::compute_skin_matrices`** — palette computation. Uses `bind.inv_bind_matrices` from the skeleton. Are inv_bind matrices correct for all joints? The bind transforms come from `UsdSkelSkeletonQuery::GetJointWorldBindTransforms` in C++ (`populate_cached_skeleton`).
+4. **Instance transform** — in `loader.rs` ~L407, skinned meshes get `skel_root_world_xform` as instance matrix. For HumanFemale this is identity, so probably not the issue, but worth verifying.
+
+**Debugging artifacts:**
+
+- `scripts/dump_rigid_meshes.py` — Python USD inspection (needs `pxr` module; not in main env but runnable from `G:\__projects\_programming\usd_25_11\` Python)
+- `assets/screenshots/usd_skel_error_05.png` — bug screenshot
+- Worktree `bif-v13.5-test` was removed after A/B test; separate `CARGO_TARGET_DIR=C:/Users/brandon/.cargo-target-v13test` used to avoid CMake cache conflicts
+
+**Hypothesis to test first:** Compare `SkinKind::Rigid` vs `SkinKind::PerVertex` output for a vertex bound 100% to joint 5 (head) at an animated frame. If they differ, the rigid branch is buggy. If they match, the issue is elsewhere.
+
+**Reference commit:** `b61264e` = v0.13.5.2 clean build shows same bug (confirms pre-existing).
+
+---
+
 ## Recent Work
+
+### v0.13.6-dev Apr 12: Rigid Mesh Offset Investigation (Apr 12, 2026)
+
+- Bisected v0.13.6 blend shape code via `#if 0` → ruled out as cause
+- Added C++ debug logging in `cache_skeleton_data` → verified loading data is correct
+- Worktree A/B test on commit `b61264e` → confirmed pre-existing v0.13.5 bug
+- Logged in BUGLIST.md, committed debug artifacts (`68c42e0`)
+- Removed `ARCHITECTURE_REFACTORS.md` (campaign closed, kept `ARCHITECTURE_REVIEW.md`)
 
 ### v0.13.6-dev Apr 11: UsdSkelBlendShape Implementation (Apr 11, 2026)
 
