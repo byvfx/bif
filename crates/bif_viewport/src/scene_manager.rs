@@ -36,6 +36,18 @@ pub struct SkinnedMeshEntry {
     /// Scratch buffer for per-frame skinned positions (keeps allocation
     /// out of the hot path).
     pub skinned_scratch: Vec<Vec3>,
+
+    // -- v0.13.6 blend shapes --
+    /// Blend shape binding (morph targets + FFI binding index). `None` when
+    /// the prototype has no blend shapes.
+    pub blend_shapes: Option<bif_core::BlendShapeBinding>,
+    /// Bind-pose normals snapshot (for blend shape normal deltas). `None` when
+    /// no blend shapes or mesh had no normals.
+    pub bind_normals: Option<Vec<Vec3>>,
+    /// Scratch buffer for blend-shape-deformed positions (fed into skinning).
+    pub blend_scratch_pos: Vec<Vec3>,
+    /// Scratch buffer for blend-shape-deformed normals.
+    pub blend_scratch_norm: Option<Vec<Vec3>>,
 }
 
 use crate::gpu_types::InstanceData;

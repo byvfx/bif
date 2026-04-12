@@ -128,6 +128,11 @@ impl Renderer {
                     xform_cache.insert(skel_idx, xforms.clone());
                     Some(xforms)
                 },
+                |binding_idx, f, target_count| {
+                    stage
+                        .compute_blend_shape_weights(binding_idx, f, target_count)
+                        .ok()
+                },
                 frame,
             );
             drop(stage);
@@ -184,17 +189,47 @@ impl Renderer {
                 (palette, entry.mesh_idx, entry.bind_positions.len())
             };
 
-            // Run LBS into the scratch buffer (owned by the entry to avoid
-            // per-frame allocation). Rust's disjoint-field borrows let us
-            // take `&skin` + `&bind_positions` alongside `&mut skinned_scratch`.
+            // v0.13.6: blend shapes → skinning composition.
+            // Apply blend shape deltas to bind_positions into blend_scratch,
+            // then feed that as the "bind pose" input to LBS. When no blend
+            // shapes are present, skin directly from bind_positions (v0.13.5 path).
             {
                 let entry = &mut self.scene.skinned_meshes[entry_idx];
                 if entry.skinned_scratch.len() != vert_count {
                     entry.skinned_scratch.resize(vert_count, Vec3::ZERO);
                 }
+
+                // Determine input to skinning: blend-deformed or raw bind
+                let skin_input = if let Some(ref bs) = entry.blend_shapes {
+                    // Fetch weights from C++ bridge at current frame
+                    let weights = stage
+                        .compute_blend_shape_weights(
+                            bs.ffi_binding_idx as usize,
+                            frame,
+                            bs.targets.len(),
+                        )
+                        .unwrap_or_default();
+
+                    if entry.blend_scratch_pos.len() != vert_count {
+                        entry.blend_scratch_pos.resize(vert_count, Vec3::ZERO);
+                    }
+
+                    bif_core::skinning::apply_blend_shapes(
+                        bs,
+                        &weights,
+                        &entry.bind_positions,
+                        entry.bind_normals.as_deref(),
+                        &mut entry.blend_scratch_pos,
+                        entry.blend_scratch_norm.as_deref_mut(),
+                    );
+                    &entry.blend_scratch_pos as &[Vec3]
+                } else {
+                    &entry.bind_positions as &[Vec3]
+                };
+
                 bif_core::skinning::skin_positions(
                     &entry.skin,
-                    &entry.bind_positions,
+                    skin_input,
                     &palette,
                     &mut entry.skinned_scratch,
                 );

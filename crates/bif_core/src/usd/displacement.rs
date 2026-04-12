@@ -272,6 +272,8 @@ mod tests {
             display_color: None,
             skin: None,
             bind_positions: None,
+            blend_shapes: None,
+            bind_normals: None,
         }
     }
 

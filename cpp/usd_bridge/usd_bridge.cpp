@@ -52,6 +52,8 @@
 #include <pxr/usd/usdSkel/binding.h>
 #include <pxr/usd/usdSkel/skeletonQuery.h>
 #include <pxr/usd/usdSkel/skinningQuery.h>
+#include <pxr/usd/usdSkel/blendShape.h>
+#include <pxr/usd/usdSkel/animQuery.h>
 #include <pxr/usd/usdVol/volume.h>
 #include <pxr/usd/usdVol/openVDBAsset.h>
 #include <pxr/usd/usdGeom/metrics.h>
@@ -334,6 +336,28 @@ struct CachedSkinBinding {
     bool valid = false;
 };
 
+/// A single dense-expanded blend shape target (owned by CachedBlendShapeBinding).
+struct CachedBlendShapeTarget {
+    std::string name;
+    std::vector<float> offsets_xyz;         // vert_count * 3, zero-padded
+    std::vector<float> normal_offsets_xyz;  // empty if BlendShape has no normalOffsets
+    uint32_t vert_count = 0;
+    bool has_normals = false;
+};
+
+/// Per-mesh blend shape binding. Owns all target data; pointers returned by
+/// `usd_bridge_get_blend_shape_binding` point into these vectors.
+struct CachedBlendShapeBinding {
+    std::string mesh_path;
+    std::vector<CachedBlendShapeTarget> targets;
+    /// Remap: targets[i] weight comes from anim_weights[shape_remap[i]].
+    /// If shape_remap[i] == -1, shape not driven by anim → weight 0.
+    std::vector<int> shape_remap;
+    /// Index of the skeleton this mesh is bound to (for anim query lookup).
+    size_t skel_index = 0;
+    bool valid = false;
+};
+
 /// Cached volume data
 struct CachedVolume {
     std::string path;
@@ -372,6 +396,7 @@ struct UsdBridgeStage {
     std::vector<CachedCurves> curves_prims;
     std::vector<CachedSkeleton> skeletons;
     std::vector<CachedSkinBinding> skin_bindings;  // Per-mesh
+    std::vector<CachedBlendShapeBinding> blend_shape_bindings;
     std::vector<CachedVolume> volumes;
     std::vector<std::vector<CachedPrimvar>> mesh_primvars;  // Per-mesh primvars
     bool cached;
@@ -5325,6 +5350,7 @@ static void cache_skeleton_data(UsdBridgeStage* bridge) {
     bridge->skeletons.clear();
     bridge->skin_bindings.clear();
     bridge->skin_bindings.resize(bridge->meshes.size());
+    bridge->blend_shape_bindings.clear();
     bridge->skel_cache.Clear();
 
     // mesh_path → index into bridge->meshes (and bridge->skin_bindings)
@@ -5380,7 +5406,8 @@ static void cache_skeleton_data(UsdBridgeStage* bridge) {
                 cached.skel = skel;
                 populate_cached_skeleton(cached, skel_query);
 
-                skel_index_by_path[skel_path] = bridge->skeletons.size();
+                size_t new_skel_idx = bridge->skeletons.size();
+                skel_index_by_path[skel_path] = new_skel_idx;
                 bridge->skeletons.push_back(std::move(cached));
             }
 
@@ -5534,6 +5561,204 @@ static void cache_skeleton_data(UsdBridgeStage* bridge) {
                 }
 
                 bridge->skin_bindings[mesh_idx] = std::move(skin);
+
+                // ----------------------------------------------------------
+                // Blend shape targets for this mesh
+                // ----------------------------------------------------------
+                UsdSkelBindingAPI binding_api(mesh_prim);
+                if (!binding_api) continue;
+
+                // Read skel:blendShapes token array (mesh-local shape names)
+                VtTokenArray mesh_bs_tokens;
+                {
+                    UsdAttribute bs_attr = binding_api.GetBlendShapesAttr();
+                    if (!bs_attr || !bs_attr.HasAuthoredValue() ||
+                        !bs_attr.Get(&mesh_bs_tokens) || mesh_bs_tokens.empty()) {
+                        continue;  // no blend shapes on this mesh
+                    }
+                }
+
+                // Resolve skel:blendShapeTargets relationship → BlendShape prims
+                SdfPathVector bs_target_paths;
+                {
+                    UsdRelationship bs_rel = binding_api.GetBlendShapeTargetsRel();
+                    if (!bs_rel || !bs_rel.GetForwardedTargets(&bs_target_paths) ||
+                        bs_target_paths.size() != mesh_bs_tokens.size()) {
+                        continue;  // malformed: count mismatch
+                    }
+                }
+
+                const CachedMesh& cm = bridge->meshes[mesh_idx];
+                const size_t post_vert = cm.vertices.size() / 3;
+                if (post_vert == 0) continue;
+
+                CachedBlendShapeBinding bsb;
+                bsb.mesh_path = mesh_path;
+                bsb.skel_index = skel_index_by_path[skel_path];
+                bsb.valid = true;
+                bsb.targets.reserve(mesh_bs_tokens.size());
+
+                for (size_t si = 0; si < bs_target_paths.size(); ++si) {
+                    UsdPrim bs_prim = bridge->stage->GetPrimAtPath(bs_target_paths[si]);
+                    UsdSkelBlendShape bs_schema(bs_prim);
+                    if (!bs_schema) {
+                        // Invalid target — push empty target to keep index alignment
+                        CachedBlendShapeTarget empty;
+                        empty.name = mesh_bs_tokens[si].GetString();
+                        empty.vert_count = static_cast<uint32_t>(post_vert);
+                        empty.offsets_xyz.resize(post_vert * 3, 0.0f);
+                        bsb.targets.push_back(std::move(empty));
+                        continue;
+                    }
+
+                    // Read offsets (required)
+                    VtVec3fArray offsets;
+                    bs_schema.GetOffsetsAttr().Get(&offsets);
+
+                    // Read normalOffsets (optional)
+                    VtVec3fArray normal_offsets;
+                    bool has_norms = false;
+                    {
+                        UsdAttribute no_attr = bs_schema.GetNormalOffsetsAttr();
+                        if (no_attr && no_attr.HasAuthoredValue() &&
+                            no_attr.Get(&normal_offsets) && !normal_offsets.empty()) {
+                            has_norms = true;
+                        }
+                    }
+
+                    // Read pointIndices (optional — sparse targets)
+                    VtIntArray point_indices;
+                    {
+                        UsdAttribute pi_attr = bs_schema.GetPointIndicesAttr();
+                        if (pi_attr && pi_attr.HasAuthoredValue()) {
+                            pi_attr.Get(&point_indices);
+                        }
+                    }
+
+                    // Dense-expand offsets: pre-split vertex count first, then
+                    // UV-split expand to post-split layout.
+                    //
+                    // Mesh vertex count in USD (pre-split) — offsets and
+                    // pointIndices reference this count.
+                    size_t pre_split_vert_count = cm.has_uv_split
+                        ? cm.vertex_index_map.empty()
+                            ? post_vert
+                            : *std::max_element(cm.vertex_index_map.begin(),
+                                                cm.vertex_index_map.end()) + 1
+                        : post_vert;
+
+                    // Step 1: scatter into pre-split dense buffer
+                    std::vector<float> pre_off(pre_split_vert_count * 3, 0.0f);
+                    std::vector<float> pre_noff;
+                    if (has_norms) pre_noff.resize(pre_split_vert_count * 3, 0.0f);
+
+                    if (point_indices.empty()) {
+                        // Dense target — offsets[i] maps to vertex i directly
+                        for (size_t i = 0; i < offsets.size() && i < pre_split_vert_count; ++i) {
+                            pre_off[i * 3 + 0] = offsets[i][0];
+                            pre_off[i * 3 + 1] = offsets[i][1];
+                            pre_off[i * 3 + 2] = offsets[i][2];
+                        }
+                        if (has_norms) {
+                            for (size_t i = 0; i < normal_offsets.size() && i < pre_split_vert_count; ++i) {
+                                pre_noff[i * 3 + 0] = normal_offsets[i][0];
+                                pre_noff[i * 3 + 1] = normal_offsets[i][1];
+                                pre_noff[i * 3 + 2] = normal_offsets[i][2];
+                            }
+                        }
+                    } else {
+                        // Sparse target — scatter via pointIndices
+                        for (size_t j = 0; j < point_indices.size() && j < offsets.size(); ++j) {
+                            int idx = point_indices[j];
+                            if (idx < 0 || static_cast<size_t>(idx) >= pre_split_vert_count) continue;
+                            pre_off[idx * 3 + 0] = offsets[j][0];
+                            pre_off[idx * 3 + 1] = offsets[j][1];
+                            pre_off[idx * 3 + 2] = offsets[j][2];
+                        }
+                        if (has_norms) {
+                            for (size_t j = 0; j < point_indices.size() && j < normal_offsets.size(); ++j) {
+                                int idx = point_indices[j];
+                                if (idx < 0 || static_cast<size_t>(idx) >= pre_split_vert_count) continue;
+                                pre_noff[idx * 3 + 0] = normal_offsets[j][0];
+                                pre_noff[idx * 3 + 1] = normal_offsets[j][1];
+                                pre_noff[idx * 3 + 2] = normal_offsets[j][2];
+                            }
+                        }
+                    }
+
+                    // Step 2: UV-split expand to post-split layout
+                    CachedBlendShapeTarget tgt;
+                    tgt.name = mesh_bs_tokens[si].GetString();
+                    tgt.vert_count = static_cast<uint32_t>(post_vert);
+                    tgt.has_normals = has_norms;
+                    tgt.offsets_xyz.resize(post_vert * 3, 0.0f);
+                    if (has_norms) tgt.normal_offsets_xyz.resize(post_vert * 3, 0.0f);
+
+                    if (cm.has_uv_split && !cm.vertex_index_map.empty()) {
+                        for (size_t sv = 0; sv < post_vert; ++sv) {
+                            uint32_t orig = cm.vertex_index_map[sv];
+                            if (static_cast<size_t>(orig) < pre_split_vert_count) {
+                                tgt.offsets_xyz[sv * 3 + 0] = pre_off[orig * 3 + 0];
+                                tgt.offsets_xyz[sv * 3 + 1] = pre_off[orig * 3 + 1];
+                                tgt.offsets_xyz[sv * 3 + 2] = pre_off[orig * 3 + 2];
+                                if (has_norms) {
+                                    tgt.normal_offsets_xyz[sv * 3 + 0] = pre_noff[orig * 3 + 0];
+                                    tgt.normal_offsets_xyz[sv * 3 + 1] = pre_noff[orig * 3 + 1];
+                                    tgt.normal_offsets_xyz[sv * 3 + 2] = pre_noff[orig * 3 + 2];
+                                }
+                            }
+                        }
+                    } else {
+                        // No UV split — pre_off IS the final layout
+                        if (pre_split_vert_count == post_vert) {
+                            tgt.offsets_xyz = std::move(pre_off);
+                            if (has_norms) tgt.normal_offsets_xyz = std::move(pre_noff);
+                        } else {
+                            // Defensive: copy min(pre, post) verts
+                            size_t copy_n = std::min(pre_split_vert_count, post_vert) * 3;
+                            std::copy_n(pre_off.begin(), copy_n, tgt.offsets_xyz.begin());
+                            if (has_norms)
+                                std::copy_n(pre_noff.begin(), copy_n, tgt.normal_offsets_xyz.begin());
+                        }
+                    }
+
+                    bsb.targets.push_back(std::move(tgt));
+                }
+
+                // Build shape-order remap: mesh's skel:blendShapes tokens →
+                // anim's blendShapes tokens. Shapes missing from anim → -1.
+                // Resolve anim query on-demand (same lazy path as joint eval).
+                size_t si = bsb.skel_index;
+                UsdSkelAnimQuery remap_anim_query;
+                if (si < bridge->skeletons.size() && bridge->skeletons[si].skel) {
+                    UsdSkelSkeletonQuery sq = bridge->skel_cache.GetSkelQuery(
+                        bridge->skeletons[si].skel);
+                    if (sq) remap_anim_query = sq.GetAnimQuery();
+                }
+                if (remap_anim_query) {
+                    VtTokenArray anim_bs_tokens = remap_anim_query.GetBlendShapeOrder();
+                    std::unordered_map<TfToken, int, TfHash> anim_tok_to_idx;
+                    anim_tok_to_idx.reserve(anim_bs_tokens.size());
+                    for (size_t ai = 0; ai < anim_bs_tokens.size(); ++ai) {
+                        anim_tok_to_idx[anim_bs_tokens[ai]] = static_cast<int>(ai);
+                    }
+                    bsb.shape_remap.reserve(mesh_bs_tokens.size());
+                    for (const auto& tok : mesh_bs_tokens) {
+                        auto ait = anim_tok_to_idx.find(tok);
+                        bsb.shape_remap.push_back(
+                            ait != anim_tok_to_idx.end() ? ait->second : -1);
+                        if (ait == anim_tok_to_idx.end()) {
+                            TF_WARN("BlendShape '%s' on mesh '%s' not found in "
+                                    "SkelAnimation — weight will be 0",
+                                    tok.GetText(), mesh_path.c_str());
+                        }
+                    }
+                } else {
+                    // No anim query — all weights 0
+                    bsb.shape_remap.assign(mesh_bs_tokens.size(), -1);
+                }
+
+                bridge->blend_shape_bindings.push_back(std::move(bsb));
             }
         }
     }
@@ -5627,6 +5852,93 @@ UsdBridgeError usd_bridge_compute_skel_skin_xforms(
 
     for (size_t i = 0; i < joint_count; ++i) {
         matrix_to_float16(xforms[i], out_joint_skel_xforms + (i * 16));
+    }
+    return USD_BRIDGE_SUCCESS;
+}
+
+// ============================================================================
+// UsdSkel Blend Shapes
+// ============================================================================
+
+UsdBridgeError usd_bridge_get_blend_shape_binding_count(const UsdBridgeStage* stage, size_t* out_count) {
+    if (!stage || !out_count) return USD_BRIDGE_ERROR_NULL_POINTER;
+    const_cast<UsdBridgeStage*>(stage)->skeletons_cached || (cache_skeleton_data(const_cast<UsdBridgeStage*>(stage)), true);
+    *out_count = stage->blend_shape_bindings.size();
+    return USD_BRIDGE_SUCCESS;
+}
+
+UsdBridgeError usd_bridge_get_blend_shape_binding(const UsdBridgeStage* stage, size_t index, UsdBridgeBlendShapeBindingData* out_data) {
+    if (!stage || !out_data) return USD_BRIDGE_ERROR_NULL_POINTER;
+    const_cast<UsdBridgeStage*>(stage)->skeletons_cached || (cache_skeleton_data(const_cast<UsdBridgeStage*>(stage)), true);
+    if (index >= stage->blend_shape_bindings.size()) return USD_BRIDGE_ERROR_INVALID_PRIM;
+
+    const CachedBlendShapeBinding& bsb = stage->blend_shape_bindings[index];
+    if (!bsb.valid) return USD_BRIDGE_ERROR_INVALID_PRIM;
+
+    // Build target pointer array into a thread-local scratch buffer (targets
+    // are owned by the CachedBlendShapeBinding, pointers are stable).
+    static thread_local std::vector<UsdBridgeBlendShapeTarget> target_scratch;
+    target_scratch.clear();
+    target_scratch.reserve(bsb.targets.size());
+    for (const auto& t : bsb.targets) {
+        UsdBridgeBlendShapeTarget ffi_t;
+        ffi_t.name = t.name.c_str();
+        ffi_t.offsets_xyz = t.offsets_xyz.empty() ? nullptr : t.offsets_xyz.data();
+        ffi_t.normal_offsets_xyz = t.has_normals ? t.normal_offsets_xyz.data() : nullptr;
+        ffi_t.vert_count = t.vert_count;
+        ffi_t.has_normals = t.has_normals ? 1 : 0;
+        target_scratch.push_back(ffi_t);
+    }
+
+    out_data->targets = target_scratch.data();
+    out_data->target_count = static_cast<uint32_t>(bsb.targets.size());
+    out_data->mesh_prim_path = bsb.mesh_path.c_str();
+    return USD_BRIDGE_SUCCESS;
+}
+
+UsdBridgeError usd_bridge_compute_blend_shape_weights(
+    const UsdBridgeStage* stage,
+    size_t binding_index,
+    double time_code,
+    float* out_weights,
+    size_t out_capacity
+) {
+    if (!stage || !out_weights) return USD_BRIDGE_ERROR_NULL_POINTER;
+    UsdBridgeStage* bridge = const_cast<UsdBridgeStage*>(stage);
+    bridge->skeletons_cached || (cache_skeleton_data(bridge), true);
+    if (binding_index >= bridge->blend_shape_bindings.size()) return USD_BRIDGE_ERROR_INVALID_PRIM;
+
+    const CachedBlendShapeBinding& bsb = bridge->blend_shape_bindings[binding_index];
+    if (!bsb.valid) return USD_BRIDGE_ERROR_INVALID_PRIM;
+    const size_t target_count = bsb.targets.size();
+    if (out_capacity < target_count) return USD_BRIDGE_ERROR_INVALID_STAGE;
+
+    // Start with all zeros (shapes not in anim get weight 0)
+    std::memset(out_weights, 0, target_count * sizeof(float));
+
+    // Resolve anim query on-demand via skel_cache (same lazy path as
+    // ComputeJointSkelTransforms — avoids touching cache state at load time).
+    if (bsb.skel_index >= bridge->skeletons.size()) return USD_BRIDGE_SUCCESS;
+    const CachedSkeleton& cached_skel = bridge->skeletons[bsb.skel_index];
+    if (!cached_skel.skel) return USD_BRIDGE_SUCCESS;
+
+    UsdSkelSkeletonQuery skel_query = bridge->skel_cache.GetSkelQuery(cached_skel.skel);
+    if (!skel_query) return USD_BRIDGE_SUCCESS;
+
+    UsdSkelAnimQuery anim_query = skel_query.GetAnimQuery();
+    if (!anim_query) return USD_BRIDGE_SUCCESS;  // no animation → all 0
+
+    VtFloatArray anim_weights;
+    if (!anim_query.ComputeBlendShapeWeights(&anim_weights, UsdTimeCode(time_code))) {
+        return USD_BRIDGE_SUCCESS;  // eval failed → all 0 (graceful)
+    }
+
+    // Remap from anim order to mesh-local target order
+    for (size_t i = 0; i < target_count && i < bsb.shape_remap.size(); ++i) {
+        int anim_idx = bsb.shape_remap[i];
+        if (anim_idx >= 0 && static_cast<size_t>(anim_idx) < anim_weights.size()) {
+            out_weights[i] = anim_weights[anim_idx];
+        }
     }
     return USD_BRIDGE_SUCCESS;
 }

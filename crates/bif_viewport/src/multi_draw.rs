@@ -223,6 +223,8 @@ impl MultiDrawState {
         // captured `HashMap` cache. For HumanFemale-style scenes (77 prototypes
         // bound to one skeleton) this collapses N FFI calls to 1 per frame.
         mut get_joint_xforms: impl FnMut(usize, f64) -> Option<Vec<Mat4>>,
+        // v0.13.6: blend shape weight fetcher (binding_idx, time, target_count) → weights
+        mut get_blend_weights: impl FnMut(usize, f64, usize) -> Option<Vec<f32>>,
         frame: f64,
     ) -> bool {
         if !self.enabled || skinned_meshes.is_empty() {
@@ -242,14 +244,40 @@ impl MultiDrawState {
             }
 
             // Ensure scratch buffer matches bind positions.
-            if entry.skinned_scratch.len() != entry.bind_positions.len() {
+            let vert_count = entry.bind_positions.len();
+            if entry.skinned_scratch.len() != vert_count {
                 entry
                     .skinned_scratch
-                    .resize(entry.bind_positions.len(), bif_math::Vec3::ZERO);
+                    .resize(vert_count, bif_math::Vec3::ZERO);
             }
+
+            // v0.13.6: blend shapes → skinning composition
+            let skin_input = if let Some(ref bs) = entry.blend_shapes {
+                let weights =
+                    get_blend_weights(bs.ffi_binding_idx as usize, frame, bs.targets.len())
+                        .unwrap_or_default();
+
+                if entry.blend_scratch_pos.len() != vert_count {
+                    entry
+                        .blend_scratch_pos
+                        .resize(vert_count, bif_math::Vec3::ZERO);
+                }
+                bif_core::skinning::apply_blend_shapes(
+                    bs,
+                    &weights,
+                    &entry.bind_positions,
+                    entry.bind_normals.as_deref(),
+                    &mut entry.blend_scratch_pos,
+                    entry.blend_scratch_norm.as_deref_mut(),
+                );
+                &entry.blend_scratch_pos as &[bif_math::Vec3]
+            } else {
+                &entry.bind_positions as &[bif_math::Vec3]
+            };
+
             bif_core::skinning::skin_positions(
                 &entry.skin,
-                &entry.bind_positions,
+                skin_input,
                 &palette,
                 &mut entry.skinned_scratch,
             );

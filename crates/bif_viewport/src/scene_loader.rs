@@ -2030,6 +2030,24 @@ impl Renderer {
                 };
 
                 let vert_count = bind_positions.len();
+
+                // v0.13.6: cache blend shape data alongside skin for per-frame eval
+                let blend_shapes = proto.mesh.blend_shapes.clone();
+                let bind_normals = proto.mesh.bind_normals.clone();
+                let has_bs = blend_shapes.is_some();
+                let blend_scratch_pos = if has_bs {
+                    vec![bif_math::Vec3::ZERO; vert_count]
+                } else {
+                    Vec::new()
+                };
+                let blend_scratch_norm = if has_bs {
+                    bind_normals
+                        .as_ref()
+                        .map(|bn| vec![bif_math::Vec3::ZERO; bn.len()])
+                } else {
+                    None
+                };
+
                 self.scene
                     .skinned_meshes
                     .push(crate::scene_manager::SkinnedMeshEntry {
@@ -2039,6 +2057,10 @@ impl Renderer {
                         bind_positions: bind_positions.clone(),
                         skin: skin.clone(),
                         skinned_scratch: vec![bif_math::Vec3::ZERO; vert_count],
+                        blend_shapes,
+                        bind_normals,
+                        blend_scratch_pos,
+                        blend_scratch_norm,
                     });
             }
             if !self.scene.skinned_meshes.is_empty() {

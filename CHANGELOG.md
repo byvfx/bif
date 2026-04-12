@@ -6,6 +6,20 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **v0.13.6 UsdSkelBlendShape — CPU morph target deformation** — blend shapes load from USD, evaluate per-frame, and compose with skinning (shapes applied before LBS).
+  - **C++ FFI** — `UsdBridgeBlendShapeTarget` + `UsdBridgeBlendShapeBindingData` structs. `usd_bridge_get_blend_shape_binding_count/get/compute_weights` functions. Dense-expanded in C++ (zero-padded, `pointIndices` scattered at load), shape-order remap built per-mesh vs `UsdSkelAnimation::blendShapes`. `UsdSkelAnimQuery` cached per skeleton for weight eval.
+  - **Rust FFI** — `RawBlendShapeTarget`/`RawBlendShapeBindingData` in `ffi_raw.rs`, safe wrappers in `cpp_bridge.rs` (`blend_shape_binding_count`, `get_blend_shape_binding`, `compute_blend_shape_weights`), conversion in `ffi_convert.rs`.
+  - **`Mesh::blend_shapes` + `Mesh::bind_normals`** — `BlendShapeTarget` (name, dense offsets, optional normal offsets) and `BlendShapeBinding` (targets + FFI binding index). `bind_normals` snapshot parallels `bind_positions`.
+  - **`skinning::apply_blend_shapes()`** — linear delta accumulation: `out[i] += target.offsets[i] * weight` per target. Weights unclamped (USD spec — exaggeration/anti-shapes legal). Normals not renormalized (downstream `skin_normals` handles it).
+  - **Pipeline order** — blend shapes applied to `bind_positions` → scratch buffer → fed as input to `skin_positions`/`skin_normals`. Both inline and multi-draw playback paths updated.
+  - **Loader** — walks bridge blend shape bindings, matches by mesh path, attaches `BlendShapeBinding`, snapshots `bind_normals`.
+  - **6 new unit tests** — passthrough, single@1.0, two@0.5, normal deltas, unclamped weights, shapes+skin composition order.
+  - **Test asset** — `test_assets/skel/two_bone_arm.usda` extended with 2 BlendShape prims (`squash`, `twist`) + animated `blendShapeWeights` over frames 0-36.
+  - **GPU path stub** — `bif_renderer::gpu_blend_shapes::GpuBlendShapeLayout` reserves data layout for future GPU skinning.
+  - **Known limits:** `UsdSkelInbetweenShape` deferred. Normal deltas required on the BlendShape prim for accurate shading — when absent, skinning uses bind-pose normals (documented). GPU path CPU-only (stubs only).
+
 ### Changed
 
 - **Architecture refactor campaign closed** — `ARCHITECTURE_REFACTORS.md` and `ARCHITECTURE_REVIEW.md` updated to reflect that all 5 phases (FFI split, cross-platform, node graph eval engine, scene pipeline, renderer hub decomposition) and 7 of 8 prioritized review items have shipped across v0.13.0 → v0.13.5. §10 table now carries a Status column with commit references. `scene_loader.rs` shrinkage logged as a deferred Phase 4.5 follow-up pending v0.14.0 layer-aware rewrite.

@@ -19,15 +19,16 @@ use bif_math::{Mat4, Vec3};
 use super::cpp_bridge::{
     CameraProperties, CurveBasis, CurveType, CurveWrap, MeshPurpose, NormalsInterpolation,
     PrimvarInterpolation, PrimvarType, SubdivisionScheme, TransformSample, UpAxis,
-    UsdAnimatedInstancerData, UsdAnimatedMeshData, UsdCurvesData, UsdInstancerData, UsdLightData,
-    UsdLightShaping, UsdMaterialData, UsdMeshData, UsdNativeInstance, UsdPointsData, UsdPrimInfo,
-    UsdPrimvarData, UsdSkeletonData, UsdSkinBindingData, UsdStageMetadata, UsdTimelineData,
-    UsdVolumeData,
+    UsdAnimatedInstancerData, UsdAnimatedMeshData, UsdBlendShapeBinding, UsdBlendShapeTarget,
+    UsdCurvesData, UsdInstancerData, UsdLightData, UsdLightShaping, UsdMaterialData, UsdMeshData,
+    UsdNativeInstance, UsdPointsData, UsdPrimInfo, UsdPrimvarData, UsdSkeletonData,
+    UsdSkinBindingData, UsdStageMetadata, UsdTimelineData, UsdVolumeData,
 };
 
 use super::ffi_raw::{
-    UsdBridgeAnimatedInstancerDataRaw, UsdBridgeAnimatedMeshDataRaw, UsdBridgeCameraPropertiesRaw,
-    UsdBridgeCurveBasisRaw, UsdBridgeCurveTypeRaw, UsdBridgeCurveWrapRaw, UsdBridgeCurvesDataRaw,
+    UsdBridgeAnimatedInstancerDataRaw, UsdBridgeAnimatedMeshDataRaw,
+    UsdBridgeBlendShapeBindingDataRaw, UsdBridgeCameraPropertiesRaw, UsdBridgeCurveBasisRaw,
+    UsdBridgeCurveTypeRaw, UsdBridgeCurveWrapRaw, UsdBridgeCurvesDataRaw,
     UsdBridgeInstancerDataRaw, UsdBridgeLightDataRaw, UsdBridgeMaterialDataRaw,
     UsdBridgeMeshDataRaw, UsdBridgePointsDataRaw, UsdBridgePrimInfoRaw, UsdBridgePrimvarDataRaw,
     UsdBridgePrimvarInterpolationRaw, UsdBridgePrimvarTypeRaw, UsdBridgePurposeRaw,
@@ -671,6 +672,60 @@ pub(crate) unsafe fn convert_skin_binding(raw: &UsdBridgeSkinBindingDataRaw) -> 
         skel_root_world_xform: f32x16_to_mat4(&raw.skel_root_world_xform),
         is_rigid: raw.is_rigid != 0,
     }
+}
+
+/// Convert raw blend shape binding data from FFI to safe `UsdBlendShapeBinding`.
+///
+/// # Safety
+///
+/// All pointers in `raw` (and in each target) must be valid and point to arrays
+/// of the specified counts, or be null.
+pub(crate) unsafe fn convert_blend_shape_binding(
+    raw: &UsdBridgeBlendShapeBindingDataRaw,
+) -> UsdBlendShapeBinding {
+    let mesh_path = c_str_to_string(raw.mesh_prim_path);
+
+    let target_count = raw.target_count as usize;
+    let mut targets = Vec::with_capacity(target_count);
+
+    if !raw.targets.is_null() && target_count > 0 {
+        let raw_targets = std::slice::from_raw_parts(raw.targets, target_count);
+        for rt in raw_targets {
+            let name = c_str_to_string(rt.name);
+            let vert_count = rt.vert_count as usize;
+
+            let offsets = if rt.offsets_xyz.is_null() || vert_count == 0 {
+                Vec::new()
+            } else {
+                let floats = std::slice::from_raw_parts(rt.offsets_xyz, vert_count * 3);
+                floats
+                    .chunks_exact(3)
+                    .map(|c| Vec3::new(c[0], c[1], c[2]))
+                    .collect()
+            };
+
+            let normal_offsets =
+                if rt.has_normals != 0 && !rt.normal_offsets_xyz.is_null() && vert_count > 0 {
+                    let floats = std::slice::from_raw_parts(rt.normal_offsets_xyz, vert_count * 3);
+                    Some(
+                        floats
+                            .chunks_exact(3)
+                            .map(|c| Vec3::new(c[0], c[1], c[2]))
+                            .collect(),
+                    )
+                } else {
+                    None
+                };
+
+            targets.push(UsdBlendShapeTarget {
+                name,
+                offsets,
+                normal_offsets,
+            });
+        }
+    }
+
+    UsdBlendShapeBinding { mesh_path, targets }
 }
 
 /// Convert raw volume data from FFI to safe `UsdVolumeData`.

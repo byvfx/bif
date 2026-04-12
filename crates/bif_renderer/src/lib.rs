@@ -29,6 +29,8 @@ mod renderer;
 mod sphere;
 mod triangle;
 
+pub mod gpu_blend_shapes;
+
 pub(crate) use bif_math::{Ray, Vec3};
 pub use blue_noise::SamplerMode;
 pub use bucket::{

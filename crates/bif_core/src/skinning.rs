@@ -29,7 +29,7 @@
 
 use bif_math::{Mat3, Mat4, Vec3};
 
-use crate::mesh::{SkinBinding, SkinKind};
+use crate::mesh::{BlendShapeBinding, SkinBinding, SkinKind};
 
 /// Assemble the skinning matrix palette for the current frame.
 ///
@@ -214,9 +214,61 @@ pub fn skin_normals(bind: &SkinBinding, bind_normals: &[Vec3], palette: &[Mat4],
     }
 }
 
+/// Apply blend shape deltas to bind-pose positions (and optionally normals).
+///
+/// For each target with a non-negligible weight, adds `target.offsets[i] * weight`
+/// to the corresponding output vertex. Weights are unclamped (values > 1.0 and
+/// < 0.0 are legal in USD for exaggeration / anti-shapes).
+///
+/// Must be called **before** skinning — the output is the deformed bind pose
+/// that feeds into `skin_positions` / `skin_normals`.
+///
+/// Normals are NOT renormalized here. When a skin pass follows, `skin_normals`
+/// handles normalization. For blend-shapes-only meshes the caller should
+/// normalize if needed.
+pub fn apply_blend_shapes(
+    bind: &BlendShapeBinding,
+    weights: &[f32],
+    bind_positions: &[Vec3],
+    bind_normals: Option<&[Vec3]>,
+    out_positions: &mut [Vec3],
+    mut out_normals: Option<&mut [Vec3]>,
+) {
+    debug_assert_eq!(bind_positions.len(), out_positions.len());
+
+    // Start from bind pose
+    out_positions.copy_from_slice(bind_positions);
+    if let (Some(bn), Some(on)) = (bind_normals, out_normals.as_deref_mut()) {
+        debug_assert_eq!(bn.len(), on.len());
+        on.copy_from_slice(bn);
+    }
+
+    for (target, weight) in bind.targets.iter().zip(weights.iter()) {
+        let w = *weight;
+        if w.abs() < 1e-7 {
+            continue;
+        }
+
+        // Position deltas
+        debug_assert_eq!(target.offsets.len(), out_positions.len());
+        for (out_p, delta) in out_positions.iter_mut().zip(target.offsets.iter()) {
+            *out_p += *delta * w;
+        }
+
+        // Normal deltas (when both target and output have them)
+        if let (Some(ref noff), Some(ref mut on)) = (&target.normal_offsets, &mut out_normals) {
+            debug_assert_eq!(noff.len(), on.len());
+            for (out_n, delta) in on.iter_mut().zip(noff.iter()) {
+                *out_n += *delta * w;
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::mesh::{BlendShapeBinding, BlendShapeTarget};
 
     fn make_bind(
         joint_indices: Vec<u32>,
@@ -545,5 +597,163 @@ mod tests {
                 "OOB rigid joint_idx should leave verts at bind pose"
             );
         }
+    }
+
+    // ====================================================================
+    // Blend shape tests (v0.13.6)
+    // ====================================================================
+
+    fn make_bs_binding(targets: Vec<BlendShapeTarget>) -> BlendShapeBinding {
+        BlendShapeBinding {
+            mesh_path: "/test/Mesh".to_string(),
+            targets,
+            ffi_binding_idx: 0,
+        }
+    }
+
+    fn make_target(name: &str, offsets: Vec<Vec3>) -> BlendShapeTarget {
+        BlendShapeTarget {
+            name: name.to_string(),
+            offsets,
+            normal_offsets: None,
+        }
+    }
+
+    #[test]
+    fn blend_shape_empty_weights_passthrough() {
+        let bind_pos = vec![
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+        ];
+        let target = make_target(
+            "test",
+            vec![Vec3::new(1.0, 0.0, 0.0), Vec3::ZERO, Vec3::ZERO],
+        );
+        let bs = make_bs_binding(vec![target]);
+        let weights = [0.0f32];
+        let mut out = vec![Vec3::ZERO; 3];
+        apply_blend_shapes(&bs, &weights, &bind_pos, None, &mut out, None);
+        for (got, want) in out.iter().zip(bind_pos.iter()) {
+            assert!(
+                (*got - *want).length() < 1e-7,
+                "zero weight should leave verts at bind: got {got:?}, want {want:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn blend_shape_single_at_one() {
+        let bind_pos = vec![Vec3::new(0.0, 0.0, 0.0), Vec3::new(1.0, 0.0, 0.0)];
+        let target = make_target(
+            "shift_x",
+            vec![Vec3::new(2.0, 0.0, 0.0), Vec3::new(0.0, 3.0, 0.0)],
+        );
+        let bs = make_bs_binding(vec![target]);
+        let weights = [1.0f32];
+        let mut out = vec![Vec3::ZERO; 2];
+        apply_blend_shapes(&bs, &weights, &bind_pos, None, &mut out, None);
+        assert!((out[0] - Vec3::new(2.0, 0.0, 0.0)).length() < 1e-6);
+        assert!((out[1] - Vec3::new(1.0, 3.0, 0.0)).length() < 1e-6);
+    }
+
+    #[test]
+    fn blend_shape_two_at_half() {
+        let bind_pos = vec![Vec3::ZERO];
+        let t1 = make_target("a", vec![Vec3::new(2.0, 0.0, 0.0)]);
+        let t2 = make_target("b", vec![Vec3::new(0.0, 4.0, 0.0)]);
+        let bs = make_bs_binding(vec![t1, t2]);
+        let weights = [0.5f32, 0.5];
+        let mut out = vec![Vec3::ZERO; 1];
+        apply_blend_shapes(&bs, &weights, &bind_pos, None, &mut out, None);
+        // 0.5 * (2,0,0) + 0.5 * (0,4,0) = (1,2,0)
+        assert!(
+            (out[0] - Vec3::new(1.0, 2.0, 0.0)).length() < 1e-6,
+            "two shapes at 0.5: got {:?}",
+            out[0]
+        );
+    }
+
+    #[test]
+    fn blend_shape_normals_linear_add() {
+        let bind_pos = vec![Vec3::ZERO];
+        let bind_norm = vec![Vec3::new(0.0, 1.0, 0.0)];
+        let target = BlendShapeTarget {
+            name: "test".to_string(),
+            offsets: vec![Vec3::ZERO],
+            normal_offsets: Some(vec![Vec3::new(0.0, 0.0, 1.0)]),
+        };
+        let bs = make_bs_binding(vec![target]);
+        let weights = [1.0f32];
+        let mut out_pos = vec![Vec3::ZERO; 1];
+        let mut out_norm = vec![Vec3::ZERO; 1];
+        apply_blend_shapes(
+            &bs,
+            &weights,
+            &bind_pos,
+            Some(&bind_norm),
+            &mut out_pos,
+            Some(&mut out_norm),
+        );
+        // Normal: (0,1,0) + 1.0*(0,0,1) = (0,1,1) — NOT normalized
+        assert!(
+            (out_norm[0] - Vec3::new(0.0, 1.0, 1.0)).length() < 1e-6,
+            "normal deltas linear add: got {:?}",
+            out_norm[0]
+        );
+    }
+
+    #[test]
+    fn blend_shape_unclamped_weight() {
+        let bind_pos = vec![Vec3::ZERO];
+        let target = make_target("exag", vec![Vec3::new(1.0, 0.0, 0.0)]);
+        let bs = make_bs_binding(vec![target]);
+        // Weight 1.5 — legal USD, exaggeration
+        let weights = [1.5f32];
+        let mut out = vec![Vec3::ZERO; 1];
+        apply_blend_shapes(&bs, &weights, &bind_pos, None, &mut out, None);
+        assert!(
+            (out[0] - Vec3::new(1.5, 0.0, 0.0)).length() < 1e-6,
+            "unclamped weight 1.5: got {:?}",
+            out[0]
+        );
+        // Negative weight — anti-shape
+        let weights = [-0.5f32];
+        apply_blend_shapes(&bs, &weights, &bind_pos, None, &mut out, None);
+        assert!(
+            (out[0] - Vec3::new(-0.5, 0.0, 0.0)).length() < 1e-6,
+            "negative weight -0.5: got {:?}",
+            out[0]
+        );
+    }
+
+    #[test]
+    fn blend_shape_then_skin_composes() {
+        // Blend shape shifts vertex +X, then skinning rotates joint 90° around Y.
+        // Order matters: shapes first, then skin.
+        let bind_pos = vec![Vec3::ZERO];
+        let target = make_target("shift", vec![Vec3::new(1.0, 0.0, 0.0)]);
+        let bs = make_bs_binding(vec![target]);
+        let weights = [1.0f32];
+
+        // Step 1: apply blend shape → (1,0,0)
+        let mut deformed = vec![Vec3::ZERO; 1];
+        apply_blend_shapes(&bs, &weights, &bind_pos, None, &mut deformed, None);
+        assert!((deformed[0] - Vec3::new(1.0, 0.0, 0.0)).length() < 1e-6);
+
+        // Step 2: skin with 90° Y rotation
+        let skin = make_bind(vec![0], vec![1.0], 1, vec![Mat4::IDENTITY]);
+        let rot_y_90 = Mat4::from_rotation_y(std::f32::consts::FRAC_PI_2);
+        let palette = compute_skin_matrices(&skin, &[rot_y_90]);
+        let mut final_pos = vec![Vec3::ZERO; 1];
+        skin_positions(&skin, &deformed, &palette, &mut final_pos);
+
+        // (1,0,0) rotated 90° Y → (0,0,-1)
+        let expected = Vec3::new(0.0, 0.0, -1.0);
+        assert!(
+            (final_pos[0] - expected).length() < 1e-5,
+            "blend+skin composition: expected {expected:?}, got {:?}",
+            final_pos[0]
+        );
     }
 }

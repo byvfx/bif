@@ -1196,6 +1196,77 @@ UsdBridgeError usd_bridge_compute_skel_skin_xforms(
 );
 
 // ============================================================================
+// UsdSkel Blend Shape Data
+// ============================================================================
+
+/// A single blend shape target (dense-expanded: offsets cover every vertex,
+/// zero-padded where the original pointIndices didn't reference a vertex).
+typedef struct UsdBridgeBlendShapeTarget {
+    /// Shape name token (e.g., "blink_L", "jawOpen")
+    const char* name;
+
+    /// Dense position offsets (vert_count * 3 floats, XYZ interleaved).
+    /// Zero for vertices not affected by this shape.
+    const float* offsets_xyz;
+
+    /// Dense normal offsets (vert_count * 3 floats), or NULL if the
+    /// BlendShape prim has no `normalOffsets` attribute.
+    const float* normal_offsets_xyz;
+
+    /// Number of vertices (== mesh vertex count). Redundant but provides
+    /// a safety check on the Rust side.
+    uint32_t vert_count;
+
+    /// 1 if normal_offsets_xyz is valid, 0 if NULL.
+    uint8_t has_normals;
+} UsdBridgeBlendShapeTarget;
+
+/// Per-mesh blend shape binding: all targets that drive this mesh.
+typedef struct UsdBridgeBlendShapeBindingData {
+    /// Array of targets (target_count entries). Owned by the bridge arena.
+    const UsdBridgeBlendShapeTarget* targets;
+    uint32_t target_count;
+
+    /// Mesh prim path this binding belongs to.
+    const char* mesh_prim_path;
+} UsdBridgeBlendShapeBindingData;
+
+/// Get the number of meshes that have blend shape bindings.
+UsdBridgeError usd_bridge_get_blend_shape_binding_count(
+    const UsdBridgeStage* stage,
+    size_t* out_count
+);
+
+/// Get blend shape binding data for a binding by index.
+/// Index is in [0, blend_shape_binding_count). Returns
+/// USD_BRIDGE_ERROR_INVALID_PRIM if index is out of range.
+UsdBridgeError usd_bridge_get_blend_shape_binding(
+    const UsdBridgeStage* stage,
+    size_t index,
+    UsdBridgeBlendShapeBindingData* out_data
+);
+
+/// Compute blend shape weights at a specific time code.
+///
+/// Writes `target_count` floats into `out_weights`. The order matches
+/// the target order returned by `usd_bridge_get_blend_shape_binding`
+/// (i.e., the mesh's `skel:blendShapes` token order, remapped from
+/// the SkelAnimation's `blendShapes` order internally).
+///
+/// Returns:
+/// - USD_BRIDGE_SUCCESS on success
+/// - USD_BRIDGE_ERROR_NULL_POINTER if stage or out buffer is null
+/// - USD_BRIDGE_ERROR_INVALID_PRIM if binding_index out of range
+/// - USD_BRIDGE_ERROR_INVALID_STAGE if out_capacity < target_count or eval fails
+UsdBridgeError usd_bridge_compute_blend_shape_weights(
+    const UsdBridgeStage* stage,
+    size_t binding_index,
+    double time_code,
+    float* out_weights,
+    size_t out_capacity
+);
+
+// ============================================================================
 // UsdVol Data Extraction
 // ============================================================================
 

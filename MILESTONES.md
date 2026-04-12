@@ -18,6 +18,24 @@ Roadmap organized by semantic version. Each release is testable, demoable, and g
 
 ---
 
+## In Progress
+
+### v0.13.6 — UsdSkel Blend Shapes
+
+CPU morph target deformation via `UsdSkelBlendShape`. Extends v0.13.5 skinning pipeline — blend shapes applied before LBS.
+
+- C++ FFI: dense-expand targets at load, shape-order remap, per-frame weight eval via `UsdSkelAnimQuery`
+- Rust: `BlendShapeTarget`/`BlendShapeBinding` on `Mesh`, `apply_blend_shapes()` in skinning module
+- Loader: walks bridge bindings, attaches to meshes, snapshots `bind_normals`
+- Playback: inline + multi-draw paths compose shapes → skin per frame
+- GPU path stubs (`GpuBlendShapeLayout`) for future GPU skinning
+- Test asset: `two_bone_arm.usda` extended with 2 shapes + animated weights
+- 6 new unit tests
+- **Scoped out:** `UsdSkelInbetweenShape` (deferred), GPU shader implementation (stubs only)
+- **Validation:** `HumanFemale.walk.usd` blink/face blend shapes (manual)
+
+---
+
 ## Upcoming
 
 | Version | Theme | Est. Hours | Key Milestones |

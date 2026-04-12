@@ -255,6 +255,24 @@ pub(crate) struct UsdBridgeSkinBindingDataRaw {
     pub(crate) is_rigid: i32,
 }
 
+/// A single blend shape target from C API (dense-expanded).
+#[repr(C)]
+pub(crate) struct UsdBridgeBlendShapeTargetRaw {
+    pub(crate) name: *const c_char,
+    pub(crate) offsets_xyz: *const f32,
+    pub(crate) normal_offsets_xyz: *const f32,
+    pub(crate) vert_count: u32,
+    pub(crate) has_normals: u8,
+}
+
+/// Per-mesh blend shape binding from C API.
+#[repr(C)]
+pub(crate) struct UsdBridgeBlendShapeBindingDataRaw {
+    pub(crate) targets: *const UsdBridgeBlendShapeTargetRaw,
+    pub(crate) target_count: u32,
+    pub(crate) mesh_prim_path: *const c_char,
+}
+
 /// Volume data from C API
 #[repr(C)]
 pub(crate) struct UsdBridgeVolumeDataRaw {
@@ -892,6 +910,26 @@ extern "C" {
         skel_index: usize,
         time_code: f64,
         out_joint_skel_xforms: *mut f32,
+        out_capacity: usize,
+    ) -> UsdBridgeErrorCode;
+
+    // Blend shapes
+    pub(crate) fn usd_bridge_get_blend_shape_binding_count(
+        stage: *const UsdBridgeStageRaw,
+        out_count: *mut usize,
+    ) -> UsdBridgeErrorCode;
+
+    pub(crate) fn usd_bridge_get_blend_shape_binding(
+        stage: *const UsdBridgeStageRaw,
+        index: usize,
+        out_data: *mut UsdBridgeBlendShapeBindingDataRaw,
+    ) -> UsdBridgeErrorCode;
+
+    pub(crate) fn usd_bridge_compute_blend_shape_weights(
+        stage: *const UsdBridgeStageRaw,
+        binding_index: usize,
+        time_code: f64,
+        out_weights: *mut f32,
         out_capacity: usize,
     ) -> UsdBridgeErrorCode;
 

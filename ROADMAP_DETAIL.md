@@ -7,14 +7,9 @@ For the high-level roadmap, see [MILESTONES.md](MILESTONES.md). For completed mi
 
 ## v0.13.0 — Pipeline Foundation
 
-**Status:** In progress (most work complete)
+**Status:** Released (2026-04-09)
 **Milestones:** M29.5 (UI overhaul), M30 (persistence + eval modes), M31 (per-node viz)
-**Last egui feature release.**
-
-### Remaining Tasks
-
-- Final validation of M29 USD export on production files
-- Release packaging and version bump
+**Last egui feature release.** See [CHANGELOG.md](CHANGELOG.md) for full release notes.
 
 ### Acceptance Criteria
 
@@ -23,6 +18,45 @@ For the high-level roadmap, see [MILESTONES.md](MILESTONES.md). For completed mi
 - Cache node with bypass toggle
 - Per-node scene graph filtering in browser
 - Centralized theme system applied throughout UI
+
+---
+
+## v0.13.6 — UsdSkel Blend Shapes
+
+**Status:** Implementation complete, pending validation + release
+**Estimate:** 8-12h
+**Dependencies:** v0.13.5 (UsdSkel skinning)
+
+### Tasks
+
+- [x] C++ FFI: `UsdBridgeBlendShapeTarget/BindingData` structs, 3 extern functions, dense expand at load, shape-order remap, `UsdSkelAnimQuery` caching
+- [x] Rust FFI: raw structs, safe wrappers (`blend_shape_binding_count`, `get_blend_shape_binding`, `compute_blend_shape_weights`), `convert_blend_shape_binding`
+- [x] Mesh struct: `BlendShapeTarget`, `BlendShapeBinding`, `Mesh::blend_shapes`, `Mesh::bind_normals`
+- [x] `skinning::apply_blend_shapes()` — linear delta add, unclamped weights
+- [x] Loader: walk bindings, attach by mesh path, snapshot bind_normals
+- [x] Playback: inline + multi-draw paths compose shapes → skin
+- [x] GPU stub: `GpuBlendShapeLayout` in bif_renderer
+- [x] Test asset: `two_bone_arm.usda` with 2 BlendShape prims + animated weights
+- [x] 6 unit tests (passthrough, single@1, two@0.5, normals, unclamped, composition)
+- [ ] Manual validation on HumanFemale.walk.usd (blinks/face)
+- [ ] Wiki concept note: `wiki/concepts/usdskel-blend-shapes.md`
+- [ ] Version bump + release commit
+
+### Technical Notes
+
+- Dense expansion in C++ (zero-pad via pointIndices) for auto-vectorizable Rust loop
+- Per-frame weight eval via `UsdSkelAnimQuery::ComputeBlendShapeWeights` (mirrors `ComputeJointSkelTransforms` pattern)
+- Shape-order remap: mesh `skel:blendShapes` token order ≠ anim `blendShapes` order, remapped once at load
+- Weights unclamped per USD spec (>1.0 exaggeration, <0 anti-shapes legal)
+- Scratch buffers stashed on `SkinnedMeshEntry` to avoid per-frame allocation
+
+### Acceptance Criteria
+
+- Blend shapes load and deform at correct times
+- Composition with skinning produces correct vertex positions (shapes first, then LBS)
+- HumanFemale blinks/face shapes visible when scrubbing timeline
+- No regression on skinning-only meshes (shapes-absent path unchanged)
+- 6 unit tests pass
 
 ---
 

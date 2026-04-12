@@ -532,6 +532,26 @@ pub struct UsdSkinBindingData {
     pub is_rigid: bool,
 }
 
+/// A single blend shape target (dense-expanded position/normal offsets).
+#[derive(Clone, Debug)]
+pub struct UsdBlendShapeTarget {
+    /// Shape name token (e.g., "blink_L", "jawOpen")
+    pub name: String,
+    /// Dense position offsets — one `Vec3` per vertex, zero for unaffected verts.
+    pub offsets: Vec<Vec3>,
+    /// Dense normal offsets, or `None` if the BlendShape prim had no `normalOffsets`.
+    pub normal_offsets: Option<Vec<Vec3>>,
+}
+
+/// Per-mesh blend shape binding: all targets that drive this mesh.
+#[derive(Clone, Debug)]
+pub struct UsdBlendShapeBinding {
+    /// Mesh prim path this binding belongs to.
+    pub mesh_path: String,
+    /// Blend shape targets in the mesh's `skel:blendShapes` token order.
+    pub targets: Vec<UsdBlendShapeTarget>,
+}
+
 /// Volume data extracted from USD (UsdVol).
 #[derive(Clone, Debug)]
 pub struct UsdVolumeData {
@@ -1439,6 +1459,67 @@ impl UsdStage {
             out.push(Mat4::from_cols_array(&arr));
         }
         Ok(out)
+    }
+
+    // ========================================================================
+    // Blend Shapes
+    // ========================================================================
+
+    /// Get the number of meshes with blend shape bindings.
+    pub fn blend_shape_binding_count(&self) -> UsdBridgeResult<usize> {
+        let mut count: usize = 0;
+        let result = unsafe { usd_bridge_get_blend_shape_binding_count(self.raw, &mut count) };
+        if result != UsdBridgeErrorCode::Success {
+            return Err(result.into());
+        }
+        Ok(count)
+    }
+
+    /// Get blend shape binding data by index.
+    pub fn get_blend_shape_binding(&self, index: usize) -> UsdBridgeResult<UsdBlendShapeBinding> {
+        let mut raw = UsdBridgeBlendShapeBindingDataRaw {
+            targets: ptr::null(),
+            target_count: 0,
+            mesh_prim_path: ptr::null(),
+        };
+        let result = unsafe { usd_bridge_get_blend_shape_binding(self.raw, index, &mut raw) };
+        if result != UsdBridgeErrorCode::Success {
+            return Err(result.into());
+        }
+
+        // SAFETY: raw populated by FFI call above; pointers valid while stage is open
+        Ok(unsafe { super::ffi_convert::convert_blend_shape_binding(&raw) })
+    }
+
+    /// Compute blend shape weights at a specific USD time code.
+    ///
+    /// Returns one weight per target in the binding's target order (matches
+    /// `UsdBlendShapeBinding::targets`). Shapes not driven by the animation
+    /// get weight 0.
+    pub fn compute_blend_shape_weights(
+        &self,
+        binding_index: usize,
+        time_code: f64,
+        target_count: usize,
+    ) -> UsdBridgeResult<Vec<f32>> {
+        if target_count == 0 {
+            return Ok(Vec::new());
+        }
+
+        let mut buf: Vec<f32> = vec![0.0; target_count];
+        let result = unsafe {
+            usd_bridge_compute_blend_shape_weights(
+                self.raw,
+                binding_index,
+                time_code,
+                buf.as_mut_ptr(),
+                buf.len(),
+            )
+        };
+        if result != UsdBridgeErrorCode::Success {
+            return Err(result.into());
+        }
+        Ok(buf)
     }
 
     // ========================================================================

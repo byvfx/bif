@@ -60,6 +60,34 @@ pub struct SkinBinding {
     pub inv_bind_matrices: Vec<Mat4>,
 }
 
+/// A single blend shape target: dense position (and optional normal) deltas.
+///
+/// Offsets are dense — one `Vec3` per vertex, zero for vertices not affected
+/// by this shape. Dense layout lets the deformation hot loop auto-vectorize
+/// without index indirection.
+#[derive(Clone, Debug)]
+pub struct BlendShapeTarget {
+    /// Shape name token (e.g., "blink_L", "jawOpen").
+    pub name: String,
+    /// Dense position offsets. `offsets.len() == mesh.positions.len()`.
+    pub offsets: Vec<Vec3>,
+    /// Dense normal offsets, or `None` if the USD prim had no `normalOffsets`.
+    pub normal_offsets: Option<Vec<Vec3>>,
+}
+
+/// Per-mesh blend shape binding: all morph targets and the FFI binding index
+/// needed to fetch per-frame weights.
+#[derive(Clone, Debug)]
+pub struct BlendShapeBinding {
+    /// Mesh prim path this binding belongs to.
+    pub mesh_path: String,
+    /// Blend shape targets in the mesh's `skel:blendShapes` token order.
+    pub targets: Vec<BlendShapeTarget>,
+    /// Index into the C++ bridge's blend-shape-binding array — passed to
+    /// `compute_blend_shape_weights` for per-frame weight evaluation.
+    pub ffi_binding_idx: u32,
+}
+
 /// A mesh consisting of vertex positions, optional normals, and triangle indices.
 ///
 /// This is the core geometry type used throughout BIF. It is intentionally
@@ -122,10 +150,19 @@ pub struct Mesh {
     /// load-time snapshot used as input to each skinning pass.
     pub skin: Option<SkinBinding>,
 
-    /// Bind-pose vertex positions snapshot. `Some` iff `skin.is_some()`.
-    /// Never mutated after load — skinning reads from here and writes into
-    /// `positions` each frame.
+    /// Bind-pose vertex positions snapshot. `Some` iff `skin.is_some()` or
+    /// `blend_shapes.is_some()`. Never mutated after load — blend shape
+    /// deformation and skinning read from here.
     pub bind_positions: Option<Vec<Vec3>>,
+
+    /// UsdSkelBlendShape binding (morph targets + FFI weight handle). `None`
+    /// for meshes without blend shapes.
+    pub blend_shapes: Option<BlendShapeBinding>,
+
+    /// Bind-pose normals snapshot. `Some` iff `blend_shapes.is_some()` and
+    /// the mesh had normals at load time. Blend shape normal deltas are
+    /// added to these before skinning.
+    pub bind_normals: Option<Vec<Vec3>>,
 }
 
 impl Mesh {
@@ -154,6 +191,8 @@ impl Mesh {
             display_color: None,
             skin: None,
             bind_positions: None,
+            blend_shapes: None,
+            bind_normals: None,
         }
     }
 
@@ -184,6 +223,8 @@ impl Mesh {
             display_color: None,
             skin: None,
             bind_positions: None,
+            blend_shapes: None,
+            bind_normals: None,
         }
     }
 
@@ -215,6 +256,8 @@ impl Mesh {
             display_color: None,
             skin: None,
             bind_positions: None,
+            blend_shapes: None,
+            bind_normals: None,
         }
     }
 

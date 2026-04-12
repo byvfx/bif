@@ -17,7 +17,7 @@ use indexmap::IndexMap;
 
 use thiserror::Error;
 
-use crate::mesh::{Mesh, SkinBinding, SkinKind};
+use crate::mesh::{BlendShapeBinding, BlendShapeTarget, Mesh, SkinBinding, SkinKind};
 use crate::point_cloud::{DistributionMethod, PointAttributes, PointCloud};
 use crate::scene::{
     AnimatedTransform, CurvesPrim, Light, PointsPrim, Purpose, Scene, TimelineInfo, Transform,
@@ -318,6 +318,59 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
                         mesh_data.path,
                         skin_data.skeleton_path
                     );
+                }
+            }
+
+            // UsdSkel blend shapes (v0.13.6). Walk the bridge's blend shape
+            // bindings and attach matching ones to this mesh. Populates
+            // `mesh.blend_shapes`, snapshots `bind_normals`, and ensures
+            // `bind_positions` exists even for shapes-only meshes (no skin).
+            {
+                let bs_count = stage.blend_shape_binding_count().unwrap_or(0);
+                for bs_idx in 0..bs_count {
+                    let Ok(bs_data) = stage.get_blend_shape_binding(bs_idx) else {
+                        continue;
+                    };
+                    if bs_data.mesh_path != mesh_data.path {
+                        continue;
+                    }
+                    if bs_data.targets.is_empty() {
+                        continue;
+                    }
+
+                    // Convert UsdBlendShapeTarget → mesh::BlendShapeTarget
+                    let targets: Vec<BlendShapeTarget> = bs_data
+                        .targets
+                        .into_iter()
+                        .map(|t| BlendShapeTarget {
+                            name: t.name,
+                            offsets: t.offsets,
+                            normal_offsets: t.normal_offsets,
+                        })
+                        .collect();
+
+                    // Ensure bind_positions exists (may already be set by skin path)
+                    if mesh.bind_positions.is_none() {
+                        mesh.bind_positions = Some(mesh.positions.clone());
+                    }
+                    // Snapshot bind normals for blend shape normal deltas
+                    if mesh.bind_normals.is_none() {
+                        mesh.bind_normals = mesh.normals.clone();
+                    }
+
+                    let target_count = targets.len();
+                    mesh.blend_shapes = Some(BlendShapeBinding {
+                        mesh_path: bs_data.mesh_path,
+                        targets,
+                        ffi_binding_idx: bs_idx as u32,
+                    });
+
+                    log::info!(
+                        "Mesh {} blend shapes: {} targets",
+                        mesh_data.path,
+                        target_count
+                    );
+                    break; // one binding per mesh
                 }
             }
 

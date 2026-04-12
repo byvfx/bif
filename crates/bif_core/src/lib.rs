@@ -35,7 +35,7 @@ pub mod usd;
 pub mod oiio;
 
 // Re-export commonly used types
-pub use mesh::{Mesh, SkinBinding, SkinKind};
+pub use mesh::{BlendShapeBinding, BlendShapeTarget, Mesh, SkinBinding, SkinKind};
 pub use point_cloud::{DistributionMethod, PointAttributes, PointCloud};
 pub use primitives::PrimitiveKind;
 pub use scatter::PointSource;

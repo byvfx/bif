@@ -1,7 +1,7 @@
 # Session Handoff - April 11, 2026
 
-**Last Updated:** Architecture refactor campaign closed
-**Current Version:** v0.13.5 released → v0.13.6-dev
+**Last Updated:** v0.13.6 UsdSkelBlendShape implementation
+**Current Version:** v0.13.6-dev (blend shapes implemented, needs validation + release)
 **Project:** BIF - USD Orchestration Tool for VFX
 
 ---
@@ -11,14 +11,23 @@
 | Status | Details |
 |--------|---------|
 | Released | v0.1.0, v0.11.0, v0.12.0, v0.13.0 (2026-04-09), **v0.13.5 (2026-04-10)** |
-| Current | v0.13.6-dev — blend shapes (UsdSkelBlendShape) planning |
-| Next | v0.13.6 blend shapes, then v0.14.0 Layer-Aware Stage (M32/M33, SdfLayer FFI, opinion inspector) |
-| Tests | 14 new skel/skinning tests (8 unit + 4 cpp_bridge + 2 loader), 530+ total |
+| Current | v0.13.6-dev — UsdSkelBlendShape CPU morph targets implemented |
+| Next | Validate on HumanFemale.walk.usd (blinks/face), then v0.13.6 release, then v0.14.0 Layer-Aware Stage |
+| Tests | 6 new blend shape unit tests, 536+ total |
 | Performance | 60 FPS viewport, 100K instances with LOD, Ivar build ~185ms |
 
 ---
 
 ## Recent Work
+
+### v0.13.6-dev Apr 11: UsdSkelBlendShape Implementation (Apr 11, 2026)
+
+- **Full CPU blend shape pipeline** — C++ FFI (dense-expand at load, shape-order remap, per-frame `ComputeBlendShapeWeights` via cached `UsdSkelAnimQuery`), Rust FFI layer, `BlendShapeTarget`/`BlendShapeBinding` on `Mesh`, `apply_blend_shapes()` in skinning module, loader integration, per-frame playback hook (both inline and multi-draw paths).
+- **Pipeline order:** blend shape deltas applied to `bind_positions` → scratch buffer → fed into `skin_positions`/`skin_normals`. Handles shapes-only meshes (no skin) and shapes+skin composition.
+- **Test asset:** `two_bone_arm.usda` extended with 2 BlendShape prims (`squash`/`twist`) + animated weights over frames 0-36.
+- **GPU stub:** `GpuBlendShapeLayout` in `bif_renderer` reserves data layout for future GPU path.
+- **6 new unit tests** — all pass. Build + clippy clean.
+- **TODO:** Manual validation on `HumanFemale.walk.usd` (has blink/face blend shapes per user). Wiki concept note. Version bump + release.
 
 ### v0.13.6-dev Apr 11: Architecture Refactor Campaign Closed (Apr 11, 2026)
 
