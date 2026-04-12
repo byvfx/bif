@@ -1,8 +1,10 @@
 # BUGLIST
 
-Last updated: 2026-04-08
+Last updated: 2026-04-12
 
 ## Active Bugs
+
+- **Rigid-skinned mesh offset on animated characters** — hair, fingernails, and eye components display at wrong positions on HumanFemale.walk.usd. They follow the skeleton (animate correctly) but are spatially offset. Confirmed pre-existing since v0.13.5 via clean worktree A/B test (commit `b61264e`). Loading data verified correct (skel-local vertices, identity geom_bind, single SkelRoot at origin). Root cause likely in multi-draw skinning path or palette computation for rigid meshes during animation. T-pose files unaffected.
 
 - OCIO ACES is not working in the viewport (Hill/Narkowicz approx active, full OCIO deferred).
 
