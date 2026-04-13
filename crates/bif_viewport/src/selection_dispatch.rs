@@ -110,6 +110,14 @@ impl Renderer {
                 }
                 _ => {}
             }
+            // v0.14.0 composition arcs — one entry per layer contributing
+            // an opinion on this prim, ordered strongest-first.
+            match stage.get_prim_stack(prim_path) {
+                Ok(stack) => props.composition_arcs = stack,
+                Err(e) => {
+                    log::debug!("Failed to query prim stack for {}: {:?}", prim_path, e);
+                }
+            }
             if let Ok(set_names) = stage.get_variant_set_names(prim_path) {
                 for set_name in &set_names {
                     let variants = stage

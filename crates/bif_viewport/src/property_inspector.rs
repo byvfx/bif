@@ -44,6 +44,10 @@ pub struct PrimProperties {
 
     /// Variant sets: (set_name, variants, current_selection)
     pub variant_sets: Vec<(String, Vec<String>, String)>,
+
+    /// USD composition arcs — one entry per layer contributing an opinion
+    /// on this prim, ordered strongest-first. v0.14.0 (read-only).
+    pub composition_arcs: Vec<bif_core::usd::layer::PrimStackEntry>,
 }
 
 /// Event emitted when user edits a transform in the property inspector.
@@ -117,6 +121,7 @@ impl PrimProperties {
             bound_material: None,
             usd_attributes: Vec::new(),
             variant_sets: Vec::new(),
+            composition_arcs: Vec::new(),
         }
     }
 
@@ -548,6 +553,45 @@ fn render_attributes_tab(
     props: &PrimProperties,
     event_bus: &mut crate::app_event::EventBus,
 ) {
+    // Composition arcs (v0.14.0) — one entry per layer contributing an
+    // opinion on this prim, ordered strongest-first. Collapsed by default
+    // to keep the Attributes tab readable when the prim has many specs.
+    if !props.composition_arcs.is_empty() {
+        egui::CollapsingHeader::new(format!(
+            "Composition Arcs ({})",
+            props.composition_arcs.len()
+        ))
+        .default_open(false)
+        .show(ui, |ui| {
+            for (idx, entry) in props.composition_arcs.iter().enumerate() {
+                ui.horizontal(|ui| {
+                    // Strongest opinion gets bold label; others dimmed.
+                    let marker = if idx == 0 { "▶" } else { " " };
+                    ui.label(
+                        egui::RichText::new(marker)
+                            .color(theme::STATUS_INFO)
+                            .monospace(),
+                    );
+                    let specifier_label = egui::RichText::new(entry.specifier.as_str())
+                        .color(theme::TEXT_SECONDARY)
+                        .small();
+                    ui.label(specifier_label);
+                    let layer_label = if idx == 0 {
+                        egui::RichText::new(&entry.layer_identifier)
+                            .monospace()
+                            .strong()
+                    } else {
+                        egui::RichText::new(&entry.layer_identifier)
+                            .monospace()
+                            .color(theme::TEXT_SECONDARY)
+                    };
+                    ui.label(layer_label).on_hover_text(&entry.path);
+                });
+            }
+        });
+        ui.add_space(4.0);
+    }
+
     // Variant sets (if any)
     if !props.variant_sets.is_empty() {
         ui.strong("Variant Sets");
