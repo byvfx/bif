@@ -263,6 +263,11 @@ pub struct Renderer {
     // Unified selection state (prim path, properties, instance, scene browser, gizmo)
     pub selection: SelectionManager,
 
+    /// Layer Stack panel UI state (v0.14.0). Data lives on
+    /// `self.scene.working_scene.layer_state`; this struct holds only the
+    /// per-panel scroll/focus state.
+    pub(crate) layer_stack_panel: crate::layer_stack_panel::LayerStackPanel,
+
     // Timeline state for animation playback
     pub timeline_state: TimelineState,
 
@@ -918,6 +923,7 @@ impl Renderer {
             multi_draw: MultiDrawState::new(),
             culling,
             selection: SelectionManager::new(),
+            layer_stack_panel: crate::layer_stack_panel::LayerStackPanel::new(),
             nodes: NodeGraphContext {
                 node_graph_state: NodeGraphState::new(),
                 node_proto_map: std::collections::HashMap::new(),

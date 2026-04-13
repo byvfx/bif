@@ -390,6 +390,26 @@ impl Renderer {
             let stats_panel = egui::SidePanel::left("left_panel")
                 .default_width(300.0)
                 .show(ctx, |ui| {
+                    // Layer Stack panel (v0.14.0) — read-only USD layer
+                    // inspection. Collapsed by default; shows the sublayer
+                    // tree with mute toggles + working-layer radio when a
+                    // USD-loaded scene is active.
+                    egui::CollapsingHeader::new("Layer Stack")
+                        .default_open(false)
+                        .show(ui, |ui| {
+                            if let Some(layer_state) = self.scene.working_scene.layer_state.as_ref()
+                            {
+                                self.layer_stack_panel
+                                    .render(ui, layer_state, &mut self.event_bus);
+                            } else {
+                                ui.label(
+                                    egui::RichText::new("No USD stage loaded.")
+                                        .color(crate::theme::TEXT_SECONDARY),
+                                );
+                            }
+                        });
+                    ui.separator();
+
                     // Scene Browser (always visible, top section)
                     // Tab bar: Scene | Node (when a node is selected)
                     let selected_node = self.nodes.node_graph_state.selected_node;
@@ -1088,25 +1108,64 @@ impl Renderer {
                 AppEvent::ProjectSaveAs => self.handle_project_save_as(),
                 AppEvent::ProjectOpenRecent(path) => self.handle_project_open_recent(path),
 
-                // Layer-aware stage (v0.14.0) — panels land in subsequent
-                // Phase D commits. For now we log so emitters can be wired
-                // in advance; handlers fill in as the UI comes online.
+                // Layer-aware stage (v0.14.0) — read-only inspection.
+                // LayerSelected is purely informational in v0.14 (the panel
+                // tracks its own focus for future keyboard nav / context
+                // menus); no scene or stage side effect.
                 AppEvent::LayerSelected(idx) => {
-                    log::debug!("LayerSelected({idx}) — panel not yet wired");
+                    log::debug!("LayerSelected({idx})");
                 }
                 AppEvent::LayerMuteToggled { index, muted } => {
-                    log::debug!(
-                        "LayerMuteToggled(index={index}, muted={muted}) — panel not yet wired"
-                    );
+                    // Resolve index → identifier, then push the mute through
+                    // to USD and mirror it in our SceneLayerState so the UI
+                    // and the stage stay in sync.
+                    let identifier = self
+                        .scene
+                        .working_scene
+                        .layer_state
+                        .as_ref()
+                        .and_then(|s| s.stack.layers.get(index))
+                        .map(|l| l.identifier.clone());
+                    if let Some(identifier) = identifier {
+                        if let Some(stage_arc) = self.scene.usd_stage.as_ref() {
+                            match stage_arc.lock() {
+                                Ok(stage) => {
+                                    if let Err(e) = stage.set_layer_muted(&identifier, muted) {
+                                        log::warn!(
+                                            "Failed to {} layer {identifier}: {e}",
+                                            if muted { "mute" } else { "unmute" }
+                                        );
+                                    }
+                                }
+                                Err(e) => log::warn!("UsdStage lock poisoned: {e}"),
+                            }
+                        }
+                        if let Some(state) = self.scene.working_scene.layer_state.as_mut() {
+                            state.set_muted(&identifier, muted);
+                        }
+                    }
                 }
                 AppEvent::WorkingLayerChanged(idx) => {
-                    log::debug!("WorkingLayerChanged({idx}) — panel not yet wired");
+                    if let Some(state) = self.scene.working_scene.layer_state.as_mut() {
+                        state.set_working_layer(idx);
+                    }
                 }
                 AppEvent::PayloadPolicyChanged(policy) => {
-                    log::debug!("PayloadPolicyChanged({policy:?}) — panel not yet wired");
+                    // Reopening the stage with a different policy is a v0.14.5
+                    // concern (file watcher + reload UX land together). For now
+                    // record the intent in scene state so downstream reads see
+                    // the user's choice.
+                    if let Some(state) = self.scene.working_scene.layer_state.as_mut() {
+                        state.payload_policy = policy;
+                    }
+                    log::info!(
+                        "PayloadPolicyChanged({policy:?}) — stage reload deferred to v0.14.5"
+                    );
                 }
                 AppEvent::IsolationModeToggled(on) => {
-                    log::debug!("IsolationModeToggled({on}) — panel not yet wired");
+                    if let Some(state) = self.scene.working_scene.layer_state.as_mut() {
+                        state.isolation_mode = on;
+                    }
                 }
             }
         }
