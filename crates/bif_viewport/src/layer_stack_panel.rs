@@ -84,25 +84,23 @@ impl LayerStackPanel {
             let (rect, _) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
             ui.painter().circle_filled(rect.center(), 5.0, dot_color);
 
-            // Working-layer radio button.
+            // Working-layer radio. Single-char label gives a larger hit
+            // area than an empty-label radio and doubles as a visible cue.
             let is_working = state.working_layer == idx;
-            if ui
-                .radio(is_working, "")
+            let radio_clicked = ui
+                .radio(is_working, "W")
                 .on_hover_text("Set as working layer")
-                .clicked()
-                && !is_working
-            {
+                .clicked();
+            if radio_clicked && !is_working {
                 events.emit(AppEvent::WorkingLayerChanged(idx));
             }
 
-            // Mute checkbox — toggles the stage-level mute and the
-            // `SceneLayerState::muted` set (via dispatch).
+            // Mute checkbox — single-char label for the same reason.
             let mut muted = layer.is_muted;
-            if ui
-                .checkbox(&mut muted, "")
-                .on_hover_text(if layer.is_muted { "Unmute" } else { "Mute" })
-                .changed()
-            {
+            let mute_resp = ui
+                .checkbox(&mut muted, "M")
+                .on_hover_text(if layer.is_muted { "Unmute" } else { "Mute" });
+            if mute_resp.changed() {
                 events.emit(AppEvent::LayerMuteToggled { index: idx, muted });
             }
 

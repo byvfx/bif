@@ -399,7 +399,7 @@ impl Renderer {
                         .show(ui, |ui| {
                             if let Some(layer_state) = self.scene.layer_state.as_ref() {
                                 self.layer_stack_panel
-                                    .render(ui, layer_state, &mut self.event_bus);
+                                    .render(ui, layer_state, &mut event_bus);
                             } else {
                                 ui.label(
                                     egui::RichText::new("No USD stage loaded.")
