@@ -64,6 +64,12 @@
 #include <pxr/usd/usdGeom/imageable.h>
 #include <pxr/usd/usdGeom/tokens.h>
 #include <pxr/usd/sdf/layerUtils.h>
+#include <pxr/usd/sdf/primSpec.h>
+#include <pxr/usd/sdf/propertySpec.h>
+#include <pxr/usd/sdf/layerOffset.h>
+#include <pxr/usd/sdf/schema.h>
+#include <pxr/usd/usd/editTarget.h>
+#include <pxr/base/tf/stringUtils.h>
 #include <pxr/base/work/loops.h>
 
 #include <vector>
@@ -6285,4 +6291,362 @@ void usd_bridge_free_prim_attributes(
         free(const_cast<char*>(attributes[i].interpolation));
     }
     delete[] attributes;
+}
+
+// ============================================================================
+// Layer-Aware Stage (v0.14.0)
+// ============================================================================
+
+namespace {
+
+// Flatten the sublayer tree rooted at `layer` into `out`. Root is placed first
+// (parent_index = -1); each sublayer's parent_index points back into `out`.
+// Uses ComputeAbsolutePath + FindOrOpen to resolve relative sublayer paths
+// correctly with the stage's asset resolver context.
+struct LayerWalkEntry {
+    SdfLayerRefPtr layer;
+    int32_t parent_index;
+    uint8_t depth;
+    SdfLayerOffset offset;
+};
+
+void collect_sublayers(
+    const SdfLayerRefPtr& layer,
+    int32_t parent_index,
+    uint8_t depth,
+    const SdfLayerOffset& offset,
+    std::vector<LayerWalkEntry>& out
+) {
+    if (!layer) return;
+    int32_t self_index = static_cast<int32_t>(out.size());
+    out.push_back({ layer, parent_index, depth, offset });
+
+    const auto& paths = layer->GetSubLayerPaths();
+    const auto& offsets = layer->GetSubLayerOffsets();
+    for (size_t i = 0; i < paths.size(); ++i) {
+        SdfLayerOffset sub_offset =
+            (i < offsets.size()) ? offsets[i] : SdfLayerOffset();
+        std::string abs_path = SdfComputeAssetPathRelativeToLayer(layer, paths[i]);
+        SdfLayerRefPtr sub = SdfLayer::FindOrOpen(abs_path);
+        if (sub) {
+            collect_sublayers(sub, self_index, depth + 1, sub_offset, out);
+        }
+    }
+}
+
+} // anonymous namespace
+
+UsdBridgeError usd_bridge_stage_get_layer_stack(
+    const UsdBridgeStage* stage,
+    UsdBridgeLayerStack** out_stack
+) {
+    if (!stage || !out_stack) {
+        return USD_BRIDGE_ERROR_NULL_POINTER;
+    }
+    *out_stack = nullptr;
+
+    try {
+        SdfLayerRefPtr root = stage->stage->GetRootLayer();
+        if (!root) {
+            return USD_BRIDGE_ERROR_INVALID_STAGE;
+        }
+
+        std::vector<LayerWalkEntry> entries;
+        collect_sublayers(root, -1, 0, SdfLayerOffset(), entries);
+
+        // Mute set — O(n) lookup per layer, fine for realistic layer counts.
+        const std::vector<std::string>& muted = stage->stage->GetMutedLayers();
+        auto is_muted = [&](const SdfLayerRefPtr& l) {
+            const std::string& id = l->GetIdentifier();
+            return std::find(muted.begin(), muted.end(), id) != muted.end();
+        };
+
+        auto* info_array = new UsdBridgeLayerInfo[entries.size()];
+        for (size_t i = 0; i < entries.size(); ++i) {
+            const LayerWalkEntry& e = entries[i];
+            info_array[i].identifier   = strdup(e.layer->GetIdentifier().c_str());
+            info_array[i].display_name = strdup(e.layer->GetDisplayName().c_str());
+            info_array[i].real_path    = strdup(e.layer->GetRealPath().c_str());
+            info_array[i].is_anonymous = e.layer->IsAnonymous() ? 1 : 0;
+            info_array[i].is_dirty     = e.layer->IsDirty() ? 1 : 0;
+            info_array[i].is_muted     = is_muted(e.layer) ? 1 : 0;
+            info_array[i].time_offset  = e.offset.GetOffset();
+            info_array[i].time_scale   = e.offset.GetScale();
+            info_array[i].parent_index = e.parent_index;
+            info_array[i].depth        = e.depth;
+        }
+
+        auto* out = new UsdBridgeLayerStack;
+        out->layers = info_array;
+        out->count = entries.size();
+        out->root_index = 0;
+        *out_stack = out;
+        return USD_BRIDGE_SUCCESS;
+    } catch (const std::exception& e) {
+        TF_WARN("usd_bridge_stage_get_layer_stack: %s", e.what());
+        return USD_BRIDGE_ERROR_UNKNOWN;
+    }
+}
+
+void usd_bridge_layer_stack_free(UsdBridgeLayerStack* stack) {
+    if (!stack) return;
+    for (size_t i = 0; i < stack->count; ++i) {
+        free(const_cast<char*>(stack->layers[i].identifier));
+        free(const_cast<char*>(stack->layers[i].display_name));
+        free(const_cast<char*>(stack->layers[i].real_path));
+    }
+    delete[] stack->layers;
+    delete stack;
+}
+
+UsdBridgeError usd_bridge_stage_get_edit_target(
+    const UsdBridgeStage* stage,
+    UsdBridgeEditTarget* out_target
+) {
+    if (!stage || !out_target) {
+        return USD_BRIDGE_ERROR_NULL_POINTER;
+    }
+    out_target->layer_identifier = nullptr;
+
+    try {
+        UsdEditTarget target = stage->stage->GetEditTarget();
+        SdfLayerHandle layer = target.GetLayer();
+        out_target->layer_identifier =
+            strdup(layer ? layer->GetIdentifier().c_str() : "");
+        return USD_BRIDGE_SUCCESS;
+    } catch (const std::exception& e) {
+        TF_WARN("usd_bridge_stage_get_edit_target: %s", e.what());
+        return USD_BRIDGE_ERROR_UNKNOWN;
+    }
+}
+
+void usd_bridge_edit_target_free(UsdBridgeEditTarget* target) {
+    if (!target) return;
+    if (target->layer_identifier) {
+        free(const_cast<char*>(target->layer_identifier));
+        target->layer_identifier = nullptr;
+    }
+}
+
+UsdBridgeError usd_bridge_stage_mute_layer(
+    UsdBridgeStage* stage,
+    const char* layer_identifier,
+    int muted
+) {
+    if (!stage || !layer_identifier) {
+        return USD_BRIDGE_ERROR_NULL_POINTER;
+    }
+    try {
+        if (muted) {
+            stage->stage->MuteLayer(layer_identifier);
+        } else {
+            stage->stage->UnmuteLayer(layer_identifier);
+        }
+        return USD_BRIDGE_SUCCESS;
+    } catch (const std::exception& e) {
+        TF_WARN("usd_bridge_stage_mute_layer: %s", e.what());
+        return USD_BRIDGE_ERROR_UNKNOWN;
+    }
+}
+
+UsdBridgeError usd_bridge_layer_get_offset(
+    const UsdBridgeStage* stage,
+    const char* layer_identifier,
+    UsdBridgeLayerOffset* out_offset
+) {
+    if (!stage || !layer_identifier || !out_offset) {
+        return USD_BRIDGE_ERROR_NULL_POINTER;
+    }
+    out_offset->offset = 0.0;
+    out_offset->scale = 1.0;
+
+    try {
+        SdfLayerRefPtr root = stage->stage->GetRootLayer();
+        if (!root) {
+            return USD_BRIDGE_ERROR_INVALID_STAGE;
+        }
+        const auto& paths = root->GetSubLayerPaths();
+        const auto& offsets = root->GetSubLayerOffsets();
+        for (size_t i = 0; i < paths.size(); ++i) {
+            std::string abs_path = SdfComputeAssetPathRelativeToLayer(root, paths[i]);
+            SdfLayerRefPtr sub = SdfLayer::FindOrOpen(abs_path);
+            if (sub && sub->GetIdentifier() == layer_identifier) {
+                if (i < offsets.size()) {
+                    out_offset->offset = offsets[i].GetOffset();
+                    out_offset->scale = offsets[i].GetScale();
+                }
+                return USD_BRIDGE_SUCCESS;
+            }
+        }
+        // Layer isn't a direct sublayer of root — identity offset stands.
+        return USD_BRIDGE_SUCCESS;
+    } catch (const std::exception& e) {
+        TF_WARN("usd_bridge_layer_get_offset: %s", e.what());
+        return USD_BRIDGE_ERROR_UNKNOWN;
+    }
+}
+
+UsdBridgeError usd_bridge_prim_get_prim_stack(
+    const UsdBridgeStage* stage,
+    const char* prim_path,
+    UsdBridgePrimStack** out_stack
+) {
+    if (!stage || !prim_path || !out_stack) {
+        return USD_BRIDGE_ERROR_NULL_POINTER;
+    }
+    *out_stack = nullptr;
+
+    try {
+        SdfPath path(prim_path);
+        UsdPrim prim = stage->stage->GetPrimAtPath(path);
+        if (!prim) {
+            return USD_BRIDGE_ERROR_INVALID_PRIM;
+        }
+
+        SdfPrimSpecHandleVector specs = prim.GetPrimStack();
+        auto* spec_array = new UsdBridgePrimSpec[specs.size()];
+        for (size_t i = 0; i < specs.size(); ++i) {
+            const SdfPrimSpecHandle& s = specs[i];
+            spec_array[i].layer_identifier =
+                strdup(s->GetLayer()->GetIdentifier().c_str());
+            spec_array[i].path =
+                strdup(s->GetPath().GetAsString().c_str());
+            spec_array[i].specifier =
+                static_cast<uint8_t>(s->GetSpecifier());
+            spec_array[i].has_authored_opinions =
+                s->HasField(SdfFieldKeys->Specifier) ? 1 : 0;
+        }
+
+        auto* out = new UsdBridgePrimStack;
+        out->specs = spec_array;
+        out->count = specs.size();
+        *out_stack = out;
+        return USD_BRIDGE_SUCCESS;
+    } catch (const std::exception& e) {
+        TF_WARN("usd_bridge_prim_get_prim_stack: %s", e.what());
+        return USD_BRIDGE_ERROR_UNKNOWN;
+    }
+}
+
+void usd_bridge_prim_stack_free(UsdBridgePrimStack* stack) {
+    if (!stack) return;
+    for (size_t i = 0; i < stack->count; ++i) {
+        free(const_cast<char*>(stack->specs[i].layer_identifier));
+        free(const_cast<char*>(stack->specs[i].path));
+    }
+    delete[] stack->specs;
+    delete stack;
+}
+
+UsdBridgeError usd_bridge_attr_get_opinion_sources(
+    const UsdBridgeStage* stage,
+    const char* prim_path,
+    const char* attr_name,
+    UsdBridgeAttributeOpinions** out_opinions
+) {
+    if (!stage || !prim_path || !attr_name || !out_opinions) {
+        return USD_BRIDGE_ERROR_NULL_POINTER;
+    }
+    *out_opinions = nullptr;
+
+    try {
+        SdfPath path(prim_path);
+        UsdPrim prim = stage->stage->GetPrimAtPath(path);
+        if (!prim) {
+            return USD_BRIDGE_ERROR_INVALID_PRIM;
+        }
+
+        UsdAttribute attr = prim.GetAttribute(TfToken(attr_name));
+        auto* out = new UsdBridgeAttributeOpinions;
+        out->sources = nullptr;
+        out->count = 0;
+        out->winning_index = 0;
+
+        if (!attr) {
+            // No such attribute — return empty (not an error).
+            *out_opinions = out;
+            return USD_BRIDGE_SUCCESS;
+        }
+
+        SdfPropertySpecHandleVector stack = attr.GetPropertyStack();
+        if (stack.empty()) {
+            *out_opinions = out;
+            return USD_BRIDGE_SUCCESS;
+        }
+
+        auto* sources = new UsdBridgeOpinionSource[stack.size()];
+        for (size_t i = 0; i < stack.size(); ++i) {
+            const SdfPropertySpecHandle& spec = stack[i];
+            sources[i].layer_identifier =
+                strdup(spec->GetLayer()->GetIdentifier().c_str());
+
+            VtValue v;
+            bool has_default = spec->HasField(SdfFieldKeys->Default, &v);
+            if (has_default && !v.IsEmpty()) {
+                sources[i].value_display = strdup(TfStringify(v).c_str());
+                sources[i].value_type_token = strdup(v.GetTypeName().c_str());
+            } else {
+                sources[i].value_display = strdup("<no opinion>");
+                sources[i].value_type_token = strdup("");
+            }
+        }
+
+        out->sources = sources;
+        out->count = stack.size();
+        out->winning_index = 0; // GetPropertyStack returns strongest first
+        *out_opinions = out;
+        return USD_BRIDGE_SUCCESS;
+    } catch (const std::exception& e) {
+        TF_WARN("usd_bridge_attr_get_opinion_sources: %s", e.what());
+        return USD_BRIDGE_ERROR_UNKNOWN;
+    }
+}
+
+void usd_bridge_opinions_free(UsdBridgeAttributeOpinions* opinions) {
+    if (!opinions) return;
+    for (size_t i = 0; i < opinions->count; ++i) {
+        free(const_cast<char*>(opinions->sources[i].layer_identifier));
+        free(const_cast<char*>(opinions->sources[i].value_display));
+        free(const_cast<char*>(opinions->sources[i].value_type_token));
+    }
+    delete[] opinions->sources;
+    delete opinions;
+}
+
+UsdBridgeError usd_bridge_open_stage_with_policy(
+    const char* path,
+    UsdBridgePayloadPolicy policy,
+    UsdBridgeStage** out_stage
+) {
+    if (!path || !out_stage) {
+        return USD_BRIDGE_ERROR_NULL_POINTER;
+    }
+    *out_stage = nullptr;
+
+    try {
+        std::string normalized_path(path);
+        std::replace(normalized_path.begin(), normalized_path.end(), '\\', '/');
+
+        ArResolverContext context =
+            ArGetResolver().CreateDefaultContextForAsset(normalized_path);
+        ArResolverContextBinder binder(context);
+
+        UsdStage::InitialLoadSet load_set =
+            (policy == USD_BRIDGE_PAYLOAD_LOAD_ALL)
+                ? UsdStage::LoadAll
+                : UsdStage::LoadNone;
+
+        UsdStageRefPtr stage = UsdStage::Open(normalized_path, load_set);
+        if (!stage) {
+            return USD_BRIDGE_ERROR_INVALID_STAGE;
+        }
+
+        auto* bridge_stage = new UsdBridgeStage();
+        bridge_stage->stage = stage;
+        *out_stage = bridge_stage;
+        return USD_BRIDGE_SUCCESS;
+    } catch (const std::exception& e) {
+        TF_WARN("usd_bridge_open_stage_with_policy: %s", e.what());
+        return USD_BRIDGE_ERROR_UNKNOWN;
+    }
 }

@@ -434,6 +434,81 @@ pub(crate) enum UsdBridgeKindRaw {
     Subcomponent = 4,
 }
 
+// ============================================================================
+// Layer-Aware Stage (v0.14.0)
+// ============================================================================
+
+/// Payload loading policy for `usd_bridge_open_stage_with_policy`.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum UsdBridgePayloadPolicyRaw {
+    LoadAll = 0,
+    LoadNone = 1,
+}
+
+/// Info about one layer in the stage's layer stack.
+/// Strings are C-allocated and freed by `usd_bridge_layer_stack_free`.
+#[repr(C)]
+pub(crate) struct UsdBridgeLayerInfoRaw {
+    pub identifier: *const c_char,
+    pub display_name: *const c_char,
+    pub real_path: *const c_char,
+    pub is_anonymous: i32,
+    pub is_dirty: i32,
+    pub is_muted: i32,
+    pub time_offset: f64,
+    pub time_scale: f64,
+    pub parent_index: i32,
+    pub depth: u8,
+}
+
+/// Flattened sublayer tree returned by `usd_bridge_stage_get_layer_stack`.
+#[repr(C)]
+pub(crate) struct UsdBridgeLayerStackRaw {
+    pub layers: *mut UsdBridgeLayerInfoRaw,
+    pub count: usize,
+    pub root_index: usize,
+}
+
+#[repr(C)]
+pub(crate) struct UsdBridgeEditTargetRaw {
+    pub layer_identifier: *const c_char,
+}
+
+#[repr(C)]
+pub(crate) struct UsdBridgeLayerOffsetRaw {
+    pub offset: f64,
+    pub scale: f64,
+}
+
+#[repr(C)]
+pub(crate) struct UsdBridgePrimSpecRaw {
+    pub layer_identifier: *const c_char,
+    pub path: *const c_char,
+    pub specifier: u8,
+    pub has_authored_opinions: i32,
+}
+
+#[repr(C)]
+pub(crate) struct UsdBridgePrimStackRaw {
+    pub specs: *mut UsdBridgePrimSpecRaw,
+    pub count: usize,
+}
+
+#[repr(C)]
+pub(crate) struct UsdBridgeOpinionSourceRaw {
+    pub layer_identifier: *const c_char,
+    pub value_display: *const c_char,
+    pub value_type_token: *const c_char,
+}
+
+#[repr(C)]
+pub(crate) struct UsdBridgeAttributeOpinionsRaw {
+    pub sources: *mut UsdBridgeOpinionSourceRaw,
+    pub count: usize,
+    pub winning_index: usize,
+}
+
 #[link(name = "usd_bridge")]
 extern "C" {
     pub(crate) fn usd_bridge_error_message(error: UsdBridgeErrorCode) -> *const c_char;
@@ -977,4 +1052,57 @@ extern "C" {
         attributes: *mut UsdBridgeAttributeDataRaw,
         count: usize,
     );
+
+    // ------------------------------------------------------------------------
+    // Layer-Aware Stage (v0.14.0)
+    // ------------------------------------------------------------------------
+
+    pub(crate) fn usd_bridge_stage_get_layer_stack(
+        stage: *const UsdBridgeStageRaw,
+        out_stack: *mut *mut UsdBridgeLayerStackRaw,
+    ) -> UsdBridgeErrorCode;
+
+    pub(crate) fn usd_bridge_layer_stack_free(stack: *mut UsdBridgeLayerStackRaw);
+
+    pub(crate) fn usd_bridge_stage_get_edit_target(
+        stage: *const UsdBridgeStageRaw,
+        out_target: *mut UsdBridgeEditTargetRaw,
+    ) -> UsdBridgeErrorCode;
+
+    pub(crate) fn usd_bridge_edit_target_free(target: *mut UsdBridgeEditTargetRaw);
+
+    pub(crate) fn usd_bridge_stage_mute_layer(
+        stage: *mut UsdBridgeStageRaw,
+        layer_identifier: *const c_char,
+        muted: i32,
+    ) -> UsdBridgeErrorCode;
+
+    pub(crate) fn usd_bridge_layer_get_offset(
+        stage: *const UsdBridgeStageRaw,
+        layer_identifier: *const c_char,
+        out_offset: *mut UsdBridgeLayerOffsetRaw,
+    ) -> UsdBridgeErrorCode;
+
+    pub(crate) fn usd_bridge_prim_get_prim_stack(
+        stage: *const UsdBridgeStageRaw,
+        prim_path: *const c_char,
+        out_stack: *mut *mut UsdBridgePrimStackRaw,
+    ) -> UsdBridgeErrorCode;
+
+    pub(crate) fn usd_bridge_prim_stack_free(stack: *mut UsdBridgePrimStackRaw);
+
+    pub(crate) fn usd_bridge_attr_get_opinion_sources(
+        stage: *const UsdBridgeStageRaw,
+        prim_path: *const c_char,
+        attr_name: *const c_char,
+        out_opinions: *mut *mut UsdBridgeAttributeOpinionsRaw,
+    ) -> UsdBridgeErrorCode;
+
+    pub(crate) fn usd_bridge_opinions_free(opinions: *mut UsdBridgeAttributeOpinionsRaw);
+
+    pub(crate) fn usd_bridge_open_stage_with_policy(
+        path: *const c_char,
+        policy: UsdBridgePayloadPolicyRaw,
+        out_stage: *mut *mut UsdBridgeStageRaw,
+    ) -> UsdBridgeErrorCode;
 }

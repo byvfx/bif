@@ -1729,6 +1729,133 @@ void usd_bridge_free_prim_attributes(
     size_t count
 );
 
+// ============================================================================
+// Layer-Aware Stage (v0.14.0)
+// ============================================================================
+
+/// Payload loading policy for usd_bridge_open_stage_with_policy.
+typedef enum UsdBridgePayloadPolicy {
+    USD_BRIDGE_PAYLOAD_LOAD_ALL = 0,
+    USD_BRIDGE_PAYLOAD_LOAD_NONE = 1,
+} UsdBridgePayloadPolicy;
+
+/// Info about one layer in the stage's layer stack (root + sublayers).
+/// Strings are strdup'd; freed by usd_bridge_layer_stack_free.
+typedef struct UsdBridgeLayerInfo {
+    const char* identifier;     // Authored USD layer identifier (unique, may be asset path)
+    const char* display_name;   // Short display name (basename of identifier)
+    const char* real_path;      // Resolved filesystem path, empty for anonymous
+    int is_anonymous;           // 1 if anonymous (in-memory), 0 otherwise
+    int is_dirty;               // 1 if dirty (unsaved), 0 otherwise
+    int is_muted;               // 1 if this layer is currently muted on the stage
+    double time_offset;         // SdfLayerOffset::GetOffset (0.0 for root)
+    double time_scale;          // SdfLayerOffset::GetScale (1.0 for root)
+    int32_t parent_index;       // Index into UsdBridgeLayerStack.layers, -1 for root
+    uint8_t depth;              // 0 for root, 1+ for sublayers
+} UsdBridgeLayerInfo;
+
+/// Flattened sublayer tree (root first, then recursive sublayers).
+typedef struct UsdBridgeLayerStack {
+    UsdBridgeLayerInfo* layers; // new[]'d array of length `count`
+    size_t count;
+    size_t root_index;          // Always 0 in current impl; exposed for future use
+} UsdBridgeLayerStack;
+
+/// Get the full layer stack for a stage (root + recursive sublayers).
+/// Caller must free with usd_bridge_layer_stack_free.
+UsdBridgeError usd_bridge_stage_get_layer_stack(
+    const UsdBridgeStage* stage,
+    UsdBridgeLayerStack** out_stack
+);
+
+void usd_bridge_layer_stack_free(UsdBridgeLayerStack* stack);
+
+/// Current edit target — where new opinions would be authored.
+/// v0.14 is read-only; this is informational.
+typedef struct UsdBridgeEditTarget {
+    const char* layer_identifier; // strdup'd; empty if no target
+} UsdBridgeEditTarget;
+
+UsdBridgeError usd_bridge_stage_get_edit_target(
+    const UsdBridgeStage* stage,
+    UsdBridgeEditTarget* out_target
+);
+
+void usd_bridge_edit_target_free(UsdBridgeEditTarget* target);
+
+/// Mute or unmute a layer on the stage. Triggers recomposition.
+UsdBridgeError usd_bridge_stage_mute_layer(
+    UsdBridgeStage* stage,
+    const char* layer_identifier,
+    int muted
+);
+
+/// Time offset + scale authored on a root sublayer reference.
+/// Returns identity (0.0, 1.0) if the layer isn't a direct sublayer of root.
+typedef struct UsdBridgeLayerOffset {
+    double offset;
+    double scale;
+} UsdBridgeLayerOffset;
+
+UsdBridgeError usd_bridge_layer_get_offset(
+    const UsdBridgeStage* stage,
+    const char* layer_identifier,
+    UsdBridgeLayerOffset* out_offset
+);
+
+/// One prim spec entry from UsdPrim::GetPrimStack.
+/// Strings are strdup'd; freed by usd_bridge_prim_stack_free.
+typedef struct UsdBridgePrimSpec {
+    const char* layer_identifier;
+    const char* path;              // SdfPath of the spec
+    uint8_t specifier;             // SdfSpecifier: 0=Def, 1=Over, 2=Class
+    int has_authored_opinions;     // 1 if the spec authors Specifier field
+} UsdBridgePrimSpec;
+
+typedef struct UsdBridgePrimStack {
+    UsdBridgePrimSpec* specs;
+    size_t count;
+} UsdBridgePrimStack;
+
+UsdBridgeError usd_bridge_prim_get_prim_stack(
+    const UsdBridgeStage* stage,
+    const char* prim_path,
+    UsdBridgePrimStack** out_stack
+);
+
+void usd_bridge_prim_stack_free(UsdBridgePrimStack* stack);
+
+/// One opinion source for an attribute (one entry per layer contributing).
+/// Values rendered as display strings via TfStringify (read-only in v0.14).
+typedef struct UsdBridgeOpinionSource {
+    const char* layer_identifier;
+    const char* value_display;     // TfStringify(VtValue) or "<no opinion>"
+    const char* value_type_token;  // VtValue::GetTypeName() or ""
+} UsdBridgeOpinionSource;
+
+typedef struct UsdBridgeAttributeOpinions {
+    UsdBridgeOpinionSource* sources;
+    size_t count;
+    size_t winning_index;          // Index of strongest opinion (0 = front of stack)
+} UsdBridgeAttributeOpinions;
+
+UsdBridgeError usd_bridge_attr_get_opinion_sources(
+    const UsdBridgeStage* stage,
+    const char* prim_path,
+    const char* attr_name,
+    UsdBridgeAttributeOpinions** out_opinions
+);
+
+void usd_bridge_opinions_free(UsdBridgeAttributeOpinions* opinions);
+
+/// Open a stage with explicit payload policy (LoadAll vs LoadNone).
+/// Same semantics as usd_bridge_open_stage, but caller controls initial load.
+UsdBridgeError usd_bridge_open_stage_with_policy(
+    const char* path,
+    UsdBridgePayloadPolicy policy,
+    UsdBridgeStage** out_stage
+);
+
 #ifdef __cplusplus
 }
 #endif
