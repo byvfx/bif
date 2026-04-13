@@ -468,6 +468,14 @@ impl Renderer {
                                 );
 
                                 let highlight = self.nodes.node_graph_state.selected_node;
+                                // v0.14.0 — optional prim → strongest-layer-index
+                                // map for color dots in the scene tree.
+                                let layer_for_prim = self
+                                    .scene
+                                    .working_scene
+                                    .layer_state
+                                    .as_ref()
+                                    .map(|s| &s.layer_for_prim);
                                 match view_mode {
                                     SceneBrowserViewMode::FullScene => {
                                         let provider: &dyn PrimDataProvider = &composite;
@@ -477,6 +485,7 @@ impl Renderer {
                                                 &mut self.selection.scene_browser_state,
                                                 provider,
                                                 highlight,
+                                                layer_for_prim,
                                             )
                                         {
                                             event_bus.emit(
@@ -507,6 +516,7 @@ impl Renderer {
                                                 &mut self.selection.scene_browser_state,
                                                 provider,
                                                 Some(node_id),
+                                                layer_for_prim,
                                             )
                                         {
                                             event_bus.emit(

@@ -11,8 +11,8 @@
 | Status | Details |
 |--------|---------|
 | Released | v0.1.0, v0.11.0, v0.12.0, v0.13.0, v0.13.5, **v0.13.6 (2026-04-12)** |
-| Current | v0.14.0-dev — Layer-Aware Stage. **Phases A-C done; Phase D substantially complete (scaffolding, scene loader wiring, LayerStackPanel + render wiring + real dispatch handlers).** Remaining Phase D: opinion inspector extension on `property_inspector.rs`, scene-browser color dots, composition arc list. |
-| Commits | `cd87179` bump → `bc8fd53` LayerStackPanel. (pending) render wiring + dispatch. ~11 ahead of origin. |
+| Current | v0.14.0-dev — Layer-Aware Stage. **Phases A-C done; Phase D almost complete** (scaffolding, scene loader wiring, LayerStackPanel + render wiring + real dispatch, scene-browser color dots). Remaining Phase D: opinion inspector extension on `property_inspector.rs`, composition arc list. |
+| Commits | `cd87179` bump → `6ee7807` last site regen. (pending) scene-browser dots. ~13 ahead of origin. |
 | Tests | 537 + ~86 v0.14.0 tests = ~623 total |
 | Performance | 60 FPS viewport, 100K instances with LOD, Ivar build ~185ms |
 

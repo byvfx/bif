@@ -254,6 +254,7 @@ pub fn render_scene_browser(
     state: &mut SceneBrowserState,
     provider: &dyn PrimDataProvider,
     highlight_node: Option<GraphNodeId>,
+    layer_for_prim: Option<&std::collections::HashMap<String, usize>>,
 ) -> Option<String> {
     let mut selection_changed: Option<String> = None;
 
@@ -376,6 +377,7 @@ pub fn render_scene_browser(
                     0,
                     &col_widths,
                     highlight_node,
+                    layer_for_prim,
                 ) {
                     selection_changed = Some(new_selection);
                 }
@@ -396,6 +398,7 @@ struct ColumnWidths {
 
 /// Recursively render a prim row and its children in table format.
 #[allow(clippy::only_used_in_recursion)] // highlight_node kept for future use (node-contribution tinting)
+#[allow(clippy::too_many_arguments)] // Recursive renderer; wrapping in a struct adds more noise than it removes.
 fn render_prim_row(
     ui: &mut egui::Ui,
     state: &mut SceneBrowserState,
@@ -404,6 +407,7 @@ fn render_prim_row(
     depth: usize,
     col_widths: &ColumnWidths,
     highlight_node: Option<GraphNodeId>,
+    layer_for_prim: Option<&std::collections::HashMap<String, usize>>,
 ) -> Option<String> {
     let info = provider.get_prim_info(path)?;
 
@@ -465,6 +469,16 @@ fn render_prim_row(
                 // Type icon (colored Unicode shape)
                 let (icon_char, icon_color) = info.icon();
                 ui.colored_label(icon_color, icon_char);
+
+                // Layer color dot (v0.14.0) — indicates which USD layer
+                // authored this prim's strongest opinion. Missing when no
+                // stage is loaded or the prim isn't in the stage.
+                if let Some(idx) = layer_for_prim.and_then(|m| m.get(path).copied()) {
+                    let color = theme::layer_color(idx);
+                    let (rect, _) =
+                        ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
+                    ui.painter().circle_filled(rect.center(), 3.0, color);
+                }
 
                 // Prim name
                 let name_text = if info.is_active {
@@ -566,6 +580,7 @@ fn render_prim_row(
                 depth + 1,
                 col_widths,
                 highlight_node,
+                layer_for_prim,
             ) {
                 selection_changed = Some(new_selection);
             }
