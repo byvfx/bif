@@ -589,11 +589,6 @@ pub struct Scene {
 
     /// Points primitives (from UsdGeomPoints)
     pub points_prims: Vec<PointsPrim>,
-
-    /// USD layer-aware state (v0.14.0). `Some` for USD-loaded scenes,
-    /// `None` for procedural-only scenes. Populated by the scene loader
-    /// after the stage opens. See [`crate::SceneLayerState`].
-    pub layer_state: Option<crate::SceneLayerState>,
 }
 
 impl Scene {

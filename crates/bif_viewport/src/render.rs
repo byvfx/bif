@@ -471,7 +471,6 @@ impl Renderer {
                                 // map for color dots in the scene tree.
                                 let layer_for_prim = self
                                     .scene
-                                    .working_scene
                                     .layer_state
                                     .as_ref()
                                     .map(|s| &s.layer_for_prim);
@@ -1130,7 +1129,6 @@ impl Renderer {
                     // and the stage stay in sync.
                     let identifier = self
                         .scene
-                        .working_scene
                         .layer_state
                         .as_ref()
                         .and_then(|s| s.stack.layers.get(index))
