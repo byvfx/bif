@@ -6,6 +6,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.13.6] - 2026-04-12
+
 ### Added
 
 - **v0.13.6 UsdSkelBlendShape — CPU morph target deformation** — blend shapes load from USD, evaluate per-frame, and compose with skinning (shapes applied before LBS).

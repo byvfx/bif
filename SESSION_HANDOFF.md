@@ -1,7 +1,7 @@
 # Session Handoff - April 12, 2026
 
-**Last Updated:** Rigid mesh offset bug FIXED — ready for v0.13.6 release
-**Current Version:** v0.13.6-dev (blend shapes + rigid mesh fix complete)
+**Last Updated:** v0.13.6 released — blend shapes + rigid mesh fix shipped
+**Current Version:** v0.13.6 (released 2026-04-12)
 **Project:** BIF - USD Orchestration Tool for VFX
 
 ---
@@ -10,10 +10,9 @@
 
 | Status | Details |
 |--------|---------|
-| Released | v0.1.0, v0.11.0, v0.12.0, v0.13.0 (2026-04-09), **v0.13.5 (2026-04-10)** |
-| Current | v0.13.6-dev — blend shapes shipped + rigid mesh offset fixed; HumanFemale renders clean across walk cycle |
-| Next | v0.13.6 release (version bump + MILESTONES Released entry) → v0.14.0 Layer-Aware Stage |
-| Tests | +1 rigid equivalence test, 537+ total |
+| Released | v0.1.0, v0.11.0, v0.12.0, v0.13.0 (2026-04-09), v0.13.5 (2026-04-10), **v0.13.6 (2026-04-12)** |
+| Next | v0.14.0 Layer-Aware Stage — SdfLayer FFI, opinion trace inspector, working layer isolation |
+| Tests | +1 rigid equivalence test in v0.13.6, 537+ total |
 | Performance | 60 FPS viewport, 100K instances with LOD, Ivar build ~185ms |
 
 ---
