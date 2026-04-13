@@ -1087,6 +1087,27 @@ impl Renderer {
                 AppEvent::ProjectSave => self.handle_project_save(),
                 AppEvent::ProjectSaveAs => self.handle_project_save_as(),
                 AppEvent::ProjectOpenRecent(path) => self.handle_project_open_recent(path),
+
+                // Layer-aware stage (v0.14.0) — panels land in subsequent
+                // Phase D commits. For now we log so emitters can be wired
+                // in advance; handlers fill in as the UI comes online.
+                AppEvent::LayerSelected(idx) => {
+                    log::debug!("LayerSelected({idx}) — panel not yet wired");
+                }
+                AppEvent::LayerMuteToggled { index, muted } => {
+                    log::debug!(
+                        "LayerMuteToggled(index={index}, muted={muted}) — panel not yet wired"
+                    );
+                }
+                AppEvent::WorkingLayerChanged(idx) => {
+                    log::debug!("WorkingLayerChanged({idx}) — panel not yet wired");
+                }
+                AppEvent::PayloadPolicyChanged(policy) => {
+                    log::debug!("PayloadPolicyChanged({policy:?}) — panel not yet wired");
+                }
+                AppEvent::IsolationModeToggled(on) => {
+                    log::debug!("IsolationModeToggled({on}) — panel not yet wired");
+                }
             }
         }
 

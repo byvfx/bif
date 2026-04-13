@@ -78,6 +78,32 @@ pub const PIN_IMAGE: Color32 = Color32::from_rgb(200, 150, 50);
 pub const PIN_ENVIRONMENT: Color32 = Color32::from_rgb(100, 150, 255);
 
 // ---------------------------------------------------------------------------
+// Layer-Aware Stage colors (v0.14.0)
+// ---------------------------------------------------------------------------
+
+/// 8-color HSL-spaced palette for layer color dots + row borders.
+///
+/// Assigned round-robin by layer index — identical layers across sessions
+/// get identical colors. Ordered to keep the first 3 (the most common case
+/// — root + 2 sublayers) maximally distinct.
+pub const LAYER_COLORS: [Color32; 8] = [
+    Color32::from_rgb(80, 190, 180),  // teal
+    Color32::from_rgb(180, 120, 220), // purple
+    Color32::from_rgb(230, 150, 70),  // orange
+    Color32::from_rgb(220, 190, 80),  // gold
+    Color32::from_rgb(230, 130, 180), // pink
+    Color32::from_rgb(90, 150, 230),  // blue
+    Color32::from_rgb(120, 200, 100), // green
+    Color32::from_rgb(220, 100, 100), // red
+];
+
+/// Color for layer `index`, wrapping at the palette size.
+#[inline]
+pub fn layer_color(index: usize) -> Color32 {
+    LAYER_COLORS[index % LAYER_COLORS.len()]
+}
+
+// ---------------------------------------------------------------------------
 // Transform axis colors
 // ---------------------------------------------------------------------------
 

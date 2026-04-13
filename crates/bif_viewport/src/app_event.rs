@@ -63,6 +63,28 @@ pub enum AppEvent {
     VariantChanged(String, String, String),
     /// Frame selected prim (F key)
     FrameSelected,
+
+    // ------------------------------------------------------------------
+    // Layer-Aware Stage (v0.14.0)
+    // ------------------------------------------------------------------
+    /// User clicked a layer row in the layer stack panel.
+    /// Index is into `SceneLayerState::stack.layers`.
+    LayerSelected(usize),
+    /// Layer mute toggled in the layer stack panel.
+    LayerMuteToggled {
+        /// Index into `SceneLayerState::stack.layers`.
+        index: usize,
+        /// New muted state.
+        muted: bool,
+    },
+    /// Working-layer selection changed (radio button in layer stack panel).
+    /// Informational in v0.14 (read-only); edit-target change lands in v0.16.
+    WorkingLayerChanged(usize),
+    /// Payload-loading policy toggle — reopens the stage with the new mode.
+    PayloadPolicyChanged(bif_core::usd::layer::PayloadPolicy),
+    /// Isolation-mode toggle in the layer stack panel header. Purely a UI
+    /// hint in v0.14.0 — dims non-working-layer opinions.
+    IsolationModeToggled(bool),
 }
 
 /// Frame-scoped event bus. UI pushes events, render loop drains them.
