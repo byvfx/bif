@@ -6,6 +6,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Layer Stack panel mute/radio clicks now propagate** — `run_egui_frame` takes the `EventBus` out of `Renderer` via `std::mem::take` at frame start; existing UI code emits to the local binding. The `LayerStackPanel` mount site was passing `&mut self.event_bus` (the empty placeholder) so every `LayerSelected` / `LayerMuteToggled` / `WorkingLayerChanged` / `IsolationModeToggled` vanished before `dispatch_events` ran. Route to the local `event_bus` like every other panel. Also swaps the empty-label radio/checkbox for single-char `W` and `M` labels so the hit area is usable.
+
+### Changed
+
+- **`test_assets/layers/` fixture now demos muting visibly in the viewport** — original fixture authored `/Hero.xformOp:translate` in all three layers with root winning, so muting any sublayer produced no visible change (USD forbids muting the root layer). Rewrote: root carries no prim opinions, shot authors translate=(3,0,0) + red, anim defines a unit cube at origin + white. Muting shot now snaps the cube back to origin and flips it white; muting anim removes it entirely. Updated 4 integration tests: attribute-opinion count 3 → 2, prim-stack count 3 → 2, mute asserts shot → 1 opinion from anim. New demo matrix documented in `root.usda` doc string.
+
 ## [0.14.0] - 2026-04-13
 
 ### Added

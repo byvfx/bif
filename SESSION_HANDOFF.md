@@ -11,6 +11,7 @@
 | Status | Details |
 |--------|---------|
 | Released | v0.1.0, v0.11.0, v0.12.0, v0.13.0, v0.13.5, v0.13.6 (2026-04-12), **v0.14.0 (2026-04-13)** |
+| Post-tag fixes | `b81d5e9` event_bus routing for Layer Stack panel (real bug — clicks did nothing); `a135612` fixture rework so muting produces visible viewport change. Both pending next release or tag move. |
 | Next | v0.14.5 — file watcher + node graph polish, OR v0.15.0 Qt migration (per roadmap) |
 | Tests | ~627 total (90 new in v0.14.0) |
 | Performance | 60 FPS viewport, 100K instances with LOD, Ivar build ~185ms |
