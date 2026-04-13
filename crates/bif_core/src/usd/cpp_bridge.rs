@@ -22,7 +22,14 @@ use bif_math::{Mat4, Vec3};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use super::ffi_convert::{
+    convert_attribute_opinions_ptr, convert_edit_target, convert_layer_offset,
+    convert_layer_stack_ptr, convert_prim_stack_ptr, payload_policy_to_raw,
+};
 use super::ffi_raw::*;
+use super::layer::{
+    EditTarget, LayerOffset, LayerStack, OpinionSource, PayloadPolicy, PrimStackEntry,
+};
 
 // Raw FFI types and extern "C" block are in ffi_raw.rs
 
@@ -2284,6 +2291,164 @@ impl UsdStage {
             return Err(result.into());
         }
         Ok(prim_count)
+    }
+}
+
+// ============================================================================
+// Layer-Aware Stage (v0.14.0)
+// ============================================================================
+//
+// Read-only inspection of the stage's layer stack, prim stacks, and
+// per-attribute opinion sources, plus layer muting and payload-policy-aware
+// stage opening. No write paths — editing lands in v0.16.
+
+impl UsdStage {
+    /// Open a stage with an explicit payload-loading policy.
+    ///
+    /// `LoadAll` opens and resolves every payload eagerly (default USD
+    /// behavior). `LoadNone` opens hierarchy only; payloads load lazily via
+    /// [`load_payload`](Self::load_payload) or [`load_payloads`](Self::load_payloads).
+    pub fn open_with_policy<P: AsRef<Path>>(
+        path: P,
+        policy: PayloadPolicy,
+    ) -> UsdBridgeResult<Self> {
+        let abs_path = std::fs::canonicalize(path.as_ref())
+            .map_err(|_| UsdBridgeError::FileNotFound(path.as_ref().display().to_string()))?;
+
+        let path_str = abs_path.to_str().ok_or(UsdBridgeError::InvalidPath)?;
+
+        // Mirror UsdStage::open's Windows extended-path handling.
+        let path_str = if let Some(unc_path) = path_str.strip_prefix(r"\\?\UNC\") {
+            format!(r"\\{}", unc_path)
+        } else if let Some(local_path) = path_str.strip_prefix(r"\\?\") {
+            local_path.to_string()
+        } else {
+            path_str.to_string()
+        };
+
+        let c_path = CString::new(path_str.as_str()).map_err(|_| UsdBridgeError::InvalidPath)?;
+
+        let mut raw: *mut UsdBridgeStageRaw = ptr::null_mut();
+        let code = unsafe {
+            usd_bridge_open_stage_with_policy(
+                c_path.as_ptr(),
+                payload_policy_to_raw(policy),
+                &mut raw,
+            )
+        };
+        if code != UsdBridgeErrorCode::Success {
+            return Err(code.into());
+        }
+        if raw.is_null() {
+            return Err(UsdBridgeError::InvalidStage);
+        }
+        Ok(Self { raw })
+    }
+
+    /// Get the stage's sublayer stack (root + recursive sublayers).
+    ///
+    /// Read-only snapshot. If sublayers change (mute/unmute, reload), call
+    /// this again to refresh.
+    pub fn get_layer_stack(&self) -> UsdBridgeResult<LayerStack> {
+        let mut raw_stack: *mut UsdBridgeLayerStackRaw = ptr::null_mut();
+        let code = unsafe { usd_bridge_stage_get_layer_stack(self.raw, &mut raw_stack) };
+        if code != UsdBridgeErrorCode::Success {
+            return Err(code.into());
+        }
+        let stack = unsafe { convert_layer_stack_ptr(raw_stack) };
+        unsafe { usd_bridge_layer_stack_free(raw_stack) };
+        Ok(stack)
+    }
+
+    /// Get the current edit target — the layer where new opinions would be
+    /// authored. Informational in v0.14.0 (read-only release).
+    pub fn get_edit_target(&self) -> UsdBridgeResult<EditTarget> {
+        let mut raw_target = UsdBridgeEditTargetRaw {
+            layer_identifier: ptr::null(),
+        };
+        let code = unsafe { usd_bridge_stage_get_edit_target(self.raw, &mut raw_target) };
+        if code != UsdBridgeErrorCode::Success {
+            return Err(code.into());
+        }
+        let target = unsafe { convert_edit_target(&raw_target) };
+        unsafe { usd_bridge_edit_target_free(&mut raw_target) };
+        Ok(target)
+    }
+
+    /// Mute or unmute a layer by its authored identifier. Triggers stage
+    /// recomposition — any cached prim data should be refreshed.
+    pub fn set_layer_muted(&self, identifier: &str, muted: bool) -> UsdBridgeResult<()> {
+        let c_id = CString::new(identifier).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let code = unsafe {
+            usd_bridge_stage_mute_layer(
+                self.raw as *mut _,
+                c_id.as_ptr(),
+                if muted { 1 } else { 0 },
+            )
+        };
+        if code != UsdBridgeErrorCode::Success {
+            return Err(code.into());
+        }
+        Ok(())
+    }
+
+    /// Get a layer's time offset + scale as authored on the root layer's
+    /// sublayer reference list. Returns identity `(0.0, 1.0)` if the layer
+    /// isn't a direct sublayer of the root.
+    pub fn get_layer_offset(&self, identifier: &str) -> UsdBridgeResult<LayerOffset> {
+        let c_id = CString::new(identifier).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let mut raw_offset = UsdBridgeLayerOffsetRaw {
+            offset: 0.0,
+            scale: 1.0,
+        };
+        let code = unsafe { usd_bridge_layer_get_offset(self.raw, c_id.as_ptr(), &mut raw_offset) };
+        if code != UsdBridgeErrorCode::Success {
+            return Err(code.into());
+        }
+        Ok(convert_layer_offset(&raw_offset))
+    }
+
+    /// Get the full prim stack — every layer that authors an opinion on the
+    /// prim, ordered strongest-first. Returns empty `Vec` if the prim has no
+    /// authored opinions (shouldn't happen for a composed prim).
+    pub fn get_prim_stack(&self, prim_path: &str) -> UsdBridgeResult<Vec<PrimStackEntry>> {
+        let c_path = CString::new(prim_path).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let mut raw_stack: *mut UsdBridgePrimStackRaw = ptr::null_mut();
+        let code =
+            unsafe { usd_bridge_prim_get_prim_stack(self.raw, c_path.as_ptr(), &mut raw_stack) };
+        if code != UsdBridgeErrorCode::Success {
+            return Err(code.into());
+        }
+        let entries = unsafe { convert_prim_stack_ptr(raw_stack) };
+        unsafe { usd_bridge_prim_stack_free(raw_stack) };
+        Ok(entries)
+    }
+
+    /// Get the opinion stack for a single attribute — one entry per layer
+    /// contributing an opinion. The entry with `is_winning = true` is the
+    /// value the composed stage sees.
+    pub fn get_attribute_opinions(
+        &self,
+        prim_path: &str,
+        attr_name: &str,
+    ) -> UsdBridgeResult<Vec<OpinionSource>> {
+        let c_path = CString::new(prim_path).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_attr = CString::new(attr_name).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let mut raw_opinions: *mut UsdBridgeAttributeOpinionsRaw = ptr::null_mut();
+        let code = unsafe {
+            usd_bridge_attr_get_opinion_sources(
+                self.raw,
+                c_path.as_ptr(),
+                c_attr.as_ptr(),
+                &mut raw_opinions,
+            )
+        };
+        if code != UsdBridgeErrorCode::Success {
+            return Err(code.into());
+        }
+        let sources = unsafe { convert_attribute_opinions_ptr(raw_opinions) };
+        unsafe { usd_bridge_opinions_free(raw_opinions) };
+        Ok(sources)
     }
 }
 

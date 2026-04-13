@@ -37,6 +37,7 @@ pub mod displacement;
 pub mod export;
 pub(crate) mod ffi_convert;
 pub(crate) mod ffi_raw;
+pub mod layer;
 mod loader;
 mod types;
 pub mod validate;
@@ -50,6 +51,10 @@ pub use cpp_bridge::{
     UsdSkinBindingData, UsdSpecifier, UsdStage, UsdTimelineData, UsdVolumeData,
 };
 pub use export::{AuthoredPrim, ExportConfig, ExportResult};
+pub use layer::{
+    EditTarget, LayerInfo, LayerOffset, LayerStack, OpinionSource, PayloadPolicy, PrimSpecifier,
+    PrimStackEntry,
+};
 pub use loader::{
     load_usd, load_usd_with_stage, load_usda, load_usda_from_string, LoadError, LoadResult,
 };

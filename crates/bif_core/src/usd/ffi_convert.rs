@@ -13,6 +13,7 @@
 // Called from cpp_bridge.rs to convert raw FFI structs to safe domain types.
 
 use std::ffi::CStr;
+use std::path::PathBuf;
 
 use bif_math::{Mat4, Vec3};
 
@@ -26,14 +27,21 @@ use super::cpp_bridge::{
 };
 
 use super::ffi_raw::{
-    UsdBridgeAnimatedInstancerDataRaw, UsdBridgeAnimatedMeshDataRaw,
+    UsdBridgeAnimatedInstancerDataRaw, UsdBridgeAnimatedMeshDataRaw, UsdBridgeAttributeOpinionsRaw,
     UsdBridgeBlendShapeBindingDataRaw, UsdBridgeCameraPropertiesRaw, UsdBridgeCurveBasisRaw,
-    UsdBridgeCurveTypeRaw, UsdBridgeCurveWrapRaw, UsdBridgeCurvesDataRaw,
-    UsdBridgeInstancerDataRaw, UsdBridgeLightDataRaw, UsdBridgeMaterialDataRaw,
-    UsdBridgeMeshDataRaw, UsdBridgePointsDataRaw, UsdBridgePrimInfoRaw, UsdBridgePrimvarDataRaw,
+    UsdBridgeCurveTypeRaw, UsdBridgeCurveWrapRaw, UsdBridgeCurvesDataRaw, UsdBridgeEditTargetRaw,
+    UsdBridgeInstancerDataRaw, UsdBridgeLayerInfoRaw, UsdBridgeLayerOffsetRaw,
+    UsdBridgeLayerStackRaw, UsdBridgeLightDataRaw, UsdBridgeMaterialDataRaw, UsdBridgeMeshDataRaw,
+    UsdBridgeOpinionSourceRaw, UsdBridgePayloadPolicyRaw, UsdBridgePointsDataRaw,
+    UsdBridgePrimInfoRaw, UsdBridgePrimSpecRaw, UsdBridgePrimStackRaw, UsdBridgePrimvarDataRaw,
     UsdBridgePrimvarInterpolationRaw, UsdBridgePrimvarTypeRaw, UsdBridgePurposeRaw,
     UsdBridgeSkeletonDataRaw, UsdBridgeSkinBindingDataRaw, UsdBridgeStageMetadataRaw,
     UsdBridgeTimelineDataRaw, UsdBridgeUpAxisRaw, UsdBridgeVolumeDataRaw, UsdNativeInstanceDataRaw,
+};
+
+use super::layer::{
+    EditTarget, LayerInfo, LayerOffset, LayerStack, OpinionSource, PayloadPolicy, PrimSpecifier,
+    PrimStackEntry,
 };
 
 // ============================================================================
@@ -893,6 +901,169 @@ pub(crate) unsafe fn convert_primvar(raw: &UsdBridgePrimvarDataRaw) -> UsdPrimva
         float_data,
         int_data,
         element_count: raw.element_count,
+    }
+}
+
+// ============================================================================
+// Layer-Aware Stage (v0.14.0)
+// ============================================================================
+
+/// Convert one raw layer info struct to safe `LayerInfo`.
+///
+/// # Safety
+///
+/// All string pointers in `raw` must be valid NUL-terminated C strings or null.
+pub(crate) unsafe fn convert_layer_info(raw: &UsdBridgeLayerInfoRaw) -> LayerInfo {
+    LayerInfo {
+        identifier: c_str_to_string(raw.identifier),
+        display_name: c_str_to_string(raw.display_name),
+        real_path: PathBuf::from(c_str_to_string(raw.real_path)),
+        is_anonymous: raw.is_anonymous != 0,
+        is_dirty: raw.is_dirty != 0,
+        is_muted: raw.is_muted != 0,
+        offset: LayerOffset {
+            offset: raw.time_offset,
+            scale: raw.time_scale,
+        },
+        parent_index: if raw.parent_index < 0 {
+            None
+        } else {
+            Some(raw.parent_index as usize)
+        },
+        depth: raw.depth,
+    }
+}
+
+/// Convert a raw layer stack pointer to a safe `LayerStack`.
+///
+/// Returns an empty stack if `ptr` is null or `count == 0`.
+///
+/// # Safety
+///
+/// `ptr` must be null or point to a valid `UsdBridgeLayerStackRaw` whose
+/// `layers` pointer + `count` describe a readable slice.
+pub(crate) unsafe fn convert_layer_stack_ptr(ptr: *const UsdBridgeLayerStackRaw) -> LayerStack {
+    if ptr.is_null() {
+        return LayerStack {
+            layers: Vec::new(),
+            root_index: 0,
+        };
+    }
+    let raw = &*ptr;
+    let layers = if raw.layers.is_null() || raw.count == 0 {
+        Vec::new()
+    } else {
+        std::slice::from_raw_parts(raw.layers, raw.count)
+            .iter()
+            .map(|r| convert_layer_info(r))
+            .collect()
+    };
+    LayerStack {
+        layers,
+        root_index: raw.root_index,
+    }
+}
+
+/// Convert one raw prim spec to a safe `PrimStackEntry`.
+///
+/// # Safety
+///
+/// All string pointers in `raw` must be valid NUL-terminated C strings or null.
+pub(crate) unsafe fn convert_prim_spec(raw: &UsdBridgePrimSpecRaw) -> PrimStackEntry {
+    PrimStackEntry {
+        layer_identifier: c_str_to_string(raw.layer_identifier),
+        path: c_str_to_string(raw.path),
+        specifier: PrimSpecifier::from_u8(raw.specifier),
+        has_authored_opinions: raw.has_authored_opinions != 0,
+    }
+}
+
+/// Convert a raw prim stack pointer to a safe `Vec<PrimStackEntry>`.
+///
+/// # Safety
+///
+/// `ptr` must be null or point to a valid `UsdBridgePrimStackRaw`.
+pub(crate) unsafe fn convert_prim_stack_ptr(
+    ptr: *const UsdBridgePrimStackRaw,
+) -> Vec<PrimStackEntry> {
+    if ptr.is_null() {
+        return Vec::new();
+    }
+    let raw = &*ptr;
+    if raw.specs.is_null() || raw.count == 0 {
+        return Vec::new();
+    }
+    std::slice::from_raw_parts(raw.specs, raw.count)
+        .iter()
+        .map(|r| convert_prim_spec(r))
+        .collect()
+}
+
+/// Convert one raw opinion source to a safe `OpinionSource`.
+///
+/// # Safety
+///
+/// All string pointers in `raw` must be valid NUL-terminated C strings or null.
+pub(crate) unsafe fn convert_opinion_source(
+    raw: &UsdBridgeOpinionSourceRaw,
+    is_winning: bool,
+) -> OpinionSource {
+    OpinionSource {
+        layer_identifier: c_str_to_string(raw.layer_identifier),
+        value_display: c_str_to_string(raw.value_display),
+        value_type: c_str_to_string(raw.value_type_token),
+        is_winning,
+    }
+}
+
+/// Convert a raw attribute opinions pointer to a safe `Vec<OpinionSource>`.
+/// The entry at `winning_index` gets `is_winning = true`.
+///
+/// # Safety
+///
+/// `ptr` must be null or point to a valid `UsdBridgeAttributeOpinionsRaw`.
+pub(crate) unsafe fn convert_attribute_opinions_ptr(
+    ptr: *const UsdBridgeAttributeOpinionsRaw,
+) -> Vec<OpinionSource> {
+    if ptr.is_null() {
+        return Vec::new();
+    }
+    let raw = &*ptr;
+    if raw.sources.is_null() || raw.count == 0 {
+        return Vec::new();
+    }
+    let winning = raw.winning_index;
+    std::slice::from_raw_parts(raw.sources, raw.count)
+        .iter()
+        .enumerate()
+        .map(|(i, r)| convert_opinion_source(r, i == winning))
+        .collect()
+}
+
+/// Convert a raw edit target struct to safe `EditTarget`.
+///
+/// # Safety
+///
+/// `raw.layer_identifier` must be valid NUL-terminated or null.
+pub(crate) unsafe fn convert_edit_target(raw: &UsdBridgeEditTargetRaw) -> EditTarget {
+    EditTarget {
+        layer_identifier: c_str_to_string(raw.layer_identifier),
+    }
+}
+
+/// Convert a raw layer offset to safe `LayerOffset` (plain struct copy).
+pub(crate) fn convert_layer_offset(raw: &UsdBridgeLayerOffsetRaw) -> LayerOffset {
+    LayerOffset {
+        offset: raw.offset,
+        scale: raw.scale,
+    }
+}
+
+/// Map safe `PayloadPolicy` to its FFI raw enum.
+pub(crate) fn payload_policy_to_raw(p: PayloadPolicy) -> UsdBridgePayloadPolicyRaw {
+    match p {
+        PayloadPolicy::LoadAll => UsdBridgePayloadPolicyRaw::LoadAll,
+        PayloadPolicy::LoadNone => UsdBridgePayloadPolicyRaw::LoadNone,
     }
 }
 
@@ -2169,5 +2340,228 @@ mod tests {
             convert_purpose_raw(UsdBridgePurposeRaw::Guide),
             MeshPurpose::Guide
         );
+    }
+
+    // ---- Layer-Aware Stage tests (v0.14.0) ----
+
+    fn make_layer_info_raw(
+        identifier: &CString,
+        display: &CString,
+        real_path: &CString,
+        parent_index: i32,
+        depth: u8,
+        muted: bool,
+    ) -> UsdBridgeLayerInfoRaw {
+        UsdBridgeLayerInfoRaw {
+            identifier: identifier.as_ptr(),
+            display_name: display.as_ptr(),
+            real_path: real_path.as_ptr(),
+            is_anonymous: 0,
+            is_dirty: 0,
+            is_muted: if muted { 1 } else { 0 },
+            time_offset: 0.0,
+            time_scale: 1.0,
+            parent_index,
+            depth,
+        }
+    }
+
+    #[test]
+    fn test_convert_layer_info_root() {
+        let ident = CString::new("root.usd").unwrap();
+        let disp = CString::new("root.usd").unwrap();
+        let real = CString::new("/abs/root.usd").unwrap();
+        let raw = make_layer_info_raw(&ident, &disp, &real, -1, 0, false);
+        let info = unsafe { convert_layer_info(&raw) };
+        assert_eq!(info.identifier, "root.usd");
+        assert_eq!(info.parent_index, None);
+        assert_eq!(info.depth, 0);
+        assert!(info.offset.is_identity());
+        assert!(!info.is_muted);
+    }
+
+    #[test]
+    fn test_convert_layer_info_sublayer_with_parent() {
+        let ident = CString::new("anim.usd").unwrap();
+        let disp = CString::new("anim.usd").unwrap();
+        let real = CString::new("/abs/anim.usd").unwrap();
+        let raw = make_layer_info_raw(&ident, &disp, &real, 0, 1, true);
+        let info = unsafe { convert_layer_info(&raw) };
+        assert_eq!(info.parent_index, Some(0));
+        assert_eq!(info.depth, 1);
+        assert!(info.is_muted);
+    }
+
+    #[test]
+    fn test_convert_layer_stack_null_returns_empty() {
+        let stack = unsafe { convert_layer_stack_ptr(ptr::null()) };
+        assert!(stack.layers.is_empty());
+        assert_eq!(stack.root_index, 0);
+    }
+
+    #[test]
+    fn test_convert_layer_stack_two_layers() {
+        let root_id = CString::new("root.usd").unwrap();
+        let root_disp = CString::new("root.usd").unwrap();
+        let root_path = CString::new("/abs/root.usd").unwrap();
+        let sub_id = CString::new("anim.usd").unwrap();
+        let sub_disp = CString::new("anim.usd").unwrap();
+        let sub_path = CString::new("/abs/anim.usd").unwrap();
+        let mut layers = vec![
+            make_layer_info_raw(&root_id, &root_disp, &root_path, -1, 0, false),
+            make_layer_info_raw(&sub_id, &sub_disp, &sub_path, 0, 1, false),
+        ];
+        let raw = UsdBridgeLayerStackRaw {
+            layers: layers.as_mut_ptr(),
+            count: layers.len(),
+            root_index: 0,
+        };
+        let stack = unsafe { convert_layer_stack_ptr(&raw) };
+        assert_eq!(stack.layers.len(), 2);
+        assert_eq!(stack.layers[0].identifier, "root.usd");
+        assert_eq!(stack.layers[0].parent_index, None);
+        assert_eq!(stack.layers[1].identifier, "anim.usd");
+        assert_eq!(stack.layers[1].parent_index, Some(0));
+
+        // LayerStack::children_of should find the sublayer
+        let kids: Vec<_> = stack.children_of(0).collect();
+        assert_eq!(kids.len(), 1);
+        assert_eq!(kids[0].1.identifier, "anim.usd");
+    }
+
+    #[test]
+    fn test_prim_specifier_from_u8_maps_correctly() {
+        assert_eq!(PrimSpecifier::from_u8(0), PrimSpecifier::Def);
+        assert_eq!(PrimSpecifier::from_u8(1), PrimSpecifier::Over);
+        assert_eq!(PrimSpecifier::from_u8(2), PrimSpecifier::Class);
+        // Unknown values fall back to Over (the most permissive).
+        assert_eq!(PrimSpecifier::from_u8(99), PrimSpecifier::Over);
+    }
+
+    #[test]
+    fn test_convert_prim_spec_all_specifiers() {
+        let layer = CString::new("shot.usd").unwrap();
+        let path = CString::new("/World/Hero").unwrap();
+        for (raw_val, expected) in [
+            (0u8, PrimSpecifier::Def),
+            (1u8, PrimSpecifier::Over),
+            (2u8, PrimSpecifier::Class),
+        ] {
+            let raw = UsdBridgePrimSpecRaw {
+                layer_identifier: layer.as_ptr(),
+                path: path.as_ptr(),
+                specifier: raw_val,
+                has_authored_opinions: 1,
+            };
+            let entry = unsafe { convert_prim_spec(&raw) };
+            assert_eq!(entry.specifier, expected);
+            assert_eq!(entry.layer_identifier, "shot.usd");
+            assert!(entry.has_authored_opinions);
+        }
+    }
+
+    #[test]
+    fn test_convert_opinion_source_winning_flag() {
+        let layer = CString::new("shot.usd").unwrap();
+        let value = CString::new("(1.0, 2.0, 3.0)").unwrap();
+        let vtype = CString::new("float3").unwrap();
+        let raw = UsdBridgeOpinionSourceRaw {
+            layer_identifier: layer.as_ptr(),
+            value_display: value.as_ptr(),
+            value_type_token: vtype.as_ptr(),
+        };
+        let winning = unsafe { convert_opinion_source(&raw, true) };
+        assert!(winning.is_winning);
+        assert_eq!(winning.value_display, "(1.0, 2.0, 3.0)");
+        assert_eq!(winning.value_type, "float3");
+
+        let weak = unsafe { convert_opinion_source(&raw, false) };
+        assert!(!weak.is_winning);
+    }
+
+    #[test]
+    fn test_convert_attribute_opinions_marks_winning() {
+        let l1 = CString::new("shot.usd").unwrap();
+        let l2 = CString::new("anim.usd").unwrap();
+        let v1 = CString::new("5.0").unwrap();
+        let v2 = CString::new("3.0").unwrap();
+        let t = CString::new("float").unwrap();
+        let mut sources = vec![
+            UsdBridgeOpinionSourceRaw {
+                layer_identifier: l1.as_ptr(),
+                value_display: v1.as_ptr(),
+                value_type_token: t.as_ptr(),
+            },
+            UsdBridgeOpinionSourceRaw {
+                layer_identifier: l2.as_ptr(),
+                value_display: v2.as_ptr(),
+                value_type_token: t.as_ptr(),
+            },
+        ];
+        let raw = UsdBridgeAttributeOpinionsRaw {
+            sources: sources.as_mut_ptr(),
+            count: sources.len(),
+            winning_index: 0,
+        };
+        let out = unsafe { convert_attribute_opinions_ptr(&raw) };
+        assert_eq!(out.len(), 2);
+        assert!(out[0].is_winning);
+        assert!(!out[1].is_winning);
+        assert_eq!(out[0].layer_identifier, "shot.usd");
+        assert_eq!(out[1].layer_identifier, "anim.usd");
+    }
+
+    #[test]
+    fn test_convert_layer_offset_identity() {
+        let raw = UsdBridgeLayerOffsetRaw {
+            offset: 0.0,
+            scale: 1.0,
+        };
+        let off = convert_layer_offset(&raw);
+        assert!(off.is_identity());
+    }
+
+    #[test]
+    fn test_convert_layer_offset_non_identity() {
+        let raw = UsdBridgeLayerOffsetRaw {
+            offset: 24.0,
+            scale: 0.5,
+        };
+        let off = convert_layer_offset(&raw);
+        assert!(!off.is_identity());
+        assert_eq!(off.offset, 24.0);
+        assert_eq!(off.scale, 0.5);
+    }
+
+    #[test]
+    fn test_payload_policy_to_raw() {
+        assert_eq!(
+            payload_policy_to_raw(PayloadPolicy::LoadAll),
+            UsdBridgePayloadPolicyRaw::LoadAll
+        );
+        assert_eq!(
+            payload_policy_to_raw(PayloadPolicy::LoadNone),
+            UsdBridgePayloadPolicyRaw::LoadNone
+        );
+    }
+
+    #[test]
+    fn test_convert_edit_target_with_identifier() {
+        let id = CString::new("shot.usd").unwrap();
+        let raw = UsdBridgeEditTargetRaw {
+            layer_identifier: id.as_ptr(),
+        };
+        let target = unsafe { convert_edit_target(&raw) };
+        assert_eq!(target.layer_identifier, "shot.usd");
+    }
+
+    #[test]
+    fn test_convert_edit_target_empty() {
+        let empty = CString::new("").unwrap();
+        let raw = UsdBridgeEditTargetRaw {
+            layer_identifier: empty.as_ptr(),
+        };
+        let target = unsafe { convert_edit_target(&raw) };
+        assert_eq!(target.layer_identifier, "");
     }
 }
