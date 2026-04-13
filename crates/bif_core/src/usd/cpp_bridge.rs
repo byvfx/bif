@@ -3428,7 +3428,12 @@ mod tests {
     /// Path to the multi-layer fixture. `test_assets/layers/root.usda`
     /// pulls in shot.usda + anim.usda as sublayers; `/Hero.xformOp:translate`
     /// carries a three-layer opinion stack (root → shot → anim).
+    /// Only shot + anim author opinions on `/Hero/Geo` — root is
+    /// opinion-free so muting shot reveals anim's values visibly in
+    /// the viewport (USD forbids muting the root layer itself).
     const LAYERS_ROOT_FIXTURE: &str = "../../test_assets/layers/root.usda";
+    const LAYERS_DEMO_ATTR_PATH: &str = "/Hero/Geo";
+    const LAYERS_DEMO_ATTR_NAME: &str = "xformOp:translate";
 
     #[test]
     fn test_get_layer_stack_on_multilayer_fixture() {
@@ -3459,31 +3464,34 @@ mod tests {
         let stage = UsdStage::open(LAYERS_ROOT_FIXTURE).expect("open fixture");
 
         let opinions = stage
-            .get_attribute_opinions("/Hero", "xformOp:translate")
+            .get_attribute_opinions(LAYERS_DEMO_ATTR_PATH, LAYERS_DEMO_ATTR_NAME)
             .expect("opinions query");
 
+        // Root authors no prim opinions; translate has two contributing
+        // layers (shot wins, anim provides the fallback).
         assert_eq!(
             opinions.len(),
-            3,
-            "expected 3 opinions for xformOp:translate, got {}",
+            2,
+            "expected 2 opinions on {LAYERS_DEMO_ATTR_PATH}.{LAYERS_DEMO_ATTR_NAME}, got {}",
             opinions.len()
         );
         assert!(opinions[0].is_winning, "first entry must be winning");
+        assert!(!opinions[1].is_winning, "second entry must not be winning");
         assert!(
-            !opinions[1].is_winning && !opinions[2].is_winning,
-            "only the strongest opinion should be marked winning"
-        );
-        assert!(
-            opinions[0].layer_identifier.ends_with("root.usda"),
-            "root.usda should author the strongest opinion, got {}",
+            opinions[0].layer_identifier.ends_with("shot.usda"),
+            "shot.usda should author the strongest opinion, got {}",
             opinions[0].layer_identifier
         );
-        // TfStringify on a GfVec3f gives "(100, 200, 300)" — robust across USD versions.
         assert!(
-            opinions[0].value_display.contains("100")
-                && opinions[0].value_display.contains("200")
-                && opinions[0].value_display.contains("300"),
-            "winning value should reflect root's (100, 200, 300), got {}",
+            opinions[1].layer_identifier.ends_with("anim.usda"),
+            "anim.usda should author the weakest opinion, got {}",
+            opinions[1].layer_identifier
+        );
+        // TfStringify on GfVec3f gives "(3, 0, 0)" — only the dominant
+        // component is stable across USD versions.
+        assert!(
+            opinions[0].value_display.contains('3'),
+            "winning value should reflect shot's (3, 0, 0), got {}",
             opinions[0].value_display
         );
     }
@@ -3492,10 +3500,10 @@ mod tests {
     fn test_mute_layer_recomposes_opinions() {
         let stage = UsdStage::open(LAYERS_ROOT_FIXTURE).expect("open fixture");
 
-        // USD forbids muting the stage's root layer (it would leave nothing
-        // composed). Pick the mid-strength sublayer `shot.usda` — muting it
-        // drops one opinion but leaves both root and anim in the stack, so
-        // root.usda remains the winning source.
+        // USD forbids muting the root layer. Mute the strong sublayer
+        // `shot.usda` — the remaining opinion stack shrinks to a single
+        // entry from anim.usda, which is exactly the visible effect we
+        // want in the viewport (cube snaps back to origin + turns white).
         let stack = stage.get_layer_stack().expect("layer stack");
         let shot_id = stack
             .layers
@@ -3509,72 +3517,63 @@ mod tests {
             .expect("mute shot succeeds");
 
         let opinions_after = stage
-            .get_attribute_opinions("/Hero", "xformOp:translate")
+            .get_attribute_opinions(LAYERS_DEMO_ATTR_PATH, LAYERS_DEMO_ATTR_NAME)
             .expect("opinions query after mute");
         assert_eq!(
             opinions_after.len(),
-            2,
-            "expected 2 opinions after muting shot.usda, got {}",
+            1,
+            "expected 1 opinion after muting shot.usda, got {}",
             opinions_after.len()
         );
-        // shot.usda is gone from the stack; root and anim remain.
         assert!(
-            opinions_after
-                .iter()
-                .all(|s| !s.layer_identifier.ends_with("shot.usda")),
-            "muted layer must not appear in the opinion stack: {:?}",
-            opinions_after
-                .iter()
-                .map(|s| &s.layer_identifier)
-                .collect::<Vec<_>>()
-        );
-        assert!(
-            opinions_after[0].layer_identifier.ends_with("root.usda"),
-            "root.usda should still be winning after muting shot, got {}",
+            opinions_after[0].layer_identifier.ends_with("anim.usda"),
+            "anim.usda should be the sole remaining opinion, got {}",
             opinions_after[0].layer_identifier
         );
 
-        // Unmute → back to 3 opinions with root winning.
+        // Unmute → back to 2 opinions with shot winning.
         stage
             .set_layer_muted(&shot_id, false)
             .expect("unmute shot succeeds");
         let opinions_restored = stage
-            .get_attribute_opinions("/Hero", "xformOp:translate")
+            .get_attribute_opinions(LAYERS_DEMO_ATTR_PATH, LAYERS_DEMO_ATTR_NAME)
             .expect("opinions query after unmute");
         assert_eq!(
             opinions_restored.len(),
-            3,
-            "expected 3 opinions after unmuting shot, got {}",
+            2,
+            "expected 2 opinions after unmuting shot, got {}",
             opinions_restored.len()
         );
         assert!(
-            opinions_restored
-                .iter()
-                .any(|s| s.layer_identifier.ends_with("shot.usda")),
-            "shot.usda should reappear after unmute"
+            opinions_restored[0].layer_identifier.ends_with("shot.usda"),
+            "shot.usda should win again after unmute, got {}",
+            opinions_restored[0].layer_identifier
         );
     }
 
     #[test]
     fn test_prim_stack_lists_all_layer_opinions() {
         let stage = UsdStage::open(LAYERS_ROOT_FIXTURE).expect("open fixture");
-        let prim_stack = stage.get_prim_stack("/Hero").expect("prim stack query");
+        // /Hero/Geo is authored by anim (as a `def Cube`) and overridden
+        // by shot. root has no opinions on it — two specs total.
+        let prim_stack = stage
+            .get_prim_stack(LAYERS_DEMO_ATTR_PATH)
+            .expect("prim stack query");
 
         assert_eq!(
             prim_stack.len(),
-            3,
-            "expected 3 prim specs for /Hero, got {}",
+            2,
+            "expected 2 prim specs for {LAYERS_DEMO_ATTR_PATH}, got {}",
             prim_stack.len()
         );
-        // Strongest → weakest: root (over), shot (over), anim (def Xform).
-        assert!(prim_stack[0].layer_identifier.ends_with("root.usda"));
-        assert!(prim_stack[1].layer_identifier.ends_with("shot.usda"));
-        assert!(prim_stack[2].layer_identifier.ends_with("anim.usda"));
+        // Strongest → weakest: shot (over), anim (def Cube).
+        assert!(prim_stack[0].layer_identifier.ends_with("shot.usda"));
+        assert!(prim_stack[1].layer_identifier.ends_with("anim.usda"));
         // Only anim.usda carries the `def` specifier.
         assert_eq!(
-            prim_stack[2].specifier,
+            prim_stack[1].specifier,
             crate::usd::layer::PrimSpecifier::Def,
-            "anim.usda defines /Hero as Xform; specifier must be Def"
+            "anim.usda defines {LAYERS_DEMO_ATTR_PATH} as Cube; specifier must be Def"
         );
     }
 }
