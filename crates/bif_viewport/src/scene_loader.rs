@@ -1504,7 +1504,7 @@ impl Renderer {
     /// Called by both `load_usd_scene` (sync) and `finalize_usd_load` (async).
     fn finalize_usd_scene(
         &mut self,
-        mut scene: bif_core::Scene,
+        scene: bif_core::Scene,
         stage: bif_core::usd::UsdStage,
         path: &std::path::Path,
     ) -> Result<()> {
@@ -1520,6 +1520,11 @@ impl Renderer {
         // that drives scene-browser color dots. Stage open always uses
         // LoadAll today; the `PayloadPolicyChanged` event reopens the
         // stage with a different policy when the UI adds that control.
+        //
+        // Stored on `SceneManager` directly (not `working_scene.layer_state`)
+        // because this function doesn't assign the parsed `Scene` back into
+        // `self.scene.working_scene` — any field set on the local `scene`
+        // binding is lost at end of function.
         let payload_policy = bif_core::usd::layer::PayloadPolicy::LoadAll;
         match bif_core::SceneLayerState::from_stage(&stage, payload_policy) {
             Ok(mut layer_state) => {
@@ -1534,7 +1539,7 @@ impl Renderer {
                     layer_state.muted.len(),
                     layer_state.layer_for_prim.len()
                 );
-                scene.layer_state = Some(layer_state);
+                self.scene.layer_state = Some(layer_state);
             }
             Err(e) => {
                 log::warn!("Failed to seed layer state from stage: {e}");

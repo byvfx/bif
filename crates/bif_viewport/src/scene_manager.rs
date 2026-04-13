@@ -98,6 +98,16 @@ pub struct SceneManager {
     pub undo_stack: UndoStack,
     /// Edit state with transform overrides.
     pub edit_state: EditState,
+
+    /// Layer-aware stage state (v0.14.0). Populated by the scene loader
+    /// when a USD stage is present. `None` for procedural-only scenes or
+    /// before any stage has been opened.
+    ///
+    /// Lives on `SceneManager` rather than `working_scene.layer_state`
+    /// because `finalize_usd_scene` pulls fields out of the parsed
+    /// `Scene` individually instead of storing the whole struct — any
+    /// assignment onto `working_scene` would get discarded.
+    pub layer_state: Option<bif_core::SceneLayerState>,
 }
 
 impl SceneManager {
@@ -121,6 +131,7 @@ impl SceneManager {
             scene_cameras: vec![],
             undo_stack: UndoStack::new(),
             edit_state: EditState::default(),
+            layer_state: None,
         }
     }
 }

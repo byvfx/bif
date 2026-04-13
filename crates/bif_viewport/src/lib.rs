@@ -264,8 +264,8 @@ pub struct Renderer {
     pub selection: SelectionManager,
 
     /// Layer Stack panel UI state (v0.14.0). Data lives on
-    /// `self.scene.working_scene.layer_state`; this struct holds only the
-    /// per-panel scroll/focus state.
+    /// `self.scene.layer_state`; this struct holds only the per-panel
+    /// scroll/focus state.
     pub(crate) layer_stack_panel: crate::layer_stack_panel::LayerStackPanel,
 
     // Timeline state for animation playback

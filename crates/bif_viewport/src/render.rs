@@ -397,8 +397,7 @@ impl Renderer {
                     egui::CollapsingHeader::new("Layer Stack")
                         .default_open(false)
                         .show(ui, |ui| {
-                            if let Some(layer_state) = self.scene.working_scene.layer_state.as_ref()
-                            {
+                            if let Some(layer_state) = self.scene.layer_state.as_ref() {
                                 self.layer_stack_panel
                                     .render(ui, layer_state, &mut self.event_bus);
                             } else {
@@ -1150,13 +1149,13 @@ impl Renderer {
                                 Err(e) => log::warn!("UsdStage lock poisoned: {e}"),
                             }
                         }
-                        if let Some(state) = self.scene.working_scene.layer_state.as_mut() {
+                        if let Some(state) = self.scene.layer_state.as_mut() {
                             state.set_muted(&identifier, muted);
                         }
                     }
                 }
                 AppEvent::WorkingLayerChanged(idx) => {
-                    if let Some(state) = self.scene.working_scene.layer_state.as_mut() {
+                    if let Some(state) = self.scene.layer_state.as_mut() {
                         state.set_working_layer(idx);
                     }
                 }
@@ -1165,7 +1164,7 @@ impl Renderer {
                     // concern (file watcher + reload UX land together). For now
                     // record the intent in scene state so downstream reads see
                     // the user's choice.
-                    if let Some(state) = self.scene.working_scene.layer_state.as_mut() {
+                    if let Some(state) = self.scene.layer_state.as_mut() {
                         state.payload_policy = policy;
                     }
                     log::info!(
@@ -1173,7 +1172,7 @@ impl Renderer {
                     );
                 }
                 AppEvent::IsolationModeToggled(on) => {
-                    if let Some(state) = self.scene.working_scene.layer_state.as_mut() {
+                    if let Some(state) = self.scene.layer_state.as_mut() {
                         state.isolation_mode = on;
                     }
                 }

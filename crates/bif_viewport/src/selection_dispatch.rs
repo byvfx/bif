@@ -124,12 +124,7 @@ impl Renderer {
             // attributes already show their one value inline. Resolve
             // winning-layer index against the scene's layer stack here so
             // the render code can color the dot without another lookup.
-            let stack_layers = self
-                .scene
-                .working_scene
-                .layer_state
-                .as_ref()
-                .map(|s| &s.stack);
+            let stack_layers = self.scene.layer_state.as_ref().map(|s| &s.stack);
             for attr in &props.usd_attributes {
                 if !attr.is_authored {
                     continue;
