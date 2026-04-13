@@ -11,8 +11,8 @@
 | Status | Details |
 |--------|---------|
 | Released | v0.1.0, v0.11.0, v0.12.0, v0.13.0, v0.13.5, **v0.13.6 (2026-04-12)** |
-| Current | v0.14.0-dev — Layer-Aware Stage. **Phases A, B, C + Phase D scaffolding complete.** Phase D panels (layer stack, opinion inspector, scene-browser dots) next. Plan at `C:\Users\brandon\.claude\plans\iridescent-soaring-hamster.md`. |
-| Commits | `cd87179` bump, `f9e7ea4` Phase A, `979c730` Phase B, `894deda` Phase C, `a4a8060` site regen, (pending) Phase D scaffolding. 6 ahead of origin. |
+| Current | v0.14.0-dev — Layer-Aware Stage. **Phases A, B, C + D scaffolding + scene-loader wiring complete.** Phase D panels (layer stack, opinion inspector, scene-browser dots) next. Plan at `C:\Users\brandon\.claude\plans\iridescent-soaring-hamster.md`. |
+| Commits | `cd87179` bump, `f9e7ea4` Phase A, `979c730` Phase B, `894deda` Phase C, `a4a8060` site regen, `70262dc` D scaffolding, `fc25043` site regen, (pending) scene-loader wiring. 8 ahead of origin. |
 | Tests | 537 + ~82 from Phases A-D scaffolding = ~619 total |
 | Performance | 60 FPS viewport, 100K instances with LOD, Ivar build ~185ms |
 

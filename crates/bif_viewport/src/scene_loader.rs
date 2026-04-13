@@ -1504,7 +1504,7 @@ impl Renderer {
     /// Called by both `load_usd_scene` (sync) and `finalize_usd_load` (async).
     fn finalize_usd_scene(
         &mut self,
-        scene: bif_core::Scene,
+        mut scene: bif_core::Scene,
         stage: bif_core::usd::UsdStage,
         path: &std::path::Path,
     ) -> Result<()> {
@@ -1512,6 +1512,33 @@ impl Renderer {
 
         if scene.prototypes.is_empty() {
             return Err(anyhow::anyhow!("Scene has no geometry"));
+        }
+
+        // v0.14.0 — seed layer-aware state from the stage. We capture the
+        // sublayer tree, edit target, and mute flags up front, then walk
+        // every prim to build the `prim_path → strongest-layer-index` map
+        // that drives scene-browser color dots. Stage open always uses
+        // LoadAll today; the `PayloadPolicyChanged` event reopens the
+        // stage with a different policy when the UI adds that control.
+        let payload_policy = bif_core::usd::layer::PayloadPolicy::LoadAll;
+        match bif_core::SceneLayerState::from_stage(&stage, payload_policy) {
+            Ok(mut layer_state) => {
+                let prim_paths: Vec<String> = stage
+                    .all_prims()
+                    .map(|prims| prims.into_iter().map(|p| p.path).collect())
+                    .unwrap_or_default();
+                layer_state.populate_layer_for_prim(&stage, &prim_paths);
+                log::info!(
+                    "Layer state: {} layers, {} muted, {} prims mapped",
+                    layer_state.stack.layers.len(),
+                    layer_state.muted.len(),
+                    layer_state.layer_for_prim.len()
+                );
+                scene.layer_state = Some(layer_state);
+            }
+            Err(e) => {
+                log::warn!("Failed to seed layer state from stage: {e}");
+            }
         }
 
         // Multi-draw architecture: create per-prototype GPU buffers
