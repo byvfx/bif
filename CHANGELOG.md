@@ -6,6 +6,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-04-13
+
 ### Added
 
 - **v0.14.0 Phase A (in progress)** — layer-aware USD FFI surface: `SdfLayer` stack walk, `UsdPrim::GetPrimStack`, `UsdAttribute::GetPropertyStack` (opinion sources), layer mute/unmute, layer offset read, explicit `PayloadPolicy::{LoadAll, LoadNone}` stage open. 9 new C types + 8 extern "C" fns + 4 destructors in `cpp/usd_bridge/`, mirrored `#[repr(C)]` types in `crates/bif_core/src/usd/ffi_raw.rs`. Values are rendered as display strings via `TfStringify` (read-only; editing lands in v0.16).

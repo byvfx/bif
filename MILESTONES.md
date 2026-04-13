@@ -16,18 +16,11 @@ Roadmap organized by semantic version. Each release is testable, demoable, and g
 | v0.13.0 | Pipeline Foundation | 2026-04-09 | M29.5 UI overhaul, M30 persistence + eval modes, M31 per-node viz, subdiv + CPU displacement, faceVarying UVs, native MaterialX displacement, DomeLight_1, SceneQuery trait, Embree feature gate |
 | v0.13.5 | UsdSkel Import | 2026-04-10 | UsdSkelCache + SkeletonQuery, CPU LBS skinning module, Mesh::skin/bind_positions, per-frame anim eval FFI, multi-draw skinning path, joint-order remap, UV-seam vertex expansion, rigid-binding broadcast, SkelRoot world xform override, validated on Pixar HumanFemale |
 | v0.13.6 | UsdSkel Blend Shapes + Rigid Fix | 2026-04-12 | CPU morph target deformation via `UsdSkelBlendShape` (dense-expand at load, shape-order remap, per-frame `UsdSkelAnimQuery` eval, shapes→skin composition), multi-joint rigid binding fix (`SkinKind::Rigid` gated on `element_size==1`; hair/fingernails on HumanFemale now render correctly) |
+| v0.14.0 | Layer-Aware Stage | 2026-04-13 | `SdfLayer` + `GetPrimStack` + `GetPropertyStack` FFI, `SceneLayerState` on `SceneManager` (sublayer tree + mute set + `layer_for_prim` map), `LayerStackPanel` egui panel (mute checkbox + working-layer radio + isolation header + layer-color dots), composition-arc collapsing header + per-attribute winning-layer dot in property inspector, scene-browser layer color dots, `PayloadPolicy::{LoadAll, LoadNone}` stage open, 4 integration tests on a 3-layer fixture |
 
 ---
 
 ## In Progress
-
-### v0.14.0 — Layer-Aware Stage (core)
-
-~33h. Data + core UI. Open stage → parse sublayer stack → select working layer → inspect opinions. **Read-only** (edit ops defer to v0.16). **Last release on egui UI.**
-
-- FFI: `SdfLayer` read, `GetEditTarget`, `GetPrimStack`, `UsdAttribute::GetPropertyStack`, layer muting, layer offset read, `PayloadPolicy::{LoadAll, LoadNone}`
-- UI: layer stack panel (right sidebar), opinion inspector sub-panel, layer color dots, composition arc text list
-- `bif_core` types are UI-agnostic so Qt port (v0.15) replaces panels without touching data
 
 ### v0.14.5 — Layer Polish (follow-up)
 
@@ -59,7 +52,7 @@ File watcher + node graph integration. Split out of v0.14.0 to keep the core rel
 
 ---
 
-v0.13.6 shipped 2026-04-12. Full release notes in [CHANGELOG.md](CHANGELOG.md), archived details in [MILESTONES_HISTORY.md](MILESTONES_HISTORY.md).
+v0.14.0 shipped 2026-04-13. Full release notes in [CHANGELOG.md](CHANGELOG.md), archived details in [MILESTONES_HISTORY.md](MILESTONES_HISTORY.md).
 
 ### v0.14.0 — Layer-Aware Stage
 

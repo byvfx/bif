@@ -1,7 +1,7 @@
 # Session Handoff - April 12, 2026
 
-**Last Updated:** v0.14.0-dev — Phases A, B, C landed. Phase D (UI panels) next.
-**Current Version:** v0.14.0-dev (v0.13.6 shipped 2026-04-12)
+**Last Updated:** v0.14.0 released — Layer-Aware Stage shipped.
+**Current Version:** v0.14.0 (released 2026-04-13)
 **Project:** BIF - USD Orchestration Tool for VFX
 
 ---
@@ -10,10 +10,9 @@
 
 | Status | Details |
 |--------|---------|
-| Released | v0.1.0, v0.11.0, v0.12.0, v0.13.0, v0.13.5, **v0.13.6 (2026-04-12)** |
-| Current | v0.14.0-dev — Layer-Aware Stage. **Phases A-E complete.** Full-stack layer awareness live (FFI, safe wrappers, Scene integration, all UI panels, 3-layer fixture + 4 integration tests). Remaining: Phase F (release plumbing → v0.14.0 tag). |
-| Commits | `cd87179` bump → `5316ebf` (opinion inspector site regen). (pending) Phase E fixture + tests. ~19 ahead of origin. |
-| Tests | 537 + ~90 v0.14.0 tests = ~627 total |
+| Released | v0.1.0, v0.11.0, v0.12.0, v0.13.0, v0.13.5, v0.13.6 (2026-04-12), **v0.14.0 (2026-04-13)** |
+| Next | v0.14.5 — file watcher + node graph polish, OR v0.15.0 Qt migration (per roadmap) |
+| Tests | ~627 total (90 new in v0.14.0) |
 | Performance | 60 FPS viewport, 100K instances with LOD, Ivar build ~185ms |
 
 ---
