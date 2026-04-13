@@ -1,6 +1,6 @@
-# Session Handoff - April 12, 2026
+# Session Handoff - April 13, 2026
 
-**Last Updated:** v0.14.0 released — Layer-Aware Stage shipped.
+**Last Updated:** v0.14.0 shipped + pushed — tag `v0.14.0` at `fc379c1`.
 **Current Version:** v0.14.0 (released 2026-04-13)
 **Project:** BIF - USD Orchestration Tool for VFX
 
@@ -10,11 +10,44 @@
 
 | Status | Details |
 |--------|---------|
-| Released | v0.1.0, v0.11.0, v0.12.0, v0.13.0, v0.13.5, v0.13.6 (2026-04-12), **v0.14.0 (2026-04-13)** |
-| Post-tag fixes | `b81d5e9` event_bus routing; `a135612` fixture rework; mute re-cache + node-graph-routed cleanup; empty-scene tolerant reload (def-providing layer can be muted → viewport clears). All four layer-aware mute behaviors now work end-to-end on the fixture. Pending push / tag move decision. |
-| Next | v0.14.5 — file watcher + node graph polish, OR v0.15.0 Qt migration (per roadmap) |
+| Released | v0.1.0, v0.11.0, v0.12.0, v0.13.0, v0.13.5, v0.13.6, **v0.14.0 (2026-04-13)** — pushed to origin |
+| v0.14.0 post-tag | Tag moved forward before push. Includes event_bus routing fix, fixture rework, mute re-cache, node-graph-routed cleanup, and empty-scene tolerant reload. All four mute behaviors (mute/unmute shot; mute/unmute anim-with-def) work end-to-end on `test_assets/layers/root.usda`. |
+| Next | **v0.15.0 — Qt Migration (50-60h, M28).** Biggest release to date. Last egui release was v0.14.0; panels get rewritten wholesale. Data types in `bif_core` are already UI-agnostic. `SceneLayerState`, `LayerStack`, `OpinionSource`, `PrimStackEntry`, `PayloadPolicy`, all panel event variants on `AppEvent` carry through unchanged. |
 | Tests | ~627 total (90 new in v0.14.0) |
 | Performance | 60 FPS viewport, 100K instances with LOD, Ivar build ~185ms |
+
+---
+
+## ➡️ v0.15.0 Qt Migration — Starting Notes
+
+**Decision done in v0.14 planning (ADR-005, `wiki/architecture/adr/005-layer-aware-read-model.md`):** `bif_core` types are egui-free. `bif_viewport` panels (`layer_stack_panel.rs`, `property_inspector.rs`, `scene_browser.rs`, `render.rs`) are the churn surface.
+
+**Background research already in repo:**
+
+- `docs/ux/UI_DESIGN.md` — 25-section authoritative Qt UI spec (T-layout, command palette, theme, etc.)
+- `docs/ux/DCC_UI_RESEARCH.md` — research notes (Houdini, Katana, usdview, etc.)
+- `wiki/ui-ux/` section — frontmatter + concept notes
+- MILESTONES.md M28 — list of required Qt features for v0.15 scope
+
+**Decision pending first session:** `cxx-qt` (Rust-first) vs. another Qt binding. `cxx-qt` was tentatively decided per MILESTONES.md; re-evaluate `qt-build-utils` and `qmetaobject-rs` before committing.
+
+**Migration strategy options:**
+1. **Big bang** — port all panels at once, drop egui when Qt is feature-complete. High risk, big release.
+2. **Side-by-side** — Qt window lives alongside egui during transition, feature-flag toggle. Lower risk, longer tail.
+3. **Panel-by-panel** — one panel at a time ships Qt-native, others stay egui. Progressive migration. May interleave awkwardly.
+
+**Key constraints:**
+- `wgpu` viewport surface must work with a Qt host window (QWindow embedding).
+- Event bus (`AppEvent`) + `SceneManager` + `NodeGraphContext` + `SceneLayerState` are all UI-agnostic already → keep as-is.
+- Qt Resource system may replace hard-coded theme colors in `bif_viewport/src/theme.rs` — defer until panels are being rewritten.
+
+**First session tasks (approximate):**
+
+1. Start with `docs/ux/UI_DESIGN.md` + MILESTONES M28 re-read.
+2. `cxx-qt` POC in a new `crates/bif_qt/` crate — minimal window, draw egui-free shell.
+3. Spike: wgpu into a QWindow to confirm viewport embedding is feasible.
+4. Decide migration strategy (big-bang vs side-by-side vs panel-by-panel) based on spike findings.
+5. Author v0.15.0 plan (/ultraplan) against the spike outcome.
 
 ---
 
