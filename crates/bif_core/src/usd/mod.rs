@@ -56,7 +56,8 @@ pub use layer::{
     PrimStackEntry,
 };
 pub use loader::{
-    load_usd, load_usd_with_stage, load_usda, load_usda_from_string, LoadError, LoadResult,
+    load_usd, load_usd_with_stage, load_usd_with_stage_muted, load_usda, load_usda_from_string,
+    LoadError, LoadResult,
 };
 pub use types::{
     compose_xform_ops, UsdMesh, UsdPointInstancer, UsdPrim, UsdReference, UsdXform, XformOp,

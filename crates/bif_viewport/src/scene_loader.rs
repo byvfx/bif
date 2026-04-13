@@ -1479,7 +1479,7 @@ impl Renderer {
     /// 3. Updates the scene browser with the new hierarchy
     /// 4. Invalidates the Ivar cache for re-rendering
     pub fn load_usd_scene<P: AsRef<std::path::Path>>(&mut self, path: P) -> Result<()> {
-        use bif_core::usd::load_usd_with_stage;
+        use bif_core::usd::load_usd_with_stage_muted;
 
         let path = path.as_ref();
         log::info!("Loading USD scene: {:?}", path);
@@ -1489,8 +1489,19 @@ impl Renderer {
             return Err(anyhow::anyhow!("File not found: {:?}", path));
         }
 
+        // v0.14.0 — preserve the user's layer-mute set across implicit
+        // stage reopens (variant changes, mute toggles, etc.). The new
+        // stage starts un-muted; we replay the mutes before payloads
+        // load so the bridge caches geometry under the muted composition.
+        let muted_snapshot: Vec<String> = self
+            .scene
+            .layer_state
+            .as_ref()
+            .map(|s| s.muted.iter().cloned().collect())
+            .unwrap_or_default();
+
         // Load USD file via C++ bridge (handles usda, usdc, usd)
-        let (scene, stage) = load_usd_with_stage(path).map_err(|e| {
+        let (scene, stage) = load_usd_with_stage_muted(path, &muted_snapshot).map_err(|e| {
             log::error!("USD bridge error: {:?}", e);
             log::error!("Hint: Ensure USD environment is set up. Run: . .\\setup_usd_env.ps1");
             anyhow::anyhow!("Failed to load USD: {}", e)

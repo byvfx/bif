@@ -1150,6 +1150,37 @@ impl Renderer {
                         if let Some(state) = self.scene.layer_state.as_mut() {
                             state.set_muted(&identifier, muted);
                         }
+                        // v0.14.0 — `set_layer_muted` recomposes the stage
+                        // but the C++ bridge's mesh cache + our GPU buffers
+                        // are still pre-mute. Route the reload through the
+                        // UsdRead node graph handler rather than calling
+                        // `load_usd_scene` directly: it cleans up the old
+                        // prototype ownership via `remove_and_reindex_prototype`
+                        // + `compact_materials` before the reload, otherwise
+                        // working_scene accumulates new prototypes on top of
+                        // stale ones and the viewport shows two cubes.
+                        //
+                        // `load_usd_scene` snapshots `layer_state.muted` and
+                        // replays it against the freshly-opened stage before
+                        // payloads load, so the cache repopulates under the
+                        // new composition.
+                        if let Some(path) = self.scene.loaded_usd_path.clone() {
+                            // Find the UsdRead node that currently owns the
+                            // scene. There should be exactly one loaded via
+                            // the node graph; if zero we fall back to a bare
+                            // reload (e.g., someone opened the file outside
+                            // the node-graph path).
+                            let owning_node = self.nodes.node_proto_map.keys().next().copied();
+                            if let Some(node_id) = owning_node {
+                                self.handle_node_graph_event(NodeGraphEvent::LoadUsdFile {
+                                    path: path.clone(),
+                                    node_id,
+                                });
+                            } else if let Err(e) = self.load_usd_scene(std::path::Path::new(&path))
+                            {
+                                log::error!("Failed to reload after mute toggle: {e}");
+                            }
+                        }
                     }
                 }
                 AppEvent::WorkingLayerChanged(idx) => {

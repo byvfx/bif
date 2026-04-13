@@ -94,6 +94,20 @@ pub fn load_usd<P: AsRef<Path>>(path: P) -> LoadResult<Scene> {
 /// println!("Loaded {} prims", stage.prim_count());
 /// ```
 pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdStage)> {
+    load_usd_with_stage_muted(path, &[])
+}
+
+/// Same as [`load_usd_with_stage`], but applies the given layer mutes after
+/// opening the stage and before payloads are loaded — so the C++ bridge's
+/// composition + caching pass sees the mutes on its first pass.
+///
+/// `muted_layer_identifiers` are USD layer identifiers (typically asset paths
+/// resolved by [`crate::SceneLayerState::muted`]) to mute. Unknown identifiers
+/// are silently ignored — the bridge would TF_WARN but we don't propagate.
+pub fn load_usd_with_stage_muted<P: AsRef<Path>>(
+    path: P,
+    muted_layer_identifiers: &[String],
+) -> LoadResult<(Scene, UsdStage)> {
     let path = path.as_ref();
     let name = path
         .file_stem()
@@ -105,6 +119,16 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
     // Open stage via C++ bridge (LoadNone — hierarchy only, no geometry yet)
     let stage_start = Instant::now();
     let stage = UsdStage::open(path)?;
+
+    // v0.14.0 — apply caller-supplied layer mutes BEFORE payload load so the
+    // first composition pass sees the mute state. Without this, the C++
+    // bridge caches geometry under the un-muted composition and any later
+    // mute call leaves stale data in `bridge->meshes` until file reload.
+    for identifier in muted_layer_identifiers {
+        if let Err(e) = stage.set_layer_muted(identifier, true) {
+            log::debug!("pre-load mute on {identifier} ignored: {e:?}");
+        }
+    }
 
     // Load all payloads and cache mesh/material/animation data
     let prim_count = stage.load_payloads()?;
