@@ -3420,4 +3420,161 @@ mod tests {
         );
         eprintln!("HumanFemale joint animation max delta over [{start}, {mid}]: {max_delta}");
     }
+
+    // ------------------------------------------------------------------
+    // v0.14.0 Layer-aware stage integration
+    // ------------------------------------------------------------------
+
+    /// Path to the multi-layer fixture. `test_assets/layers/root.usda`
+    /// pulls in shot.usda + anim.usda as sublayers; `/Hero.xformOp:translate`
+    /// carries a three-layer opinion stack (root → shot → anim).
+    const LAYERS_ROOT_FIXTURE: &str = "../../test_assets/layers/root.usda";
+
+    #[test]
+    fn test_get_layer_stack_on_multilayer_fixture() {
+        let stage = UsdStage::open(LAYERS_ROOT_FIXTURE).expect("open fixture");
+        let stack = stage.get_layer_stack().expect("layer stack");
+
+        assert!(
+            stack.layers.len() >= 3,
+            "expected at least 3 layers (root + 2 sublayers), got {}",
+            stack.layers.len()
+        );
+        assert_eq!(stack.root_index, 0, "root layer should be first entry");
+        assert_eq!(stack.layers[0].depth, 0, "root layer must have depth 0");
+        assert!(
+            stack.layers[1..]
+                .iter()
+                .all(|l| l.depth >= 1 && l.parent_index.is_some()),
+            "sublayers must have depth >= 1 and a parent_index"
+        );
+        assert!(
+            stack.layers.iter().all(|l| !l.is_muted),
+            "no layer should be muted at load time"
+        );
+    }
+
+    #[test]
+    fn test_attribute_opinions_winning_layer() {
+        let stage = UsdStage::open(LAYERS_ROOT_FIXTURE).expect("open fixture");
+
+        let opinions = stage
+            .get_attribute_opinions("/Hero", "xformOp:translate")
+            .expect("opinions query");
+
+        assert_eq!(
+            opinions.len(),
+            3,
+            "expected 3 opinions for xformOp:translate, got {}",
+            opinions.len()
+        );
+        assert!(opinions[0].is_winning, "first entry must be winning");
+        assert!(
+            !opinions[1].is_winning && !opinions[2].is_winning,
+            "only the strongest opinion should be marked winning"
+        );
+        assert!(
+            opinions[0].layer_identifier.ends_with("root.usda"),
+            "root.usda should author the strongest opinion, got {}",
+            opinions[0].layer_identifier
+        );
+        // TfStringify on a GfVec3f gives "(100, 200, 300)" — robust across USD versions.
+        assert!(
+            opinions[0].value_display.contains("100")
+                && opinions[0].value_display.contains("200")
+                && opinions[0].value_display.contains("300"),
+            "winning value should reflect root's (100, 200, 300), got {}",
+            opinions[0].value_display
+        );
+    }
+
+    #[test]
+    fn test_mute_layer_recomposes_opinions() {
+        let stage = UsdStage::open(LAYERS_ROOT_FIXTURE).expect("open fixture");
+
+        // USD forbids muting the stage's root layer (it would leave nothing
+        // composed). Pick the mid-strength sublayer `shot.usda` — muting it
+        // drops one opinion but leaves both root and anim in the stack, so
+        // root.usda remains the winning source.
+        let stack = stage.get_layer_stack().expect("layer stack");
+        let shot_id = stack
+            .layers
+            .iter()
+            .find(|l| l.identifier.ends_with("shot.usda"))
+            .map(|l| l.identifier.clone())
+            .expect("shot.usda in stack");
+
+        stage
+            .set_layer_muted(&shot_id, true)
+            .expect("mute shot succeeds");
+
+        let opinions_after = stage
+            .get_attribute_opinions("/Hero", "xformOp:translate")
+            .expect("opinions query after mute");
+        assert_eq!(
+            opinions_after.len(),
+            2,
+            "expected 2 opinions after muting shot.usda, got {}",
+            opinions_after.len()
+        );
+        // shot.usda is gone from the stack; root and anim remain.
+        assert!(
+            opinions_after
+                .iter()
+                .all(|s| !s.layer_identifier.ends_with("shot.usda")),
+            "muted layer must not appear in the opinion stack: {:?}",
+            opinions_after
+                .iter()
+                .map(|s| &s.layer_identifier)
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            opinions_after[0].layer_identifier.ends_with("root.usda"),
+            "root.usda should still be winning after muting shot, got {}",
+            opinions_after[0].layer_identifier
+        );
+
+        // Unmute → back to 3 opinions with root winning.
+        stage
+            .set_layer_muted(&shot_id, false)
+            .expect("unmute shot succeeds");
+        let opinions_restored = stage
+            .get_attribute_opinions("/Hero", "xformOp:translate")
+            .expect("opinions query after unmute");
+        assert_eq!(
+            opinions_restored.len(),
+            3,
+            "expected 3 opinions after unmuting shot, got {}",
+            opinions_restored.len()
+        );
+        assert!(
+            opinions_restored
+                .iter()
+                .any(|s| s.layer_identifier.ends_with("shot.usda")),
+            "shot.usda should reappear after unmute"
+        );
+    }
+
+    #[test]
+    fn test_prim_stack_lists_all_layer_opinions() {
+        let stage = UsdStage::open(LAYERS_ROOT_FIXTURE).expect("open fixture");
+        let prim_stack = stage.get_prim_stack("/Hero").expect("prim stack query");
+
+        assert_eq!(
+            prim_stack.len(),
+            3,
+            "expected 3 prim specs for /Hero, got {}",
+            prim_stack.len()
+        );
+        // Strongest → weakest: root (over), shot (over), anim (def Xform).
+        assert!(prim_stack[0].layer_identifier.ends_with("root.usda"));
+        assert!(prim_stack[1].layer_identifier.ends_with("shot.usda"));
+        assert!(prim_stack[2].layer_identifier.ends_with("anim.usda"));
+        // Only anim.usda carries the `def` specifier.
+        assert_eq!(
+            prim_stack[2].specifier,
+            crate::usd::layer::PrimSpecifier::Def,
+            "anim.usda defines /Hero as Xform; specifier must be Def"
+        );
+    }
 }
