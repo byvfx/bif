@@ -1,7 +1,7 @@
 # Session Handoff - April 12, 2026
 
-**Last Updated:** v0.13.6 released — blend shapes + rigid mesh fix shipped
-**Current Version:** v0.13.6 (released 2026-04-12)
+**Last Updated:** v0.14.0-dev started — Layer-Aware Stage planning done, Phase A next
+**Current Version:** v0.14.0-dev (v0.13.6 shipped 2026-04-12)
 **Project:** BIF - USD Orchestration Tool for VFX
 
 ---
@@ -10,9 +10,9 @@
 
 | Status | Details |
 |--------|---------|
-| Released | v0.1.0, v0.11.0, v0.12.0, v0.13.0 (2026-04-09), v0.13.5 (2026-04-10), **v0.13.6 (2026-04-12)** |
-| Next | v0.14.0 Layer-Aware Stage — SdfLayer FFI, opinion trace inspector, working layer isolation |
-| Tests | +1 rigid equivalence test in v0.13.6, 537+ total |
+| Released | v0.1.0, v0.11.0, v0.12.0, v0.13.0, v0.13.5, **v0.13.6 (2026-04-12)** |
+| Current | v0.14.0-dev — Layer-Aware Stage, Phase A (FFI foundation) next. Plan at `C:\Users\brandon\.claude\plans\iridescent-soaring-hamster.md`. Split scope: v0.14.0 core + v0.14.5 polish. |
+| Tests | 537+ total (baseline for v0.14.0) |
 | Performance | 60 FPS viewport, 100K instances with LOD, Ivar build ~185ms |
 
 ---

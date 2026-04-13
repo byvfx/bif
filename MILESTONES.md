@@ -21,7 +21,21 @@ Roadmap organized by semantic version. Each release is testable, demoable, and g
 
 ## In Progress
 
-_No version in progress — v0.14.0 planning next._
+### v0.14.0 — Layer-Aware Stage (core)
+
+~33h. Data + core UI. Open stage → parse sublayer stack → select working layer → inspect opinions. **Read-only** (edit ops defer to v0.16). **Last release on egui UI.**
+
+- FFI: `SdfLayer` read, `GetEditTarget`, `GetPrimStack`, `UsdAttribute::GetPropertyStack`, layer muting, layer offset read, `PayloadPolicy::{LoadAll, LoadNone}`
+- UI: layer stack panel (right sidebar), opinion inspector sub-panel, layer color dots, composition arc text list
+- `bif_core` types are UI-agnostic so Qt port (v0.15) replaces panels without touching data
+
+### v0.14.5 — Layer Polish (follow-up)
+
+File watcher + node graph integration. Split out of v0.14.0 to keep the core release tight.
+
+- File watcher (`notify` crate, 500ms debounce, reload prompt)
+- Layer Stack display node + node graph blue/orange color coding (composition / operations)
+- Layer offset UI display + tooltip
 
 ---
 
@@ -29,7 +43,6 @@ _No version in progress — v0.14.0 planning next._
 
 | Version | Theme | Est. Hours | Key Milestones |
 |---------|-------|-----------|----------------|
-| v0.14.0 | Layer-Aware Stage | 35-50h | M32, M33 + workflow Phase 1 |
 | v0.15.0 | Qt Migration | 50-60h | M28 (T-layout, command palette, theme) |
 | v0.16.0 | Edit Operations + Save | 30-40h | Workflow Phase 2 + material param sheet + lookdev orb |
 | v0.17.0 | Viewport Performance | 25-35h | M22 + payload policies + texture nodes in material editor |
