@@ -11,7 +11,7 @@
 | Status | Details |
 |--------|---------|
 | Released | v0.1.0, v0.11.0, v0.12.0, v0.13.0, v0.13.5, v0.13.6 (2026-04-12), **v0.14.0 (2026-04-13)** |
-| Post-tag fixes | `b81d5e9` event_bus routing; `a135612` fixture rework; **mute now re-caches C++ bridge + preserves user's mute set across reload + routes through UsdRead node graph handler to avoid prototype accumulation.** Pending next release or tag move. Remaining: muting the def-providing layer (anim.usda in fixture) returns NoGeometry + leaves viewport stale; needs empty-scene-tolerant reload path. |
+| Post-tag fixes | `b81d5e9` event_bus routing; `a135612` fixture rework; mute re-cache + node-graph-routed cleanup; empty-scene tolerant reload (def-providing layer can be muted → viewport clears). All four layer-aware mute behaviors now work end-to-end on the fixture. Pending push / tag move decision. |
 | Next | v0.14.5 — file watcher + node graph polish, OR v0.15.0 Qt migration (per roadmap) |
 | Tests | ~627 total (90 new in v0.14.0) |
 | Performance | 60 FPS viewport, 100K instances with LOD, Ivar build ~185ms |

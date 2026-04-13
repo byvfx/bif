@@ -94,7 +94,14 @@ pub fn load_usd<P: AsRef<Path>>(path: P) -> LoadResult<Scene> {
 /// println!("Loaded {} prims", stage.prim_count());
 /// ```
 pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdStage)> {
-    load_usd_with_stage_muted(path, &[])
+    // Strict variant — first-load callers expect geometry. Preserves the
+    // pre-v0.14 contract where an empty scene is a user error (bad USD file,
+    // missing geometry, etc.).
+    let (scene, stage) = load_usd_with_stage_muted(path, &[])?;
+    if scene.prototypes.is_empty() {
+        return Err(LoadError::NoGeometry);
+    }
+    Ok((scene, stage))
 }
 
 /// Same as [`load_usd_with_stage`], but applies the given layer mutes after
@@ -966,9 +973,11 @@ pub fn load_usd_with_stage_muted<P: AsRef<Path>>(
     }
     let instancer_time = instancer_start.elapsed();
 
-    if scene.prototypes.is_empty() {
-        return Err(LoadError::NoGeometry);
-    }
+    // Empty scenes are legitimate when the caller supplied a mute set
+    // that strips the def-providing layer — composition resolves to
+    // zero prims. `load_usd_with_stage` (strict variant) re-adds the
+    // `NoGeometry` check at its own layer; callers that tolerate empty
+    // (mute-driven reloads) use this permissive path directly.
 
     // Log timing breakdown
     let total_time = load_start.elapsed();

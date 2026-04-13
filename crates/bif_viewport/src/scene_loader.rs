@@ -1521,8 +1521,39 @@ impl Renderer {
     ) -> Result<()> {
         let viewport_load_start = Instant::now();
 
+        // v0.14.0 — empty scenes are legitimate when the user mutes the
+        // layer that provides the `def` (so composition strips the prim).
+        // Install the stage + re-seed layer_state so the Layer Stack panel
+        // can still unmute, then clear GPU state and return Ok.
         if scene.prototypes.is_empty() {
-            return Err(anyhow::anyhow!("Scene has no geometry"));
+            log::info!(
+                "Scene has no geometry after composition \
+                 (likely from a mute that removed the def-providing layer) — \
+                 clearing viewport; Layer Stack panel remains active for unmute"
+            );
+
+            let payload_policy = bif_core::usd::layer::PayloadPolicy::LoadAll;
+            if let Ok(mut layer_state) =
+                bif_core::SceneLayerState::from_stage(&stage, payload_policy)
+            {
+                // No prim paths to map — prim_for_layer map stays empty.
+                layer_state.populate_layer_for_prim(&stage, Vec::<String>::new());
+                self.scene.layer_state = Some(layer_state);
+            }
+
+            self.scene.loaded_usd_path = Some(path.display().to_string());
+            self.scene.usd_stage = Some(Arc::new(Mutex::new(stage)));
+            self.scene.working_scene = bif_core::Scene::default();
+            self.scene.mesh_data = MeshData::default();
+            self.nodes.scene_graph_dirty = true;
+
+            self.reload_working_scene()?;
+            let elapsed = viewport_load_start.elapsed();
+            log::info!(
+                "Viewport cleared after empty-scene compose ({:>5.1}ms)",
+                elapsed.as_secs_f64() * 1000.0
+            );
+            return Ok(());
         }
 
         // v0.14.0 — seed layer-aware state from the stage. We capture the
