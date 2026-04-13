@@ -3,7 +3,7 @@ title: UsdSkel Import
 type: concept
 tags: [usd, skel, skinning, animation, lbs, cpu]
 created: 2026-04-10
-updated: 2026-04-10
+updated: 2026-04-12
 ---
 
 # UsdSkel Import
@@ -55,6 +55,12 @@ Cheap to call repeatedly at different times — the underlying `UsdSkelSkeletonQ
 
 USD silently clamps out-of-range time code queries to the nearest authored keyframe. A test that queried frames 0 and 20 on HumanFemale.walk.usd (authored range **101**-129) returned the same bind-pose values at both times — max delta 0.0 — not because eval was broken but because both queries clamped to frame 101. Always query within the stage's `get_timeline()` range when asserting on animation deltas.
 
+### Gotcha: `IsRigidlyDeformed()` is broader than single-joint
+
+`UsdSkelSkinningQuery::IsRigidlyDeformed()` returns true for any mesh whose binding is **per-prim** (same influence block across every vertex) — **not just single-joint**. Uniform multi-bone bindings qualify: HumanFemale's hair binds to 3 head/neck joints at w=0.333 each; fingernails bind to 2 finger-tip joints at w=0.5 each.
+
+A compact `SkinKind::Rigid { joint_idx, weight }` encoding that extracts only `joint_indices[0]` + `joint_weights[0]` works for single-joint rigid (eyes, shoes) but silently mis-renders multi-joint rigid: the fractional weight scales every vertex toward the first bone's origin. This was the v0.13.5.2 → v0.13.6 bug on HumanFemale hair/nails. The fix gates the compact encoding on `element_size == 1`; multi-joint rigid meshes broadcast the authored block to per-vertex layout and run through the standard `SkinKind::PerVertex` path. Regression guard: `skinning::tests::rigid_matches_pervertex_single_influence`.
+
 ### Viewport hot path
 
 `Renderer::update_animation` dispatches into `update_skinning(frame)` whenever `scene.skinned_meshes` is non-empty and the frame has advanced beyond the 0.5-frame tolerance. Per skinned entry:
@@ -93,7 +99,7 @@ Surfaced by code review and HumanFemale validation but deferred to follow-up ver
 
 - **Hand-rolled joint-order remap.** `cache_skeleton_data` builds the mesh-local → skel-global joint mapping by hand via `UsdSkelBindingAPI::GetJointsAttr` matched against `UsdSkelSkeletonQuery::GetJointOrder`. The canonical USD pattern is `UsdSkelSkinningQuery::GetJointMapper()`, which handles identity/null cases internally. Functionally equivalent today; cleanup target for v0.13.6.
 
-- **Rigidly-deformed mesh broadcast wastes memory.** Hair, buttons, eyelashes — meshes where `IsRigidlyDeformed()` is true — currently broadcast their single influence block to per-post-split-vertex layout. For HumanFemale's hair (5899 verts × 5 influences) this is ~236KB per mesh that could be 8 bytes with a `Rigid` enum variant on `SkinBinding`. Multi-MB total savings on a typical character. Cleanup target for v0.13.6.
+- **Rigidly-deformed mesh broadcast wastes memory.** ~~Cleanup target for v0.13.6.~~ **Resolved in v0.13.5.2 / v0.13.6:** `SkinKind::Rigid { joint_idx, weight }` enum variant on `SkinBinding` compacts single-joint rigid bindings (eyes, shoes) to 8 bytes. Multi-joint rigid bindings (hair, nails) intentionally broadcast through `SkinKind::PerVertex` — see the `IsRigidlyDeformed()` gotcha above for why compaction must be gated on `element_size == 1`.
 
 ## Performance Notes
 
