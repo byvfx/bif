@@ -77,7 +77,7 @@ pub struct LayerInfo {
 
 /// Flattened sublayer tree (root at [`Self::root_index`]; each entry's
 /// [`LayerInfo::parent_index`] points back to its parent in the `layers` vec).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct LayerStack {
     pub layers: Vec<LayerInfo>,
     pub root_index: usize,

@@ -6,6 +6,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **v0.14.0 Phase A (in progress)** — layer-aware USD FFI surface: `SdfLayer` stack walk, `UsdPrim::GetPrimStack`, `UsdAttribute::GetPropertyStack` (opinion sources), layer mute/unmute, layer offset read, explicit `PayloadPolicy::{LoadAll, LoadNone}` stage open. 9 new C types + 8 extern "C" fns + 4 destructors in `cpp/usd_bridge/`, mirrored `#[repr(C)]` types in `crates/bif_core/src/usd/ffi_raw.rs`. Values are rendered as display strings via `TfStringify` (read-only; editing lands in v0.16).
+- **v0.14.0 Phase B (in progress)** — safe Rust wrappers on top of Phase A. New `crates/bif_core/src/usd/layer.rs` module with UI-agnostic types: `LayerStack` (with `find_by_identifier` + `children_of` tree helpers), `LayerInfo`, `LayerOffset`, `PrimStackEntry`, `PrimSpecifier`, `OpinionSource`, `EditTarget`, `PayloadPolicy`. Seven new `UsdStage` methods: `open_with_policy`, `get_layer_stack`, `get_edit_target`, `set_layer_muted`, `get_layer_offset`, `get_prim_stack`, `get_attribute_opinions`. Eight new `convert_*` fns in `ffi_convert.rs` + 13 unit tests covering struct conversion, winning-index flag propagation, specifier mapping, null-pointer paths, and `LayerStack` tree navigation — all run without USD env.
+- **v0.14.0 Phase C (in progress)** — `SceneLayerState` attached to `bif_core::Scene` as `layer_state: Option<SceneLayerState>`. Tracks the sublayer stack, working-layer index, muted set, isolation-mode flag, payload policy, and a `prim_path → strongest-layer-index` map for scene-browser color dots. Constructor `SceneLayerState::from_stage` seeds state from a loaded `UsdStage`; `populate_layer_for_prim` walks prim paths and records each prim's authoring layer. 6 new unit tests. LRU opinion cache planned in the Phase C scope was deferred — keeping the struct pure-data preserves `Scene: Clone` and leaves caching as a UI-layer concern if needed later.
+
 ## [0.13.6] - 2026-04-12
 
 ### Added
