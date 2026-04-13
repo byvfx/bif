@@ -27,6 +27,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **Rigid-skinned mesh offset on multi-joint rigid bindings** — `SkinKind::Rigid` compression in `crates/bif_core/src/usd/loader.rs` assumed `element_size == 1, weight == 1.0`, but USD's `UsdSkelSkinningQuery::IsRigidlyDeformed()` also covers meshes with uniform per-prim multi-bone influence. Taking only `joint_indices[0]` + `joint_weights[0]` for hair (3 head/neck bones at w=0.333 each) and fingernails (2 tip bones at w=0.5 each) collapsed every vertex by the fractional weight, visually shrinking the mesh toward its first bone's origin. Loader now gates the compact `SkinKind::Rigid` encoding on `element_size == 1` only; multi-joint rigid meshes broadcast their single authored influence block across post-split vertices and flow through `SkinKind::PerVertex`. Affected: HumanFemale hair, fingernails on accessory meshes. New regression test `skinning::tests::rigid_matches_pervertex_single_influence` locks `SkinKind::Rigid{J, 1.0}` to match equivalent `SkinKind::PerVertex{[J;N],[1.0;N], 1}`. Bug was pre-existing since v0.13.5.2.
 - **`persistence.rs` path-relativization tests now cross-platform** — `path_relativization_*` tests used to hardcode `D:\\projects\\...` literals. Rewrote with `#[cfg(windows)]` / `#[cfg(not(windows))]` constants so the tests exercise the same logic on both targets. `sample_project()` `file_path` dropped its `D:\\` prefix (round-trip serde test doesn't hit the filesystem).
 
 ## [0.13.5] - 2026-04-10

@@ -268,26 +268,65 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
                     };
 
                     // Build the variant based on the C++ bridge's `is_rigid` flag.
-                    // Rigid meshes (hair, buttons, teeth, eyelashes) compress to a
-                    // single (joint_idx, weight) pair instead of broadcasting the
-                    // influence block across every post-split vertex — saves
-                    // hundreds of KB per accessory mesh and shrinks the inner
-                    // skinning loop to a single matrix multiply per vertex.
-                    let kind = if skin_data.is_rigid {
-                        let joint_idx = skin_data
-                            .joint_indices
-                            .first()
-                            .copied()
+                    //
+                    // `SkinKind::Rigid` is a compact encoding for the common case:
+                    // accessory mesh (eye, shoe, button) bound to a SINGLE joint
+                    // with weight 1.0. It stores one `(joint_idx, weight)` pair
+                    // and the skinning inner loop becomes one matrix multiply per
+                    // vertex — saves hundreds of KB per mesh vs broadcasting the
+                    // influence block across every post-split vertex.
+                    //
+                    // However, USD's `UsdSkelSkinningQuery::IsRigidlyDeformed()`
+                    // is broader than "single joint": it returns true for any
+                    // mesh whose binding is per-prim rather than per-vertex. That
+                    // includes multi-bone uniform bindings like hair (3 head/neck
+                    // bones weighted 1/3 each, same for every vertex) and
+                    // fingernails (2 finger-tip bones weighted 1/2 each). For
+                    // those we must fall back to the per-vertex layout — taking
+                    // only `joint_indices[0]` + `joint_weights[0]` would keep the
+                    // first bone at fractional weight and collapse the mesh
+                    // toward that bone's origin (v0.13.5.2 bug: hair on
+                    // HumanFemale.walk.usd rendered at 1/3 of its correct
+                    // position because weight 0.333 scaled every vertex).
+                    let is_rigid_compact = skin_data.is_rigid && skin_data.element_size == 1;
+                    let kind = if is_rigid_compact {
+                        let first_raw = skin_data.joint_indices.first().copied();
+                        let joint_idx = first_raw
                             .filter(|&i| i >= 0)
                             .map(|i| i as u32)
                             .unwrap_or(u32::MAX);
                         let weight = skin_data.joint_weights.first().copied().unwrap_or(1.0);
                         SkinKind::Rigid { joint_idx, weight }
+                    } else if skin_data.is_rigid {
+                        // Multi-joint rigid: C++ bridge stored a single authored
+                        // block of `element_size` entries. Broadcast here to
+                        // match the per-vertex layout the skinning kernel
+                        // expects — one block per post-split vertex.
+                        let elem_size = skin_data.element_size;
+                        let n_verts = mesh.positions.len();
+                        let src_ji = &skin_data.joint_indices;
+                        let src_jw = &skin_data.joint_weights;
+                        let mut joint_indices = Vec::with_capacity(n_verts * elem_size);
+                        let mut joint_weights = Vec::with_capacity(n_verts * elem_size);
+                        for _ in 0..n_verts {
+                            for k in 0..elem_size {
+                                let i = src_ji.get(k).copied().unwrap_or(-1);
+                                let w = src_jw.get(k).copied().unwrap_or(0.0);
+                                joint_indices.push(if i < 0 { u32::MAX } else { i as u32 });
+                                joint_weights.push(w);
+                            }
+                        }
+                        SkinKind::PerVertex {
+                            joint_indices,
+                            joint_weights,
+                            element_size: elem_size,
+                        }
                     } else {
-                        // -1 sentinel from the C++ bridge means "no skeleton mapping
-                        // for this mesh-local joint" — convert to u32::MAX so the
-                        // Rust skinning code's bounds check drops the influence
-                        // (otherwise cast-through-0 would silently pull joint 0).
+                        // Per-vertex binding: C++ already broadcast to
+                        // `post_vert * element_size` entries. -1 sentinels mean
+                        // "no skeleton mapping" — convert to u32::MAX so the
+                        // skinning kernel's bounds check drops the influence
+                        // instead of silently pulling joint 0.
                         SkinKind::PerVertex {
                             joint_indices: skin_data
                                 .joint_indices

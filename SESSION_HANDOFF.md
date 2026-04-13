@@ -1,7 +1,7 @@
 # Session Handoff - April 12, 2026
 
-**Last Updated:** Rigid mesh offset bug investigation (pre-existing v0.13.5 issue)
-**Current Version:** v0.13.6-dev (blend shapes complete; rigid mesh offset bug open)
+**Last Updated:** Rigid mesh offset bug FIXED — ready for v0.13.6 release
+**Current Version:** v0.13.6-dev (blend shapes + rigid mesh fix complete)
 **Project:** BIF - USD Orchestration Tool for VFX
 
 ---
@@ -11,57 +11,42 @@
 | Status | Details |
 |--------|---------|
 | Released | v0.1.0, v0.11.0, v0.12.0, v0.13.0 (2026-04-09), **v0.13.5 (2026-04-10)** |
-| Current | v0.13.6-dev — blend shapes shipped, face deformations validated on HumanFemale |
-| Bug open | Rigid mesh offset on animated characters (hair/nails/eyes displaced — pre-existing v0.13.5) |
-| Next | Investigate rigid mesh offset → fix → v0.13.6 release → v0.14.0 Layer-Aware Stage |
-| Tests | 6 new blend shape unit tests, 536+ total |
+| Current | v0.13.6-dev — blend shapes shipped + rigid mesh offset fixed; HumanFemale renders clean across walk cycle |
+| Next | v0.13.6 release (version bump + MILESTONES Released entry) → v0.14.0 Layer-Aware Stage |
+| Tests | +1 rigid equivalence test, 537+ total |
 | Performance | 60 FPS viewport, 100K instances with LOD, Ivar build ~185ms |
 
 ---
 
-## 🐛 NEXT SESSION: Rigid Mesh Offset Bug
+## ✅ Rigid Mesh Offset Bug — FIXED (Apr 12, 2026)
 
-**Symptom:** Hair, fingernails, and eye components on `HumanFemale.walk.usd` display at wrong world positions. They follow the skeleton correctly (animate with joints) but are spatially offset. Screenshot: `assets/screenshots/usd_skel_error_05.png`. T-pose files unaffected.
+**Root cause:** `SkinKind::Rigid` compression in `crates/bif_core/src/usd/loader.rs` assumed `element_size == 1, weight == 1.0`, but USD's `IsRigidlyDeformed()` is broader — it returns true for any per-prim binding, including multi-bone uniform influence (hair with 3 head/neck bones at w=0.333, fingernails with 2 tip bones at w=0.5). Taking only `joint_indices[0]` + `joint_weights[0]` collapsed each vertex by the fractional weight, visually shrinking the mesh toward its first bone.
 
-**What we know:**
+**Fix:** loader now gates the compact `SkinKind::Rigid` path on `element_size == 1`. Multi-joint rigid meshes broadcast the single authored block across post-split vertices and flow through `SkinKind::PerVertex`.
 
-- **Pre-existing in v0.13.5** — confirmed via clean worktree A/B test on commit `b61264e` (v0.13.5.2). Not a v0.13.6 regression.
-- **Blend shape code ruled out** — bisection via `#if 0` showed issue persists with all v0.13.6 C++ blend shape code disabled.
-- **Loading data is correct** — verified via C++ debug logging in `cache_skeleton_data()`:
-  - All rigid meshes share single SkelRoot (`HumanFemale_Group`) at origin `sr_t=(0,0,0)`
-  - All share single skeleton (`/HumanFemale_Group/Rig/Skel`)
-  - All have identity `geom_bind_transform` and identity local transform
-  - Vertices are in skel-local space (eyes Z=119, nails X=±54/Z=95, hair Z=127)
-- **Per-vertex meshes (body) work correctly** — so the issue is specific to the `SkinKind::Rigid` path or shared code that behaves differently for rigid meshes.
+**Regression guard:** new `skinning::tests::rigid_matches_pervertex_single_influence` — asserts `SkinKind::Rigid{J, 1.0}` produces identical output to `SkinKind::PerVertex{[J;N], [1.0;N], 1}` over a non-trivial palette.
 
-**Where to look next:**
+**Diagnostic trail:** Python dump of `HumanFemale.walk.usd` via `UsdSkelSkinningQuery::ComputeJointInfluences` + joint-path resolution revealed the multi-joint rigid pattern (hair `elem=3, w=0.333`; nails `elem=2, w=0.5`; eyes/shoes `elem=1, w=1.0`). Single-joint meshes were unaffected — explains why shoes/eyes partially worked while hair/nails were visibly offset.
 
-1. **`crates/bif_core/src/skinning.rs`** — `SkinKind::Rigid` branch of `skin_positions` (~L127). Compare against `SkinKind::PerVertex` branch. Does `palette_mat.transform_point3(*bind_pos) * w` produce different results vs per-vertex weighted blend for w=1.0?
-2. **`crates/bif_viewport/src/multi_draw.rs`** — `update_skinning()`, per-prototype GPU buffer write. HumanFemale uses multi-draw (77 prototypes). Does the per-prototype buffer write correctly for rigid meshes?
-3. **`crates/bif_core/src/skinning.rs::compute_skin_matrices`** — palette computation. Uses `bind.inv_bind_matrices` from the skeleton. Are inv_bind matrices correct for all joints? The bind transforms come from `UsdSkelSkeletonQuery::GetJointWorldBindTransforms` in C++ (`populate_cached_skeleton`).
-4. **Instance transform** — in `loader.rs` ~L407, skinned meshes get `skel_root_world_xform` as instance matrix. For HumanFemale this is identity, so probably not the issue, but worth verifying.
-
-**Debugging artifacts:**
-
-- `scripts/dump_rigid_meshes.py` — Python USD inspection (needs `pxr` module; not in main env but runnable from `G:\__projects\_programming\usd_25_11\` Python)
-- `assets/screenshots/usd_skel_error_05.png` — bug screenshot
-- Worktree `bif-v13.5-test` was removed after A/B test; separate `CARGO_TARGET_DIR=C:/Users/brandon/.cargo-target-v13test` used to avoid CMake cache conflicts
-
-**Hypothesis to test first:** Compare `SkinKind::Rigid` vs `SkinKind::PerVertex` output for a vertex bound 100% to joint 5 (head) at an animated frame. If they differ, the rigid branch is buggy. If they match, the issue is elsewhere.
-
-**Reference commit:** `b61264e` = v0.13.5.2 clean build shows same bug (confirms pre-existing).
+**Bug was pre-existing since v0.13.5.2** (commit `b61264e` introduced the compression). Not a v0.13.6 regression.
 
 ---
 
 ## Recent Work
 
-### v0.13.6-dev Apr 12: Rigid Mesh Offset Investigation (Apr 12, 2026)
+### v0.13.6-dev Apr 12: Rigid Mesh Offset Bug Fixed (Apr 12, 2026)
 
-- Bisected v0.13.6 blend shape code via `#if 0` → ruled out as cause
-- Added C++ debug logging in `cache_skeleton_data` → verified loading data is correct
-- Worktree A/B test on commit `b61264e` → confirmed pre-existing v0.13.5 bug
-- Logged in BUGLIST.md, committed debug artifacts (`68c42e0`)
-- Removed `ARCHITECTURE_REFACTORS.md` (campaign closed, kept `ARCHITECTURE_REVIEW.md`)
+- **Root cause:** `SkinKind::Rigid` compression in `bif_core/src/usd/loader.rs` assumed `element_size == 1, weight == 1.0`, collapsing multi-joint rigid bindings (hair `elem=3, w=0.333`; nails `elem=2, w=0.5`) to a single fractional-weight influence. Kernel then did `M·p·0.333`, visually shrinking each vertex toward its first bone's origin.
+- **Fix:** loader gates the compact `SkinKind::Rigid` path on `element_size == 1`. Multi-joint rigid meshes now broadcast the single authored block across post-split vertices and flow through `SkinKind::PerVertex`.
+- **Regression guard:** new `skinning::tests::rigid_matches_pervertex_single_influence` — locks `SkinKind::Rigid{J, 1.0}` to match equivalent `PerVertex{[J;N],[1.0;N], 1}`.
+- **Diagnostic ladder:** (1) math equivalence test passed → kernel correct, bug upstream. (2) Python `ComputeJointInfluences` dump on `HumanFemale.walk.usd` revealed hair/nails are multi-joint rigid with fractional uniform weights — not the single-joint rigid the compression assumed.
+- **Validated visually** on full HumanFemale walk cycle; hair, eyes, fingernails all in correct positions.
+- Previous investigation notes:
+  - Bisected v0.13.6 blend shape code via `#if 0` → ruled out as cause
+  - C++ debug logging in `cache_skeleton_data` → verified loading data correct
+  - Worktree A/B on commit `b61264e` → confirmed pre-existing v0.13.5.2 bug
+  - Debug artifacts committed (`68c42e0`)
+  - Removed `ARCHITECTURE_REFACTORS.md` (campaign closed, kept `ARCHITECTURE_REVIEW.md`)
 
 ### v0.13.6-dev Apr 11: UsdSkelBlendShape Implementation (Apr 11, 2026)
 
@@ -261,6 +246,6 @@ egui UI overhaul — centralized theme, panel restructure, property inspector, m
 
 ## Next Steps
 
-1. **v0.13.5 (UsdSkel Import)** — C++ bridge: UsdSkelCache, skeleton topology, skin weights, CPU LBS, blend shapes
-2. **v0.14.0 planning** — USD composition inspector + opinion trace (M32, M33), SdfLayer FFI, LayerAwareScene
-3. **v0.15.0 research** — Qt 6 Rust bindings evaluation (cxx-qt decided, eval qt-build-utils)
+1. **v0.13.6 release** — bump `0.13.6-dev → 0.13.6` in workspace `Cargo.toml`, promote `## [Unreleased]` CHANGELOG block to `## [0.13.6] - 2026-04-12`, update MILESTONES.md Released section, release commit + tag.
+2. **v0.14.0 planning** — USD composition inspector + opinion trace (M32, M33), SdfLayer FFI, LayerAwareScene. Resume Phase 4.5 `scene_loader.rs` shrinkage when `finalize_usd_scene()` is rewritten.
+3. **v0.15.0 research** — Qt 6 Rust bindings evaluation (cxx-qt decided, eval qt-build-utils).

@@ -756,4 +756,59 @@ mod tests {
             final_pos[0]
         );
     }
+
+    #[test]
+    fn rigid_matches_pervertex_single_influence() {
+        // Regression guard: `SkinKind::Rigid { joint_idx: J, weight: 1.0 }`
+        // must produce bit-close output to `SkinKind::PerVertex` with
+        // `joint_indices=[J;N], joint_weights=[1.0;N], element_size=1`.
+        //
+        // Written during v0.13.6 rigid mesh offset bug hunt — if this fails,
+        // the Rigid branch of `skin_positions` has drifted out of algebraic
+        // parity with PerVertex and accessory meshes (hair/nails/eyes) will
+        // render at subtly wrong positions.
+        let palette = vec![
+            Mat4::from_translation(Vec3::new(1.0, 2.0, 3.0)) * Mat4::from_rotation_y(0.7),
+            Mat4::from_translation(Vec3::new(-4.0, 0.5, 2.0)) * Mat4::from_rotation_x(-0.3),
+            Mat4::from_scale(Vec3::new(1.5, 1.5, 1.5)),
+        ];
+        let bind: Vec<Vec3> = (0..8)
+            .map(|i| Vec3::new(i as f32 * 0.3, i as f32 * -0.2, i as f32 * 0.1 + 1.0))
+            .collect();
+
+        for joint in 0..palette.len() as u32 {
+            let inv_binds: Vec<Mat4> = vec![Mat4::IDENTITY; palette.len()];
+
+            // Per-vertex reference: same joint, weight 1.0, element_size 1.
+            let per = make_bind(
+                vec![joint; bind.len()],
+                vec![1.0; bind.len()],
+                1,
+                inv_binds.clone(),
+            );
+
+            // Rigid variant: same skeleton payload, different kind.
+            let rigid = SkinBinding {
+                skeleton_path: "/test/Skel".to_string(),
+                kind: SkinKind::Rigid {
+                    joint_idx: joint,
+                    weight: 1.0,
+                },
+                geom_bind_transform: Mat4::IDENTITY,
+                inv_bind_matrices: inv_binds,
+            };
+
+            let mut r_out = vec![Vec3::ZERO; bind.len()];
+            let mut p_out = vec![Vec3::ZERO; bind.len()];
+            skin_positions(&rigid, &bind, &palette, &mut r_out);
+            skin_positions(&per, &bind, &palette, &mut p_out);
+
+            for (i, (a, b)) in r_out.iter().zip(p_out.iter()).enumerate() {
+                assert!(
+                    (*a - *b).length() < 1e-5,
+                    "joint {joint} vert {i}: rigid {a:?} vs per-vertex {b:?}"
+                );
+            }
+        }
+    }
 }

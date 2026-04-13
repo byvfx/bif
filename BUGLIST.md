@@ -4,8 +4,6 @@ Last updated: 2026-04-12
 
 ## Active Bugs
 
-- **Rigid-skinned mesh offset on animated characters** — hair, fingernails, and eye components display at wrong positions on HumanFemale.walk.usd. They follow the skeleton (animate correctly) but are spatially offset. Confirmed pre-existing since v0.13.5 via clean worktree A/B test (commit `b61264e`). Loading data verified correct (skel-local vertices, identity geom_bind, single SkelRoot at origin). Root cause likely in multi-draw skinning path or palette computation for rigid meshes during animation. T-pose files unaffected.
-
 - OCIO ACES is not working in the viewport (Hill/Narkowicz approx active, full OCIO deferred).
 
 - Pre-existing C++ bridge test crashes: `test_load_pointinstancer_external_prototype` (lucy_100_fixed.usda), `test_load_relative_reference_usda` (lucy_100.usda), `test_define_scope_prim` — all crash at `UsdStage::Open` with STATUS_BREAKPOINT. Not caused by recent changes.
@@ -13,6 +11,7 @@ Last updated: 2026-04-12
 
 ## Fixed (since last update)
 
+- Rigid-skinned mesh offset on animated characters — `SkinKind::Rigid` compression in `bif_core/src/usd/loader.rs` assumed `element_size=1, weight=1.0`, collapsing multi-joint rigid bindings (hair at w=0.333, nails at w=0.5) to a single fractional influence. Loader now only uses the compact encoding when `element_size == 1`; multi-joint rigid meshes broadcast through `SkinKind::PerVertex`. New regression test added. Fixed 2026-04-12.
 - Dome light from Houdini USD not detected — C++ bridge now checks `UsdLuxDomeLight_1` (new schema), attribute lookup tries `inputs:texture:file` first. Fixed 2026-04-08.
 - MaterialX displacement now natively extracted — 3-tier: surface shader input, GetDisplacementOutput() → ND_displacement node, UsdPreviewSurface fallback. Fixed 2026-04-08.
 - Camera persistence bug: fixed in v0.13.0-dev (reset viewport/batch camera source on new scene load).
