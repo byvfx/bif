@@ -22,6 +22,7 @@ pub mod gpu_types;
 pub mod grid;
 pub mod ivar_renderer;
 pub mod ivar_state;
+pub mod layer_stack_panel;
 pub mod lights;
 pub mod mesh_data;
 pub mod multi_draw;
