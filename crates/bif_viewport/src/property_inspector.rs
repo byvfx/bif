@@ -48,6 +48,15 @@ pub struct PrimProperties {
     /// USD composition arcs — one entry per layer contributing an opinion
     /// on this prim, ordered strongest-first. v0.14.0 (read-only).
     pub composition_arcs: Vec<bif_core::usd::layer::PrimStackEntry>,
+
+    /// Per-attribute opinion trace — keyed by attribute name.
+    /// Value is (sources, winning_layer_index into SceneLayerState.stack.layers).
+    /// Only populated for authored attributes with multiple opinions.
+    /// v0.14.0 (read-only).
+    pub opinion_traces: std::collections::HashMap<
+        String,
+        (Vec<bif_core::usd::layer::OpinionSource>, Option<usize>),
+    >,
 }
 
 /// Event emitted when user edits a transform in the property inspector.
@@ -122,6 +131,7 @@ impl PrimProperties {
             usd_attributes: Vec::new(),
             variant_sets: Vec::new(),
             composition_arcs: Vec::new(),
+            opinion_traces: Default::default(),
         }
     }
 
@@ -548,6 +558,45 @@ fn render_property_detail(ui: &mut egui::Ui, row: &PropertyRow) {
 }
 
 /// Render the Attributes tab — USD prim attributes, primvars, and variant sets.
+/// Draws a 6px color dot hinting at the winning opinion's authoring layer
+/// for the given attribute. The dot carries a tooltip listing the full
+/// opinion stack — winning value highlighted. No-op when the attribute
+/// has no multi-layer opinions.
+fn render_attribute_layer_dot(
+    ui: &mut egui::Ui,
+    trace: Option<&(Vec<bif_core::usd::layer::OpinionSource>, Option<usize>)>,
+) {
+    let Some((sources, winning_idx)) = trace else {
+        return;
+    };
+    let color = winning_idx
+        .map(theme::layer_color)
+        .unwrap_or(theme::TEXT_SECONDARY);
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
+    ui.painter().circle_filled(rect.center(), 3.0, color);
+    response.on_hover_ui(|ui| {
+        ui.strong(format!("{} opinions", sources.len()));
+        for src in sources {
+            let marker = if src.is_winning { "▶ " } else { "  " };
+            let id_text = if src.is_winning {
+                egui::RichText::new(format!("{marker}{}", src.layer_identifier))
+                    .monospace()
+                    .strong()
+            } else {
+                egui::RichText::new(format!("{marker}{}", src.layer_identifier))
+                    .monospace()
+                    .color(theme::TEXT_SECONDARY)
+            };
+            ui.label(id_text);
+            ui.label(
+                egui::RichText::new(format!("  = {}", src.value_display))
+                    .small()
+                    .monospace(),
+            );
+        }
+    });
+}
+
 fn render_attributes_tab(
     ui: &mut egui::Ui,
     props: &PrimProperties,
@@ -648,11 +697,17 @@ fn render_attributes_tab(
                     } else {
                         theme::TEXT_SECONDARY
                     };
-                    ui.label(
-                        egui::RichText::new(&attr.name)
-                            .color(name_color)
-                            .monospace(),
-                    );
+                    // First column: optional layer-color dot (v0.14.0) when
+                    // multi-layer opinions exist, followed by the attribute
+                    // name. Tooltip lists the full opinion stack.
+                    ui.horizontal(|ui| {
+                        render_attribute_layer_dot(ui, props.opinion_traces.get(&attr.name));
+                        ui.label(
+                            egui::RichText::new(&attr.name)
+                                .color(name_color)
+                                .monospace(),
+                        );
+                    });
                     ui.label(
                         egui::RichText::new(&attr.type_name)
                             .color(theme::TEXT_SECONDARY)

@@ -118,6 +118,41 @@ impl Renderer {
                     log::debug!("Failed to query prim stack for {}: {:?}", prim_path, e);
                 }
             }
+            // v0.14.0 per-attribute opinion traces. Only authored attributes
+            // with multi-layer opinions are recorded — unauthored fallbacks
+            // have nothing interesting to display, and single-opinion
+            // attributes already show their one value inline. Resolve
+            // winning-layer index against the scene's layer stack here so
+            // the render code can color the dot without another lookup.
+            let stack_layers = self
+                .scene
+                .working_scene
+                .layer_state
+                .as_ref()
+                .map(|s| &s.stack);
+            for attr in &props.usd_attributes {
+                if !attr.is_authored {
+                    continue;
+                }
+                let Ok(sources) = stage.get_attribute_opinions(prim_path, &attr.name) else {
+                    continue;
+                };
+                if sources.len() < 2 {
+                    continue;
+                }
+                let winning_idx = sources
+                    .iter()
+                    .find(|s| s.is_winning)
+                    .or_else(|| sources.first())
+                    .and_then(|s| {
+                        stack_layers
+                            .and_then(|st| st.find_by_identifier(&s.layer_identifier))
+                            .map(|(idx, _)| idx)
+                    });
+                props
+                    .opinion_traces
+                    .insert(attr.name.clone(), (sources, winning_idx));
+            }
             if let Ok(set_names) = stage.get_variant_set_names(prim_path) {
                 for set_name in &set_names {
                     let variants = stage

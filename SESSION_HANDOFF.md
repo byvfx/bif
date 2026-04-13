@@ -11,8 +11,8 @@
 | Status | Details |
 |--------|---------|
 | Released | v0.1.0, v0.11.0, v0.12.0, v0.13.0, v0.13.5, **v0.13.6 (2026-04-12)** |
-| Current | v0.14.0-dev — Layer-Aware Stage. **Phases A-C done; Phase D almost complete** (scaffolding, scene loader wiring, LayerStackPanel + render wiring + real dispatch, scene-browser color dots, composition arc list). Remaining Phase D: per-attribute opinion inspector (expand attribute row → see per-layer values). |
-| Commits | `cd87179` bump → `ee9e3ff` (scene dots site regen). (pending) composition arcs. ~15 ahead of origin. |
+| Current | v0.14.0-dev — Layer-Aware Stage. **Phases A-D complete.** Layer stack panel, scene-browser color dots, composition arcs, per-attribute opinion inspector all live. Remaining: Phase E (tests + validation) → Phase F (release plumbing → v0.14.0 tag). |
+| Commits | `cd87179` bump → `87ebad3` (arcs site regen). (pending) per-attribute opinion inspector. ~17 ahead of origin. |
 | Tests | 537 + ~86 v0.14.0 tests = ~623 total |
 | Performance | 60 FPS viewport, 100K instances with LOD, Ivar build ~185ms |
 
