@@ -13,8 +13,9 @@
 | Released | v0.1.0, v0.11.0, v0.12.0, v0.13.0, v0.13.5, v0.13.6, **v0.14.0 (2026-04-13)** — pushed to origin |
 | **Active branch** | **`v0.15-qt`** — Qt migration. `main` stays v0.14.0 shippable until Phase H merge. |
 | v0.15.0 Phase 0 ✅ | wgpu-into-QWidget spike gate PASSED 2026-04-13. Qt 6.8.3 LTS + MSVC 2022 + cxx 1.0 + qt-build-utils 0.7 toolchain proven in `crates/bif_qt_spike/`. ADR-006 authored. |
-| v0.15.0 Phase A ✅ | `crates/bif_qt/` scaffolding landed 2026-04-13. First real `#[cxx_qt::bridge]` — `BifShellState` QObject with 2 qproperties + 1 qinvokable. Theme port (34 colors + stylesheet generator). C++ QMainWindow assembly with 4 dock placeholders + menu bar. `bif_qt_shell` dogfood binary runs. |
-| Next | **Phase B — Qt shell (~12h).** Embedded viewport widget (port spike's RenderWidget), menu actions wiring, command palette (Ctrl+P), breadcrumb, 4 workspace presets, first-launch screen, Zen mode. |
+| v0.15.0 Phase A ✅ | `crates/bif_qt/` scaffolding landed 2026-04-13. First real `#[cxx_qt::bridge]` — `BifShellState` QObject with 2 qproperties + 1 qinvokable. Theme port (34 colors + stylesheet generator). C++ QMainWindow assembly with 4 dock placeholders + menu bar. |
+| v0.15.0 Phase B.1–B.4 ✅ | wgpu viewport in central widget (B.1), stylesheet installed (B.2), menu actions wired through cxx-qt invokables with keyboard shortcuts (B.3), Zen mode (Ctrl+\\) toggles dock visibility (B.4). 5 `#[qinvokable]` stubs on `BifShellState`. Shell feels alive. |
+| Next | **Phase B slices B.5–B.8 (~8h remaining).** B.5 workspace switcher (`QMainWindow::saveState()`+`QSettings` per preset, Ctrl+1/2/3/4 actually reconfigures). B.6 first-launch screen (no-stage welcome widget). B.7 breadcrumb bar (`QToolBar` above viewport). B.8 command palette (Ctrl+P `QDialog` + fuzzy matcher). |
 | Tests | ~627 total (90 new in v0.14.0) + spike has no unit tests (deletion-scheduled) |
 | Performance | 60 FPS viewport, 100K instances with LOD, Ivar build ~185ms |
 

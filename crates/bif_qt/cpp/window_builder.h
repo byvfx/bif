@@ -1,23 +1,28 @@
-// Window builder — Phase A shell assembly.
+// Window builder — Phase B shell assembly.
 //
-// Constructs the QMainWindow skeleton: menu bar, status bar, central
-// placeholder widget, and four empty QDockWidget slots (left/right/
-// bottom). Phase B fills these with real panels.
+// Constructs the QMainWindow skeleton: menu bar, status bar,
+// RenderWidget as the central widget (wgpu-into-Qt, ported from
+// the Phase 0 spike), and four QDockWidget slots (left/right/
+// bottom). Phase C fills the docks with real panels.
 //
-// Keeps window construction in C++ because cxx-qt-lib's QtWidgets
-// coverage is thinner than Core/Gui — QMainWindow / QDockWidget /
-// QMenuBar / QStatusBar wrappers would be significant Rust-side
-// boilerplate with no ergonomic win in Phase A. BifShellState (the
-// cxx-qt-generated Rust-backed QObject from src/main_window.rs) is
-// constructed C++-side here and parented to the main window.
+// ViewportCallbacks is a Rust-opaque struct declared in the cxx-qt
+// bridge at src/main_window.rs. It owns the wgpu Viewport on the
+// Rust side; C++ forwards RenderWidget signals to it via the
+// viewport_on_* trampolines cxx generates.
 
 #pragma once
 
+#include "rust/cxx.h"
+
+// Forward-declared by the cxx-qt-generated bridge header.
+struct ViewportCallbacks;
+
 extern "C" {
 
-// Creates QApplication + QMainWindow, shows it, runs exec(), returns
-// the exit code. Blocks until the event loop terminates. Constructs
-// BifShellState internally as a child of the main window.
-int bif_qt_run_shell();
+// Creates QApplication + QMainWindow (with RenderWidget central),
+// wires viewport callbacks, applies the stylesheet, shows the
+// window, runs exec(), returns the exit code. Blocks until the
+// event loop terminates.
+int bif_qt_run_shell(ViewportCallbacks* viewport_cb, ::rust::Str stylesheet);
 
 }  // extern "C"

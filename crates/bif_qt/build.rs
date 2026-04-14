@@ -24,6 +24,7 @@ fn main() {
         .file("src/main_window.rs")
         .cc_builder(|cc| {
             cc.file("cpp/window_builder.cpp");
+            cc.file("cpp/render_widget.cpp");
             cc.include("cpp");
             cc.std("c++17");
 
@@ -34,10 +35,17 @@ fn main() {
                 cc.flag_if_supported("/EHsc");
             }
         })
+        // render_widget.h has Q_OBJECT → moc generates a companion
+        // .cpp that the cc_builder must compile. CxxQtBuilder picks
+        // up headers passed via .qobject_header() automatically.
+        .qobject_header("cpp/render_widget.h")
         .build();
 
     println!("cargo:rerun-if-changed=src/main_window.rs");
     println!("cargo:rerun-if-changed=src/app.rs");
+    println!("cargo:rerun-if-changed=src/viewport.rs");
     println!("cargo:rerun-if-changed=cpp/window_builder.cpp");
     println!("cargo:rerun-if-changed=cpp/window_builder.h");
+    println!("cargo:rerun-if-changed=cpp/render_widget.cpp");
+    println!("cargo:rerun-if-changed=cpp/render_widget.h");
 }

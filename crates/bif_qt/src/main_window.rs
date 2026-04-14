@@ -21,6 +21,11 @@
 use core::pin::Pin;
 use cxx_qt::CxxQtType;
 
+use crate::viewport::{
+    viewport_on_frame, viewport_on_resize, viewport_on_shutdown, viewport_on_surface_ready,
+    ViewportCallbacks,
+};
+
 #[cxx_qt::bridge]
 pub mod qobject {
     unsafe extern "C++" {
@@ -32,29 +37,74 @@ pub mod qobject {
         include!("window_builder.h");
         /// Blocks until QApplication::exec returns. Implemented in
         /// cpp/window_builder.cpp. Constructs QApplication +
-        /// QMainWindow + BifShellState internally.
+        /// QMainWindow + BifShellState + RenderWidget internally
+        /// and wires RenderWidget's signals to the viewport
+        /// callbacks passed in. Applies `stylesheet` via
+        /// QApplication::setStyleSheet at startup.
         ///
         /// # Safety
         ///
         /// Must be called exactly once, on the main thread, before
         /// any other Qt code runs in the process. The function takes
         /// over the main thread for the Qt event loop and does not
-        /// return until the window is closed.
-        unsafe fn bif_qt_run_shell() -> i32;
+        /// return until the window is closed. `viewport_cb` must
+        /// remain valid for the duration of the call.
+        unsafe fn bif_qt_run_shell(viewport_cb: *mut ViewportCallbacks, stylesheet: &str) -> i32;
+    }
+
+    // Viewport callback plumbing — C++ RenderWidget signals call
+    // these Rust functions, which forward to the wgpu Viewport
+    // (see src/viewport.rs). `ViewportCallbacks` is resolved
+    // against `super::ViewportCallbacks` — the parent module's
+    // `use crate::viewport::ViewportCallbacks` below brings it
+    // into scope.
+    extern "Rust" {
+        type ViewportCallbacks;
+
+        fn viewport_on_surface_ready(
+            cb: &mut ViewportCallbacks,
+            hwnd: u64,
+            hinstance: u64,
+            width: i32,
+            height: i32,
+        ) -> bool;
+        fn viewport_on_resize(cb: &mut ViewportCallbacks, width: i32, height: i32);
+        fn viewport_on_frame(cb: &mut ViewportCallbacks);
+        fn viewport_on_shutdown(cb: &mut ViewportCallbacks);
     }
 
     extern "RustQt" {
-        /// Phase A placeholder QObject — holds app-level shell state
-        /// (window title, last-loaded stage path, status message).
-        /// Phase B expands this into the real shell model.
+        /// Shell state QObject — window title, status message, and
+        /// menu-action invokables. Phase B: stubs that update
+        /// status_message. Phase C+ wires to real logic.
         #[qobject]
         #[qproperty(QString, title)]
         #[qproperty(QString, status_message)]
         type BifShellState = super::BifShellStateRust;
 
-        /// Phase A smoke-test invokable — verifies Rust↔C++ round-trip.
+        /// Smoke-test invokable — verifies Rust↔C++ round-trip.
         #[qinvokable]
         fn describe(self: Pin<&mut BifShellState>) -> QString;
+
+        /// File/New Stage (Ctrl+N). Phase B stub.
+        #[qinvokable]
+        fn on_new_stage(self: Pin<&mut BifShellState>);
+
+        /// File/Open Stage (Ctrl+O). Phase B stub.
+        #[qinvokable]
+        fn on_open_stage(self: Pin<&mut BifShellState>);
+
+        /// File/Save (Ctrl+S). Phase B stub.
+        #[qinvokable]
+        fn on_save(self: Pin<&mut BifShellState>);
+
+        /// File/Save As (Ctrl+Shift+S). Phase B stub.
+        #[qinvokable]
+        fn on_save_as(self: Pin<&mut BifShellState>);
+
+        /// Help/About. Phase B stub.
+        #[qinvokable]
+        fn on_about(self: Pin<&mut BifShellState>);
     }
 }
 
@@ -83,5 +133,43 @@ impl qobject::BifShellState {
             "BifShellState[title={}, status={}]",
             rust.title, rust.status_message
         ))
+    }
+
+    /// Phase B stub — logs, updates status. Phase C wires to
+    /// Scene reset + new-stage creation via bif_core.
+    fn on_new_stage(mut self: Pin<&mut Self>) {
+        log::info!("action: File/New Stage");
+        self.as_mut().set_status_message(cxx_qt_lib::QString::from(
+            "New Stage — not yet implemented (v0.16)",
+        ));
+    }
+
+    /// Phase B stub — Phase C wires to QFileDialog + UsdStage::Open
+    /// via bif_core.
+    fn on_open_stage(mut self: Pin<&mut Self>) {
+        log::info!("action: File/Open Stage");
+        self.as_mut().set_status_message(cxx_qt_lib::QString::from(
+            "Open Stage — not yet implemented (Phase C)",
+        ));
+    }
+
+    /// Phase B stub — Phase C (actually v0.16) wires to save logic.
+    fn on_save(mut self: Pin<&mut Self>) {
+        log::info!("action: File/Save");
+        self.as_mut()
+            .set_status_message(cxx_qt_lib::QString::from("Save — deferred to v0.16"));
+    }
+
+    fn on_save_as(mut self: Pin<&mut Self>) {
+        log::info!("action: File/Save As");
+        self.as_mut()
+            .set_status_message(cxx_qt_lib::QString::from("Save As — deferred to v0.16"));
+    }
+
+    fn on_about(mut self: Pin<&mut Self>) {
+        log::info!("action: Help/About");
+        self.as_mut().set_status_message(cxx_qt_lib::QString::from(
+            "BIF — USD Orchestration Tool — bif_qt v0.14.0 (Phase B shell)",
+        ));
     }
 }

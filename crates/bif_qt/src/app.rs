@@ -1,12 +1,14 @@
-// App runner — invokes the C++ `bif_qt_run_shell` entry point
-// declared in the cxx-qt bridge at src/main_window.rs.
+// App runner — allocates ViewportCallbacks (Rust-owned wgpu
+// renderer state), hands its raw pointer to C++, and invokes the
+// QApplication::exec entry point.
 //
-// Phase A keeps lifecycle C++-side (matching the spike) because
-// cxx-qt-lib's QtWidgets coverage is thin. Phase B/C may promote
-// QApplication construction into Rust once panel QObjects have
-// absorbed enough Rust ownership that it makes sense.
+// Lifetime: ViewportCallbacks sits on the stack for the entire
+// QApplication lifetime. C++ uses the raw pointer in Qt signal
+// lambdas (all on the main thread), never escapes it.
 
 use anyhow::Result;
+
+use crate::viewport::ViewportCallbacks;
 
 /// Run the BIF Qt shell event loop. Returns the QApplication exit
 /// code. Blocks the caller.
@@ -15,9 +17,20 @@ pub fn run() -> Result<i32> {
         .try_init();
 
     log::info!("bif_qt {} — starting Qt shell", crate::BIF_QT_VERSION);
-    // SAFETY: QApplication + QMainWindow lifecycle is entirely C++-
-    // managed. The function blocks until the event loop exits.
-    let rc = unsafe { crate::main_window::qobject::bif_qt_run_shell() };
+
+    let mut viewport_cb = ViewportCallbacks::new();
+    let stylesheet = crate::theme::qt_stylesheet();
+
+    // SAFETY: bif_qt_run_shell blocks until QApplication::exec
+    // returns. `&mut viewport_cb` stays live for the entire call.
+    // `stylesheet` lives on the stack; rust::Str views into it for
+    // the single QString::fromUtf8 copy at startup.
+    let rc = unsafe {
+        crate::main_window::qobject::bif_qt_run_shell(
+            &mut viewport_cb as *mut ViewportCallbacks,
+            &stylesheet,
+        )
+    };
     log::info!("bif_qt shell exited rc={rc}");
     Ok(rc)
 }
