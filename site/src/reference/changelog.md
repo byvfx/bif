@@ -8,6 +8,15 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **v0.15.0 Phase B (slices 5–8) — workspaces, first-launch, breadcrumb, command palette** — Phase B complete.
+  - **B.5 Workspace switcher** — 4 presets (Assembly / Lighting / Materials / Render) persist `QMainWindow::saveState()` byte arrays in `QSettings`. Switching saves the outgoing preset's current layout, then restores the incoming one (or applies a hardcoded default for that preset on first switch). Last-active preset persisted in `workspaces/last_active`. New `current_workspace` qproperty on `BifShellState`. Defaults visible: Assembly = all docks; Lighting = Layer Stack + Node Graph hidden; Materials = only Property Inspector + Node Graph; Render = only Property Inspector.
+  - **B.6 First-launch screen** — new `FirstLaunchWidget` (`cpp/first_launch_widget.{h,cpp}`) with "Welcome to BIF" title + tagline + two card buttons (📄 New Stage, 📂 Open Stage) + Recent Stages list pulled from `QSettings("recent_stages")`. Cards emit `newStageClicked` / `openStageClicked` signals; window builder routes to `BifShellState::on_*` invokables and flips the central QStackedWidget to viewport.
+  - **B.7 Breadcrumb bar** — `QToolBar` ("breadcrumb_bar") above the central stack. Phase B stub shows "(no stage)" segment; `breadcrumb_set_path(QStringList)` helper rebuilds segments with `›` separators (Phase C calls it on prim selection).
+  - **B.8 Command palette (Ctrl+P)** — borderless modal `CommandPalette : QDialog` (`cpp/command_palette.{h,cpp}`) with `QLineEdit` + `QListView` + `QSortFilterProxyModel` over a `QStringListModel`. 11 commands aggregated from `MenuActions`. Substring case-insensitive filter (Phase B); fuzzy scorer deferred to v0.16. Up/Down navigates without leaving the search field; Enter triggers + closes; Esc cancels. Centered overlay positioned over the main window.
+- **Layout restructure** — central widget is now a `QWidget` container with `QVBoxLayout`(breadcrumb `QToolBar` + `QStackedWidget`(first-launch | viewport)) instead of the bare `RenderWidget`.
+
+### Added
+
 - **v0.15.0 Phase B (slices 1–4) — Qt shell functional** — `bif_qt_shell` now a live shell with wgpu viewport, styled panels, menu actions, and zen mode. Slices landed in one commit:
   - **B.1 Viewport** — `cpp/render_widget.{h,cpp}` + `shaders/triangle.wgsl` + `src/viewport.rs` ported from `bif_qt_spike`. RenderWidget is the central widget; wgpu surface feeds directly into the Qt-native HWND. Rust-opaque `ViewportCallbacks` wraps `Option<Viewport>` and plugs into the cxx-qt bridge through an `extern "Rust"` block. C++ wires `RenderWidget::{surfaceReady, resized, frameRequested}` signals to cxx-generated trampolines that forward to `viewport_on_*` free functions.
   - **B.2 Stylesheet** — `theme::qt_stylesheet()` now applied via `QApplication::setStyleSheet` at shell startup. `bif_qt_run_shell(viewport_cb, stylesheet)` takes a `rust::Str` arg (cxx's `&str`), C++ converts with `QString::fromUtf8` and installs.
