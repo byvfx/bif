@@ -12,18 +12,26 @@
 |--------|---------|
 | Released | v0.1.0, v0.11.0, v0.12.0, v0.13.0, v0.13.5, v0.13.6, **v0.14.0 (2026-04-13)** — pushed to origin |
 | **Active branch** | **`v0.15-qt`** — Qt migration. `main` stays v0.14.0 shippable until Phase H merge. |
-| v0.15.0 Phase 0 ✅ | wgpu-into-QWidget spike gate PASSED 2026-04-13. Qt 6.8.3 LTS + MSVC 2022 + cxx 1.0 + qt-build-utils 0.7 toolchain proven in `crates/bif_qt_spike/`. ADR-006 authored. Gotchas captured (MSVC `/Zc:__cplusplus`, QT_NO_KEYWORDS, moc driving, argc lifetime). |
-| Next | **Phase A — `crates/bif_qt/` scaffolding (~4h).** New crate with `cxx_qt_build::CxxQtBuilder`, theme port (65 colors → QPalette + stylesheet), QMainWindow subclass skeleton with 4 empty dock slots. |
+| v0.15.0 Phase 0 ✅ | wgpu-into-QWidget spike gate PASSED 2026-04-13. Qt 6.8.3 LTS + MSVC 2022 + cxx 1.0 + qt-build-utils 0.7 toolchain proven in `crates/bif_qt_spike/`. ADR-006 authored. |
+| v0.15.0 Phase A ✅ | `crates/bif_qt/` scaffolding landed 2026-04-13. First real `#[cxx_qt::bridge]` — `BifShellState` QObject with 2 qproperties + 1 qinvokable. Theme port (34 colors + stylesheet generator). C++ QMainWindow assembly with 4 dock placeholders + menu bar. `bif_qt_shell` dogfood binary runs. |
+| Next | **Phase B — Qt shell (~12h).** Embedded viewport widget (port spike's RenderWidget), menu actions wiring, command palette (Ctrl+P), breadcrumb, 4 workspace presets, first-launch screen, Zen mode. |
 | Tests | ~627 total (90 new in v0.14.0) + spike has no unit tests (deletion-scheduled) |
 | Performance | 60 FPS viewport, 100K instances with LOD, Ivar build ~185ms |
 
 ---
 
-## ➡️ v0.15.0 Qt Migration — Phase A Starting Notes
+## ➡️ v0.15.0 Qt Migration — Phase B Starting Notes
 
-**Strategy decided 2026-04-13 (ADR-006):** Shell-first on `v0.15-qt`. Panels one-at-a-time. Merge at Phase H.
+**Strategy (ADR-006):** Shell-first on `v0.15-qt`. Panels one-at-a-time. Merge at Phase H.
 
-**Binding locked:** `cxx-qt 0.7` + `qt-build-utils 0.7` + Qt 6.8.3 LTS + LGPL dynamic linking. Spike used plain `cxx` (validated wgpu-QWindow), Phase A commits to cxx-qt macros for Rust-side QObjects.
+**Binding locked:** `cxx-qt 0.7` + `qt-build-utils 0.7` + Qt 6.8.3 LTS + LGPL dynamic linking. Phase A validated cxx-qt macros. C++ owns window assembly (QMainWindow / QDockWidget / QMenuBar) — cxx-qt-lib's QtWidgets coverage is thin and Rust-side boilerplate would be pure cost without ergonomic win. Rust owns QObjects (BifShellState + future panel models).
+
+**Phase A cxx-qt gotchas (for Phase B authors):**
+- `#[qinvokable]` declared inside `extern "RustQt"`, IMPLEMENTED in a regular impl block OUTSIDE the bridge (non-empty impls inside the bridge = compile error).
+- `CxxQtType` trait must be in scope for `.rust()` / `.rust_mut()` accessors.
+- cxx-qt-generated header path: `bif_qt/src/main_window.cxxqt.h` (crate + src prefix).
+- Cannot mix `#[cxx::bridge]` + `#[cxx_qt::bridge]` in same crate — only the latter is processed by `cxx_qt_build::CxxQtBuilder`. Merge extern decls into the single cxx-qt bridge.
+- `#![allow(clippy::missing_safety_doc)]` at crate scope required — clippy can't introspect bridge-macro-expanded fn docs.
 
 **Phase 0 artifacts already in branch:**
 

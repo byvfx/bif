@@ -27,7 +27,7 @@ Roadmap organized by semantic version. Each release is testable, demoable, and g
 Branch: `v0.15-qt`. Plan: `C:\Users\brandon\.claude\plans\iridescent-soaring-hamster.md`. ~50h ceiling.
 
 - **Phase 0 ✅ (2026-04-13):** wgpu-into-QWidget spike gate PASSED. Qt 6.8.3 LTS + MSVC 2022 + cxx 1.0 + qt-build-utils 0.7 toolchain proven. See [ADR-006](wiki/architecture/adr/006-qt-via-cxx-qt.md). Evidence: `assets/screenshots/qt_spike_wgpu.PNG`.
-- Phase A — `crates/bif_qt/` scaffolding (~4h)
+- **Phase A ✅ (2026-04-13):** `crates/bif_qt/` scaffolding landed. First real `#[cxx_qt::bridge]` compiles against Qt 6.8.3 LTS + cxx-qt 0.7 + MSVC. `BifShellState` QObject with 2 qproperties + 1 qinvokable. `src/theme.rs` port (34 colors + Qt stylesheet generator). C++ window assembly with menu bar + 4 dock placeholders + `bif_qt_shell` dogfood binary. Runs clean — see devlog 2026-04-13 session 3.
 - Phase B — shell: viewport widget + docks + menu + command palette + breadcrumb + 4 workspaces + first-launch + zen mode (~12h)
 - Phase C — core panels: Layer Stack + Scene Browser (virtualized 100K+) + Property Inspector (~18h)
 - Phase D — secondary panels: Timeline + Node Graph (QGraphicsScene) + Render Settings (~10h)
