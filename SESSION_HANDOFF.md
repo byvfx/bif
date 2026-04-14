@@ -1,7 +1,7 @@
-# Session Handoff - April 13, 2026
+# Session Handoff - April 13, 2026 (session 2)
 
-**Last Updated:** v0.14.0 shipped + pushed — tag `v0.14.0` at `fc379c1`.
-**Current Version:** v0.14.0 (released 2026-04-13)
+**Last Updated:** v0.15.0 Phase 0 gate PASSED on branch `v0.15-qt`.
+**Current Version:** v0.14.0 shipped on `main`; v0.15.0 in progress on `v0.15-qt`.
 **Project:** BIF - USD Orchestration Tool for VFX
 
 ---
@@ -11,43 +11,39 @@
 | Status | Details |
 |--------|---------|
 | Released | v0.1.0, v0.11.0, v0.12.0, v0.13.0, v0.13.5, v0.13.6, **v0.14.0 (2026-04-13)** — pushed to origin |
-| v0.14.0 post-tag | Tag moved forward before push. Includes event_bus routing fix, fixture rework, mute re-cache, node-graph-routed cleanup, and empty-scene tolerant reload. All four mute behaviors (mute/unmute shot; mute/unmute anim-with-def) work end-to-end on `test_assets/layers/root.usda`. |
-| Next | **v0.15.0 — Qt Migration (50-60h, M28).** Biggest release to date. Last egui release was v0.14.0; panels get rewritten wholesale. Data types in `bif_core` are already UI-agnostic. `SceneLayerState`, `LayerStack`, `OpinionSource`, `PrimStackEntry`, `PayloadPolicy`, all panel event variants on `AppEvent` carry through unchanged. |
-| Tests | ~627 total (90 new in v0.14.0) |
+| **Active branch** | **`v0.15-qt`** — Qt migration. `main` stays v0.14.0 shippable until Phase H merge. |
+| v0.15.0 Phase 0 ✅ | wgpu-into-QWidget spike gate PASSED 2026-04-13. Qt 6.8.3 LTS + MSVC 2022 + cxx 1.0 + qt-build-utils 0.7 toolchain proven in `crates/bif_qt_spike/`. ADR-006 authored. Gotchas captured (MSVC `/Zc:__cplusplus`, QT_NO_KEYWORDS, moc driving, argc lifetime). |
+| Next | **Phase A — `crates/bif_qt/` scaffolding (~4h).** New crate with `cxx_qt_build::CxxQtBuilder`, theme port (65 colors → QPalette + stylesheet), QMainWindow subclass skeleton with 4 empty dock slots. |
+| Tests | ~627 total (90 new in v0.14.0) + spike has no unit tests (deletion-scheduled) |
 | Performance | 60 FPS viewport, 100K instances with LOD, Ivar build ~185ms |
 
 ---
 
-## ➡️ v0.15.0 Qt Migration — Starting Notes
+## ➡️ v0.15.0 Qt Migration — Phase A Starting Notes
 
-**Decision done in v0.14 planning (ADR-005, `wiki/architecture/adr/005-layer-aware-read-model.md`):** `bif_core` types are egui-free. `bif_viewport` panels (`layer_stack_panel.rs`, `property_inspector.rs`, `scene_browser.rs`, `render.rs`) are the churn surface.
+**Strategy decided 2026-04-13 (ADR-006):** Shell-first on `v0.15-qt`. Panels one-at-a-time. Merge at Phase H.
 
-**Background research already in repo:**
+**Binding locked:** `cxx-qt 0.7` + `qt-build-utils 0.7` + Qt 6.8.3 LTS + LGPL dynamic linking. Spike used plain `cxx` (validated wgpu-QWindow), Phase A commits to cxx-qt macros for Rust-side QObjects.
 
-- `docs/ux/UI_DESIGN.md` — 25-section authoritative Qt UI spec (T-layout, command palette, theme, etc.)
-- `docs/ux/DCC_UI_RESEARCH.md` — research notes (Houdini, Katana, usdview, etc.)
-- `wiki/ui-ux/` section — frontmatter + concept notes
-- MILESTONES.md M28 — list of required Qt features for v0.15 scope
+**Phase 0 artifacts already in branch:**
 
-**Decision pending first session:** `cxx-qt` (Rust-first) vs. another Qt binding. `cxx-qt` was tentatively decided per MILESTONES.md; re-evaluate `qt-build-utils` and `qmetaobject-rs` before committing.
+- `setup_qt_env.ps1` — sets `Qt6_DIR`, `CMAKE_PREFIX_PATH`, `PATH` (Qt bin + CMake_64 + Ninja), `QT_PLUGIN_PATH`, `QML2_IMPORT_PATH`.
+- `crates/bif_qt_spike/` — gate crate. Deletion scheduled for Phase H. Reference for Phase A's build.rs shape + MSVC flag recipe + wgpu embedding pattern.
+- `wiki/architecture/adr/006-qt-via-cxx-qt.md` — full decision record + gotchas.
+- Workspace deps: `raw-window-handle 0.6`, `cxx 1.0`, `cxx-qt 0.7`, `cxx-qt-lib 0.7` (qt_full), `cxx-qt-build 0.7`, `qt-build-utils 0.7`.
 
-**Migration strategy options:**
-1. **Big bang** — port all panels at once, drop egui when Qt is feature-complete. High risk, big release.
-2. **Side-by-side** — Qt window lives alongside egui during transition, feature-flag toggle. Lower risk, longer tail.
-3. **Panel-by-panel** — one panel at a time ships Qt-native, others stay egui. Progressive migration. May interleave awkwardly.
+**Phase A first moves (~4h):**
 
-**Key constraints:**
-- `wgpu` viewport surface must work with a Qt host window (QWindow embedding).
-- Event bus (`AppEvent`) + `SceneManager` + `NodeGraphContext` + `SceneLayerState` are all UI-agnostic already → keep as-is.
-- Qt Resource system may replace hard-coded theme colors in `bif_viewport/src/theme.rs` — defer until panels are being rewritten.
+1. New `crates/bif_qt/Cargo.toml` — depends on `bif_core`, `bif_renderer`, `cxx-qt 0.7`, `cxx-qt-lib 0.7`.
+2. `build.rs` — switch to `cxx_qt_build::CxxQtBuilder` (first real cxx-qt macro use). Verify moc still runs; validate that `#[cxx_qt::bridge]` compiles on Qt 6.8.3 + MSVC 2022.
+3. Port `bif_viewport/src/theme.rs` (65 color constants) → `QPalette` + Qt stylesheet string in `bif_qt/src/theme.rs`. Named constants mirror egui names for continuity.
+4. `src/main_window.rs` — `QMainWindow` subclass skeleton: menu bar, status bar, central placeholder, 4 empty `QDockWidget` slots (left/right/bottom + detached pool). Use `Q_OBJECT` + moc.
+5. `src/app.rs` — `QApplication::new()` from `cxx-qt-lib`, install stylesheet, create main window, run `app.exec()`.
+6. Decide `QT_NO_KEYWORDS` — cxx-qt default is ON (to avoid `slots` colliding with Rust keywords), but Phase A's C++ needs `Q_SIGNALS:` / `Q_EMIT` syntax. Match cxx-qt convention to avoid fighting the framework.
 
-**First session tasks (approximate):**
-
-1. Start with `docs/ux/UI_DESIGN.md` + MILESTONES M28 re-read.
-2. `cxx-qt` POC in a new `crates/bif_qt/` crate — minimal window, draw egui-free shell.
-3. Spike: wgpu into a QWindow to confirm viewport embedding is feasible.
-4. Decide migration strategy (big-bang vs side-by-side vs panel-by-panel) based on spike findings.
-5. Author v0.15.0 plan (/ultraplan) against the spike outcome.
+**Key constraints carry forward:**
+- Event bus (`AppEvent`) + `SceneManager` + `NodeGraphContext` + `SceneLayerState` → reuse without change.
+- `bif_viewport` panel files (`layer_stack_panel.rs`, `property_inspector.rs`, `scene_browser.rs`, `render.rs`) are the Phase C-D churn surface — leave untouched in Phase A.
 
 ---
 

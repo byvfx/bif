@@ -28,6 +28,8 @@ BIF is a USD Orchestration Tool for VFX built in Rust — layer-aware USD editin
 - [[002-egui-temporary-ui|ADR 002: egui Temporary UI]] — egui is a stepping stone; all subsystems must be UI-agnostic for Qt migration
 - [[003-hybrid-usd-workflow|ADR 003: Hybrid USD Workflow]] — Procedural nodes + layer-aware editing, not a full pivot to either
 - [[004-cpp-bridge-for-usd|ADR 004: C++ Bridge for USD]] — CMake-built C++ bridge for USD FFI instead of pure Rust
+- [[005-layer-aware-read-model|ADR 005: Layer-aware read model (v0.14.0)]] — Read-only layer inspection in v0.14; UI-agnostic `SceneLayerState` / `LayerStack` / `OpinionSource`
+- [[006-qt-via-cxx-qt|ADR 006: Qt 6 via cxx-qt (v0.15.0)]] — Qt binding choice, wgpu-QWidget embedding recipe, LGPL dynamic linking, shell-first migration on `v0.15-qt` branch
 
 ## Key Principles
 

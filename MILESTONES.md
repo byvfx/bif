@@ -22,6 +22,21 @@ Roadmap organized by semantic version. Each release is testable, demoable, and g
 
 ## In Progress
 
+### v0.15.0 — Qt Migration (M28 Shell)
+
+Branch: `v0.15-qt`. Plan: `C:\Users\brandon\.claude\plans\iridescent-soaring-hamster.md`. ~50h ceiling.
+
+- **Phase 0 ✅ (2026-04-13):** wgpu-into-QWidget spike gate PASSED. Qt 6.8.3 LTS + MSVC 2022 + cxx 1.0 + qt-build-utils 0.7 toolchain proven. See [ADR-006](wiki/architecture/adr/006-qt-via-cxx-qt.md). Evidence: `assets/screenshots/qt_spike_wgpu.PNG`.
+- Phase A — `crates/bif_qt/` scaffolding (~4h)
+- Phase B — shell: viewport widget + docks + menu + command palette + breadcrumb + 4 workspaces + first-launch + zen mode (~12h)
+- Phase C — core panels: Layer Stack + Scene Browser (virtualized 100K+) + Property Inspector (~18h)
+- Phase D — secondary panels: Timeline + Node Graph (QGraphicsScene) + Render Settings (~10h)
+- Phase E — input + event wiring (~3h)
+- Phase F — delete egui from `bif_viewport` + `bif_viewer` (~2h)
+- Phase G/H — tests + release + merge `v0.15-qt` → `main` (~4h)
+
+Deferred to v0.15.5/v0.16: asset browser (M28.1), asset library (M28.2), drag-and-drop, Wacom pressure/tilt.
+
 ### v0.14.5 — Layer Polish (follow-up)
 
 File watcher + node graph integration. Split out of v0.14.0 to keep the core release tight.
@@ -36,7 +51,6 @@ File watcher + node graph integration. Split out of v0.14.0 to keep the core rel
 
 | Version | Theme | Est. Hours | Key Milestones |
 |---------|-------|-----------|----------------|
-| v0.15.0 | Qt Migration | 50-60h | M28 (T-layout, command palette, theme) |
 | v0.16.0 | Edit Operations + Save | 30-40h | Workflow Phase 2 + material param sheet + lookdev orb |
 | v0.17.0 | Viewport Performance | 25-35h | M22 + payload policies + texture nodes in material editor |
 | v0.18.0 | AI Integration | 38-59h | Material creator, scene builder, ComfyUI |

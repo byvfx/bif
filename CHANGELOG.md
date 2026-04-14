@@ -6,6 +6,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **v0.15.0 Phase 0 spike — wgpu into Qt 6 QWidget (gate PASSED 2026-04-13)** — new `crates/bif_qt_spike/` crate proves end-to-end that wgpu renders into a Qt-native HWND with MSVC 2022 + Qt 6.8.3 LTS. Stack: `qt-build-utils 0.7` finds Qt → `cxx 1.0` + `cxx_build` bridges Rust↔C++ → custom `RenderWidget : QWidget` with `WA_NativeWindow` + `WA_PaintOnScreen` + `paintEngine() == nullptr` yields a raw HWND → `wgpu::Surface` configured in sRGB + HighPerf adapter → triangle draws cleanly + resizes. 6 C++/Rust files + `shaders/triangle.wgsl` + `setup_qt_env.ps1`. Spike crate scheduled for deletion at Phase H.
+- **ADR-006 — Qt 6 via cxx-qt** — `wiki/architecture/adr/006-qt-via-cxx-qt.md` records the binding decision (cxx-qt 0.7 + Qt 6.8 LTS + LGPL dynamic linking), the wgpu-QWidget embedding recipe, migration strategy (shell-first on `v0.15-qt` branch, merge at Phase H), and 4 captured gotchas (MSVC `/Zc:__cplusplus`, `QT_NO_KEYWORDS` trade-off, moc driving, argc lifetime).
+- **`setup_qt_env.ps1`** — companion to `setup_usd_env.ps1`. Sets `Qt6_DIR`, `CMAKE_PREFIX_PATH`, `QT_PLUGIN_PATH`, `QML2_IMPORT_PATH`, and prepends Qt bin + CMake_64 + Ninja to `PATH`.
+- Workspace-level Qt/FFI dependencies: `raw-window-handle 0.6`, `cxx 1.0`, `cxx-qt 0.7`, `cxx-qt-lib 0.7` (qt_full feature), `cxx-qt-build 0.7`, `qt-build-utils 0.7`.
+
 ### Fixed
 
 - **Muting the def-providing layer clears the viewport cleanly** — previously `load_usd_with_stage_muted` bailed with `LoadError::NoGeometry` whenever composition resolved to zero prims (e.g. the user muted `anim.usda` which carried the `def Cube` in the test fixture), the reload failed, and the viewport kept showing the pre-mute cube — UI desynced from mute state. Split the empty-scene gate: the strict `load_usd_with_stage` still returns `NoGeometry` (first-load callers need geometry), but the permissive muted variant returns the empty scene successfully. `finalize_usd_scene` in `bif_viewport` now recognises the empty case, installs the stage handle + re-seeds `SceneLayerState` so the Layer Stack panel can still unmute, clears `working_scene` + `mesh_data`, and calls `reload_working_scene` to flush GPU buffers.
