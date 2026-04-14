@@ -1,28 +1,116 @@
 #include "window_builder.h"
+#include "command_palette.h"
+#include "first_launch_widget.h"
 #include "render_widget.h"
 
 #include <QAction>
 #include <QApplication>
+#include <QByteArray>
 #include <QDockWidget>
+#include <QHash>
 #include <QKeySequence>
 #include <QLabel>
 #include <QList>
 #include <QMainWindow>
 #include <QMenu>
 #include <QMenuBar>
+#include <QPushButton>
+#include <QScreen>
+#include <QSettings>
 #include <QShortcut>
+#include <QStackedWidget>
 #include <QStatusBar>
+#include <QString>
+#include <QToolBar>
+#include <QVBoxLayout>
 #include <QWidget>
 
-// cxx-qt-generated header for BifShellState + ViewportCallbacks
-// + viewport_on_* trampolines declared in src/main_window.rs.
 #include "bif_qt/src/main_window.cxxqt.h"
 
 namespace {
 
 // ---------------------------------------------------------------------------
-// Menu actions — owned by QMainWindow (parent-child); we keep
-// pointers in this struct for post-construction wiring.
+// Workspace presets (B.5)
+// ---------------------------------------------------------------------------
+namespace ws {
+constexpr const char* ASSEMBLY = "assembly";
+constexpr const char* LIGHTING = "lighting";
+constexpr const char* MATERIALS = "materials";
+constexpr const char* RENDER = "render";
+constexpr const char* DEFAULT_WORKSPACE = ASSEMBLY;
+constexpr const char* SETTINGS_LAST_KEY = "workspaces/last_active";
+
+void apply_default_layout(QMainWindow* window, const QString& name) {
+    auto dock = [window](const char* obj_name) -> QDockWidget* {
+        return window->findChild<QDockWidget*>(QString::fromLatin1(obj_name));
+    };
+    auto* scene_browser = dock("dock_scene_browser");
+    auto* layer_stack = dock("dock_layer_stack");
+    auto* property_inspector = dock("dock_property_inspector");
+    auto* node_graph = dock("dock_node_graph");
+
+    auto show_all = [&](bool s) {
+        if (scene_browser) scene_browser->setVisible(s);
+        if (layer_stack) layer_stack->setVisible(s);
+        if (property_inspector) property_inspector->setVisible(s);
+        if (node_graph) node_graph->setVisible(s);
+    };
+
+    if (name == QLatin1String(ws::ASSEMBLY)) {
+        show_all(true);
+    } else if (name == QLatin1String(ws::LIGHTING)) {
+        if (scene_browser) scene_browser->setVisible(true);
+        if (layer_stack) layer_stack->setVisible(false);
+        if (property_inspector) property_inspector->setVisible(true);
+        if (node_graph) node_graph->setVisible(false);
+    } else if (name == QLatin1String(ws::MATERIALS)) {
+        if (scene_browser) scene_browser->setVisible(false);
+        if (layer_stack) layer_stack->setVisible(false);
+        if (property_inspector) property_inspector->setVisible(true);
+        if (node_graph) node_graph->setVisible(true);
+    } else if (name == QLatin1String(ws::RENDER)) {
+        if (scene_browser) scene_browser->setVisible(false);
+        if (layer_stack) layer_stack->setVisible(false);
+        if (property_inspector) property_inspector->setVisible(true);
+        if (node_graph) node_graph->setVisible(false);
+    } else {
+        show_all(true);
+    }
+}
+
+QString state_key(const QString& name) {
+    return QStringLiteral("workspaces/%1/state").arg(name);
+}
+
+void save_current(QMainWindow* window, const QString& current) {
+    if (current.isEmpty()) return;
+    QSettings settings;
+    settings.setValue(state_key(current), window->saveState());
+}
+
+void switch_to(
+    QMainWindow* window,
+    BifShellState* state,
+    const QString& target) {
+    save_current(window, state->getCurrent_workspace());
+
+    QSettings settings;
+    const QByteArray blob = settings.value(state_key(target)).toByteArray();
+    if (blob.isEmpty()) {
+        apply_default_layout(window, target);
+    } else if (!window->restoreState(blob)) {
+        apply_default_layout(window, target);
+    }
+
+    state->setCurrent_workspace(target);
+    settings.setValue(QLatin1String(SETTINGS_LAST_KEY), target);
+    state->setStatus_message(QStringLiteral("Workspace: %1").arg(target));
+    window->statusBar()->showMessage(state->getStatus_message());
+}
+}  // namespace ws
+
+// ---------------------------------------------------------------------------
+// Menu actions
 // ---------------------------------------------------------------------------
 struct MenuActions {
     QAction* new_stage;
@@ -82,7 +170,6 @@ MenuActions build_menu_bar(QMainWindow* window) {
     a.save_as->setShortcut(QKeySequence::SaveAs);
     file->addSeparator();
     a.exit_app = file->addAction(QStringLiteral("E&xit"));
-    // QKeySequence::Quit is empty on Windows — force Ctrl+Q.
     a.exit_app->setShortcut(QKeySequence(QStringLiteral("Ctrl+Q")));
 
     auto* view = menu->addMenu(QStringLiteral("&View"));
@@ -105,28 +192,124 @@ MenuActions build_menu_bar(QMainWindow* window) {
     return a;
 }
 
-// Connect each action to a lambda that invokes the corresponding
-// BifShellState invokable then shows the resulting status message.
-// Keeps the reaction chain: user → QAction → BifShellState (cxx-qt
-// invokable updates status_message) → QStatusBar shows message.
+// ---------------------------------------------------------------------------
+// Breadcrumb (B.7) — placeholder bar above the central widget. Phase
+// C populates segments from SceneLayerState / selection. For now,
+// shows a single "(no stage)" segment.
+// ---------------------------------------------------------------------------
+QToolBar* build_breadcrumb_bar(QMainWindow* window) {
+    auto* bar = new QToolBar(QStringLiteral("Breadcrumb"), window);
+    bar->setObjectName(QStringLiteral("breadcrumb_bar"));
+    bar->setMovable(false);
+    bar->setFloatable(false);
+    bar->setIconSize(QSize(0, 0));
+    bar->setStyleSheet(QStringLiteral(
+        "QToolBar {"
+        "  background-color: rgba(34, 38, 44, 255);"
+        "  border: none;"
+        "  border-bottom: 1px solid rgba(20, 22, 26, 255);"
+        "  padding: 4px 8px;"
+        "  spacing: 0px;"
+        "}"
+        "QToolButton {"
+        "  background-color: transparent;"
+        "  color: rgba(140, 145, 155, 255);"
+        "  border: none;"
+        "  padding: 4px 6px;"
+        "  font-size: 12px;"
+        "}"
+        "QToolButton:hover { color: rgba(220, 222, 226, 255); }"
+        "QLabel { color: rgba(80, 85, 95, 255); padding: 0 2px; }"));
+
+    bar->addAction(QStringLiteral("(no stage)"));
+    return bar;
+}
+
+// Populate breadcrumb segments. Phase C calls this on prim selection
+// changes; Phase B leaves it as a stub.
+void breadcrumb_set_path(QToolBar* bar, const QStringList& segments) {
+    bar->clear();
+    if (segments.isEmpty()) {
+        bar->addAction(QStringLiteral("(no stage)"));
+        return;
+    }
+    for (int i = 0; i < segments.size(); ++i) {
+        if (i > 0) {
+            auto* sep = new QLabel(QStringLiteral(" › "), bar);
+            bar->addWidget(sep);
+        }
+        bar->addAction(segments[i]);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Central area (B.6 + B.7) — wraps QToolBar + QStackedWidget. Stack
+// index 0 = first-launch screen, 1 = wgpu viewport.
+// ---------------------------------------------------------------------------
+struct CentralArea {
+    QWidget* container;
+    QToolBar* breadcrumb;
+    QStackedWidget* stack;
+    FirstLaunchWidget* first_launch;
+    RenderWidget* viewport;
+};
+
+CentralArea build_central_area(QMainWindow* window) {
+    CentralArea ca{};
+    ca.container = new QWidget(window);
+    ca.container->setObjectName(QStringLiteral("central_area"));
+
+    auto* layout = new QVBoxLayout(ca.container);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(0);
+
+    ca.breadcrumb = build_breadcrumb_bar(window);
+    ca.breadcrumb->setParent(ca.container);
+    layout->addWidget(ca.breadcrumb);
+
+    ca.stack = new QStackedWidget(ca.container);
+    ca.stack->setObjectName(QStringLiteral("central_stack"));
+    layout->addWidget(ca.stack, 1);
+
+    ca.first_launch = new FirstLaunchWidget(ca.stack);
+    ca.viewport = new RenderWidget(ca.stack);
+    ca.viewport->setObjectName(QStringLiteral("viewport"));
+
+    ca.stack->addWidget(ca.first_launch);  // index 0
+    ca.stack->addWidget(ca.viewport);      // index 1
+    ca.stack->setCurrentIndex(0);
+
+    return ca;
+}
+
+// ---------------------------------------------------------------------------
+// Action wiring
+// ---------------------------------------------------------------------------
 void wire_shell_actions(
     MenuActions& actions,
     BifShellState* shell_state,
-    QMainWindow* window) {
+    QMainWindow* window,
+    QStackedWidget* central_stack) {
     auto update_status = [shell_state, window]() {
         window->statusBar()->showMessage(shell_state->getStatus_message());
     };
 
-    QObject::connect(actions.new_stage, &QAction::triggered, window,
-        [shell_state, update_status]() {
-            shell_state->on_new_stage();
-            update_status();
-        });
-    QObject::connect(actions.open_stage, &QAction::triggered, window,
-        [shell_state, update_status]() {
-            shell_state->on_open_stage();
-            update_status();
-        });
+    auto open_stage_flow = [shell_state, central_stack, update_status]() {
+        shell_state->on_open_stage();
+        // Swap to viewport so user sees something. Phase C replaces
+        // this with: only swap on actual successful stage load.
+        central_stack->setCurrentIndex(1);
+        update_status();
+    };
+
+    auto new_stage_flow = [shell_state, central_stack, update_status]() {
+        shell_state->on_new_stage();
+        central_stack->setCurrentIndex(1);
+        update_status();
+    };
+
+    QObject::connect(actions.new_stage, &QAction::triggered, window, new_stage_flow);
+    QObject::connect(actions.open_stage, &QAction::triggered, window, open_stage_flow);
     QObject::connect(actions.save, &QAction::triggered, window,
         [shell_state, update_status]() {
             shell_state->on_save();
@@ -140,24 +323,15 @@ void wire_shell_actions(
     QObject::connect(actions.exit_app, &QAction::triggered,
         qApp, &QCoreApplication::quit);
 
-    // Workspace actions — Phase B.5 wires to QMainWindow::saveState
-    // presets in QSettings. For now, update status only.
-    auto workspace_stub = [shell_state, update_status, window](const char* name) {
-        shell_state->setStatus_message(QStringLiteral("Switched to %1 workspace (presets in Phase B.5)")
-            .arg(QString::fromLatin1(name)));
-        update_status();
-    };
     QObject::connect(actions.workspace_assembly, &QAction::triggered, window,
-        [workspace_stub]() { workspace_stub("Assembly"); });
+        [window, shell_state]() { ws::switch_to(window, shell_state, QLatin1String(ws::ASSEMBLY)); });
     QObject::connect(actions.workspace_lighting, &QAction::triggered, window,
-        [workspace_stub]() { workspace_stub("Lighting"); });
+        [window, shell_state]() { ws::switch_to(window, shell_state, QLatin1String(ws::LIGHTING)); });
     QObject::connect(actions.workspace_materials, &QAction::triggered, window,
-        [workspace_stub]() { workspace_stub("Materials"); });
+        [window, shell_state]() { ws::switch_to(window, shell_state, QLatin1String(ws::MATERIALS)); });
     QObject::connect(actions.workspace_render, &QAction::triggered, window,
-        [workspace_stub]() { workspace_stub("Render"); });
+        [window, shell_state]() { ws::switch_to(window, shell_state, QLatin1String(ws::RENDER)); });
 
-    // Zen mode — toggles visibility of every QDockWidget child. Menu
-    // bar + status bar stay visible (only docks vanish).
     QObject::connect(actions.zen_mode, &QAction::toggled, window,
         [window, shell_state, update_status](bool zen) {
             const auto docks = window->findChildren<QDockWidget*>();
@@ -177,6 +351,38 @@ void wire_shell_actions(
         });
 }
 
+// First-launch screen → action plumbing. Clicking the cards routes
+// through the same invokables as the menu, then flips the central
+// stack to the viewport.
+void wire_first_launch(
+    FirstLaunchWidget* first_launch,
+    BifShellState* shell_state,
+    QStackedWidget* central_stack,
+    QMainWindow* window) {
+    auto update_status = [shell_state, window]() {
+        window->statusBar()->showMessage(shell_state->getStatus_message());
+    };
+
+    QObject::connect(first_launch, &FirstLaunchWidget::newStageClicked, window,
+        [shell_state, central_stack, update_status]() {
+            shell_state->on_new_stage();
+            central_stack->setCurrentIndex(1);
+            update_status();
+        });
+    QObject::connect(first_launch, &FirstLaunchWidget::openStageClicked, window,
+        [shell_state, central_stack, update_status]() {
+            shell_state->on_open_stage();
+            central_stack->setCurrentIndex(1);
+            update_status();
+        });
+    QObject::connect(first_launch, &FirstLaunchWidget::recentStageActivated, window,
+        [shell_state, central_stack, update_status](const QString& path) {
+            shell_state->setStatus_message(QStringLiteral("Recent: %1 (Phase C wires file open)").arg(path));
+            central_stack->setCurrentIndex(1);
+            update_status();
+        });
+}
+
 void connect_viewport_signals(
     RenderWidget* viewport,
     ViewportCallbacks* cb,
@@ -191,7 +397,7 @@ void connect_viewport_signals(
             const auto h = viewport->pixelHeight();
             const auto ok = viewport_on_surface_ready(*cb, hwnd, hinst, w, h);
             shell_state->setStatus_message(ok
-                ? QStringLiteral("wgpu viewport live — Phase B shell")
+                ? QStringLiteral("wgpu viewport live")
                 : QStringLiteral("FAILED to init wgpu viewport — see stderr"));
             window->statusBar()->showMessage(shell_state->getStatus_message());
         });
@@ -212,7 +418,6 @@ void connect_viewport_signals(
 }  // namespace
 
 int bif_qt_run_shell(ViewportCallbacks* viewport_cb, ::rust::Str stylesheet) {
-    // argc/argv — static storage so QApplication can hold the int&.
     static char arg0[] = "bif_qt_shell";
     static char* argv_storage[] = {arg0, nullptr};
     static int argc = 1;
@@ -237,13 +442,15 @@ int bif_qt_run_shell(ViewportCallbacks* viewport_cb, ::rust::Str stylesheet) {
     window.setProperty("bif_shell_state", QVariant::fromValue(shell_state));
 
     auto menu_actions = build_menu_bar(&window);
-    wire_shell_actions(menu_actions, shell_state, &window);
 
-    auto* viewport = new RenderWidget(&window);
-    viewport->setObjectName(QStringLiteral("viewport"));
-    window.setCentralWidget(viewport);
+    // Central area: breadcrumb toolbar + QStackedWidget(first-launch | viewport).
+    auto central = build_central_area(&window);
+    window.setCentralWidget(central.container);
+
+    wire_shell_actions(menu_actions, shell_state, &window, central.stack);
+    wire_first_launch(central.first_launch, shell_state, central.stack, &window);
     if (viewport_cb != nullptr) {
-        connect_viewport_signals(viewport, viewport_cb, shell_state, &window);
+        connect_viewport_signals(central.viewport, viewport_cb, shell_state, &window);
     }
 
     make_placeholder_dock(
@@ -263,11 +470,53 @@ int bif_qt_run_shell(ViewportCallbacks* viewport_cb, ::rust::Str stylesheet) {
         QStringLiteral("dock_node_graph"),
         Qt::BottomDockWidgetArea, &window);
 
-    window.statusBar()->showMessage(
-        QStringLiteral("Phase B shell ready — actions wired, panels placeholders."));
+    {
+        QSettings settings;
+        const QString last = settings
+            .value(QLatin1String(ws::SETTINGS_LAST_KEY),
+                   QLatin1String(ws::DEFAULT_WORKSPACE))
+            .toString();
+        ws::switch_to(&window, shell_state, last);
+    }
+
+    // Command palette (B.8) — Ctrl+P opens a centered overlay
+    // listing the menu actions. Phase C widens to prims/layers/nodes.
+    {
+        QHash<QString, QAction*> commands;
+        commands.insert(QStringLiteral("File: New Stage"), menu_actions.new_stage);
+        commands.insert(QStringLiteral("File: Open Stage..."), menu_actions.open_stage);
+        commands.insert(QStringLiteral("File: Save"), menu_actions.save);
+        commands.insert(QStringLiteral("File: Save As..."), menu_actions.save_as);
+        commands.insert(QStringLiteral("File: Exit"), menu_actions.exit_app);
+        commands.insert(QStringLiteral("Workspace: Assembly"), menu_actions.workspace_assembly);
+        commands.insert(QStringLiteral("Workspace: Lighting"), menu_actions.workspace_lighting);
+        commands.insert(QStringLiteral("Workspace: Materials"), menu_actions.workspace_materials);
+        commands.insert(QStringLiteral("Workspace: Render"), menu_actions.workspace_render);
+        commands.insert(QStringLiteral("View: Toggle Zen Mode"), menu_actions.zen_mode);
+        commands.insert(QStringLiteral("Help: About BIF"), menu_actions.about);
+
+        // Owned by `window` via Qt parent-child; deleted on shutdown.
+        auto* palette = new CommandPalette(&window, commands);
+
+        auto* shortcut = new QShortcut(
+            QKeySequence(QStringLiteral("Ctrl+P")), &window);
+        shortcut->setContext(Qt::ApplicationShortcut);
+        QObject::connect(shortcut, &QShortcut::activated, &window,
+            [&window, palette]() {
+                // Center the palette over the main window before showing.
+                const auto win_center = window.geometry().center();
+                palette->move(
+                    win_center.x() - palette->width() / 2,
+                    window.geometry().top() + 80);
+                palette->show();
+                palette->raise();
+                palette->activateWindow();
+            });
+    }
 
     window.show();
     const int rc = app.exec();
+    ws::save_current(&window, shell_state->getCurrent_workspace());
     if (viewport_cb != nullptr) {
         viewport_on_shutdown(*viewport_cb);
     }

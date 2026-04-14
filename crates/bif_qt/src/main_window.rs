@@ -80,6 +80,7 @@ pub mod qobject {
         #[qobject]
         #[qproperty(QString, title)]
         #[qproperty(QString, status_message)]
+        #[qproperty(QString, current_workspace)]
         type BifShellState = super::BifShellStateRust;
 
         /// Smoke-test invokable — verifies Rust↔C++ round-trip.
@@ -114,6 +115,10 @@ pub mod qobject {
 pub struct BifShellStateRust {
     pub title: cxx_qt_lib::QString,
     pub status_message: cxx_qt_lib::QString,
+    /// Active workspace preset — one of "assembly", "lighting",
+    /// "materials", "render". Empty on first launch (C++ side
+    /// initializes from QSettings or falls back to "assembly").
+    pub current_workspace: cxx_qt_lib::QString,
 }
 
 impl Default for BifShellStateRust {
@@ -121,6 +126,7 @@ impl Default for BifShellStateRust {
         Self {
             title: cxx_qt_lib::QString::from("BIF — USD Orchestration (Qt)"),
             status_message: cxx_qt_lib::QString::from("Ready."),
+            current_workspace: cxx_qt_lib::QString::from(""),
         }
     }
 }

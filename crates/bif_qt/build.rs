@@ -25,6 +25,8 @@ fn main() {
         .cc_builder(|cc| {
             cc.file("cpp/window_builder.cpp");
             cc.file("cpp/render_widget.cpp");
+            cc.file("cpp/first_launch_widget.cpp");
+            cc.file("cpp/command_palette.cpp");
             cc.include("cpp");
             cc.std("c++17");
 
@@ -35,10 +37,11 @@ fn main() {
                 cc.flag_if_supported("/EHsc");
             }
         })
-        // render_widget.h has Q_OBJECT → moc generates a companion
-        // .cpp that the cc_builder must compile. CxxQtBuilder picks
-        // up headers passed via .qobject_header() automatically.
+        // Q_OBJECT headers — moc runs on each, generated .cpp is
+        // auto-fed into the cc_builder.
         .qobject_header("cpp/render_widget.h")
+        .qobject_header("cpp/first_launch_widget.h")
+        .qobject_header("cpp/command_palette.h")
         .build();
 
     println!("cargo:rerun-if-changed=src/main_window.rs");
@@ -48,4 +51,8 @@ fn main() {
     println!("cargo:rerun-if-changed=cpp/window_builder.h");
     println!("cargo:rerun-if-changed=cpp/render_widget.cpp");
     println!("cargo:rerun-if-changed=cpp/render_widget.h");
+    println!("cargo:rerun-if-changed=cpp/first_launch_widget.cpp");
+    println!("cargo:rerun-if-changed=cpp/first_launch_widget.h");
+    println!("cargo:rerun-if-changed=cpp/command_palette.cpp");
+    println!("cargo:rerun-if-changed=cpp/command_palette.h");
 }

@@ -14,25 +14,30 @@
 | **Active branch** | **`v0.15-qt`** — Qt migration. `main` stays v0.14.0 shippable until Phase H merge. |
 | v0.15.0 Phase 0 ✅ | wgpu-into-QWidget spike gate PASSED 2026-04-13. Qt 6.8.3 LTS + MSVC 2022 + cxx 1.0 + qt-build-utils 0.7 toolchain proven in `crates/bif_qt_spike/`. ADR-006 authored. |
 | v0.15.0 Phase A ✅ | `crates/bif_qt/` scaffolding landed 2026-04-13. First real `#[cxx_qt::bridge]` — `BifShellState` QObject with 2 qproperties + 1 qinvokable. Theme port (34 colors + stylesheet generator). C++ QMainWindow assembly with 4 dock placeholders + menu bar. |
-| v0.15.0 Phase B.1–B.4 ✅ | wgpu viewport in central widget (B.1), stylesheet installed (B.2), menu actions wired through cxx-qt invokables with keyboard shortcuts (B.3), Zen mode (Ctrl+\\) toggles dock visibility (B.4). 5 `#[qinvokable]` stubs on `BifShellState`. Shell feels alive. |
-| Next | **Phase B slices B.5–B.8 (~8h remaining).** B.5 workspace switcher (`QMainWindow::saveState()`+`QSettings` per preset, Ctrl+1/2/3/4 actually reconfigures). B.6 first-launch screen (no-stage welcome widget). B.7 breadcrumb bar (`QToolBar` above viewport). B.8 command palette (Ctrl+P `QDialog` + fuzzy matcher). |
+| v0.15.0 Phase B ✅ | All 8 slices done. wgpu viewport in central (B.1) · stylesheet (B.2) · menu invokables (B.3) · zen mode Ctrl+\\ (B.4) · workspace switcher with QSettings persistence (B.5) · first-launch welcome screen (B.6) · breadcrumb `QToolBar` (B.7) · command palette Ctrl+P (B.8). Layout: `QWidget(QVBoxLayout(breadcrumb, QStackedWidget(first-launch, viewport)))`. |
+| Next | **Phase C — Core panels (~18h).** Port Layer Stack panel first (simplest, v0.14 reference impl: `QTreeView` + custom `QAbstractItemModel` reading `SceneLayerState` + checkboxes for mute, radio for working layer, color dot delegate). Then Scene Browser (virtualized 100K+ prims, `CompositeProvider` model). Then Property Inspector (Attributes/Relationships tabs, opinion dot delegate). All emit existing `AppEvent` variants — `bif_core` types unchanged. |
 | Tests | ~627 total (90 new in v0.14.0) + spike has no unit tests (deletion-scheduled) |
 | Performance | 60 FPS viewport, 100K instances with LOD, Ivar build ~185ms |
 
 ---
 
-## ➡️ v0.15.0 Qt Migration — Phase B Starting Notes
+## ➡️ v0.15.0 Qt Migration — Phase C Starting Notes
 
 **Strategy (ADR-006):** Shell-first on `v0.15-qt`. Panels one-at-a-time. Merge at Phase H.
 
 **Binding locked:** `cxx-qt 0.7` + `qt-build-utils 0.7` + Qt 6.8.3 LTS + LGPL dynamic linking. Phase A validated cxx-qt macros. C++ owns window assembly (QMainWindow / QDockWidget / QMenuBar) — cxx-qt-lib's QtWidgets coverage is thin and Rust-side boilerplate would be pure cost without ergonomic win. Rust owns QObjects (BifShellState + future panel models).
 
-**Phase A cxx-qt gotchas (for Phase B authors):**
+**Phase A/B cxx-qt + Qt gotchas (for Phase C authors):**
 - `#[qinvokable]` declared inside `extern "RustQt"`, IMPLEMENTED in a regular impl block OUTSIDE the bridge (non-empty impls inside the bridge = compile error).
 - `CxxQtType` trait must be in scope for `.rust()` / `.rust_mut()` accessors.
 - cxx-qt-generated header path: `bif_qt/src/main_window.cxxqt.h` (crate + src prefix).
-- Cannot mix `#[cxx::bridge]` + `#[cxx_qt::bridge]` in same crate — only the latter is processed by `cxx_qt_build::CxxQtBuilder`. Merge extern decls into the single cxx-qt bridge.
-- `#![allow(clippy::missing_safety_doc)]` at crate scope required — clippy can't introspect bridge-macro-expanded fn docs.
+- Cannot mix `#[cxx::bridge]` + `#[cxx_qt::bridge]` in same crate. `extern "Rust"` AND `extern "RustQt"` CAN coexist inside one cxx-qt bridge.
+- `type Foo = path::Foo;` is rejected in `extern "Rust"` — use `type Foo;` and resolve via parent-module `use crate::module::Foo;`.
+- `#![allow(clippy::missing_safety_doc)]` at crate scope required — clippy can't see bridge-macro-expanded fn docs.
+- C++ Q_OBJECT headers need `CxxQtBuilder::qobject_header("path/to.h")` for moc; the `.cpp` goes in `cc_builder.file()`.
+- `QKeySequence::Quit` is empty on Windows — hardcode `Ctrl+Q`.
+- `extern "Rust"` opaque types pass to C++ as `Foo*` raw pointers (no UniquePtr unless explicitly boxed).
+- `rust::Str` ↔ `QString`: `QString::fromUtf8(s.data(), static_cast<int>(s.size()))`.
 
 **Phase 0 artifacts already in branch:**
 
