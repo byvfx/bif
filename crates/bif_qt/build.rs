@@ -35,6 +35,7 @@ fn main() {
             cc.file("cpp/timeline_widget.cpp");
             cc.file("cpp/render_settings_widget.cpp");
             cc.file("cpp/node_graph_widget.cpp");
+            cc.file("cpp/shortcut_registry.cpp");
             cc.include("cpp");
             cc.std("c++17");
 
@@ -87,4 +88,6 @@ fn main() {
     println!("cargo:rerun-if-changed=cpp/render_settings_widget.h");
     println!("cargo:rerun-if-changed=cpp/node_graph_widget.cpp");
     println!("cargo:rerun-if-changed=cpp/node_graph_widget.h");
+    println!("cargo:rerun-if-changed=cpp/shortcut_registry.cpp");
+    println!("cargo:rerun-if-changed=cpp/shortcut_registry.h");
 }

@@ -1,9 +1,11 @@
 #include "render_widget.h"
 
+#include <QMouseEvent>
 #include <QPaintEvent>
 #include <QResizeEvent>
 #include <QShowEvent>
 #include <QTimer>
+#include <QWheelEvent>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -19,7 +21,7 @@ RenderWidget::RenderWidget(QWidget* parent) : QWidget(parent) {
     setAttribute(Qt::WA_NoSystemBackground, true);
     // Accept focus so the viewport can handle key events later.
     setFocusPolicy(Qt::StrongFocus);
-    // Reasonable default, shell will override.
+    setMouseTracking(false);
     setMinimumSize(320, 240);
 }
 
@@ -46,7 +48,6 @@ int RenderWidget::pixelHeight() const {
 }
 
 void RenderWidget::paintEvent(QPaintEvent* event) {
-    // Qt paint event is our tick — forward to Rust. Never call base.
     Q_UNUSED(event);
     emit frameRequested();
 }
@@ -58,15 +59,61 @@ void RenderWidget::resizeEvent(QResizeEvent* event) {
 
 void RenderWidget::showEvent(QShowEvent* event) {
     QWidget::showEvent(event);
-    // First show — wgpu::Surface creation needs a valid HWND, which
-    // only exists after the widget has been shown and native-created.
     emit surfaceReady();
-    // Kick off continuous rendering via a ~60fps timer. A real shell
-    // will drive this from the scene-dirty event instead.
     static QTimer* tick = nullptr;
     if (!tick) {
         tick = new QTimer(this);
         connect(tick, &QTimer::timeout, this, QOverload<>::of(&QWidget::update));
         tick->start(16);
     }
+}
+
+// ---------------------------------------------------------------------------
+// Camera input (Phase E.1)
+// LMB (no mods)      → primPickRequested (Phase E.2 ray-cast)
+// Alt+LMB drag       → cameraOrbit (dx, dy pixels)
+// MMB drag           → cameraPan   (dx, dy pixels)
+// Wheel              → cameraZoom  (QWheelEvent::angleDelta().y())
+// Raw pixel deltas are emitted; a downstream handler scales by the
+// ORBIT_SENSITIVITY / PAN_SENSITIVITY constants from bif_viewer/main.
+// ---------------------------------------------------------------------------
+
+void RenderWidget::mousePressEvent(QMouseEvent* event) {
+    m_last_mouse_pos = event->pos();
+    if (event->button() == Qt::LeftButton) {
+        if (event->modifiers() & Qt::AltModifier) {
+            m_orbit_active = true;
+        } else {
+            emit primPickRequested(event->pos().x(), event->pos().y());
+        }
+    } else if (event->button() == Qt::MiddleButton) {
+        m_pan_active = true;
+    }
+    setFocus(Qt::MouseFocusReason);
+    event->accept();
+}
+
+void RenderWidget::mouseMoveEvent(QMouseEvent* event) {
+    const QPoint delta = event->pos() - m_last_mouse_pos;
+    m_last_mouse_pos = event->pos();
+    if (m_orbit_active) {
+        emit cameraOrbit(delta.x(), delta.y());
+    } else if (m_pan_active) {
+        emit cameraPan(delta.x(), delta.y());
+    }
+    event->accept();
+}
+
+void RenderWidget::mouseReleaseEvent(QMouseEvent* event) {
+    if (event->button() == Qt::LeftButton) {
+        m_orbit_active = false;
+    } else if (event->button() == Qt::MiddleButton) {
+        m_pan_active = false;
+    }
+    event->accept();
+}
+
+void RenderWidget::wheelEvent(QWheelEvent* event) {
+    emit cameraZoom(event->angleDelta().y());
+    event->accept();
 }

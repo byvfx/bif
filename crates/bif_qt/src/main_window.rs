@@ -93,11 +93,22 @@ pub mod qobject {
         // to the auto-generated `selected_prim_pathChanged` signal.
         #[qproperty(QString, selected_prim_path)]
         #[qproperty(QString, selected_prim_type)]
-        // Timeline state (Phase D.1). Phase E wires the frame-advance
-        // timer + bif_core::TimelineState.
+        // Timeline state (Phase D.1 / E.1). Phase E.2 wires the
+        // auto-detect from bif_core::TimelineState + USD metadata.
         #[qproperty(i32, current_frame)]
         #[qproperty(i32, start_frame)]
         #[qproperty(i32, end_frame)]
+        #[qproperty(i32, playback_fps)]
+        /// When true, playback paces to `playback_fps` (real clock).
+        /// When false, playback advances as fast as possible — useful
+        /// for non-realtime scenes where each frame's render cost
+        /// dominates.
+        #[qproperty(bool, realtime_playback)]
+        /// When true, playback wraps back to `start_frame` at
+        /// `end_frame`. When false, playback stops at `end_frame`.
+        /// Future: upgrade to an enum (Repeat / Bounce / Stop /
+        /// Continue) à la Nuke.
+        #[qproperty(bool, loop_playback)]
         #[qproperty(bool, is_playing)]
         type BifShellState = super::BifShellStateRust;
 
@@ -116,6 +127,31 @@ pub mod qobject {
         /// File/Save (Ctrl+S). Phase B stub.
         #[qinvokable]
         fn on_save(self: Pin<&mut BifShellState>);
+
+        /// Record an opened stage path in the status bar + recents
+        /// (QSettings-side). Phase E.2 parses + loads the stage;
+        /// Phase E.1 records only.
+        #[qinvokable]
+        fn on_stage_path_opened(self: Pin<&mut BifShellState>, path: QString);
+
+        /// Camera orbit delta forwarded from RenderWidget::cameraOrbit.
+        /// Phase E.1 just updates status; Phase E.2 dispatches a
+        /// real AppEvent::CameraOrbit to bif_renderer::Renderer.
+        #[qinvokable]
+        fn on_camera_orbit(self: Pin<&mut BifShellState>, dx: i32, dy: i32);
+
+        /// Camera pan delta.
+        #[qinvokable]
+        fn on_camera_pan(self: Pin<&mut BifShellState>, dx: i32, dy: i32);
+
+        /// Camera wheel zoom.
+        #[qinvokable]
+        fn on_camera_zoom(self: Pin<&mut BifShellState>, angle_delta: i32);
+
+        /// Frame the currently-selected prim (F key). Phase E.2
+        /// dispatches AppEvent::FrameSelected; Phase E.1 stub status.
+        #[qinvokable]
+        fn on_frame_selected(self: Pin<&mut BifShellState>);
 
         /// File/Save As (Ctrl+Shift+S). Phase B stub.
         #[qinvokable]
@@ -196,6 +232,16 @@ pub mod qobject {
         #[qinvokable]
         fn step_frame(self: Pin<&mut BifShellState>, delta: i32);
 
+        /// Jump to the previous keyframe before `current_frame`, or
+        /// clamp to `start_frame` if none. Stops playback.
+        #[qinvokable]
+        fn jump_to_prev_keyframe(self: Pin<&mut BifShellState>);
+
+        /// Jump to the next keyframe after `current_frame`, or clamp
+        /// to `end_frame` if none. Stops playback.
+        #[qinvokable]
+        fn jump_to_next_keyframe(self: Pin<&mut BifShellState>);
+
         /// Number of keyframes the demo timeline exposes.
         #[qinvokable]
         fn keyframe_count(self: &BifShellState) -> i32;
@@ -203,6 +249,13 @@ pub mod qobject {
         /// Frame of the keyframe at `index`. -1 on OOB.
         #[qinvokable]
         fn keyframe_at(self: &BifShellState, index: i32) -> i32;
+
+        /// Re-detect timeline range + fps from the currently-loaded
+        /// USD stage's `startTimeCode` / `endTimeCode` /
+        /// `timeCodesPerSecond`. Phase E.1 is a status-only stub;
+        /// Phase E.2 does the real read after stage load lands.
+        #[qinvokable]
+        fn detect_timeline_from_stage(self: Pin<&mut BifShellState>);
     }
 }
 
@@ -233,6 +286,18 @@ pub struct BifShellStateRust {
     pub start_frame: i32,
     /// Timeline — inclusive end frame.
     pub end_frame: i32,
+    /// Timeline — frames-per-second used for the playback QTimer.
+    /// Phase E.2 defaults to the loaded stage's `timeCodesPerSecond`;
+    /// user can override via the timeline FPS spinbox.
+    pub playback_fps: i32,
+    /// Timeline — when true (default), the playback timer ticks at
+    /// 1000/fps ms so playback runs at real wallclock speed. When
+    /// false the timer ticks as fast as possible — useful for non-
+    /// realtime scenes where rendering dominates frame time.
+    pub realtime_playback: bool,
+    /// Timeline — loop playback at end_frame. When false, playback
+    /// stops. Future work: expand to an enum with Bounce/Continue.
+    pub loop_playback: bool,
     /// Timeline — true when playback is active (Phase E wires the timer).
     pub is_playing: bool,
     /// Hardcoded demo keyframes (Phase D.1). Phase E replaces with
@@ -253,6 +318,9 @@ impl Default for BifShellStateRust {
             current_frame: 0,
             start_frame: 0,
             end_frame: 120,
+            playback_fps: 24,
+            realtime_playback: true,
+            loop_playback: true,
             is_playing: false,
             demo_keyframes: vec![0, 12, 30, 48, 72, 96, 120],
         }
@@ -305,6 +373,48 @@ impl qobject::BifShellState {
         self.as_mut().set_status_message(cxx_qt_lib::QString::from(
             "BIF — USD Orchestration Tool — bif_qt v0.14.0 (Phase B shell)",
         ));
+    }
+
+    fn on_stage_path_opened(mut self: Pin<&mut Self>, path: cxx_qt_lib::QString) {
+        let path_str: String = (&path).into();
+        log::info!("stage open requested: {path_str}");
+        self.as_mut()
+            .set_status_message(cxx_qt_lib::QString::from(&format!(
+                "Open Stage: {path_str}  (Phase E.2 wires the actual load)"
+            )));
+    }
+
+    fn on_camera_orbit(mut self: Pin<&mut Self>, dx: i32, dy: i32) {
+        self.as_mut()
+            .set_status_message(cxx_qt_lib::QString::from(&format!(
+                "Camera orbit Δ=({dx},{dy})  (Phase E.2 wires Renderer)"
+            )));
+    }
+
+    fn on_camera_pan(mut self: Pin<&mut Self>, dx: i32, dy: i32) {
+        self.as_mut()
+            .set_status_message(cxx_qt_lib::QString::from(&format!(
+                "Camera pan Δ=({dx},{dy})  (Phase E.2 wires Renderer)"
+            )));
+    }
+
+    fn on_camera_zoom(mut self: Pin<&mut Self>, angle_delta: i32) {
+        self.as_mut()
+            .set_status_message(cxx_qt_lib::QString::from(&format!(
+                "Camera zoom Δ={angle_delta}  (Phase E.2 wires Renderer)"
+            )));
+    }
+
+    fn on_frame_selected(mut self: Pin<&mut Self>) {
+        let path_qs = self.as_ref().rust().selected_prim_path.clone();
+        let path: String = (&path_qs).into();
+        let msg = if path.is_empty() {
+            "Frame: no prim selected".to_string()
+        } else {
+            format!("Frame: {path}  (Phase E.2 wires bounds calc)")
+        };
+        self.as_mut()
+            .set_status_message(cxx_qt_lib::QString::from(&msg));
     }
 
     // -----------------------------------------------------------------
@@ -491,6 +601,50 @@ impl qobject::BifShellState {
         self.as_mut().set_current_frame(next);
     }
 
+    fn jump_to_prev_keyframe(mut self: Pin<&mut Self>) {
+        let (target, was_playing) = {
+            let pin_ref = self.as_ref();
+            let r = pin_ref.rust();
+            let cur = r.current_frame;
+            let start = r.start_frame;
+            // Largest keyframe strictly less than current; fallback to start.
+            let target = r
+                .demo_keyframes
+                .iter()
+                .copied()
+                .filter(|&k| k < cur)
+                .max()
+                .unwrap_or(start);
+            (target, r.is_playing)
+        };
+        if was_playing {
+            self.as_mut().set_is_playing(false);
+        }
+        self.as_mut().set_current_frame(target);
+    }
+
+    fn jump_to_next_keyframe(mut self: Pin<&mut Self>) {
+        let (target, was_playing) = {
+            let pin_ref = self.as_ref();
+            let r = pin_ref.rust();
+            let cur = r.current_frame;
+            let end = r.end_frame;
+            // Smallest keyframe strictly greater than current; fallback to end.
+            let target = r
+                .demo_keyframes
+                .iter()
+                .copied()
+                .filter(|&k| k > cur)
+                .min()
+                .unwrap_or(end);
+            (target, r.is_playing)
+        };
+        if was_playing {
+            self.as_mut().set_is_playing(false);
+        }
+        self.as_mut().set_current_frame(target);
+    }
+
     fn keyframe_count(&self) -> i32 {
         self.rust().demo_keyframes.len() as i32
     }
@@ -501,6 +655,18 @@ impl qobject::BifShellState {
             .get(index as usize)
             .copied()
             .unwrap_or(-1)
+    }
+
+    fn detect_timeline_from_stage(mut self: Pin<&mut Self>) {
+        // Phase E.1 stub. Phase E.2 reads the loaded UsdStage for
+        // startTimeCode / endTimeCode / timeCodesPerSecond and
+        // writes them through set_start_frame / set_end_frame /
+        // set_playback_fps. Until a stage is actually loaded the
+        // button just surfaces intent in the status bar.
+        log::info!("timeline: detect-from-stage requested (Phase E.2 stub)");
+        self.as_mut().set_status_message(cxx_qt_lib::QString::from(
+            "Detect timeline from stage — Phase E.2 wires USD metadata read",
+        ));
     }
 }
 

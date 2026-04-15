@@ -57,13 +57,31 @@ private slots:
     void on_frame_spin_changed(int value);
     void on_state_changed();
 
+private slots:
+    void on_start_spin_changed(int value);
+    void on_end_spin_changed(int value);
+    void on_fps_spin_changed(int value);
+    void on_detect_clicked();
+
 private:
     BifShellState* m_state;
     TimelineRuler* m_ruler;
     QToolBar* m_toolbar;
+    QAction* m_prev_keyframe_action;
     QAction* m_prev_action;
     QAction* m_play_action;
     QAction* m_next_action;
+    QAction* m_next_keyframe_action;
     QSpinBox* m_frame_spin;
-    QLabel* m_range_label;
+    // Range + fps inline editors — ease-of-use alternative to a
+    // modal "Global Animation Options" dialog. `m_detect_action`
+    // re-reads the loaded USD stage's time metadata. `m_realtime_action`
+    // flips the QTimer between paced (1000/fps ms) and as-fast-as-
+    // possible playback modes.
+    QSpinBox* m_start_spin;
+    QSpinBox* m_end_spin;
+    QSpinBox* m_fps_spin;
+    QAction* m_realtime_action;
+    QAction* m_loop_action;
+    QAction* m_detect_action;
 };

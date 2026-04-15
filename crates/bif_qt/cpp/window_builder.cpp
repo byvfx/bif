@@ -7,12 +7,14 @@
 #include "render_settings_widget.h"
 #include "render_widget.h"
 #include "scene_browser_widget.h"
+#include "shortcut_registry.h"
 #include "timeline_widget.h"
 
 #include <QAction>
 #include <QApplication>
 #include <QByteArray>
 #include <QDockWidget>
+#include <QFileDialog>
 #include <QHash>
 #include <QKeySequence>
 #include <QLabel>
@@ -27,6 +29,8 @@
 #include <QStackedWidget>
 #include <QStatusBar>
 #include <QString>
+#include <QStringList>
+#include <QTimer>
 #include <QToolBar>
 #include <QVBoxLayout>
 #include <QWidget>
@@ -315,7 +319,33 @@ void wire_shell_actions(
     };
 
     QObject::connect(actions.new_stage, &QAction::triggered, window, new_stage_flow);
-    QObject::connect(actions.open_stage, &QAction::triggered, window, open_stage_flow);
+    // Open Stage now actually shows a QFileDialog (Phase E.1). Phase
+    // E.2 parses the returned path + calls bif_core::scene_loader.
+    QObject::connect(actions.open_stage, &QAction::triggered, window,
+        [window, shell_state, central_stack, update_status]() {
+            const QString path = QFileDialog::getOpenFileName(
+                window,
+                QStringLiteral("Open USD Stage"),
+                QString(),
+                QStringLiteral("USD files (*.usd *.usda *.usdc *.usdz);;All files (*)"));
+            if (!path.isEmpty()) {
+                // Store in recents for the first-launch list.
+                QSettings settings;
+                auto recents = settings.value(QStringLiteral("recent_stages"))
+                                    .toStringList();
+                recents.removeAll(path);
+                recents.prepend(path);
+                while (recents.size() > 10) recents.removeLast();
+                settings.setValue(QStringLiteral("recent_stages"), recents);
+
+                shell_state->on_stage_path_opened(path);
+                central_stack->setCurrentIndex(1);
+                update_status();
+            } else {
+                shell_state->on_open_stage();
+                update_status();
+            }
+        });
     QObject::connect(actions.save, &QAction::triggered, window,
         [shell_state, update_status]() {
             shell_state->on_save();
@@ -418,6 +448,41 @@ void connect_viewport_signals(
         viewport, &RenderWidget::frameRequested, viewport,
         [cb]() {
             viewport_on_frame(*cb);
+        });
+
+    // Camera + selection input — Phase E.1 routes deltas to
+    // BifShellState invokables that update the status bar. Phase E.2
+    // dispatches real AppEvent::Camera* to the bif_renderer Renderer.
+    auto update_status = [shell_state, window]() {
+        window->statusBar()->showMessage(shell_state->getStatus_message());
+    };
+
+    QObject::connect(
+        viewport, &RenderWidget::cameraOrbit, shell_state,
+        [shell_state, update_status](int dx, int dy) {
+            shell_state->on_camera_orbit(dx, dy);
+            update_status();
+        });
+    QObject::connect(
+        viewport, &RenderWidget::cameraPan, shell_state,
+        [shell_state, update_status](int dx, int dy) {
+            shell_state->on_camera_pan(dx, dy);
+            update_status();
+        });
+    QObject::connect(
+        viewport, &RenderWidget::cameraZoom, shell_state,
+        [shell_state, update_status](int d) {
+            shell_state->on_camera_zoom(d);
+            update_status();
+        });
+    QObject::connect(
+        viewport, &RenderWidget::primPickRequested, shell_state,
+        [shell_state, update_status](int x, int y) {
+            // Phase E.2 builds a ray and hit-tests; for now just
+            // surface the click coords.
+            shell_state->setStatus_message(QStringLiteral(
+                "Viewport pick at (%1,%2) — Phase E.2 wires ray-cast").arg(x).arg(y));
+            update_status();
         });
 }
 
@@ -598,6 +663,101 @@ int bif_qt_run_shell(ViewportCallbacks* viewport_cb, ::rust::Str stylesheet) {
                 palette->raise();
                 palette->activateWindow();
             });
+    }
+
+    // Timeline QTimer — advances current_frame while is_playing.
+    // Interval driven by playback_fps + realtime_playback: paced at
+    // 1000/fps ms in realtime mode, 0ms (as-fast-as-possible) when
+    // realtime is off. Phase E.2 swaps for bif_core TimelineState.
+    auto* timeline_timer = new QTimer(&window);
+    auto compute_timer_interval = [shell_state]() {
+        if (!shell_state->getRealtime_playback()) return 0;
+        const int fps = qMax(1, shell_state->getPlayback_fps());
+        return qMax(1, 1000 / fps);
+    };
+    timeline_timer->setInterval(compute_timer_interval());
+    QObject::connect(timeline_timer, &QTimer::timeout, &window,
+        [shell_state]() {
+            const int cur = shell_state->getCurrent_frame();
+            const int start = shell_state->getStart_frame();
+            const int end = shell_state->getEnd_frame();
+            const bool loop = shell_state->getLoop_playback();
+            int next = cur + 1;
+            if (next > end) {
+                if (loop) {
+                    next = start;
+                } else {
+                    shell_state->setIs_playing(false);
+                    shell_state->setCurrent_frame(end);
+                    return;
+                }
+            }
+            shell_state->setCurrent_frame(next);
+        });
+    QObject::connect(shell_state, &BifShellState::is_playingChanged, &window,
+        [shell_state, timeline_timer]() {
+            if (shell_state->getIs_playing()) {
+                timeline_timer->start();
+            } else {
+                timeline_timer->stop();
+            }
+        });
+    // Re-tune the interval on fps / realtime change.
+    auto retune_timer = [timeline_timer, compute_timer_interval]() {
+        timeline_timer->setInterval(compute_timer_interval());
+    };
+    QObject::connect(shell_state, &BifShellState::playback_fpsChanged,
+                     &window, retune_timer);
+    QObject::connect(shell_state, &BifShellState::realtime_playbackChanged,
+                     &window, retune_timer);
+
+    // Keyboard shortcuts — all routed through ShortcutRegistry so a
+    // future Preferences dialog can rebind them. Register each with a
+    // stable ID + default sequence; the registry consults QSettings
+    // `shortcuts/<id>` for user overrides on lookup.
+    //
+    // Context choice: Qt::ApplicationShortcut for F (fires everywhere,
+    // matches standard DCC "frame selected"). Qt::WindowShortcut for
+    // arrow keys + Space so QLineEdit / QSpinBox edits keep arrow
+    // navigation + spacebar typing.
+    {
+        namespace sc = bif_qt::shortcuts;
+        auto bind = [&window](const char* id, const QKeySequence& def,
+                              Qt::ShortcutContext ctx, auto&& handler) {
+            auto* shortcut = new QShortcut(sc::lookup(id, def), &window);
+            shortcut->setContext(ctx);
+            QObject::connect(shortcut, &QShortcut::activated, &window, handler);
+            return shortcut;
+        };
+
+        bind(sc::kCameraFrameSelected, QKeySequence(Qt::Key_F),
+             Qt::ApplicationShortcut,
+             [shell_state, &window]() {
+                 shell_state->on_frame_selected();
+                 window.statusBar()->showMessage(shell_state->getStatus_message());
+             });
+
+        bind(sc::kTimelineTogglePlayback, QKeySequence(Qt::Key_Space),
+             Qt::WindowShortcut,
+             [shell_state]() { shell_state->toggle_playback(); });
+
+        bind(sc::kTimelinePrevFrame, QKeySequence(Qt::Key_Left),
+             Qt::WindowShortcut,
+             [shell_state]() { shell_state->step_frame(-1); });
+
+        bind(sc::kTimelineNextFrame, QKeySequence(Qt::Key_Right),
+             Qt::WindowShortcut,
+             [shell_state]() { shell_state->step_frame(1); });
+
+        bind(sc::kTimelinePrevKeyframe,
+             QKeySequence(Qt::ShiftModifier | Qt::Key_Left),
+             Qt::WindowShortcut,
+             [shell_state]() { shell_state->jump_to_prev_keyframe(); });
+
+        bind(sc::kTimelineNextKeyframe,
+             QKeySequence(Qt::ShiftModifier | Qt::Key_Right),
+             Qt::WindowShortcut,
+             [shell_state]() { shell_state->jump_to_next_keyframe(); });
     }
 
     window.show();

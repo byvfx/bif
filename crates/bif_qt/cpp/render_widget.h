@@ -13,14 +13,16 @@
 //   native_win_id()        — returns HWND as u64 for raw-window-handle
 //   native_hinstance()     — returns HINSTANCE as u64
 //   emits resized(w, h)    — whenever the widget's pixel size changes
-//   emits request_frame()  — Qt update() path triggers a paintEvent,
-//                            we forward it as a render request to Rust
+//   emits frameRequested() — Qt update() path triggers a paintEvent
+//   emits cameraOrbit / cameraPan / cameraZoom — camera input (Phase E.1)
+//   emits primPickRequested(x, y) — LMB click for ray-cast (Phase E.1)
 //
 // The Rust side drives wgpu::Surface creation/render/resize entirely;
-// this widget is a glorified HWND carrier with a render tick.
+// this widget is a glorified HWND carrier with a render tick + input.
 
 #pragma once
 
+#include <QPoint>
 #include <QWidget>
 #include <cstdint>
 
@@ -30,15 +32,8 @@ public:
     explicit RenderWidget(QWidget* parent = nullptr);
     ~RenderWidget() override;
 
-    // Returns the native window handle as u64.
-    // Windows: HWND. Linux: Window/xcb_window_t. macOS: NSView*.
     std::uint64_t nativeWinId() const;
-
-    // Windows-only: module HINSTANCE (GetModuleHandle(NULL)).
-    // Returns 0 on non-Windows.
     std::uint64_t nativeHInstance() const;
-
-    // Widget size in device pixels (DPR-scaled).
     int pixelWidth() const;
     int pixelHeight() const;
 
@@ -48,8 +43,28 @@ protected:
     void resizeEvent(QResizeEvent* event) override;
     void showEvent(QShowEvent* event) override;
 
+    void mousePressEvent(QMouseEvent* event) override;
+    void mouseMoveEvent(QMouseEvent* event) override;
+    void mouseReleaseEvent(QMouseEvent* event) override;
+    void wheelEvent(QWheelEvent* event) override;
+
 signals:
     void resized(int width, int height);
     void frameRequested();
     void surfaceReady();
+
+    /// Camera orbit delta (Alt+LMB drag). Raw pixel deltas; a
+    /// downstream handler applies ORBIT_SENSITIVITY.
+    void cameraOrbit(int dx, int dy);
+    /// Camera pan delta (middle-mouse drag).
+    void cameraPan(int dx, int dy);
+    /// Camera wheel zoom — matches QWheelEvent::angleDelta().y().
+    void cameraZoom(int angle_delta);
+    /// Unmodified LMB click — Phase E.2 ray-casts into selection.rs.
+    void primPickRequested(int x, int y);
+
+private:
+    QPoint m_last_mouse_pos;
+    bool m_orbit_active = false;
+    bool m_pan_active = false;
 };
