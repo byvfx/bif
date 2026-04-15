@@ -15,20 +15,21 @@
 | v0.15.0 Phase 0 ✅ | wgpu-into-QWidget spike gate PASSED 2026-04-13. Qt 6.8.3 LTS + MSVC 2022 + cxx 1.0 + qt-build-utils 0.7 toolchain proven in `crates/bif_qt_spike/`. ADR-006 authored. |
 | v0.15.0 Phase A ✅ | `crates/bif_qt/` scaffolding landed 2026-04-13. First real `#[cxx_qt::bridge]` — `BifShellState` QObject with 2 qproperties + 1 qinvokable. Theme port (34 colors + stylesheet generator). C++ QMainWindow assembly with 4 dock placeholders + menu bar. |
 | v0.15.0 Phase B ✅ | All 8 slices. Viewport + stylesheet + menu + Zen mode + workspaces + first-launch + breadcrumb + command palette. |
-| v0.15.0 Phase C ✅ | All 3 panels. Layer Stack (QListView + checkbox mute + double-click working + isolation toolbar + color dot). Scene Browser (QTreeView + hierarchical filter + selection routes to `BifShellState::selected_prim_path`). Property Inspector (tabs + composition arcs group + attributes table with opinion dots). Demo data in C++ until Phase E. 11 new `#[qinvokable]`s + 3 new qproperties on `BifShellState`. |
-| Next | **Phase D — Secondary panels (~10h).** Timeline (`QWidget` custom paint — playhead, keyframe markers, frame range; play/pause toolbar). Node Graph (`QGraphicsScene` + `QGraphicsItem` per node type — biggest single port; preserve 10 existing node types, replace `egui-snarl` entirely). Render Settings + Stats (QFormLayout for sliders/toggles). |
+| v0.15.0 Phase C ✅ | 3 panels. Layer Stack · Scene Browser · Property Inspector. |
+| v0.15.0 Phase D ✅ | 3 secondary panels. Timeline (custom paintEvent ruler + keyframes + scrub). Node Graph (QGraphicsScene replacing egui-snarl; 5-node demo; wheel-zoom + middle-pan). Render Settings (QFormLayout form). Bottom dock tabifies Node Graph + Timeline; Render Settings tabifies with Property Inspector. |
+| Next | **Phase E — Input + event wiring (~3h).** Map existing egui keybindings (Ctrl+N/O/S/Shift+S, F to frame) → `QKeySequence`. Mouse orbit/pan/zoom on viewport via `QMouseEvent` (preserve `ORBIT_SENSITIVITY` / `PAN_SENSITIVITY` from bif_viewer). Gizmo raycast via `QMouseEvent` → existing `selection.rs`. `EventBus` + dispatch modules carry through untouched — decide the panel→AppEvent bridge (global queue vs cxx-qt QObject) now that real USD operations need dispatched handling. |
 | Tests | ~627 total (90 new in v0.14.0) + spike has no unit tests (deletion-scheduled) |
 | Performance | 60 FPS viewport, 100K instances with LOD, Ivar build ~185ms |
 
 ---
 
-## ➡️ v0.15.0 Qt Migration — Phase D Starting Notes
+## ➡️ v0.15.0 Qt Migration — Phase E Starting Notes
 
 **Strategy (ADR-006):** Shell-first on `v0.15-qt`. Panels one-at-a-time. Merge at Phase H.
 
 **Binding locked:** `cxx-qt 0.7` + `qt-build-utils 0.7` + Qt 6.8.3 LTS + LGPL dynamic linking. Phase A validated cxx-qt macros. C++ owns window assembly (QMainWindow / QDockWidget / QMenuBar) — cxx-qt-lib's QtWidgets coverage is thin and Rust-side boilerplate would be pure cost without ergonomic win. Rust owns QObjects (BifShellState + future panel models).
 
-**Phase A/B/C cxx-qt + Qt gotchas (for Phase D authors):**
+**Phase A/B/C/D cxx-qt + Qt gotchas (for Phase E authors):**
 - `#[qinvokable]` declared inside `extern "RustQt"`, IMPLEMENTED in a regular impl block OUTSIDE the bridge (non-empty impls inside the bridge = compile error).
 - `CxxQtType` trait must be in scope for `.rust()` / `.rust_mut()` accessors.
 - cxx-qt-generated header path: `bif_qt/src/main_window.cxxqt.h` (crate + src prefix).
@@ -44,6 +45,11 @@
 - **`self: &Self` in invokable impl blocks trips `clippy::needless_arbitrary_self_type`** — use plain `&self` in the impl body even though the bridge declaration requires `self: &BifShellState`.
 - **Nested private C++ struct types aren't accessible from anonymous namespaces in the .cpp** — promote to public when helper builders need them.
 - **Auto-generated property-changed signals are `<snake>Changed`** — for `#[qproperty(i32, layer_state_revision)]` the signal is `layer_state_revisionChanged`. Use that, not a custom `#[qsignal]`, for triggering model refreshes.
+- **cxx-qt bridge `#[qinvokable]` read-only functions require `self: &BifShellState`, NOT `&self`.** Impl bodies use `&self` normally (clippy wants that). Mutators use `self: Pin<&mut BifShellState>`.
+- **When reading `.rust()` inside a `Pin<&mut Self>` invokable**, bind the `self.as_ref()` temporary to a variable before calling `.rust()`, or the borrow dangles (E0716).
+- **`QGraphicsView` consumes wheel events for its built-in scroll.** Override `wheelEvent` on a `QGraphicsView` subclass, not on the wrapping `QWidget` — wheel events don't propagate.
+- **`QGraphicsPathItem` is NOT a QObject** — it can't be the connect context. Use the sender (also the QObject) as the context for 3-arg connect.
+- **`BifNodeGraphicsItem::moved` signal pattern:** emit from `itemChange(ItemPositionHasChanged, ...)` on a `QGraphicsObject` subclass. Wires subscribe for re-routing.
 
 **Phase 0 artifacts already in branch:**
 

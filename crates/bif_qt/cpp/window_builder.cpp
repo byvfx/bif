@@ -2,9 +2,12 @@
 #include "command_palette.h"
 #include "first_launch_widget.h"
 #include "layer_stack_widget.h"
+#include "node_graph_widget.h"
 #include "property_inspector_widget.h"
+#include "render_settings_widget.h"
 #include "render_widget.h"
 #include "scene_browser_widget.h"
+#include "timeline_widget.h"
 
 #include <QAction>
 #include <QApplication>
@@ -498,10 +501,55 @@ int bif_qt_run_shell(ViewportCallbacks* viewport_cb, ::rust::Str stylesheet) {
         dock->setWidget(panel);
         window.addDockWidget(Qt::RightDockWidgetArea, dock);
     }
-    make_placeholder_dock(
-        QStringLiteral("Node Graph"),
-        QStringLiteral("dock_node_graph"),
-        Qt::BottomDockWidgetArea, &window);
+    // Bottom area: Node Graph (still a placeholder — Phase D.2) and
+    // Timeline (Phase D.1) tabified together.
+    QDockWidget* node_graph_dock = nullptr;
+    QDockWidget* timeline_dock = nullptr;
+    {
+        node_graph_dock = new QDockWidget(QStringLiteral("Node Graph"), &window);
+        node_graph_dock->setObjectName(QStringLiteral("dock_node_graph"));
+        node_graph_dock->setAllowedAreas(Qt::AllDockWidgetAreas);
+        node_graph_dock->setFeatures(
+            QDockWidget::DockWidgetMovable |
+            QDockWidget::DockWidgetFloatable |
+            QDockWidget::DockWidgetClosable);
+        auto* panel = new NodeGraphWidget(node_graph_dock);
+        node_graph_dock->setWidget(panel);
+        window.addDockWidget(Qt::BottomDockWidgetArea, node_graph_dock);
+    }
+    {
+        timeline_dock = new QDockWidget(QStringLiteral("Timeline"), &window);
+        timeline_dock->setObjectName(QStringLiteral("dock_timeline"));
+        timeline_dock->setAllowedAreas(Qt::AllDockWidgetAreas);
+        timeline_dock->setFeatures(
+            QDockWidget::DockWidgetMovable |
+            QDockWidget::DockWidgetFloatable |
+            QDockWidget::DockWidgetClosable);
+        auto* panel = new TimelineWidget(shell_state, timeline_dock);
+        timeline_dock->setWidget(panel);
+        window.addDockWidget(Qt::BottomDockWidgetArea, timeline_dock);
+        window.tabifyDockWidget(node_graph_dock, timeline_dock);
+    }
+
+    // Render Settings dock — tabified with Property Inspector on the right.
+    {
+        auto* prop_dock = window.findChild<QDockWidget*>(
+            QStringLiteral("dock_property_inspector"));
+        auto* dock = new QDockWidget(QStringLiteral("Render Settings"), &window);
+        dock->setObjectName(QStringLiteral("dock_render_settings"));
+        dock->setAllowedAreas(Qt::AllDockWidgetAreas);
+        dock->setFeatures(
+            QDockWidget::DockWidgetMovable |
+            QDockWidget::DockWidgetFloatable |
+            QDockWidget::DockWidgetClosable);
+        auto* panel = new RenderSettingsWidget(dock);
+        dock->setWidget(panel);
+        window.addDockWidget(Qt::RightDockWidgetArea, dock);
+        if (prop_dock) {
+            window.tabifyDockWidget(prop_dock, dock);
+            prop_dock->raise();
+        }
+    }
 
     {
         QSettings settings;

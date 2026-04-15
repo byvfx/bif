@@ -93,6 +93,12 @@ pub mod qobject {
         // to the auto-generated `selected_prim_pathChanged` signal.
         #[qproperty(QString, selected_prim_path)]
         #[qproperty(QString, selected_prim_type)]
+        // Timeline state (Phase D.1). Phase E wires the frame-advance
+        // timer + bif_core::TimelineState.
+        #[qproperty(i32, current_frame)]
+        #[qproperty(i32, start_frame)]
+        #[qproperty(i32, end_frame)]
+        #[qproperty(bool, is_playing)]
         type BifShellState = super::BifShellStateRust;
 
         /// Smoke-test invokable — verifies Rust↔C++ round-trip.
@@ -178,6 +184,25 @@ pub mod qobject {
         /// Toggle isolation mode. Bumps `layer_state_revision`.
         #[qinvokable]
         fn toggle_isolation_mode(self: Pin<&mut BifShellState>);
+
+        // ---- Timeline state surface (Phase D.1) ----
+
+        /// Toggle play/pause. Phase D.1 is UI-only; Phase E wires a
+        /// QTimer that advances current_frame.
+        #[qinvokable]
+        fn toggle_playback(self: Pin<&mut BifShellState>);
+
+        /// Step current frame by `delta`, clamped to [start_frame, end_frame].
+        #[qinvokable]
+        fn step_frame(self: Pin<&mut BifShellState>, delta: i32);
+
+        /// Number of keyframes the demo timeline exposes.
+        #[qinvokable]
+        fn keyframe_count(self: &BifShellState) -> i32;
+
+        /// Frame of the keyframe at `index`. -1 on OOB.
+        #[qinvokable]
+        fn keyframe_at(self: &BifShellState, index: i32) -> i32;
     }
 }
 
@@ -202,6 +227,17 @@ pub struct BifShellStateRust {
     pub selected_prim_path: cxx_qt_lib::QString,
     /// Type name of the selected prim (e.g. "Mesh", "Xform").
     pub selected_prim_type: cxx_qt_lib::QString,
+    /// Timeline — current playhead frame.
+    pub current_frame: i32,
+    /// Timeline — inclusive start frame.
+    pub start_frame: i32,
+    /// Timeline — inclusive end frame.
+    pub end_frame: i32,
+    /// Timeline — true when playback is active (Phase E wires the timer).
+    pub is_playing: bool,
+    /// Hardcoded demo keyframes (Phase D.1). Phase E replaces with
+    /// `AnimatedTransform`-derived keyframe marker positions.
+    pub demo_keyframes: Vec<i32>,
 }
 
 impl Default for BifShellStateRust {
@@ -214,6 +250,11 @@ impl Default for BifShellStateRust {
             scene_layer_state: None,
             selected_prim_path: cxx_qt_lib::QString::from(""),
             selected_prim_type: cxx_qt_lib::QString::from(""),
+            current_frame: 0,
+            start_frame: 0,
+            end_frame: 120,
+            is_playing: false,
+            demo_keyframes: vec![0, 12, 30, 48, 72, 96, 120],
         }
     }
 }
@@ -424,6 +465,42 @@ impl qobject::BifShellState {
             state.isolation_mode = !state.isolation_mode;
         }
         bump_revision(self.as_mut());
+    }
+
+    // -----------------------------------------------------------------
+    // Timeline surface (Phase D.1)
+    // -----------------------------------------------------------------
+
+    fn toggle_playback(mut self: Pin<&mut Self>) {
+        let next = !self.as_ref().rust().is_playing;
+        self.as_mut().set_is_playing(next);
+        log::info!(
+            "timeline playback → {}",
+            if next { "play" } else { "pause" }
+        );
+    }
+
+    fn step_frame(mut self: Pin<&mut Self>, delta: i32) {
+        // Bind the Pin temp so it outlives the .rust() borrow.
+        let pin_ref = self.as_ref();
+        let r = pin_ref.rust();
+        let cur = r.current_frame;
+        let start = r.start_frame;
+        let end = r.end_frame;
+        let next = (cur + delta).clamp(start, end);
+        self.as_mut().set_current_frame(next);
+    }
+
+    fn keyframe_count(&self) -> i32 {
+        self.rust().demo_keyframes.len() as i32
+    }
+
+    fn keyframe_at(&self, index: i32) -> i32 {
+        self.rust()
+            .demo_keyframes
+            .get(index as usize)
+            .copied()
+            .unwrap_or(-1)
     }
 }
 

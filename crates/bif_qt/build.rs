@@ -32,6 +32,9 @@ fn main() {
             cc.file("cpp/scene_browser_model.cpp");
             cc.file("cpp/scene_browser_widget.cpp");
             cc.file("cpp/property_inspector_widget.cpp");
+            cc.file("cpp/timeline_widget.cpp");
+            cc.file("cpp/render_settings_widget.cpp");
+            cc.file("cpp/node_graph_widget.cpp");
             cc.include("cpp");
             cc.std("c++17");
 
@@ -52,6 +55,9 @@ fn main() {
         .qobject_header("cpp/scene_browser_model.h")
         .qobject_header("cpp/scene_browser_widget.h")
         .qobject_header("cpp/property_inspector_widget.h")
+        .qobject_header("cpp/timeline_widget.h")
+        .qobject_header("cpp/render_settings_widget.h")
+        .qobject_header("cpp/node_graph_widget.h")
         .build();
 
     println!("cargo:rerun-if-changed=src/main_window.rs");
@@ -75,4 +81,10 @@ fn main() {
     println!("cargo:rerun-if-changed=cpp/scene_browser_widget.h");
     println!("cargo:rerun-if-changed=cpp/property_inspector_widget.cpp");
     println!("cargo:rerun-if-changed=cpp/property_inspector_widget.h");
+    println!("cargo:rerun-if-changed=cpp/timeline_widget.cpp");
+    println!("cargo:rerun-if-changed=cpp/timeline_widget.h");
+    println!("cargo:rerun-if-changed=cpp/render_settings_widget.cpp");
+    println!("cargo:rerun-if-changed=cpp/render_settings_widget.h");
+    println!("cargo:rerun-if-changed=cpp/node_graph_widget.cpp");
+    println!("cargo:rerun-if-changed=cpp/node_graph_widget.h");
 }
