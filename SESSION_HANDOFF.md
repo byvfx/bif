@@ -1,8 +1,16 @@
-# Session Handoff - April 13, 2026 (session 2)
+# Session Handoff - April 14, 2026 (sessions 2–8, end of Phase E.1)
 
-**Last Updated:** v0.15.0 Phase 0 gate PASSED on branch `v0.15-qt`.
-**Current Version:** v0.14.0 shipped on `main`; v0.15.0 in progress on `v0.15-qt`.
+**Last Updated:** v0.15.0 Phase E.1 shipped on `v0.15-qt` (`759a01f`). Phase E.2 is next — the big USD integration.
+**Current Version:** v0.14.0 shipped on `main`; v0.15.0 in progress on `v0.15-qt` (13 commits ahead of main).
 **Project:** BIF - USD Orchestration Tool for VFX
+
+## 🚀 How to pick up next session
+
+1. `. .\setup_qt_env.ps1` — required every session (Qt 6.8.3 LTS env).
+2. `git checkout v0.15-qt` — the migration branch. `main` is v0.14.0-frozen.
+3. `cargo run -p bif_qt --bin bif_qt_shell` — dogfood binary. Viewport renders a triangle (Phase E.2 swaps in the real `bif_renderer::Renderer`).
+4. Read **"Phase E.2 Starting Notes"** below — has the ordered first moves + AppEvent bridge options.
+5. All Phase A–E.1 gotchas are in the **cxx-qt + Qt gotchas** list below. Worth skimming before touching the bridge.
 
 ---
 
@@ -52,25 +60,93 @@
 - **`QGraphicsPathItem` is NOT a QObject** — it can't be the connect context. Use the sender (also the QObject) as the context for 3-arg connect.
 - **`BifNodeGraphicsItem::moved` signal pattern:** emit from `itemChange(ItemPositionHasChanged, ...)` on a `QGraphicsObject` subclass. Wires subscribe for re-routing.
 
-**Phase 0 artifacts already in branch:**
+## 📂 v0.15 Phase state map
 
-- `setup_qt_env.ps1` — sets `Qt6_DIR`, `CMAKE_PREFIX_PATH`, `PATH` (Qt bin + CMake_64 + Ninja), `QT_PLUGIN_PATH`, `QML2_IMPORT_PATH`.
-- `crates/bif_qt_spike/` — gate crate. Deletion scheduled for Phase H. Reference for Phase A's build.rs shape + MSVC flag recipe + wgpu embedding pattern.
-- `wiki/architecture/adr/006-qt-via-cxx-qt.md` — full decision record + gotchas.
-- Workspace deps: `raw-window-handle 0.6`, `cxx 1.0`, `cxx-qt 0.7`, `cxx-qt-lib 0.7` (qt_full), `cxx-qt-build 0.7`, `qt-build-utils 0.7`.
+| Surface | Ships in branch | What's real | What's stub / demo |
+|---|---|---|---|
+| **Build + env** | `setup_qt_env.ps1`, workspace Cargo.toml | Qt 6.8.3 LTS detection via `qt-build-utils`, MSVC flags | — |
+| **Shell** | `crates/bif_qt/` + `bif_qt_shell` bin | QMainWindow, menu bar, status bar, dock system, command palette (Ctrl+P), breadcrumb bar, 4 workspace presets (QSettings persistence), first-launch screen, Zen mode (Ctrl+\\), dark stylesheet | — |
+| **Viewport** | `cpp/render_widget.{h,cpp}` + `src/viewport.rs` | wgpu triangle + mouse orbit/pan/zoom signals + `primPickRequested` signal | Triangle instead of real Renderer; camera input echoes status bar, doesn't drive camera |
+| **Layer Stack panel** | `cpp/layer_stack_{model,widget}.{h,cpp}` | `QListView` + model, color dot delegate, mute checkbox, double-click working layer, isolation toolbar | 3-layer hardcoded demo data in `BifShellState::seed_demo_layer_stack` |
+| **Scene Browser** | `cpp/scene_browser_{model,widget}.{h,cpp}` | `QTreeView` + model, hierarchical filter, selection routes to `selected_prim_path` qproperty | 10-prim hardcoded demo tree; no lazy fetch yet |
+| **Property Inspector** | `cpp/property_inspector_widget.{h,cpp}` | Tabs + composition arcs group + attributes table with opinion-dot delegate | Fake attrs per prim-type, composition arcs mirror layer stack |
+| **Timeline** | `cpp/timeline_widget.{h,cpp}` | Nuke-style 3-zone toolbar, custom paint ruler + playhead + keyframe diamonds, QTimer advances frames on Play, fps/RT/Loop/Start/End controls, `↻⇅` detect button | Keyframes hardcoded; detect button is a status-only stub |
+| **Node Graph** | `cpp/node_graph_widget.{h,cpp}` | `QGraphicsScene` + `NodeGraphView`, 5-node demo (UsdRead→Scatter→Xform→IvarRender + HdriEnv), wheel-zoom + middle-mouse pan, bezier wires refresh on node move | Demo graph only; can't create/delete/rewire nodes (v0.16) |
+| **Render Settings** | `cpp/render_settings_widget.{h,cpp}` | QFormLayout with Path Tracer (spp/depth/SHARC) + Post-Processing (exposure/gamma/OIDN) | Values local; not wired to `bif_renderer::RenderConfig` |
+| **Shortcut system** | `cpp/shortcut_registry.{h,cpp}` | QSettings-override path for every shortcut declared via ID | Preferences UI (v0.16) |
+| **File → Open** | `window_builder.cpp` | Real `QFileDialog`, records `QSettings("recent_stages")`, flips central stack to viewport | `BifShellState::on_stage_path_opened` doesn't actually call `scene_loader::load_usd_scene` yet |
 
-**Phase A first moves (~4h):**
+**One-liner to understand the shape:** `BifShellState` (cxx-qt QObject in `src/main_window.rs`) is the fat singleton that every panel binds to via `#[qproperty]` + `#[qinvokable]`. It holds title / status / workspace / layer state / selection / timeline. Phase C deliberately skipped the existing `EventBus`; Phase E.2 reopens that decision.
 
-1. New `crates/bif_qt/Cargo.toml` — depends on `bif_core`, `bif_renderer`, `cxx-qt 0.7`, `cxx-qt-lib 0.7`.
-2. `build.rs` — switch to `cxx_qt_build::CxxQtBuilder` (first real cxx-qt macro use). Verify moc still runs; validate that `#[cxx_qt::bridge]` compiles on Qt 6.8.3 + MSVC 2022.
-3. Port `bif_viewport/src/theme.rs` (65 color constants) → `QPalette` + Qt stylesheet string in `bif_qt/src/theme.rs`. Named constants mirror egui names for continuity.
-4. `src/main_window.rs` — `QMainWindow` subclass skeleton: menu bar, status bar, central placeholder, 4 empty `QDockWidget` slots (left/right/bottom + detached pool). Use `Q_OBJECT` + moc.
-5. `src/app.rs` — `QApplication::new()` from `cxx-qt-lib`, install stylesheet, create main window, run `app.exec()`.
-6. Decide `QT_NO_KEYWORDS` — cxx-qt default is ON (to avoid `slots` colliding with Rust keywords), but Phase A's C++ needs `Q_SIGNALS:` / `Q_EMIT` syntax. Match cxx-qt convention to avoid fighting the framework.
+---
 
-**Key constraints carry forward:**
-- Event bus (`AppEvent`) + `SceneManager` + `NodeGraphContext` + `SceneLayerState` → reuse without change.
-- `bif_viewport` panel files (`layer_stack_panel.rs`, `property_inspector.rs`, `scene_browser.rs`, `render.rs`) are the Phase C-D churn surface — leave untouched in Phase A.
+## ➡️ Phase E.2 Starting Notes — Real USD Wiring (~5–8h)
+
+**Goal:** Replace demo data with real USD reads. This is the biggest integration step in v0.15 and the hardest architectural decision (AppEvent bridge).
+
+### 🎯 Phase E.2 — ordered first moves
+
+1. **Pull `bif_renderer::Renderer` into bif_qt's viewport.** Today `src/viewport.rs` owns a tiny wgpu pipeline drawing a triangle. Goal: `Viewport` holds a `bif_renderer::Renderer` instead, with the same HWND-fed `wgpu::Surface`. Two flavors of this, pick one:
+   - (Lightweight) Keep `Viewport` in bif_qt, delegate rendering to `bif_renderer::Renderer::render(&camera, &scene)` — needs Renderer's public API to be reachable without `bif_viewport` types.
+   - (Full) Pull `bif_viewport::Renderer` (the 75-field God object) + `SceneManager` + `EventBus` into bif_qt directly, deleting the egui UI parts. This is closer to Phase F scope — might as well do it now since Phase E.2 needs it.
+   - **Recommended:** the full path. Phase E.2 + Phase F essentially merge.
+2. **Wire `QFileDialog` result → real stage load.** Add `BifShellState::load_stage_at_path(QString)` invokable (replacing the `on_stage_path_opened` status echo). Inside: call `bif_core::scene_loader::load_usd_scene(path)` → `SceneManager::load_scene(scene)` → update `SceneLayerState` on self → bump `layer_state_revision` so the Layer Stack panel refreshes. Drop the hardcoded demos from `seed_demo_layer_stack` + `SceneBrowserModel::seed_demo_tree`.
+3. **AppEvent bridge decision + implementation.** See "AppEvent bridge options" section below.
+4. **`detect_timeline_from_stage` real impl.** Call `UsdStage::GetStartTimeCode() / GetEndTimeCode() / GetTimeCodesPerSecond()` → set `start_frame`, `end_frame`, `playback_fps` qproperties. File load should also call this automatically.
+5. **Gizmo raycast on LMB.** `RenderWidget::primPickRequested(x, y)` already emits. Hook it to a new Rust handler that builds a ray via the existing `bif_viewport/src/selection.rs` code → sets `BifShellState::selected_prim_path`. Scene Browser already listens to this for sync.
+6. **Breadcrumb wires to `selected_prim_pathChanged`.** The `breadcrumb_set_path` helper already exists in `window_builder.cpp` — connect it to the signal.
+7. **Scene Browser real data.** Replace `SceneBrowserModel::seed_demo_tree` with a proper `bif_core::CompositeProvider` traversal. For 100K+ prims use `canFetchMore` / `fetchMore` for lazy population.
+8. **Property Inspector real attributes.** Replace fake attrs with `UsdPrim::GetAttributes()` via new Rust invokables on `BifShellState`. Composition arcs via `UsdStage::get_prim_stack`.
+9. **Timeline keyframes real.** Pull from the selected prim's `AnimatedTransform` keyframes.
+
+### 🏛️ AppEvent bridge — the open decision
+
+`bif_viewport::EventBus` + `AppEvent` + `dispatch_events` in `bif_viewport/src/*_dispatch.rs` are the existing dispatch system. Phase C–E.1 sidestepped it by mutating `BifShellState` directly. Real USD operations need dispatched handling (stage load → geometry extraction → GPU upload → scene tree refresh → selection reset → etc.). Three candidates:
+
+| Option | Pattern | Pros | Cons |
+|---|---|---|---|
+| **(a) Global `Mutex<VecDeque<AppEvent>>`** polled per-frame | Rust singleton queue; panel invokables `push(AppEvent)`; a `QTimer` tick in `window_builder.cpp` drains + dispatches | Simple; fits cxx-qt pattern (invokables don't need extra state); drain can piggyback on paintEvent tick | Global state; harder to test; lock contention on high-frequency events (mouse drags) |
+| **(b) cxx-qt QObject wrapping `EventBus`** passed into each panel | New `BifEventBus : QObject` with `#[qinvokable] fn push(event)`; held as child of `BifShellState`; panels access via `state->event_bus()` | Testable via dependency injection; clean ownership; fits Qt idioms | `AppEvent` is a Rust enum with heterogeneous payloads — bridging enum through cxx-qt is awkward, likely need a tagged-struct proxy |
+| **(c) Per-panel Qt-native signals → Rust trampolines** | Each panel emits typed signals (`layerMuteToggled(int)`, `primSelected(QString)`, …); C++ signal connection calls Rust free fn that builds `AppEvent` + pushes to EventBus | Clean separation; panels don't know about AppEvent; easy incremental migration | Boilerplate trampolines — one per AppEvent variant (~28 variants); lots of small wiring |
+
+**Recommendation: (a) + incremental (c) for high-frequency events.** Start with (a) — simplest plumbing, works immediately. Mouse drags (camera input, ruler scrub) that would churn through the queue can bypass via direct state writes (already the case in E.1). When the global queue hurts, migrate the hot paths to (c) per-panel signals. (b) is theoretically cleanest but the enum-bridge cost isn't worth it.
+
+### 🗺️ Phase E.2 code map — where to look in the existing codebase
+
+| Looking for | File |
+|---|---|
+| Scene load flow | `bif_viewport/src/scene_loader.rs::load_usd_scene` |
+| SceneManager / Scene | `bif_core/src/scene.rs`, `bif_viewport/src/scene_manager.rs` |
+| EventBus + AppEvent | `bif_viewport/src/event_bus.rs`, `bif_viewport/src/app_event.rs` |
+| Dispatch modules | `bif_viewport/src/{render,node_graph,selection,project}_dispatch.rs` |
+| Camera state + sensitivity | `bif_viewer/src/main.rs` (`ORBIT_SENSITIVITY`, `PAN_SENSITIVITY`) |
+| Ray-cast / prim selection | `bif_viewport/src/selection.rs` |
+| Renderer God object | `bif_renderer/src/lib.rs` or the renderer struct module |
+| Existing egui panels (for reference) | `bif_viewport/src/{layer_stack_panel,scene_browser,property_inspector,timeline,render}.rs` |
+| Timeline state + animated transforms | `bif_core/src/timeline.rs`, `bif_core/src/animation.rs` (look around `AnimatedTransform`) |
+
+### 🏗️ Phase E.2 deliverables checklist
+
+- [ ] `bif_qt::Viewport` renders real scenes (not a triangle)
+- [ ] `File → Open` loads actual USD stage
+- [ ] `BifShellState::scene_layer_state` populated from load, not demo seed
+- [ ] Scene Browser shows real prim tree via CompositeProvider (+ lazy fetch for 100K+)
+- [ ] Property Inspector shows real attributes via `UsdPrim::GetAttributes()`
+- [ ] Composition arcs from `UsdStage::get_prim_stack`, not layer-stack mirror
+- [ ] Timeline keyframes from selected prim's `AnimatedTransform`
+- [ ] `detect_timeline_from_stage` reads real USD time metadata
+- [ ] Gizmo raycast via `selection.rs` on LMB click
+- [ ] Breadcrumb connected to `selected_prim_pathChanged`
+- [ ] AppEvent bridge chosen + implemented
+- [ ] `bif_qt_shell` loads `test_assets/layers/root.usda` end-to-end — Layer Stack shows 3 real layers, mute works, viewport updates
+
+### ⚠️ Phase E.2 risk: scope overlap with Phase F
+
+Phase E.2 as described is most of Phase F ("delete egui") bundled in. Two paths:
+1. **Merge them** — Phase E.2 pulls Renderer/SceneManager/EventBus into bif_qt, egui-specific panel files in `bif_viewport` are deleted as we replace each one. Effectively the endgame of the migration.
+2. **Keep separate** — Phase E.2 exposes Renderer/SceneManager via a new `bif_runtime` crate (or similar) that both `bif_qt` and `bif_viewport`'s legacy egui code depend on. Phase F then deletes `bif_viewport`'s egui parts.
+
+**Recommendation:** Path 1. Path 2 duplicates effort.
 
 ---
 
@@ -300,8 +376,70 @@ egui UI overhaul — centralized theme, panel restructure, property inspector, m
 
 ---
 
-## Next Steps
+## 🎨 User preferences captured this migration
 
-1. **v0.13.6 release** — bump `0.13.6-dev → 0.13.6` in workspace `Cargo.toml`, promote `## [Unreleased]` CHANGELOG block to `## [0.13.6] - 2026-04-12`, update MILESTONES.md Released section, release commit + tag.
-2. **v0.14.0 planning** — USD composition inspector + opinion trace (M32, M33), SdfLayer FFI, LayerAwareScene. Resume Phase 4.5 `scene_loader.rs` shrinkage when `finalize_usd_scene()` is rewritten.
-3. **v0.15.0 research** — Qt 6 Rust bindings evaluation (cxx-qt decided, eval qt-build-utils).
+- **Ease-of-use over modal dialogs.** Inline controls on toolbars beat "Global Animation Options" popups. Timeline range/fps/loop/RT live on the toolbar, not a menu.
+- **Nuke-inspired layouts** for timeline-style UIs. 3-zone toolbar (config / transport+counter / range) landed this session.
+- **"Put our spin on it"** — take DCC conventions as input, not as specification. Loop toggle is a boolean now; grow to Repeat/Bounce/Stop/Continue enum when complexity justifies it.
+- **Plan for customizability early.** User wants rebindable shortcuts — the ShortcutRegistry pattern (string-ID + QSettings override) lands in advance of the v0.16 Preferences dialog.
+- **Auto-detect from USD by default, manual override available.** Timeline detects `timeCodesPerSecond` from the stage; user can override via the fps spinbox. Same shape for anything stage-derived.
+
+---
+
+## 🛠️ v0.15 Phase A–E.1 recent work
+
+### Phase E.1 — Input + event wiring (session 8, `759a01f`)
+
+- `RenderWidget` mouse input: Alt+LMB orbit / MMB pan / wheel zoom / unmodified LMB = primPickRequested. Signals forwarded through 4 new `on_camera_*` / `on_frame_selected` invokables on `BifShellState` (stubs until Phase E.2).
+- `ShortcutRegistry` (new `cpp/shortcut_registry.{h,cpp}`) with string-ID lookup + `QSettings("shortcuts/<id>")` override path. Wired F, Space, Left/Right, Shift+Left/Right.
+- Real `QFileDialog` on File → Open; writes `QSettings("recent_stages")` (max 10), flips central stack to viewport.
+- QTimer-driven timeline playback with configurable fps, real-time mode, and loop toggle. Nuke-style 3-zone toolbar (config / transport+orange frame counter / range + detect).
+- New qproperties: `playback_fps`, `realtime_playback`, `loop_playback`. New invokables: `jump_to_prev_keyframe`, `jump_to_next_keyframe`, `detect_timeline_from_stage` stub, `on_stage_path_opened`.
+
+### Phase D — Secondary panels (session 7, `109d2d3`)
+
+- Timeline (`cpp/timeline_widget.{h,cpp}`): custom `paintEvent` for ruler + playhead + keyframes. Scrub via mouse.
+- Node Graph (`cpp/node_graph_widget.{h,cpp}`): `QGraphicsScene` + `NodeGraphView` subclass for wheel-zoom + middle-mouse pan. `BifNodeGraphicsItem : QGraphicsObject` with category-colored headers, pin lollipops. 5-node demo.
+- Render Settings (`cpp/render_settings_widget.{h,cpp}`): `QFormLayout` in two styled `QGroupBox`es.
+
+### Phase C — Core panels (session 6, `b859c2c`)
+
+- Layer Stack (`cpp/layer_stack_{model,widget}.{h,cpp}`): `QListView` + `QAbstractListModel` reading `SceneLayerState` via 11 new `#[qinvokable]` methods. Color dot delegate + editorEvent-aligned checkboxes.
+- Scene Browser (`cpp/scene_browser_{model,widget}.{h,cpp}`): `QTreeView` + `QAbstractItemModel` + hierarchical filter. Selection routes to `selected_prim_path`.
+- Property Inspector (`cpp/property_inspector_widget.{h,cpp}`): QTabWidget + collapsible composition arcs + attribute table with opinion-dot delegate.
+- New qproperties: `layer_state_revision` (bumps on mutation → triggers model refresh via `*Changed` signal), `selected_prim_path`, `selected_prim_type`.
+
+### Phase B — Qt shell (sessions 4–5, `7499faa` + `1776fdc`)
+
+- Viewport embedded (B.1), stylesheet (B.2), menu invokables (B.3), Zen mode Ctrl+\\ (B.4), workspace switcher with QSettings persistence (B.5), first-launch welcome screen (B.6), breadcrumb `QToolBar` (B.7), command palette Ctrl+P (B.8).
+- Central layout: `QWidget(QVBoxLayout(breadcrumb, QStackedWidget(first_launch, viewport)))`.
+
+### Phase A — `bif_qt` scaffolding (session 3, `8ce4271`)
+
+- New `crates/bif_qt/`. First real `#[cxx_qt::bridge]` in BIF. `BifShellState` QObject with 2 qproperties + 1 qinvokable. 34-color theme port + Qt stylesheet generator. C++ window assembly with menu bar + 4 dock placeholders.
+
+### Phase 0 — wgpu-into-QWidget spike (session 2, `c2440db`)
+
+- `crates/bif_qt_spike/` proved wgpu + Qt coexistence on MSVC 2022 + Qt 6.8.3 LTS. ADR-006 authored. Toolchain validated (cxx + qt-build-utils + cc + moc). Deletion scheduled for Phase H.
+
+---
+
+## Next Steps (v0.15.0)
+
+1. **Phase E.2 — Real USD wiring** (~5–8h). See checklist above. This is the big integration step.
+2. **Phase F — egui cleanup** (~2h, may merge with E.2). Delete `egui` + `egui-wgpu` + `egui-winit` + `egui-snarl` from `bif_viewer` + `bif_viewport` Cargo.toml. Delete `bif_viewport::run_egui_frame` and the ~900 lines of panel-assembly code. Rename `bif_viewer`'s main to target `bif_qt::run`.
+3. **Phase G — tests + validation** (~2h). Unit tests on Qt models (headless — no QApplication needed for model-only tests with mocks). Manual checklist from plan: load `test_assets/layers/root.usda`, mute shot.usda + anim.usda behaviors, HumanFemale.walk.usd scrub, workspace switch, command palette, Zen mode, project save/close/reopen.
+4. **Phase H — release plumbing + tag** (~1h). Bump `0.15.0-dev → 0.15.0`. Promote CHANGELOG `[Unreleased]` → `[0.15.0]`. MILESTONES v0.15.0 → Released. Wiki post-mortem at `wiki/ui-ux/qt-migration.md`. Update ADR-006 with Phase A–G learnings. Release commit + `git tag -a v0.15.0`. Merge `v0.15-qt` → `main`.
+
+## Follow-up debts across phases (v0.15.5 / v0.16)
+
+- Command palette: fuzzy scorer (skim or inline), widen beyond menu commands to prims/layers/nodes via provider interface.
+- Node Graph: can't create/delete/rewire nodes (v0.16). Orthogonal/manhattan wire routing option (TODO marker in `BifNodeWire::refresh`).
+- Timeline: loop mode enum upgrade (Repeat/Bounce/Stop/Continue); consider scrub slider under the frame counter.
+- Breadcrumb segment styling (placeholder-only as of Phase B.7; Phase E.2 populates).
+- Preferences dialog (v0.16) — enumerates `ShortcutRegistry::registered_defaults()` with `QKeySequenceEdit` per entry.
+- `BifShellState` is a fat singleton — v0.16 may split into `BifShellState` / `BifSceneState` / `BifSelectionState` if the invokable surface grows past maintainability.
+- Theme polish per `docs/ux/UI_DESIGN.md` (25 sections) — Phase G spends time here; post-v0.15 iteration continues against Stitch mockups in `assets/stitch_bif_ui_01/`.
+- Bjorn opinion stack, Material Editor (v0.21), rich per-panel UX per UI_DESIGN.md — future releases.
+
+---
