@@ -432,6 +432,7 @@ dependencies = [
  "anyhow",
  "bif_core",
  "bif_renderer",
+ "bif_viewport",
  "cxx",
  "cxx-qt",
  "cxx-qt-build",

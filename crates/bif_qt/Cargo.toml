@@ -23,6 +23,7 @@ path = "src/bin/bif_qt_shell.rs"
 [dependencies]
 bif_core = { path = "../bif_core" }
 bif_renderer = { path = "../bif_renderer" }
+bif_viewport = { path = "../bif_viewport" }
 
 cxx.workspace = true
 cxx-qt.workspace = true

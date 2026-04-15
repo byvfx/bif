@@ -1,34 +1,38 @@
-// bif_qt viewport — minimal wgpu renderer embedded in the RenderWidget.
+// bif_qt viewport — hosts the real `bif_viewport::Renderer` inside a Qt
+// `RenderWidget`. Phase E.2 move 1 (2026-04-15).
 //
-// Phase B scope: same triangle the spike drew, now inside the
-// persistent bif_qt_shell. This proves the Phase 0 embedding pattern
-// works within the cxx-qt-built shell. Phase B.2+ will swap in
-// bif_renderer::Renderer for real USD rendering once input + event
-// wiring is in place.
+// Previously Phase B shipped a triangle demo here. Now that
+// `bif_viewport::Renderer` is winit-free (Phase E.2-prep, 2026-04-15), we
+// build the wgpu primitives from the Qt-native HWND and hand them to
+// `Renderer::new(...)`. No egui is attached — the whole UI is Qt now.
 //
 // Lifecycle (driven by Qt signals from cpp/render_widget.cpp):
 //   Viewport::new(hwnd, hinstance, w, h) — called from showEvent
 //   Viewport::resize(w, h)                — resizeEvent
 //   Viewport::render()                    — paintEvent / 16ms tick
 //
-// ViewportCallbacks wraps `Option<Viewport>` so construction can
-// defer until the HWND is real (post-showEvent). C++ holds a raw
-// pointer to this Rust-owned struct for the lifetime of the event
-// loop.
+// ViewportCallbacks wraps `Option<Viewport>` so construction can defer
+// until the HWND is real (post-showEvent). C++ holds a raw pointer to this
+// Rust-owned struct for the lifetime of the event loop.
 
 use anyhow::{anyhow, Result};
+use bif_viewport::Renderer;
 use raw_window_handle::{
     RawDisplayHandle, RawWindowHandle, Win32WindowHandle, WindowsDisplayHandle,
 };
 use std::num::NonZeroIsize;
 
+/// Matches theme::BG_BASE (26,29,33) in linear sRGB. Used when the viewport
+/// has nothing scene-ful to render.
+const CLEAR_COLOR: wgpu::Color = wgpu::Color {
+    r: 0.010,
+    g: 0.013,
+    b: 0.017,
+    a: 1.0,
+};
+
 pub struct Viewport {
-    _instance: wgpu::Instance,
-    surface: wgpu::Surface<'static>,
-    device: wgpu::Device,
-    queue: wgpu::Queue,
-    config: wgpu::SurfaceConfiguration,
-    pipeline: wgpu::RenderPipeline,
+    renderer: Renderer,
 }
 
 impl Viewport {
@@ -61,8 +65,8 @@ impl Viewport {
         let (device, queue) = pollster::block_on(adapter.request_device(
             &wgpu::DeviceDescriptor {
                 label: Some("bif_qt viewport device"),
-                required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::default(),
+                required_features: bif_viewport::REQUIRED_FEATURES,
+                required_limits: bif_viewport::required_limits(),
                 memory_hints: wgpu::MemoryHints::default(),
             },
             None,
@@ -88,16 +92,23 @@ impl Viewport {
         };
         surface.configure(&device, &config);
 
-        let pipeline = build_triangle_pipeline(&device, format);
-
-        Ok(Self {
-            _instance: instance,
+        // Phase E.2: default scale_factor to 1.0 until we wire
+        // QScreen::devicePixelRatio() through the cxx-qt bridge. egui is not
+        // attached — Qt owns the UI chrome.
+        let renderer = Renderer::new(
             surface,
             device,
             queue,
             config,
-            pipeline,
-        })
+            (width.max(1), height.max(1)),
+            1.0,
+        )?;
+
+        // `adapter` and `instance` drop here; Renderer owns device/queue/surface.
+        drop(adapter);
+        drop(instance);
+
+        Ok(Self { renderer })
     }
 
     fn build_raw_window_handle(hwnd: u64, hinstance: u64) -> Result<RawWindowHandle> {
@@ -112,105 +123,39 @@ impl Viewport {
         if width == 0 || height == 0 {
             return;
         }
-        self.config.width = width;
-        self.config.height = height;
-        self.surface.configure(&self.device, &self.config);
+        // scale_factor stays at 1.0 for now; hook through QScreen later.
+        self.renderer
+            .resize((width, height), self.renderer.scale_factor());
     }
 
     pub fn render(&mut self) -> Result<()> {
-        let frame = match self.surface.get_current_texture() {
-            Ok(t) => t,
-            Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
-                self.surface.configure(&self.device, &self.config);
-                return Ok(());
+        // Headless path — no egui input, no PlatformOutput expected back.
+        match self.renderer.render(CLEAR_COLOR, None) {
+            Ok(_) => Ok(()),
+            Err(e) => {
+                // Recover from transient surface loss/outdated the same way
+                // bif_viewer does: reconfigure at current size + scale.
+                if let Some(surface_err) = e.downcast_ref::<wgpu::SurfaceError>() {
+                    match surface_err {
+                        wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated => {
+                            let size = self.renderer.size;
+                            let scale = self.renderer.scale_factor();
+                            self.renderer.resize(size, scale);
+                            Ok(())
+                        }
+                        _ => Err(e),
+                    }
+                } else {
+                    Err(e)
+                }
             }
-            Err(e) => return Err(e.into()),
-        };
-        let view = frame
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
-
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("bif_qt viewport encoder"),
-            });
-
-        {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("bif_qt viewport pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        // Matches theme::BG_BASE (26,29,33) in linear sRGB.
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.010,
-                            g: 0.013,
-                            b: 0.017,
-                            a: 1.0,
-                        }),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
-            pass.set_pipeline(&self.pipeline);
-            pass.draw(0..3, 0..1);
         }
-
-        self.queue.submit(std::iter::once(encoder.finish()));
-        frame.present();
-        Ok(())
     }
-}
 
-fn build_triangle_pipeline(
-    device: &wgpu::Device,
-    format: wgpu::TextureFormat,
-) -> wgpu::RenderPipeline {
-    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("bif_qt viewport triangle shader"),
-        source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/triangle.wgsl").into()),
-    });
-
-    let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("bif_qt viewport pipeline layout"),
-        bind_group_layouts: &[],
-        push_constant_ranges: &[],
-    });
-
-    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("bif_qt viewport triangle pipeline"),
-        layout: Some(&layout),
-        vertex: wgpu::VertexState {
-            module: &shader,
-            entry_point: "vs_main",
-            buffers: &[],
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-        },
-        fragment: Some(wgpu::FragmentState {
-            module: &shader,
-            entry_point: "fs_main",
-            targets: &[Some(wgpu::ColorTargetState {
-                format,
-                blend: Some(wgpu::BlendState::REPLACE),
-                write_mask: wgpu::ColorWrites::ALL,
-            })],
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-        }),
-        primitive: wgpu::PrimitiveState {
-            topology: wgpu::PrimitiveTopology::TriangleList,
-            cull_mode: None,
-            ..Default::default()
-        },
-        depth_stencil: None,
-        multisample: wgpu::MultisampleState::default(),
-        multiview: None,
-        cache: None,
-    })
+    /// Access the underlying renderer (for scene-load invokables, etc).
+    pub fn renderer_mut(&mut self) -> &mut Renderer {
+        &mut self.renderer
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -226,6 +171,12 @@ pub struct ViewportCallbacks {
 impl ViewportCallbacks {
     pub fn new() -> Self {
         Self { viewport: None }
+    }
+
+    /// Mutable access to the live viewport (for scene-load invokables that
+    /// need to reach into the renderer).
+    pub fn viewport_mut(&mut self) -> Option<&mut Viewport> {
+        self.viewport.as_mut()
     }
 }
 
