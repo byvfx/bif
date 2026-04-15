@@ -1,8 +1,41 @@
-# Session Handoff - April 14, 2026 (sessions 2–8, end of Phase E.1)
+# Session Handoff - April 15, 2026 (sessions 2–9, end of Phase E.2-prep)
 
-**Last Updated:** v0.15.0 Phase E.1 shipped on `v0.15-qt` (`759a01f`). Phase E.2 is next — the big USD integration.
-**Current Version:** v0.14.0 shipped on `main`; v0.15.0 in progress on `v0.15-qt` (13 commits ahead of main).
+**Last Updated:** v0.15.0 Phase E.2-prep landed on `v0.15-qt` (uncommitted). `bif_viewport::Renderer` is winit-free. Next session: Phase E.2 moves 1+2+4 — now unblocked.
+**Current Version:** v0.14.0 shipped on `main`; v0.15.0 in progress on `v0.15-qt`.
 **Project:** BIF - USD Orchestration Tool for VFX
+
+## ⚡ Phase E.2-prep (2026-04-15) — Renderer winit decoupling
+
+**Why:** Phase E.2's move 1 (pull `bif_viewport::Renderer` into `bif_qt`) was gated by hidden winit coupling the original handoff didn't flag. `Renderer::new(Arc<winit::Window>)` + `render(…, &winit::Window)` + egui's per-frame `take_egui_input`/`handle_platform_output`/`on_window_event` handshake all needed a live winit Window reference. bif_qt has only a raw HWND.
+
+**What landed:**
+- **`bif_viewport::Renderer::new`** now takes `(surface, device, queue, config, size: (u32,u32), scale_factor: f32)` — pure wgpu primitives, caller owns surface creation. Synchronous.
+- **`Renderer::attach_egui(egui_state)`** — optional egui overlay attachment. `bif_viewer` uses it; `bif_qt` won't.
+- **`Renderer::egui_state_mut()`** — caller drives the winit ↔ egui handshake (`on_window_event`, `take_egui_input`, `handle_platform_output`) outside `bif_viewport`.
+- **`Renderer::render(clear_color, raw_input: Option<RawInput>) -> Result<Option<PlatformOutput>>`** — headless when `None`, egui-overlay when `Some`.
+- **`Renderer::set_dialog_focus_hook(Fn(bool) + 'static)`** — installable visibility toggle for the Windows z-order workaround. `bif_viewer` installs `move |v| window.set_visible(v)`; `bif_qt` leaves it `None`. All 5 existing internal `with_dialog_focus` callers unchanged.
+- **`Renderer::resize((u32,u32), f32)`** — takes scale factor.
+- **Constants exposed:** `bif_viewport::REQUIRED_FEATURES` + `required_limits()` so callers request the right wgpu device.
+- **Zero direct `winit::*` imports** in `bif_viewport/src/lib.rs` + `render.rs` code (doc comments + `egui_winit::State` type only — the transitive winit dep stays until egui is retired in Phase F).
+
+**`bif_viewer` compat shim:**
+- New `fn create_renderer(window: Arc<Window>) -> Result<Renderer>` in `main.rs` builds wgpu primitives + `egui_winit::State` + installs dialog hook. Three existing call sites converted.
+- `handle_egui_event` call replaced with inline `egui_state_mut().on_window_event(window, &event).consumed`.
+- `render(clear_color, window)` replaced with `take_egui_input` + `render(clear_color, Some(raw_input))` + `handle_platform_output`.
+- Both `resize` call sites pass `window.scale_factor() as f32`.
+
+**Build gates:** `cargo build -p bif_viewport -p bif_viewer` clean, `cargo clippy -- -D warnings` clean, `cargo fmt --check` clean, `cargo test -p bif_math` 74/74 pass.
+
+**Still to verify:** `cargo run -p bif_viewer --release` end-to-end — golden path load/orbit/pan/zoom + egui panels + native dialog. Low risk but non-zero; the egui handshake is a mechanical 3-call move.
+
+**Next session — Phase E.2 moves 1+2+4 (original plan, now unblocked):**
+1. `bif_qt::viewport::Viewport` swaps its triangle for `bif_viewport::Renderer` via `Renderer::new(surface, device, queue, config, size, scale)` — HWND surface creation pattern already lives in `viewport.rs:38–101`.
+2. Add `BifShellState::load_stage_at_path(QString)` invokable → `SceneManager::load_usd_scene` → bump `layer_state_revision`.
+3. Add USD timeline FFI (`usd_stage_get_time_range` in `bif_core/cpp/usd_bridge/`) + `detect_timeline_from_stage()` invokable.
+
+AppEvent bridge decision: deferred. Moves 1+2+4 don't need it; will revisit when dispatch-wide ops land.
+
+---
 
 ## 🚀 How to pick up next session
 
@@ -26,7 +59,8 @@
 | v0.15.0 Phase C ✅ | 3 panels. Layer Stack · Scene Browser · Property Inspector. |
 | v0.15.0 Phase D ✅ | 3 secondary panels. Timeline · Node Graph · Render Settings. Tabification between bottom + right. |
 | v0.15.0 Phase E.1 ✅ | Input stubs. Viewport mouse/camera signals, keyboard shortcuts (F/Space/Left/Right/±Shift), ShortcutRegistry with QSettings override path, real QFileDialog, QTimer-driven timeline playback, fps + realtime + loop toggles, Nuke-style 3-zone toolbar, inline Start/End range + detect-from-stage button. 9 new qproperties, 6 new invokables. |
-| Next | **Phase E.2 — Real USD wiring (~5-8h).** Pull `bif_renderer::Renderer` into `bif_qt` (replacing the triangle demo viewport). Wire `QFileDialog` result → `bif_core::scene_loader::load_usd_scene` → replace hardcoded panel demos with real `SceneLayerState` / `CompositeProvider` / `UsdPrim::GetAttributes`. Implement `detect_timeline_from_stage` via `UsdStage::GetStartTimeCode/EndTimeCode/timeCodesPerSecond`. Pick and implement the AppEvent bridge. Gizmo raycast via existing `selection.rs`. Breadcrumb wires to `selected_prim_pathChanged`. |
+| v0.15.0 Phase E.2-prep ✅ | `bif_viewport::Renderer` decoupled from winit (2026-04-15). New API: `new(surface, device, queue, config, size, scale) + attach_egui + egui_state_mut + set_dialog_focus_hook + render(clear_color, Option<RawInput>) -> Option<PlatformOutput>`. `bif_viewer` keeps working via a new `create_renderer` helper. Zero direct `winit::*` imports in `bif_viewport` code. Build/clippy/fmt clean. |
+| Next | **Phase E.2 moves 1+2+4 (~3-4h, now unblocked).** Move 1: `bif_qt::Viewport` swaps its triangle for `bif_viewport::Renderer` via the new winit-free `Renderer::new(...)`. Move 2: `BifShellState::load_stage_at_path(QString)` → `SceneManager::load_usd_scene` → bump `layer_state_revision`. Move 4: USD timeline FFI + `detect_timeline_from_stage` invokable. Moves 3/5–9 deferred. |
 | Tests | ~627 total (90 new in v0.14.0) + spike has no unit tests (deletion-scheduled) |
 | Performance | 60 FPS viewport, 100K instances with LOD, Ivar build ~185ms |
 

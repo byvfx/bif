@@ -168,6 +168,90 @@ impl App {
     }
 }
 
+/// Build a `bif_viewport::Renderer` from a winit window.
+///
+/// Owns the full wgpu + egui setup that `bif_viewport::Renderer::new` used
+/// to handle internally — now lives here so `bif_viewport` stays
+/// windowing-system-agnostic. `bif_qt` performs the equivalent setup from a
+/// raw HWND in its own `Viewport::new`.
+fn create_renderer(window: std::sync::Arc<Window>) -> anyhow::Result<Renderer> {
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+        backends: wgpu::Backends::PRIMARY,
+        ..Default::default()
+    });
+
+    let surface = instance.create_surface(window.clone())?;
+
+    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+        power_preference: wgpu::PowerPreference::HighPerformance,
+        compatible_surface: Some(&surface),
+        force_fallback_adapter: false,
+    }))
+    .ok_or_else(|| anyhow::anyhow!("Failed to find suitable GPU adapter"))?;
+
+    let (device, queue) = pollster::block_on(adapter.request_device(
+        &wgpu::DeviceDescriptor {
+            label: Some("BIF Device"),
+            required_features: bif_viewport::REQUIRED_FEATURES,
+            required_limits: bif_viewport::required_limits(),
+            memory_hints: Default::default(),
+        },
+        None,
+    ))?;
+
+    let surface_caps = surface.get_capabilities(&adapter);
+    let surface_format = surface_caps
+        .formats
+        .iter()
+        .copied()
+        .find(|f| f.is_srgb())
+        .unwrap_or(surface_caps.formats[0]);
+
+    let size = window.inner_size();
+    let config = wgpu::SurfaceConfiguration {
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        format: surface_format,
+        width: size.width,
+        height: size.height,
+        present_mode: wgpu::PresentMode::Fifo, // VSync
+        alpha_mode: surface_caps.alpha_modes[0],
+        view_formats: vec![],
+        desired_maximum_frame_latency: 2,
+    };
+    surface.configure(&device, &config);
+
+    let scale_factor = window.scale_factor() as f32;
+    let mut renderer = Renderer::new(
+        surface,
+        device,
+        queue,
+        config,
+        (size.width, size.height),
+        scale_factor,
+    )?;
+
+    // Build the egui <-> winit handshake state using the renderer's egui
+    // context, then hand ownership to the renderer.
+    let egui_state = egui_winit::State::new(
+        renderer.egui_ctx().clone(),
+        egui::ViewportId::ROOT,
+        &*window,
+        Some(scale_factor),
+        None,
+        None, // max_texture_side (use default)
+    );
+    renderer.attach_egui(egui_state);
+
+    // Install dialog-focus hook: hide/show the winit window around native
+    // dialogs to work around the Windows z-order issue.
+    let window_for_hook = window.clone();
+    renderer.set_dialog_focus_hook(move |visible| {
+        window_for_hook.set_visible(visible);
+    });
+
+    Ok(renderer)
+}
+
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.window.is_none() {
@@ -187,7 +271,7 @@ impl ApplicationHandler for App {
             let renderer = if let Some(usd_path) = &self.usd_path {
                 // Use C++ bridge for --usd flag (supports USDC and references)
                 log::info!("Loading USD scene via C++ bridge: {}", usd_path);
-                let mut r = match pollster::block_on(Renderer::new(window.clone())) {
+                let mut r = match create_renderer(window.clone()) {
                     Ok(r) => r,
                     Err(e) => {
                         eprintln!("Failed to initialize renderer: {}", e);
@@ -204,7 +288,7 @@ impl ApplicationHandler for App {
                 r
             } else if let Some(usda_path) = self.usda_path.as_deref() {
                 log::info!("Loading USDA scene: {}", usda_path);
-                let mut r = match pollster::block_on(Renderer::new(window.clone())) {
+                let mut r = match create_renderer(window.clone()) {
                     Ok(r) => r,
                     Err(e) => {
                         eprintln!("Failed to initialize renderer: {}", e);
@@ -239,7 +323,7 @@ impl ApplicationHandler for App {
             } else {
                 // No file specified - start with blank scene
                 log::info!("Starting with blank scene (load USD via node graph)");
-                match pollster::block_on(Renderer::new(window.clone())) {
+                match create_renderer(window.clone()) {
                     Ok(r) => r,
                     Err(e) => {
                         eprintln!("Failed to initialize renderer: {}", e);
@@ -264,11 +348,12 @@ impl ApplicationHandler for App {
         // Any window event means we need at least one redraw
         self.needs_redraw = true;
 
-        // Let egui handle the event first
-        if let Some(renderer) = &mut self.renderer {
-            if let Some(window) = &self.window {
-                if renderer.handle_egui_event(window, &event) {
-                    // Event was consumed by egui, don't process it further
+        // Let egui handle the event first. bif_viewport::Renderer no longer
+        // owns the winit Window, so we drive the egui_winit <-> winit
+        // handshake here in bif_viewer's event loop.
+        if let (Some(renderer), Some(window)) = (&mut self.renderer, &self.window) {
+            if let Some(egui_state) = renderer.egui_state_mut() {
+                if egui_state.on_window_event(window, &event).consumed {
                     return;
                 }
             }
@@ -288,8 +373,13 @@ impl ApplicationHandler for App {
                 }
             }
             WindowEvent::Resized(physical_size) => {
+                let scale_factor = self
+                    .window
+                    .as_ref()
+                    .map(|w| w.scale_factor() as f32)
+                    .unwrap_or(1.0);
                 self.with_renderer(|r| {
-                    r.resize((physical_size.width, physical_size.height));
+                    r.resize((physical_size.width, physical_size.height), scale_factor);
                     log::info!(
                         "Resized to {}x{}",
                         physical_size.width,
@@ -581,22 +671,40 @@ impl ApplicationHandler for App {
                             a: 1.0,
                         };
 
-                        if let Err(e) = renderer.render(clear_color, window) {
-                            if let Some(surface_err) = e.downcast_ref::<wgpu::SurfaceError>() {
-                                match surface_err {
-                                    wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated => {
-                                        renderer.resize(renderer.size);
-                                    }
-                                    wgpu::SurfaceError::OutOfMemory => {
-                                        log::error!("Out of memory!");
-                                        event_loop.exit();
-                                    }
-                                    _ => {
-                                        log::error!("Surface error: {:?}", surface_err);
+                        // Pull egui input from the renderer's attached state
+                        // before the render call — bif_viewport no longer
+                        // owns the winit Window required for `take_egui_input`.
+                        let raw_input = renderer
+                            .egui_state_mut()
+                            .map(|es| es.take_egui_input(window));
+                        match renderer.render(clear_color, raw_input) {
+                            Ok(platform_output) => {
+                                // Hand platform output (clipboard, cursor, IME
+                                // hints, URLs) back to winit via egui_winit.
+                                if let Some(po) = platform_output {
+                                    if let Some(es) = renderer.egui_state_mut() {
+                                        es.handle_platform_output(window, po);
                                     }
                                 }
-                            } else {
-                                log::error!("Render error: {:?}", e);
+                            }
+                            Err(e) => {
+                                if let Some(surface_err) = e.downcast_ref::<wgpu::SurfaceError>() {
+                                    match surface_err {
+                                        wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated => {
+                                            let scale = window.scale_factor() as f32;
+                                            renderer.resize(renderer.size, scale);
+                                        }
+                                        wgpu::SurfaceError::OutOfMemory => {
+                                            log::error!("Out of memory!");
+                                            event_loop.exit();
+                                        }
+                                        _ => {
+                                            log::error!("Surface error: {:?}", surface_err);
+                                        }
+                                    }
+                                } else {
+                                    log::error!("Render error: {:?}", e);
+                                }
                             }
                         }
                     }

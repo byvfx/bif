@@ -6,6 +6,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **v0.15.0 Phase E.2-prep — `bif_viewport::Renderer` decoupled from winit** (2026-04-15). Foundation refactor that unblocks Phase E.2 move 1 (pulling Renderer into `bif_qt` from a raw HWND). `Renderer::new` now takes `(surface, device, queue, config, size, scale_factor)` — pure wgpu primitives, synchronous; the winit-coupled `Arc<winit::Window>` dep is gone. New optional-overlay API: `attach_egui(egui_state)`, `egui_state_mut()`, `egui_ctx()`, `set_dialog_focus_hook(Fn(bool) + 'static)`. `render()` now takes `Option<egui::RawInput>` and returns `Result<Option<egui::PlatformOutput>>` — headless when `None`, egui overlay when `Some`. `resize()` signature adds `scale_factor: f32`. `REQUIRED_FEATURES` + `required_limits()` constants exposed so callers request the right wgpu device. Zero direct `winit::*` imports in `bif_viewport/src/lib.rs` + `render.rs` code (doc comments + `egui_winit::State` transitive type only). `bif_viewer` keeps working via a new `create_renderer(window)` helper in `main.rs` that owns the wgpu/egui setup and installs the dialog-focus hook. Removed: `handle_egui_event` (callers now drive `egui_state.on_window_event` directly), old `resize((u32, u32))` signature, internal `window` field.
+
 ### Added
 
 - **v0.15.0 Phase E.1 — Input + event wiring (stubs)** — interactivity layer without real USD yet. Phase E.2 wires bif_renderer + scene_loader on top.

@@ -61,17 +61,25 @@ fn open_usd_file_dialog(
 
 impl Renderer {
     /// Render a frame with the given clear color.
+    ///
+    /// `raw_input` controls whether the egui overlay runs:
+    /// - `None` — pure 3D path; no egui pass. Use for headless consumers
+    ///   (e.g. `bif_qt`) that render only the scene.
+    /// - `Some(input)` — caller has pulled egui input via
+    ///   `egui_state_mut().unwrap().take_egui_input(window)` and passes it
+    ///   here. Returns the resulting [`egui::PlatformOutput`] so the caller
+    ///   can hand it to `egui_state.handle_platform_output(window, output)`.
+    ///   Required whenever egui is attached.
     pub fn render(
         &mut self,
         clear_color: wgpu::Color,
-        window: &winit::window::Window,
-    ) -> Result<()> {
+        raw_input: Option<egui::RawInput>,
+    ) -> Result<Option<egui::PlatformOutput>> {
         self.poll_async_work();
         self.poll_environment();
-        let full_output = self.run_egui_frame(window);
+        let full_output = raw_input.map(|ri| self.run_egui_frame(ri));
         self.dispatch_events();
-        self.submit_gpu_frame(clear_color, window, full_output)?;
-        Ok(())
+        self.submit_gpu_frame(clear_color, full_output)
     }
 
     /// Phase 1: Poll async work — USD load, texture streaming, scene graph, scene ops.
@@ -183,10 +191,11 @@ impl Renderer {
     }
 
     /// Phase 3: Run the egui frame — build all UI panels and return FullOutput.
-    fn run_egui_frame(&mut self, window: &winit::window::Window) -> egui::FullOutput {
-        // Prepare egui UI
-        let raw_input = self.egui_state.take_egui_input(window);
-
+    ///
+    /// The caller must have already pulled `raw_input` from the installed
+    /// `egui_winit::State` (the winit<->egui handshake lives outside this
+    /// crate).
+    fn run_egui_frame(&mut self, raw_input: egui::RawInput) -> egui::FullOutput {
         // Build UI - need to split borrow to avoid closure borrowing entire self
         let mut left_panel_width = self.ui_layout.left_panel_width;
         let mut right_panel_width = self.ui_layout.right_panel_width;
@@ -1327,28 +1336,47 @@ impl Renderer {
     }
 
     /// Phase 5: Tessellate egui, submit GPU render passes, present frame.
+    ///
+    /// When `full_output` is `Some`, the egui pass runs and the returned
+    /// `PlatformOutput` must be handed back to
+    /// `egui_winit::State::handle_platform_output` by the caller (this crate
+    /// no longer holds the winit Window reference required for that call).
+    /// When `None`, the 3D pipeline renders alone — no egui overlay, no
+    /// platform output.
     fn submit_gpu_frame(
         &mut self,
         clear_color: wgpu::Color,
-        window: &winit::window::Window,
-        full_output: egui::FullOutput,
-    ) -> Result<()> {
+        full_output: Option<egui::FullOutput>,
+    ) -> Result<Option<egui::PlatformOutput>> {
         let output = self.gpu.surface.get_current_texture()?;
         let view = output
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
 
-        self.egui_state
-            .handle_platform_output(window, full_output.platform_output);
-
-        let screen_descriptor = egui_wgpu::ScreenDescriptor {
-            size_in_pixels: [self.size.0, self.size.1],
-            pixels_per_point: window.scale_factor() as f32,
-        };
-
-        let paint_jobs = self
-            .egui_ctx
-            .tessellate(full_output.shapes, full_output.pixels_per_point);
+        // Split egui data out early so we can move PlatformOutput to the
+        // caller at the end of the frame. `paint_jobs` / `textures_delta` /
+        // `screen_descriptor` stay local to this function; `platform_output`
+        // bubbles up.
+        let egui_frame = full_output.map(|fo| {
+            let egui::FullOutput {
+                platform_output,
+                textures_delta,
+                shapes,
+                pixels_per_point,
+                ..
+            } = fo;
+            let paint_jobs = self.egui_ctx.tessellate(shapes, pixels_per_point);
+            let screen_descriptor = egui_wgpu::ScreenDescriptor {
+                size_in_pixels: [self.size.0, self.size.1],
+                pixels_per_point: self.scale_factor,
+            };
+            (
+                platform_output,
+                textures_delta,
+                paint_jobs,
+                screen_descriptor,
+            )
+        });
 
         let mut encoder = self
             .gpu
@@ -1357,20 +1385,24 @@ impl Renderer {
                 label: Some("Render Encoder"),
             });
 
-        // Upload egui textures
-        for (id, image_delta) in &full_output.textures_delta.set {
-            self.egui_renderer
-                .update_texture(&self.gpu.device, &self.gpu.queue, *id, image_delta);
+        // Upload egui textures + prepare egui buffers (skipped when no egui).
+        if let Some((_, textures_delta, paint_jobs, screen_descriptor)) = egui_frame.as_ref() {
+            for (id, image_delta) in &textures_delta.set {
+                self.egui_renderer.update_texture(
+                    &self.gpu.device,
+                    &self.gpu.queue,
+                    *id,
+                    image_delta,
+                );
+            }
+            self.egui_renderer.update_buffers(
+                &self.gpu.device,
+                &self.gpu.queue,
+                &mut encoder,
+                paint_jobs,
+                screen_descriptor,
+            );
         }
-
-        // Prepare egui render pass
-        self.egui_renderer.update_buffers(
-            &self.gpu.device,
-            &self.gpu.queue,
-            &mut encoder,
-            &paint_jobs,
-            &screen_descriptor,
-        );
 
         // Update point preview params before render pass (only when dirty or viewport resized).
         // Single writer for params buffer — upload_points never writes params.
@@ -1790,8 +1822,8 @@ impl Renderer {
             }
         }
 
-        // Render egui on top
-        {
+        // Render egui on top (skipped when no egui attached).
+        if let Some((_, _, paint_jobs, screen_descriptor)) = egui_frame.as_ref() {
             let mut egui_pass = encoder
                 .begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("egui Render Pass"),
@@ -1810,17 +1842,20 @@ impl Renderer {
                 .forget_lifetime(); // Need 'static lifetime for egui renderer
 
             self.egui_renderer
-                .render(&mut egui_pass, &paint_jobs, &screen_descriptor);
+                .render(&mut egui_pass, paint_jobs, screen_descriptor);
         }
 
-        // Free egui textures
-        for id in &full_output.textures_delta.free {
-            self.egui_renderer.free_texture(id);
-        }
+        // Free egui textures + extract platform_output to return to the caller.
+        let platform_output = egui_frame.map(|(platform_output, textures_delta, _, _)| {
+            for id in &textures_delta.free {
+                self.egui_renderer.free_texture(id);
+            }
+            platform_output
+        });
 
         self.gpu.queue.submit(std::iter::once(encoder.finish()));
         output.present();
 
-        Ok(())
+        Ok(platform_output)
     }
 }

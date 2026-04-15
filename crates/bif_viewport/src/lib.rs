@@ -1,7 +1,7 @@
 use anyhow::Result;
 use std::num::NonZeroU32;
 use std::sync::Arc;
-use wgpu::{util::DeviceExt, Device, Instance, Queue, Surface, SurfaceConfiguration};
+use wgpu::{util::DeviceExt, Device, Queue, Surface, SurfaceConfiguration};
 
 use bif_math::{Camera, Mat4, Vec3};
 
@@ -192,7 +192,16 @@ fn denormalize_synthetic_path(prim_path: &str) -> String {
 
 /// Core renderer managing wgpu state
 pub struct Renderer {
-    pub(crate) window: std::sync::Arc<winit::window::Window>,
+    /// Display scale factor (device-independent pixels per point). Used for
+    /// egui overlay tessellation. Callers update via [`Renderer::resize`].
+    pub(crate) scale_factor: f32,
+
+    /// Optional hook invoked around native-dialog presentations to work
+    /// around the Windows z-order issue where file/message dialogs can get
+    /// stuck behind the main window. `bif_viewer` installs a closure that
+    /// toggles its winit Window; `bif_qt` leaves this `None`.
+    pub(crate) dialog_focus_hook: Option<Box<dyn Fn(bool)>>,
+
     pub(crate) gpu: GpuContext,
     pub size: (u32, u32),
     pub(crate) pipeline: wgpu::RenderPipeline,
@@ -220,7 +229,10 @@ pub struct Renderer {
 
     // egui state
     pub(crate) egui_ctx: egui::Context,
-    pub(crate) egui_state: egui_winit::State,
+    /// egui <-> windowing handshake state. `None` for headless consumers
+    /// (e.g. `bif_qt`); `bif_viewer` attaches this via
+    /// [`Renderer::attach_egui`] after construction.
+    pub(crate) egui_state: Option<egui_winit::State>,
     pub(crate) egui_renderer: egui_wgpu::Renderer,
 
     // UI state
@@ -304,73 +316,47 @@ pub struct Renderer {
     pub(crate) mipmap_generator: texture_loader::MipmapGenerator,
 }
 
+/// Required wgpu feature set for the renderer. Callers building their own
+/// `wgpu::Device` (bif_viewer, bif_qt) should request at least these features.
+pub const REQUIRED_FEATURES: wgpu::Features = wgpu::Features::TEXTURE_BINDING_ARRAY
+    .union(wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING)
+    .union(wgpu::Features::SHADER_PRIMITIVE_INDEX)
+    .union(wgpu::Features::POLYGON_MODE_LINE);
+
+/// Recommended wgpu limits for the renderer. Callers can clone or adjust but
+/// must satisfy at least `max_sampled_textures_per_shader_stage = MAX_VIEWPORT_TEXTURES`
+/// and `max_bind_groups >= 5`.
+pub fn required_limits() -> wgpu::Limits {
+    wgpu::Limits {
+        max_sampled_textures_per_shader_stage: MAX_VIEWPORT_TEXTURES as u32,
+        max_buffer_size: 1 << 30, // 1GB for large meshes
+        max_bind_groups: 5,       // Groups 0-4 (camera, material, texture, env, lights)
+        ..Default::default()
+    }
+}
+
 impl Renderer {
-    /// Create a new renderer for the given window
-    pub async fn new(window: std::sync::Arc<winit::window::Window>) -> Result<Self> {
-        let size = window.inner_size();
-
-        // Create wgpu instance
-        let instance = Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::PRIMARY,
-            ..Default::default()
-        });
-
-        // Create surface
-        let surface = instance.create_surface(window.clone())?;
-
-        // Request adapter
-        let adapter = instance
-            .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::HighPerformance,
-                compatible_surface: Some(&surface),
-                force_fallback_adapter: false,
-            })
-            .await
-            .ok_or_else(|| anyhow::anyhow!("Failed to find suitable GPU adapter"))?;
-
-        // Request device and queue
-        let (device, queue) = adapter
-            .request_device(
-                &wgpu::DeviceDescriptor {
-                    label: Some("BIF Device"),
-                    required_features: wgpu::Features::TEXTURE_BINDING_ARRAY
-                        | wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING
-                        | wgpu::Features::SHADER_PRIMITIVE_INDEX
-                        | wgpu::Features::POLYGON_MODE_LINE,
-                    required_limits: wgpu::Limits {
-                        max_sampled_textures_per_shader_stage: MAX_VIEWPORT_TEXTURES as u32,
-                        max_buffer_size: 1 << 30, // 1GB for large meshes
-                        max_bind_groups: 5,       // Groups 0-4 (camera, material, texture, env, lights)
-                        ..Default::default()
-                    },
-                    memory_hints: Default::default(),
-                },
-                None,
-            )
-            .await?;
-
-        // Configure surface
-        let surface_caps = surface.get_capabilities(&adapter);
-        let surface_format = surface_caps
-            .formats
-            .iter()
-            .copied()
-            .find(|f| f.is_srgb())
-            .unwrap_or(surface_caps.formats[0]);
-
-        let config = SurfaceConfiguration {
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            format: surface_format,
-            width: size.width,
-            height: size.height,
-            present_mode: wgpu::PresentMode::Fifo, // VSync for proper frame pacing // VSync
-            alpha_mode: surface_caps.alpha_modes[0],
-            view_formats: vec![],
-            desired_maximum_frame_latency: 2,
-        };
-
-        surface.configure(&device, &config);
-
+    /// Create a new renderer from caller-provided wgpu primitives.
+    ///
+    /// `bif_viewer` (winit) and `bif_qt` (Qt / raw HWND) each build their own
+    /// `wgpu::Instance` + `Surface` from their native window handle, request
+    /// an adapter/device/queue, and pass them here. This crate no longer
+    /// depends on any specific windowing system — the caller owns that layer.
+    ///
+    /// `size` is the surface size in physical pixels. `scale_factor` is used
+    /// for egui overlay tessellation; update both via [`Renderer::resize`].
+    ///
+    /// egui is **not** initialized by this call. Callers that want egui (i.e.
+    /// `bif_viewer`) build `egui_winit::State` themselves from their winit
+    /// window and install it via [`Renderer::attach_egui`].
+    pub fn new(
+        surface: wgpu::Surface<'static>,
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        config: wgpu::SurfaceConfiguration,
+        size: (u32, u32),
+        scale_factor: f32,
+    ) -> Result<Self> {
         // Start with blank scene - no default mesh
         log::info!("Initializing blank scene (no default geometry)");
 
@@ -378,7 +364,7 @@ impl Renderer {
         let mesh_data = MeshData::default();
 
         // Create camera at default position looking at origin
-        let aspect = size.width as f32 / size.height as f32;
+        let aspect = size.0 as f32 / size.1 as f32;
         let mut camera = Camera::new(
             Vec3::new(0.0, 10.0, 50.0), // Default position
             Vec3::new(0.0, 0.0, 0.0),   // Look at origin
@@ -740,8 +726,7 @@ impl Renderer {
         });
 
         // Create depth texture
-        let (depth_texture, depth_view) =
-            ivar_renderer::create_depth_texture(&device, (size.width, size.height));
+        let (depth_texture, depth_view) = ivar_renderer::create_depth_texture(&device, size);
 
         // No instances by default - empty scene
         let dummy_instance = InstanceData {
@@ -773,17 +758,12 @@ impl Renderer {
 
         log::info!("Created culling manager");
 
-        // Initialize egui
+        // Initialize egui context + wgpu renderer. The winit-coupled
+        // `egui_winit::State` is NOT constructed here — callers that want
+        // egui overlay (bif_viewer) build one from their winit window and
+        // install it via `attach_egui()`.
         let egui_ctx = egui::Context::default();
         theme::apply_theme(&egui_ctx);
-        let egui_state = egui_winit::State::new(
-            egui_ctx.clone(),
-            egui::ViewportId::ROOT,
-            &window,
-            Some(window.scale_factor() as f32),
-            None,
-            None, // max_texture_side (use default)
-        );
 
         let egui_renderer = egui_wgpu::Renderer::new(
             &device,
@@ -822,8 +802,7 @@ impl Renderer {
         let num_triangles = 0;
 
         // Create Ivar resources for CPU path tracer display
-        let (ivar_texture, ivar_texture_view) =
-            ivar_renderer::create_ivar_texture(&device, (size.width, size.height));
+        let (ivar_texture, ivar_texture_view) = ivar_renderer::create_ivar_texture(&device, size);
 
         let ivar_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("Ivar Sampler"),
@@ -849,14 +828,15 @@ impl Renderer {
         let mipmap_generator = texture_loader::MipmapGenerator::new(&device);
 
         Ok(Self {
-            window,
+            scale_factor,
+            dialog_focus_hook: None,
             gpu: GpuContext {
                 surface,
                 device,
                 queue,
                 config,
             },
-            size: (size.width, size.height),
+            size,
             pipeline,
             wireframe_pipeline,
             wireframe_cam_buffer,
@@ -898,7 +878,7 @@ impl Renderer {
             gnomon,
             grid,
             egui_ctx,
-            egui_state,
+            egui_state: None,
             egui_renderer,
             fps: 0.0,
             frame_count: 0,
@@ -972,10 +952,57 @@ impl Renderer {
             || self.selection.gizmo_state.is_dragging
     }
 
-    /// Handle window resize
-    pub fn resize(&mut self, new_size: (u32, u32)) {
+    /// Install the egui input/output state. Call this once after `new()` if
+    /// you want egui overlay (bif_viewer). Callers that don't want egui
+    /// (bif_qt) simply skip this and `render()` with `raw_input: None`.
+    ///
+    /// The state is winit-specific (via `egui_winit::State`); callers build
+    /// it themselves so this crate stays windowing-system-agnostic.
+    pub fn attach_egui(&mut self, egui_state: egui_winit::State) {
+        self.egui_state = Some(egui_state);
+    }
+
+    /// Mutable access to the installed egui state. `None` when no egui was
+    /// attached. Callers (bif_viewer) use this to drive the per-event
+    /// `on_window_event` handshake and the per-frame `take_egui_input` /
+    /// `handle_platform_output` pair — all winit-typed — outside this crate.
+    pub fn egui_state_mut(&mut self) -> Option<&mut egui_winit::State> {
+        self.egui_state.as_mut()
+    }
+
+    /// Access to the egui context (for callers that want to push theming,
+    /// read `pixels_per_point()`, etc.).
+    pub fn egui_ctx(&self) -> &egui::Context {
+        &self.egui_ctx
+    }
+
+    /// Install a hook invoked around native-dialog presentations. The hook
+    /// is called with `false` before the dialog opens and `true` after it
+    /// closes — giving the caller a chance to hide/show its window to work
+    /// around OS z-order issues (Windows).
+    ///
+    /// `bif_viewer` installs `Box::new(move |v| window.set_visible(v))`;
+    /// `bif_qt` leaves this unset.
+    pub fn set_dialog_focus_hook<F>(&mut self, hook: F)
+    where
+        F: Fn(bool) + 'static,
+    {
+        self.dialog_focus_hook = Some(Box::new(hook));
+    }
+
+    /// Current display scale factor (device-independent pixels per point).
+    pub fn scale_factor(&self) -> f32 {
+        self.scale_factor
+    }
+
+    /// Handle window resize. `scale_factor` is the caller's current display
+    /// scale (device-independent pixels per point); pass whatever your
+    /// windowing layer reports (`winit::Window::scale_factor()` in
+    /// `bif_viewer`; `QScreen::devicePixelRatio()` in `bif_qt`).
+    pub fn resize(&mut self, new_size: (u32, u32), scale_factor: f32) {
         if new_size.0 > 0 && new_size.1 > 0 {
             self.size = new_size;
+            self.scale_factor = scale_factor;
             self.gpu.config.width = new_size.0;
             self.gpu.config.height = new_size.1;
             self.gpu
@@ -1239,16 +1266,6 @@ impl Renderer {
             cam.name,
             inst_idx
         );
-    }
-
-    /// Handle egui window event - returns true if event was consumed by egui
-    pub fn handle_egui_event(
-        &mut self,
-        window: &winit::window::Window,
-        event: &winit::event::WindowEvent,
-    ) -> bool {
-        let response = self.egui_state.on_window_event(window, event);
-        response.consumed
     }
 
     /// Rebuild the Embree pick scene from current mesh + instance data.
@@ -1886,11 +1903,20 @@ impl Renderer {
 
     /// Run a closure that shows a native dialog, hiding the main window
     /// so the dialog isn't stuck behind it (Windows z-order workaround).
+    ///
+    /// Delegates visibility toggling to the caller-installed
+    /// [`dialog_focus_hook`](Self::set_dialog_focus_hook). When no hook is
+    /// installed (headless / Qt consumers) the closure simply runs with no
+    /// visibility change.
     fn with_dialog_focus<T>(&self, f: impl FnOnce() -> T) -> T {
-        self.window.set_visible(false);
-        let result = f();
-        self.window.set_visible(true);
-        result
+        if let Some(hook) = &self.dialog_focus_hook {
+            hook(false);
+            let result = f();
+            hook(true);
+            result
+        } else {
+            f()
+        }
     }
 
     /// Show "Save changes?" dialog if dirty. Returns action to take.
