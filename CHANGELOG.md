@@ -6,6 +6,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **v0.15.0 Phase E.2 move 4 — real timeline detection from USD stage** (2026-04-15). Timeline toolbar's ⇅ detect-from-stage button now reads actual USD time metadata. `BifShellState::on_stage_path_opened` stores the path in a new Rust-side `current_stage_path: Option<PathBuf>` field. `detect_timeline_from_stage` opens a throwaway `UsdStage` from that path, calls the existing `UsdStage::get_timeline()` (which wraps `GetStartTimeCode` / `GetEndTimeCode` / `GetTimeCodesPerSecond` via `cpp_bridge::usd_bridge_get_timeline`), and writes `start_frame` / `end_frame` / `playback_fps` qproperties. Logs when the stage has no authored time range. Status messages on success and both failure modes (path not set, stage open fails, get_timeline fails). Standalone implementation — no shared stage handle yet. Inefficient (reopens the stage per click) but gets the UI correct; move 2 + the architecture decision that follows will replace it with a shared stage driving the viewport.
+
 ### Changed
 
 - **v0.15.0 Phase E.2 move 1 — `bif_qt::Viewport` hosts real `bif_viewport::Renderer`** (2026-04-15). Replaces the triangle demo. `bif_qt` now depends on `bif_viewport`. `Viewport::new` builds wgpu primitives from the Qt-native HWND, requests a device with `bif_viewport::REQUIRED_FEATURES` + `required_limits()`, and hands everything to `Renderer::new(surface, device, queue, config, size, scale_factor)`. Frame ticks render via `renderer.render(clear_color, None)` (no egui — Qt owns the UI). Resize + surface-lost recovery thread through `renderer.resize(size, scale_factor)`. `Viewport::renderer_mut()` + `ViewportCallbacks::viewport_mut()` expose the renderer to future scene-load invokables (moves 2+4). `scale_factor` hardcoded to 1.0 until `QScreen::devicePixelRatio()` is wired. Removed the inline triangle pipeline, shader file (`crates/bif_qt/shaders/triangle.wgsl`), and `build_triangle_pipeline` helper.

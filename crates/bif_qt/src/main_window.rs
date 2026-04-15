@@ -23,6 +23,7 @@ use cxx_qt::CxxQtType;
 
 use bif_core::scene_layer_state::SceneLayerState;
 use bif_core::usd::layer::{LayerInfo, LayerOffset, LayerStack, PayloadPolicy};
+use bif_core::usd::UsdStage;
 
 use crate::viewport::{
     viewport_on_frame, viewport_on_resize, viewport_on_shutdown, viewport_on_surface_ready,
@@ -303,6 +304,15 @@ pub struct BifShellStateRust {
     /// Hardcoded demo keyframes (Phase D.1). Phase E replaces with
     /// `AnimatedTransform`-derived keyframe marker positions.
     pub demo_keyframes: Vec<i32>,
+    /// Path of the stage the user last opened via File → Open. Stored
+    /// without further interpretation — `detect_timeline_from_stage`
+    /// opens a throwaway `UsdStage` from this path to read time
+    /// metadata. `None` until a stage is opened.
+    ///
+    /// This is a stopgap for Phase E.2 move 4 (2026-04-15). Move 2
+    /// will replace it with a proper stage handle shared between
+    /// `BifShellState` and `ViewportCallbacks::viewport.renderer.scene`.
+    pub current_stage_path: Option<std::path::PathBuf>,
 }
 
 impl Default for BifShellStateRust {
@@ -323,6 +333,7 @@ impl Default for BifShellStateRust {
             loop_playback: true,
             is_playing: false,
             demo_keyframes: vec![0, 12, 30, 48, 72, 96, 120],
+            current_stage_path: None,
         }
     }
 }
@@ -378,9 +389,14 @@ impl qobject::BifShellState {
     fn on_stage_path_opened(mut self: Pin<&mut Self>, path: cxx_qt_lib::QString) {
         let path_str: String = (&path).into();
         log::info!("stage open requested: {path_str}");
+        // Phase E.2 move 4: store the path so `detect_timeline_from_stage`
+        // can open a throwaway UsdStage to read time metadata. Move 2 will
+        // replace this with a proper shared stage handle driving the
+        // viewport renderer.
+        self.as_mut().rust_mut().current_stage_path = Some(std::path::PathBuf::from(&path_str));
         self.as_mut()
             .set_status_message(cxx_qt_lib::QString::from(&format!(
-                "Open Stage: {path_str}  (Phase E.2 wires the actual load)"
+                "Open Stage: {path_str}  (Phase E.2 move 2 wires the viewport load)"
             )));
     }
 
@@ -658,15 +674,65 @@ impl qobject::BifShellState {
     }
 
     fn detect_timeline_from_stage(mut self: Pin<&mut Self>) {
-        // Phase E.1 stub. Phase E.2 reads the loaded UsdStage for
-        // startTimeCode / endTimeCode / timeCodesPerSecond and
-        // writes them through set_start_frame / set_end_frame /
-        // set_playback_fps. Until a stage is actually loaded the
-        // button just surfaces intent in the status bar.
-        log::info!("timeline: detect-from-stage requested (Phase E.2 stub)");
-        self.as_mut().set_status_message(cxx_qt_lib::QString::from(
-            "Detect timeline from stage — Phase E.2 wires USD metadata read",
-        ));
+        // Phase E.2 move 4 (2026-04-15): opens a throwaway `UsdStage`
+        // from the last path handed to `on_stage_path_opened`, reads
+        // the existing `UsdStage::get_timeline()` (which already wraps
+        // `GetStartTimeCode` / `GetEndTimeCode` / `GetTimeCodesPerSecond`
+        // via `cpp_bridge::usd_bridge_get_timeline`), and writes the
+        // three timeline qproperties.
+        //
+        // Standalone — no shared stage handle with the renderer yet.
+        // Inefficient (reopens the stage per click) but gets the UI
+        // correct. Move 2 + the architecture decision that follows
+        // replace this with a shared UsdStage.
+        let path_opt = self.as_ref().rust().current_stage_path.clone();
+        let Some(path) = path_opt else {
+            log::info!("timeline: detect-from-stage clicked, no stage path yet");
+            self.as_mut().set_status_message(cxx_qt_lib::QString::from(
+                "Detect timeline: open a stage first (File → Open).",
+            ));
+            return;
+        };
+        match UsdStage::open(&path) {
+            Ok(stage) => match stage.get_timeline() {
+                Ok(tl) => {
+                    if !tl.has_authored_time_range {
+                        log::info!(
+                            "timeline: stage {:?} has no authored time range; using USD defaults \
+                             (start={}, end={}, fps={})",
+                            path,
+                            tl.start_time_code,
+                            tl.end_time_code,
+                            tl.frames_per_second
+                        );
+                    }
+                    let start = tl.start_time_code.round() as i32;
+                    let end = tl.end_time_code.round() as i32;
+                    let fps = (tl.frames_per_second.round() as i32).max(1);
+                    self.as_mut().set_start_frame(start);
+                    self.as_mut().set_end_frame(end);
+                    self.as_mut().set_playback_fps(fps);
+                    self.as_mut()
+                        .set_status_message(cxx_qt_lib::QString::from(&format!(
+                            "Timeline detected: {start}-{end} @ {fps} fps",
+                        )));
+                }
+                Err(e) => {
+                    log::warn!("timeline: get_timeline failed: {e:?}");
+                    self.as_mut()
+                        .set_status_message(cxx_qt_lib::QString::from(&format!(
+                            "Timeline detect failed: {e:?}",
+                        )));
+                }
+            },
+            Err(e) => {
+                log::warn!("timeline: UsdStage::open({:?}) failed: {e:?}", path);
+                self.as_mut()
+                    .set_status_message(cxx_qt_lib::QString::from(&format!(
+                        "Timeline detect failed to open stage: {e:?}",
+                    )));
+            }
+        }
     }
 }
 
