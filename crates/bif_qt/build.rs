@@ -27,6 +27,11 @@ fn main() {
             cc.file("cpp/render_widget.cpp");
             cc.file("cpp/first_launch_widget.cpp");
             cc.file("cpp/command_palette.cpp");
+            cc.file("cpp/layer_stack_model.cpp");
+            cc.file("cpp/layer_stack_widget.cpp");
+            cc.file("cpp/scene_browser_model.cpp");
+            cc.file("cpp/scene_browser_widget.cpp");
+            cc.file("cpp/property_inspector_widget.cpp");
             cc.include("cpp");
             cc.std("c++17");
 
@@ -42,6 +47,11 @@ fn main() {
         .qobject_header("cpp/render_widget.h")
         .qobject_header("cpp/first_launch_widget.h")
         .qobject_header("cpp/command_palette.h")
+        .qobject_header("cpp/layer_stack_model.h")
+        .qobject_header("cpp/layer_stack_widget.h")
+        .qobject_header("cpp/scene_browser_model.h")
+        .qobject_header("cpp/scene_browser_widget.h")
+        .qobject_header("cpp/property_inspector_widget.h")
         .build();
 
     println!("cargo:rerun-if-changed=src/main_window.rs");
@@ -55,4 +65,14 @@ fn main() {
     println!("cargo:rerun-if-changed=cpp/first_launch_widget.h");
     println!("cargo:rerun-if-changed=cpp/command_palette.cpp");
     println!("cargo:rerun-if-changed=cpp/command_palette.h");
+    println!("cargo:rerun-if-changed=cpp/layer_stack_model.cpp");
+    println!("cargo:rerun-if-changed=cpp/layer_stack_model.h");
+    println!("cargo:rerun-if-changed=cpp/layer_stack_widget.cpp");
+    println!("cargo:rerun-if-changed=cpp/layer_stack_widget.h");
+    println!("cargo:rerun-if-changed=cpp/scene_browser_model.cpp");
+    println!("cargo:rerun-if-changed=cpp/scene_browser_model.h");
+    println!("cargo:rerun-if-changed=cpp/scene_browser_widget.cpp");
+    println!("cargo:rerun-if-changed=cpp/scene_browser_widget.h");
+    println!("cargo:rerun-if-changed=cpp/property_inspector_widget.cpp");
+    println!("cargo:rerun-if-changed=cpp/property_inspector_widget.h");
 }

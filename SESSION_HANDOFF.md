@@ -14,20 +14,21 @@
 | **Active branch** | **`v0.15-qt`** — Qt migration. `main` stays v0.14.0 shippable until Phase H merge. |
 | v0.15.0 Phase 0 ✅ | wgpu-into-QWidget spike gate PASSED 2026-04-13. Qt 6.8.3 LTS + MSVC 2022 + cxx 1.0 + qt-build-utils 0.7 toolchain proven in `crates/bif_qt_spike/`. ADR-006 authored. |
 | v0.15.0 Phase A ✅ | `crates/bif_qt/` scaffolding landed 2026-04-13. First real `#[cxx_qt::bridge]` — `BifShellState` QObject with 2 qproperties + 1 qinvokable. Theme port (34 colors + stylesheet generator). C++ QMainWindow assembly with 4 dock placeholders + menu bar. |
-| v0.15.0 Phase B ✅ | All 8 slices done. wgpu viewport in central (B.1) · stylesheet (B.2) · menu invokables (B.3) · zen mode Ctrl+\\ (B.4) · workspace switcher with QSettings persistence (B.5) · first-launch welcome screen (B.6) · breadcrumb `QToolBar` (B.7) · command palette Ctrl+P (B.8). Layout: `QWidget(QVBoxLayout(breadcrumb, QStackedWidget(first-launch, viewport)))`. |
-| Next | **Phase C — Core panels (~18h).** Port Layer Stack panel first (simplest, v0.14 reference impl: `QTreeView` + custom `QAbstractItemModel` reading `SceneLayerState` + checkboxes for mute, radio for working layer, color dot delegate). Then Scene Browser (virtualized 100K+ prims, `CompositeProvider` model). Then Property Inspector (Attributes/Relationships tabs, opinion dot delegate). All emit existing `AppEvent` variants — `bif_core` types unchanged. |
+| v0.15.0 Phase B ✅ | All 8 slices. Viewport + stylesheet + menu + Zen mode + workspaces + first-launch + breadcrumb + command palette. |
+| v0.15.0 Phase C ✅ | All 3 panels. Layer Stack (QListView + checkbox mute + double-click working + isolation toolbar + color dot). Scene Browser (QTreeView + hierarchical filter + selection routes to `BifShellState::selected_prim_path`). Property Inspector (tabs + composition arcs group + attributes table with opinion dots). Demo data in C++ until Phase E. 11 new `#[qinvokable]`s + 3 new qproperties on `BifShellState`. |
+| Next | **Phase D — Secondary panels (~10h).** Timeline (`QWidget` custom paint — playhead, keyframe markers, frame range; play/pause toolbar). Node Graph (`QGraphicsScene` + `QGraphicsItem` per node type — biggest single port; preserve 10 existing node types, replace `egui-snarl` entirely). Render Settings + Stats (QFormLayout for sliders/toggles). |
 | Tests | ~627 total (90 new in v0.14.0) + spike has no unit tests (deletion-scheduled) |
 | Performance | 60 FPS viewport, 100K instances with LOD, Ivar build ~185ms |
 
 ---
 
-## ➡️ v0.15.0 Qt Migration — Phase C Starting Notes
+## ➡️ v0.15.0 Qt Migration — Phase D Starting Notes
 
 **Strategy (ADR-006):** Shell-first on `v0.15-qt`. Panels one-at-a-time. Merge at Phase H.
 
 **Binding locked:** `cxx-qt 0.7` + `qt-build-utils 0.7` + Qt 6.8.3 LTS + LGPL dynamic linking. Phase A validated cxx-qt macros. C++ owns window assembly (QMainWindow / QDockWidget / QMenuBar) — cxx-qt-lib's QtWidgets coverage is thin and Rust-side boilerplate would be pure cost without ergonomic win. Rust owns QObjects (BifShellState + future panel models).
 
-**Phase A/B cxx-qt + Qt gotchas (for Phase C authors):**
+**Phase A/B/C cxx-qt + Qt gotchas (for Phase D authors):**
 - `#[qinvokable]` declared inside `extern "RustQt"`, IMPLEMENTED in a regular impl block OUTSIDE the bridge (non-empty impls inside the bridge = compile error).
 - `CxxQtType` trait must be in scope for `.rust()` / `.rust_mut()` accessors.
 - cxx-qt-generated header path: `bif_qt/src/main_window.cxxqt.h` (crate + src prefix).
@@ -38,6 +39,11 @@
 - `QKeySequence::Quit` is empty on Windows — hardcode `Ctrl+Q`.
 - `extern "Rust"` opaque types pass to C++ as `Foo*` raw pointers (no UniquePtr unless explicitly boxed).
 - `rust::Str` ↔ `QString`: `QString::fromUtf8(s.data(), static_cast<int>(s.size()))`.
+- **Qt's `QList`/`QVector` can't hold move-only types** like `std::unique_ptr` — use `std::vector`.
+- **Custom tree delegates that shift paint rects MUST also override `editorEvent`** with the same shift, otherwise checkbox hit-testing misses the visual checkbox.
+- **`self: &Self` in invokable impl blocks trips `clippy::needless_arbitrary_self_type`** — use plain `&self` in the impl body even though the bridge declaration requires `self: &BifShellState`.
+- **Nested private C++ struct types aren't accessible from anonymous namespaces in the .cpp** — promote to public when helper builders need them.
+- **Auto-generated property-changed signals are `<snake>Changed`** — for `#[qproperty(i32, layer_state_revision)]` the signal is `layer_state_revisionChanged`. Use that, not a custom `#[qsignal]`, for triggering model refreshes.
 
 **Phase 0 artifacts already in branch:**
 

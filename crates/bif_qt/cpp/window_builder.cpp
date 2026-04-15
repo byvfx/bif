@@ -1,7 +1,10 @@
 #include "window_builder.h"
 #include "command_palette.h"
 #include "first_launch_widget.h"
+#include "layer_stack_widget.h"
+#include "property_inspector_widget.h"
 #include "render_widget.h"
+#include "scene_browser_widget.h"
 
 #include <QAction>
 #include <QApplication>
@@ -453,18 +456,48 @@ int bif_qt_run_shell(ViewportCallbacks* viewport_cb, ::rust::Str stylesheet) {
         connect_viewport_signals(central.viewport, viewport_cb, shell_state, &window);
     }
 
-    make_placeholder_dock(
-        QStringLiteral("Scene Browser"),
-        QStringLiteral("dock_scene_browser"),
-        Qt::LeftDockWidgetArea, &window);
-    make_placeholder_dock(
-        QStringLiteral("Layer Stack"),
-        QStringLiteral("dock_layer_stack"),
-        Qt::LeftDockWidgetArea, &window);
-    make_placeholder_dock(
-        QStringLiteral("Property Inspector"),
-        QStringLiteral("dock_property_inspector"),
-        Qt::RightDockWidgetArea, &window);
+    // Scene Browser dock — real panel (Phase C.2). Demo prim tree
+    // until Phase E wires CompositeProvider.
+    {
+        auto* dock = new QDockWidget(QStringLiteral("Scene Browser"), &window);
+        dock->setObjectName(QStringLiteral("dock_scene_browser"));
+        dock->setAllowedAreas(Qt::AllDockWidgetAreas);
+        dock->setFeatures(
+            QDockWidget::DockWidgetMovable |
+            QDockWidget::DockWidgetFloatable |
+            QDockWidget::DockWidgetClosable);
+        auto* panel = new SceneBrowserWidget(shell_state, dock);
+        dock->setWidget(panel);
+        window.addDockWidget(Qt::LeftDockWidgetArea, dock);
+    }
+    // Layer Stack dock — real panel (Phase C.1). Other docks stay
+    // placeholders until their phase lands.
+    {
+        auto* dock = new QDockWidget(QStringLiteral("Layer Stack"), &window);
+        dock->setObjectName(QStringLiteral("dock_layer_stack"));
+        dock->setAllowedAreas(Qt::AllDockWidgetAreas);
+        dock->setFeatures(
+            QDockWidget::DockWidgetMovable |
+            QDockWidget::DockWidgetFloatable |
+            QDockWidget::DockWidgetClosable);
+        auto* panel = new LayerStackWidget(shell_state, dock);
+        dock->setWidget(panel);
+        window.addDockWidget(Qt::LeftDockWidgetArea, dock);
+    }
+    // Property Inspector dock — real panel (Phase C.3). Fake
+    // attributes until Phase E wires UsdPrim::GetAttributes.
+    {
+        auto* dock = new QDockWidget(QStringLiteral("Property Inspector"), &window);
+        dock->setObjectName(QStringLiteral("dock_property_inspector"));
+        dock->setAllowedAreas(Qt::AllDockWidgetAreas);
+        dock->setFeatures(
+            QDockWidget::DockWidgetMovable |
+            QDockWidget::DockWidgetFloatable |
+            QDockWidget::DockWidgetClosable);
+        auto* panel = new PropertyInspectorWidget(shell_state, dock);
+        dock->setWidget(panel);
+        window.addDockWidget(Qt::RightDockWidgetArea, dock);
+    }
     make_placeholder_dock(
         QStringLiteral("Node Graph"),
         QStringLiteral("dock_node_graph"),
@@ -478,6 +511,11 @@ int bif_qt_run_shell(ViewportCallbacks* viewport_cb, ::rust::Str stylesheet) {
             .toString();
         ws::switch_to(&window, shell_state, last);
     }
+
+    // Phase C.1 demo data — seed a 3-layer fake stack so the
+    // Layer Stack panel has something to show. Phase E replaces
+    // this with real USD stage load.
+    shell_state->seed_demo_layer_stack();
 
     // Command palette (B.8) — Ctrl+P opens a centered overlay
     // listing the menu actions. Phase C widens to prims/layers/nodes.
