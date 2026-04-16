@@ -488,25 +488,46 @@ impl qobject::BifShellState {
         }
     }
 
-    fn on_camera_orbit(mut self: Pin<&mut Self>, dx: i32, dy: i32) {
-        self.as_mut()
-            .set_status_message(cxx_qt_lib::QString::from(&format!(
-                "Camera orbit Δ=({dx},{dy})  (Phase E.2 wires Renderer)"
-            )));
+    fn on_camera_orbit(self: Pin<&mut Self>, dx: i32, dy: i32) {
+        // Sensitivity matches bif_viewer's ORBIT_SENSITIVITY (0.005).
+        const ORBIT_SENSITIVITY: f32 = 0.005;
+        with_viewport_mut(|vp| {
+            let r = vp.renderer_mut();
+            r.cam
+                .camera
+                .orbit(dx as f32 * ORBIT_SENSITIVITY, dy as f32 * ORBIT_SENSITIVITY);
+            r.update_camera();
+        });
     }
 
-    fn on_camera_pan(mut self: Pin<&mut Self>, dx: i32, dy: i32) {
-        self.as_mut()
-            .set_status_message(cxx_qt_lib::QString::from(&format!(
-                "Camera pan Δ=({dx},{dy})  (Phase E.2 wires Renderer)"
-            )));
+    fn on_camera_pan(self: Pin<&mut Self>, dx: i32, dy: i32) {
+        // Scale pan speed by camera-to-target distance so panning feels
+        // proportional regardless of zoom level. Matches bif_viewer's
+        // PAN_SENSITIVITY (0.1) + PAN_DISTANCE_SCALE (0.0001).
+        const PAN_BASE: f32 = 0.01;
+        with_viewport_mut(|vp| {
+            let r = vp.renderer_mut();
+            let dist = (r.cam.camera.position - r.cam.camera.target).length();
+            let scale = PAN_BASE * dist.max(0.1);
+            r.cam
+                .camera
+                .pan(-dx as f32 * scale, dy as f32 * scale, 0.0, 1.0);
+            r.update_camera();
+        });
     }
 
-    fn on_camera_zoom(mut self: Pin<&mut Self>, angle_delta: i32) {
-        self.as_mut()
-            .set_status_message(cxx_qt_lib::QString::from(&format!(
-                "Camera zoom Δ={angle_delta}  (Phase E.2 wires Renderer)"
-            )));
+    fn on_camera_zoom(self: Pin<&mut Self>, angle_delta: i32) {
+        // Qt angleDelta is in eighths-of-a-degree; 120 = one notch.
+        // Convert to a dolly distance. Matches bif_viewer's scroll
+        // handling (SCROLL_DOLLY_SCALE * lines * distance).
+        const DOLLY_SCALE: f32 = 0.001;
+        with_viewport_mut(|vp| {
+            let r = vp.renderer_mut();
+            let dist = (r.cam.camera.position - r.cam.camera.target).length();
+            let dolly = angle_delta as f32 * DOLLY_SCALE * dist.max(0.1);
+            r.cam.camera.dolly(dolly);
+            r.update_camera();
+        });
     }
 
     fn on_frame_selected(mut self: Pin<&mut Self>) {

@@ -225,5 +225,8 @@ pub fn viewport_on_frame(cb: &mut ViewportCallbacks) {
 
 pub fn viewport_on_shutdown(cb: &mut ViewportCallbacks) {
     log::info!("bif_qt viewport shutting down");
+    if let Some(v) = cb.viewport.as_mut() {
+        v.renderer_mut().wait_for_gpu();
+    }
     cb.viewport = None;
 }

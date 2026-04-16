@@ -995,6 +995,13 @@ impl Renderer {
         self.scale_factor
     }
 
+    /// Block until all submitted GPU work completes. Call before dropping
+    /// the Renderer to avoid `OBJECT_DELETED_WHILE_STILL_IN_USE` errors
+    /// on D3D12/Vulkan.
+    pub fn wait_for_gpu(&self) {
+        self.gpu.device.poll(wgpu::Maintain::Wait);
+    }
+
     /// Handle window resize. `scale_factor` is the caller's current display
     /// scale (device-independent pixels per point); pass whatever your
     /// windowing layer reports (`winit::Window::scale_factor()` in
