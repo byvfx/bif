@@ -1,9 +1,15 @@
 # BUGLIST
 
-Last updated: 2026-04-12
+Last updated: 2026-04-15
 
 ## Active Bugs
 
+- **bif_qt: no "reset / close stage" action.** Once a USD stage is loaded, there's no way to unload it or return to the first-launch screen without quitting the app. Needs File → Close Stage menu item (Phase E.2 follow-up). Noted 2026-04-15.
+- **bif_qt: Scene Browser shows hardcoded demo tree.** `SceneBrowserModel::seed_demo_tree` is still the 10-prim hardcoded demo (World/Hero/Geom/…). Phase E.2 move 7 replaces with `CompositeProvider` traversal over the real USD stage. Noted 2026-04-15.
+- **bif_qt: Property Inspector shows fake attributes per prim-type.** Phase E.2 move 8 wires `UsdPrim::GetAttributes()` + `UsdStage::get_prim_stack` for real composition arcs. Noted 2026-04-15.
+- **bif_qt: Timeline keyframes are hardcoded demo.** Phase E.2 move 9 pulls keyframes from selected prim's `AnimatedTransform`. Noted 2026-04-15.
+- **bif_qt: Gizmo raycast not wired.** `RenderWidget::primPickRequested(x, y)` signal fires but no selection handler consumes it. Phase E.2 move 5 connects to `bif_viewport::selection::ray_cast`. Noted 2026-04-15.
+- **bif_qt: scale factor hardcoded to 1.0.** `Viewport::new` / `resize` ignore `QScreen::devicePixelRatio()`; HiDPI monitors render at wrong scale. Wire through the cxx-qt bridge. Noted 2026-04-15.
 - OCIO ACES is not working in the viewport (Hill/Narkowicz approx active, full OCIO deferred).
 
 - Pre-existing C++ bridge test crashes: `test_load_pointinstancer_external_prototype` (lucy_100_fixed.usda), `test_load_relative_reference_usda` (lucy_100.usda), `test_define_scope_prim` — all crash at `UsdStage::Open` with STATUS_BREAKPOINT. Not caused by recent changes.

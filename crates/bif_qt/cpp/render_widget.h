@@ -26,6 +26,8 @@
 #include <QWidget>
 #include <cstdint>
 
+class QTimer;
+
 class RenderWidget : public QWidget {
     Q_OBJECT
 public:
@@ -36,6 +38,14 @@ public:
     std::uint64_t nativeHInstance() const;
     int pixelWidth() const;
     int pixelHeight() const;
+
+    /// Stop the 16ms render tick. Call before modal dialogs so the
+    /// paint loop doesn't fight for z-order / focus with the dialog.
+    /// Safe to call even when not yet initialized.
+    void pausePainting();
+
+    /// Resume the 16ms render tick. Pair with pausePainting().
+    void resumePainting();
 
 protected:
     QPaintEngine* paintEngine() const override { return nullptr; }
@@ -64,6 +74,7 @@ signals:
     void primPickRequested(int x, int y);
 
 private:
+    QTimer* m_tick = nullptr;
     QPoint m_last_mouse_pos;
     bool m_orbit_active = false;
     bool m_pan_active = false;

@@ -60,11 +60,25 @@ void RenderWidget::resizeEvent(QResizeEvent* event) {
 void RenderWidget::showEvent(QShowEvent* event) {
     QWidget::showEvent(event);
     emit surfaceReady();
-    static QTimer* tick = nullptr;
-    if (!tick) {
-        tick = new QTimer(this);
-        connect(tick, &QTimer::timeout, this, QOverload<>::of(&QWidget::update));
-        tick->start(16);
+    if (!m_tick) {
+        m_tick = new QTimer(this);
+        connect(m_tick, &QTimer::timeout, this, QOverload<>::of(&QWidget::update));
+        m_tick->start(16);
+    } else if (!m_tick->isActive()) {
+        // Resume if paused (e.g. by a modal dialog flow).
+        m_tick->start(16);
+    }
+}
+
+void RenderWidget::pausePainting() {
+    if (m_tick && m_tick->isActive()) {
+        m_tick->stop();
+    }
+}
+
+void RenderWidget::resumePainting() {
+    if (m_tick && !m_tick->isActive()) {
+        m_tick->start(16);
     }
 }
 

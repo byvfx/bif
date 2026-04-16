@@ -295,21 +295,72 @@ CentralArea build_central_area(QMainWindow* window) {
 // ---------------------------------------------------------------------------
 // Action wiring
 // ---------------------------------------------------------------------------
-void wire_shell_actions(
-    MenuActions& actions,
-    BifShellState* shell_state,
+
+// Shared helper: drive a USD stage load from whichever UI surface
+// requested it (menu bar, first-launch screen, recent-stage click).
+//
+// Pauses the viewport's 16ms render tick around the file picker so the
+// native Windows dialog doesn't fight the wgpu paint loop for z-order
+// (previously worked around via window->setVisible(false/true) which
+// looked awful — the whole app briefly vanished).
+//
+// `pre_picked_path` short-circuits the picker (used by Recent Stages).
+// Empty path = show the native QFileDialog.
+static void trigger_open_stage(
     QMainWindow* window,
-    QStackedWidget* central_stack) {
+    BifShellState* shell_state,
+    QStackedWidget* central_stack,
+    RenderWidget* viewport,
+    const QString& pre_picked_path = QString()) {
+
     auto update_status = [shell_state, window]() {
         window->statusBar()->showMessage(shell_state->getStatus_message());
     };
 
-    auto open_stage_flow = [shell_state, central_stack, update_status]() {
-        shell_state->on_open_stage();
-        // Swap to viewport so user sees something. Phase C replaces
-        // this with: only swap on actual successful stage load.
-        central_stack->setCurrentIndex(1);
-        update_status();
+    QString path = pre_picked_path;
+    if (path.isEmpty()) {
+        // Pause the viewport render tick — fixes the native-dialog
+        // z-order fight caused by 60fps paint events demanding the
+        // main-window foreground.
+        if (viewport) viewport->pausePainting();
+        path = QFileDialog::getOpenFileName(
+            window,
+            QStringLiteral("Open USD Stage"),
+            QString(),
+            QStringLiteral("USD files (*.usd *.usda *.usdc *.usdz);;All files (*)"));
+        if (viewport) viewport->resumePainting();
+    }
+
+    if (path.isEmpty()) {
+        // User cancelled — leave the central stack wherever it was.
+        return;
+    }
+
+    // Record in QSettings recents for the first-launch list.
+    QSettings settings;
+    auto recents = settings.value(QStringLiteral("recent_stages")).toStringList();
+    recents.removeAll(path);
+    recents.prepend(path);
+    while (recents.size() > 10) recents.removeLast();
+    settings.setValue(QStringLiteral("recent_stages"), recents);
+
+    // Swap to viewport FIRST so the RenderWidget actually becomes
+    // visible (and fires surfaceReady) before the stage load runs —
+    // otherwise with_viewport_mut returns None and the load no-ops.
+    central_stack->setCurrentIndex(1);
+
+    shell_state->on_stage_path_opened(path);
+    update_status();
+}
+
+void wire_shell_actions(
+    MenuActions& actions,
+    BifShellState* shell_state,
+    QMainWindow* window,
+    QStackedWidget* central_stack,
+    RenderWidget* viewport) {
+    auto update_status = [shell_state, window]() {
+        window->statusBar()->showMessage(shell_state->getStatus_message());
     };
 
     auto new_stage_flow = [shell_state, central_stack, update_status]() {
@@ -319,37 +370,10 @@ void wire_shell_actions(
     };
 
     QObject::connect(actions.new_stage, &QAction::triggered, window, new_stage_flow);
-    // Open Stage now actually shows a QFileDialog (Phase E.1). Phase
-    // E.2 parses the returned path + calls bif_core::scene_loader.
+    // File → Open Stage — shared helper.
     QObject::connect(actions.open_stage, &QAction::triggered, window,
-        [window, shell_state, central_stack, update_status]() {
-            // Hide main window so QFileDialog isn't stuck behind it
-            // (Windows z-order workaround — same as bif_viewer's
-            // with_dialog_focus pattern).
-            window->setVisible(false);
-            const QString path = QFileDialog::getOpenFileName(
-                window,
-                QStringLiteral("Open USD Stage"),
-                QString(),
-                QStringLiteral("USD files (*.usd *.usda *.usdc *.usdz);;All files (*)"));
-            window->setVisible(true);
-            if (!path.isEmpty()) {
-                // Store in recents for the first-launch list.
-                QSettings settings;
-                auto recents = settings.value(QStringLiteral("recent_stages"))
-                                    .toStringList();
-                recents.removeAll(path);
-                recents.prepend(path);
-                while (recents.size() > 10) recents.removeLast();
-                settings.setValue(QStringLiteral("recent_stages"), recents);
-
-                shell_state->on_stage_path_opened(path);
-                central_stack->setCurrentIndex(1);
-                update_status();
-            } else {
-                shell_state->on_open_stage();
-                update_status();
-            }
+        [window, shell_state, central_stack, viewport]() {
+            trigger_open_stage(window, shell_state, central_stack, viewport);
         });
     QObject::connect(actions.save, &QAction::triggered, window,
         [shell_state, update_status]() {
@@ -399,6 +423,7 @@ void wire_first_launch(
     FirstLaunchWidget* first_launch,
     BifShellState* shell_state,
     QStackedWidget* central_stack,
+    RenderWidget* viewport,
     QMainWindow* window) {
     auto update_status = [shell_state, window]() {
         window->statusBar()->showMessage(shell_state->getStatus_message());
@@ -410,17 +435,15 @@ void wire_first_launch(
             central_stack->setCurrentIndex(1);
             update_status();
         });
+    // Open Stage from the first-launch screen → same flow as File → Open.
     QObject::connect(first_launch, &FirstLaunchWidget::openStageClicked, window,
-        [shell_state, central_stack, update_status]() {
-            shell_state->on_open_stage();
-            central_stack->setCurrentIndex(1);
-            update_status();
+        [window, shell_state, central_stack, viewport]() {
+            trigger_open_stage(window, shell_state, central_stack, viewport);
         });
+    // Recent-stage click → load directly without picker.
     QObject::connect(first_launch, &FirstLaunchWidget::recentStageActivated, window,
-        [shell_state, central_stack, update_status](const QString& path) {
-            shell_state->setStatus_message(QStringLiteral("Recent: %1 (Phase C wires file open)").arg(path));
-            central_stack->setCurrentIndex(1);
-            update_status();
+        [window, shell_state, central_stack, viewport](const QString& path) {
+            trigger_open_stage(window, shell_state, central_stack, viewport, path);
         });
 }
 
@@ -523,8 +546,8 @@ int bif_qt_run_shell(ViewportCallbacks* viewport_cb, ::rust::Str stylesheet) {
     auto central = build_central_area(&window);
     window.setCentralWidget(central.container);
 
-    wire_shell_actions(menu_actions, shell_state, &window, central.stack);
-    wire_first_launch(central.first_launch, shell_state, central.stack, &window);
+    wire_shell_actions(menu_actions, shell_state, &window, central.stack, central.viewport);
+    wire_first_launch(central.first_launch, shell_state, central.stack, central.viewport, &window);
     if (viewport_cb != nullptr) {
         connect_viewport_signals(central.viewport, viewport_cb, shell_state, &window);
     }
