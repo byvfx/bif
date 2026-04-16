@@ -1,49 +1,121 @@
-# Session Handoff - April 15, 2026 (sessions 2–9, end of Phase E.2-prep)
+# Session Handoff — April 15, 2026 (end of Phase E.2 first pass)
 
-**Last Updated:** v0.15.0 Phase E.2-prep landed on `v0.15-qt` (uncommitted). `bif_viewport::Renderer` is winit-free. Next session: Phase E.2 moves 1+2+4 — now unblocked.
+**Last Updated:** 2026-04-15, end of session. 10 commits on `v0.15-qt` covering Phase E.2-prep + moves 1/2/4/6 + ADR-007 + camera wiring + dialog UX fixes. `bif_qt_shell` now opens real USD stages, renders them through `bif_viewport::Renderer`, populates the Layer Stack, wires the timeline detect button, updates the breadcrumb, and responds to camera input. Moves 5/7/8/9 + polish items remain.
 **Current Version:** v0.14.0 shipped on `main`; v0.15.0 in progress on `v0.15-qt`.
-**Project:** BIF - USD Orchestration Tool for VFX
+**Project:** BIF — USD Orchestration Tool for VFX.
 
-## ⚡ Phase E.2-prep (2026-04-15) — Renderer winit decoupling
+## ✅ 2026-04-15 — what shipped today
 
-**Why:** Phase E.2's move 1 (pull `bif_viewport::Renderer` into `bif_qt`) was gated by hidden winit coupling the original handoff didn't flag. `Renderer::new(Arc<winit::Window>)` + `render(…, &winit::Window)` + egui's per-frame `take_egui_input`/`handle_platform_output`/`on_window_event` handshake all needed a live winit Window reference. bif_qt has only a raw HWND.
+Commits on `v0.15-qt` (newest first):
 
-**What landed:**
-- **`bif_viewport::Renderer::new`** now takes `(surface, device, queue, config, size: (u32,u32), scale_factor: f32)` — pure wgpu primitives, caller owns surface creation. Synchronous.
-- **`Renderer::attach_egui(egui_state)`** — optional egui overlay attachment. `bif_viewer` uses it; `bif_qt` won't.
-- **`Renderer::egui_state_mut()`** — caller drives the winit ↔ egui handshake (`on_window_event`, `take_egui_input`, `handle_platform_output`) outside `bif_viewport`.
-- **`Renderer::render(clear_color, raw_input: Option<RawInput>) -> Result<Option<PlatformOutput>>`** — headless when `None`, egui-overlay when `Some`.
-- **`Renderer::set_dialog_focus_hook(Fn(bool) + 'static)`** — installable visibility toggle for the Windows z-order workaround. `bif_viewer` installs `move |v| window.set_visible(v)`; `bif_qt` leaves it `None`. All 5 existing internal `with_dialog_focus` callers unchanged.
-- **`Renderer::resize((u32,u32), f32)`** — takes scale factor.
-- **Constants exposed:** `bif_viewport::REQUIRED_FEATURES` + `required_limits()` so callers request the right wgpu device.
-- **Zero direct `winit::*` imports** in `bif_viewport/src/lib.rs` + `render.rs` code (doc comments + `egui_winit::State` type only — the transitive winit dep stays until egui is retired in Phase F).
+```
+cc44a45 feat(qt): share Open Stage flow + fix file dialog UX via paint pause
+d290c9d fix(qt): guard viewport_on_surface_ready against double-init + quiet wgpu_hal
+6777874 feat(qt): wire camera orbit/pan/zoom + fix GPU cleanup on exit
+3c6be37 fix(qt): filter wgpu log spam + fix QFileDialog z-order on Windows
+6fe81ed feat(qt): v0.15.0 Phase E.2 moves 4-opt + 6 — live stage timeline + breadcrumb wire
+8107bb7 feat(qt): v0.15.0 Phase E.2 move 2 — real stage load + ADR-007 bridge
+0f006b2 feat(qt): v0.15.0 Phase E.2 move 4 — real timeline detect from USD stage
+ae4ed7c feat(qt): v0.15.0 Phase E.2 move 1 — bif_qt::Viewport hosts real Renderer
+264394f refactor(viewport): decouple Renderer from winit (v0.15 Phase E.2-prep)
+```
 
-**`bif_viewer` compat shim:**
-- New `fn create_renderer(window: Arc<Window>) -> Result<Renderer>` in `main.rs` builds wgpu primitives + `egui_winit::State` + installs dialog hook. Three existing call sites converted.
-- `handle_egui_event` call replaced with inline `egui_state_mut().on_window_event(window, &event).consumed`.
-- `render(clear_color, window)` replaced with `take_egui_input` + `render(clear_color, Some(raw_input))` + `handle_platform_output`.
-- Both `resize` call sites pass `window.scale_factor() as f32`.
+**Feature deliveries:**
 
-**Build gates:** `cargo build -p bif_viewport -p bif_viewer` clean, `cargo clippy -- -D warnings` clean, `cargo fmt --check` clean, `cargo test -p bif_math` 74/74 pass.
+- `bif_viewport::Renderer` decoupled from winit — API surface now `(surface, device, queue, config, size, scale_factor)` + optional `attach_egui`. `bif_viewer` compat shim preserved.
+- `bif_qt::Viewport` hosts the real `bif_viewport::Renderer` — triangle deleted. HWND-built wgpu primitives feed `Renderer::new(...)`, headless (no egui) path for rendering.
+- ADR-007 locks in the **β (thread-local raw-pointer) bridge** between `BifShellState` invokables and `ViewportCallbacks`. `with_viewport_mut(|vp| ...)` helper. `install_viewport_callbacks(&mut viewport_cb)` called from `app.rs::run` before the Qt event loop.
+- **Move 1:** viewport wires to real Renderer.
+- **Move 2:** `on_stage_path_opened` does real `Renderer::load_usd_scene`, populates `scene_layer_state`, bumps `layer_state_revision` → Layer Stack panel shows real layers.
+- **Move 4:** `detect_timeline_from_stage` reads live stage's `UsdTimelineData` via existing `cpp_bridge` wrapper — writes `start_frame/end_frame/playback_fps` qproperties.
+- **Move 6:** breadcrumb bar connected to `selected_prim_pathChanged` signal.
+- Camera orbit / pan / zoom invokables drive the real `Renderer.cam.camera` via `with_viewport_mut`.
+- Shared `trigger_open_stage` helper — File menu, first-launch Open button, recent-stage clicks all flow through one code path.
 
-**Still to verify:** `cargo run -p bif_viewer --release` end-to-end — golden path load/orbit/pan/zoom + egui panels + native dialog. Low risk but non-zero; the egui handshake is a mechanical 3-call move.
+**Bugs fixed during dogfood:**
 
-**Next session — Phase E.2 moves 1+2+4 (original plan, now unblocked):**
-1. `bif_qt::viewport::Viewport` swaps its triangle for `bif_viewport::Renderer` via `Renderer::new(surface, device, queue, config, size, scale)` — HWND surface creation pattern already lives in `viewport.rs:38–101`.
-2. Add `BifShellState::load_stage_at_path(QString)` invokable → `SceneManager::load_usd_scene` → bump `layer_state_revision`.
-3. Add USD timeline FFI (`usd_stage_get_time_range` in `bif_core/cpp/usd_bridge/`) + `detect_timeline_from_stage()` invokable.
+- D3D12 `OBJECT_DELETED_WHILE_STILL_IN_USE` crash on close → `Renderer::wait_for_gpu()` called in `viewport_on_shutdown`.
+- `QFileDialog` z-order behind main window → paused the 16ms render tick around the dialog via new `RenderWidget::pausePainting/resumePainting` + member `m_tick`. Removed the `window->setVisible(false/true)` hack that was causing the app to briefly vanish.
+- `showEvent` fired twice after `setVisible` reshow → new Renderer was dropped while GPU commands in-flight → guarded `viewport_on_surface_ready` against re-init.
+- `wgpu_core` `Device::maintain` INFO spam at 60 FPS → env_logger filter `info,wgpu_core=warn,wgpu_hal=error,naga=warn`.
 
-AppEvent bridge decision: deferred. Moves 1+2+4 don't need it; will revisit when dispatch-wide ops land.
+**Still demo data / stubbed (see BUGLIST):** Scene Browser tree, Property Inspector attributes, Timeline keyframes, Gizmo raycast, HiDPI scale, reset/close-stage action.
 
 ---
 
 ## 🚀 How to pick up next session
 
-1. `. .\setup_qt_env.ps1` — required every session (Qt 6.8.3 LTS env).
-2. `git checkout v0.15-qt` — the migration branch. `main` is v0.14.0-frozen.
-3. `cargo run -p bif_qt --bin bif_qt_shell` — dogfood binary. Viewport renders a triangle (Phase E.2 swaps in the real `bif_renderer::Renderer`).
-4. Read **"Phase E.2 Starting Notes"** below — has the ordered first moves + AppEvent bridge options.
-5. All Phase A–E.1 gotchas are in the **cxx-qt + Qt gotchas** list below. Worth skimming before touching the bridge.
+1. `. .\setup_qt_env.ps1` — Qt 6.8.3 LTS env (required for any bif_qt work).
+2. `. .\setup_usd_env.ps1` — USD DLLs (required to load stages in bif_qt_shell).
+3. `git checkout v0.15-qt`. `main` is v0.14.0-frozen.
+4. Dogfood: `cargo run -p bif_qt --bin bif_qt_shell`. File → Open or launch-screen "Open USD" → pick `test_assets/layers/root.usda` (or any .usda in your test set). Verify:
+   - Viewport renders geometry (if stage has any).
+   - Layer Stack panel shows real layers (count > 0, mute toggle works).
+   - Timeline `⇅` detect button populates Start/End/FPS.
+   - Scene Browser click → breadcrumb updates at the top of the central area.
+   - Alt+LMB drag orbits, MMB pans, wheel zooms.
+5. Read **"Next target ordering"** below — picks the next move to ship.
+
+---
+
+## ▶️ Next target ordering (Phase E.2 moves 5, 7, 8, 9 + polish)
+
+**Recommended order (small → medium):**
+
+### 1. Move 9 — Timeline keyframes from `AnimatedTransform` (smallest, ~30min)
+Replace `BifShellStateRust::demo_keyframes: Vec<i32>` with keyframes derived from the currently-selected prim's `AnimatedTransform`. Lives in `bif_core::animation` (per handoff code map). Read via `with_viewport_mut(|vp| vp.renderer_mut().scene.…)`. Rebuild keyframe list when `selected_prim_path` changes.
+
+### 2. Move 6-sibling / polish — File → Close Stage + reset viewport (~30min)
+Add a "Close Stage" menu item (Ctrl+W?) that:
+- Calls a new invokable `close_stage` → clears `scene_layer_state`, clears `current_stage_path`, bumps `layer_state_revision`, sets status.
+- Via ADR-007 bridge, resets the renderer: `with_viewport_mut(|vp| { vp.renderer_mut().scene = SceneManager::new(); vp.renderer_mut().rebuild_pick_scene(); })` — or whatever the bif_viewer "new scene" flow does.
+- Swaps central_stack back to first-launch index (0).
+
+### 3. Move 5 — Gizmo raycast on LMB (~1h)
+`RenderWidget::primPickRequested(x, y)` already fires. Connect it to a new invokable `on_prim_pick(i32, i32)` that:
+- `with_viewport_mut(|vp| vp.renderer_mut().pick_at(x, y))` — need to identify the existing pick-scene API. `bif_viewport::selection::ray_cast` is the entry point per handoff. `Renderer::rebuild_pick_scene` already exists; `Renderer::pick_scene: Option<EmbreePickScene>` holds the BVH.
+- On hit, set `selected_prim_path` qproperty → breadcrumb + property inspector auto-update (already wired).
+
+### 4. Move 7 — Scene Browser real data (~1.5h)
+Replace `SceneBrowserModel::seed_demo_tree` (in `cpp/scene_browser_model.cpp`) with a traversal over `bif_core::CompositeProvider` built from the live stage. For 100K+ prims, use `canFetchMore` / `fetchMore` for lazy population. Trigger reset via the existing `layer_state_revisionChanged` signal (or add a new `scene_revision` qproperty).
+
+### 5. Move 8 — Property Inspector real attributes (~1.5h)
+Replace fake attrs in `cpp/property_inspector_widget.cpp` with a Rust-side invokable that returns `UsdPrim::GetAttributes()` for the selected prim. Composition arcs from `UsdStage::get_prim_stack` (already exists on `UsdStage`). Opinion-dot delegate already paints winning-layer color — just needs real data.
+
+### 6. HiDPI scale factor (~20min)
+Wire `QScreen::devicePixelRatio()` through the cxx-qt bridge → `Viewport::new` + `Viewport::resize`. Currently hardcoded `1.0`. Test on a 125%/150% monitor.
+
+**Acceptance for Phase E.2 complete:** moves 5 + 7 + 8 + 9 shipped, Phase E.2 deliverables checklist below fully checked, manual dogfood end-to-end clean.
+
+---
+
+## 📋 Phase E.2 deliverables — updated checklist
+
+- [x] `bif_qt::Viewport` renders real scenes (not a triangle) — **Move 1**
+- [x] `File → Open` loads actual USD stage — **Move 2**
+- [x] `BifShellState::scene_layer_state` populated from load — **Move 2**
+- [ ] Scene Browser shows real prim tree via CompositeProvider — **Move 7 pending**
+- [ ] Property Inspector shows real attributes via `UsdPrim::GetAttributes()` — **Move 8 pending**
+- [ ] Composition arcs from `UsdStage::get_prim_stack` — **Move 8 pending**
+- [ ] Timeline keyframes from selected prim's `AnimatedTransform` — **Move 9 pending**
+- [x] `detect_timeline_from_stage` reads real USD time metadata — **Move 4 + 4-opt**
+- [ ] Gizmo raycast via `selection.rs` on LMB click — **Move 5 pending**
+- [x] Breadcrumb connected to `selected_prim_pathChanged` — **Move 6**
+- [x] AppEvent bridge chosen + implemented — **ADR-007 (β thread-local raw-pointer)**
+- [ ] `bif_qt_shell` loads `test_assets/layers/root.usda` end-to-end (full dogfood) — **pending user validation**
+
+**6 of 12 done. Remaining work: moves 5, 7, 8, 9 + final dogfood.**
+
+---
+
+## 🧠 Gotchas learned 2026-04-15
+
+- **`showEvent` can fire multiple times.** Window hide/show cycles re-trigger it. Guard `viewport_on_surface_ready` against re-init — resize-only when `cb.viewport.is_some()`.
+- **Native `QFileDialog` fights wgpu paint loop on Windows.** The 16ms paint tick on the RenderWidget keeps the main window in foreground and the native dialog opens behind. Pause the tick around the dialog (not `setVisible` — that's ugly and made the app briefly vanish).
+- **GPU resources need a drain before drop.** D3D12 throws `OBJECT_DELETED_WHILE_STILL_IN_USE` if the Renderer is dropped while frames are in-flight. Call `device.poll(wgpu::Maintain::Wait)` first.
+- **`SceneManager::load_usd_scene` is actually on `Renderer`, not `SceneManager`.** Lives in `bif_viewport/src/scene_loader.rs` inside `impl Renderer`. Call as `vp.renderer_mut().load_usd_scene(path)`, not `vp.renderer_mut().scene.load_usd_scene(path)`.
+- **`UsdStage::get_timeline()` already exists** — no new FFI was needed for Move 4. `UsdTimelineData { start_time_code, end_time_code, frames_per_second, has_authored_time_range }` at `bif_core/src/usd/cpp_bridge.rs:756`.
+- **Swap central_stack to viewport BEFORE calling `on_stage_path_opened`.** The RenderWidget needs to be visible so `surfaceReady` fires and the Renderer becomes live before `load_usd_scene` runs. Otherwise `with_viewport_mut` returns `None` and the load no-ops.
 
 ---
 
@@ -59,12 +131,10 @@ AppEvent bridge decision: deferred. Moves 1+2+4 don't need it; will revisit when
 | v0.15.0 Phase C ✅ | 3 panels. Layer Stack · Scene Browser · Property Inspector. |
 | v0.15.0 Phase D ✅ | 3 secondary panels. Timeline · Node Graph · Render Settings. Tabification between bottom + right. |
 | v0.15.0 Phase E.1 ✅ | Input stubs. Viewport mouse/camera signals, keyboard shortcuts (F/Space/Left/Right/±Shift), ShortcutRegistry with QSettings override path, real QFileDialog, QTimer-driven timeline playback, fps + realtime + loop toggles, Nuke-style 3-zone toolbar, inline Start/End range + detect-from-stage button. 9 new qproperties, 6 new invokables. |
-| v0.15.0 Phase E.2-prep ✅ | `bif_viewport::Renderer` decoupled from winit (2026-04-15). New API: `new(surface, device, queue, config, size, scale) + attach_egui + egui_state_mut + set_dialog_focus_hook + render(clear_color, Option<RawInput>) -> Option<PlatformOutput>`. `bif_viewer` keeps working via a new `create_renderer` helper. Zero direct `winit::*` imports in `bif_viewport` code. Build/clippy/fmt clean. |
-| v0.15.0 Phase E.2 move 1 ✅ | `bif_qt::Viewport` hosts real `bif_viewport::Renderer` (2026-04-15). Triangle demo deleted. `bif_qt` depends on `bif_viewport`. HWND-built wgpu primitives feed `Renderer::new(...)` — zero winit, no egui attached. `render(clear_color, None)` headless path. `scale_factor` hardcoded to 1.0 until `QScreen::devicePixelRatio()` wired. `ViewportCallbacks::viewport_mut()` exposes the renderer for moves 2+4's invokables. **Needs manual dogfood — `. .\setup_qt_env.ps1; cargo run -p bif_qt --bin bif_qt_shell`.** |
-| v0.15.0 Phase E.2 move 4 ✅ | Real timeline detection (2026-04-15). Path stored by `on_stage_path_opened` → `detect_timeline_from_stage` opens throwaway `UsdStage`, calls existing `get_timeline()`, writes start/end/fps qproperties. Standalone — no shared stage handle yet. |
-| v0.15.0 ADR-007 ✅ | BifShellState ↔ ViewportCallbacks bridge locked in: **β (thread-local raw-pointer)**. See `wiki/architecture/adr/007-shell-state-to-viewport-bridge.md`. Rationale: Qt UI single-threaded → `thread_local!<Cell<*mut _>>` is sound + lock-free; ViewportCallbacks lives on app.rs's stack for the full event loop. Encapsulated in `with_viewport_mut(|vp| ...)` with one small `unsafe` block. |
-| v0.15.0 Phase E.2 move 2 ✅ | Real stage load (2026-04-15). `on_stage_path_opened` fires `QFileDialog` → `with_viewport_mut(|vp| vp.renderer_mut().load_usd_scene(&path))` → clones `renderer.scene.layer_state` onto `BifShellState` → bumps `layer_state_revision`. Layer Stack panel now shows real layers. |
-| Next | **Phase E.2 polish + remaining moves.** (a) Revisit move 4 to use the live in-renderer stage instead of reopening one per click (replace `UsdStage::open(path)` with reading through `with_viewport_mut`). (b) Scene Browser real data via `CompositeProvider` traversal (move 7). (c) Property Inspector real attributes via `UsdPrim::GetAttributes` + composition arcs from `UsdStage::get_prim_stack` (move 8). (d) Gizmo raycast via `selection.rs` on LMB pick (move 5). (e) Breadcrumb wire to `selected_prim_pathChanged` (move 6). (f) Wire `QScreen::devicePixelRatio()` into `Viewport::new` / `resize` — currently hardcoded to 1.0. (g) Manual dogfood on a real USD stage end-to-end. |
+| v0.15.0 Phase E.2-prep ✅ | `bif_viewport::Renderer` decoupled from winit (2026-04-15). See top-of-file section for full API. `bif_viewer` preserved via `create_renderer` compat helper. |
+| v0.15.0 Phase E.2 moves 1/2/4/6 ✅ | Viewport → real Renderer; File/Open → real `load_usd_scene`; timeline detect → real `UsdTimelineData`; breadcrumb → `selected_prim_pathChanged`. Camera orbit/pan/zoom wired. Shared `trigger_open_stage` helper (menu + launch screen + recents). D3D12-close crash + file-dialog z-order + viewport double-init all fixed. See **"2026-04-15 what shipped today"** above. |
+| v0.15.0 ADR-007 ✅ | BifShellState ↔ ViewportCallbacks bridge locked in: **β (thread-local raw-pointer)**. `with_viewport_mut(|vp| ...)` helper. See `wiki/architecture/adr/007-shell-state-to-viewport-bridge.md`. |
+| Next | **Phase E.2 moves 5/7/8/9 + polish** (reset stage, HiDPI). See **"Next target ordering"** above for recommended order (9 → close/reset → 5 → 7 → 8 → HiDPI). End of Phase E.2 = all 4 moves shipped + full dogfood clean. |
 | Tests | ~627 total (90 new in v0.14.0) + spike has no unit tests (deletion-scheduled) |
 | Performance | 60 FPS viewport, 100K instances with LOD, Ivar build ~185ms |
 
