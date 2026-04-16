@@ -21,6 +21,16 @@ pub fn run() -> Result<i32> {
     let mut viewport_cb = ViewportCallbacks::new();
     let stylesheet = crate::theme::qt_stylesheet();
 
+    // Install the ViewportCallbacks pointer for BifShellState invokables to
+    // reach the live Renderer (ADR-007). SAFETY: `viewport_cb` stays on this
+    // stack frame for the entire `bif_qt_run_shell` call — pointer valid
+    // for the full Qt event loop. Install BEFORE entering the event loop
+    // so no invokable can fire against a null pointer.
+    // SAFETY: see ADR-007.
+    unsafe {
+        crate::main_window::install_viewport_callbacks(&mut viewport_cb as *mut ViewportCallbacks);
+    }
+
     // SAFETY: bif_qt_run_shell blocks until QApplication::exec
     // returns. `&mut viewport_cb` stays live for the entire call.
     // `stylesheet` lives on the stack; rust::Str views into it for

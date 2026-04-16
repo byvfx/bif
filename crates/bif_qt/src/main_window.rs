@@ -20,6 +20,7 @@
 
 use core::pin::Pin;
 use cxx_qt::CxxQtType;
+use std::cell::Cell;
 
 use bif_core::scene_layer_state::SceneLayerState;
 use bif_core::usd::layer::{LayerInfo, LayerOffset, LayerStack, PayloadPolicy};
@@ -27,8 +28,65 @@ use bif_core::usd::UsdStage;
 
 use crate::viewport::{
     viewport_on_frame, viewport_on_resize, viewport_on_shutdown, viewport_on_surface_ready,
-    ViewportCallbacks,
+    Viewport, ViewportCallbacks,
 };
+
+// ---------------------------------------------------------------------------
+// BifShellState ↔ ViewportCallbacks bridge (ADR-007).
+//
+// BifShellState invokables need to reach ViewportCallbacks::viewport to drive
+// scene loads / camera ops / frame-selected / etc. The two Rust singletons
+// live in disjoint scopes (app.rs runtime vs cxx-qt QObject lifecycle), so
+// we bridge through a thread_local raw pointer installed at app startup.
+//
+// Safety invariant: ViewportCallbacks lives on app.rs's stack for the entire
+// Qt event loop. install_viewport_callbacks is called before bif_qt_run_shell
+// enters the event loop — no invokable can fire before install. Qt UI is
+// single-threaded, so thread_local + Cell<*mut _> is sound.
+//
+// See ADR-007 in wiki/architecture/adr/ for the full rationale + alternatives.
+// ---------------------------------------------------------------------------
+
+thread_local! {
+    /// Installed by `app.rs` before entering the Qt event loop. Read by
+    /// `with_viewport_mut` from `BifShellState` invokables.
+    static VIEWPORT_CALLBACKS: Cell<*mut ViewportCallbacks> =
+        const { Cell::new(std::ptr::null_mut()) };
+}
+
+/// Install the `ViewportCallbacks` pointer for this thread. Must be called
+/// once, on the main (Qt UI) thread, before `bif_qt_run_shell`. Pointer
+/// must remain valid for the full duration of the Qt event loop.
+///
+/// # Safety
+///
+/// Caller guarantees `cb` points to a `ViewportCallbacks` that outlives the
+/// Qt event loop (typically stack-allocated in `app.rs::run`).
+pub unsafe fn install_viewport_callbacks(cb: *mut ViewportCallbacks) {
+    VIEWPORT_CALLBACKS.with(|slot| slot.set(cb));
+}
+
+/// Run `f` with mutable access to the live `Viewport`. Returns `None` when:
+///   - `install_viewport_callbacks` was never called (pointer null), or
+///   - the viewport hasn't been constructed yet (surfaceReady not fired), or
+///   - the viewport has been torn down.
+///
+/// Callers must handle `None` gracefully.
+fn with_viewport_mut<R>(f: impl FnOnce(&mut Viewport) -> R) -> Option<R> {
+    VIEWPORT_CALLBACKS.with(|slot| {
+        let ptr = slot.get();
+        if ptr.is_null() {
+            return None;
+        }
+        // SAFETY: Qt UI is single-threaded; pointer installed before the
+        // event loop starts and valid for its full duration; no other site
+        // holds a conflicting &mut to the same ViewportCallbacks concurrently
+        // (viewport_on_* callbacks run via cxx-qt `extern "Rust"`, not
+        // through this thread_local).
+        let cb = unsafe { &mut *ptr };
+        cb.viewport_mut().map(f)
+    })
+}
 
 #[cxx_qt::bridge]
 pub mod qobject {
@@ -388,16 +446,47 @@ impl qobject::BifShellState {
 
     fn on_stage_path_opened(mut self: Pin<&mut Self>, path: cxx_qt_lib::QString) {
         let path_str: String = (&path).into();
+        let path_buf = std::path::PathBuf::from(&path_str);
         log::info!("stage open requested: {path_str}");
-        // Phase E.2 move 4: store the path so `detect_timeline_from_stage`
-        // can open a throwaway UsdStage to read time metadata. Move 2 will
-        // replace this with a proper shared stage handle driving the
-        // viewport renderer.
-        self.as_mut().rust_mut().current_stage_path = Some(std::path::PathBuf::from(&path_str));
-        self.as_mut()
-            .set_status_message(cxx_qt_lib::QString::from(&format!(
-                "Open Stage: {path_str}  (Phase E.2 move 2 wires the viewport load)"
-            )));
+
+        // Phase E.2 move 4: record the path for `detect_timeline_from_stage`.
+        self.as_mut().rust_mut().current_stage_path = Some(path_buf.clone());
+
+        // Phase E.2 move 2: drive the real scene load through the renderer
+        // via the ADR-007 bridge. Synchronous — SceneManager::load_usd_scene
+        // blocks on the C++ bridge + GPU buffer uploads. Matches bif_viewer's
+        // startup-load behavior; acceptable for now. Async path is a future
+        // optimization (scene_manager.rs already has `load_usd_scene_async`).
+        let load_result = with_viewport_mut(|vp| vp.renderer_mut().load_usd_scene(&path_buf));
+
+        match load_result {
+            None => {
+                log::warn!("stage open: viewport not ready yet (surface not created?)");
+                self.as_mut()
+                    .set_status_message(cxx_qt_lib::QString::from(&format!(
+                        "Viewport not ready — cannot load {path_str}",
+                    )));
+            }
+            Some(Err(e)) => {
+                log::error!("stage load failed: {e:?}");
+                self.as_mut()
+                    .set_status_message(cxx_qt_lib::QString::from(&format!("Load failed: {e:?}",)));
+            }
+            Some(Ok(())) => {
+                // Pull the freshly-populated layer state out of the renderer
+                // and mirror it on self so the Layer Stack panel (and the
+                // Phase C property inspector's composition-arcs mirror) see
+                // real data on the next layer_state_revision bump.
+                let layer_state_clone =
+                    with_viewport_mut(|vp| vp.renderer_mut().scene.layer_state.clone()).flatten();
+                self.as_mut().rust_mut().scene_layer_state = layer_state_clone;
+                bump_revision(self.as_mut());
+
+                log::info!("stage loaded: {path_str}");
+                self.as_mut()
+                    .set_status_message(cxx_qt_lib::QString::from(&format!("Loaded: {path_str}",)));
+            }
+        }
     }
 
     fn on_camera_orbit(mut self: Pin<&mut Self>, dx: i32, dy: i32) {
