@@ -323,11 +323,16 @@ void wire_shell_actions(
     // E.2 parses the returned path + calls bif_core::scene_loader.
     QObject::connect(actions.open_stage, &QAction::triggered, window,
         [window, shell_state, central_stack, update_status]() {
+            // Hide main window so QFileDialog isn't stuck behind it
+            // (Windows z-order workaround — same as bif_viewer's
+            // with_dialog_focus pattern).
+            window->setVisible(false);
             const QString path = QFileDialog::getOpenFileName(
                 window,
                 QStringLiteral("Open USD Stage"),
                 QString(),
                 QStringLiteral("USD files (*.usd *.usda *.usdc *.usdz);;All files (*)"));
+            window->setVisible(true);
             if (!path.isEmpty()) {
                 // Store in recents for the first-launch list.
                 QSettings settings;

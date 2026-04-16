@@ -13,8 +13,10 @@ use crate::viewport::ViewportCallbacks;
 /// Run the BIF Qt shell event loop. Returns the QApplication exit
 /// code. Blocks the caller.
 pub fn run() -> Result<i32> {
-    let _ = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
-        .try_init();
+    let _ = env_logger::Builder::from_env(
+        env_logger::Env::default().default_filter_or("info,wgpu_core=warn,wgpu_hal=warn,naga=warn"),
+    )
+    .try_init();
 
     log::info!("bif_qt {} — starting Qt shell", crate::BIF_QT_VERSION);
 
