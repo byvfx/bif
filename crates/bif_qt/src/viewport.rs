@@ -193,6 +193,14 @@ pub fn viewport_on_surface_ready(
     width: i32,
     height: i32,
 ) -> bool {
+    // Guard: if the viewport already exists (e.g. window was hidden +
+    // re-shown around a QFileDialog), just resize — don't recreate the
+    // Renderer and drop GPU resources that may still be in-flight.
+    if cb.viewport.is_some() {
+        viewport_on_resize(cb, width, height);
+        return true;
+    }
+
     let w = width.max(1) as u32;
     let h = height.max(1) as u32;
     // SAFETY: hwnd is a Qt-native HWND for a widget that outlives us.
