@@ -24,7 +24,6 @@ use std::cell::Cell;
 
 use bif_core::scene_layer_state::SceneLayerState;
 use bif_core::usd::layer::{LayerInfo, LayerOffset, LayerStack, PayloadPolicy};
-use bif_core::usd::UsdStage;
 
 use crate::viewport::{
     viewport_on_frame, viewport_on_resize, viewport_on_shutdown, viewport_on_surface_ready,
@@ -763,65 +762,43 @@ impl qobject::BifShellState {
     }
 
     fn detect_timeline_from_stage(mut self: Pin<&mut Self>) {
-        // Phase E.2 move 4 (2026-04-15): opens a throwaway `UsdStage`
-        // from the last path handed to `on_stage_path_opened`, reads
-        // the existing `UsdStage::get_timeline()` (which already wraps
-        // `GetStartTimeCode` / `GetEndTimeCode` / `GetTimeCodesPerSecond`
-        // via `cpp_bridge::usd_bridge_get_timeline`), and writes the
-        // three timeline qproperties.
-        //
-        // Standalone — no shared stage handle with the renderer yet.
-        // Inefficient (reopens the stage per click) but gets the UI
-        // correct. Move 2 + the architecture decision that follows
-        // replace this with a shared UsdStage.
-        let path_opt = self.as_ref().rust().current_stage_path.clone();
-        let Some(path) = path_opt else {
-            log::info!("timeline: detect-from-stage clicked, no stage path yet");
+        // Read timeline metadata from the live renderer's UsdStage
+        // (loaded by on_stage_path_opened → Renderer::load_usd_scene).
+        // Uses the ADR-007 bridge to reach the renderer's SceneManager.
+        let timeline = with_viewport_mut(|vp| {
+            let stage_arc = vp.renderer_mut().scene.usd_stage.as_ref()?;
+            let stage = stage_arc.lock().ok()?;
+            stage.get_timeline().ok()
+        })
+        .flatten();
+
+        let Some(tl) = timeline else {
+            log::info!("timeline: detect-from-stage — no stage loaded");
             self.as_mut().set_status_message(cxx_qt_lib::QString::from(
-                "Detect timeline: open a stage first (File → Open).",
+                "Detect timeline: no stage loaded (File \u{2192} Open first).",
             ));
             return;
         };
-        match UsdStage::open(&path) {
-            Ok(stage) => match stage.get_timeline() {
-                Ok(tl) => {
-                    if !tl.has_authored_time_range {
-                        log::info!(
-                            "timeline: stage {:?} has no authored time range; using USD defaults \
-                             (start={}, end={}, fps={})",
-                            path,
-                            tl.start_time_code,
-                            tl.end_time_code,
-                            tl.frames_per_second
-                        );
-                    }
-                    let start = tl.start_time_code.round() as i32;
-                    let end = tl.end_time_code.round() as i32;
-                    let fps = (tl.frames_per_second.round() as i32).max(1);
-                    self.as_mut().set_start_frame(start);
-                    self.as_mut().set_end_frame(end);
-                    self.as_mut().set_playback_fps(fps);
-                    self.as_mut()
-                        .set_status_message(cxx_qt_lib::QString::from(&format!(
-                            "Timeline detected: {start}-{end} @ {fps} fps",
-                        )));
-                }
-                Err(e) => {
-                    log::warn!("timeline: get_timeline failed: {e:?}");
-                    self.as_mut()
-                        .set_status_message(cxx_qt_lib::QString::from(&format!(
-                            "Timeline detect failed: {e:?}",
-                        )));
-                }
-            },
-            Err(e) => {
-                log::warn!("timeline: UsdStage::open({:?}) failed: {e:?}", path);
-                self.as_mut()
-                    .set_status_message(cxx_qt_lib::QString::from(&format!(
-                        "Timeline detect failed to open stage: {e:?}",
-                    )));
-            }
+
+        if !tl.has_authored_time_range {
+            log::info!(
+                "timeline: no authored time range; using USD defaults \
+                 (start={}, end={}, fps={})",
+                tl.start_time_code,
+                tl.end_time_code,
+                tl.frames_per_second
+            );
         }
+        let start = tl.start_time_code.round() as i32;
+        let end = tl.end_time_code.round() as i32;
+        let fps = (tl.frames_per_second.round() as i32).max(1);
+        self.as_mut().set_start_frame(start);
+        self.as_mut().set_end_frame(end);
+        self.as_mut().set_playback_fps(fps);
+        self.as_mut()
+            .set_status_message(cxx_qt_lib::QString::from(&format!(
+                "Timeline detected: {start}-{end} @ {fps} fps",
+            )));
     }
 }
 

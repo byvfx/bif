@@ -524,6 +524,19 @@ int bif_qt_run_shell(ViewportCallbacks* viewport_cb, ::rust::Str stylesheet) {
         connect_viewport_signals(central.viewport, viewport_cb, shell_state, &window);
     }
 
+    // Breadcrumb bar ← selected_prim_path (Phase E.2 move 6).
+    // Split the prim path by '/' into segments for the breadcrumb trail.
+    QObject::connect(
+        shell_state, &BifShellState::selected_prim_pathChanged,
+        [breadcrumb = central.breadcrumb, shell_state]() {
+            auto path = shell_state->getSelected_prim_path();
+            if (path.isEmpty()) {
+                breadcrumb_set_path(breadcrumb, {});
+            } else {
+                breadcrumb_set_path(breadcrumb, path.split(QChar('/'), Qt::SkipEmptyParts));
+            }
+        });
+
     // Scene Browser dock — real panel (Phase C.2). Demo prim tree
     // until Phase E wires CompositeProvider.
     {
