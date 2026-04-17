@@ -13,16 +13,13 @@ oiio = ["bif_core/oiio", "bif_viewport/oiio"]
 oidn = ["bif_viewport/oidn"]
 
 [dependencies]
-bif_math = { path = "../bif_math" }
+# Phase F: bif_viewer is now a thin shim over `bif_qt::run()`. The
+# winit / wgpu / egui-bridge dependencies that powered the old event
+# loop are gone — pulled transitively through `bif_qt` only where
+# needed. `bif_core` / `bif_viewport` stay so feature flag passthrough
+# (`oiio`, `oidn`) still routes correctly.
+bif_qt = { path = "../bif_qt" }
 bif_core = { path = "../bif_core" }
 bif_viewport = { path = "../bif_viewport" }
 
-wgpu = { workspace = true }
-winit = { workspace = true }
-egui = { workspace = true }
-egui-wgpu = { workspace = true }
-egui-winit = { workspace = true }
-pollster = { workspace = true }
 env_logger = { workspace = true }
-log = { workspace = true }
-anyhow = { workspace = true }

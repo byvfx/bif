@@ -135,8 +135,9 @@ impl Viewport {
     }
 
     pub fn render(&mut self) -> Result<()> {
-        // Headless path — no egui input, no PlatformOutput expected back.
-        match self.renderer.render(CLEAR_COLOR, None) {
+        // Headless path — Phase F removed the egui bridge; render() is
+        // now scene-only and returns Result<()> directly.
+        match self.renderer.render(CLEAR_COLOR) {
             Ok(_) => Ok(()),
             Err(e) => {
                 // Recover from transient surface loss/outdated the same way

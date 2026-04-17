@@ -25,10 +25,10 @@ anyhow = { workspace = true }
 rayon = { workspace = true }
 tobj = "4.0"
 
-# UI
+# UI — egui kept (dead in-tree panels still depend on it; revisit when
+# Qt replacements land). egui-wgpu/egui-winit dropped with Phase F egui
+# bridge deletion; nothing in this crate consumes them now.
 egui = { workspace = true }
-egui-wgpu = { workspace = true }
-egui-winit = { workspace = true }
 egui-snarl = { version = "0.5", features = ["serde"] }
 rfd = "0.14"
 serde = { workspace = true }

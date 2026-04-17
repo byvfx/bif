@@ -37,7 +37,7 @@ Branch: `v0.15-qt`. Plan: `C:\Users\brandon\.claude\plans\iridescent-soaring-ham
 - Phase C — core panels: Layer Stack + Scene Browser (virtualized 100K+) + Property Inspector (~18h)
 - Phase D — secondary panels: Timeline + Node Graph (QGraphicsScene) + Render Settings (~10h)
 - Phase E — input + event wiring (~3h)
-- Phase F — delete egui from `bif_viewport` + `bif_viewer` (~2h)
+- **Phase F ✅ (2026-04-16):** Renderer egui bridge deleted (`egui_ctx` / `egui_state` / `egui_renderer` fields, `attach_egui` / `egui_state_mut` / `egui_ctx` methods, `run_egui_frame` ~870 LOC, egui paint pass in `submit_gpu_frame`). `Renderer::render` simplified to `render(&mut self, clear_color) -> Result<()>`. `render_ui.rs` deleted (~729 LOC). `egui-wgpu` + `egui-winit` dropped from `bif_viewport/Cargo.toml`. `bif_viewer/src/main.rs` rewritten 905 → 14 lines as a `bif_qt::run()` shim; `wgpu`/`winit`/`egui`/`egui-wgpu`/`egui-winit`/`pollster` dropped from `bif_viewer/Cargo.toml`. `egui_panels_legacy` feature gating deferred — would have required also gating `NodeGraphContext` (egui-snarl typed); panel modules stay in-tree as dead code until Qt replacements land. Tier 0 (Qt scene browser parity — CompositeProvider routing + 4 columns + eye chrome) shipped in same session as the parity gate.
 - Phase G/H — tests + release + merge `v0.15-qt` → `main` (~4h)
 
 Deferred to v0.15.5/v0.16: asset browser (M28.1), asset library (M28.2), drag-and-drop, Wacom pressure/tilt.

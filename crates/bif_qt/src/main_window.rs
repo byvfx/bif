@@ -78,6 +78,35 @@ fn with_stage<R>(f: impl FnOnce(&bif_core::usd::UsdStage) -> R) -> Option<R> {
     Some(f(&guard))
 }
 
+/// Run `f` with read access to a `CompositeProvider` that merges the live
+/// USD stage with the procedural prim cache. This is the same provider the
+/// egui scene browser uses, so children of procedural prims and synthetic
+/// `/BIF/` paths are visible (T0.2 fix — Qt previously saw only the raw
+/// USD stage and dropped procedural / synthetic descendants).
+///
+/// Returns `None` when the viewport isn't ready. When no stage is loaded,
+/// returns a USD-less composite (procedural-only).
+fn with_scene_browser_provider<R>(
+    f: impl FnOnce(&dyn bif_viewport::scene_browser::PrimDataProvider) -> R,
+) -> Option<R> {
+    use bif_viewport::scene_browser::{CompositeProvider, PrimDataProvider};
+    with_viewport_mut(|vp| {
+        let renderer = vp.renderer_mut();
+        // Clone the Arc first so the MutexGuard borrows from a local,
+        // not from `renderer.scene.usd_stage`. That frees `renderer` for
+        // the immutable `cached_scene_graph()` call below (method calls
+        // can't be split-borrowed across struct fields).
+        let stage_arc = renderer.scene.usd_stage.clone();
+        let cache = renderer.cached_scene_graph();
+        let stage_guard = stage_arc.as_ref().and_then(|s| s.lock().ok());
+        let composite = CompositeProvider::new(
+            stage_guard.as_deref().map(|s| s as &dyn PrimDataProvider),
+            cache,
+        );
+        f(&composite)
+    })
+}
+
 /// Map a layer identifier to the palette color index used by the
 /// Layer Stack panel (modulo 8). Returns -1 when the identifier isn't
 /// present in the currently-loaded scene layer state.
@@ -405,6 +434,23 @@ pub mod qobject {
         /// Display (leaf) name for the prim at `path`.
         #[qinvokable]
         fn prim_display_name_at(self: &BifShellState, path: QString) -> QString;
+
+        /// Kind metadata (e.g. "component", "assembly", "group") for the
+        /// prim at `path`. Empty when unset or stage unloaded. (Same TODO
+        /// as the egui browser — composed-stage kind isn't surfaced from
+        /// the C++ bridge yet.)
+        #[qinvokable]
+        fn prim_kind_at(self: &BifShellState, path: QString) -> QString;
+
+        /// Computed visibility (inherited) for the prim at `path`.
+        /// `true` when prim not found so empty trees aren't all-hidden.
+        #[qinvokable]
+        fn prim_is_visible_at(self: &BifShellState, path: QString) -> bool;
+
+        /// Active flag for the prim at `path`. Inactive prims still
+        /// appear in the tree (dimmed) per egui parity.
+        #[qinvokable]
+        fn prim_is_active_at(self: &BifShellState, path: QString) -> bool;
 
         // ---- Property Inspector surface (Phase E.2 move 8) ----
         //
@@ -1048,17 +1094,12 @@ impl qobject::BifShellState {
     // -----------------------------------------------------------------
 
     fn root_prim_count(&self) -> i32 {
-        with_stage(|stage| {
-            use bif_viewport::scene_browser::PrimDataProvider;
-            stage.root_paths().len() as i32
-        })
-        .unwrap_or(0)
+        with_scene_browser_provider(|provider| provider.root_paths().len() as i32).unwrap_or(0)
     }
 
     fn root_prim_path_at(&self, index: i32) -> cxx_qt_lib::QString {
-        let path = with_stage(|stage| {
-            use bif_viewport::scene_browser::PrimDataProvider;
-            stage
+        let path = with_scene_browser_provider(|provider| {
+            provider
                 .root_paths()
                 .get(index as usize)
                 .cloned()
@@ -1070,11 +1111,7 @@ impl qobject::BifShellState {
 
     fn child_prim_count(&self, parent_path: cxx_qt_lib::QString) -> i32 {
         let p: String = (&parent_path).into();
-        with_stage(|stage| {
-            use bif_viewport::scene_browser::PrimDataProvider;
-            stage.get_children(&p).len() as i32
-        })
-        .unwrap_or(0)
+        with_scene_browser_provider(|provider| provider.get_children(&p).len() as i32).unwrap_or(0)
     }
 
     fn child_prim_path_at(
@@ -1083,9 +1120,8 @@ impl qobject::BifShellState {
         index: i32,
     ) -> cxx_qt_lib::QString {
         let parent: String = (&parent_path).into();
-        let child = with_stage(|stage| {
-            use bif_viewport::scene_browser::PrimDataProvider;
-            stage
+        let child = with_scene_browser_provider(|provider| {
+            provider
                 .get_children(&parent)
                 .get(index as usize)
                 .cloned()
@@ -1097,9 +1133,11 @@ impl qobject::BifShellState {
 
     fn prim_type_name_at(&self, path: cxx_qt_lib::QString) -> cxx_qt_lib::QString {
         let p: String = (&path).into();
-        let type_name = with_stage(|stage| {
-            stage
-                .get_prim_info_by_path(&p)
+        // Composite provider so procedural prim type names ("Mesh",
+        // "PointInstancer", "Scope") resolve too — not just USD prims.
+        let type_name = with_scene_browser_provider(|provider| {
+            provider
+                .get_prim_info(&p)
                 .map(|info| info.type_name)
                 .unwrap_or_default()
         })
@@ -1114,6 +1152,40 @@ impl qobject::BifShellState {
         // with path indices at the authoring level.
         let name = p.rsplit('/').next().unwrap_or("").to_string();
         cxx_qt_lib::QString::from(&name)
+    }
+
+    fn prim_kind_at(&self, path: cxx_qt_lib::QString) -> cxx_qt_lib::QString {
+        let p: String = (&path).into();
+        let kind = with_scene_browser_provider(|provider| {
+            provider
+                .get_prim_info(&p)
+                .map(|i| i.kind)
+                .unwrap_or_default()
+        })
+        .unwrap_or_default();
+        cxx_qt_lib::QString::from(&kind)
+    }
+
+    fn prim_is_visible_at(&self, path: cxx_qt_lib::QString) -> bool {
+        let p: String = (&path).into();
+        with_scene_browser_provider(|provider| {
+            provider
+                .get_prim_info(&p)
+                .map(|i| i.is_visible)
+                .unwrap_or(true)
+        })
+        .unwrap_or(true)
+    }
+
+    fn prim_is_active_at(&self, path: cxx_qt_lib::QString) -> bool {
+        let p: String = (&path).into();
+        with_scene_browser_provider(|provider| {
+            provider
+                .get_prim_info(&p)
+                .map(|i| i.is_active)
+                .unwrap_or(true)
+        })
+        .unwrap_or(true)
     }
 
     // -----------------------------------------------------------------

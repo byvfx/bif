@@ -39,7 +39,6 @@ mod project_dispatch;
 pub mod property_inspector;
 mod render;
 mod render_dispatch;
-mod render_ui;
 pub mod scene_browser;
 mod scene_loader;
 pub mod scene_manager;
@@ -84,9 +83,7 @@ pub use timeline::TimelineState;
 pub use types::*;
 
 pub use node_graph::{render_node_graph, GraphNodeId, NodeGraphEvent, NodeGraphState, SceneNode};
-pub use property_inspector::{
-    render_property_inspector, reset_property_inspector_cache, PrimProperties, TransformEdit,
-};
+pub use property_inspector::{render_property_inspector, PrimProperties, TransformEdit};
 pub use scene_browser::{
     build_scene_graph_cache, CachedSceneGraph, CompositeProvider, EmptyPrimProvider,
     NodeFilteredProvider, PrimDataProvider, PrimDisplayInfo, ProceduralPrim, ProceduralPrimKind,
@@ -227,14 +224,6 @@ pub struct Renderer {
     // Ground grid
     pub(crate) grid: GridRenderer,
 
-    // egui state
-    pub(crate) egui_ctx: egui::Context,
-    /// egui <-> windowing handshake state. `None` for headless consumers
-    /// (e.g. `bif_qt`); `bif_viewer` attaches this via
-    /// [`Renderer::attach_egui`] after construction.
-    pub(crate) egui_state: Option<egui_winit::State>,
-    pub(crate) egui_renderer: egui_wgpu::Renderer,
-
     // UI state
     pub fps: f32,
     pub(crate) frame_count: u32,
@@ -277,7 +266,9 @@ pub struct Renderer {
 
     /// Layer Stack panel UI state (v0.14.0). Data lives on
     /// `self.scene.layer_state`; this struct holds only the per-panel
-    /// scroll/focus state.
+    /// scroll/focus state. Phase F left it unread — the egui panel that
+    /// consumed it is in-tree dead code pending Qt replacement.
+    #[allow(dead_code)]
     pub(crate) layer_stack_panel: crate::layer_stack_panel::LayerStackPanel,
 
     // Timeline state for animation playback
@@ -758,23 +749,6 @@ impl Renderer {
 
         log::info!("Created culling manager");
 
-        // Initialize egui context + wgpu renderer. The winit-coupled
-        // `egui_winit::State` is NOT constructed here — callers that want
-        // egui overlay (bif_viewer) build one from their winit window and
-        // install it via `attach_egui()`.
-        let egui_ctx = egui::Context::default();
-        theme::apply_theme(&egui_ctx);
-
-        let egui_renderer = egui_wgpu::Renderer::new(
-            &device,
-            config.format,
-            None, // No depth testing for egui
-            1,
-            false, // allow_srgb_render_target
-        );
-
-        log::info!("egui initialized");
-
         // Create gnomon renderer
         let gnomon = GnomonRenderer::new(&device, config.format);
         log::info!("Gnomon initialized");
@@ -877,9 +851,6 @@ impl Renderer {
             depth_view,
             gnomon,
             grid,
-            egui_ctx,
-            egui_state: None,
-            egui_renderer,
             fps: 0.0,
             frame_count: 0,
             fps_update_timer: 0.0,
@@ -952,28 +923,12 @@ impl Renderer {
             || self.selection.gizmo_state.is_dragging
     }
 
-    /// Install the egui input/output state. Call this once after `new()` if
-    /// you want egui overlay (bif_viewer). Callers that don't want egui
-    /// (bif_qt) simply skip this and `render()` with `raw_input: None`.
-    ///
-    /// The state is winit-specific (via `egui_winit::State`); callers build
-    /// it themselves so this crate stays windowing-system-agnostic.
-    pub fn attach_egui(&mut self, egui_state: egui_winit::State) {
-        self.egui_state = Some(egui_state);
-    }
-
-    /// Mutable access to the installed egui state. `None` when no egui was
-    /// attached. Callers (bif_viewer) use this to drive the per-event
-    /// `on_window_event` handshake and the per-frame `take_egui_input` /
-    /// `handle_platform_output` pair — all winit-typed — outside this crate.
-    pub fn egui_state_mut(&mut self) -> Option<&mut egui_winit::State> {
-        self.egui_state.as_mut()
-    }
-
-    /// Access to the egui context (for callers that want to push theming,
-    /// read `pixels_per_point()`, etc.).
-    pub fn egui_ctx(&self) -> &egui::Context {
-        &self.egui_ctx
+    /// Access to the procedural-prim cache the scene browser uses. Lets
+    /// `bif_qt` build a `CompositeProvider` (USD + procedural + synthetic
+    /// `/BIF/`) without exposing the private `nodes` field. Mirrors how
+    /// `scene.usd_stage` is the other half of the composite source.
+    pub fn cached_scene_graph(&self) -> &scene_browser::CachedSceneGraph {
+        &self.nodes.cached_scene_graph
     }
 
     /// Install a hook invoked around native-dialog presentations. The hook
@@ -1662,11 +1617,6 @@ impl Renderer {
             .unwrap_or_default();
 
         self.timeline_state.keyframe_times = times;
-    }
-
-    /// Reset cached property inspector state in the egui data store.
-    pub fn reset_property_inspector_cache(&self) {
-        reset_property_inspector_cache(&self.egui_ctx);
     }
 
     /// Export transform overrides, keyframes, and point clouds as a USD layer.

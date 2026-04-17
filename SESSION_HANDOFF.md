@@ -1,10 +1,51 @@
-# Session Handoff — April 16, 2026 (Phase E.2 shipped + dogfood passed + wiki synced)
+# Session Handoff — April 16, 2026 (Tier 0 + Phase F shipped — egui bridge deleted)
 
-**Last Updated:** 2026-04-16, late session. Phase E.2 shipped in `834add4` (moves 5/7/8/9 + Close Stage + HiDPI + display mode features). User dogfooded `test_assets/layers/root.usda` — working well; remaining gaps logged in `BUGLIST.md` and acceptable to ship around. Wiki vault synced this session (2 new journal entries, 2 new architecture articles, 3 new concept notes — see `wiki/journal/2026-04-15-phase-e2-first-pass.md` and `wiki/journal/2026-04-16-phase-e2-finish.md`). `.claude/commands/bif-commit.md` strengthened — wiki sync now a commit gate. **Next: Phase F (egui cleanup).**
+**Last Updated:** 2026-04-16, evening continuation. Tier 0 (Qt scene browser parity — CompositeProvider routing + 4 columns + eye-glyph chrome) and Phase F (Renderer egui bridge deletion + bif_viewer retargeted at `bif_qt::run`) both landed this session. Workspace builds + clippy clean; tests pass except 2 pre-existing failures (`test_should_restart_no_render`, `test_build_property_rows_with_material`). User visually confirmed Tier 0 parity on lucy.usd — residual child-count gap under a couple sections logged in BUGLIST as a downstream `UsdStage::child_prim_paths` quirk, acceptable to ship. **Next: Tier 1 (edit-target pill + auto-pick writable sublayer + save flow + breadcrumb layer segment + viewport toolbar).**
 **Current Version:** v0.14.0 shipped on `main`; v0.15.0 in progress on `v0.15-qt`.
 **Project:** BIF — USD Orchestration Tool for VFX.
 
-## 🏁 2026-04-16 session summary — Phase E.2 feature-complete
+## 🏁 2026-04-16 evening — Tier 0 + Phase F
+
+**Tier 0 (parity gate before egui deletion):**
+
+- **CompositeProvider routing.** New `with_scene_browser_provider` helper in `bif_qt::main_window` mirrors `with_stage` but builds a `CompositeProvider` (USD stage + procedural prim cache + synthetic `/BIF/`) per call. The 4 tree invokables + `prim_type_name_at` route through it. New `Renderer::cached_scene_graph()` accessor on `bif_viewport` exposes the cache without widening the private `nodes` field. Architectural parity with egui's data path; residual lucy.usd child-count gap under a couple sections is a downstream `UsdStage::child_prim_paths` issue (BUGLIST).
+- **Three new invokables:** `prim_kind_at`, `prim_is_visible_at`, `prim_is_active_at` — sourced from `PrimDisplayInfo`. Specifier dropped (not in composed-stage info; egui doesn't show it either).
+- **Scene browser model:** `columnCount()` 1→4, new `Columns` enum + `PrimRoles` for kind/visible/active/children-count, `PrimNode` extended, `populate_subtree` + `rebuild_from_state` pre-fetch the new fields, `headerData` + `data()` cover all columns. Header now shown with section resize modes.
+- **Row chrome:** `PrimRowDelegate` paints an eye glyph (filled when visible, struck-through when hidden) before the existing layer color dot in column 0; inactive prims get reduced-alpha text via palette override. Read-only — toggle interactivity is Tier 1+.
+
+**Phase F (egui bridge deletion — adapted scope):**
+
+- **Renderer egui surface gone.** Deleted `egui_ctx` / `egui_state` / `egui_renderer` fields, `attach_egui` / `egui_state_mut` / `egui_ctx` / `reset_property_inspector_cache` methods. `Renderer::render` simplified: `render(&mut self, clear_color: wgpu::Color) -> Result<()>`. Internal `run_egui_frame` (~870 LOC) and `submit_gpu_frame`'s egui paint pass deleted. Cache-reset call in `selection_dispatch` removed.
+- **`render_ui.rs` deleted** (~729 LOC).
+- **Cargo.toml diet.** `bif_viewport`: dropped `egui-wgpu` + `egui-winit`; kept `egui` + `egui-snarl` for the in-tree dead panel modules. `bif_viewer`: dropped `wgpu` / `winit` / `egui` / `egui-wgpu` / `egui-winit` / `pollster`; added `bif_qt`. Confirmed via `cargo tree` — `egui-wgpu` and `egui-winit` no longer pulled by either.
+- **`bif_viewer/src/main.rs`** rewritten 905 → 14 lines as a `bif_qt::run()` shim. CLI autoload (`--usd <path>`) is a regression — filed in BUGLIST. Use File → Open Stage instead.
+- **`bif_qt` fallout — one line.** `viewport.rs::Viewport::render` dropped the `None` raw_input arg. Recon confirmed bif_qt rust has zero egui-typed imports otherwise.
+- **`egui_panels_legacy` feature flag SKIPPED.** Original plan called for one to gate `property_inspector` / `layer_stack_panel` / `node_graph` / `theme`, but that required also gating `NodeGraphContext` (egui-snarl typed) — large refactor for a "future cannibalization" benefit only. Pragmatic call: leave panels in-tree as dead code; revisit when Qt replacements land.
+
+**Files modified this session (uncommitted):**
+
+```
+ M BUGLIST.md
+ M CHANGELOG.md
+ M MILESTONES.md
+ M SESSION_HANDOFF.md
+ M crates/bif_qt/cpp/scene_browser_model.cpp
+ M crates/bif_qt/cpp/scene_browser_model.h
+ M crates/bif_qt/cpp/scene_browser_widget.cpp
+ M crates/bif_qt/src/main_window.rs
+ M crates/bif_qt/src/viewport.rs
+ M crates/bif_viewer/Cargo.toml
+ M crates/bif_viewer/src/main.rs
+ M crates/bif_viewport/Cargo.toml
+ M crates/bif_viewport/src/lib.rs
+ M crates/bif_viewport/src/render.rs
+ M crates/bif_viewport/src/selection_dispatch.rs
+ D crates/bif_viewport/src/render_ui.rs
+ M devlog/2026-04/DEVLOG_2026-04-16.md
+ ?? wiki/journal/2026-04-16-tier0-phase-f.md
+```
+
+## 🏁 2026-04-16 (earlier) — Phase E.2 feature-complete
 
 `bif_qt_shell` now reads the live USD stage end-to-end:
 

@@ -12,11 +12,17 @@ SceneBrowserModel::PrimNode* add_child(
     const QString& name,
     const QString& type_name,
     int color_index,
-    const QString& explicit_path = QString()) {
+    const QString& explicit_path = QString(),
+    const QString& kind = QString(),
+    bool is_visible = true,
+    bool is_active = true) {
     auto node = std::make_unique<SceneBrowserModel::PrimNode>();
     node->name = name;
     node->type_name = type_name;
+    node->kind = kind;
     node->color_index = color_index;
+    node->is_visible = is_visible;
+    node->is_active = is_active;
     node->parent = parent;
     if (!explicit_path.isEmpty()) {
         node->path = explicit_path;
@@ -48,12 +54,18 @@ void populate_subtree(
         if (child_path.isEmpty()) continue;
         const auto name = state->prim_display_name_at(child_path);
         const auto type_name = state->prim_type_name_at(child_path);
+        const auto kind = state->prim_kind_at(child_path);
+        const bool is_visible = state->prim_is_visible_at(child_path);
+        const bool is_active = state->prim_is_active_at(child_path);
         auto* child_node = add_child(
             parent_node,
             name.isEmpty() ? child_path : name,
             type_name,
             /*color_index=*/-1,
-            /*explicit_path=*/child_path);
+            /*explicit_path=*/child_path,
+            kind,
+            is_visible,
+            is_active);
         populate_subtree(state, child_node, child_path, depth + 1);
     }
 }
@@ -114,12 +126,18 @@ void SceneBrowserModel::rebuild_from_state() {
             if (path.isEmpty()) continue;
             const auto name = m_state->prim_display_name_at(path);
             const auto type_name = m_state->prim_type_name_at(path);
+            const auto kind = m_state->prim_kind_at(path);
+            const bool is_visible = m_state->prim_is_visible_at(path);
+            const bool is_active = m_state->prim_is_active_at(path);
             auto* root = add_child(
                 m_root.get(),
                 name.isEmpty() ? path : name,
                 type_name,
                 /*color_index=*/-1,
-                /*explicit_path=*/path);
+                /*explicit_path=*/path,
+                kind,
+                is_visible,
+                is_active);
             populate_subtree(m_state, root, path, /*depth=*/1);
         }
     }
@@ -182,8 +200,7 @@ int SceneBrowserModel::rowCount(const QModelIndex& parent) const {
 }
 
 int SceneBrowserModel::columnCount(const QModelIndex& /*parent*/) const {
-    // Name only. A Type column could be added later.
-    return 1;
+    return ColumnCount_;
 }
 
 QVariant SceneBrowserModel::data(const QModelIndex& index, int role) const {
@@ -191,7 +208,16 @@ QVariant SceneBrowserModel::data(const QModelIndex& index, int role) const {
     auto* node = static_cast<PrimNode*>(index.internalPointer());
     switch (role) {
         case Qt::DisplayRole:
-            return node->name;
+            switch (index.column()) {
+                case ColName: return node->name;
+                case ColType: return node->type_name;
+                case ColChildren:
+                    return node->children.empty()
+                        ? QVariant()
+                        : QVariant(static_cast<int>(node->children.size()));
+                case ColKind: return node->kind;
+            }
+            return {};
         case Qt::ToolTipRole:
             return QStringLiteral("%1\n%2").arg(node->path).arg(node->type_name);
         case PathRole:
@@ -200,6 +226,14 @@ QVariant SceneBrowserModel::data(const QModelIndex& index, int role) const {
             return node->type_name;
         case ColorIndexRole:
             return node->color_index;
+        case KindRole:
+            return node->kind;
+        case IsVisibleRole:
+            return node->is_visible;
+        case IsActiveRole:
+            return node->is_active;
+        case ChildrenCountRole:
+            return static_cast<int>(node->children.size());
     }
     return {};
 }
@@ -207,7 +241,12 @@ QVariant SceneBrowserModel::data(const QModelIndex& index, int role) const {
 QVariant SceneBrowserModel::headerData(int section, Qt::Orientation orientation,
                                        int role) const {
     if (orientation != Qt::Horizontal || role != Qt::DisplayRole) return {};
-    if (section == 0) return QStringLiteral("Prim");
+    switch (section) {
+        case ColName: return QStringLiteral("Prim");
+        case ColType: return QStringLiteral("Type");
+        case ColChildren: return QStringLiteral("Children");
+        case ColKind: return QStringLiteral("Kind");
+    }
     return {};
 }
 
@@ -216,5 +255,9 @@ QHash<int, QByteArray> SceneBrowserModel::roleNames() const {
     roles.insert(PathRole, "path");
     roles.insert(TypeNameRole, "typeName");
     roles.insert(ColorIndexRole, "colorIndex");
+    roles.insert(KindRole, "kind");
+    roles.insert(IsVisibleRole, "isVisible");
+    roles.insert(IsActiveRole, "isActive");
+    roles.insert(ChildrenCountRole, "childrenCount");
     return roles;
 }

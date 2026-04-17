@@ -20,7 +20,7 @@ BIF is a VFX scene assembler and renderer built in Rust with wgpu, USD, and Mate
 | [[concepts/_index\|Concepts]] | 13 | Atomic notes on key technical concepts |
 | [[rust/_index\|Rust]] | 1 | Learning notes, patterns, idioms |
 | [[ui-ux/_index\|UI/UX]] | 2 | Design philosophy, material editor |
-| [[journal/_index\|Journal]] | 3 | Reflective learning entries |
+| [[journal/_index\|Journal]] | 4 | Reflective learning entries |
 | [[raw/_index\|Raw]] | — | Ingested source material |
 
 ## Source Documents

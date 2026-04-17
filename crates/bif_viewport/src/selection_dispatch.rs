@@ -3,7 +3,7 @@
 use bif_core::SceneQuery;
 
 use crate::ivar_state::RenderMode;
-use crate::property_inspector::{reset_property_inspector_cache, PrimProperties, TransformEdit};
+use crate::property_inspector::{PrimProperties, TransformEdit};
 use crate::scene_browser::{CompositeProvider, PrimDataProvider, ProceduralPrimKind};
 use crate::Renderer;
 
@@ -173,7 +173,6 @@ impl Renderer {
             .expand_to_path(&prim_path);
         self.selection.scene_browser_state.select(&prim_path);
         self.selection.selected_instance_index = self.resolve_instance_index(&prim_path);
-        reset_property_inspector_cache(&self.egui_ctx);
 
         let stage_guard = self
             .scene

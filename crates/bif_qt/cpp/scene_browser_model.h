@@ -29,6 +29,18 @@ public:
         PathRole = Qt::UserRole + 1,
         TypeNameRole,
         ColorIndexRole,
+        KindRole,
+        IsVisibleRole,
+        IsActiveRole,
+        ChildrenCountRole,
+    };
+
+    enum Columns {
+        ColName = 0,
+        ColType,
+        ColChildren,
+        ColKind,
+        ColumnCount_,
     };
 
     /// `state` is the source of prim tree data once a stage is loaded.
@@ -62,7 +74,10 @@ public:
         QString name;
         QString type_name;
         QString path;
+        QString kind;       // "component", "assembly", "group", … or empty
         int color_index;
+        bool is_visible{true};
+        bool is_active{true};
         PrimNode* parent;
         // std::vector — Qt's QList/QVector require copy-constructible
         // T but unique_ptr is move-only. std handles it cleanly.

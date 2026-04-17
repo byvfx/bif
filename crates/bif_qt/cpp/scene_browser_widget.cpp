@@ -28,43 +28,90 @@ constexpr QColor LAYER_PALETTE[8] = {
 };
 
 // Tree-row delegate that paints a small color dot before the
-// branch decoration. Indent is handled natively by QTreeView so
-// we only reserve `kDotPad + kDotDiameter` on the left.
+// branch decoration, plus (col 0) an eye glyph reflecting visibility.
+// Inactive prims (`is_active == false`) are dimmed across all columns.
+// Indent is handled natively by QTreeView; we only reserve the chrome
+// strip on column 0's left.
 class PrimRowDelegate : public QStyledItemDelegate {
 public:
     using QStyledItemDelegate::QStyledItemDelegate;
 
     static constexpr int kDotDiameter = 6;
     static constexpr int kDotPad = 6;
-    static constexpr int kReserved = kDotDiameter + kDotPad;
+    static constexpr int kEyeWidth = 12;
+    static constexpr int kEyePad = 4;
+    static constexpr int kReserved = kEyeWidth + kEyePad + kDotDiameter + kDotPad;
 
     void paint(QPainter* painter,
                const QStyleOptionViewItem& option,
                const QModelIndex& index) const override {
+        const bool is_active = index.data(SceneBrowserModel::IsActiveRole).toBool();
+        const bool is_visible = index.data(SceneBrowserModel::IsVisibleRole).toBool();
         const int color_index = index.data(SceneBrowserModel::ColorIndexRole).toInt();
+        const bool is_name_col = index.column() == SceneBrowserModel::ColName;
 
         QStyleOptionViewItem adjusted = option;
-        adjusted.rect.setLeft(option.rect.left() + kReserved);
+        if (is_name_col) {
+            adjusted.rect.setLeft(option.rect.left() + kReserved);
+        }
+
+        // Inactive dimming — fade text across all columns.
+        if (!is_active) {
+            QPalette pal = adjusted.palette;
+            const auto fg = pal.color(QPalette::Text);
+            pal.setColor(QPalette::Text,        QColor(fg.red(), fg.green(), fg.blue(), 110));
+            pal.setColor(QPalette::WindowText,  QColor(fg.red(), fg.green(), fg.blue(), 110));
+            pal.setColor(QPalette::HighlightedText,
+                         QColor(fg.red(), fg.green(), fg.blue(), 160));
+            adjusted.palette = pal;
+        }
+
         QStyledItemDelegate::paint(painter, adjusted, index);
 
+        if (!is_name_col) return;
+
+        painter->save();
+        painter->setRenderHint(QPainter::Antialiasing, true);
+        const int cy = option.rect.center().y();
+
+        // Eye glyph (visibility) — flush left, before the color dot.
+        const int ex = option.rect.left() + 2;
+        const QRectF eye_rect(ex, cy - 4, kEyeWidth, 8);
+        const QColor eye_fg = is_visible
+            ? QColor(200, 204, 212, is_active ? 255 : 130)
+            : QColor(110, 114, 122, is_active ? 200 : 110);
+        painter->setPen(QPen(eye_fg, 1.0));
+        painter->setBrush(Qt::NoBrush);
+        painter->drawEllipse(eye_rect);
+        painter->setBrush(eye_fg);
+        painter->setPen(Qt::NoPen);
+        painter->drawEllipse(QPointF(ex + kEyeWidth / 2.0, cy), 1.6, 1.6);
+        if (!is_visible) {
+            painter->setPen(QPen(eye_fg, 1.0));
+            painter->drawLine(QPointF(ex - 1, cy + 5),
+                              QPointF(ex + kEyeWidth + 1, cy - 5));
+        }
+
+        // Layer color dot (existing) — between eye and the row text.
         if (color_index >= 0 && color_index < 8) {
-            painter->save();
-            painter->setRenderHint(QPainter::Antialiasing, true);
-            const auto color = LAYER_PALETTE[color_index];
-            const int cy = option.rect.center().y();
-            const int cx = option.rect.left() + kDotDiameter / 2 + 2;
+            auto color = LAYER_PALETTE[color_index];
+            if (!is_active) color.setAlpha(130);
+            const int cx = ex + kEyeWidth + kEyePad + kDotDiameter / 2;
             painter->setPen(Qt::NoPen);
             painter->setBrush(color);
             painter->drawEllipse(QPoint(cx, cy), kDotDiameter / 2, kDotDiameter / 2);
-            painter->restore();
         }
+
+        painter->restore();
     }
 
     QSize sizeHint(const QStyleOptionViewItem& option,
                    const QModelIndex& index) const override {
         QSize base = QStyledItemDelegate::sizeHint(option, index);
         base.setHeight(qMax(26, base.height()));
-        base.setWidth(base.width() + kReserved);
+        if (index.column() == SceneBrowserModel::ColName) {
+            base.setWidth(base.width() + kReserved);
+        }
         return base;
     }
 };
@@ -128,7 +175,7 @@ SceneBrowserWidget::SceneBrowserWidget(BifShellState* state, QWidget* parent)
 
     m_view = new QTreeView(this);
     m_view->setObjectName(QStringLiteral("scene_browser_view"));
-    m_view->setHeaderHidden(true);
+    m_view->setHeaderHidden(false);
     m_view->setUniformRowHeights(true);
     m_view->setSelectionMode(QAbstractItemView::SingleSelection);
     m_view->setSelectionBehavior(QAbstractItemView::SelectRows);
@@ -140,7 +187,15 @@ SceneBrowserWidget::SceneBrowserWidget(BifShellState* state, QWidget* parent)
         "  color: rgba(220, 222, 226, 255);"
         "  border: none; padding: 2px; outline: none;"
         "}"
-        "QTreeView::item:selected { background-color: rgba(74, 144, 217, 80); }"));
+        "QTreeView::item:selected { background-color: rgba(74, 144, 217, 80); }"
+        "QHeaderView::section {"
+        "  background-color: rgba(28, 32, 38, 255);"
+        "  color: rgba(180, 184, 192, 255);"
+        "  border: none;"
+        "  border-right: 1px solid rgba(20, 22, 26, 255);"
+        "  padding: 4px 8px;"
+        "  font-size: 11px;"
+        "}"));
     layout->addWidget(m_view, 1);
 
     m_model = new SceneBrowserModel(m_state, this);
@@ -149,6 +204,12 @@ SceneBrowserWidget::SceneBrowserWidget(BifShellState* state, QWidget* parent)
     m_filter->setFilterCaseSensitivity(Qt::CaseInsensitive);
     m_filter->setRecursiveFilteringEnabled(false);  // We do our own.
     m_view->setModel(m_filter);
+    auto* header = m_view->header();
+    header->setSectionResizeMode(SceneBrowserModel::ColName, QHeaderView::Stretch);
+    header->setSectionResizeMode(SceneBrowserModel::ColType, QHeaderView::ResizeToContents);
+    header->setSectionResizeMode(SceneBrowserModel::ColChildren, QHeaderView::ResizeToContents);
+    header->setSectionResizeMode(SceneBrowserModel::ColKind, QHeaderView::ResizeToContents);
+    header->setStretchLastSection(false);
     m_view->expandAll();
 
     QObject::connect(m_search, &QLineEdit::textChanged,
