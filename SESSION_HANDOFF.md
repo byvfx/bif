@@ -1,6 +1,6 @@
-# Session Handoff — April 16, 2026 (Phase E.2 feature-complete, pending dogfood + commit)
+# Session Handoff — April 16, 2026 (Phase E.2 shipped + dogfood passed + wiki synced)
 
-**Last Updated:** 2026-04-16, end of session. All 4 remaining Phase E.2 moves (5/7/8/9) + Close Stage + HiDPI landed on the working tree of `v0.15-qt`. Build + clippy clean. Uncommitted — awaiting user dogfood on `test_assets/layers/root.usda`. Once validated, ship 4 grouped commits (or 1 bundled) per plan.
+**Last Updated:** 2026-04-16, late session. Phase E.2 shipped in `834add4` (moves 5/7/8/9 + Close Stage + HiDPI + display mode features). User dogfooded `test_assets/layers/root.usda` — working well; remaining gaps logged in `BUGLIST.md` and acceptable to ship around. Wiki vault synced this session (2 new journal entries, 2 new architecture articles, 3 new concept notes — see `wiki/journal/2026-04-15-phase-e2-first-pass.md` and `wiki/journal/2026-04-16-phase-e2-finish.md`). `.claude/commands/bif-commit.md` strengthened — wiki sync now a commit gate. **Next: Phase F (egui cleanup).**
 **Current Version:** v0.14.0 shipped on `main`; v0.15.0 in progress on `v0.15-qt`.
 **Project:** BIF — USD Orchestration Tool for VFX.
 
@@ -38,17 +38,20 @@
 
 ## ▶️ Pickup next session (2026-04-17+)
 
-1. **Dogfood the changes.** `. .\setup_qt_env.ps1 && . .\setup_usd_env.ps1 && cargo run -p bif_qt --bin bif_qt_shell`. File → Open → `test_assets/layers/root.usda`. Verify:
-   - Layer Stack shows real 3 layers (mute toggle works).
-   - Scene Browser shows real prim tree — `/World`, nested meshes, lights. No demo data.
-   - Click mesh in viewport → breadcrumb + property inspector populate real attributes; composition arcs show real layers with opinion dot colors.
-   - Select animated prim → timeline ruler marks animation keyframe frames.
-   - Timeline `⇅` detect populates from stage time metadata (already working).
-   - File → Close Stage → first-launch returns, no GPU validation errors in log.
-   - HiDPI: no black edge bar on 125%/150% display.
-2. **Commit.** Plan says 4 grouped commits (hidpi / close-stage / keyframes+pick / browser+inspector) but main_window.rs interleaving makes clean `git add -p` splits messy — a single "Phase E.2 finish" commit is pragmatic. Up to user.
-3. **Phase F — egui cleanup.** Delete `egui`/`egui-wgpu`/`egui-winit`/`egui-snarl` from `bif_viewer` + `bif_viewport` Cargo.toml. Delete `run_egui_frame` + ~900 lines of panel assembly.
-4. **Phase G — validation + release plumbing**, then **Phase H — `v0.15.0` tag + merge back to main**.
+1. ✅ **Dogfood passed** (this session). Remaining gaps captured in `BUGLIST.md`; acceptable to ship around.
+2. ✅ **Phase E.2 committed** as `834add4` (bundled commit — main_window.rs interleaving made clean splits messy).
+3. ✅ **Wiki synced** — journal entries for 2026-04-15 and 2026-04-16, plus architecture + concept articles for Phase E.2 roadmap, cxx-qt patterns, paint-pause, HiDPI DPR threading, PrimDataProvider.
+4. **Phase F — egui cleanup** ← next target. Delete `egui`/`egui-wgpu`/`egui-winit`/`egui-snarl` from `bif_viewer` + `bif_viewport` Cargo.toml. Delete `run_egui_frame` + ~900 lines of panel assembly. Retarget `bif_viewer` main at `bif_qt::run`. Estimate ~2h; mostly deletion.
+5. **Phase G — validation + release plumbing.**
+6. **Phase H — `v0.15.0` tag + merge back to main.**
+
+### Phase F opening checklist
+
+- Confirm `bif_viewport::Renderer::attach_egui` / `egui_state_mut` / `egui_ctx` are the only remaining egui surface on bif_viewport — delete them.
+- `render(clear_color, raw_input: Option<RawInput>) -> Option<PlatformOutput>` collapses to `render(clear_color) -> Result<()>` once the egui branch is gone.
+- `bif_viewer/src/main.rs` `create_renderer` compat shim becomes the entry point to `bif_qt::run`.
+- egui-snarl lives in bif_viewer; node-graph UI moves away entirely (no Qt replacement yet — that's post-v0.15 work).
+- Verify `bif_viewer` Cargo binary still builds and launches the Qt shell.
 
 ## Known gaps for v0.16
 

@@ -3,7 +3,7 @@ title: "Architecture"
 type: article
 tags: [architecture]
 created: "2026-04-05"
-updated: "2026-04-05"
+updated: "2026-04-16"
 sources: [ARCHITECTURE.md, ARCHITECTURE_REVIEW.md, ARCHITECTURE_REFACTORS.md, MILESTONES.md]
 ---
 
@@ -21,6 +21,8 @@ BIF is a USD Orchestration Tool for VFX built in Rust — layer-aware USD editin
 - [[architecture-review|Architecture Review]] — Audit status of ARCHITECTURE_REVIEW.md and ARCHITECTURE_REFACTORS.md
 - [[scene-query-trait|SceneQuery Trait]] — Read-only query API abstracting Scene for future LayerAwareScene
 - [[event-dispatch-pattern|Event Dispatch Pattern]] — Thin router + category dispatch files for AppEvent handling
+- [[phase-e2-qt-migration|Phase E.2 — Qt migration roadmap]] — 9 moves connecting `bif_qt_shell` to the live stage (all shipped, dogfood pending)
+- [[cxx-qt-bridge-patterns|cxx-qt bridge patterns]] — invokable signatures, `rust_mut` mutability, qproperty revisions, trait-shadow gotcha
 
 ## Architecture Decision Records
 
