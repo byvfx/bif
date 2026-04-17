@@ -98,7 +98,12 @@ void RenderWidget::mousePressEvent(QMouseEvent* event) {
         if (event->modifiers() & Qt::AltModifier) {
             m_orbit_active = true;
         } else {
-            emit primPickRequested(event->pos().x(), event->pos().y());
+            // Emit framebuffer (physical) pixel coords so the ray-cast
+            // matches the wgpu surface dims (which are DPR-scaled).
+            const auto dpr = devicePixelRatioF();
+            emit primPickRequested(
+                static_cast<int>(event->pos().x() * dpr),
+                static_cast<int>(event->pos().y() * dpr));
         }
     } else if (event->button() == Qt::MiddleButton) {
         m_pan_active = true;

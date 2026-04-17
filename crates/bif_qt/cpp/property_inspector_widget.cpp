@@ -68,60 +68,6 @@ public:
     }
 };
 
-// Fake attributes per prim type. Phase E replaces with UsdPrim::GetAttributes.
-struct FakeAttr {
-    const char* name;
-    const char* value;
-    const char* type_name;
-    int winning_layer;  // color index
-};
-
-const std::vector<FakeAttr>& attrs_for_type(const QString& prim_type) {
-    // -1 = no dot (attribute unauthored anywhere). Variable per type.
-    static const std::vector<FakeAttr> mesh = {
-        {"points", "(432 float3 values)", "point3f[]", 2},
-        {"faceVertexCounts", "(240 int values)", "int[]", 2},
-        {"faceVertexIndices", "(720 int values)", "int[]", 2},
-        {"normals", "(432 float3 values)", "normal3f[]", 2},
-        {"extent", "[(-1, -1, -1), (1, 1, 1)]", "float3[2]", 2},
-        {"primvars:displayColor", "[(0.8, 0.7, 0.6)]", "color3f[]", 1},
-        {"visibility", "\"inherited\"", "token", -1},
-    };
-    static const std::vector<FakeAttr> xform = {
-        {"xformOp:translate", "(0, 0, 0)", "double3", 1},
-        {"xformOp:rotateXYZ", "(0, 0, 0)", "float3", 1},
-        {"xformOp:scale", "(1, 1, 1)", "float3", 1},
-        {"xformOpOrder", "[\"xformOp:translate\", \"xformOp:rotateXYZ\", \"xformOp:scale\"]", "token[]", 0},
-        {"visibility", "\"inherited\"", "token", -1},
-    };
-    static const std::vector<FakeAttr> light = {
-        {"inputs:intensity", "1.0", "float", 1},
-        {"inputs:exposure", "0.0", "float", -1},
-        {"inputs:color", "(1, 1, 1)", "color3f", 2},
-        {"inputs:angle", "0.53", "float", 2},
-        {"visibility", "\"inherited\"", "token", -1},
-    };
-    static const std::vector<FakeAttr> scope = {
-        {"visibility", "\"inherited\"", "token", -1},
-        {"purpose", "\"default\"", "token", -1},
-    };
-    static const std::vector<FakeAttr> skeleton = {
-        {"joints", "[\"Root\", \"Hip\", \"Spine\", \"Head\"]", "token[]", 1},
-        {"bindTransforms", "(4 matrix4d values)", "matrix4d[]", 1},
-        {"restTransforms", "(4 matrix4d values)", "matrix4d[]", 1},
-    };
-    static const std::vector<FakeAttr> empty;
-
-    if (prim_type == QLatin1String("Mesh")) return mesh;
-    if (prim_type == QLatin1String("Xform")) return xform;
-    if (prim_type == QLatin1String("DistantLight") ||
-        prim_type == QLatin1String("DomeLight")) return light;
-    if (prim_type == QLatin1String("Scope") ||
-        prim_type == QLatin1String("SkelRoot")) return scope;
-    if (prim_type == QLatin1String("Skeleton")) return skeleton;
-    return empty;
-}
-
 QLabel* make_dim_label(const QString& text, QWidget* parent) {
     auto* l = new QLabel(text, parent);
     l->setStyleSheet(QStringLiteral(
@@ -288,44 +234,65 @@ void PropertyInspectorWidget::populate_composition_arcs(const QString& prim_path
     m_arcs_list->clear();
     if (prim_path.isEmpty()) return;
 
-    const int n = m_state->layer_count();
+    // Phase E.2 move 8: pull the real prim stack via
+    // `UsdStage::get_prim_stack` behind BifShellState invokables.
+    const int n = m_state->selected_prim_stack_count();
     if (n == 0) {
         auto* item = new QListWidgetItem(
-            QStringLiteral("(no layer stack — seed demo data)"),
+            QStringLiteral("(no authored opinions)"),
             m_arcs_list);
         item->setFlags(Qt::NoItemFlags);
         return;
     }
 
-    // Phase C.3 stub: list every layer in the stack ordered
-    // strongest-first, with a specifier tag derived from index
-    // (first = def, rest = over). Phase E replaces with the real
-    // `UsdStage::get_prim_stack(prim_path)` result.
     for (int i = 0; i < n; ++i) {
-        const auto name = m_state->layer_name_at(i);
-        const auto spec = (i == 0) ? QStringLiteral("def") : QStringLiteral("over");
-        auto* item = new QListWidgetItem(
-            QStringLiteral("  ▸ %1   %2")
-                .arg(spec, -6)
-                .arg(name),
-            m_arcs_list);
+        const auto layer = m_state->selected_prim_stack_layer_at(i);
+        const auto spec = m_state->selected_prim_stack_specifier_at(i);
+        const bool has_opinion = m_state->selected_prim_stack_has_opinion_at(i);
+        const int color_index = m_state->selected_prim_stack_color_index_at(i);
+
+        QString label = QStringLiteral("  ▸ %1   %2")
+            .arg(spec.isEmpty() ? QStringLiteral("?") : spec, -6)
+            .arg(layer);
+        if (!has_opinion) {
+            label += QStringLiteral("   (inherited)");
+        }
+
+        auto* item = new QListWidgetItem(label, m_arcs_list);
         if (i == 0) {
             QFont f = item->font();
             f.setBold(true);
             item->setFont(f);
         }
+        if (color_index >= 0 && color_index < 8) {
+            item->setForeground(LAYER_PALETTE[color_index]);
+        }
     }
 }
 
-void PropertyInspectorWidget::populate_attributes(const QString& /*prim_path*/,
-                                                  const QString& prim_type) {
+void PropertyInspectorWidget::populate_attributes(const QString& prim_path,
+                                                  const QString& /*prim_type*/) {
     m_attrs_model->removeRows(0, m_attrs_model->rowCount());
-    const auto& attrs = attrs_for_type(prim_type);
-    for (const auto& attr : attrs) {
-        auto* name_item = new QStandardItem(QString::fromLatin1(attr.name));
-        name_item->setData(attr.winning_layer, ColorIndexRole);
-        auto* value_item = new QStandardItem(QString::fromLatin1(attr.value));
-        auto* type_item = new QStandardItem(QString::fromLatin1(attr.type_name));
+    if (!m_state || prim_path.isEmpty()) return;
+
+    // Phase E.2 move 8: pull real authored attributes via
+    // `UsdStage::get_prim_attributes` behind BifShellState invokables.
+    const int n = m_state->selected_prim_attribute_count();
+    for (int i = 0; i < n; ++i) {
+        const auto name = m_state->selected_prim_attribute_name_at(i);
+        const auto value = m_state->selected_prim_attribute_value_at(i);
+        const auto type_name = m_state->selected_prim_attribute_type_at(i);
+
+        auto* name_item = new QStandardItem(name);
+        // Opinion dot color: derive from the winning layer in the
+        // prim stack (strongest authored layer, index 0 when present).
+        int winning_color = -1;
+        if (m_state->selected_prim_stack_count() > 0) {
+            winning_color = m_state->selected_prim_stack_color_index_at(0);
+        }
+        name_item->setData(winning_color, ColorIndexRole);
+        auto* value_item = new QStandardItem(value);
+        auto* type_item = new QStandardItem(type_name);
         type_item->setForeground(QColor(140, 145, 155));
         m_attrs_model->appendRow({name_item, value_item, type_item});
     }

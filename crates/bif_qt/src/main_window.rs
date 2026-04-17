@@ -24,6 +24,7 @@ use std::cell::Cell;
 
 use bif_core::scene_layer_state::SceneLayerState;
 use bif_core::usd::layer::{LayerInfo, LayerOffset, LayerStack, PayloadPolicy};
+use bif_viewport::SceneManager;
 
 use crate::viewport::{
     viewport_on_frame, viewport_on_resize, viewport_on_shutdown, viewport_on_surface_ready,
@@ -63,6 +64,34 @@ thread_local! {
 /// Qt event loop (typically stack-allocated in `app.rs::run`).
 pub unsafe fn install_viewport_callbacks(cb: *mut ViewportCallbacks) {
     VIEWPORT_CALLBACKS.with(|slot| slot.set(cb));
+}
+
+/// Run `f` with read access to the live `UsdStage` via
+/// `SceneManager::usd_stage`. Returns `None` when no stage is loaded,
+/// the viewport isn't ready, or the stage mutex is poisoned.
+///
+/// The `Arc` is cloned out of the viewport first so the `with_viewport_mut`
+/// re-entrant guard doesn't hold across the stage lock.
+fn with_stage<R>(f: impl FnOnce(&bif_core::usd::UsdStage) -> R) -> Option<R> {
+    let stage_arc = with_viewport_mut(|vp| vp.renderer_mut().scene.usd_stage.clone()).flatten()?;
+    let guard = stage_arc.lock().ok()?;
+    Some(f(&guard))
+}
+
+/// Map a layer identifier to the palette color index used by the
+/// Layer Stack panel (modulo 8). Returns -1 when the identifier isn't
+/// present in the currently-loaded scene layer state.
+fn color_index_for_layer(state: &BifShellStateRust, identifier: &str) -> i32 {
+    let Some(scene) = state.scene_layer_state.as_ref() else {
+        return -1;
+    };
+    scene
+        .stack
+        .layers
+        .iter()
+        .position(|l| l.identifier == identifier)
+        .map(|i| (i as i32) % 8)
+        .unwrap_or(-1)
 }
 
 /// Run `f` with mutable access to the live `Viewport`. Returns `None` when:
@@ -128,8 +157,14 @@ pub mod qobject {
             hinstance: u64,
             width: i32,
             height: i32,
+            scale_factor: f32,
         ) -> bool;
-        fn viewport_on_resize(cb: &mut ViewportCallbacks, width: i32, height: i32);
+        fn viewport_on_resize(
+            cb: &mut ViewportCallbacks,
+            width: i32,
+            height: i32,
+            scale_factor: f32,
+        );
         fn viewport_on_frame(cb: &mut ViewportCallbacks);
         fn viewport_on_shutdown(cb: &mut ViewportCallbacks);
     }
@@ -146,6 +181,11 @@ pub mod qobject {
         // connect to the auto-generated `layer_state_revisionChanged`
         // signal to trigger a reset/refresh.
         #[qproperty(i32, layer_state_revision)]
+        // Bumped on every stage load / close. SceneBrowserModel
+        // listens to `scene_browser_revisionChanged` to
+        // beginResetModel/endResetModel and rebuild from the live
+        // UsdStage via prim-tree invokables.
+        #[qproperty(i32, scene_browser_revision)]
         // Currently-selected prim path (driven by scene browser
         // click). Empty = no selection. Property inspector listens
         // to the auto-generated `selected_prim_pathChanged` signal.
@@ -192,6 +232,15 @@ pub mod qobject {
         #[qinvokable]
         fn on_stage_path_opened(self: Pin<&mut BifShellState>, path: QString);
 
+        /// File → Close Stage. Drains GPU, replaces the renderer's
+        /// `SceneManager` with a fresh one, rebuilds the pick BVH,
+        /// clears shell state (layer stack, selection, timeline path),
+        /// and bumps `layer_state_revision` so panel models reset.
+        /// C++ side swaps the central stack back to the first-launch
+        /// screen (index 0).
+        #[qinvokable]
+        fn close_stage(self: Pin<&mut BifShellState>);
+
         /// Camera orbit delta forwarded from RenderWidget::cameraOrbit.
         /// Phase E.1 just updates status; Phase E.2 dispatches a
         /// real AppEvent::CameraOrbit to bif_renderer::Renderer.
@@ -210,6 +259,15 @@ pub mod qobject {
         /// dispatches AppEvent::FrameSelected; Phase E.1 stub status.
         #[qinvokable]
         fn on_frame_selected(self: Pin<&mut BifShellState>);
+
+        /// Viewport LMB click (unmodified). `x` and `y` are framebuffer
+        /// (physical-pixel) coords — `RenderWidget::mousePressEvent`
+        /// multiplies by `devicePixelRatioF()` before emitting. Ray-
+        /// casts against the live pick BVH and sets
+        /// `selected_prim_path` / `selected_prim_type` on hit, or
+        /// clears them on miss. Uses the ADR-007 β bridge.
+        #[qinvokable]
+        fn on_prim_pick(self: Pin<&mut BifShellState>, x: i32, y: i32);
 
         /// File/Save As (Ctrl+Shift+S). Phase B stub.
         #[qinvokable]
@@ -314,6 +372,82 @@ pub mod qobject {
         /// Phase E.2 does the real read after stage load lands.
         #[qinvokable]
         fn detect_timeline_from_stage(self: Pin<&mut BifShellState>);
+
+        // ---- Scene Browser surface (Phase E.2 move 7) ----
+        //
+        // Invokables read the live UsdStage via the ADR-007 bridge +
+        // `scene.usd_stage: Arc<Mutex<UsdStage>>`. SceneBrowserModel
+        // walks the tree by calling these repeatedly, mirroring the
+        // two-call `count` / `at(i)` pattern used by layer_stack.
+
+        /// Top-level prim count (children of pseudo-root).
+        #[qinvokable]
+        fn root_prim_count(self: &BifShellState) -> i32;
+
+        /// Path of root-level prim at `index`. Empty on OOB.
+        #[qinvokable]
+        fn root_prim_path_at(self: &BifShellState, index: i32) -> QString;
+
+        /// Number of child prims under `parent_path`. 0 if path not
+        /// found or stage unloaded.
+        #[qinvokable]
+        fn child_prim_count(self: &BifShellState, parent_path: QString) -> i32;
+
+        /// Path of the `index`th child of `parent_path`. Empty on OOB.
+        #[qinvokable]
+        fn child_prim_path_at(self: &BifShellState, parent_path: QString, index: i32) -> QString;
+
+        /// USD type name for the prim at `path` (e.g. "Mesh", "Xform").
+        /// Empty if prim not found.
+        #[qinvokable]
+        fn prim_type_name_at(self: &BifShellState, path: QString) -> QString;
+
+        /// Display (leaf) name for the prim at `path`.
+        #[qinvokable]
+        fn prim_display_name_at(self: &BifShellState, path: QString) -> QString;
+
+        // ---- Property Inspector surface (Phase E.2 move 8) ----
+        //
+        // All read from the currently-selected prim (`selected_prim_path`)
+        // via a fresh `UsdStage::get_prim_attributes` / `get_prim_stack`
+        // call. C++ side rebuilds on `selected_prim_pathChanged`.
+
+        /// Number of authored attributes on the selected prim.
+        #[qinvokable]
+        fn selected_prim_attribute_count(self: &BifShellState) -> i32;
+
+        /// Attribute name at `index`.
+        #[qinvokable]
+        fn selected_prim_attribute_name_at(self: &BifShellState, index: i32) -> QString;
+
+        /// Attribute typeName at `index`.
+        #[qinvokable]
+        fn selected_prim_attribute_type_at(self: &BifShellState, index: i32) -> QString;
+
+        /// Stringified attribute value at `index`.
+        #[qinvokable]
+        fn selected_prim_attribute_value_at(self: &BifShellState, index: i32) -> QString;
+
+        /// Number of entries in the selected prim's composition stack.
+        #[qinvokable]
+        fn selected_prim_stack_count(self: &BifShellState) -> i32;
+
+        /// Layer identifier for stack entry at `index`.
+        #[qinvokable]
+        fn selected_prim_stack_layer_at(self: &BifShellState, index: i32) -> QString;
+
+        /// Specifier ("def", "over", "class") for stack entry at `index`.
+        #[qinvokable]
+        fn selected_prim_stack_specifier_at(self: &BifShellState, index: i32) -> QString;
+
+        /// Whether stack entry at `index` has authored opinions.
+        #[qinvokable]
+        fn selected_prim_stack_has_opinion_at(self: &BifShellState, index: i32) -> bool;
+
+        /// Layer palette color index (mod 8) for stack entry at `index`.
+        /// -1 on OOB or when the entry's layer isn't in the loaded stack.
+        #[qinvokable]
+        fn selected_prim_stack_color_index_at(self: &BifShellState, index: i32) -> i32;
     }
 }
 
@@ -331,6 +465,9 @@ pub struct BifShellStateRust {
     /// Monotonic counter bumped on every scene_layer_state mutation.
     /// Auto-emits `layer_state_revisionChanged` for panel models.
     pub layer_state_revision: i32,
+    /// Monotonic counter bumped on stage load / close. Auto-emits
+    /// `scene_browser_revisionChanged` for the Scene Browser panel.
+    pub scene_browser_revision: i32,
     /// Layer stack + mute set + working layer + isolation flag.
     /// None until a stage is loaded (Phase E) or demo data seeded.
     pub scene_layer_state: Option<SceneLayerState>,
@@ -358,9 +495,6 @@ pub struct BifShellStateRust {
     pub loop_playback: bool,
     /// Timeline — true when playback is active (Phase E wires the timer).
     pub is_playing: bool,
-    /// Hardcoded demo keyframes (Phase D.1). Phase E replaces with
-    /// `AnimatedTransform`-derived keyframe marker positions.
-    pub demo_keyframes: Vec<i32>,
     /// Path of the stage the user last opened via File → Open. Stored
     /// without further interpretation — `detect_timeline_from_stage`
     /// opens a throwaway `UsdStage` from this path to read time
@@ -379,6 +513,7 @@ impl Default for BifShellStateRust {
             status_message: cxx_qt_lib::QString::from("Ready."),
             current_workspace: cxx_qt_lib::QString::from(""),
             layer_state_revision: 0,
+            scene_browser_revision: 0,
             scene_layer_state: None,
             selected_prim_path: cxx_qt_lib::QString::from(""),
             selected_prim_type: cxx_qt_lib::QString::from(""),
@@ -389,7 +524,6 @@ impl Default for BifShellStateRust {
             realtime_playback: true,
             loop_playback: true,
             is_playing: false,
-            demo_keyframes: vec![0, 12, 30, 48, 72, 96, 120],
             current_stage_path: None,
         }
     }
@@ -480,12 +614,46 @@ impl qobject::BifShellState {
                     with_viewport_mut(|vp| vp.renderer_mut().scene.layer_state.clone()).flatten();
                 self.as_mut().rust_mut().scene_layer_state = layer_state_clone;
                 bump_revision(self.as_mut());
+                bump_scene_browser_revision(self.as_mut());
 
                 log::info!("stage loaded: {path_str}");
                 self.as_mut()
                     .set_status_message(cxx_qt_lib::QString::from(&format!("Loaded: {path_str}",)));
             }
         }
+    }
+
+    fn close_stage(mut self: Pin<&mut Self>) {
+        log::info!("action: File/Close Stage");
+
+        // Drain GPU + reset renderer scene to a fresh SceneManager.
+        // `wait_for_gpu` is mandatory before dropping textures/buffers
+        // (same root cause as the D3D12 shutdown crash — commit d290c9d).
+        let drained = with_viewport_mut(|vp| {
+            vp.renderer_mut().wait_for_gpu();
+            vp.renderer_mut().scene = SceneManager::new();
+            vp.renderer_mut().rebuild_pick_scene();
+        });
+
+        if drained.is_none() {
+            log::warn!("close_stage: viewport not ready — only clearing shell state");
+        }
+
+        // Clear shell state that mirrors scene/selection.
+        {
+            let mut r = self.as_mut().rust_mut();
+            r.scene_layer_state = None;
+            r.current_stage_path = None;
+        }
+        self.as_mut()
+            .set_selected_prim_path(cxx_qt_lib::QString::from(""));
+        self.as_mut()
+            .set_selected_prim_type(cxx_qt_lib::QString::from(""));
+        bump_revision(self.as_mut());
+        bump_scene_browser_revision(self.as_mut());
+
+        self.as_mut()
+            .set_status_message(cxx_qt_lib::QString::from("Stage closed."));
     }
 
     fn on_camera_orbit(self: Pin<&mut Self>, dx: i32, dy: i32) {
@@ -540,6 +708,60 @@ impl qobject::BifShellState {
         };
         self.as_mut()
             .set_status_message(cxx_qt_lib::QString::from(&msg));
+    }
+
+    fn on_prim_pick(mut self: Pin<&mut Self>, x: i32, y: i32) {
+        // Ray-cast into the live pick BVH. Pixel coords are already
+        // framebuffer-space (DPR-multiplied in render_widget.cpp).
+        let hit = with_viewport_mut(|vp| vp.renderer_mut().pick_instance_at(x as f32, y as f32))
+            .flatten();
+
+        let Some(idx) = hit else {
+            // Miss — clear selection + status.
+            self.as_mut()
+                .set_selected_prim_path(cxx_qt_lib::QString::from(""));
+            self.as_mut()
+                .set_selected_prim_type(cxx_qt_lib::QString::from(""));
+            self.as_mut()
+                .set_status_message(cxx_qt_lib::QString::from("Selection cleared."));
+            return;
+        };
+
+        // Look up the prim path on the hit instance. Strip the `/BIF/...`
+        // synthetic prefix the USD loader applies to prototype-sourced
+        // instances — user-facing paths should match stage authoring.
+        let (path, type_name) = with_viewport_mut(|vp| {
+            let raw = vp
+                .renderer_mut()
+                .scene
+                .working_scene
+                .instances()
+                .get(idx)
+                .map(|inst| (*inst.prim_path).to_string())?;
+            let path = denormalize_synthetic_path(&raw);
+            // Prim type: consult the usd_stage if available; otherwise
+            // empty (keeps the property inspector resilient).
+            let stage_arc = vp.renderer_mut().scene.usd_stage.clone();
+            let type_name = stage_arc
+                .and_then(|arc| {
+                    arc.lock()
+                        .ok()
+                        .and_then(|stage| stage.get_prim_info_by_path(&path).ok())
+                        .map(|info| info.type_name)
+                })
+                .unwrap_or_default();
+            Some((path, type_name))
+        })
+        .flatten()
+        .unwrap_or_default();
+
+        log::info!("pick hit: idx={idx} path={path} type={type_name}");
+        self.as_mut()
+            .set_selected_prim_path(cxx_qt_lib::QString::from(&path));
+        self.as_mut()
+            .set_selected_prim_type(cxx_qt_lib::QString::from(&type_name));
+        self.as_mut()
+            .set_status_message(cxx_qt_lib::QString::from(&format!("Selected: {path}")));
     }
 
     // -----------------------------------------------------------------
@@ -732,9 +954,9 @@ impl qobject::BifShellState {
             let r = pin_ref.rust();
             let cur = r.current_frame;
             let start = r.start_frame;
+            let kfs = selected_prim_keyframes(&r.selected_prim_path);
             // Largest keyframe strictly less than current; fallback to start.
-            let target = r
-                .demo_keyframes
+            let target = kfs
                 .iter()
                 .copied()
                 .filter(|&k| k < cur)
@@ -754,9 +976,9 @@ impl qobject::BifShellState {
             let r = pin_ref.rust();
             let cur = r.current_frame;
             let end = r.end_frame;
+            let kfs = selected_prim_keyframes(&r.selected_prim_path);
             // Smallest keyframe strictly greater than current; fallback to end.
-            let target = r
-                .demo_keyframes
+            let target = kfs
                 .iter()
                 .copied()
                 .filter(|&k| k > cur)
@@ -771,12 +993,11 @@ impl qobject::BifShellState {
     }
 
     fn keyframe_count(&self) -> i32 {
-        self.rust().demo_keyframes.len() as i32
+        selected_prim_keyframes(&self.rust().selected_prim_path).len() as i32
     }
 
     fn keyframe_at(&self, index: i32) -> i32 {
-        self.rust()
-            .demo_keyframes
+        selected_prim_keyframes(&self.rust().selected_prim_path)
             .get(index as usize)
             .copied()
             .unwrap_or(-1)
@@ -821,6 +1042,209 @@ impl qobject::BifShellState {
                 "Timeline detected: {start}-{end} @ {fps} fps",
             )));
     }
+
+    // -----------------------------------------------------------------
+    // Scene Browser surface (Phase E.2 move 7)
+    // -----------------------------------------------------------------
+
+    fn root_prim_count(&self) -> i32 {
+        with_stage(|stage| {
+            use bif_viewport::scene_browser::PrimDataProvider;
+            stage.root_paths().len() as i32
+        })
+        .unwrap_or(0)
+    }
+
+    fn root_prim_path_at(&self, index: i32) -> cxx_qt_lib::QString {
+        let path = with_stage(|stage| {
+            use bif_viewport::scene_browser::PrimDataProvider;
+            stage
+                .root_paths()
+                .get(index as usize)
+                .cloned()
+                .unwrap_or_default()
+        })
+        .unwrap_or_default();
+        cxx_qt_lib::QString::from(&path)
+    }
+
+    fn child_prim_count(&self, parent_path: cxx_qt_lib::QString) -> i32 {
+        let p: String = (&parent_path).into();
+        with_stage(|stage| {
+            use bif_viewport::scene_browser::PrimDataProvider;
+            stage.get_children(&p).len() as i32
+        })
+        .unwrap_or(0)
+    }
+
+    fn child_prim_path_at(
+        &self,
+        parent_path: cxx_qt_lib::QString,
+        index: i32,
+    ) -> cxx_qt_lib::QString {
+        let parent: String = (&parent_path).into();
+        let child = with_stage(|stage| {
+            use bif_viewport::scene_browser::PrimDataProvider;
+            stage
+                .get_children(&parent)
+                .get(index as usize)
+                .cloned()
+                .unwrap_or_default()
+        })
+        .unwrap_or_default();
+        cxx_qt_lib::QString::from(&child)
+    }
+
+    fn prim_type_name_at(&self, path: cxx_qt_lib::QString) -> cxx_qt_lib::QString {
+        let p: String = (&path).into();
+        let type_name = with_stage(|stage| {
+            stage
+                .get_prim_info_by_path(&p)
+                .map(|info| info.type_name)
+                .unwrap_or_default()
+        })
+        .unwrap_or_default();
+        cxx_qt_lib::QString::from(&type_name)
+    }
+
+    fn prim_display_name_at(&self, path: cxx_qt_lib::QString) -> cxx_qt_lib::QString {
+        let p: String = (&path).into();
+        // Leaf segment of the path is the USD prim name by convention.
+        // Strips any numeric suffix safely — prim names don't collide
+        // with path indices at the authoring level.
+        let name = p.rsplit('/').next().unwrap_or("").to_string();
+        cxx_qt_lib::QString::from(&name)
+    }
+
+    // -----------------------------------------------------------------
+    // Property Inspector surface (Phase E.2 move 8)
+    // -----------------------------------------------------------------
+
+    fn selected_prim_attribute_count(&self) -> i32 {
+        let path: String = (&self.rust().selected_prim_path).into();
+        if path.is_empty() {
+            return 0;
+        }
+        with_stage(|stage| {
+            stage
+                .get_prim_attributes(&path)
+                .map(|v| v.len() as i32)
+                .unwrap_or(0)
+        })
+        .unwrap_or(0)
+    }
+
+    fn selected_prim_attribute_name_at(&self, index: i32) -> cxx_qt_lib::QString {
+        let path: String = (&self.rust().selected_prim_path).into();
+        let name = with_stage(|stage| {
+            stage
+                .get_prim_attributes(&path)
+                .ok()
+                .and_then(|v| v.get(index as usize).map(|a| a.name.clone()))
+                .unwrap_or_default()
+        })
+        .unwrap_or_default();
+        cxx_qt_lib::QString::from(&name)
+    }
+
+    fn selected_prim_attribute_type_at(&self, index: i32) -> cxx_qt_lib::QString {
+        let path: String = (&self.rust().selected_prim_path).into();
+        let type_name = with_stage(|stage| {
+            stage
+                .get_prim_attributes(&path)
+                .ok()
+                .and_then(|v| v.get(index as usize).map(|a| a.type_name.clone()))
+                .unwrap_or_default()
+        })
+        .unwrap_or_default();
+        cxx_qt_lib::QString::from(&type_name)
+    }
+
+    fn selected_prim_attribute_value_at(&self, index: i32) -> cxx_qt_lib::QString {
+        let path: String = (&self.rust().selected_prim_path).into();
+        let value = with_stage(|stage| {
+            stage
+                .get_prim_attributes(&path)
+                .ok()
+                .and_then(|v| v.get(index as usize).map(|a| a.value.clone()))
+                .unwrap_or_default()
+        })
+        .unwrap_or_default();
+        cxx_qt_lib::QString::from(&value)
+    }
+
+    fn selected_prim_stack_count(&self) -> i32 {
+        let path: String = (&self.rust().selected_prim_path).into();
+        if path.is_empty() {
+            return 0;
+        }
+        with_stage(|stage| {
+            stage
+                .get_prim_stack(&path)
+                .map(|v| v.len() as i32)
+                .unwrap_or(0)
+        })
+        .unwrap_or(0)
+    }
+
+    fn selected_prim_stack_layer_at(&self, index: i32) -> cxx_qt_lib::QString {
+        let path: String = (&self.rust().selected_prim_path).into();
+        let id = with_stage(|stage| {
+            stage
+                .get_prim_stack(&path)
+                .ok()
+                .and_then(|v| v.get(index as usize).map(|e| e.layer_identifier.clone()))
+                .unwrap_or_default()
+        })
+        .unwrap_or_default();
+        cxx_qt_lib::QString::from(&id)
+    }
+
+    fn selected_prim_stack_specifier_at(&self, index: i32) -> cxx_qt_lib::QString {
+        use bif_core::usd::layer::PrimSpecifier;
+        let path: String = (&self.rust().selected_prim_path).into();
+        let spec = with_stage(|stage| {
+            stage
+                .get_prim_stack(&path)
+                .ok()
+                .and_then(|v| v.get(index as usize).map(|e| e.specifier))
+        })
+        .flatten();
+        let label = match spec {
+            Some(PrimSpecifier::Def) => "def",
+            Some(PrimSpecifier::Over) => "over",
+            Some(PrimSpecifier::Class) => "class",
+            None => "",
+        };
+        cxx_qt_lib::QString::from(label)
+    }
+
+    fn selected_prim_stack_has_opinion_at(&self, index: i32) -> bool {
+        let path: String = (&self.rust().selected_prim_path).into();
+        with_stage(|stage| {
+            stage
+                .get_prim_stack(&path)
+                .ok()
+                .and_then(|v| v.get(index as usize).map(|e| e.has_authored_opinions))
+                .unwrap_or(false)
+        })
+        .unwrap_or(false)
+    }
+
+    fn selected_prim_stack_color_index_at(&self, index: i32) -> i32 {
+        let path: String = (&self.rust().selected_prim_path).into();
+        let identifier = with_stage(|stage| {
+            stage
+                .get_prim_stack(&path)
+                .ok()
+                .and_then(|v| v.get(index as usize).map(|e| e.layer_identifier.clone()))
+        })
+        .flatten();
+        match identifier {
+            Some(id) => color_index_for_layer(self.rust(), &id),
+            None => -1,
+        }
+    }
 }
 
 /// Increment `layer_state_revision` to trigger the cxx-qt-generated
@@ -829,4 +1253,73 @@ impl qobject::BifShellState {
 fn bump_revision(mut state: Pin<&mut qobject::BifShellState>) {
     let next = state.as_ref().rust().layer_state_revision.wrapping_add(1);
     state.as_mut().set_layer_state_revision(next);
+}
+
+/// Increment `scene_browser_revision` to trigger
+/// `scene_browser_revisionChanged`. SceneBrowserModel listens for
+/// this and calls `beginResetModel/endResetModel`.
+fn bump_scene_browser_revision(mut state: Pin<&mut qobject::BifShellState>) {
+    let next = state.as_ref().rust().scene_browser_revision.wrapping_add(1);
+    state.as_mut().set_scene_browser_revision(next);
+}
+
+/// Convert a synthetic `/BIF/{real_path}/{idx}` instance path back to
+/// the real path. Mirrors `bif_viewport::denormalize_synthetic_path`
+/// (private to that crate). Kept local so user-facing selection paths
+/// match stage-authored prim paths.
+fn denormalize_synthetic_path(prim_path: &str) -> String {
+    if let Some(stripped) = prim_path.strip_prefix("/BIF/") {
+        if let Some(last_slash) = stripped.rfind('/') {
+            let suffix = &stripped[last_slash + 1..];
+            if suffix.parse::<usize>().is_ok() {
+                return stripped[..last_slash].to_string();
+            }
+        }
+        return stripped.to_string();
+    }
+    prim_path.to_string()
+}
+
+/// Return the selected prim's animation keyframe times (rounded to
+/// integer frames), sorted ascending. Empty when no selection, no
+/// matching instance, or no authored keyframes. Reads through the
+/// ADR-007 β bridge via `with_viewport_mut`.
+///
+/// Path matching walks `scene.working_scene.instances()` looking for
+/// an `Instance::prim_path` equal to (or synthetic-suffixed match of)
+/// the selected path — handles the `/BIF/...` synthesis the USD loader
+/// applies to prototype-sourced instances.
+fn selected_prim_keyframes(selected: &cxx_qt_lib::QString) -> Vec<i32> {
+    let target: String = selected.into();
+    if target.is_empty() {
+        return Vec::new();
+    }
+    with_viewport_mut(|vp| {
+        let scene = &vp.renderer_mut().scene.working_scene;
+        let instances = scene.instances();
+        let animations = scene.instance_animations();
+        // Find first instance whose prim_path matches the selection —
+        // exact match first, then `/BIF/...` synthetic-path suffix.
+        let idx = instances.iter().position(|inst| {
+            let p: &str = &inst.prim_path;
+            p == target
+                || (p.starts_with("/BIF/")
+                    && p.rsplit_once('/')
+                        .map(|(_, leaf)| leaf == target.rsplit('/').next().unwrap_or(""))
+                        .unwrap_or(false))
+        });
+        let Some(idx) = idx else { return Vec::new() };
+        let anim = match animations.get(idx).and_then(|a| a.as_ref()) {
+            Some(a) => a,
+            None => return Vec::new(),
+        };
+        let Some(kfs) = anim.keyframes.as_ref() else {
+            return Vec::new();
+        };
+        let mut times: Vec<i32> = kfs.iter().map(|k| k.time.round() as i32).collect();
+        times.sort_unstable();
+        times.dedup();
+        times
+    })
+    .unwrap_or_default()
 }

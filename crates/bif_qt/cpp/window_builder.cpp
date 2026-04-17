@@ -125,6 +125,7 @@ void switch_to(
 struct MenuActions {
     QAction* new_stage;
     QAction* open_stage;
+    QAction* close_stage;
     QAction* save;
     QAction* save_as;
     QAction* exit_app;
@@ -173,6 +174,8 @@ MenuActions build_menu_bar(QMainWindow* window) {
     a.new_stage->setShortcut(QKeySequence::New);
     a.open_stage = file->addAction(QStringLiteral("&Open Stage..."));
     a.open_stage->setShortcut(QKeySequence::Open);
+    a.close_stage = file->addAction(QStringLiteral("&Close Stage"));
+    a.close_stage->setShortcut(QKeySequence::Close);
     file->addSeparator();
     a.save = file->addAction(QStringLiteral("&Save"));
     a.save->setShortcut(QKeySequence::Save);
@@ -375,6 +378,17 @@ void wire_shell_actions(
         [window, shell_state, central_stack, viewport]() {
             trigger_open_stage(window, shell_state, central_stack, viewport);
         });
+    // File → Close Stage — reset renderer, clear state, return to first-launch.
+    QObject::connect(actions.close_stage, &QAction::triggered, window,
+        [shell_state, central_stack, viewport, update_status]() {
+            // Pause render tick during teardown so the 16ms paint loop
+            // can't fire against a half-reset scene.
+            if (viewport) viewport->pausePainting();
+            shell_state->close_stage();
+            if (viewport) viewport->resumePainting();
+            central_stack->setCurrentIndex(0);
+            update_status();
+        });
     QObject::connect(actions.save, &QAction::triggered, window,
         [shell_state, update_status]() {
             shell_state->on_save();
@@ -459,7 +473,8 @@ void connect_viewport_signals(
             const auto hinst = viewport->nativeHInstance();
             const auto w = viewport->pixelWidth();
             const auto h = viewport->pixelHeight();
-            const auto ok = viewport_on_surface_ready(*cb, hwnd, hinst, w, h);
+            const auto scale = static_cast<float>(viewport->devicePixelRatioF());
+            const auto ok = viewport_on_surface_ready(*cb, hwnd, hinst, w, h, scale);
             shell_state->setStatus_message(ok
                 ? QStringLiteral("wgpu viewport live")
                 : QStringLiteral("FAILED to init wgpu viewport — see stderr"));
@@ -468,8 +483,9 @@ void connect_viewport_signals(
 
     QObject::connect(
         viewport, &RenderWidget::resized, viewport,
-        [cb](int w, int h) {
-            viewport_on_resize(*cb, w, h);
+        [cb, viewport](int w, int h) {
+            const auto scale = static_cast<float>(viewport->devicePixelRatioF());
+            viewport_on_resize(*cb, w, h, scale);
         });
 
     QObject::connect(
@@ -506,10 +522,7 @@ void connect_viewport_signals(
     QObject::connect(
         viewport, &RenderWidget::primPickRequested, shell_state,
         [shell_state, update_status](int x, int y) {
-            // Phase E.2 builds a ray and hit-tests; for now just
-            // surface the click coords.
-            shell_state->setStatus_message(QStringLiteral(
-                "Viewport pick at (%1,%2) — Phase E.2 wires ray-cast").arg(x).arg(y));
+            shell_state->on_prim_pick(x, y);
             update_status();
         });
 }
@@ -677,6 +690,7 @@ int bif_qt_run_shell(ViewportCallbacks* viewport_cb, ::rust::Str stylesheet) {
         QHash<QString, QAction*> commands;
         commands.insert(QStringLiteral("File: New Stage"), menu_actions.new_stage);
         commands.insert(QStringLiteral("File: Open Stage..."), menu_actions.open_stage);
+        commands.insert(QStringLiteral("File: Close Stage"), menu_actions.close_stage);
         commands.insert(QStringLiteral("File: Save"), menu_actions.save);
         commands.insert(QStringLiteral("File: Save As..."), menu_actions.save_as);
         commands.insert(QStringLiteral("File: Exit"), menu_actions.exit_app);

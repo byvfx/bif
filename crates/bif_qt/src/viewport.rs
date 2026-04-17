@@ -39,7 +39,13 @@ impl Viewport {
     /// # Safety
     /// Caller must guarantee that `hwnd` is a valid HWND belonging to a
     /// Qt widget that outlives this Viewport.
-    pub unsafe fn new(hwnd: u64, hinstance: u64, width: u32, height: u32) -> Result<Self> {
+    pub unsafe fn new(
+        hwnd: u64,
+        hinstance: u64,
+        width: u32,
+        height: u32,
+        scale_factor: f32,
+    ) -> Result<Self> {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::PRIMARY,
             ..Default::default()
@@ -92,16 +98,18 @@ impl Viewport {
         };
         surface.configure(&device, &config);
 
-        // Phase E.2: default scale_factor to 1.0 until we wire
-        // QScreen::devicePixelRatio() through the cxx-qt bridge. egui is not
-        // attached — Qt owns the UI chrome.
+        // HiDPI: `scale_factor` comes from QScreen::devicePixelRatioF().
+        // wgpu SurfaceConfiguration already holds physical pixels (w, h are
+        // RenderWidget::pixelWidth/Height which multiply by DPR). The scale
+        // is stored on Renderer for any downstream consumer that needs the
+        // logical↔physical ratio. egui is not attached — Qt owns chrome.
         let renderer = Renderer::new(
             surface,
             device,
             queue,
             config,
             (width.max(1), height.max(1)),
-            1.0,
+            scale_factor.max(0.1),
         )?;
 
         // `adapter` and `instance` drop here; Renderer owns device/queue/surface.
@@ -119,13 +127,11 @@ impl Viewport {
         Ok(RawWindowHandle::Win32(handle))
     }
 
-    pub fn resize(&mut self, width: u32, height: u32) {
+    pub fn resize(&mut self, width: u32, height: u32, scale_factor: f32) {
         if width == 0 || height == 0 {
             return;
         }
-        // scale_factor stays at 1.0 for now; hook through QScreen later.
-        self.renderer
-            .resize((width, height), self.renderer.scale_factor());
+        self.renderer.resize((width, height), scale_factor.max(0.1));
     }
 
     pub fn render(&mut self) -> Result<()> {
@@ -192,21 +198,22 @@ pub fn viewport_on_surface_ready(
     hinstance: u64,
     width: i32,
     height: i32,
+    scale_factor: f32,
 ) -> bool {
     // Guard: if the viewport already exists (e.g. window was hidden +
     // re-shown around a QFileDialog), just resize — don't recreate the
     // Renderer and drop GPU resources that may still be in-flight.
     if cb.viewport.is_some() {
-        viewport_on_resize(cb, width, height);
+        viewport_on_resize(cb, width, height, scale_factor);
         return true;
     }
 
     let w = width.max(1) as u32;
     let h = height.max(1) as u32;
     // SAFETY: hwnd is a Qt-native HWND for a widget that outlives us.
-    match unsafe { Viewport::new(hwnd, hinstance, w, h) } {
+    match unsafe { Viewport::new(hwnd, hinstance, w, h, scale_factor) } {
         Ok(v) => {
-            log::info!("bif_qt viewport live — {w}x{h}");
+            log::info!("bif_qt viewport live — {w}x{h} @ {scale_factor}x");
             cb.viewport = Some(v);
             true
         }
@@ -217,9 +224,9 @@ pub fn viewport_on_surface_ready(
     }
 }
 
-pub fn viewport_on_resize(cb: &mut ViewportCallbacks, width: i32, height: i32) {
+pub fn viewport_on_resize(cb: &mut ViewportCallbacks, width: i32, height: i32, scale_factor: f32) {
     if let Some(v) = cb.viewport.as_mut() {
-        v.resize(width.max(1) as u32, height.max(1) as u32);
+        v.resize(width.max(1) as u32, height.max(1) as u32, scale_factor);
     }
 }
 

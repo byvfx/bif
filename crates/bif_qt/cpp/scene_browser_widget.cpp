@@ -143,7 +143,7 @@ SceneBrowserWidget::SceneBrowserWidget(BifShellState* state, QWidget* parent)
         "QTreeView::item:selected { background-color: rgba(74, 144, 217, 80); }"));
     layout->addWidget(m_view, 1);
 
-    m_model = new SceneBrowserModel(this);
+    m_model = new SceneBrowserModel(m_state, this);
     m_filter = new HierarchicalFilter(this);
     m_filter->setSourceModel(m_model);
     m_filter->setFilterCaseSensitivity(Qt::CaseInsensitive);

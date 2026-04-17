@@ -1,10 +1,64 @@
-# Session Handoff — April 15, 2026 (end of Phase E.2 first pass)
+# Session Handoff — April 16, 2026 (Phase E.2 feature-complete, pending dogfood + commit)
 
-**Last Updated:** 2026-04-15, end of session. 10 commits on `v0.15-qt` covering Phase E.2-prep + moves 1/2/4/6 + ADR-007 + camera wiring + dialog UX fixes. `bif_qt_shell` now opens real USD stages, renders them through `bif_viewport::Renderer`, populates the Layer Stack, wires the timeline detect button, updates the breadcrumb, and responds to camera input. Moves 5/7/8/9 + polish items remain.
+**Last Updated:** 2026-04-16, end of session. All 4 remaining Phase E.2 moves (5/7/8/9) + Close Stage + HiDPI landed on the working tree of `v0.15-qt`. Build + clippy clean. Uncommitted — awaiting user dogfood on `test_assets/layers/root.usda`. Once validated, ship 4 grouped commits (or 1 bundled) per plan.
 **Current Version:** v0.14.0 shipped on `main`; v0.15.0 in progress on `v0.15-qt`.
 **Project:** BIF — USD Orchestration Tool for VFX.
 
-## ✅ 2026-04-15 — what shipped today
+## 🏁 2026-04-16 session summary — Phase E.2 feature-complete
+
+`bif_qt_shell` now reads the live USD stage end-to-end:
+
+- **HiDPI:** `devicePixelRatioF()` threaded through `viewport_on_surface_ready` / `viewport_on_resize` bridge → `Viewport::new` / `Viewport::resize` → `Renderer`. No signal-signature change; captured inside existing lambdas.
+- **Close Stage (Ctrl+W):** new `close_stage` invokable drains GPU, resets `Renderer::scene = SceneManager::new()`, rebuilds pick BVH, clears layer state + selection + path, bumps revisions, swaps central stack to first-launch.
+- **Move 9 — Keyframes:** `demo_keyframes` deleted. `keyframe_count/at` + `jump_to_prev/next_keyframe` derive from the selected prim's `AnimatedTransform` via `selected_prim_keyframes` helper over `scene.working_scene.instances()` + `instance_animations()`. Timeline ruler refreshes on `selected_prim_pathChanged`.
+- **Move 5 — Gizmo pick:** new `on_prim_pick(x, y)` invokable → `Renderer::pick_instance_at` → `scene.working_scene.instances()[idx].prim_path` → `denormalize_synthetic_path` (inlined) → sets `selected_prim_path` + `selected_prim_type` (latter via `UsdStage::get_prim_info_by_path`). `RenderWidget::mousePressEvent` multiplies pick coords by DPR before emit.
+- **Move 7 — Scene Browser:** new `scene_browser_revision` qproperty. 6 new invokables backing the tree (`root_prim_count/path_at`, `child_prim_count/path_at`, `prim_type_name_at`, `prim_display_name_at`) via `PrimDataProvider` trait on `UsdStage`. `SceneBrowserModel` takes `BifShellState*`, connects `scene_browser_revisionChanged`, recursively rebuilds on stage load (depth cap 64). Falls back to demo tree when no stage loaded.
+- **Move 8 — Property Inspector:** 9 new invokables backing real attributes (`selected_prim_attribute_count/name/type/value_at`) + composition arcs (`selected_prim_stack_count/layer/specifier/has_opinion/color_index_at`) via `UsdStage::get_prim_attributes` / `get_prim_stack`. `PropertyInspectorWidget` deletes ~55 lines of `FakeAttr` tables; opinion dot color derives from matching stack layer identifier to `SceneLayerState::stack.layers` index (mod 8).
+
+**Uncommitted. 9 files modified:**
+
+```
+ M crates/bif_qt/cpp/property_inspector_widget.cpp
+ M crates/bif_qt/cpp/render_widget.cpp
+ M crates/bif_qt/cpp/scene_browser_model.cpp
+ M crates/bif_qt/cpp/scene_browser_model.h
+ M crates/bif_qt/cpp/scene_browser_widget.cpp
+ M crates/bif_qt/cpp/timeline_widget.cpp
+ M crates/bif_qt/cpp/window_builder.cpp
+ M crates/bif_qt/src/main_window.rs
+ M crates/bif_qt/src/viewport.rs
+```
+
+**Gotchas learned today:**
+
+- **Inherent methods mask trait methods with shared names.** `UsdStage` has both `get_prim_info(index: usize)` inherent AND `impl PrimDataProvider` with `get_prim_info(path: &str)`. `stage.get_prim_info(&str)` dispatches to inherent → E0308. Fix: use the inherent `get_prim_info_by_path(&str)` — no trait-shadow path needed.
+- **cxx-qt `self.as_mut().rust_mut()` requires `let mut r = ...`** at the binding site even though `rust_mut()` returns something pin-bound.
+- **Move DPR-aware pick coord multiply into C++** (`mousePressEvent` emits physical pixels) — keeps all downstream Rust invokables DPR-agnostic and matches the existing `resized(pixelWidth(), pixelHeight())` pattern.
+- **`denormalize_synthetic_path` is crate-private in `bif_viewport`** — simple enough to inline in bif_qt rather than widen API surface.
+
+## ▶️ Pickup next session (2026-04-17+)
+
+1. **Dogfood the changes.** `. .\setup_qt_env.ps1 && . .\setup_usd_env.ps1 && cargo run -p bif_qt --bin bif_qt_shell`. File → Open → `test_assets/layers/root.usda`. Verify:
+   - Layer Stack shows real 3 layers (mute toggle works).
+   - Scene Browser shows real prim tree — `/World`, nested meshes, lights. No demo data.
+   - Click mesh in viewport → breadcrumb + property inspector populate real attributes; composition arcs show real layers with opinion dot colors.
+   - Select animated prim → timeline ruler marks animation keyframe frames.
+   - Timeline `⇅` detect populates from stage time metadata (already working).
+   - File → Close Stage → first-launch returns, no GPU validation errors in log.
+   - HiDPI: no black edge bar on 125%/150% display.
+2. **Commit.** Plan says 4 grouped commits (hidpi / close-stage / keyframes+pick / browser+inspector) but main_window.rs interleaving makes clean `git add -p` splits messy — a single "Phase E.2 finish" commit is pragmatic. Up to user.
+3. **Phase F — egui cleanup.** Delete `egui`/`egui-wgpu`/`egui-winit`/`egui-snarl` from `bif_viewer` + `bif_viewport` Cargo.toml. Delete `run_egui_frame` + ~900 lines of panel assembly.
+4. **Phase G — validation + release plumbing**, then **Phase H — `v0.15.0` tag + merge back to main**.
+
+## Known gaps for v0.16
+
+- Scene Browser tree walk is eager (not `canFetchMore`/`fetchMore`). Fine for `root.usda`; needs lazy fetch for 100K+ prim scenes.
+- Property Inspector opinion dot uses strongest-layer color for every attribute row — real per-attribute opinion resolution deferred.
+- Attribute value stringification is FFI-side `Debug`-summary — pretty-printing is v0.16.
+
+---
+
+## ✅ 2026-04-15 — prior-session (Phase E.2 first pass)
 
 Commits on `v0.15-qt` (newest first):
 
@@ -94,17 +148,17 @@ Wire `QScreen::devicePixelRatio()` through the cxx-qt bridge → `Viewport::new`
 - [x] `bif_qt::Viewport` renders real scenes (not a triangle) — **Move 1**
 - [x] `File → Open` loads actual USD stage — **Move 2**
 - [x] `BifShellState::scene_layer_state` populated from load — **Move 2**
-- [ ] Scene Browser shows real prim tree via CompositeProvider — **Move 7 pending**
-- [ ] Property Inspector shows real attributes via `UsdPrim::GetAttributes()` — **Move 8 pending**
-- [ ] Composition arcs from `UsdStage::get_prim_stack` — **Move 8 pending**
-- [ ] Timeline keyframes from selected prim's `AnimatedTransform` — **Move 9 pending**
+- [x] Scene Browser shows real prim tree via `PrimDataProvider`/`UsdStage` — **Move 7 (2026-04-16)**
+- [x] Property Inspector shows real attributes via `UsdStage::get_prim_attributes` — **Move 8 (2026-04-16)**
+- [x] Composition arcs from `UsdStage::get_prim_stack` — **Move 8 (2026-04-16)**
+- [x] Timeline keyframes from selected prim's `AnimatedTransform` — **Move 9 (2026-04-16)**
 - [x] `detect_timeline_from_stage` reads real USD time metadata — **Move 4 + 4-opt**
-- [ ] Gizmo raycast via `selection.rs` on LMB click — **Move 5 pending**
+- [x] Gizmo raycast via `Renderer::pick_instance_at` on LMB click — **Move 5 (2026-04-16)**
 - [x] Breadcrumb connected to `selected_prim_pathChanged` — **Move 6**
 - [x] AppEvent bridge chosen + implemented — **ADR-007 (β thread-local raw-pointer)**
-- [ ] `bif_qt_shell` loads `test_assets/layers/root.usda` end-to-end (full dogfood) — **pending user validation**
+- [ ] `bif_qt_shell` loads `test_assets/layers/root.usda` end-to-end (full dogfood) — **pending user validation 2026-04-16**
 
-**6 of 12 done. Remaining work: moves 5, 7, 8, 9 + final dogfood.**
+**11 of 12 done. Remaining: user-driven dogfood + commit.**
 
 ---
 
@@ -132,9 +186,10 @@ Wire `QScreen::devicePixelRatio()` through the cxx-qt bridge → `Viewport::new`
 | v0.15.0 Phase D ✅ | 3 secondary panels. Timeline · Node Graph · Render Settings. Tabification between bottom + right. |
 | v0.15.0 Phase E.1 ✅ | Input stubs. Viewport mouse/camera signals, keyboard shortcuts (F/Space/Left/Right/±Shift), ShortcutRegistry with QSettings override path, real QFileDialog, QTimer-driven timeline playback, fps + realtime + loop toggles, Nuke-style 3-zone toolbar, inline Start/End range + detect-from-stage button. 9 new qproperties, 6 new invokables. |
 | v0.15.0 Phase E.2-prep ✅ | `bif_viewport::Renderer` decoupled from winit (2026-04-15). See top-of-file section for full API. `bif_viewer` preserved via `create_renderer` compat helper. |
-| v0.15.0 Phase E.2 moves 1/2/4/6 ✅ | Viewport → real Renderer; File/Open → real `load_usd_scene`; timeline detect → real `UsdTimelineData`; breadcrumb → `selected_prim_pathChanged`. Camera orbit/pan/zoom wired. Shared `trigger_open_stage` helper (menu + launch screen + recents). D3D12-close crash + file-dialog z-order + viewport double-init all fixed. See **"2026-04-15 what shipped today"** above. |
-| v0.15.0 ADR-007 ✅ | BifShellState ↔ ViewportCallbacks bridge locked in: **β (thread-local raw-pointer)**. `with_viewport_mut(|vp| ...)` helper. See `wiki/architecture/adr/007-shell-state-to-viewport-bridge.md`. |
-| Next | **Phase E.2 moves 5/7/8/9 + polish** (reset stage, HiDPI). See **"Next target ordering"** above for recommended order (9 → close/reset → 5 → 7 → 8 → HiDPI). End of Phase E.2 = all 4 moves shipped + full dogfood clean. |
+| v0.15.0 Phase E.2 moves 1/2/4/6 ✅ | Viewport → real Renderer; File/Open → real `load_usd_scene`; timeline detect → real `UsdTimelineData`; breadcrumb → `selected_prim_pathChanged`. Camera orbit/pan/zoom wired. Shared `trigger_open_stage` helper (menu + launch screen + recents). D3D12-close crash + file-dialog z-order + viewport double-init all fixed. |
+| v0.15.0 Phase E.2 moves 5/7/8/9 + Close + HiDPI ⏳ | **Feature-complete, uncommitted 2026-04-16.** Pick ray-cast, real Scene Browser tree, real Property Inspector attributes + arcs, AnimatedTransform keyframes, File→Close Stage (Ctrl+W), devicePixelRatioF() threaded through the viewport bridge. `scene_browser_revision` qproperty added. 14 new invokables on BifShellState. Build + clippy clean; pending dogfood. |
+| v0.15.0 ADR-007 ✅ | BifShellState ↔ ViewportCallbacks bridge locked in: **β (thread-local raw-pointer)**. `with_viewport_mut(|vp| ...)` + `with_stage(|stage| ...)` helpers. See `wiki/architecture/adr/007-shell-state-to-viewport-bridge.md`. |
+| Next | **Dogfood + commit 2026-04-16 changes**, then Phase F (egui cleanup). See top-of-file "Pickup next session" for dogfood checklist. |
 | Tests | ~627 total (90 new in v0.14.0) + spike has no unit tests (deletion-scheduled) |
 | Performance | 60 FPS viewport, 100K instances with LOD, Ivar build ~185ms |
 

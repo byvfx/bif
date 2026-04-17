@@ -32,6 +32,10 @@ TimelineRuler::TimelineRuler(BifShellState* state, QWidget* parent)
             this, &TimelineRuler::on_state_changed);
         QObject::connect(m_state, &BifShellState::end_frameChanged,
             this, &TimelineRuler::on_state_changed);
+        // Keyframes are derived per-selection now (Phase E.2 move 9) —
+        // re-paint when the selected prim changes.
+        QObject::connect(m_state, &BifShellState::selected_prim_pathChanged,
+            this, &TimelineRuler::on_state_changed);
     }
 }
 
