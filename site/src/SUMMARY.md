@@ -24,6 +24,7 @@
 - [April 2026]()
   - [BIF v0.13.5 Announcement — LinkedIn + Instagram](devlog/2026-04/v0.13.5_announcement.md)
   - [BIF v0.13.0 Announcement — LinkedIn + Instagram](devlog/2026-04/v0.13.0_announcement.md)
+  - [2026-04-17](devlog/2026-04/DEVLOG_2026-04-17.md)
   - [2026-04-16](devlog/2026-04/DEVLOG_2026-04-16.md)
   - [2026-04-15](devlog/2026-04/DEVLOG_2026-04-15.md)
   - [2026-04-13](devlog/2026-04/DEVLOG_2026-04-13.md)
