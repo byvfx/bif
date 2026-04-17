@@ -1,6 +1,41 @@
-# Session Handoff — April 16, 2026 (Tier 0 + Phase F shipped — egui bridge deleted)
+# Session Handoff — April 17, 2026 (Tier 1 shipped — edit-target visible everywhere + schema labels)
 
-**Last Updated:** 2026-04-16, evening continuation. Tier 0 (Qt scene browser parity — CompositeProvider routing + 4 columns + eye-glyph chrome) and Phase F (Renderer egui bridge deletion + bif_viewer retargeted at `bif_qt::run`) both landed this session. Workspace builds + clippy clean; tests pass except 2 pre-existing failures (`test_should_restart_no_render`, `test_build_property_rows_with_material`). User visually confirmed Tier 0 parity on lucy.usd — residual child-count gap under a couple sections logged in BUGLIST as a downstream `UsdStage::child_prim_paths` quirk, acceptable to ship. **Next: Tier 1 (edit-target pill + auto-pick writable sublayer + save flow + breadcrumb layer segment + viewport toolbar).**
+**Last Updated:** 2026-04-17. Tier 1 (edit-target pill + viewport edge tint + status-bar chip + breadcrumb layer segment + auto-pick strongest writable sublayer + window title + friendly schema labels + save-flow polish) shipped as one commit. Workspace builds + clippy `-D warnings` clean, fmt clean, schema_labels tests 4/4; two pre-existing test failures unchanged. User visually confirmed spine (`"all looks good"`) before schema-labels + title wiring landed. Added 2 new bugs to BUGLIST from user observation — no camera/orthographic view presets, animation playback doesn't update the scene. **Next: Tier 1.5 per-attribute opinion-resolution FFI** (wraps `UsdAttribute::GetPropertyStack` → per-row color, gates first-opinion guard + Tier 2 #9 inspector left-border). Or viewport toolbar (Tier 1 item #6.5, M effort) if user prefers artist-visible win first. User preference captured in memory: function before form — full design-system pass ("Graphite / Quiet Confidence" from `assets/stitch_bif_ui/obsidian_graphite/DESIGN.md`) deferred until all Tier 1/1.5/2 widgets are in place.
+
+## 🏁 2026-04-17 — Tier 1
+
+**What changed (single commit on top of Phase F):**
+
+- **4 new edit-target invokables** on `BifShellState`: `active_edit_target_is_set` / `_name` / `_identifier` / `_color_index`. All read `scene_layer_state.working_layer`; all C++ consumers refresh on `layer_state_revisionChanged` (no new signal).
+- **`current_stage_display`** invokable — leaf-name of the current stage path for breadcrumb + title.
+- **`compose_title`** invokable — `BIF — stage.usda[*] · Editing: layer`. Dirty asterisk derives from `LayerInfo::is_dirty` (latent until v0.16 write path flips it).
+- **Auto-pick** — new `pick_strongest_writable_sublayer` helper + `is_writable_layer` helper. On stage load success, re-picks `working_layer` to the first `!is_anonymous && !is_muted` layer. Real `SdfLayer::PermissionToEdit()` FFI deferred to Tier 1.5.
+- **Status toast** — stage-load message is now `"Loaded: <path>  •  Edit target: <layer>"`.
+- **Pill** — right side of breadcrumb row, color dot + `"Editing: <name>"` label, pill background tinted with layer color. Hides when no stage.
+- **Status-bar chip** — compact variant, permanent widget on right of status bar.
+- **Viewport edge tint** — 2px inner border on a `QFrame` wrapping the viewport stack, colored by edit target.
+- **Breadcrumb layer segment** — `stage.usda › layer (edit) › prim › path`.
+- **Schema labels** — new `crates/bif_qt/src/schema_labels.rs` with two functions (`friendly_attribute_name`, `friendly_prim_type`). Covers xformOp, primvars, UsdGeom, UsdLux, UsdGeomCamera, common prim types. Property inspector calls the invokables; raw USD name appears in tooltip. Unknown names pass through unchanged.
+- **Save-flow polish** — `on_save` / `on_save_as` branch on edit-target presence so the "no stage" case reads differently from "write not wired yet".
+
+**Non-obvious bits:**
+
+- Pill can't live *inside* the breadcrumb `QToolBar` — `breadcrumb_set_path` calls `bar->clear()` on every selection change, which would nuke the pill. Refactored `build_central_area` to wrap [breadcrumb + pill] in a sibling `QHBoxLayout`.
+- Viewport edge tint is achieved by wrapping the `QStackedWidget` in a `QFrame` with 2px contentsMargins — the frame's background fills the margins as a "border".
+- `current_stage_path` is not a qproperty (plain `Option<PathBuf>`); adding one would require converting field + setter + all readers. Instead added the `current_stage_display` invokable and piggybacked on `layer_state_revisionChanged` which fires immediately after stage load sets both fields.
+
+**Files touched (uncommitted on top of Phase F commit `e3d30bc`):**
+
+```
+ M BUGLIST.md                                              (+2 bugs)
+ M crates/bif_qt/cpp/property_inspector_widget.cpp         (friendly labels)
+ M crates/bif_qt/cpp/window_builder.cpp                    (pill/chip/tint/title)
+ M crates/bif_qt/src/lib.rs                                (+schema_labels mod)
+ M crates/bif_qt/src/main_window.rs                        (8 new invokables)
+ A crates/bif_qt/src/schema_labels.rs                      (new module)
+```
+
+## 🏁 2026-04-16 evening — Tier 0 + Phase F
 **Current Version:** v0.14.0 shipped on `main`; v0.15.0 in progress on `v0.15-qt`.
 **Project:** BIF — USD Orchestration Tool for VFX.
 

@@ -1,10 +1,12 @@
 # BUGLIST
 
-Last updated: 2026-04-16
+Last updated: 2026-04-17
 
 ## Active Bugs
 
 - **bif_qt scene browser: residual child-count gap under some sections vs egui.** Tier 0 routed Qt through `CompositeProvider` (parity with egui's data path), but a few sections still show fewer children than egui in side-by-side. Likely a `UsdStage::child_prim_paths` quirk (composed-stage iteration vs root-layer iteration) or empty `inst.prim_path` synthesis not reaching the cache in Qt builds. Noted 2026-04-16.
+- **bif_qt: no way to view through USD cameras or standard orthographic views.** Viewport is stuck on the free-flying camera; no menu/shortcut to "look through" a `UsdGeomCamera` authored on the stage, and no Front/Back/Left/Right/Top/Bottom orthographic presets. Needs a camera-picker widget (dropdown of `UsdGeomCamera` prims + 6 ortho presets + free-fly) feeding `Renderer::cam.camera`. Noted 2026-04-17.
+- **bif_qt: animation playback doesn't update the scene.** Timeline scrubber / play button advances `current_frame` but the viewport doesn't re-evaluate — `AnimatedTransform` opinions aren't pushed to `SceneManager::instance_transforms` on frame change, so animated prims stay frozen at load-time pose. Needs `Renderer::set_time(frame)` hook invoked from the playback timer. Noted 2026-04-17.
 - **bif_qt: no "reset / close stage" action.** Once a USD stage is loaded, there's no way to unload it or return to the first-launch screen without quitting the app. Needs File → Close Stage menu item (Phase E.2 follow-up). Noted 2026-04-15.
 - **bif_qt: Scene Browser shows hardcoded demo tree.** `SceneBrowserModel::seed_demo_tree` is still the 10-prim hardcoded demo (World/Hero/Geom/…). Phase E.2 move 7 replaces with `CompositeProvider` traversal over the real USD stage. Noted 2026-04-15.
 - **bif_qt: Property Inspector shows fake attributes per prim-type.** Phase E.2 move 8 wires `UsdPrim::GetAttributes()` + `UsdStage::get_prim_stack` for real composition arcs. Noted 2026-04-15.

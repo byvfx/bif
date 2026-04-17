@@ -123,6 +123,28 @@ fn color_index_for_layer(state: &BifShellStateRust, identifier: &str) -> i32 {
         .unwrap_or(-1)
 }
 
+/// Pragmatic "is this layer a valid edit target?" check for Tier 1.
+/// Anonymous layers can't persist; muted layers shouldn't accept new
+/// opinions. Real `SdfLayer::PermissionToEdit()` is Tier 1.5 FFI work.
+fn is_writable_layer(info: &bif_core::usd::LayerInfo) -> bool {
+    !info.is_anonymous && !info.is_muted
+}
+
+/// Pick the strongest writable sublayer as the edit target. Walks the
+/// flattened stack in natural (strength) order — `SceneLayerState::from_stage`
+/// pushes the root first then sublayers depth-first, so index 0 is the
+/// strongest opinion source. Returns `None` if nothing qualifies (the
+/// caller should keep the previous working_layer).
+fn pick_strongest_writable_sublayer(state: &bif_core::SceneLayerState) -> Option<usize> {
+    state
+        .stack
+        .layers
+        .iter()
+        .enumerate()
+        .find(|(_, info)| is_writable_layer(info))
+        .map(|(idx, _)| idx)
+}
+
 /// Run `f` with mutable access to the live `Viewport`. Returns `None` when:
 ///   - `install_viewport_callbacks` was never called (pointer null), or
 ///   - the viewport hasn't been constructed yet (surfaceReady not fired), or
@@ -366,6 +388,55 @@ pub mod qobject {
         #[qinvokable]
         fn toggle_isolation_mode(self: Pin<&mut BifShellState>);
 
+        /// Tier 1 edit-target surface. All 4 read `scene_layer_state
+        /// .working_layer`; pill / status chip / viewport edge tint /
+        /// breadcrumb layer segment all refresh on
+        /// `layer_state_revisionChanged`.
+
+        /// `true` when a stage is loaded and an edit target is set.
+        #[qinvokable]
+        fn active_edit_target_is_set(self: &BifShellState) -> bool;
+
+        /// Display name of the active edit-target layer (the `working_layer`).
+        /// Empty when no stage is loaded.
+        #[qinvokable]
+        fn active_edit_target_name(self: &BifShellState) -> QString;
+
+        /// Full identifier of the active edit-target layer (file path or
+        /// anonymous layer tag). Empty when no stage is loaded.
+        #[qinvokable]
+        fn active_edit_target_identifier(self: &BifShellState) -> QString;
+
+        /// Palette index (mod 8) for the active edit-target layer's
+        /// color dot. -1 when no stage is loaded.
+        #[qinvokable]
+        fn active_edit_target_color_index(self: &BifShellState) -> i32;
+
+        /// Display string for the currently-loaded stage file (leaf
+        /// name + parent folder if short). Empty when no stage loaded.
+        /// Breadcrumb + title-bar surfaces read this.
+        #[qinvokable]
+        fn current_stage_display(self: &BifShellState) -> QString;
+
+        /// Friendly label for a USD attribute name (`xformOp:translate`
+        /// → `"Position"`). Unknown names pass through unchanged.
+        /// Property inspector consumes this as the primary column text
+        /// with the raw USD name surfaced in the tooltip.
+        #[qinvokable]
+        fn friendly_attribute_name(self: &BifShellState, raw: QString) -> QString;
+
+        /// Friendly label for a USD prim type name (`Xform` →
+        /// `"Transform"`, `PointInstancer` → `"Point Instancer"`).
+        /// Unknown names pass through unchanged.
+        #[qinvokable]
+        fn friendly_prim_type(self: &BifShellState, raw: QString) -> QString;
+
+        /// Compose the main-window title from stage + edit target +
+        /// dirty state. Format: `BIF — stage.usda[*] · Editing: layer`.
+        /// Refreshed on `layer_state_revisionChanged` + stage load.
+        #[qinvokable]
+        fn compose_title(self: &BifShellState) -> QString;
+
         // ---- Timeline state surface (Phase D.1) ----
 
         /// Toggle play/pause. Phase D.1 is UI-only; Phase E wires a
@@ -604,16 +675,70 @@ impl qobject::BifShellState {
     }
 
     /// Phase B stub — Phase C (actually v0.16) wires to save logic.
+    /// Tier 1 item #4: gives clearer feedback about why nothing
+    /// happened and flags the no-edit-target case explicitly.
     fn on_save(mut self: Pin<&mut Self>) {
         log::info!("action: File/Save");
+        let msg = if !self.as_ref().active_edit_target_is_set() {
+            "Save: no stage loaded — open a stage first"
+        } else {
+            "Save: write path not yet wired (v0.16)"
+        };
         self.as_mut()
-            .set_status_message(cxx_qt_lib::QString::from("Save — deferred to v0.16"));
+            .set_status_message(cxx_qt_lib::QString::from(msg));
     }
 
     fn on_save_as(mut self: Pin<&mut Self>) {
         log::info!("action: File/Save As");
+        let msg = if !self.as_ref().active_edit_target_is_set() {
+            "Save As: no stage loaded — open a stage first"
+        } else {
+            "Save As: write path not yet wired (v0.16)"
+        };
         self.as_mut()
-            .set_status_message(cxx_qt_lib::QString::from("Save As — deferred to v0.16"));
+            .set_status_message(cxx_qt_lib::QString::from(msg));
+    }
+
+    /// Tier 1 item #4: compose the window title from stage path +
+    /// edit-target + dirty state. Format:
+    ///   `BIF — <stage.usda>[*] · Editing: <layer>`
+    /// Dirty asterisk is wired via `LayerInfo::is_dirty` which flips
+    /// only on real USD writes — latent until v0.16 save lands.
+    fn compose_title(&self) -> cxx_qt_lib::QString {
+        let stage = self
+            .rust()
+            .current_stage_path
+            .as_ref()
+            .and_then(|p| p.file_name())
+            .map(|s| s.to_string_lossy().into_owned());
+        let (edit_target, dirty) = self
+            .rust()
+            .scene_layer_state
+            .as_ref()
+            .map(|s| {
+                let dirty = s.stack.layers.iter().any(|l| l.is_dirty);
+                let target = s
+                    .stack
+                    .layers
+                    .get(s.working_layer)
+                    .map(|l| l.display_name.clone())
+                    .unwrap_or_default();
+                (target, dirty)
+            })
+            .unwrap_or((String::new(), false));
+
+        let title = match stage {
+            None => "BIF — No stage".to_string(),
+            Some(name) => {
+                let asterisk = if dirty { "*" } else { "" };
+                if edit_target.is_empty() {
+                    format!("BIF — {name}{asterisk}")
+                } else {
+                    format!("BIF — {name}{asterisk} · Editing: {edit_target}")
+                }
+            }
+        };
+        cxx_qt_lib::QString::from(&title)
     }
 
     fn on_about(mut self: Pin<&mut Self>) {
@@ -659,12 +784,40 @@ impl qobject::BifShellState {
                 let layer_state_clone =
                     with_viewport_mut(|vp| vp.renderer_mut().scene.layer_state.clone()).flatten();
                 self.as_mut().rust_mut().scene_layer_state = layer_state_clone;
+
+                // Tier 1: auto-pick the strongest writable sublayer as edit
+                // target. `SceneLayerState::from_stage` already defaulted
+                // `working_layer` to the root; re-pick so anonymous / muted
+                // roots skip to the next candidate instead of silently
+                // authoring into a non-persistent layer.
+                let edit_target_name = {
+                    let mut r = self.as_mut().rust_mut();
+                    if let Some(state) = r.scene_layer_state.as_mut() {
+                        if let Some(idx) = pick_strongest_writable_sublayer(state) {
+                            state.working_layer = idx;
+                        }
+                        state
+                            .stack
+                            .layers
+                            .get(state.working_layer)
+                            .map(|l| l.display_name.clone())
+                            .unwrap_or_default()
+                    } else {
+                        String::new()
+                    }
+                };
+
                 bump_revision(self.as_mut());
                 bump_scene_browser_revision(self.as_mut());
 
                 log::info!("stage loaded: {path_str}");
+                let msg = if edit_target_name.is_empty() {
+                    format!("Loaded: {path_str}")
+                } else {
+                    format!("Loaded: {path_str}  •  Edit target: {edit_target_name}")
+                };
                 self.as_mut()
-                    .set_status_message(cxx_qt_lib::QString::from(&format!("Loaded: {path_str}",)));
+                    .set_status_message(cxx_qt_lib::QString::from(&msg));
             }
         }
     }
@@ -968,6 +1121,78 @@ impl qobject::BifShellState {
             state.isolation_mode = !state.isolation_mode;
         }
         bump_revision(self.as_mut());
+    }
+
+    // -----------------------------------------------------------------
+    // Edit-target surface (Tier 1)
+    // -----------------------------------------------------------------
+    //
+    // Each reader walks `scene_layer_state.stack.layers[working_layer]`.
+    // Safe over empty state (returns false / empty / -1). All C++ consumers
+    // (pill, status chip, viewport edge tint, breadcrumb segment) refresh
+    // on `layer_state_revisionChanged`.
+
+    fn active_edit_target_is_set(&self) -> bool {
+        self.rust()
+            .scene_layer_state
+            .as_ref()
+            .map(|s| s.stack.layers.get(s.working_layer).is_some())
+            .unwrap_or(false)
+    }
+
+    fn active_edit_target_name(&self) -> cxx_qt_lib::QString {
+        let name = self
+            .rust()
+            .scene_layer_state
+            .as_ref()
+            .and_then(|s| s.stack.layers.get(s.working_layer))
+            .map(|l| l.display_name.clone())
+            .unwrap_or_default();
+        cxx_qt_lib::QString::from(&name)
+    }
+
+    fn active_edit_target_identifier(&self) -> cxx_qt_lib::QString {
+        let ident = self
+            .rust()
+            .scene_layer_state
+            .as_ref()
+            .and_then(|s| s.stack.layers.get(s.working_layer))
+            .map(|l| l.identifier.clone())
+            .unwrap_or_default();
+        cxx_qt_lib::QString::from(&ident)
+    }
+
+    fn active_edit_target_color_index(&self) -> i32 {
+        let Some(state) = self.rust().scene_layer_state.as_ref() else {
+            return -1;
+        };
+        if state.stack.layers.get(state.working_layer).is_none() {
+            return -1;
+        }
+        (state.working_layer as i32) % 8
+    }
+
+    fn current_stage_display(&self) -> cxx_qt_lib::QString {
+        let display = self
+            .rust()
+            .current_stage_path
+            .as_ref()
+            .and_then(|p| p.file_name())
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        cxx_qt_lib::QString::from(&display)
+    }
+
+    fn friendly_attribute_name(&self, raw: cxx_qt_lib::QString) -> cxx_qt_lib::QString {
+        let r: String = (&raw).into();
+        let friendly = crate::schema_labels::friendly_attribute_name(&r);
+        cxx_qt_lib::QString::from(friendly)
+    }
+
+    fn friendly_prim_type(&self, raw: cxx_qt_lib::QString) -> cxx_qt_lib::QString {
+        let r: String = (&raw).into();
+        let friendly = crate::schema_labels::friendly_prim_type(&r);
+        cxx_qt_lib::QString::from(friendly)
     }
 
     // -----------------------------------------------------------------

@@ -19,6 +19,7 @@
 
 pub mod app;
 pub mod main_window;
+pub mod schema_labels;
 pub mod theme;
 pub mod viewport;
 

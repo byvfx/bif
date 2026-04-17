@@ -13,8 +13,11 @@
 #include <QAction>
 #include <QApplication>
 #include <QByteArray>
+#include <QColor>
 #include <QDockWidget>
 #include <QFileDialog>
+#include <QFrame>
+#include <QHBoxLayout>
 #include <QHash>
 #include <QKeySequence>
 #include <QLabel>
@@ -206,6 +209,110 @@ MenuActions build_menu_bar(QMainWindow* window) {
 }
 
 // ---------------------------------------------------------------------------
+// Tier 1 — Edit-target pill + status bar chip + viewport edge tint.
+//
+// All three surfaces read the same 4 invokables on `BifShellState`
+// (`active_edit_target_is_set` / `_name` / `_identifier` / `_color_index`)
+// and refresh on `layer_state_revisionChanged`. The pill lives in the
+// breadcrumb toolbar (right-aligned), the chip lives in the status bar
+// (permanent widget, right-aligned), and the viewport edge tint is a
+// 2px inner border on a QFrame that wraps the RenderWidget.
+// ---------------------------------------------------------------------------
+
+// Mirror of crates/bif_qt/cpp/{layer_stack,property_inspector,scene_browser}_widget.cpp
+// LAYER_PALETTE. TODO(tier2): consolidate into a shared header.
+constexpr QColor EDIT_TARGET_PALETTE[8] = {
+    QColor(80, 190, 180),
+    QColor(180, 120, 220),
+    QColor(230, 150, 70),
+    QColor(220, 190, 80),
+    QColor(230, 130, 180),
+    QColor(90, 150, 230),
+    QColor(120, 200, 100),
+    QColor(220, 100, 100),
+};
+
+// Pull the current edit-target label + color from the shell state.
+// Returns {"", gray} when nothing is set; caller picks whether to show.
+struct EditTargetDisplay {
+    QString name;
+    QColor color;
+    bool set;
+};
+
+EditTargetDisplay read_edit_target(BifShellState* state) {
+    EditTargetDisplay d{};
+    d.set = state->active_edit_target_is_set();
+    if (!d.set) {
+        d.color = QColor(90, 94, 102);
+        return d;
+    }
+    d.name = state->active_edit_target_name();
+    const int ci = state->active_edit_target_color_index();
+    d.color = (ci >= 0 && ci < 8) ? EDIT_TARGET_PALETTE[ci]
+                                  : QColor(90, 94, 102);
+    return d;
+}
+
+// Build the edit-target chip. A colored dot + layer name, pill-shaped.
+// `compact` shrinks padding + font for the status-bar variant.
+QWidget* build_edit_target_chip(QWidget* parent, BifShellState* state,
+                                bool compact) {
+    auto* chip = new QWidget(parent);
+    chip->setObjectName(compact ? QStringLiteral("edit_target_chip")
+                                : QStringLiteral("edit_target_pill"));
+    auto* layout = new QHBoxLayout(chip);
+    const int pad_h = compact ? 6 : 10;
+    const int pad_v = compact ? 2 : 4;
+    layout->setContentsMargins(pad_h, pad_v, pad_h, pad_v);
+    layout->setSpacing(compact ? 5 : 7);
+
+    auto* dot = new QLabel(chip);
+    const int dot_d = compact ? 8 : 10;
+    dot->setFixedSize(dot_d, dot_d);
+    dot->setObjectName(QStringLiteral("edit_target_dot"));
+    layout->addWidget(dot);
+
+    auto* label = new QLabel(chip);
+    label->setObjectName(QStringLiteral("edit_target_label"));
+    label->setStyleSheet(QString::fromLatin1(
+        "color: rgba(220, 222, 226, 255); font-size: %1px;")
+            .arg(compact ? 11 : 12));
+    layout->addWidget(label);
+
+    auto refresh = [chip, dot, label, state, compact, dot_d]() {
+        const auto d = read_edit_target(state);
+        if (!d.set) {
+            chip->setVisible(false);
+            return;
+        }
+        chip->setVisible(true);
+        label->setText(QStringLiteral("Editing: %1").arg(d.name));
+        const auto bg = QColor(d.color.red(), d.color.green(),
+                               d.color.blue(), compact ? 40 : 55);
+        chip->setStyleSheet(QString::fromLatin1(
+            "QWidget#%1 { background-color: rgba(%2,%3,%4,%5);"
+            " border: 1px solid rgba(%6,%7,%8,%9);"
+            " border-radius: %10px; }")
+                .arg(chip->objectName())
+                .arg(bg.red()).arg(bg.green()).arg(bg.blue()).arg(bg.alpha())
+                .arg(d.color.red()).arg(d.color.green()).arg(d.color.blue())
+                .arg(compact ? 140 : 180)
+                .arg(compact ? 9 : 11));
+        dot->setStyleSheet(QString::fromLatin1(
+            "background-color: rgba(%1,%2,%3,255);"
+            " border-radius: %4px;")
+                .arg(d.color.red()).arg(d.color.green()).arg(d.color.blue())
+                .arg(dot_d / 2));
+    };
+    refresh();
+
+    QObject::connect(state, &BifShellState::layer_state_revisionChanged,
+                     chip, refresh);
+    return chip;
+}
+
+// ---------------------------------------------------------------------------
 // Breadcrumb (B.7) — placeholder bar above the central widget. Phase
 // C populates segments from SceneLayerState / selection. For now,
 // shows a single "(no stage)" segment.
@@ -262,12 +369,14 @@ void breadcrumb_set_path(QToolBar* bar, const QStringList& segments) {
 struct CentralArea {
     QWidget* container;
     QToolBar* breadcrumb;
+    QWidget* edit_target_pill;
+    QFrame* viewport_frame;
     QStackedWidget* stack;
     FirstLaunchWidget* first_launch;
     RenderWidget* viewport;
 };
 
-CentralArea build_central_area(QMainWindow* window) {
+CentralArea build_central_area(QMainWindow* window, BifShellState* state) {
     CentralArea ca{};
     ca.container = new QWidget(window);
     ca.container->setObjectName(QStringLiteral("central_area"));
@@ -276,13 +385,44 @@ CentralArea build_central_area(QMainWindow* window) {
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
 
-    ca.breadcrumb = build_breadcrumb_bar(window);
-    ca.breadcrumb->setParent(ca.container);
-    layout->addWidget(ca.breadcrumb);
+    // Breadcrumb row: [breadcrumb_bar (stretch) | edit-target pill]. The
+    // breadcrumb toolbar calls `->clear()` on every selection change,
+    // so the pill can't share its action list — it lives alongside
+    // instead.
+    auto* breadcrumb_row = new QWidget(ca.container);
+    breadcrumb_row->setObjectName(QStringLiteral("breadcrumb_row"));
+    breadcrumb_row->setStyleSheet(QStringLiteral(
+        "QWidget#breadcrumb_row {"
+        "  background-color: rgba(34, 38, 44, 255);"
+        "  border-bottom: 1px solid rgba(20, 22, 26, 255);"
+        "}"));
+    auto* row_layout = new QHBoxLayout(breadcrumb_row);
+    row_layout->setContentsMargins(0, 0, 8, 0);
+    row_layout->setSpacing(0);
 
-    ca.stack = new QStackedWidget(ca.container);
+    ca.breadcrumb = build_breadcrumb_bar(window);
+    ca.breadcrumb->setParent(breadcrumb_row);
+    row_layout->addWidget(ca.breadcrumb, 1);
+
+    ca.edit_target_pill = build_edit_target_chip(breadcrumb_row, state, /*compact=*/false);
+    row_layout->addWidget(ca.edit_target_pill, 0);
+
+    layout->addWidget(breadcrumb_row);
+
+    // Viewport tint frame — a thin coloured inset around the stacked
+    // viewport. Shares the edit-target color via the same refresh hook.
+    ca.viewport_frame = new QFrame(ca.container);
+    ca.viewport_frame->setObjectName(QStringLiteral("viewport_edge_tint"));
+    ca.viewport_frame->setFrameShape(QFrame::NoFrame);
+    auto* frame_layout = new QVBoxLayout(ca.viewport_frame);
+    frame_layout->setContentsMargins(2, 2, 2, 2);
+    frame_layout->setSpacing(0);
+
+    ca.stack = new QStackedWidget(ca.viewport_frame);
     ca.stack->setObjectName(QStringLiteral("central_stack"));
-    layout->addWidget(ca.stack, 1);
+    frame_layout->addWidget(ca.stack, 1);
+
+    layout->addWidget(ca.viewport_frame, 1);
 
     ca.first_launch = new FirstLaunchWidget(ca.stack);
     ca.viewport = new RenderWidget(ca.stack);
@@ -291,6 +431,24 @@ CentralArea build_central_area(QMainWindow* window) {
     ca.stack->addWidget(ca.first_launch);  // index 0
     ca.stack->addWidget(ca.viewport);      // index 1
     ca.stack->setCurrentIndex(0);
+
+    // Edge-tint stylesheet follows the edit-target color.
+    auto refresh_tint = [frame = ca.viewport_frame, state]() {
+        const auto d = read_edit_target(state);
+        if (!d.set) {
+            frame->setStyleSheet(QStringLiteral(
+                "QFrame#viewport_edge_tint { background-color: transparent; }"));
+            return;
+        }
+        frame->setStyleSheet(QString::fromLatin1(
+            "QFrame#viewport_edge_tint {"
+            "  background-color: rgba(%1,%2,%3,255);"
+            "}")
+                .arg(d.color.red()).arg(d.color.green()).arg(d.color.blue()));
+    };
+    refresh_tint();
+    QObject::connect(state, &BifShellState::layer_state_revisionChanged,
+                     ca.viewport_frame, refresh_tint);
 
     return ca;
 }
@@ -556,7 +714,7 @@ int bif_qt_run_shell(ViewportCallbacks* viewport_cb, ::rust::Str stylesheet) {
     auto menu_actions = build_menu_bar(&window);
 
     // Central area: breadcrumb toolbar + QStackedWidget(first-launch | viewport).
-    auto central = build_central_area(&window);
+    auto central = build_central_area(&window, shell_state);
     window.setCentralWidget(central.container);
 
     wire_shell_actions(menu_actions, shell_state, &window, central.stack, central.viewport);
@@ -565,18 +723,37 @@ int bif_qt_run_shell(ViewportCallbacks* viewport_cb, ::rust::Str stylesheet) {
         connect_viewport_signals(central.viewport, viewport_cb, shell_state, &window);
     }
 
-    // Breadcrumb bar ← selected_prim_path (Phase E.2 move 6).
-    // Split the prim path by '/' into segments for the breadcrumb trail.
-    QObject::connect(
-        shell_state, &BifShellState::selected_prim_pathChanged,
-        [breadcrumb = central.breadcrumb, shell_state]() {
-            auto path = shell_state->getSelected_prim_path();
-            if (path.isEmpty()) {
-                breadcrumb_set_path(breadcrumb, {});
-            } else {
-                breadcrumb_set_path(breadcrumb, path.split(QChar('/'), Qt::SkipEmptyParts));
-            }
-        });
+    // Breadcrumb bar ← selected_prim_path (Phase E.2 move 6) + layer
+    // segment (Tier 1 item #6). Format:
+    //   stage_name > layer_name (edit) > prim > path > segments
+    // Refreshes on both `selected_prim_pathChanged` and
+    // `layer_state_revisionChanged` so the edit-target segment stays
+    // in sync with the Layer Stack panel's working-layer radio.
+    auto refresh_breadcrumb = [breadcrumb = central.breadcrumb, shell_state]() {
+        QStringList segments;
+        const auto stage_name = shell_state->current_stage_display();
+        if (!stage_name.isEmpty()) {
+            segments << stage_name;
+        }
+        if (shell_state->active_edit_target_is_set()) {
+            segments << QStringLiteral("%1 (edit)")
+                .arg(shell_state->active_edit_target_name());
+        }
+        const auto prim_path = shell_state->getSelected_prim_path();
+        if (!prim_path.isEmpty()) {
+            segments.append(prim_path.split(QChar('/'), Qt::SkipEmptyParts));
+        }
+        breadcrumb_set_path(breadcrumb, segments);
+    };
+    // Stage path itself has no dedicated signal (plain Rust field, not
+    // a qproperty); `layer_state_revisionChanged` fires right after
+    // `scene_layer_state` populates on successful load, so it covers
+    // the stage-name-appearance case too.
+    QObject::connect(shell_state, &BifShellState::selected_prim_pathChanged,
+                     &window, refresh_breadcrumb);
+    QObject::connect(shell_state, &BifShellState::layer_state_revisionChanged,
+                     &window, refresh_breadcrumb);
+    refresh_breadcrumb();
 
     // Scene Browser dock — real panel (Phase C.2). Demo prim tree
     // until Phase E wires CompositeProvider.
@@ -814,6 +991,22 @@ int bif_qt_run_shell(ViewportCallbacks* viewport_cb, ::rust::Str stylesheet) {
              Qt::WindowShortcut,
              [shell_state]() { shell_state->jump_to_next_keyframe(); });
     }
+
+    // Tier 1 — status-bar edit-target chip (permanent, right-aligned).
+    // Hides itself when no stage is loaded via the internal refresh hook.
+    {
+        auto* chip = build_edit_target_chip(window.statusBar(), shell_state, /*compact=*/true);
+        window.statusBar()->addPermanentWidget(chip);
+    }
+
+    // Tier 1 item #4 — window title follows stage + edit target + dirt.
+    // Latent dirty asterisk until the v0.16 write path flips is_dirty.
+    auto refresh_title = [&window, shell_state]() {
+        window.setWindowTitle(shell_state->compose_title());
+    };
+    QObject::connect(shell_state, &BifShellState::layer_state_revisionChanged,
+                     &window, refresh_title);
+    refresh_title();
 
     window.show();
     const int rc = app.exec();

@@ -223,7 +223,16 @@ void PropertyInspectorWidget::rebuild() {
     }
 
     m_header_path->setText(path);
-    m_header_type->setText(type.isEmpty() ? QStringLiteral("") : QStringLiteral("[%1]").arg(type));
+    // Friendly prim-type label ("Xform" → "Transform") with the raw
+    // USD name in the tooltip so pipeline folks can still grep.
+    if (type.isEmpty()) {
+        m_header_type->setText(QStringLiteral(""));
+        m_header_type->setToolTip(QString());
+    } else {
+        const auto friendly = m_state->friendly_prim_type(type);
+        m_header_type->setText(QStringLiteral("[%1]").arg(friendly));
+        m_header_type->setToolTip(QStringLiteral("USD schema: %1").arg(type));
+    }
 
     populate_composition_arcs(path);
     populate_attributes(path, type);
@@ -283,7 +292,12 @@ void PropertyInspectorWidget::populate_attributes(const QString& prim_path,
         const auto value = m_state->selected_prim_attribute_value_at(i);
         const auto type_name = m_state->selected_prim_attribute_type_at(i);
 
-        auto* name_item = new QStandardItem(name);
+        // Tier 1 item #3: friendly attribute label, raw USD name in tooltip.
+        const auto friendly = m_state->friendly_attribute_name(name);
+        auto* name_item = new QStandardItem(friendly);
+        if (friendly != name) {
+            name_item->setToolTip(QStringLiteral("USD: %1").arg(name));
+        }
         // Opinion dot color: derive from the winning layer in the
         // prim stack (strongest authored layer, index 0 when present).
         int winning_color = -1;
