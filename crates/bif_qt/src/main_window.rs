@@ -24,7 +24,6 @@ use std::cell::Cell;
 
 use bif_core::scene_layer_state::SceneLayerState;
 use bif_core::usd::layer::{LayerInfo, LayerOffset, LayerStack, PayloadPolicy};
-use bif_viewport::SceneManager;
 
 use crate::viewport::{
     viewport_on_frame, viewport_on_resize, viewport_on_shutdown, viewport_on_surface_ready,
@@ -444,6 +443,14 @@ pub mod qobject {
         #[qinvokable]
         fn toggle_playback(self: Pin<&mut BifShellState>);
 
+        /// Push `frame` through to the renderer's animation evaluation
+        /// path (`Renderer::set_time`) so `AnimatedTransform` /
+        /// vertex-animation / skinning channels update the next paint.
+        /// Connected from `current_frameChanged` in the Qt window so
+        /// both QTimer-driven playback and scrubber drags propagate.
+        #[qinvokable]
+        fn on_frame_changed(self: Pin<&mut BifShellState>, frame: i32);
+
         /// Step current frame by `delta`, clamped to [start_frame, end_frame].
         #[qinvokable]
         fn step_frame(self: Pin<&mut BifShellState>, delta: i32);
@@ -522,6 +529,14 @@ pub mod qobject {
         /// appear in the tree (dimmed) per egui parity.
         #[qinvokable]
         fn prim_is_active_at(self: &BifShellState, path: QString) -> bool;
+
+        /// Palette index (mod 8) for the layer dot next to the prim
+        /// in the scene browser. Sources from `SceneLayerState::
+        /// layer_for_prim` (prim_path → strongest opinion source
+        /// layer). Returns -1 when no mapping exists (procedural
+        /// prim with no USD layer, or stage unloaded).
+        #[qinvokable]
+        fn prim_color_index_at(self: &BifShellState, path: QString) -> i32;
 
         // ---- Property Inspector surface (Phase E.2 move 8) ----
         //
@@ -753,6 +768,34 @@ impl qobject::BifShellState {
         let path_buf = std::path::PathBuf::from(&path_str);
         log::info!("stage open requested: {path_str}");
 
+        // 2026-04-17 fix: when a stage is already loaded, prims from the
+        // previous load lingered visually (viewport) and in the scene
+        // browser tree (procedural cache survived the SceneManager swap)
+        // because `load_usd_scene` doesn't fully evict prior state.
+        // `Renderer::reset_scene_state` is the single source of truth for
+        // "evict the previous stage entirely" — clears both halves of
+        // the CompositeProvider source (USD stage + node-graph cache).
+        // Skipped on first open (nothing to drain yet).
+        let had_prior_stage = self.as_ref().rust().current_stage_path.is_some();
+        if had_prior_stage {
+            with_viewport_mut(|vp| vp.renderer_mut().reset_scene_state());
+            // Clear shell-state mirrors so the new load doesn't see stale
+            // `scene_layer_state` / `selected_prim_*` from the prior stage.
+            {
+                let mut r = self.as_mut().rust_mut();
+                r.scene_layer_state = None;
+            }
+            self.as_mut()
+                .set_selected_prim_path(cxx_qt_lib::QString::from(""));
+            self.as_mut()
+                .set_selected_prim_type(cxx_qt_lib::QString::from(""));
+            // Bump scene browser revision so the model rebuilds against the
+            // empty state before the new stage's data lands — prevents a
+            // brief frame where old + new prims merge in the tree.
+            bump_scene_browser_revision(self.as_mut());
+            bump_revision(self.as_mut());
+        }
+
         // Phase E.2 move 4: record the path for `detect_timeline_from_stage`.
         self.as_mut().rust_mut().current_stage_path = Some(path_buf.clone());
 
@@ -825,14 +868,13 @@ impl qobject::BifShellState {
     fn close_stage(mut self: Pin<&mut Self>) {
         log::info!("action: File/Close Stage");
 
-        // Drain GPU + reset renderer scene to a fresh SceneManager.
-        // `wait_for_gpu` is mandatory before dropping textures/buffers
-        // (same root cause as the D3D12 shutdown crash — commit d290c9d).
-        let drained = with_viewport_mut(|vp| {
-            vp.renderer_mut().wait_for_gpu();
-            vp.renderer_mut().scene = SceneManager::new();
-            vp.renderer_mut().rebuild_pick_scene();
-        });
+        // `Renderer::reset_scene_state` drains GPU then evicts both
+        // halves of the CompositeProvider source (USD stage in
+        // `scene` + procedural prim cache in `nodes`) so the scene
+        // browser tree clears with the viewport. `wait_for_gpu` is
+        // mandatory before dropping textures/buffers (same root cause
+        // as the D3D12 shutdown crash — commit d290c9d).
+        let drained = with_viewport_mut(|vp| vp.renderer_mut().reset_scene_state());
 
         if drained.is_none() {
             log::warn!("close_stage: viewport not ready — only clearing shell state");
@@ -1208,6 +1250,16 @@ impl qobject::BifShellState {
         );
     }
 
+    /// Connected from `current_frameChanged` — drives `Renderer::set_time`
+    /// so animation re-evaluates on both QTimer-driven playback and
+    /// scrubber drags. Safe no-op when viewport isn't ready.
+    fn on_frame_changed(self: Pin<&mut Self>, frame: i32) {
+        let _ = &self; // reserve `self: Pin<&mut Self>` signature for cxx-qt
+        with_viewport_mut(|vp| {
+            vp.renderer_mut().set_time(frame as f64);
+        });
+    }
+
     fn step_frame(mut self: Pin<&mut Self>, delta: i32) {
         // Bind the Pin temp so it outlives the .rust() borrow.
         let pin_ref = self.as_ref();
@@ -1411,6 +1463,18 @@ impl qobject::BifShellState {
                 .unwrap_or(true)
         })
         .unwrap_or(true)
+    }
+
+    fn prim_color_index_at(&self, path: cxx_qt_lib::QString) -> i32 {
+        let p: String = (&path).into();
+        let Some(state) = self.rust().scene_layer_state.as_ref() else {
+            return -1;
+        };
+        state
+            .layer_for_prim
+            .get(&p)
+            .map(|idx| (*idx as i32) % 8)
+            .unwrap_or(-1)
     }
 
     // -----------------------------------------------------------------

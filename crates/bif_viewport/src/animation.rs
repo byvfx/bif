@@ -7,13 +7,36 @@ use crate::ivar_state::RenderMode;
 use crate::Renderer;
 
 impl Renderer {
-    /// Update timeline animation (call each frame).
+    /// Update timeline animation — wall-clock-driven (call each frame).
     ///
-    /// Uses wall-clock time for accurate playback regardless of frame rate.
+    /// Advances `timeline_state.current_frame` based on wall clock (used by
+    /// the old egui-driven playback loop) and re-evaluates animations.
+    /// For externally-driven playback (e.g. Qt's QTimer), call
+    /// [`Renderer::set_time`] instead.
     pub fn update_animation(&mut self, _delta_time: f32) {
-        // Update timeline using wall-clock time (ignores delta_time)
         self.timeline_state.update();
+        self.apply_animation_at_current_frame();
+    }
 
+    /// Snap animation state to `frame` without advancing wall-clock time.
+    ///
+    /// Used by Qt's playback + scrubber path (bif_qt), which drives
+    /// `current_frame` externally via its own QTimer and timeline slider.
+    /// Re-evaluates all animation channels at the new frame and uploads
+    /// the GPU buffers so the next paint shows the moved prims.
+    pub fn set_time(&mut self, frame: f64) {
+        self.timeline_state.current_frame = frame;
+        self.apply_animation_at_current_frame();
+    }
+
+    /// Re-evaluate every animation channel (transform / vertex /
+    /// skinning / camera) at whatever frame `timeline_state.current_frame`
+    /// currently holds, and push the results to the GPU.
+    ///
+    /// Shared by both [`Renderer::update_animation`] (wall-clock) and
+    /// [`Renderer::set_time`] (external-drive). Guards against excessive
+    /// re-evaluation via the 0.5-frame `last_evaluated_frame` tolerance.
+    fn apply_animation_at_current_frame(&mut self) {
         // Check if frame changed enough to warrant re-evaluation
         // Use larger tolerance (0.5 frame) to avoid excessive updates from rapid redraws
         let current_frame = self.timeline_state.current_frame;

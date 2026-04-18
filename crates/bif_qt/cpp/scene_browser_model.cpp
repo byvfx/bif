@@ -57,11 +57,12 @@ void populate_subtree(
         const auto kind = state->prim_kind_at(child_path);
         const bool is_visible = state->prim_is_visible_at(child_path);
         const bool is_active = state->prim_is_active_at(child_path);
+        const int color_index = state->prim_color_index_at(child_path);
         auto* child_node = add_child(
             parent_node,
             name.isEmpty() ? child_path : name,
             type_name,
-            /*color_index=*/-1,
+            color_index,
             /*explicit_path=*/child_path,
             kind,
             is_visible,
@@ -129,11 +130,12 @@ void SceneBrowserModel::rebuild_from_state() {
             const auto kind = m_state->prim_kind_at(path);
             const bool is_visible = m_state->prim_is_visible_at(path);
             const bool is_active = m_state->prim_is_active_at(path);
+            const int color_index = m_state->prim_color_index_at(path);
             auto* root = add_child(
                 m_root.get(),
                 name.isEmpty() ? path : name,
                 type_name,
-                /*color_index=*/-1,
+                color_index,
                 /*explicit_path=*/path,
                 kind,
                 is_visible,

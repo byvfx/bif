@@ -943,6 +943,15 @@ int bif_qt_run_shell(ViewportCallbacks* viewport_cb, ::rust::Str stylesheet) {
     QObject::connect(shell_state, &BifShellState::realtime_playbackChanged,
                      &window, retune_timer);
 
+    // Push every frame change into `Renderer::set_time` so animated
+    // prims actually move. Covers both the QTimer tick above (playback)
+    // and the timeline slider / jump-to-keyframe paths (scrubbing).
+    QObject::connect(shell_state, &BifShellState::current_frameChanged,
+                     &window, [shell_state]() {
+                         shell_state->on_frame_changed(
+                             shell_state->getCurrent_frame());
+                     });
+
     // Keyboard shortcuts — all routed through ShortcutRegistry so a
     // future Preferences dialog can rebind them. Register each with a
     // stable ID + default sequence; the registry consults QSettings

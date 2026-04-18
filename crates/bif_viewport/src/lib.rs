@@ -957,6 +957,29 @@ impl Renderer {
         self.gpu.device.poll(wgpu::Maintain::Wait);
     }
 
+    /// Reset the renderer to "no scene loaded" state. Drains GPU,
+    /// replaces `SceneManager` with a fresh one, clears all node-graph
+    /// caches (procedural prim cache, instancer results, prim counts,
+    /// node↔proto / node↔cloud maps), and rebuilds the pick BVH.
+    ///
+    /// Called by `bif_qt` from both `close_stage` (Ctrl+W) and the
+    /// implicit pre-load reset on second-open. Single source of truth
+    /// for "evict the previous stage entirely" so no half-state (cached
+    /// procedural prims, stale dirty flags) survives the swap.
+    pub fn reset_scene_state(&mut self) {
+        self.wait_for_gpu();
+        self.scene = SceneManager::new();
+        self.nodes.cached_scene_graph = scene_browser::CachedSceneGraph::default();
+        self.nodes.node_proto_map.clear();
+        self.nodes.node_cloud_map.clear();
+        self.nodes.instancer_results.clear();
+        self.nodes.node_prim_counts.clear();
+        self.nodes.scene_graph_dirty = true;
+        self.nodes.materials_dirty = true;
+        self.nodes.primitive_name_counters.clear();
+        self.rebuild_pick_scene();
+    }
+
     /// Handle window resize. `scale_factor` is the caller's current display
     /// scale (device-independent pixels per point); pass whatever your
     /// windowing layer reports (`winit::Window::scale_factor()` in
