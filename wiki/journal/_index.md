@@ -1,7 +1,7 @@
 ---
 title: Journal Index
 type: index
-updated: "2026-04-17"
+updated: "2026-04-19"
 ---
 
 # Learning Journal
@@ -12,6 +12,7 @@ Daily development logs live in ../../devlog/ — this section is for entries tha
 
 ## Entries
 
+- [[2026-04-19-tier1-5-commit|2026-04-19 — Tier 1.5 commit + camera-picker plan]] — per-attribute opinion color committed; camera-picker planned (CameraSource + OrthoPreset already exist)
 - [[2026-04-17-tier1-edit-target|2026-04-17 — Tier 1 (edit target visible everywhere + schema labels)]] — 4-surface edit-target fanout from one invokable cluster; auto-pick writable sublayer heuristic; `schema_labels.rs` friendly USD names; save-flow polish
 - [[2026-04-16-tier0-phase-f|2026-04-16 — Tier 0 + Phase F (egui bridge deleted)]] — scene browser CompositeProvider parity + 4 columns + eye chrome; Renderer egui surface + `render_ui.rs` (~1600 LOC) deleted; `bif_viewer` is a 14-line shim
 - [[2026-04-16-phase-e2-finish|2026-04-16 — Phase E.2 finish]] — moves 5/7/8/9 + Close Stage + HiDPI; cxx-qt gotchas (trait shadowing, `rust_mut` mutability)
