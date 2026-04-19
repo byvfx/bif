@@ -580,6 +580,11 @@ pub mod qobject {
         /// -1 on OOB or when the entry's layer isn't in the loaded stack.
         #[qinvokable]
         fn selected_prim_stack_color_index_at(self: &BifShellState, index: i32) -> i32;
+
+        /// Palette color index (mod 8) for the winning opinion on attribute
+        /// `attr_index` of the selected prim. -1 when unresolvable.
+        #[qinvokable]
+        fn selected_prim_attr_color_index_at(self: &BifShellState, attr_index: i32) -> i32;
     }
 }
 
@@ -1602,6 +1607,36 @@ impl qobject::BifShellState {
         })
         .flatten();
         match identifier {
+            Some(id) => color_index_for_layer(self.rust(), &id),
+            None => -1,
+        }
+    }
+
+    fn selected_prim_attr_color_index_at(&self, attr_index: i32) -> i32 {
+        let prim_path: String = (&self.rust().selected_prim_path).into();
+        if prim_path.is_empty() {
+            return -1;
+        }
+        let attr_name = with_stage(|stage| {
+            stage
+                .get_prim_attributes(&prim_path)
+                .ok()
+                .and_then(|v| v.get(attr_index as usize).map(|a| a.name.clone()))
+        })
+        .flatten();
+        let Some(name) = attr_name else { return -1 };
+        let winning_id = with_stage(|stage| {
+            stage
+                .get_attribute_opinions(&prim_path, &name)
+                .ok()
+                .and_then(|v| {
+                    v.into_iter()
+                        .find(|o| o.is_winning)
+                        .map(|o| o.layer_identifier)
+                })
+        })
+        .flatten();
+        match winning_id {
             Some(id) => color_index_for_layer(self.rust(), &id),
             None => -1,
         }

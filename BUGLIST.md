@@ -6,12 +6,6 @@ Last updated: 2026-04-17
 
 - **bif_qt scene browser: residual child-count gap under some sections vs egui.** Tier 0 routed Qt through `CompositeProvider` (parity with egui's data path), but a few sections still show fewer children than egui in side-by-side. Likely a `UsdStage::child_prim_paths` quirk (composed-stage iteration vs root-layer iteration) or empty `inst.prim_path` synthesis not reaching the cache in Qt builds. Noted 2026-04-16.
 - **bif_qt: no way to view through USD cameras or standard orthographic views.** Viewport is stuck on the free-flying camera; no menu/shortcut to "look through" a `UsdGeomCamera` authored on the stage, and no Front/Back/Left/Right/Top/Bottom orthographic presets. Needs a camera-picker widget (dropdown of `UsdGeomCamera` prims + 6 ortho presets + free-fly) feeding `Renderer::cam.camera`. Noted 2026-04-17.
-- **bif_qt: animation playback doesn't update the scene.** Timeline scrubber / play button advances `current_frame` but the viewport doesn't re-evaluate — `AnimatedTransform` opinions aren't pushed to `SceneManager::instance_transforms` on frame change, so animated prims stay frozen at load-time pose. Needs `Renderer::set_time(frame)` hook invoked from the playback timer. Noted 2026-04-17.
-- **bif_qt: no "reset / close stage" action.** Once a USD stage is loaded, there's no way to unload it or return to the first-launch screen without quitting the app. Needs File → Close Stage menu item (Phase E.2 follow-up). Noted 2026-04-15.
-- **bif_qt: Scene Browser shows hardcoded demo tree.** `SceneBrowserModel::seed_demo_tree` is still the 10-prim hardcoded demo (World/Hero/Geom/…). Phase E.2 move 7 replaces with `CompositeProvider` traversal over the real USD stage. Noted 2026-04-15.
-- **bif_qt: Property Inspector shows fake attributes per prim-type.** Phase E.2 move 8 wires `UsdPrim::GetAttributes()` + `UsdStage::get_prim_stack` for real composition arcs. Noted 2026-04-15.
-- **bif_qt: Timeline keyframes are hardcoded demo.** Phase E.2 move 9 pulls keyframes from selected prim's `AnimatedTransform`. Noted 2026-04-15.
-- **bif_qt: Gizmo raycast not wired.** `RenderWidget::primPickRequested(x, y)` signal fires but no selection handler consumes it. Phase E.2 move 5 connects to `bif_viewport::selection::ray_cast`. Noted 2026-04-15.
 - **bif_qt: scale factor hardcoded to 1.0.** `Viewport::new` / `resize` ignore `QScreen::devicePixelRatio()`; HiDPI monitors render at wrong scale. Wire through the cxx-qt bridge. Noted 2026-04-15.
 - OCIO ACES is not working in the viewport (Hill/Narkowicz approx active, full OCIO deferred).
 
@@ -20,6 +14,13 @@ Last updated: 2026-04-17
 
 ## Fixed (since last update)
 
+- bif_qt property inspector opinion dot used prim-level winning layer for all attribute rows — replaced with per-attribute `get_attribute_opinions` call (Tier 1.5, 2026-04-17).
+- bif_qt animation playback — `Renderer::set_time` + `on_frame_changed` invokable wired to QTimer (commit 962a3b7, 2026-04-17).
+- bif_qt close stage — `reset_scene_state` helper + File → Close Stage (commit 962a3b7, 2026-04-17).
+- bif_qt scene browser showed hardcoded demo tree — replaced with `CompositeProvider` traversal (commit 962a3b7, 2026-04-17).
+- bif_qt property inspector showed fake attrs — real `get_prim_attributes` + `get_prim_stack` (commit 962a3b7, 2026-04-17).
+- bif_qt timeline keyframes hardcoded — real `AnimatedTransform` keyframes (commit 962a3b7, 2026-04-17).
+- bif_qt gizmo raycast not wired — `on_prim_pick` invokable + `pick_instance_at` (commit 962a3b7, 2026-04-17).
 - Rigid-skinned mesh offset on animated characters — `SkinKind::Rigid` compression in `bif_core/src/usd/loader.rs` assumed `element_size=1, weight=1.0`, collapsing multi-joint rigid bindings (hair at w=0.333, nails at w=0.5) to a single fractional influence. Loader now only uses the compact encoding when `element_size == 1`; multi-joint rigid meshes broadcast through `SkinKind::PerVertex`. New regression test added. Fixed 2026-04-12.
 - Dome light from Houdini USD not detected — C++ bridge now checks `UsdLuxDomeLight_1` (new schema), attribute lookup tries `inputs:texture:file` first. Fixed 2026-04-08.
 - MaterialX displacement now natively extracted — 3-tier: surface shader input, GetDisplacementOutput() → ND_displacement node, UsdPreviewSurface fallback. Fixed 2026-04-08.

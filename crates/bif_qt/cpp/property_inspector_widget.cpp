@@ -298,13 +298,8 @@ void PropertyInspectorWidget::populate_attributes(const QString& prim_path,
         if (friendly != name) {
             name_item->setToolTip(QStringLiteral("USD: %1").arg(name));
         }
-        // Opinion dot color: derive from the winning layer in the
-        // prim stack (strongest authored layer, index 0 when present).
-        int winning_color = -1;
-        if (m_state->selected_prim_stack_count() > 0) {
-            winning_color = m_state->selected_prim_stack_color_index_at(0);
-        }
-        name_item->setData(winning_color, ColorIndexRole);
+        // Per-attribute winning opinion color (Tier 1.5).
+        name_item->setData(m_state->selected_prim_attr_color_index_at(i), ColorIndexRole);
         auto* value_item = new QStandardItem(value);
         auto* type_item = new QStandardItem(type_name);
         type_item->setForeground(QColor(140, 145, 155));
