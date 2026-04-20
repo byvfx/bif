@@ -1,11 +1,10 @@
 # BUGLIST
 
-Last updated: 2026-04-17
+Last updated: 2026-04-19
 
 ## Active Bugs
 
 - **bif_qt scene browser: residual child-count gap under some sections vs egui.** Tier 0 routed Qt through `CompositeProvider` (parity with egui's data path), but a few sections still show fewer children than egui in side-by-side. Likely a `UsdStage::child_prim_paths` quirk (composed-stage iteration vs root-layer iteration) or empty `inst.prim_path` synthesis not reaching the cache in Qt builds. Noted 2026-04-16.
-- **bif_qt: no way to view through USD cameras or standard orthographic views.** Viewport is stuck on the free-flying camera; no menu/shortcut to "look through" a `UsdGeomCamera` authored on the stage, and no Front/Back/Left/Right/Top/Bottom orthographic presets. Needs a camera-picker widget (dropdown of `UsdGeomCamera` prims + 6 ortho presets + free-fly) feeding `Renderer::cam.camera`. Noted 2026-04-17.
 - **bif_qt: scale factor hardcoded to 1.0.** `Viewport::new` / `resize` ignore `QScreen::devicePixelRatio()`; HiDPI monitors render at wrong scale. Wire through the cxx-qt bridge. Noted 2026-04-15.
 - OCIO ACES is not working in the viewport (Hill/Narkowicz approx active, full OCIO deferred).
 
@@ -14,6 +13,7 @@ Last updated: 2026-04-17
 
 ## Fixed (since last update)
 
+- bif_qt: no way to view through USD cameras or standard orthographic views — camera-picker QComboBox added with UsdGeomCamera enumeration + 6 ortho presets + free-fly toggle (commit c835eaf, 2026-04-19).
 - bif_qt property inspector opinion dot used prim-level winning layer for all attribute rows — replaced with per-attribute `get_attribute_opinions` call (Tier 1.5, 2026-04-17).
 - bif_qt animation playback — `Renderer::set_time` + `on_frame_changed` invokable wired to QTimer (commit 962a3b7, 2026-04-17).
 - bif_qt close stage — `reset_scene_state` helper + File → Close Stage (commit 962a3b7, 2026-04-17).

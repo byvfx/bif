@@ -8,6 +8,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **v0.15.0 camera-picker — UsdGeomCamera + ortho presets + free-fly toggle** (2026-04-19). Viewport no longer locked to free-fly; artists can look through any `UsdGeomCamera` prim or snap to 6 standard orthographic views.
+  - `UsdStage::list_camera_prims()` — filters `all_prims()` by `type_name == "Camera"` (no new FFI; pure Rust-side filter).
+  - `Renderer::apply_usd_camera` / `apply_ortho_view` / `apply_free_fly` — three new helpers on `bif_viewport::Renderer`. Ortho view positions camera along the preset axis, sets `ProjectionMode::Orthographic { ortho_size }` derived from current camera distance; existing `sync_viewport_to_usd_camera` reused. `pub use bif_math::OrthoPreset` re-exported from `bif_viewport` so `bif_qt` doesn't need a direct `bif_math` dep.
+  - 4 new invokables + `camera_list_revision` qproperty on `BifShellState` — `usd_camera_count`, `usd_camera_path_at`, `active_camera_name`, `on_select_camera`. `on_select_camera` dispatches `"free"` / `"ortho:Top"` / `"usd:/path"` string keys. `on_stage_path_opened` caches camera paths + bumps revision; `close_stage` clears them.
+  - `QComboBox` camera picker in breadcrumb row (`window_builder.cpp`) — "Perspective" first, then 6 ortho presets, then USD camera leaf names (if any). Repopulates on `camera_list_revisionChanged`. Animated USD cameras work automatically — existing `animation.rs` frame-change path already re-syncs `selected_usd_camera` each tick.
+
 - **v0.15.0 Tier 1 — Edit-target visibility + schema labels + save-flow polish** (2026-04-17). Persistent "where am I editing?" signal across 4 surfaces + friendly attribute/prim names.
   - **Edit-target pill + status-bar chip + viewport 2px edge tint** — all three read 4 new cxx-qt invokables (`active_edit_target_{is_set,name,identifier,color_index}`) that resolve `scene_layer_state.working_layer`; refresh on `layer_state_revisionChanged`. Pill lives on the right of the breadcrumb row, chip as a permanent widget on the status bar, tint as a colored `QFrame` wrapping the viewport.
   - **Auto-pick strongest writable sublayer on stage load** — new `pick_strongest_writable_sublayer` helper walks `stack.layers` for the first `!is_anonymous && !is_muted` candidate and sets it as the edit target; status bar shows `"Loaded: <path>  •  Edit target: <layer>"`. Real `SdfLayer::PermissionToEdit()` FFI deferred to Tier 1.5.
