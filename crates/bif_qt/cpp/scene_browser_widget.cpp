@@ -230,12 +230,11 @@ void SceneBrowserWidget::on_selection_changed(const QModelIndex& current,
     if (!m_state || !current.isValid()) return;
     const auto path = current.data(SceneBrowserModel::PathRole).toString();
     const auto type = current.data(SceneBrowserModel::TypeNameRole).toString();
-    // Feed the selection through to BifShellState — property
-    // inspector (Phase C.3) listens on selected_prim_pathChanged.
-    // Phase E adds real AppEvent::PrimSelected dispatch for the
-    // viewport highlight + downstream handlers.
-    m_state->setSelected_prim_path(path);
-    m_state->setSelected_prim_type(type);
+    // Route through Rust so the renderer-side selection path updates
+    // the viewport gizmo + outline highlight. `on_tree_prim_selected`
+    // also mirrors path/type into the shell qprops the property
+    // inspector listens on (selected_prim_pathChanged).
+    m_state->on_tree_prim_selected(path, type);
     m_state->setStatus_message(
         QStringLiteral("Selected: %1  [%2]").arg(path).arg(type));
 }

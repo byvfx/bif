@@ -6,6 +6,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **v0.15-qt review blockers (1a) — three-panel selection sync + teardown + timeline clamp** (2026-04-19). Third-pass review (two reviewer subagents + manual) caught behavioral gaps the scaffolding reviews missed. Commit 1a closes the pure-wiring blockers; mute pipeline (B2) follows in 1b.
+  - **B1 — viewport ↔ tree selection sync.** `on_prim_pick` now calls `Renderer::select_at_screen` (renderer-side selection path — updates `selection.selected_instance_index`, resets gizmo, clears selection on empty-space click) instead of bare `pick_instance_at`. New `Renderer::select_prim_by_path(&str)` wraps the existing `(pub(crate))` `handle_prim_selected` so tree clicks can drive renderer selection. New `on_tree_prim_selected(path, type)` invokable on `BifShellState` — `SceneBrowserWidget::on_selection_changed` routes through it so tree clicks update viewport gizmo + outline, not just shell qprops.
+  - **B3 — stage teardown completeness.** `close_stage` now sets `is_playing=false` + resets `current_frame` to `start_frame` *before* the renderer reset — otherwise the Qt timer kept advancing `current_frame` onto the first-launch screen. `on_stage_path_opened` also resets `is_playing` at entry so a stale `is_playing=true` doesn't start the timer immediately against the previous stage's frame. `Renderer::reset_scene_state` now calls `self.selection.clear()` so stale `selected_prim_path` + instance index + gizmo state don't resolve to wrong rows on the fresh scene.
+  - **M1 — `detect_timeline_from_stage` clamps `current_frame`.** After writing `start_frame`/`end_frame`/`playback_fps`, clamps the qproperty into the new range. Spinbox widget already clamps its display, but the underlying qproperty drives the playback timer + render evaluation — out-of-range values made playback advance from the wrong frame until user interaction.
+
 ### Added
 
 - **v0.15.0 camera-picker — UsdGeomCamera + ortho presets + free-fly toggle** (2026-04-19). Viewport no longer locked to free-fly; artists can look through any `UsdGeomCamera` prim or snap to 6 standard orthographic views.

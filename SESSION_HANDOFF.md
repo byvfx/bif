@@ -1,3 +1,35 @@
+# Session Handoff — April 19, 2026 (v0.15-qt review pass + Commit 1a blockers shipped)
+
+**Last Updated:** 2026-04-19 evening. Third review pass on v0.15-qt (40 unpushed commits) — two reviewer subagents + a behavior-focused manual pass. Agents found 0 blockers / 8 Major / 12 Minor / 6 Nits (scaffolding + hygiene). Manual pass found 3 real blockers (selection fork, mute UI-only, teardown leak) + 2 Medium + 1 Low — behavioral gaps the agents missed because they never exercised cross-panel sync. Consolidated plan at `C:\Users\brandon\.claude\plans\v015-qt-consolidated-fixup-plan.md` (5 commits, blockers split first). **Commit 1a shipped (this session):** B1 selection sync + B3 teardown + M1 timeline clamp. `cargo build` + `clippy -D warnings` + `fmt --check` clean; 151/153 bif_viewport tests pass (2 pre-existing: known flaky + unrelated material test). **Next session: Commit 1b = B2 mute pipeline** — `UsdStage::set_layer_muted` exists (`cpp_bridge.rs:2390`); renderer needs either a "re-extract from live stage" path or a mute-survives-reload workaround. Then commits 2–5 (housekeeping, property inspector O(N²) cache, ortho aspect + QTimer gating + demo-seed guard, optional scene browser lazy fetchMore).
+
+## 🏁 2026-04-19 evening — v0.15-qt Commit 1a (B1 + B3 + M1)
+
+**Three review passes** before push: `vfx-code-reviewer` (USD/FFI/GPU lens), `Code Reviewer` (general correctness/hygiene), and a manual behavioral pass. Agents converged on Major-tier hygiene (double `env_logger::init`, dead `bif_qt_spike` crate, O(N²) property inspector, 1817-line God module) but **missed every cross-panel behavioral bug** — selection didn't sync across panels, layer mute was UI-only on real stages, close-stage leaked playback/frame state. The manual pass caught these because it asked "click X in panel A → does panel B highlight?" rather than reading diffs line-by-line.
+
+**Commit 1a** closes the pure-wiring blockers; B2 (mute pipeline) needs a renderer API addition and got split into 1b.
+
+- **B1 — three-panel selection sync.** Viewport clicks now route through `Renderer::select_at_screen` (the actual renderer-side selection path — updates `selection.selected_instance_index`, resets gizmo, clears on empty-space click). New `Renderer::select_prim_by_path(&str)` wraps `(pub(crate))` `handle_prim_selected` for tree clicks. New `on_tree_prim_selected` invokable on `BifShellState`; `SceneBrowserWidget::on_selection_changed` routes through it so tree clicks drive viewport gizmo + outline, not just shell qprops.
+- **B3 — stage teardown.** `close_stage` sets `is_playing=false` + resets `current_frame=start_frame` *before* renderer reset (timer was advancing `current_frame` onto the first-launch screen otherwise). `on_stage_path_opened` also resets `is_playing` at entry so the prior stage's playback doesn't run against the new stage's frame. `Renderer::reset_scene_state` now calls `selection.clear()` so stale `selected_prim_path` + instance index + gizmo state don't resolve to wrong rows.
+- **M1 — `detect_timeline_from_stage` clamps `current_frame`.** After writing range qprops, clamps the frame into `[start, end]`. Spinbox widget already clamps its display, but the qproperty drives the playback timer + render eval — out-of-range values made playback start from the wrong frame until user interaction.
+
+**Non-obvious bits:**
+- `cxx-qt` i32 qproperty getters return `&i32` — need `*` deref before passing into `.clamp()` or back through setters. Caught at compile time; three sites.
+- `select_at_screen` already did full "pick + update selection + clear on miss" plumbing — the Qt side was duplicating selection state by bypassing it with `pick_instance_at` directly.
+- `SelectionManager::clear()` (selection.rs:36) already exists — extending `reset_scene_state` is a one-liner.
+
+**What 1a intentionally did NOT touch:**
+- B2 (mute pipeline) — needs a renderer "refresh scene from live stage without file reload" method or a mute-survives-reload workaround. Clean split because the other blockers are pure wiring and this one needs an API design decision.
+- Phase B stubs, About string, `bif_qt_spike` removal — Commit 2 housekeeping batch.
+- O(N²) property inspector — Commit 3 self-contained perf cache.
+- Ortho aspect ratio, QTimer gating, demo-seed guard — Commit 4.
+- Scene browser lazy fetchMore — optional Commit 5.
+
+## 🏁 2026-04-17 evening — 3-bugfix bundle (commit `962a3b7`) (historical)
+
+**Prior session context preserved below.**
+
+---
+
 # Session Handoff — April 17, 2026 (Tier 1 + 3-bugfix bundle shipped)
 
 **Last Updated:** 2026-04-17 evening. Tier 1 (`f2a67c2`) shipped first — edit-target pill + viewport edge tint + status-bar chip + breadcrumb layer segment + auto-pick strongest writable sublayer + window title + friendly schema labels + save-flow polish. Then a 3-bugfix bundle (`962a3b7`) closed user-observed gaps: animation playback didn't reach the renderer, loading a second USD left old prims in viewport AND scene tree, layer color dots never painted in the scene browser. Workspace builds + clippy `-D warnings` clean, fmt clean, schema_labels tests 4/4; two pre-existing test failures unchanged. User visually confirmed all 3 fixes (`"all is working"`) — they're testing more before signing off. **Next session: Tier 1.5 per-attribute opinion-resolution FFI** (wraps `UsdAttribute::GetPropertyStack` → per-row color, gates first-opinion guard + Tier 2 #9 inspector left-border). Or viewport toolbar (Tier 1 item #6.5, M effort) if user prefers artist-visible win first. Or knock out remaining BUGLIST items — camera-picker / orthographic views (no looking-through-camera support yet). User preference captured in memory: function before form — full design-system pass ("Graphite / Quiet Confidence" from `assets/stitch_bif_ui/obsidian_graphite/DESIGN.md`) deferred until all Tier 1/1.5/2 widgets are in place.

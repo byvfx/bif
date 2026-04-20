@@ -321,6 +321,14 @@ pub mod qobject {
         #[qinvokable]
         fn on_prim_pick(self: Pin<&mut BifShellState>, x: i32, y: i32);
 
+        /// Scene-browser tree selection change. Routes through the
+        /// renderer so viewport gizmo + outline highlight sync to the
+        /// clicked row. Also mirrors path/type into shell qprops so the
+        /// property inspector (bound to `selected_prim_pathChanged`)
+        /// updates in the same invocation.
+        #[qinvokable]
+        fn on_tree_prim_selected(self: Pin<&mut BifShellState>, path: QString, type_name: QString);
+
         /// File/Save As (Ctrl+Shift+S). Phase B stub.
         #[qinvokable]
         fn on_save_as(self: Pin<&mut BifShellState>);
@@ -803,6 +811,12 @@ impl qobject::BifShellState {
         let path_buf = std::path::PathBuf::from(&path_str);
         log::info!("stage open requested: {path_str}");
 
+        // Stop any playback carried over from the prior stage. Leaving
+        // `is_playing=true` would start the timer immediately against a
+        // `current_frame` that belongs to the previous stage's range;
+        // `detect_timeline_from_stage` will clamp the frame afterwards.
+        self.as_mut().set_is_playing(false);
+
         // 2026-04-17 fix: when a stage is already loaded, prims from the
         // previous load lingered visually (viewport) and in the scene
         // browser tree (procedural cache survived the SceneManager swap)
@@ -914,6 +928,15 @@ impl qobject::BifShellState {
     fn close_stage(mut self: Pin<&mut Self>) {
         log::info!("action: File/Close Stage");
 
+        // Stop playback before tearing the stage down. The timer in
+        // window_builder.cpp stops on `is_playing=false`; otherwise it
+        // keeps advancing `current_frame` onto the first-launch screen
+        // and leaks into the next stage load (reopen inherits stale
+        // frame state). Reset frame to start for the same reason.
+        let start_frame = *self.as_ref().start_frame();
+        self.as_mut().set_is_playing(false);
+        self.as_mut().set_current_frame(start_frame);
+
         // `Renderer::reset_scene_state` drains GPU then evicts both
         // halves of the CompositeProvider source (USD stage in
         // `scene` + procedural prim cache in `nodes`) so the scene
@@ -1001,37 +1024,25 @@ impl qobject::BifShellState {
     }
 
     fn on_prim_pick(mut self: Pin<&mut Self>, x: i32, y: i32) {
-        // Ray-cast into the live pick BVH. Pixel coords are already
-        // framebuffer-space (DPR-multiplied in render_widget.cpp).
-        let hit = with_viewport_mut(|vp| vp.renderer_mut().pick_instance_at(x as f32, y as f32))
-            .flatten();
-
-        let Some(idx) = hit else {
-            // Miss — clear selection + status.
-            self.as_mut()
-                .set_selected_prim_path(cxx_qt_lib::QString::from(""));
-            self.as_mut()
-                .set_selected_prim_type(cxx_qt_lib::QString::from(""));
-            self.as_mut()
-                .set_status_message(cxx_qt_lib::QString::from("Selection cleared."));
-            return;
-        };
-
-        // Look up the prim path on the hit instance. Strip the `/BIF/...`
-        // synthetic prefix the USD loader applies to prototype-sourced
-        // instances — user-facing paths should match stage authoring.
-        let (path, type_name) = with_viewport_mut(|vp| {
-            let raw = vp
-                .renderer_mut()
+        // Route through the renderer's unified selection path so viewport
+        // outline + gizmo state stay in sync with tree/property panels.
+        // `select_at_screen` ray-casts into the pick BVH, updates
+        // `selection.selected_instance_index` + `selected_prim_path`,
+        // and clears gizmo state. We read the result back here to mirror
+        // path/type into shell qprops (property inspector listens on
+        // `selected_prim_pathChanged`).
+        let pick_result = with_viewport_mut(|vp| {
+            let r = vp.renderer_mut();
+            r.select_at_screen(x as f32, y as f32);
+            let idx = r.selection.selected_instance_index?;
+            let raw = r
                 .scene
                 .working_scene
                 .instances()
                 .get(idx)
                 .map(|inst| (*inst.prim_path).to_string())?;
             let path = denormalize_synthetic_path(&raw);
-            // Prim type: consult the usd_stage if available; otherwise
-            // empty (keeps the property inspector resilient).
-            let stage_arc = vp.renderer_mut().scene.usd_stage.clone();
+            let stage_arc = r.scene.usd_stage.clone();
             let type_name = stage_arc
                 .and_then(|arc| {
                     arc.lock()
@@ -1042,16 +1053,46 @@ impl qobject::BifShellState {
                 .unwrap_or_default();
             Some((path, type_name))
         })
-        .flatten()
-        .unwrap_or_default();
+        .flatten();
 
-        log::info!("pick hit: idx={idx} path={path} type={type_name}");
-        self.as_mut()
-            .set_selected_prim_path(cxx_qt_lib::QString::from(&path));
-        self.as_mut()
-            .set_selected_prim_type(cxx_qt_lib::QString::from(&type_name));
-        self.as_mut()
-            .set_status_message(cxx_qt_lib::QString::from(&format!("Selected: {path}")));
+        match pick_result {
+            Some((path, type_name)) => {
+                log::info!("pick hit: path={path} type={type_name}");
+                self.as_mut()
+                    .set_selected_prim_path(cxx_qt_lib::QString::from(&path));
+                self.as_mut()
+                    .set_selected_prim_type(cxx_qt_lib::QString::from(&type_name));
+                self.as_mut()
+                    .set_status_message(cxx_qt_lib::QString::from(&format!("Selected: {path}")));
+            }
+            None => {
+                self.as_mut()
+                    .set_selected_prim_path(cxx_qt_lib::QString::from(""));
+                self.as_mut()
+                    .set_selected_prim_type(cxx_qt_lib::QString::from(""));
+                self.as_mut()
+                    .set_status_message(cxx_qt_lib::QString::from("Selection cleared."));
+            }
+        }
+    }
+
+    fn on_tree_prim_selected(
+        mut self: Pin<&mut Self>,
+        path: cxx_qt_lib::QString,
+        type_name: cxx_qt_lib::QString,
+    ) {
+        let path_str: String = (&path).into();
+        if path_str.is_empty() {
+            return;
+        }
+        // Drive renderer-side selection so the viewport gizmo + outline
+        // highlight follow the tree click. `select_prim_by_path` resolves
+        // the prim path back to an instance index when available.
+        with_viewport_mut(|vp| vp.renderer_mut().select_prim_by_path(&path_str));
+        // Mirror path/type into shell qprops so the property inspector
+        // (which binds to `selected_prim_pathChanged`) updates too.
+        self.as_mut().set_selected_prim_path(path);
+        self.as_mut().set_selected_prim_type(type_name);
     }
 
     // -----------------------------------------------------------------
@@ -1409,6 +1450,16 @@ impl qobject::BifShellState {
         self.as_mut().set_start_frame(start);
         self.as_mut().set_end_frame(end);
         self.as_mut().set_playback_fps(fps);
+        // Clamp `current_frame` into the newly-detected range. The spin-
+        // box widget clamps its display, but the underlying qproperty
+        // drives the playback timer (window_builder.cpp) and render
+        // evaluation — if it stays out of range, playback advances from
+        // the wrong frame until the user interacts with the UI.
+        let cur = *self.as_ref().current_frame();
+        let clamped = cur.clamp(start, end);
+        if clamped != cur {
+            self.as_mut().set_current_frame(clamped);
+        }
         self.as_mut()
             .set_status_message(cxx_qt_lib::QString::from(&format!(
                 "Timeline detected: {start}-{end} @ {fps} fps",

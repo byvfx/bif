@@ -978,7 +978,21 @@ impl Renderer {
         self.nodes.scene_graph_dirty = true;
         self.nodes.materials_dirty = true;
         self.nodes.primitive_name_counters.clear();
+        // Stale selection (prim path, instance index, gizmo, tree
+        // expansion) from the prior stage would resolve to wrong rows
+        // on the fresh scene — clear before rebuilding pick BVH.
+        self.selection.clear();
         self.rebuild_pick_scene();
+    }
+
+    /// Drive selection from a USD prim path (typically a tree-view click).
+    ///
+    /// Public wrapper over `handle_prim_selected` so UI layers (bif_qt,
+    /// bif_viewer) can sync viewport gizmo + outline highlight when the
+    /// scene browser's selection changes. Resolves the prim path back to
+    /// an instance index when possible (synthetic `/BIF/` paths handled).
+    pub fn select_prim_by_path(&mut self, prim_path: &str) {
+        self.handle_prim_selected(prim_path.to_string());
     }
 
     /// Handle window resize. `scale_factor` is the caller's current display
