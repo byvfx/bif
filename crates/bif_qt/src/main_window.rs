@@ -1233,11 +1233,71 @@ impl qobject::BifShellState {
             };
             layer.identifier.clone()
         };
+
+        // Update the shell mirror immediately so the checkbox reflects
+        // the new state even if the reload path below fails or there's
+        // no live stage (demo-only layer stack).
         if let Some(state) = self.as_mut().rust_mut().scene_layer_state.as_mut() {
             state.set_muted(&identifier, muted);
         }
         bump_revision(self.as_mut());
         log::info!("layer {index} muted={muted}");
+
+        // For real stages, push the mute through the renderer. The loader
+        // (scene_loader.rs:1496-1508) snapshots `scene.layer_state.muted`
+        // at entry and replays it via `load_usd_with_stage_muted` BEFORE
+        // payloads are fetched — so geometry is extracted under the muted
+        // composition. Empty scenes (e.g. muting a def-providing layer)
+        // are handled by load_usd_scene itself: viewport clears, Layer
+        // Stack panel stays active for unmute. No new renderer API is
+        // required; we just mutate the authoritative mute set on the
+        // renderer's `scene.layer_state` and re-run the load.
+        let Some(path) = self.as_ref().rust().current_stage_path.clone() else {
+            // Demo-only stack (no live stage): UI toggle updates the
+            // mirror but there's nothing to recompose.
+            return;
+        };
+
+        // NB: skip `reset_scene_state` on purpose — it wipes
+        // `scene.layer_state`, which would erase the mute snapshot the
+        // loader reads on re-entry. `load_usd_scene` / `finalize_usd_scene`
+        // overwrite the USD halves of `SceneManager` internally and call
+        // `reload_working_scene` for the GPU rebuild, which is what we
+        // need here. Post-Phase-F node restoration may want a "reset
+        // node caches but preserve layer_state" path for hybrid setups.
+        let reload_result = with_viewport_mut(|vp| {
+            let r = vp.renderer_mut();
+            if let Some(state) = r.scene.layer_state.as_mut() {
+                state.set_muted(&identifier, muted);
+            }
+            r.load_usd_scene(&path)
+        });
+
+        match reload_result {
+            Some(Ok(())) => {
+                // Refresh the shell mirror from the freshly-composed
+                // stage (muted layers now report `is_muted=true`, and
+                // per-prim strongest-layer assignments may have shifted).
+                let fresh_state =
+                    with_viewport_mut(|vp| vp.renderer_mut().scene.layer_state.clone()).flatten();
+                self.as_mut().rust_mut().scene_layer_state = fresh_state;
+                bump_revision(self.as_mut());
+                bump_scene_browser_revision(self.as_mut());
+                let verb = if muted { "muted" } else { "unmuted" };
+                self.as_mut()
+                    .set_status_message(cxx_qt_lib::QString::from(&format!(
+                        "Layer {verb}: {identifier}",
+                    )));
+            }
+            Some(Err(e)) => {
+                log::error!("layer mute reload failed: {e:?}");
+                self.as_mut()
+                    .set_status_message(cxx_qt_lib::QString::from(&format!("Mute failed: {e:?}")));
+            }
+            None => {
+                log::warn!("layer mute: viewport not ready — shell mirror updated only");
+            }
+        }
     }
 
     fn set_working_layer(mut self: Pin<&mut Self>, index: i32) {

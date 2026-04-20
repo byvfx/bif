@@ -1,6 +1,26 @@
-# Session Handoff — April 19, 2026 (v0.15-qt review pass + Commit 1a blockers shipped)
+# Session Handoff — April 19, 2026 (v0.15-qt review pass + Commits 1a + 1b shipped)
 
-**Last Updated:** 2026-04-19 evening. Third review pass on v0.15-qt (40 unpushed commits) — two reviewer subagents + a behavior-focused manual pass. Agents found 0 blockers / 8 Major / 12 Minor / 6 Nits (scaffolding + hygiene). Manual pass found 3 real blockers (selection fork, mute UI-only, teardown leak) + 2 Medium + 1 Low — behavioral gaps the agents missed because they never exercised cross-panel sync. Consolidated plan at `C:\Users\brandon\.claude\plans\v015-qt-consolidated-fixup-plan.md` (5 commits, blockers split first). **Commit 1a shipped (this session):** B1 selection sync + B3 teardown + M1 timeline clamp. `cargo build` + `clippy -D warnings` + `fmt --check` clean; 151/153 bif_viewport tests pass (2 pre-existing: known flaky + unrelated material test). **Next session: Commit 1b = B2 mute pipeline** — `UsdStage::set_layer_muted` exists (`cpp_bridge.rs:2390`); renderer needs either a "re-extract from live stage" path or a mute-survives-reload workaround. Then commits 2–5 (housekeeping, property inspector O(N²) cache, ortho aspect + QTimer gating + demo-seed guard, optional scene browser lazy fetchMore).
+**Last Updated:** 2026-04-19 late evening. Third review pass on v0.15-qt (40+ unpushed commits) — two reviewer subagents + a behavior-focused manual pass. Agents found 0 blockers / 8 Major / 12 Minor / 6 Nits (scaffolding + hygiene). Manual pass found 3 real blockers (selection fork, mute UI-only, teardown leak) + 2 Medium + 1 Low — behavioral gaps the agents missed because they never exercised cross-panel sync. Consolidated plan at `C:\Users\brandon\.claude\plans\v015-qt-consolidated-fixup-plan.md` (5 commits, blockers split first). **Shipped this session:** Commit 1a (B1 selection sync + B3 teardown + M1 timeline clamp) and Commit 1b (B2 mute pipeline). 1b was much simpler than feared — `scene_loader.rs:1481-1508` already preserves mutes across reopens via `load_usd_with_stage_muted`, so the fix is pure wiring: mutate `renderer.scene.layer_state.muted`, call `load_usd_scene(&current_stage_path)`, refresh shell mirror. `cargo build` + `clippy -D warnings` + `fmt --check` clean. **Next session:** push 1a + 1b (or dogfood first), then commits 2–5 (housekeeping, property inspector O(N²) cache, ortho aspect + QTimer gating + demo-seed guard, optional scene browser lazy fetchMore).
+
+## 🏁 2026-04-19 late evening — v0.15-qt Commit 1b (B2 mute pipeline)
+
+**The fix was simpler than planned.** Research revealed `scene_loader.rs::load_usd_scene` (lines 1496-1508) already snapshots `scene.layer_state.muted` at entry and replays via `load_usd_with_stage_muted` *before* payloads fetch — the loader was designed for repeated re-entry on mute/variant changes ("implicit stage reopens" per comment at 1492-1495). No new `Renderer::refresh_scene_from_live_stage()` API needed.
+
+**Implementation (bif_qt/src/main_window.rs::set_layer_muted):**
+1. Update shell mirror (existing behavior).
+2. If no `current_stage_path` (demo stack): stop — no regression from Phase C.1.
+3. Mutate `renderer.scene.layer_state.muted` via `with_viewport_mut`; call `r.load_usd_scene(&path)`. Loader picks up the muted set, reopens with mutes applied pre-payload, re-extracts geometry, rebuilds GPU via `reload_working_scene`.
+4. Refresh shell mirror from freshly-composed stage; bump `layer_state_revision` + `scene_browser_revision` so property inspector / tree / color dots re-resolve.
+5. Status bar shows `"Layer muted: <identifier>"` or the reload error.
+
+**Key decision — skip `reset_scene_state`.** That wipes `scene.layer_state` which would erase the mute snapshot the loader depends on. `finalize_usd_scene` already overwrites the USD halves of `SceneManager` internally. Post-Phase-F node-graph restoration may want a "reset node caches but preserve layer_state" variant — left as a TODO comment.
+
+**Non-obvious bits:**
+- `SceneLayerState::muted` is the authoritative set; `LayerInfo::is_muted` per-layer flags are derived — `SceneLayerState::from_stage` reconstructs them from the composed stage after reload. Don't need to manually flip per-layer flags.
+- Qt `scene_layer_state` is a mirror of `renderer.scene.layer_state`. Mutations must flow to the renderer side *before* reload so the loader's snapshot sees them, then mirror refreshes from renderer after.
+- Empty-scene case (mute removes the def-providing layer) is handled at `scene_loader.rs:1528-1557` — viewport clears, `layer_state` stays populated so the Layer Stack panel can unmute. Nothing for bif_qt to do.
+
+
 
 ## 🏁 2026-04-19 evening — v0.15-qt Commit 1a (B1 + B3 + M1)
 
