@@ -52,6 +52,7 @@ mod types;
 
 // Re-exports from new modules
 pub use app_event::{AppEvent, EventBus};
+pub use bif_math::OrthoPreset;
 pub use culling_manager::CullingManager;
 pub use environment::GpuEnvironment;
 pub use environment_manager::EnvironmentManager;
@@ -1206,6 +1207,45 @@ impl Renderer {
                 log::error!("Failed to get USD camera transform: {:?}", e);
             }
         }
+    }
+
+    /// Look through a USD camera at the current timeline frame.
+    pub fn apply_usd_camera(&mut self, camera_path: &str) {
+        self.cam.viewport_camera_source = CameraSource::UsdCamera(camera_path.to_string());
+        self.cam.selected_usd_camera = Some(camera_path.to_string());
+        self.cam.camera_locked = true;
+        self.sync_viewport_to_usd_camera(camera_path);
+    }
+
+    /// Snap viewport to an orthographic preset view.
+    pub fn apply_ortho_view(&mut self, preset: bif_math::OrthoPreset) {
+        let dir = preset.direction();
+        let up = preset.up();
+        let dist = (self.cam.camera.target - self.cam.camera.position)
+            .length()
+            .max(5.0);
+        self.cam.camera.position = self.cam.camera.target + dir * dist;
+        self.cam.camera.up = up;
+        let normalized = (self.cam.camera.position - self.cam.camera.target).normalize();
+        self.cam.camera.yaw = normalized.z.atan2(normalized.x);
+        self.cam.camera.pitch = normalized.y.asin();
+        self.cam.camera.distance = dist;
+        self.cam.camera.projection = bif_math::ProjectionMode::Orthographic {
+            ortho_size: dist * 0.5,
+        };
+        self.cam.viewport_camera_source = CameraSource::OrthoView(preset);
+        self.cam.selected_usd_camera = None;
+        self.cam.camera_locked = false;
+        self.update_camera();
+    }
+
+    /// Reset to free perspective orbit (clears any USD/ortho camera lock).
+    pub fn apply_free_fly(&mut self) {
+        self.cam.camera.projection = bif_math::ProjectionMode::Perspective;
+        self.cam.camera_locked = false;
+        self.cam.viewport_camera_source = CameraSource::Viewport;
+        self.cam.selected_usd_camera = None;
+        self.update_camera();
     }
 
     /// Sync viewport camera to a scene camera (from Camera primitive).

@@ -2225,6 +2225,16 @@ impl UsdStage {
         Ok(prims)
     }
 
+    /// Return paths of all UsdGeomCamera prims in the stage.
+    pub fn list_camera_prims(&self) -> UsdBridgeResult<Vec<String>> {
+        Ok(self
+            .all_prims()?
+            .into_iter()
+            .filter(|p| p.type_name == "Camera")
+            .map(|p| p.path)
+            .collect())
+    }
+
     /// Helper to convert raw prim info to Rust type.
     fn convert_prim_info(raw: &UsdBridgePrimInfoRaw) -> UsdBridgeResult<UsdPrimInfo> {
         // SAFETY: raw populated by FFI call in caller; pointers valid while stage is open

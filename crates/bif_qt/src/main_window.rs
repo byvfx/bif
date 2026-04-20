@@ -258,6 +258,8 @@ pub mod qobject {
         /// Continue) à la Nuke.
         #[qproperty(bool, loop_playback)]
         #[qproperty(bool, is_playing)]
+        /// Bumped on stage load/close so the camera picker repopulates.
+        #[qproperty(i32, camera_list_revision)]
         type BifShellState = super::BifShellStateRust;
 
         /// Smoke-test invokable — verifies Rust↔C++ round-trip.
@@ -585,6 +587,24 @@ pub mod qobject {
         /// `attr_index` of the selected prim. -1 when unresolvable.
         #[qinvokable]
         fn selected_prim_attr_color_index_at(self: &BifShellState, attr_index: i32) -> i32;
+
+        // ---- Camera picker surface ----
+
+        /// Number of UsdGeomCamera prims in the loaded stage. 0 when no stage.
+        #[qinvokable]
+        fn usd_camera_count(self: &BifShellState) -> i32;
+
+        /// Full prim path of USD camera at `index`. Empty on OOB.
+        #[qinvokable]
+        fn usd_camera_path_at(self: &BifShellState, index: i32) -> QString;
+
+        /// Active camera source key: "free" | "ortho:Top" | "usd:/path".
+        #[qinvokable]
+        fn active_camera_name(self: &BifShellState) -> QString;
+
+        /// Switch camera. `source` is "free", "ortho:<Preset>", or "usd:<path>".
+        #[qinvokable]
+        fn on_select_camera(self: Pin<&mut BifShellState>, source: QString);
     }
 }
 
@@ -641,6 +661,13 @@ pub struct BifShellStateRust {
     /// will replace it with a proper stage handle shared between
     /// `BifShellState` and `ViewportCallbacks::viewport.renderer.scene`.
     pub current_stage_path: Option<std::path::PathBuf>,
+    /// Monotonic counter bumped on stage load/close so the camera picker
+    /// QComboBox knows to repopulate its USD camera entries.
+    pub camera_list_revision: i32,
+    /// UsdGeomCamera prim paths cached from the last successful stage load.
+    pub usd_camera_paths: Vec<String>,
+    /// Active camera source key: "free" | "ortho:<Preset>" | "usd:<path>".
+    pub active_camera_source: String,
 }
 
 impl Default for BifShellStateRust {
@@ -662,6 +689,9 @@ impl Default for BifShellStateRust {
             loop_playback: true,
             is_playing: false,
             current_stage_path: None,
+            camera_list_revision: 0,
+            usd_camera_paths: Vec::new(),
+            active_camera_source: "free".to_string(),
         }
     }
 }
@@ -858,6 +888,17 @@ impl qobject::BifShellState {
                 bump_revision(self.as_mut());
                 bump_scene_browser_revision(self.as_mut());
 
+                // Populate camera picker: collect UsdGeomCamera prim paths.
+                let camera_paths =
+                    with_stage(|stage| stage.list_camera_prims().unwrap_or_default())
+                        .unwrap_or_default();
+                {
+                    let mut r = self.as_mut().rust_mut();
+                    r.usd_camera_paths = camera_paths;
+                    r.active_camera_source = "free".to_string();
+                }
+                bump_camera_list_revision(self.as_mut());
+
                 log::info!("stage loaded: {path_str}");
                 let msg = if edit_target_name.is_empty() {
                     format!("Loaded: {path_str}")
@@ -890,7 +931,10 @@ impl qobject::BifShellState {
             let mut r = self.as_mut().rust_mut();
             r.scene_layer_state = None;
             r.current_stage_path = None;
+            r.usd_camera_paths = Vec::new();
+            r.active_camera_source = "free".to_string();
         }
+        bump_camera_list_revision(self.as_mut());
         self.as_mut()
             .set_selected_prim_path(cxx_qt_lib::QString::from(""));
         self.as_mut()
@@ -1641,6 +1685,51 @@ impl qobject::BifShellState {
             None => -1,
         }
     }
+
+    // -----------------------------------------------------------------
+    // Camera picker surface
+    // -----------------------------------------------------------------
+
+    fn usd_camera_count(&self) -> i32 {
+        self.rust().usd_camera_paths.len() as i32
+    }
+
+    fn usd_camera_path_at(&self, index: i32) -> cxx_qt_lib::QString {
+        self.rust()
+            .usd_camera_paths
+            .get(index as usize)
+            .map(|s| cxx_qt_lib::QString::from(s.as_str()))
+            .unwrap_or_default()
+    }
+
+    fn active_camera_name(&self) -> cxx_qt_lib::QString {
+        cxx_qt_lib::QString::from(self.rust().active_camera_source.as_str())
+    }
+
+    fn on_select_camera(mut self: Pin<&mut Self>, source: cxx_qt_lib::QString) {
+        let source_str: String = (&source).into();
+        self.as_mut().rust_mut().active_camera_source = source_str.clone();
+
+        if source_str == "free" {
+            with_viewport_mut(|vp| vp.renderer_mut().apply_free_fly());
+        } else if let Some(preset_str) = source_str.strip_prefix("ortho:") {
+            let preset = match preset_str {
+                "Top" => Some(bif_viewport::OrthoPreset::Top),
+                "Bottom" => Some(bif_viewport::OrthoPreset::Bottom),
+                "Front" => Some(bif_viewport::OrthoPreset::Front),
+                "Back" => Some(bif_viewport::OrthoPreset::Back),
+                "Right" => Some(bif_viewport::OrthoPreset::Right),
+                "Left" => Some(bif_viewport::OrthoPreset::Left),
+                _ => None,
+            };
+            if let Some(preset) = preset {
+                with_viewport_mut(|vp| vp.renderer_mut().apply_ortho_view(preset));
+            }
+        } else if let Some(path) = source_str.strip_prefix("usd:") {
+            let path = path.to_string();
+            with_viewport_mut(|vp| vp.renderer_mut().apply_usd_camera(&path));
+        }
+    }
 }
 
 /// Increment `layer_state_revision` to trigger the cxx-qt-generated
@@ -1657,6 +1746,13 @@ fn bump_revision(mut state: Pin<&mut qobject::BifShellState>) {
 fn bump_scene_browser_revision(mut state: Pin<&mut qobject::BifShellState>) {
     let next = state.as_ref().rust().scene_browser_revision.wrapping_add(1);
     state.as_mut().set_scene_browser_revision(next);
+}
+
+/// Increment `camera_list_revision` to trigger `camera_list_revisionChanged`.
+/// The camera picker QComboBox repopulates its USD camera entries on this signal.
+fn bump_camera_list_revision(mut state: Pin<&mut qobject::BifShellState>) {
+    let next = state.as_ref().rust().camera_list_revision.wrapping_add(1);
+    state.as_mut().set_camera_list_revision(next);
 }
 
 /// Convert a synthetic `/BIF/{real_path}/{idx}` instance path back to

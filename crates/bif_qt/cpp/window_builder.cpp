@@ -12,6 +12,7 @@
 
 #include <QAction>
 #include <QApplication>
+#include <QComboBox>
 #include <QByteArray>
 #include <QColor>
 #include <QDockWidget>
@@ -403,6 +404,75 @@ CentralArea build_central_area(QMainWindow* window, BifShellState* state) {
     ca.breadcrumb = build_breadcrumb_bar(window);
     ca.breadcrumb->setParent(breadcrumb_row);
     row_layout->addWidget(ca.breadcrumb, 1);
+
+    // Camera picker — QComboBox that lists Free / ortho presets / USD cameras.
+    // Repopulates when `camera_list_revision` changes (stage load/close).
+    auto* camera_picker = new QComboBox(breadcrumb_row);
+    camera_picker->setObjectName(QStringLiteral("camera_picker"));
+    camera_picker->setMinimumWidth(130);
+    camera_picker->setMaximumWidth(180);
+    camera_picker->setStyleSheet(QStringLiteral(
+        "QComboBox#camera_picker {"
+        "  background-color: rgba(34, 38, 44, 200);"
+        "  color: rgba(180, 185, 195, 255);"
+        "  border: 1px solid rgba(55, 60, 70, 255);"
+        "  border-radius: 3px;"
+        "  padding: 2px 6px;"
+        "  font-size: 11px;"
+        "}"
+        "QComboBox#camera_picker::drop-down { border: none; }"
+        "QComboBox#camera_picker:hover { border-color: rgba(90, 100, 120, 255); }"));
+
+    auto populate_camera_picker = [=]() {
+        camera_picker->blockSignals(true);
+        camera_picker->clear();
+        camera_picker->addItem(QStringLiteral("Perspective"), QStringLiteral("free"));
+        camera_picker->insertSeparator(camera_picker->count());
+        const struct { const char* label; const char* key; } ortho_views[] = {
+            {"Top",    "ortho:Top"},
+            {"Bottom", "ortho:Bottom"},
+            {"Front",  "ortho:Front"},
+            {"Back",   "ortho:Back"},
+            {"Right",  "ortho:Right"},
+            {"Left",   "ortho:Left"},
+        };
+        for (const auto& v : ortho_views)
+            camera_picker->addItem(QString::fromLatin1(v.label),
+                                   QString::fromLatin1(v.key));
+        int usd_count = state->usd_camera_count();
+        if (usd_count > 0) {
+            camera_picker->insertSeparator(camera_picker->count());
+            for (int i = 0; i < usd_count; ++i) {
+                auto path = state->usd_camera_path_at(i);
+                auto leaf = path.split(QLatin1Char('/')).last();
+                camera_picker->addItem(leaf, QStringLiteral("usd:") + path);
+            }
+        }
+        // Restore active selection
+        auto active = state->active_camera_name();
+        for (int i = 0; i < camera_picker->count(); ++i) {
+            if (camera_picker->itemData(i).toString() == active) {
+                camera_picker->setCurrentIndex(i);
+                break;
+            }
+        }
+        camera_picker->blockSignals(false);
+    };
+
+    populate_camera_picker();
+
+    QObject::connect(state, &BifShellState::camera_list_revisionChanged,
+                     camera_picker, populate_camera_picker);
+
+    QObject::connect(camera_picker,
+                     QOverload<int>::of(&QComboBox::currentIndexChanged),
+                     state, [=](int index) {
+                         auto key = camera_picker->itemData(index).toString();
+                         if (!key.isEmpty())
+                             state->on_select_camera(key);
+                     });
+
+    row_layout->addWidget(camera_picker, 0);
 
     ca.edit_target_pill = build_edit_target_chip(breadcrumb_row, state, /*compact=*/false);
     row_layout->addWidget(ca.edit_target_pill, 0);
