@@ -260,6 +260,12 @@ pub mod qobject {
         #[qproperty(bool, is_playing)]
         /// Bumped on stage load/close so the camera picker repopulates.
         #[qproperty(i32, camera_list_revision)]
+        /// Viewport — when true (default), the built-in box-LOD system
+        /// swaps full geometry for AABB boxes past the per-instance
+        /// distance threshold. Bound to View → Toggle LOD. Mirrors
+        /// `Renderer::display_settings.lod_enabled` after a successful
+        /// toggle; viewport owns the behavior, qprop owns the UI bind.
+        #[qproperty(bool, lod_enabled)]
         type BifShellState = super::BifShellStateRust;
 
         /// Smoke-test invokable — verifies Rust↔C++ round-trip.
@@ -328,6 +334,14 @@ pub mod qobject {
         /// updates in the same invocation.
         #[qinvokable]
         fn on_tree_prim_selected(self: Pin<&mut BifShellState>, path: QString, type_name: QString);
+
+        /// View → Toggle LOD. Updates the `lod_enabled` qprop and
+        /// mirrors the new value onto `Renderer::display_settings.lod_enabled`
+        /// so the next culling pass honors it. Default-on matches the
+        /// pre-Qt egui behavior; artists can disable when the box-LOD
+        /// swap is confusing selection or debugging geometry.
+        #[qinvokable]
+        fn on_set_lod_enabled(self: Pin<&mut BifShellState>, enabled: bool);
 
         /// File/Save As (Ctrl+Shift+S). Phase B stub.
         #[qinvokable]
@@ -676,6 +690,10 @@ pub struct BifShellStateRust {
     pub usd_camera_paths: Vec<String>,
     /// Active camera source key: "free" | "ortho:<Preset>" | "usd:<path>".
     pub active_camera_source: String,
+    /// Viewport — built-in box-LOD toggle. Default `true` matches
+    /// `DisplaySettings::default()` in bif_viewport. Mirrored onto
+    /// `Renderer::display_settings.lod_enabled` by `on_set_lod_enabled`.
+    pub lod_enabled: bool,
 }
 
 impl Default for BifShellStateRust {
@@ -700,6 +718,7 @@ impl Default for BifShellStateRust {
             camera_list_revision: 0,
             usd_camera_paths: Vec::new(),
             active_camera_source: "free".to_string(),
+            lod_enabled: true,
         }
     }
 }
@@ -1035,12 +1054,21 @@ impl qobject::BifShellState {
             let r = vp.renderer_mut();
             r.select_at_screen(x as f32, y as f32);
             let idx = r.selection.selected_instance_index?;
-            let raw = r
-                .scene
-                .working_scene
-                .instances()
-                .get(idx)
-                .map(|inst| (*inst.prim_path).to_string())?;
+            // Pick indices align with `scene.instances.prim_paths` — the
+            // same collection `select_at_screen` uses internally for path
+            // resolution (bif_viewport/src/lib.rs:1378). Reading from
+            // `working_scene.instances()` yields empty paths for some
+            // prototype-sourced instances on post-composition scenes,
+            // which is why the status bar was showing "Selected: " with
+            // no path after a successful hit.
+            let raw = r.scene.instances.prim_paths.get(idx).cloned()?;
+            if raw.is_empty() {
+                log::warn!(
+                    "pick idx={idx} resolved to empty prim_path at \
+                     scene.instances.prim_paths[{idx}] — stage/pick desync?"
+                );
+                return None;
+            }
             let path = denormalize_synthetic_path(&raw);
             let stage_arc = r.scene.usd_stage.clone();
             let type_name = stage_arc
@@ -1051,6 +1079,7 @@ impl qobject::BifShellState {
                         .map(|info| info.type_name)
                 })
                 .unwrap_or_default();
+            log::debug!("pick idx={idx} raw={raw} path={path} type={type_name}");
             Some((path, type_name))
         })
         .flatten();
@@ -1093,6 +1122,28 @@ impl qobject::BifShellState {
         // (which binds to `selected_prim_pathChanged`) updates too.
         self.as_mut().set_selected_prim_path(path);
         self.as_mut().set_selected_prim_type(type_name);
+    }
+
+    fn on_set_lod_enabled(mut self: Pin<&mut Self>, enabled: bool) {
+        // Update the qprop first so the menu checkbox reflects the new
+        // state even if the viewport isn't ready yet (pre-surfaceReady).
+        self.as_mut().set_lod_enabled(enabled);
+        let applied = with_viewport_mut(|vp| {
+            vp.renderer_mut().display_settings.lod_enabled = enabled;
+        })
+        .is_some();
+        let msg = if applied {
+            if enabled {
+                "LOD: enabled"
+            } else {
+                "LOD: disabled"
+            }
+        } else {
+            "LOD toggle deferred — viewport not ready"
+        };
+        log::info!("set_lod_enabled({enabled}) applied={applied}");
+        self.as_mut()
+            .set_status_message(cxx_qt_lib::QString::from(msg));
     }
 
     // -----------------------------------------------------------------

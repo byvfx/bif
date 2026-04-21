@@ -139,6 +139,7 @@ struct MenuActions {
     QAction* workspace_materials;
     QAction* workspace_render;
     QAction* zen_mode;
+    QAction* toggle_lod;
 
     QAction* about;
 };
@@ -202,6 +203,10 @@ MenuActions build_menu_bar(QMainWindow* window) {
     a.zen_mode = view->addAction(QStringLiteral("&Zen Mode"));
     a.zen_mode->setShortcut(QKeySequence(QStringLiteral("Ctrl+\\")));
     a.zen_mode->setCheckable(true);
+    a.toggle_lod = view->addAction(QStringLiteral("Viewport &LOD"));
+    a.toggle_lod->setShortcut(QKeySequence(QStringLiteral("Ctrl+L")));
+    a.toggle_lod->setCheckable(true);
+    a.toggle_lod->setChecked(true);  // DisplaySettings::default = true
 
     auto* help = menu->addMenu(QStringLiteral("&Help"));
     a.about = help->addAction(QStringLiteral("&About BIF"));
@@ -651,6 +656,12 @@ void wire_shell_actions(
             update_status();
         });
 
+    QObject::connect(actions.toggle_lod, &QAction::toggled, window,
+        [shell_state, update_status](bool enabled) {
+            shell_state->on_set_lod_enabled(enabled);
+            update_status();
+        });
+
     QObject::connect(actions.about, &QAction::triggered, window,
         [shell_state, update_status]() {
             shell_state->on_about();
@@ -946,6 +957,7 @@ int bif_qt_run_shell(ViewportCallbacks* viewport_cb, ::rust::Str stylesheet) {
         commands.insert(QStringLiteral("Workspace: Materials"), menu_actions.workspace_materials);
         commands.insert(QStringLiteral("Workspace: Render"), menu_actions.workspace_render);
         commands.insert(QStringLiteral("View: Toggle Zen Mode"), menu_actions.zen_mode);
+        commands.insert(QStringLiteral("View: Toggle Viewport LOD"), menu_actions.toggle_lod);
         commands.insert(QStringLiteral("Help: About BIF"), menu_actions.about);
 
         // Owned by `window` via Qt parent-child; deleted on shutdown.
