@@ -1,3 +1,30 @@
+# Session Handoff — April 21, 2026 (polish batch + site regen — v0.15-qt ready for merge)
+
+**Last Updated:** 2026-04-21. Option 2 polish batch landed: `on_about` uses `BIF_QT_VERSION` (was hardcoded `v0.14.0 (Phase B shell)`), bare `env_logger::init()` removed from `bif_viewer/src/main.rs` (was shadowing `bif_qt::run`'s tuned wgpu filter), `bif_qt_spike` crate deleted (ADR-006 shipped, gate passed), orphan `on_open_stage` invokable deleted (zero C++ callers). Site regenerated via `scripts/generate-site.sh` — touched `SUMMARY.md` + `reference/changelog.md`. **Site deploy root cause identified:** `.github/workflows/pages.yml` is gated to `branches: [main]`, so feature branches never trigger Pages builds. Site will update on merge. **Next action:** merge `v0.15-qt` → `main` with `--no-ff` (preserves the 40+ phase-by-phase commit history for the Qt migration). Remaining review items (property inspector O(N²) cache, ortho aspect + QTimer gating + demo-seed guard, optional scene browser lazy fetchMore) stay as post-merge cleanup on `main`.
+
+## 🏁 2026-04-21 — polish batch + site regen
+
+- **About string** — `crate::BIF_QT_VERSION` const replaces hardcoded `v0.14.0 (Phase B shell)`.
+- **env_logger dedup** — bare `init()` removed from `bif_viewer/src/main.rs`; env_logger dep dropped from `bif_viewer/Cargo.toml`. Call-site comment documents why the init must live in `bif_qt::run()` alone (the bare one silently wins and drops the tuned wgpu filter).
+- **`bif_qt_spike` crate deleted** — workspace member removed, directory `rm -rf`'d, `setup_qt_env.ps1` doc comment updated. ~600 LOC + full wgpu/cxx-build/qt-build-utils double-compile gone from every build.
+- **Orphan `on_open_stage` deleted** — zero C++ call sites; live path is `on_stage_path_opened`. Declaration + impl removed.
+- **Site regen** — devlog mirror + USD docs mirror re-copied; `SUMMARY.md` + `reference/changelog.md` updated.
+- **Pages workflow investigation** — `pages.yml` filters `branches: [main]`, so no feature-branch deploys. Site updates post-merge.
+
+## Merge instructions (next action)
+
+```bash
+git checkout main
+git pull
+git merge --no-ff v0.15-qt -m "Merge branch 'v0.15-qt' — Qt migration + review blockers + polish batch"
+git push
+# Pages workflow fires on main push → site rebuilds + deploys
+```
+
+Don't squash — the 40+ phase-by-phase commits are useful context for future debugging of the Qt migration.
+
+---
+
 # Session Handoff — April 20, 2026 (v0.15-qt PUSHED — review blockers + dogfood fixes live)
 
 **Last Updated:** 2026-04-20 end-of-day. **`v0.15-qt` is pushed to `origin`** (tracking `origin/v0.15-qt`, PR URL https://github.com/byvfx/bif/pull/new/v0.15-qt). Two sessions' work shipped: review blockers 1a + 1b + dogfood pick-path fix + LOD toggle restoration + FEATURES note for selection-outline polish. Dogfood results: pick now returns real paths + tree highlights, mute works on real stages, teardown stable; selection outline IS drawn (`outline.wgsl` back-face normal-expanded silhouette, labeled "Selection Outline Pipeline" at `bif_viewport/src/lib.rs:632` but stored in var named `wireframe_pipeline`) but too subtle for the default docked-viewport size (`OUTLINE_SIZE=0.004` NDC → ~1.6px in an 800px viewport). Deferred to FEATURES.md as a "promote to uniform + spinbox in Render Settings" followup rather than chased tonight.

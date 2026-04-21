@@ -8,7 +8,11 @@
 // open via File → Open Stage. Tracked in BUGLIST.
 
 fn main() {
-    env_logger::init();
+    // NB: do NOT call `env_logger::init()` here — `bif_qt::run()` runs
+    // its own `try_init()` with a tuned filter
+    // ("info,wgpu_core=warn,wgpu_hal=error,naga=warn"). A bare `init()`
+    // here wins first and shadows that filter, so the shipping binary
+    // would see wgpu log spam at 60 FPS.
     match bif_qt::run() {
         Ok(rc) => std::process::exit(rc),
         Err(e) => {

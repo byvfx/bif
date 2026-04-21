@@ -8,7 +8,6 @@ members = [
     "crates/bif_viewer",
     "crates/bif_maketx",
     "crates/bif_qt",
-    "crates/bif_qt_spike",
     "benchmarks",
 ]
 

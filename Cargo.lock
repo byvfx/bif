@@ -429,22 +429,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bif_qt_spike"
-version = "0.14.0"
-dependencies = [
- "anyhow",
- "bytemuck",
- "cxx",
- "cxx-build",
- "env_logger",
- "log",
- "pollster",
- "qt-build-utils",
- "raw-window-handle",
- "wgpu",
-]
-
-[[package]]
 name = "bif_renderer"
 version = "0.14.0"
 dependencies = [
@@ -470,7 +454,6 @@ dependencies = [
  "bif_core",
  "bif_qt",
  "bif_viewport",
- "env_logger",
 ]
 
 [[package]]

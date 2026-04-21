@@ -21,5 +21,3 @@ oidn = ["bif_viewport/oidn"]
 bif_qt = { path = "../bif_qt" }
 bif_core = { path = "../bif_core" }
 bif_viewport = { path = "../bif_viewport" }
-
-env_logger = { workspace = true }

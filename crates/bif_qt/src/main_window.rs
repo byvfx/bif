@@ -276,10 +276,6 @@ pub mod qobject {
         #[qinvokable]
         fn on_new_stage(self: Pin<&mut BifShellState>);
 
-        /// File/Open Stage (Ctrl+O). Phase B stub.
-        #[qinvokable]
-        fn on_open_stage(self: Pin<&mut BifShellState>);
-
         /// File/Save (Ctrl+S). Phase B stub.
         #[qinvokable]
         fn on_save(self: Pin<&mut BifShellState>);
@@ -742,15 +738,6 @@ impl qobject::BifShellState {
         ));
     }
 
-    /// Phase B stub — Phase C wires to QFileDialog + UsdStage::Open
-    /// via bif_core.
-    fn on_open_stage(mut self: Pin<&mut Self>) {
-        log::info!("action: File/Open Stage");
-        self.as_mut().set_status_message(cxx_qt_lib::QString::from(
-            "Open Stage — not yet implemented (Phase C)",
-        ));
-    }
-
     /// Phase B stub — Phase C (actually v0.16) wires to save logic.
     /// Tier 1 item #4: gives clearer feedback about why nothing
     /// happened and flags the no-edit-target case explicitly.
@@ -820,9 +807,11 @@ impl qobject::BifShellState {
 
     fn on_about(mut self: Pin<&mut Self>) {
         log::info!("action: Help/About");
-        self.as_mut().set_status_message(cxx_qt_lib::QString::from(
-            "BIF — USD Orchestration Tool — bif_qt v0.14.0 (Phase B shell)",
-        ));
+        self.as_mut()
+            .set_status_message(cxx_qt_lib::QString::from(&format!(
+                "BIF — USD Orchestration Tool — bif_qt {}",
+                crate::BIF_QT_VERSION,
+            )));
     }
 
     fn on_stage_path_opened(mut self: Pin<&mut Self>, path: cxx_qt_lib::QString) {

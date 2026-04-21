@@ -6,7 +6,15 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Removed
+
+- **`bif_qt_spike` crate deleted** (2026-04-21). Self-labelled "GATE crate — delete after Phase 0 decision lands in ADR-006"; ADR-006 merged, Phase 0 gate passed, `bif_qt` shipped the production path. Removing eliminates ~600 LOC of maintenance surface and trims every `cargo build` (no more wgpu + cxx-build + qt-build-utils double-compilation). Git history retains the spike for posterity. Also removed from `setup_qt_env.ps1`'s doc comment.
+- **Orphan `on_open_stage` invokable deleted** from `BifShellState`. Zero C++ call sites — the live File → Open path runs through `on_stage_path_opened` (called by `window_builder.cpp::trigger_open_stage` after `QFileDialog::getOpenFileName`). The stub was dead code from Phase B and would have been a wiring accident waiting to happen if someone accidentally re-bound the menu to it.
+
 ### Fixed
+
+- **`bif_viewer` no longer double-inits `env_logger`** (2026-04-21). `bif_viewer/src/main.rs` previously called bare `env_logger::init()` before `bif_qt::run()`'s `try_init()` with the tuned filter `"info,wgpu_core=warn,wgpu_hal=error,naga=warn"`. The second call silently failed (by design of `try_init`), so the shipping binary lost the wgpu log filter — `d290c9d`'s "quiet wgpu_hal" work only applied via `bif_qt_shell`, not the real `bif_viewer` binary. Bare `init()` deleted + `env_logger` dep dropped from `bif_viewer/Cargo.toml`. A comment at the call site documents why the init must live in `bif_qt::run()` alone.
+- **About dialog stale version string** — `on_about` hardcoded `"bif_qt v0.14.0 (Phase B shell)"` on a v0.15 build. Replaced with `crate::BIF_QT_VERSION` (reads `CARGO_PKG_VERSION` at compile time) so the Help → About message tracks actual crate version going forward.
 
 - **v0.15-qt dogfood fix — viewport pick returned empty paths** (2026-04-20). Follow-up to review blocker 1a. After fixing the pick routing to go through `Renderer::select_at_screen`, the status bar showed "Selected: " with no path on hits. Root cause: `on_prim_pick` was looking up the denormalized path via `scene.working_scene.instances()[idx].prim_path`, but the index returned by `pick_instance_at` aligns with `scene.instances.prim_paths` (the collection `select_at_screen` uses internally at `bif_viewport/src/lib.rs:1378`). `working_scene.instances()[idx].prim_path` is empty for prototype-sourced instances on post-composition scenes, so the denormalized path came out empty. Fixed by switching to `scene.instances.prim_paths.get(idx)` with an early-return + warn log when the path resolves empty (catches any future stage/pick desync). Added `log::debug!` for raw vs denormalized vs type-name on every hit so field debugging is trivial.
 

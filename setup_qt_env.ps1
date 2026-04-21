@@ -1,6 +1,6 @@
 # BIF Qt Environment Setup
 #
-# Run this script before building/running bif_qt_spike or bif_qt:
+# Run this script before building/running bif_qt:
 #   . .\setup_qt_env.ps1
 #
 # Or source it alongside setup_usd_env.ps1 in your PowerShell profile.
