@@ -1,14 +1,38 @@
-# Session Handoff — April 20, 2026 (dogfood fix — pick path + LOD toggle)
+# Session Handoff — April 20, 2026 (v0.15-qt PUSHED — review blockers + dogfood fixes live)
 
-**Last Updated:** 2026-04-20 early. Dogfooded 1a/1b → viewport selection still returned empty paths ("Selected: " with no trailing string) on successful hits. Root cause: `on_prim_pick` looked up denormalized paths via `scene.working_scene.instances()[idx].prim_path` which returns empty for prototype-sourced instances; canonical lookup is `scene.instances.prim_paths.get(idx)` — the exact collection `Renderer::select_at_screen` uses internally at `bif_viewport/src/lib.rs:1378`. Swapped + added empty-path warn log + debug log of raw/denorm/type on every hit. Also restored the LOD toggle that was dropped with `render_ui.rs` in Phase F: new `#[qproperty(bool, lod_enabled)]` on `BifShellState`, `on_set_lod_enabled(bool)` invokable mirroring onto `Renderer::display_settings.lod_enabled`, View → Viewport LOD (Ctrl+L, checkable, default-on), command-palette entry. User suspected LOD might be interfering with selection — fixing both together lets them verify. `cargo build` + `clippy -D warnings` + `fmt --check` clean. **Next session: in-app verify pick + tree sync + LOD toggle, then push 1a+1b+this.** Commits 2–5 still outstanding per the consolidated plan.
+**Last Updated:** 2026-04-20 end-of-day. **`v0.15-qt` is pushed to `origin`** (tracking `origin/v0.15-qt`, PR URL https://github.com/byvfx/bif/pull/new/v0.15-qt). Two sessions' work shipped: review blockers 1a + 1b + dogfood pick-path fix + LOD toggle restoration + FEATURES note for selection-outline polish. Dogfood results: pick now returns real paths + tree highlights, mute works on real stages, teardown stable; selection outline IS drawn (`outline.wgsl` back-face normal-expanded silhouette, labeled "Selection Outline Pipeline" at `bif_viewport/src/lib.rs:632` but stored in var named `wireframe_pipeline`) but too subtle for the default docked-viewport size (`OUTLINE_SIZE=0.004` NDC → ~1.6px in an 800px viewport). Deferred to FEATURES.md as a "promote to uniform + spinbox in Render Settings" followup rather than chased tonight.
 
-## 🏁 2026-04-20 — dogfood fix (pick path alignment + LOD toggle)
+**Next session priorities** (pick order — none of them block each other):
+1. **Commit 2 — housekeeping batch.** Delete `bif_qt_spike` crate (self-labelled "delete after ADR-006", ADR-006 merged), remove duplicate `env_logger::init()` in `bif_viewer/src/main.rs` (bare `init()` shadows the tuned wgpu filter in `bif_qt::run()`), fix stale `"v0.14.0 (Phase B shell)"` About string → use `BIF_QT_VERSION` const, rename Phase B `on_new_stage`/`on_open_stage` stubs to `*_stub` so they don't shadow the live `on_stage_path_opened`. All low-risk text/structural edits.
+2. **Commit 3 — property inspector O(N²) snapshot cache.** `main_window.rs:1547+` invokables re-lock the stage + re-walk attributes per Qt paint cycle; for a 200-attr prim that's ~800 stack walks per repaint. Cache `Vec<AttrInfo>` on `selected_prim_pathChanged`; invalidate on `layer_state_revision`. Pattern mirrors the existing `scene_layer_state` mirror.
+3. **Commit 4 — ortho aspect + QTimer gating + demo-seed guard.** `bif_viewport/src/lib.rs:1233` — `apply_ortho_view` ignores viewport aspect; fix with `width = size * aspect`, frame from scene AABB. `render_widget.cpp:60` — gate `m_tick.start()` on `viewport_on_surface_ready` returning `true` (silent-black-viewport bug on adapter init failure). `main_window.rs:1061` + `scene_browser_model.cpp:147` — gate demo seed behind `has_stage` runtime check so first-launch looks empty until a real stage loads.
+4. **Commit 5 (optional)** — scene browser lazy `fetchMore` + per-parent cache. Full virtualization deferred to Phase E.3 proper.
+5. **FEATURES.md followup** — selection outline width knob + color.
+
+**Still untracked locally (not pushed):** `assets/screenshots/bif_ui_15.png`, `bif_ui_15_timeline.png`, `review/v0.15-qt-vfx.md`, `review/v0.15-qt-general.md`. Session artifacts — commit-or-ignore decision deferred to user.
+
+**Plan file for the 5-commit sequence:** `C:\Users\brandon\.claude\plans\v015-qt-consolidated-fixup-plan.md`. Re-read at start of next session before jumping in.
+
+## 🏁 2026-04-20 end-of-day — commits pushed on v0.15-qt
+
+Stack (all pushed to origin):
+
+| Commit | Change |
+|---|---|
+| `b4f080e` | docs: FEATURES — selection outline knob followup |
+| `e68eac5` | fix(qt): pick path alignment + restore LOD toggle (Ctrl+L) |
+| `89e0b04` | fix(qt): v0.15-qt review blocker 1b — layer mute wired through renderer |
+| `70dde20` | fix(qt): v0.15-qt review blockers 1a — selection sync + teardown + timeline clamp |
+| `f532f91` | docs: camera-picker changelog + devlog + wiki |
+
+## 🏁 2026-04-20 earlier — dogfood fix (pick path alignment + LOD toggle) — commit `e68eac5`
 
 - **Selection fix.** `bif_qt/src/main_window.rs::on_prim_pick` → `r.scene.instances.prim_paths.get(idx)` (was `r.scene.working_scene.instances().get(idx).prim_path`). Early-return + `log::warn!` when `raw.is_empty()` so we see stage/pick desync in the logs instead of a silent empty status. Added `log::debug!` showing `idx`, `raw`, denormalized `path`, `type_name` on every hit.
 - **LOD toggle.**
   - Rust: `lod_enabled: bool` field on `BifShellStateRust` (default `true`, matches `DisplaySettings::default`); `#[qproperty(bool, lod_enabled)]`; `#[qinvokable] on_set_lod_enabled(bool)` implementation updates qprop first then mirrors onto `Renderer::display_settings.lod_enabled` via `with_viewport_mut` (the `display_settings` field is already `pub` on `Renderer` — no new renderer API).
   - C++: `QAction* toggle_lod` added to `MenuActions`. View menu gets "Viewport &LOD" (Ctrl+L, checkable, default-checked). `QAction::toggled` → `shell_state->on_set_lod_enabled(checked)`. Command palette: "View: Toggle Viewport LOD".
 - **Non-obvious bit.** Pick indices align with `scene.instances.prim_paths`, not `scene.working_scene.instances()`. The split looks symmetric; it's not — first-principles reading misses this. When wiring selection in the future, copy the lookup from `Renderer::select_at_screen` directly.
+- **Selection outline investigation.** Confirmed the outline IS drawn (see `bif_viewport/src/shaders/outline.wgsl` + pipeline at `lib.rs:632`), but `OUTLINE_SIZE=0.004` NDC constant renders ~1.6px in an 800px docked viewport — effectively invisible. Filed to FEATURES.md for proper uniform + slider treatment. Commit `b4f080e`.
 
 ---
 
