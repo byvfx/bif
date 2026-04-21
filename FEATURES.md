@@ -1,6 +1,6 @@
 # FEATURES
 
-Last updated: 2026-04-16
+Last updated: 2026-04-20
 
 ## Rendering
 
@@ -28,6 +28,7 @@ Last updated: 2026-04-16
 - Add sub-surface scattering support (skin and organic materials).
 - Add multi-layer BRDF support.
 - Add renderpass support for AOVs and custom outputs, using the nodes and whatever comes with USD.
+- Viewport selection outline — better feedback. Today `OUTLINE_SIZE` is a shader constant in `outline.wgsl` (`0.004` NDC → ~3.8px at 1920 framebuffer, ~1.6px in a typical docked 800px viewport — effectively invisible for most users). Work: (a) bump default for visibility, (b) promote to a uniform at `@group(1) @binding(0)`, (c) expose `DisplaySettings::outline_width_px: f32` on `Renderer`, (d) `#[qproperty(f32, outline_width_px)]` + `on_set_outline_width` invokable on `BifShellState`, (e) `QDoubleSpinBox` in the Render Settings panel (1.0–20.0 px, step 0.5). Also consider a color knob (currently hardcoded orange-gold in `outline.wgsl::fs_main`).
   
 ## USD
 
