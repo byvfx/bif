@@ -1093,6 +1093,7 @@ pub fn render_xform_properties(
 
 /// Render parameters for the selected node in the property inspector.
 /// Returns a list of node graph events to emit.
+#[allow(dead_code)] // Phase F: caller in `render_ui.rs` deleted; in-tree dead code.
 pub(crate) fn render_node_properties(
     ui: &mut egui::Ui,
     node: &mut SceneNode,

@@ -1,0 +1,42 @@
+[package]
+name = "bif_qt"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+publish = false
+
+# v0.15.0 Qt UI crate. Replaces bif_viewport's egui panels. Depends
+# on bif_core (UI-agnostic data), bif_renderer (wgpu), and the
+# cxx-qt / Qt 6 stack validated in bif_qt_spike + ADR-006.
+
+[lib]
+name = "bif_qt"
+path = "src/lib.rs"
+
+# Standalone binary for Phase A/B manual testing before bif_viewer
+# switches over. Will be removed once bif_viewer targets bif_qt.
+[[bin]]
+name = "bif_qt_shell"
+path = "src/bin/bif_qt_shell.rs"
+
+[dependencies]
+bif_core = { path = "../bif_core" }
+bif_renderer = { path = "../bif_renderer" }
+bif_viewport = { path = "../bif_viewport" }
+
+cxx.workspace = true
+cxx-qt.workspace = true
+cxx-qt-lib.workspace = true
+
+wgpu.workspace = true
+pollster.workspace = true
+raw-window-handle.workspace = true
+
+anyhow.workspace = true
+log.workspace = true
+env_logger.workspace = true
+
+[build-dependencies]
+cxx-qt-build.workspace = true
+qt-build-utils.workspace = true

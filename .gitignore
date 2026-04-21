@@ -11,3 +11,5 @@
 # Obsidian user-specific state
 wiki/.obsidian/workspace.json
 wiki/.obsidian/workspace-mobile.json
+# Added by code-review-graph
+.code-review-graph/

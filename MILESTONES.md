@@ -22,6 +22,26 @@ Roadmap organized by semantic version. Each release is testable, demoable, and g
 
 ## In Progress
 
+### v0.15.0 — Qt Migration (M28 Shell)
+
+Branch: `v0.15-qt`. Plan: `C:\Users\brandon\.claude\plans\iridescent-soaring-hamster.md`. ~50h ceiling.
+
+- **Phase 0 ✅ (2026-04-13):** wgpu-into-QWidget spike gate PASSED. Qt 6.8.3 LTS + MSVC 2022 + cxx 1.0 + qt-build-utils 0.7 toolchain proven. See [ADR-006](wiki/architecture/adr/006-qt-via-cxx-qt.md). Evidence: `assets/screenshots/qt_spike_wgpu.PNG`.
+- **Phase A ✅ (2026-04-13):** `crates/bif_qt/` scaffolding landed. First real `#[cxx_qt::bridge]` compiles against Qt 6.8.3 LTS + cxx-qt 0.7 + MSVC. `BifShellState` QObject with 2 qproperties + 1 qinvokable. `src/theme.rs` port (34 colors + Qt stylesheet generator). C++ window assembly with menu bar + 4 dock placeholders + `bif_qt_shell` dogfood binary. Runs clean — see devlog 2026-04-13 session 3.
+- **Phase B slices 1–4 ✅ (2026-04-14):** shell is functional — wgpu viewport in the central widget (B.1), theme stylesheet applied via `QApplication::setStyleSheet` (B.2), menu actions wired through cxx-qt invokables on `BifShellState` with shortcuts (B.3), zen mode toggles all dock visibility via `Ctrl+\` (B.4). 5 new `#[qinvokable]` methods.
+- **Phase B slices 5–8 ✅ (2026-04-14):** workspace switcher (4 presets persisted in `QSettings`), first-launch screen with New/Open cards + Recent Stages list, breadcrumb `QToolBar` above viewport, command palette `Ctrl+P` (`QDialog` + `QSortFilterProxyModel` over 11 menu commands). Central widget restructured to `QWidget(QVBoxLayout(breadcrumb, QStackedWidget(first-launch, viewport)))`. **Phase B complete — all 8 slices in the plan landed.**
+- **Phase C ✅ (2026-04-14):** 3 panels ported — Layer Stack (`QListView` + `QAbstractListModel` + color-dot delegate + editorEvent-aligned checkbox), Scene Browser (`QTreeView` + `QAbstractItemModel` + hierarchical filter), Property Inspector (QTabWidget + composition arcs + opinion-dot attributes table). 11 new `#[qinvokable]` methods + 3 new qproperties on `BifShellState`. Demo data in C++ until Phase E wires real USD reads.
+- **Phase D ✅ (2026-04-14):** 3 secondary panels — Timeline (custom paintEvent ruler + keyframe diamonds + playhead, scrub via mouse, toolbar with Play/Prev/Next/spinbox), Node Graph (`QGraphicsScene` replacing egui-snarl; `NodeGraphView` subclass for wheel-zoom + middle-mouse pan; `BifNodeGraphicsItem` with category-colored headers and pin lollipops; bezier wires that reroute on node move), Render Settings (QFormLayout in styled QGroupBoxes — path tracer + post-processing). Bottom dock tabifies Node Graph + Timeline; Render Settings tabifies with Property Inspector on the right.
+- **Phase E.1 ✅ (2026-04-14):** Input + event wiring (stubs). Viewport mouse orbit/pan/zoom + prim-pick signals on RenderWidget (status-bar echo until Phase E.2 dispatches to real Renderer). Keyboard shortcuts (F/Space/Left/Right/Shift+Left/Shift+Right) routed through a new `ShortcutRegistry` that supports QSettings overrides for a v0.16 Preferences dialog. Real QFileDialog on File → Open (writes `recent_stages` QSettings, stub load). Timeline QTimer-driven playback with configurable fps, real-time mode, and loop toggle. Nuke-style 3-zone toolbar (fps/RT/Loop left, transport + orange frame counter center, Start/End/Detect right). 9 new qproperties + 6 new invokables on `BifShellState`.
+- Phase B — shell: viewport widget + docks + menu + command palette + breadcrumb + 4 workspaces + first-launch + zen mode (~12h)
+- Phase C — core panels: Layer Stack + Scene Browser (virtualized 100K+) + Property Inspector (~18h)
+- Phase D — secondary panels: Timeline + Node Graph (QGraphicsScene) + Render Settings (~10h)
+- Phase E — input + event wiring (~3h)
+- **Phase F ✅ (2026-04-16):** Renderer egui bridge deleted (`egui_ctx` / `egui_state` / `egui_renderer` fields, `attach_egui` / `egui_state_mut` / `egui_ctx` methods, `run_egui_frame` ~870 LOC, egui paint pass in `submit_gpu_frame`). `Renderer::render` simplified to `render(&mut self, clear_color) -> Result<()>`. `render_ui.rs` deleted (~729 LOC). `egui-wgpu` + `egui-winit` dropped from `bif_viewport/Cargo.toml`. `bif_viewer/src/main.rs` rewritten 905 → 14 lines as a `bif_qt::run()` shim; `wgpu`/`winit`/`egui`/`egui-wgpu`/`egui-winit`/`pollster` dropped from `bif_viewer/Cargo.toml`. `egui_panels_legacy` feature gating deferred — would have required also gating `NodeGraphContext` (egui-snarl typed); panel modules stay in-tree as dead code until Qt replacements land. Tier 0 (Qt scene browser parity — CompositeProvider routing + 4 columns + eye chrome) shipped in same session as the parity gate.
+- Phase G/H — tests + release + merge `v0.15-qt` → `main` (~4h)
+
+Deferred to v0.15.5/v0.16: asset browser (M28.1), asset library (M28.2), drag-and-drop, Wacom pressure/tilt.
+
 ### v0.14.5 — Layer Polish (follow-up)
 
 File watcher + node graph integration. Split out of v0.14.0 to keep the core release tight.
@@ -36,7 +56,6 @@ File watcher + node graph integration. Split out of v0.14.0 to keep the core rel
 
 | Version | Theme | Est. Hours | Key Milestones |
 |---------|-------|-----------|----------------|
-| v0.15.0 | Qt Migration | 50-60h | M28 (T-layout, command palette, theme) |
 | v0.16.0 | Edit Operations + Save | 30-40h | Workflow Phase 2 + material param sheet + lookdev orb |
 | v0.17.0 | Viewport Performance | 25-35h | M22 + payload policies + texture nodes in material editor |
 | v0.18.0 | AI Integration | 38-59h | Material creator, scene builder, ComfyUI |

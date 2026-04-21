@@ -68,12 +68,28 @@ Based on the diff above:
 - Check if `devlog/DEVLOG_YYYY-MM-DD.md` exists for today, if one exists, append to it; if not, create it with today's date
 - Append session summary if exists, create if not
 
-### 6. Wiki Links
+### 6. Obsidian Wiki Sync (keep it fresh — do not skip)
 
-- Add `## Wiki Links` section to any new or updated devlog entries with Obsidian wikilinks to relevant wiki articles
-- If new concepts, architecture decisions, or domain knowledge were learned this session, create/update articles in `wiki/`
-- Update the relevant section `_index.md` if new wiki articles were added
-- Use `[[Article Name]]` wikilink format with a brief reason for each link
+The Obsidian vault at `wiki/` must stay in sync with each commit. Treat this as a commit gate, not optional polish. A commit that shipped non-obvious design work without a wiki touch is an incomplete commit.
+
+- **Devlog cross-link:** Add a `## Wiki Links` section to any new/updated devlog entry with `[[Article Name]]` wikilinks + a brief reason for each.
+- **Journal synthesis:** If today's session made architectural decisions, hit non-obvious gotchas, or wrapped a milestone, create or update a `wiki/journal/YYYY-MM-DD-<slug>.md` entry. Do not let devlogs accumulate without journal synthesis — a 3+ day gap between the newest journal entry and the newest devlog is a smell.
+- **New concepts / patterns / ADRs:** If the session introduced a new reusable pattern, crate-level decision, or domain concept, create the article:
+  - Architecture decision → `wiki/architecture/adr/NNN-<slug>.md` (next ADR number)
+  - Reusable pattern or crate-level design → `wiki/architecture/<slug>.md`
+  - Atomic concept note → `wiki/concepts/<slug>.md`
+  - Follow `wiki/templates/` for frontmatter (title, type, tags, created, updated).
+- **Index updates (mandatory when adding articles):**
+  - Add a one-line entry with wikilink to the relevant section `_index.md` (`architecture/_index.md`, `concepts/_index.md`, `journal/_index.md`, etc.).
+  - Bump the section `_index.md`'s `updated:` frontmatter date.
+  - If article counts on the root `wiki/_index.md` table drift, correct them and bump its `updated:` date too.
+- **Frontmatter hygiene:** When editing an existing article, bump its `updated:` date. Use wikilinks `[[...]]` for cross-references per CLAUDE.md.
+- **Quick self-check before finishing the commit:**
+  1. Does every non-obvious design move in this commit have a wiki home (journal entry, concept note, ADR, or architecture article)?
+  2. Do the section `_index.md` files list every article that exists in their folder?
+  3. Are the `updated:` dates on touched files current?
+
+If all three are yes, you're done. If not, fix it in the same commit — wiki drift compounds fast.
 
 ### 7. Site Update
 

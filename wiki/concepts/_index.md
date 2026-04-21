@@ -1,7 +1,7 @@
 ---
 title: Concepts Index
 type: index
-updated: "2026-04-05"
+updated: "2026-04-16"
 ---
 
 # Concepts
@@ -25,6 +25,12 @@ Atomic notes on key technical concepts used in BIF. Each note covers one idea �
 ## Concurrency & FFI
 
 - [[usdstage-thread-safety|UsdStage Thread Safety]] — Send vs Sync for C++ FFI types, Arc<Mutex> pattern
+- [[primdataprovider-trait|PrimDataProvider Trait]] — Abstraction over prim-hierarchy queries; inherent-vs-trait method shadowing gotcha
+
+## Qt Integration
+
+- [[paint-pause-pattern|Paint Pause Pattern]] — Suspend the 16ms render tick around modal dialogs and scene resets
+- [[hidpi-dpr-threading|HiDPI DPR Threading]] — `devicePixelRatioF()` from Qt through to `Renderer::scale_factor`
 
 ## Tools & Libraries
 

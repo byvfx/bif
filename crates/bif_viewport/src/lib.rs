@@ -1,7 +1,7 @@
 use anyhow::Result;
 use std::num::NonZeroU32;
 use std::sync::Arc;
-use wgpu::{util::DeviceExt, Device, Instance, Queue, Surface, SurfaceConfiguration};
+use wgpu::{util::DeviceExt, Device, Queue, Surface, SurfaceConfiguration};
 
 use bif_math::{Camera, Mat4, Vec3};
 
@@ -39,7 +39,6 @@ mod project_dispatch;
 pub mod property_inspector;
 mod render;
 mod render_dispatch;
-mod render_ui;
 pub mod scene_browser;
 mod scene_loader;
 pub mod scene_manager;
@@ -53,6 +52,7 @@ mod types;
 
 // Re-exports from new modules
 pub use app_event::{AppEvent, EventBus};
+pub use bif_math::OrthoPreset;
 pub use culling_manager::CullingManager;
 pub use environment::GpuEnvironment;
 pub use environment_manager::EnvironmentManager;
@@ -84,9 +84,7 @@ pub use timeline::TimelineState;
 pub use types::*;
 
 pub use node_graph::{render_node_graph, GraphNodeId, NodeGraphEvent, NodeGraphState, SceneNode};
-pub use property_inspector::{
-    render_property_inspector, reset_property_inspector_cache, PrimProperties, TransformEdit,
-};
+pub use property_inspector::{render_property_inspector, PrimProperties, TransformEdit};
 pub use scene_browser::{
     build_scene_graph_cache, CachedSceneGraph, CompositeProvider, EmptyPrimProvider,
     NodeFilteredProvider, PrimDataProvider, PrimDisplayInfo, ProceduralPrim, ProceduralPrimKind,
@@ -192,7 +190,16 @@ fn denormalize_synthetic_path(prim_path: &str) -> String {
 
 /// Core renderer managing wgpu state
 pub struct Renderer {
-    pub(crate) window: std::sync::Arc<winit::window::Window>,
+    /// Display scale factor (device-independent pixels per point). Used for
+    /// egui overlay tessellation. Callers update via [`Renderer::resize`].
+    pub(crate) scale_factor: f32,
+
+    /// Optional hook invoked around native-dialog presentations to work
+    /// around the Windows z-order issue where file/message dialogs can get
+    /// stuck behind the main window. `bif_viewer` installs a closure that
+    /// toggles its winit Window; `bif_qt` leaves this `None`.
+    pub(crate) dialog_focus_hook: Option<Box<dyn Fn(bool)>>,
+
     pub(crate) gpu: GpuContext,
     pub size: (u32, u32),
     pub(crate) pipeline: wgpu::RenderPipeline,
@@ -217,11 +224,6 @@ pub struct Renderer {
 
     // Ground grid
     pub(crate) grid: GridRenderer,
-
-    // egui state
-    pub(crate) egui_ctx: egui::Context,
-    pub(crate) egui_state: egui_winit::State,
-    pub(crate) egui_renderer: egui_wgpu::Renderer,
 
     // UI state
     pub fps: f32,
@@ -265,7 +267,9 @@ pub struct Renderer {
 
     /// Layer Stack panel UI state (v0.14.0). Data lives on
     /// `self.scene.layer_state`; this struct holds only the per-panel
-    /// scroll/focus state.
+    /// scroll/focus state. Phase F left it unread — the egui panel that
+    /// consumed it is in-tree dead code pending Qt replacement.
+    #[allow(dead_code)]
     pub(crate) layer_stack_panel: crate::layer_stack_panel::LayerStackPanel,
 
     // Timeline state for animation playback
@@ -304,73 +308,47 @@ pub struct Renderer {
     pub(crate) mipmap_generator: texture_loader::MipmapGenerator,
 }
 
+/// Required wgpu feature set for the renderer. Callers building their own
+/// `wgpu::Device` (bif_viewer, bif_qt) should request at least these features.
+pub const REQUIRED_FEATURES: wgpu::Features = wgpu::Features::TEXTURE_BINDING_ARRAY
+    .union(wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING)
+    .union(wgpu::Features::SHADER_PRIMITIVE_INDEX)
+    .union(wgpu::Features::POLYGON_MODE_LINE);
+
+/// Recommended wgpu limits for the renderer. Callers can clone or adjust but
+/// must satisfy at least `max_sampled_textures_per_shader_stage = MAX_VIEWPORT_TEXTURES`
+/// and `max_bind_groups >= 5`.
+pub fn required_limits() -> wgpu::Limits {
+    wgpu::Limits {
+        max_sampled_textures_per_shader_stage: MAX_VIEWPORT_TEXTURES as u32,
+        max_buffer_size: 1 << 30, // 1GB for large meshes
+        max_bind_groups: 5,       // Groups 0-4 (camera, material, texture, env, lights)
+        ..Default::default()
+    }
+}
+
 impl Renderer {
-    /// Create a new renderer for the given window
-    pub async fn new(window: std::sync::Arc<winit::window::Window>) -> Result<Self> {
-        let size = window.inner_size();
-
-        // Create wgpu instance
-        let instance = Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::PRIMARY,
-            ..Default::default()
-        });
-
-        // Create surface
-        let surface = instance.create_surface(window.clone())?;
-
-        // Request adapter
-        let adapter = instance
-            .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::HighPerformance,
-                compatible_surface: Some(&surface),
-                force_fallback_adapter: false,
-            })
-            .await
-            .ok_or_else(|| anyhow::anyhow!("Failed to find suitable GPU adapter"))?;
-
-        // Request device and queue
-        let (device, queue) = adapter
-            .request_device(
-                &wgpu::DeviceDescriptor {
-                    label: Some("BIF Device"),
-                    required_features: wgpu::Features::TEXTURE_BINDING_ARRAY
-                        | wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING
-                        | wgpu::Features::SHADER_PRIMITIVE_INDEX
-                        | wgpu::Features::POLYGON_MODE_LINE,
-                    required_limits: wgpu::Limits {
-                        max_sampled_textures_per_shader_stage: MAX_VIEWPORT_TEXTURES as u32,
-                        max_buffer_size: 1 << 30, // 1GB for large meshes
-                        max_bind_groups: 5,       // Groups 0-4 (camera, material, texture, env, lights)
-                        ..Default::default()
-                    },
-                    memory_hints: Default::default(),
-                },
-                None,
-            )
-            .await?;
-
-        // Configure surface
-        let surface_caps = surface.get_capabilities(&adapter);
-        let surface_format = surface_caps
-            .formats
-            .iter()
-            .copied()
-            .find(|f| f.is_srgb())
-            .unwrap_or(surface_caps.formats[0]);
-
-        let config = SurfaceConfiguration {
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            format: surface_format,
-            width: size.width,
-            height: size.height,
-            present_mode: wgpu::PresentMode::Fifo, // VSync for proper frame pacing // VSync
-            alpha_mode: surface_caps.alpha_modes[0],
-            view_formats: vec![],
-            desired_maximum_frame_latency: 2,
-        };
-
-        surface.configure(&device, &config);
-
+    /// Create a new renderer from caller-provided wgpu primitives.
+    ///
+    /// `bif_viewer` (winit) and `bif_qt` (Qt / raw HWND) each build their own
+    /// `wgpu::Instance` + `Surface` from their native window handle, request
+    /// an adapter/device/queue, and pass them here. This crate no longer
+    /// depends on any specific windowing system — the caller owns that layer.
+    ///
+    /// `size` is the surface size in physical pixels. `scale_factor` is used
+    /// for egui overlay tessellation; update both via [`Renderer::resize`].
+    ///
+    /// egui is **not** initialized by this call. Callers that want egui (i.e.
+    /// `bif_viewer`) build `egui_winit::State` themselves from their winit
+    /// window and install it via [`Renderer::attach_egui`].
+    pub fn new(
+        surface: wgpu::Surface<'static>,
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        config: wgpu::SurfaceConfiguration,
+        size: (u32, u32),
+        scale_factor: f32,
+    ) -> Result<Self> {
         // Start with blank scene - no default mesh
         log::info!("Initializing blank scene (no default geometry)");
 
@@ -378,7 +356,7 @@ impl Renderer {
         let mesh_data = MeshData::default();
 
         // Create camera at default position looking at origin
-        let aspect = size.width as f32 / size.height as f32;
+        let aspect = size.0 as f32 / size.1 as f32;
         let mut camera = Camera::new(
             Vec3::new(0.0, 10.0, 50.0), // Default position
             Vec3::new(0.0, 0.0, 0.0),   // Look at origin
@@ -740,8 +718,7 @@ impl Renderer {
         });
 
         // Create depth texture
-        let (depth_texture, depth_view) =
-            ivar_renderer::create_depth_texture(&device, (size.width, size.height));
+        let (depth_texture, depth_view) = ivar_renderer::create_depth_texture(&device, size);
 
         // No instances by default - empty scene
         let dummy_instance = InstanceData {
@@ -773,28 +750,6 @@ impl Renderer {
 
         log::info!("Created culling manager");
 
-        // Initialize egui
-        let egui_ctx = egui::Context::default();
-        theme::apply_theme(&egui_ctx);
-        let egui_state = egui_winit::State::new(
-            egui_ctx.clone(),
-            egui::ViewportId::ROOT,
-            &window,
-            Some(window.scale_factor() as f32),
-            None,
-            None, // max_texture_side (use default)
-        );
-
-        let egui_renderer = egui_wgpu::Renderer::new(
-            &device,
-            config.format,
-            None, // No depth testing for egui
-            1,
-            false, // allow_srgb_render_target
-        );
-
-        log::info!("egui initialized");
-
         // Create gnomon renderer
         let gnomon = GnomonRenderer::new(&device, config.format);
         log::info!("Gnomon initialized");
@@ -822,8 +777,7 @@ impl Renderer {
         let num_triangles = 0;
 
         // Create Ivar resources for CPU path tracer display
-        let (ivar_texture, ivar_texture_view) =
-            ivar_renderer::create_ivar_texture(&device, (size.width, size.height));
+        let (ivar_texture, ivar_texture_view) = ivar_renderer::create_ivar_texture(&device, size);
 
         let ivar_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("Ivar Sampler"),
@@ -849,14 +803,15 @@ impl Renderer {
         let mipmap_generator = texture_loader::MipmapGenerator::new(&device);
 
         Ok(Self {
-            window,
+            scale_factor,
+            dialog_focus_hook: None,
             gpu: GpuContext {
                 surface,
                 device,
                 queue,
                 config,
             },
-            size: (size.width, size.height),
+            size,
             pipeline,
             wireframe_pipeline,
             wireframe_cam_buffer,
@@ -897,9 +852,6 @@ impl Renderer {
             depth_view,
             gnomon,
             grid,
-            egui_ctx,
-            egui_state,
-            egui_renderer,
             fps: 0.0,
             frame_count: 0,
             fps_update_timer: 0.0,
@@ -972,10 +924,85 @@ impl Renderer {
             || self.selection.gizmo_state.is_dragging
     }
 
-    /// Handle window resize
-    pub fn resize(&mut self, new_size: (u32, u32)) {
+    /// Access to the procedural-prim cache the scene browser uses. Lets
+    /// `bif_qt` build a `CompositeProvider` (USD + procedural + synthetic
+    /// `/BIF/`) without exposing the private `nodes` field. Mirrors how
+    /// `scene.usd_stage` is the other half of the composite source.
+    pub fn cached_scene_graph(&self) -> &scene_browser::CachedSceneGraph {
+        &self.nodes.cached_scene_graph
+    }
+
+    /// Install a hook invoked around native-dialog presentations. The hook
+    /// is called with `false` before the dialog opens and `true` after it
+    /// closes — giving the caller a chance to hide/show its window to work
+    /// around OS z-order issues (Windows).
+    ///
+    /// `bif_viewer` installs `Box::new(move |v| window.set_visible(v))`;
+    /// `bif_qt` leaves this unset.
+    pub fn set_dialog_focus_hook<F>(&mut self, hook: F)
+    where
+        F: Fn(bool) + 'static,
+    {
+        self.dialog_focus_hook = Some(Box::new(hook));
+    }
+
+    /// Current display scale factor (device-independent pixels per point).
+    pub fn scale_factor(&self) -> f32 {
+        self.scale_factor
+    }
+
+    /// Block until all submitted GPU work completes. Call before dropping
+    /// the Renderer to avoid `OBJECT_DELETED_WHILE_STILL_IN_USE` errors
+    /// on D3D12/Vulkan.
+    pub fn wait_for_gpu(&self) {
+        self.gpu.device.poll(wgpu::Maintain::Wait);
+    }
+
+    /// Reset the renderer to "no scene loaded" state. Drains GPU,
+    /// replaces `SceneManager` with a fresh one, clears all node-graph
+    /// caches (procedural prim cache, instancer results, prim counts,
+    /// node↔proto / node↔cloud maps), and rebuilds the pick BVH.
+    ///
+    /// Called by `bif_qt` from both `close_stage` (Ctrl+W) and the
+    /// implicit pre-load reset on second-open. Single source of truth
+    /// for "evict the previous stage entirely" so no half-state (cached
+    /// procedural prims, stale dirty flags) survives the swap.
+    pub fn reset_scene_state(&mut self) {
+        self.wait_for_gpu();
+        self.scene = SceneManager::new();
+        self.nodes.cached_scene_graph = scene_browser::CachedSceneGraph::default();
+        self.nodes.node_proto_map.clear();
+        self.nodes.node_cloud_map.clear();
+        self.nodes.instancer_results.clear();
+        self.nodes.node_prim_counts.clear();
+        self.nodes.scene_graph_dirty = true;
+        self.nodes.materials_dirty = true;
+        self.nodes.primitive_name_counters.clear();
+        // Stale selection (prim path, instance index, gizmo, tree
+        // expansion) from the prior stage would resolve to wrong rows
+        // on the fresh scene — clear before rebuilding pick BVH.
+        self.selection.clear();
+        self.rebuild_pick_scene();
+    }
+
+    /// Drive selection from a USD prim path (typically a tree-view click).
+    ///
+    /// Public wrapper over `handle_prim_selected` so UI layers (bif_qt,
+    /// bif_viewer) can sync viewport gizmo + outline highlight when the
+    /// scene browser's selection changes. Resolves the prim path back to
+    /// an instance index when possible (synthetic `/BIF/` paths handled).
+    pub fn select_prim_by_path(&mut self, prim_path: &str) {
+        self.handle_prim_selected(prim_path.to_string());
+    }
+
+    /// Handle window resize. `scale_factor` is the caller's current display
+    /// scale (device-independent pixels per point); pass whatever your
+    /// windowing layer reports (`winit::Window::scale_factor()` in
+    /// `bif_viewer`; `QScreen::devicePixelRatio()` in `bif_qt`).
+    pub fn resize(&mut self, new_size: (u32, u32), scale_factor: f32) {
         if new_size.0 > 0 && new_size.1 > 0 {
             self.size = new_size;
+            self.scale_factor = scale_factor;
             self.gpu.config.width = new_size.0;
             self.gpu.config.height = new_size.1;
             self.gpu
@@ -1196,6 +1223,45 @@ impl Renderer {
         }
     }
 
+    /// Look through a USD camera at the current timeline frame.
+    pub fn apply_usd_camera(&mut self, camera_path: &str) {
+        self.cam.viewport_camera_source = CameraSource::UsdCamera(camera_path.to_string());
+        self.cam.selected_usd_camera = Some(camera_path.to_string());
+        self.cam.camera_locked = true;
+        self.sync_viewport_to_usd_camera(camera_path);
+    }
+
+    /// Snap viewport to an orthographic preset view.
+    pub fn apply_ortho_view(&mut self, preset: bif_math::OrthoPreset) {
+        let dir = preset.direction();
+        let up = preset.up();
+        let dist = (self.cam.camera.target - self.cam.camera.position)
+            .length()
+            .max(5.0);
+        self.cam.camera.position = self.cam.camera.target + dir * dist;
+        self.cam.camera.up = up;
+        let normalized = (self.cam.camera.position - self.cam.camera.target).normalize();
+        self.cam.camera.yaw = normalized.z.atan2(normalized.x);
+        self.cam.camera.pitch = normalized.y.asin();
+        self.cam.camera.distance = dist;
+        self.cam.camera.projection = bif_math::ProjectionMode::Orthographic {
+            ortho_size: dist * 0.5,
+        };
+        self.cam.viewport_camera_source = CameraSource::OrthoView(preset);
+        self.cam.selected_usd_camera = None;
+        self.cam.camera_locked = false;
+        self.update_camera();
+    }
+
+    /// Reset to free perspective orbit (clears any USD/ortho camera lock).
+    pub fn apply_free_fly(&mut self) {
+        self.cam.camera.projection = bif_math::ProjectionMode::Perspective;
+        self.cam.camera_locked = false;
+        self.cam.viewport_camera_source = CameraSource::Viewport;
+        self.cam.selected_usd_camera = None;
+        self.update_camera();
+    }
+
     /// Sync viewport camera to a scene camera (from Camera primitive).
     ///
     /// Reads the instance transform and applies the camera's FOV.
@@ -1239,16 +1305,6 @@ impl Renderer {
             cam.name,
             inst_idx
         );
-    }
-
-    /// Handle egui window event - returns true if event was consumed by egui
-    pub fn handle_egui_event(
-        &mut self,
-        window: &winit::window::Window,
-        event: &winit::event::WindowEvent,
-    ) -> bool {
-        let response = self.egui_state.on_window_event(window, event);
-        response.consumed
     }
 
     /// Rebuild the Embree pick scene from current mesh + instance data.
@@ -1640,11 +1696,6 @@ impl Renderer {
         self.timeline_state.keyframe_times = times;
     }
 
-    /// Reset cached property inspector state in the egui data store.
-    pub fn reset_property_inspector_cache(&self) {
-        reset_property_inspector_cache(&self.egui_ctx);
-    }
-
     /// Export transform overrides, keyframes, and point clouds as a USD layer.
     pub fn export_edit_layer(&self, output_path: &str) -> anyhow::Result<()> {
         let config = bif_core::ExportConfig {
@@ -1886,11 +1937,20 @@ impl Renderer {
 
     /// Run a closure that shows a native dialog, hiding the main window
     /// so the dialog isn't stuck behind it (Windows z-order workaround).
+    ///
+    /// Delegates visibility toggling to the caller-installed
+    /// [`dialog_focus_hook`](Self::set_dialog_focus_hook). When no hook is
+    /// installed (headless / Qt consumers) the closure simply runs with no
+    /// visibility change.
     fn with_dialog_focus<T>(&self, f: impl FnOnce() -> T) -> T {
-        self.window.set_visible(false);
-        let result = f();
-        self.window.set_visible(true);
-        result
+        if let Some(hook) = &self.dialog_focus_hook {
+            hook(false);
+            let result = f();
+            hook(true);
+            result
+        } else {
+            f()
+        }
     }
 
     /// Show "Save changes?" dialog if dirty. Returns action to take.

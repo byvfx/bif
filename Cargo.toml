@@ -7,6 +7,7 @@ members = [
     "crates/bif_viewport",
     "crates/bif_viewer",
     "crates/bif_maketx",
+    "crates/bif_qt",
     "benchmarks",
 ]
 
@@ -28,6 +29,14 @@ rayon = "1.10"
 # Rendering
 wgpu = "22.1"
 pollster = "0.3"
+raw-window-handle = "0.6"
+
+# Qt bindings (v0.15 migration — see ADR-006)
+cxx = "1.0"
+cxx-qt = "0.7"
+cxx-qt-lib = { version = "0.7", features = ["qt_full"] }
+cxx-qt-build = "0.7"
+qt-build-utils = "0.7"
 
 # UI - egui 0.29 (stable, works with wgpu 22)
 egui = "0.29"

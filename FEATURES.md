@@ -1,17 +1,34 @@
 # FEATURES
 
-Last updated: 2026-04-01
+Last updated: 2026-04-20
 
 ## Rendering
 
 - Add lights to the node graph and viewport, with support for USD light types (point, directional, spot, area).
 - Add OpenSubdiv support with GPU-accelerated subdivision.
 - Add camera safe-area overlay.
-- Add viewport display modes: textured, display color, and unlit.
+- Viewport display modes (Katana/Houdini-style):
+  - Shaded (textured with lighting — default)
+  - Wireframe (edges only, no fill)
+  - Wireframe on Shaded (shaded + edge overlay)
+  - Flat Shaded (per-face normals, no textures)
+  - Smooth Shaded (smooth normals, no textures)
+  - Display Color (`primvars:displayColor` with lighting)
+  - Unlit / Constant (albedo only, no lighting)
+  - Points (vertex dots, good for dense scatter previews)
+  - Hidden Line (wireframe with hidden-edge removal)
+  - Bounding Box (AABB per prim, fastest for huge scenes)
+- Purpose display filtering (USD render/proxy/guide):
+  - Toggle visibility per purpose: Render, Proxy, Guide
+  - Default: Render + Proxy visible, Guide hidden
+  - Quick-switch toolbar buttons (like Katana's purpose toggles)
+  - When Proxy visible + Render hidden, show proxy geo in place of full-res (USD purpose swap pattern)
+  - Guide geometry drawn with dashed/stippled wireframe to distinguish from scene content
 - Add IBL disk caching and reload to avoid recomputing each session keep file in the same area as the usd, and lets have a housekeeping mechanism that deletes old ones after a certain amount of time or disk usage.
 - Add sub-surface scattering support (skin and organic materials).
 - Add multi-layer BRDF support.
 - Add renderpass support for AOVs and custom outputs, using the nodes and whatever comes with USD.
+- Viewport selection outline — better feedback. Today `OUTLINE_SIZE` is a shader constant in `outline.wgsl` (`0.004` NDC → ~3.8px at 1920 framebuffer, ~1.6px in a typical docked 800px viewport — effectively invisible for most users). Work: (a) bump default for visibility, (b) promote to a uniform at `@group(1) @binding(0)`, (c) expose `DisplaySettings::outline_width_px: f32` on `Renderer`, (d) `#[qproperty(f32, outline_width_px)]` + `on_set_outline_width` invokable on `BifShellState`, (e) `QDoubleSpinBox` in the Render Settings panel (1.0–20.0 px, step 0.5). Also consider a color knob (currently hardcoded orange-gold in `outline.wgsl::fs_main`).
   
 ## USD
 

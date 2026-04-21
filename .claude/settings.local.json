@@ -18,5 +18,9 @@
       "mcp__plugin_context-mode_context-mode__ctx_stats",
       "WebFetch(domain:raw.githubusercontent.com)"
     ]
-  }
+  },
+  "enabledMcpjsonServers": [
+    "code-review-graph"
+  ],
+  "enableAllProjectMcpServers": true
 }
