@@ -210,19 +210,28 @@ SceneBrowserWidget::SceneBrowserWidget(BifShellState* state, QWidget* parent)
     header->setSectionResizeMode(SceneBrowserModel::ColChildren, QHeaderView::ResizeToContents);
     header->setSectionResizeMode(SceneBrowserModel::ColKind, QHeaderView::ResizeToContents);
     header->setStretchLastSection(false);
-    m_view->expandAll();
 
     QObject::connect(m_search, &QLineEdit::textChanged,
         this, &SceneBrowserWidget::on_filter_changed);
     QObject::connect(m_view->selectionModel(), &QItemSelectionModel::currentChanged,
         this, &SceneBrowserWidget::on_selection_changed);
+    QObject::connect(m_view, &QTreeView::expanded, this,
+        [this](const QModelIndex& proxy_index) {
+            if (!m_model || !m_filter) return;
+            const auto source_index = m_filter->mapToSource(proxy_index);
+            if (source_index.isValid() && m_model->canFetchMore(source_index)) {
+                m_model->fetchMore(source_index);
+            }
+        });
 }
 
 SceneBrowserWidget::~SceneBrowserWidget() = default;
 
 void SceneBrowserWidget::on_filter_changed(const QString& text) {
     m_filter->setFilterFixedString(text);
-    m_view->expandAll();  // re-expand so newly-included rows are visible
+    if (!text.isEmpty()) {
+        m_view->expandAll();  // expose newly-included rows while filtering
+    }
 }
 
 void SceneBrowserWidget::on_selection_changed(const QModelIndex& current,

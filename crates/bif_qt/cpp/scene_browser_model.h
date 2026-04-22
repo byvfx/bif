@@ -53,6 +53,9 @@ public:
     QModelIndex parent(const QModelIndex& index) const override;
     int rowCount(const QModelIndex& parent = QModelIndex()) const override;
     int columnCount(const QModelIndex& parent = QModelIndex()) const override;
+    bool hasChildren(const QModelIndex& parent = QModelIndex()) const override;
+    bool canFetchMore(const QModelIndex& parent) const override;
+    void fetchMore(const QModelIndex& parent) override;
     QVariant data(const QModelIndex& index, int role = Qt::DisplayRole) const override;
     QVariant headerData(int section, Qt::Orientation orientation,
                         int role = Qt::DisplayRole) const override;
@@ -78,6 +81,8 @@ public:
         int color_index;
         bool is_visible{true};
         bool is_active{true};
+        int child_count{0};
+        bool children_populated{true};
         PrimNode* parent;
         // std::vector — Qt's QList/QVector require copy-constructible
         // T but unique_ptr is move-only. std handles it cleanly.
@@ -95,4 +100,5 @@ private:
 
     QPointer<BifShellState> m_state;
     std::unique_ptr<PrimNode> m_root;
+    bool m_has_ever_loaded_stage{false};
 };

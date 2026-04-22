@@ -4,6 +4,17 @@
 
 namespace {
 
+struct PrimNodeData {
+    QString name;
+    QString type_name;
+    QString path;
+    QString kind;
+    int color_index = -1;
+    bool is_visible = true;
+    bool is_active = true;
+    int child_count = 0;
+};
+
 // Build a child node and parent it to `parent`. Returns the raw
 // pointer for further chaining. Color index alternates by depth so
 // the demo tree shows the layer-color-dot system across rows.
@@ -23,6 +34,8 @@ SceneBrowserModel::PrimNode* add_child(
     node->color_index = color_index;
     node->is_visible = is_visible;
     node->is_active = is_active;
+    node->child_count = 0;
+    node->children_populated = true;
     node->parent = parent;
     if (!explicit_path.isEmpty()) {
         node->path = explicit_path;
@@ -33,42 +46,70 @@ SceneBrowserModel::PrimNode* add_child(
     }
     auto* raw = node.get();
     parent->children.push_back(std::move(node));
+    parent->child_count = static_cast<int>(parent->children.size());
+    parent->children_populated = true;
     return raw;
 }
 
-// Recursively pull children of `parent_path` from BifShellState and
-// attach them under `parent_node`. Depth-limited to keep the initial
-// tree walk bounded — USD stages with pathological nesting don't
-// stall the UI thread.
-constexpr int kMaxTreeDepth = 64;
+PrimNodeData describe_prim(BifShellState* state, const QString& path) {
+    PrimNodeData data;
+    data.path = path;
+    data.name = state->prim_display_name_at(path);
+    data.type_name = state->prim_type_name_at(path);
+    data.kind = state->prim_kind_at(path);
+    data.is_visible = state->prim_is_visible_at(path);
+    data.is_active = state->prim_is_active_at(path);
+    data.color_index = state->prim_color_index_at(path);
+    data.child_count = state->child_prim_count(path);
+    if (data.name.isEmpty()) {
+        data.name = path;
+    }
+    return data;
+}
 
-void populate_subtree(
-    BifShellState* state,
-    SceneBrowserModel::PrimNode* parent_node,
-    const QString& parent_path,
-    int depth) {
-    if (!state || depth >= kMaxTreeDepth) return;
+std::vector<PrimNodeData> describe_children(BifShellState* state, const QString& parent_path) {
+    std::vector<PrimNodeData> nodes;
+    if (!state) return nodes;
     const int n = state->child_prim_count(parent_path);
+    nodes.reserve(static_cast<size_t>(qMax(0, n)));
     for (int i = 0; i < n; ++i) {
         const auto child_path = state->child_prim_path_at(parent_path, i);
-        if (child_path.isEmpty()) continue;
-        const auto name = state->prim_display_name_at(child_path);
-        const auto type_name = state->prim_type_name_at(child_path);
-        const auto kind = state->prim_kind_at(child_path);
-        const bool is_visible = state->prim_is_visible_at(child_path);
-        const bool is_active = state->prim_is_active_at(child_path);
-        const int color_index = state->prim_color_index_at(child_path);
-        auto* child_node = add_child(
-            parent_node,
-            name.isEmpty() ? child_path : name,
-            type_name,
-            color_index,
-            /*explicit_path=*/child_path,
-            kind,
-            is_visible,
-            is_active);
-        populate_subtree(state, child_node, child_path, depth + 1);
+        if (!child_path.isEmpty()) {
+            nodes.push_back(describe_prim(state, child_path));
+        }
     }
+    return nodes;
+}
+
+std::vector<PrimNodeData> describe_root_prims(BifShellState* state) {
+    std::vector<PrimNodeData> nodes;
+    if (!state) return nodes;
+    const int n = state->root_prim_count();
+    nodes.reserve(static_cast<size_t>(qMax(0, n)));
+    for (int i = 0; i < n; ++i) {
+        const auto path = state->root_prim_path_at(i);
+        if (!path.isEmpty()) {
+            nodes.push_back(describe_prim(state, path));
+        }
+    }
+    return nodes;
+}
+
+std::unique_ptr<SceneBrowserModel::PrimNode> make_node(
+    SceneBrowserModel::PrimNode* parent,
+    const PrimNodeData& data) {
+    auto node = std::make_unique<SceneBrowserModel::PrimNode>();
+    node->name = data.name;
+    node->type_name = data.type_name;
+    node->path = data.path;
+    node->kind = data.kind;
+    node->color_index = data.color_index;
+    node->is_visible = data.is_visible;
+    node->is_active = data.is_active;
+    node->child_count = data.child_count;
+    node->children_populated = (data.child_count == 0);
+    node->parent = parent;
+    return node;
 }
 
 }  // namespace
@@ -92,12 +133,15 @@ SceneBrowserModel::SceneBrowserModel(BifShellState* state, QObject* parent)
       m_root(std::make_unique<PrimNode>()) {
     m_root->name = QStringLiteral("(root)");
     m_root->path = QStringLiteral("/");
+    m_root->child_count = 0;
+    m_root->children_populated = true;
     m_root->color_index = -1;
     m_root->parent = nullptr;
 
     // Initial content — if a stage is already loaded, pull real data;
     // otherwise seed demo tree so first-launch still looks alive.
     if (m_state && m_state->root_prim_count() > 0) {
+        m_has_ever_loaded_stage = true;
         rebuild_from_state();
     } else {
         seed_demo_tree();
@@ -119,39 +163,27 @@ void SceneBrowserModel::on_state_revision_changed() {
 void SceneBrowserModel::rebuild_from_state() {
     beginResetModel();
     m_root->children.clear();
+    m_root->child_count = 0;
+    m_root->children_populated = true;
 
     if (m_state) {
-        const int n = m_state->root_prim_count();
-        for (int i = 0; i < n; ++i) {
-            const auto path = m_state->root_prim_path_at(i);
-            if (path.isEmpty()) continue;
-            const auto name = m_state->prim_display_name_at(path);
-            const auto type_name = m_state->prim_type_name_at(path);
-            const auto kind = m_state->prim_kind_at(path);
-            const bool is_visible = m_state->prim_is_visible_at(path);
-            const bool is_active = m_state->prim_is_active_at(path);
-            const int color_index = m_state->prim_color_index_at(path);
-            auto* root = add_child(
-                m_root.get(),
-                name.isEmpty() ? path : name,
-                type_name,
-                color_index,
-                /*explicit_path=*/path,
-                kind,
-                is_visible,
-                is_active);
-            populate_subtree(m_state, root, path, /*depth=*/1);
+        const auto roots = describe_root_prims(m_state);
+        if (!roots.empty()) {
+            m_has_ever_loaded_stage = true;
         }
-    }
-
-    // Fallback — if nothing loaded, keep first-launch looking alive.
-    if (m_root->children.empty()) {
-        endResetModel();
-        seed_demo_tree();
-        return;
+        for (const auto& root_data : roots) {
+            m_root->children.push_back(make_node(m_root.get(), root_data));
+        }
+        m_root->child_count = static_cast<int>(m_root->children.size());
     }
 
     endResetModel();
+
+    // Keep first-launch lively until a real stage has loaded once.
+    // After that, a close-stage should leave the tree empty.
+    if (m_root->children.empty() && !m_has_ever_loaded_stage) {
+        seed_demo_tree();
+    }
 }
 
 void SceneBrowserModel::seed_demo_tree() {
@@ -205,6 +237,34 @@ int SceneBrowserModel::columnCount(const QModelIndex& /*parent*/) const {
     return ColumnCount_;
 }
 
+bool SceneBrowserModel::hasChildren(const QModelIndex& parent) const {
+    if (!parent.isValid()) {
+        return m_root->child_count > 0;
+    }
+    return node_for_index(parent)->child_count > 0;
+}
+
+bool SceneBrowserModel::canFetchMore(const QModelIndex& parent) const {
+    if (!m_state || !parent.isValid()) return false;
+    auto* node = node_for_index(parent);
+    return node->child_count > 0 && !node->children_populated;
+}
+
+void SceneBrowserModel::fetchMore(const QModelIndex& parent) {
+    if (!canFetchMore(parent)) return;
+    auto* parent_node = node_for_index(parent);
+    const auto children = describe_children(m_state, parent_node->path);
+    parent_node->child_count = static_cast<int>(children.size());
+    parent_node->children_populated = true;
+    if (children.empty()) return;
+
+    beginInsertRows(parent, 0, static_cast<int>(children.size()) - 1);
+    for (const auto& child_data : children) {
+        parent_node->children.push_back(make_node(parent_node, child_data));
+    }
+    endInsertRows();
+}
+
 QVariant SceneBrowserModel::data(const QModelIndex& index, int role) const {
     if (!index.isValid()) return {};
     auto* node = static_cast<PrimNode*>(index.internalPointer());
@@ -214,9 +274,7 @@ QVariant SceneBrowserModel::data(const QModelIndex& index, int role) const {
                 case ColName: return node->name;
                 case ColType: return node->type_name;
                 case ColChildren:
-                    return node->children.empty()
-                        ? QVariant()
-                        : QVariant(static_cast<int>(node->children.size()));
+                    return node->child_count > 0 ? QVariant(node->child_count) : QVariant();
                 case ColKind: return node->kind;
             }
             return {};
@@ -235,7 +293,7 @@ QVariant SceneBrowserModel::data(const QModelIndex& index, int role) const {
         case IsActiveRole:
             return node->is_active;
         case ChildrenCountRole:
-            return static_cast<int>(node->children.size());
+            return node->child_count;
     }
     return {};
 }
