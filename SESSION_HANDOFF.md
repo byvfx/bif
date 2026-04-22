@@ -1,3 +1,19 @@
+# Session Handoff — April 22, 2026 (shared agent-config layer + Codex skill path)
+
+**Last Updated:** 2026-04-22. New branch `agent-config-unification` establishes a repo-owned shared agent-config layer: canonical docs now live under `agents/` (project guidance, handoff contract, roles, workflows), Claude/Kilo wrappers are thin adapters, plans/handoffs now have repo homes under `docs/agent-plans/` and `docs/agent-handoffs/`, and Codex has a repo-generated `bif-commit` skill artifact plus installer path. Checks for this branch are clean **when the Qt env is loaded** (`. .\setup_qt_env.ps1; cargo build`, `. .\setup_qt_env.ps1; cargo clippy -- -D warnings`, `cargo fmt --check`). Unrelated artifacts remain intentionally uncommitted: `assets/screenshots/bif_ui_15.png`, `assets/screenshots/bif_ui_15_timeline.png`, `review/`.
+
+**Next action:** commit the branch-scoped agent-config changes, then merge `agent-config-unification` → `main`. After merge, run `pwsh -File scripts/install-codex-skills.ps1` from a clean checkout if you want the repo-owned Codex `bif-commit` skill available globally.
+
+## 🏁 2026-04-22 — shared agent-config layer + Codex skill path
+
+- **Canonical shared source added under `agents/`.** `agents/base/PROJECT.md`, `agents/base/HANDOFF_CONTRACT.md`, shared roles, shared workflows, a Codex `bif-commit` walkthrough, and a lightweight generated Codex artifact area now live in-repo.
+- **Claude and Kilo wrappers slimmed.** `.claude/*` and `.kilo/*` workflow/agent files now point at canonical docs under `agents/` instead of carrying full repo logic inline.
+- **Plan/handoff repo paths established.** Architecture plans live in `docs/agent-plans/`; execution-ready handoffs live in `docs/agent-handoffs/`. Claude gets a `/save-plan` command that saves plans into those repo paths.
+- **Sync/install scripts added.** `scripts/sync-agent-config.ps1` regenerates wrappers and repo-local Codex artifacts. `scripts/install-codex-skills.ps1` copies repo-generated Codex skills into `~/.codex/skills`.
+- **Validation result.** `sync-agent-config.ps1` is idempotent on the current branch, and the repo-generated Codex `bif-commit` artifact dry-runs clean. Build/clippy initially failed only because Qt was not loaded in the shell; rerunning with `setup_qt_env.ps1` fixed that immediately.
+
+---
+
 # Session Handoff — April 21, 2026 (polish batch + site regen — v0.15-qt ready for merge)
 
 **Last Updated:** 2026-04-21. Option 2 polish batch landed: `on_about` uses `BIF_QT_VERSION` (was hardcoded `v0.14.0 (Phase B shell)`), bare `env_logger::init()` removed from `bif_viewer/src/main.rs` (was shadowing `bif_qt::run`'s tuned wgpu filter), `bif_qt_spike` crate deleted (ADR-006 shipped, gate passed), orphan `on_open_stage` invokable deleted (zero C++ callers). Site regenerated via `scripts/generate-site.sh` — touched `SUMMARY.md` + `reference/changelog.md`. **Site deploy root cause identified:** `.github/workflows/pages.yml` is gated to `branches: [main]`, so feature branches never trigger Pages builds. Site will update on merge. **Next action:** merge `v0.15-qt` → `main` with `--no-ff` (preserves the 40+ phase-by-phase commit history for the Qt migration). Remaining review items (property inspector O(N²) cache, ortho aspect + QTimer gating + demo-seed guard, optional scene browser lazy fetchMore) stay as post-merge cleanup on `main`.
