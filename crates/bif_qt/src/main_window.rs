@@ -23,7 +23,7 @@ use cxx_qt::CxxQtType;
 use std::cell::Cell;
 
 use bif_core::scene_layer_state::SceneLayerState;
-use bif_core::usd::layer::{LayerInfo, LayerOffset, LayerStack, PayloadPolicy};
+use bif_core::usd::layer::{LayerInfo, LayerOffset, LayerStack, PayloadPolicy, PrimStackEntry};
 
 use crate::viewport::{
     viewport_on_frame, viewport_on_resize, viewport_on_shutdown, viewport_on_surface_ready,
@@ -560,9 +560,10 @@ pub mod qobject {
 
         // ---- Property Inspector surface (Phase E.2 move 8) ----
         //
-        // All read from the currently-selected prim (`selected_prim_path`)
-        // via a fresh `UsdStage::get_prim_attributes` / `get_prim_stack`
-        // call. C++ side rebuilds on `selected_prim_pathChanged`.
+        // All read from the currently-selected prim (`selected_prim_path`).
+        // Attribute rows query live stage data; prim-stack rows use a cache
+        // mirrored on selection changes and layer-state revisions so the C++
+        // property inspector doesn't trigger O(N*M) stack walks on rebuild.
 
         /// Number of authored attributes on the selected prim.
         #[qinvokable]
@@ -690,6 +691,9 @@ pub struct BifShellStateRust {
     /// `DisplaySettings::default()` in bif_viewport. Mirrored onto
     /// `Renderer::display_settings.lod_enabled` by `on_set_lod_enabled`.
     pub lod_enabled: bool,
+    /// Cached prim-stack snapshot for the property inspector's composition arcs.
+    /// Refreshed on selected-prim changes and layer-state revision bumps.
+    pub selected_prim_stack_cache: Vec<PrimStackEntry>,
 }
 
 impl Default for BifShellStateRust {
@@ -715,6 +719,7 @@ impl Default for BifShellStateRust {
             usd_camera_paths: Vec::new(),
             active_camera_source: "free".to_string(),
             lod_enabled: true,
+            selected_prim_stack_cache: Vec::new(),
         }
     }
 }
@@ -846,6 +851,7 @@ impl qobject::BifShellState {
                 .set_selected_prim_path(cxx_qt_lib::QString::from(""));
             self.as_mut()
                 .set_selected_prim_type(cxx_qt_lib::QString::from(""));
+            refresh_selected_prim_stack_cache(self.as_mut());
             // Bump scene browser revision so the model rebuilds against the
             // empty state before the new stage's data lands — prevents a
             // brief frame where old + new prims merge in the tree.
@@ -970,6 +976,7 @@ impl qobject::BifShellState {
             .set_selected_prim_path(cxx_qt_lib::QString::from(""));
         self.as_mut()
             .set_selected_prim_type(cxx_qt_lib::QString::from(""));
+        refresh_selected_prim_stack_cache(self.as_mut());
         bump_revision(self.as_mut());
         bump_scene_browser_revision(self.as_mut());
 
@@ -1080,6 +1087,7 @@ impl qobject::BifShellState {
                     .set_selected_prim_path(cxx_qt_lib::QString::from(&path));
                 self.as_mut()
                     .set_selected_prim_type(cxx_qt_lib::QString::from(&type_name));
+                refresh_selected_prim_stack_cache(self.as_mut());
                 self.as_mut()
                     .set_status_message(cxx_qt_lib::QString::from(&format!("Selected: {path}")));
             }
@@ -1088,6 +1096,7 @@ impl qobject::BifShellState {
                     .set_selected_prim_path(cxx_qt_lib::QString::from(""));
                 self.as_mut()
                     .set_selected_prim_type(cxx_qt_lib::QString::from(""));
+                refresh_selected_prim_stack_cache(self.as_mut());
                 self.as_mut()
                     .set_status_message(cxx_qt_lib::QString::from("Selection cleared."));
             }
@@ -1111,6 +1120,7 @@ impl qobject::BifShellState {
         // (which binds to `selected_prim_pathChanged`) updates too.
         self.as_mut().set_selected_prim_path(path);
         self.as_mut().set_selected_prim_type(type_name);
+        refresh_selected_prim_stack_cache(self.as_mut());
     }
 
     fn on_set_lod_enabled(mut self: Pin<&mut Self>, enabled: bool) {
@@ -1735,72 +1745,43 @@ impl qobject::BifShellState {
     }
 
     fn selected_prim_stack_count(&self) -> i32 {
-        let path: String = (&self.rust().selected_prim_path).into();
-        if path.is_empty() {
-            return 0;
-        }
-        with_stage(|stage| {
-            stage
-                .get_prim_stack(&path)
-                .map(|v| v.len() as i32)
-                .unwrap_or(0)
-        })
-        .unwrap_or(0)
+        self.rust().selected_prim_stack_cache.len() as i32
     }
 
     fn selected_prim_stack_layer_at(&self, index: i32) -> cxx_qt_lib::QString {
-        let path: String = (&self.rust().selected_prim_path).into();
-        let id = with_stage(|stage| {
-            stage
-                .get_prim_stack(&path)
-                .ok()
-                .and_then(|v| v.get(index as usize).map(|e| e.layer_identifier.clone()))
-                .unwrap_or_default()
-        })
-        .unwrap_or_default();
+        let id = self
+            .rust()
+            .selected_prim_stack_cache
+            .get(index as usize)
+            .map(|e| e.layer_identifier.clone())
+            .unwrap_or_default();
         cxx_qt_lib::QString::from(&id)
     }
 
     fn selected_prim_stack_specifier_at(&self, index: i32) -> cxx_qt_lib::QString {
-        use bif_core::usd::layer::PrimSpecifier;
-        let path: String = (&self.rust().selected_prim_path).into();
-        let spec = with_stage(|stage| {
-            stage
-                .get_prim_stack(&path)
-                .ok()
-                .and_then(|v| v.get(index as usize).map(|e| e.specifier))
-        })
-        .flatten();
-        let label = match spec {
-            Some(PrimSpecifier::Def) => "def",
-            Some(PrimSpecifier::Over) => "over",
-            Some(PrimSpecifier::Class) => "class",
-            None => "",
-        };
+        let label = self
+            .rust()
+            .selected_prim_stack_cache
+            .get(index as usize)
+            .map(|e| e.specifier.as_str())
+            .unwrap_or("");
         cxx_qt_lib::QString::from(label)
     }
 
     fn selected_prim_stack_has_opinion_at(&self, index: i32) -> bool {
-        let path: String = (&self.rust().selected_prim_path).into();
-        with_stage(|stage| {
-            stage
-                .get_prim_stack(&path)
-                .ok()
-                .and_then(|v| v.get(index as usize).map(|e| e.has_authored_opinions))
-                .unwrap_or(false)
-        })
-        .unwrap_or(false)
+        self.rust()
+            .selected_prim_stack_cache
+            .get(index as usize)
+            .map(|e| e.has_authored_opinions)
+            .unwrap_or(false)
     }
 
     fn selected_prim_stack_color_index_at(&self, index: i32) -> i32 {
-        let path: String = (&self.rust().selected_prim_path).into();
-        let identifier = with_stage(|stage| {
-            stage
-                .get_prim_stack(&path)
-                .ok()
-                .and_then(|v| v.get(index as usize).map(|e| e.layer_identifier.clone()))
-        })
-        .flatten();
+        let identifier = self
+            .rust()
+            .selected_prim_stack_cache
+            .get(index as usize)
+            .map(|e| e.layer_identifier.clone());
         match identifier {
             Some(id) => color_index_for_layer(self.rust(), &id),
             None => -1,
@@ -1887,8 +1868,23 @@ impl qobject::BifShellState {
 /// `layer_state_revisionChanged` signal. C++ panel models listen for
 /// this and refresh.
 fn bump_revision(mut state: Pin<&mut qobject::BifShellState>) {
+    refresh_selected_prim_stack_cache(state.as_mut());
     let next = state.as_ref().rust().layer_state_revision.wrapping_add(1);
     state.as_mut().set_layer_state_revision(next);
+}
+
+fn selected_prim_stack_snapshot(path: &cxx_qt_lib::QString) -> Vec<PrimStackEntry> {
+    let path: String = path.into();
+    if path.is_empty() {
+        return Vec::new();
+    }
+    with_stage(|stage| stage.get_prim_stack(&path).unwrap_or_default()).unwrap_or_default()
+}
+
+fn refresh_selected_prim_stack_cache(mut state: Pin<&mut qobject::BifShellState>) {
+    let path = state.as_ref().rust().selected_prim_path.clone();
+    let cache = selected_prim_stack_snapshot(&path);
+    state.as_mut().rust_mut().selected_prim_stack_cache = cache;
 }
 
 /// Increment `scene_browser_revision` to trigger
