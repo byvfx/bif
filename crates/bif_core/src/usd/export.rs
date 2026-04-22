@@ -671,7 +671,11 @@ mod tests {
 
     /// Create a minimal empty mesh for test prototypes.
     fn empty_mesh() -> Arc<crate::mesh::Mesh> {
-        Arc::new(crate::mesh::Mesh::new(vec![], vec![], None))
+        Arc::new(crate::mesh::Mesh::new(
+            vec![Vec3::ZERO, Vec3::X, Vec3::Y],
+            vec![0, 1, 2],
+            None,
+        ))
     }
 
     #[test]
@@ -752,6 +756,7 @@ mod tests {
 
         // Reopen and verify the xform was written
         let stage = UsdStage::open(&out).expect("reopen");
+        stage.load_payloads().expect("load_payloads");
         let mesh_count = stage.mesh_count().unwrap_or(0);
         // The export writes an Xform prim (not a mesh), so mesh_count may be 0.
         // But we can verify the file is valid and has content.
@@ -813,6 +818,7 @@ mod tests {
 
         // Verify file is valid
         let stage = UsdStage::open(&out).expect("reopen");
+        stage.load_payloads().expect("load_payloads");
         assert!(stage.mesh_count().is_ok(), "Stage should be queryable");
 
         cleanup(&out);
@@ -871,6 +877,7 @@ mod tests {
 
         // Reopen and verify the instancer
         let stage = UsdStage::open(&out).expect("reopen");
+        stage.load_payloads().expect("load_payloads");
         let instancer_count = stage.instancer_count().expect("instancer_count");
         assert_eq!(
             instancer_count, 1,
@@ -915,6 +922,9 @@ mod tests {
                 return;
             }
         };
+        source_stage
+            .load_payloads()
+            .expect("load_payloads on source");
 
         let original_instancer_count = source_stage
             .instancer_count()
@@ -954,6 +964,7 @@ mod tests {
 
         // Reopen — composed stage should have original data intact
         let composed = UsdStage::open(&out).expect("reopen composed");
+        composed.load_payloads().expect("load_payloads on composed");
         let composed_mesh_count = composed.mesh_count().expect("mesh_count on composed");
         let composed_instancer_count = composed
             .instancer_count()
@@ -997,6 +1008,7 @@ mod tests {
         );
 
         let stage = UsdStage::open(&out).expect("reopen");
+        stage.load_payloads().expect("load_payloads");
         assert!(stage.mesh_count().is_ok(), "Stage should be queryable");
 
         cleanup(&out);
@@ -1044,6 +1056,7 @@ mod tests {
 
         // Reopen and verify prims exist
         let stage = UsdStage::open(&out).expect("reopen");
+        stage.load_payloads().expect("load_payloads");
         let prim_count = stage.prim_count().expect("prim_count");
         assert!(
             prim_count >= 2,
@@ -1074,6 +1087,7 @@ mod tests {
         layer.save().expect("save");
 
         let stage = UsdStage::open(&out).expect("reopen");
+        stage.load_payloads().expect("load_payloads");
         let prim_count = stage.prim_count().expect("prim_count");
         assert!(prim_count >= 1, "Should have at least 1 prim");
 
@@ -1100,6 +1114,7 @@ mod tests {
         layer.save().expect("save");
 
         let stage = UsdStage::open(&out).expect("reopen");
+        stage.load_payloads().expect("load_payloads");
         let prim_count = stage.prim_count().expect("prim_count");
         assert!(prim_count >= 1, "Should have at least 1 prim");
 
@@ -1164,6 +1179,7 @@ mod tests {
 
         // Reopen and verify metadata roundtrips
         let stage = UsdStage::open(&out).expect("reopen");
+        stage.load_payloads().expect("load_payloads");
         let meta = stage.get_stage_metadata().expect("metadata");
         assert!(
             (meta.meters_per_unit - 0.01).abs() < 1e-6,
@@ -1209,6 +1225,7 @@ mod tests {
 
         // Verify file is valid
         let stage = UsdStage::open(&out).expect("reopen");
+        stage.load_payloads().expect("load_payloads");
         let mats = stage.materials().unwrap_or_default();
         assert!(
             !mats.is_empty(),
@@ -1255,6 +1272,7 @@ mod tests {
 
         // Verify roundtrip
         let stage = UsdStage::open(&out).expect("reopen");
+        stage.load_payloads().expect("load_payloads");
         let lights = stage.lights().unwrap_or_default();
         assert_eq!(lights.len(), 2, "Should have 2 lights in exported file");
 
@@ -1297,6 +1315,7 @@ mod tests {
 
         // File should be valid
         let stage = UsdStage::open(&out).expect("reopen");
+        stage.load_payloads().expect("load_payloads");
         assert!(stage.prim_count().is_ok());
 
         cleanup(&out);
@@ -1330,6 +1349,7 @@ mod tests {
 
         // Roundtrip: verify dome light exists
         let stage = UsdStage::open(&out).expect("reopen");
+        stage.load_payloads().expect("load_payloads");
         let lights = stage.lights().unwrap_or_default();
         assert_eq!(lights.len(), 1, "Should have 1 dome light");
         assert_eq!(
@@ -1382,6 +1402,7 @@ mod tests {
 
         // Roundtrip: verify invisible IDs
         let stage = UsdStage::open(&out).expect("reopen");
+        stage.load_payloads().expect("load_payloads");
         let instancers = stage.instancers().expect("instancers");
         assert_eq!(instancers.len(), 1);
         assert_eq!(

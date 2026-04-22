@@ -396,9 +396,29 @@ mod tests {
     use super::*;
     use crate::hdr::HdrImage;
 
-    fn test_hdr_path() -> std::path::PathBuf {
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../legacy/go-raytracing/assets/hdri/abandoned_hall_01_1k.hdr")
+    fn test_hdr_image() -> HdrImage {
+        let width = 16;
+        let height = 8;
+        let mut pixels = Vec::with_capacity((width * height) as usize);
+
+        for y in 0..height {
+            let yf = y as f32 / (height - 1) as f32;
+            for x in 0..width {
+                let xf = x as f32 / (width - 1) as f32;
+                let hotspot = if (6..=9).contains(&x) { 6.0 } else { 0.0 };
+                pixels.push([
+                    0.25 + xf * 1.5 + hotspot,
+                    0.10 + yf * 0.5 + hotspot * 0.2,
+                    0.05 + (1.0 - xf) * 0.35,
+                ]);
+            }
+        }
+
+        HdrImage {
+            width,
+            height,
+            pixels,
+        }
     }
 
     #[test]
@@ -468,7 +488,7 @@ mod tests {
 
     #[test]
     fn generate_cubemap_from_hdr() {
-        let hdr = HdrImage::load(test_hdr_path()).expect("Failed to load HDR");
+        let hdr = test_hdr_image();
         let cubemap = generate_cubemap(&hdr, 16);
 
         assert_eq!(cubemap.len(), 6);
@@ -486,7 +506,7 @@ mod tests {
 
     #[test]
     fn irradiance_is_smooth() {
-        let hdr = HdrImage::load(test_hdr_path()).expect("Failed to load HDR");
+        let hdr = test_hdr_image();
         let irradiance = generate_irradiance(&hdr, 4);
 
         // Irradiance should be relatively smooth - all values positive

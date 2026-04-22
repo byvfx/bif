@@ -251,23 +251,85 @@ impl HdrImage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use image::{codecs::hdr::HdrEncoder, Rgb};
+    use std::{
+        fs::{remove_file, File},
+        io::BufWriter,
+        path::{Path, PathBuf},
+        sync::atomic::{AtomicUsize, Ordering as AtomicOrdering},
+    };
 
-    fn test_hdr_path() -> std::path::PathBuf {
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../legacy/go-raytracing/assets/hdri/abandoned_hall_01_1k.hdr")
+    static HDR_FIXTURE_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+    fn test_hdr_pixels() -> (u32, u32, Vec<[f32; 3]>) {
+        let width = 16;
+        let height = 8;
+        let mut pixels = Vec::with_capacity((width * height) as usize);
+
+        for y in 0..height {
+            let yf = y as f32 / (height - 1) as f32;
+            for x in 0..width {
+                let xf = x as f32 / (width - 1) as f32;
+                let hotspot = if (6..=9).contains(&x) { 6.0 } else { 0.0 };
+                pixels.push([
+                    0.25 + xf * 1.5 + hotspot,
+                    0.10 + yf * 0.5 + hotspot * 0.2,
+                    0.05 + (1.0 - xf) * 0.35,
+                ]);
+            }
+        }
+
+        (width, height, pixels)
+    }
+
+    struct TestHdrFile {
+        path: PathBuf,
+    }
+
+    impl TestHdrFile {
+        fn new() -> Self {
+            let (width, height, pixels) = test_hdr_pixels();
+            let rgb_pixels: Vec<Rgb<f32>> = pixels.into_iter().map(Rgb).collect();
+            let unique_id = HDR_FIXTURE_COUNTER.fetch_add(1, AtomicOrdering::Relaxed);
+            let path = std::env::temp_dir().join(format!(
+                "bif_test_hdr_{}_{}.hdr",
+                std::process::id(),
+                unique_id
+            ));
+
+            let file = File::create(&path).expect("create temp HDR fixture");
+            let writer = BufWriter::new(file);
+            HdrEncoder::new(writer)
+                .encode(&rgb_pixels, width as usize, height as usize)
+                .expect("encode temp HDR fixture");
+
+            Self { path }
+        }
+
+        fn path(&self) -> &Path {
+            &self.path
+        }
+    }
+
+    impl Drop for TestHdrFile {
+        fn drop(&mut self) {
+            let _ = remove_file(&self.path);
+        }
     }
 
     #[test]
     fn load_hdr_file() {
-        let img = HdrImage::load(test_hdr_path()).expect("Failed to load HDR");
-        assert_eq!(img.width, 1024);
-        assert_eq!(img.height, 512);
-        assert_eq!(img.pixels.len(), 1024 * 512);
+        let hdr_file = TestHdrFile::new();
+        let img = HdrImage::load(hdr_file.path()).expect("Failed to load HDR");
+        assert_eq!(img.width, 16);
+        assert_eq!(img.height, 8);
+        assert_eq!(img.pixels.len(), 16 * 8);
     }
 
     #[test]
     fn hdr_values_are_hdr() {
-        let img = HdrImage::load(test_hdr_path()).expect("Failed to load HDR");
+        let hdr_file = TestHdrFile::new();
+        let img = HdrImage::load(hdr_file.path()).expect("Failed to load HDR");
         // HDR images should have some pixels > 1.0
         let max_val = img
             .pixels
@@ -332,7 +394,8 @@ mod tests {
 
     #[test]
     fn sample_bilinear_no_panic() {
-        let img = HdrImage::load(test_hdr_path()).expect("Failed to load HDR");
+        let hdr_file = TestHdrFile::new();
+        let img = HdrImage::load(hdr_file.path()).expect("Failed to load HDR");
         // Sample in various directions
         let dirs: &[[f32; 3]] = &[
             [1.0, 0.0, 0.0],

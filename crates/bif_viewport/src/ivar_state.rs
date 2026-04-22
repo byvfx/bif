@@ -720,10 +720,13 @@ impl IvarState {
     /// AND ensures the user sees a visual update before we cancel, and the time
     /// floor prevents thrashing in fast scenes where buckets complete every frame.
     pub fn should_restart(&self) -> bool {
+        if self.render_start_time.is_none() {
+            return true;
+        }
         let elapsed_ms = self
             .render_start_time
             .map(|t| t.elapsed().as_millis() as u64)
-            .unwrap_or(u64::MAX); // no render yet → always allow
+            .unwrap_or(u64::MAX);
         elapsed_ms >= RESTART_THROTTLE_MS && self.buckets_completed > 0
     }
 

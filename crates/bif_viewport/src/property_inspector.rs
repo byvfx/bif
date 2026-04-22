@@ -1941,14 +1941,20 @@ mod tests {
         let mat = bif_core::Material::default();
         let props = PrimProperties::default().with_material(Arc::new(mat));
         let rows = build_property_rows(&props);
-        // Material + base color + metalness + roughness + specular weight + specular IOR
-        // + transmission + opacity + double-sided + Children attribute = 10+
-        assert!(rows.len() >= 10);
+        // The default material contributes a stable core row set; optional
+        // emission/texture rows only appear when authored on the material.
+        assert!(rows.len() >= 9);
         assert!(rows
             .iter()
             .any(|r| r.name == "Resolved Material" && r.status == PropertyStatus::Resolved));
         assert!(rows.iter().any(|r| r.name == "Base Color"));
+        assert!(rows.iter().any(|r| r.name == "Metalness"));
         assert!(rows.iter().any(|r| r.name == "Roughness"));
+        assert!(rows.iter().any(|r| r.name == "Specular Weight"));
+        assert!(rows.iter().any(|r| r.name == "Specular IOR"));
+        assert!(rows.iter().any(|r| r.name == "Transmission"));
+        assert!(rows.iter().any(|r| r.name == "Opacity"));
+        assert!(rows.iter().any(|r| r.name == "Double-Sided"));
     }
 
     #[test]

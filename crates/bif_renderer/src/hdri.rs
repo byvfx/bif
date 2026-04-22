@@ -251,21 +251,41 @@ fn random_unit_sphere<R: RngCore + ?Sized>(rng: &mut R) -> Vec3 {
 mod tests {
     use super::*;
 
-    fn test_hdr_path() -> std::path::PathBuf {
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../legacy/go-raytracing/assets/hdri/abandoned_hall_01_1k.hdr")
+    fn test_hdr_image() -> HdrImage {
+        let width = 16;
+        let height = 8;
+        let mut pixels = Vec::with_capacity((width * height) as usize);
+
+        for y in 0..height {
+            let yf = y as f32 / (height - 1) as f32;
+            for x in 0..width {
+                let xf = x as f32 / (width - 1) as f32;
+                let hotspot = if (6..=9).contains(&x) { 6.0 } else { 0.0 };
+                pixels.push([
+                    0.25 + xf * 1.5 + hotspot,
+                    0.10 + yf * 0.5 + hotspot * 0.2,
+                    0.05 + (1.0 - xf) * 0.35,
+                ]);
+            }
+        }
+
+        HdrImage {
+            width,
+            height,
+            pixels,
+        }
     }
 
     #[test]
     fn create_hdri_environment() {
-        let hdr = HdrImage::load(test_hdr_path()).expect("Failed to load HDR");
+        let hdr = test_hdr_image();
         let env = HdriEnvironment::new(hdr, 0.0, 1.0);
         assert!(env.total_power > 0.0);
     }
 
     #[test]
     fn sample_returns_positive() {
-        let hdr = HdrImage::load(test_hdr_path()).expect("Failed to load HDR");
+        let hdr = test_hdr_image();
         let env = HdriEnvironment::new(hdr, 0.0, 1.0);
 
         let dirs = [
@@ -284,7 +304,7 @@ mod tests {
 
     #[test]
     fn importance_sample_directions() {
-        let hdr = HdrImage::load(test_hdr_path()).expect("Failed to load HDR");
+        let hdr = test_hdr_image();
         let env = HdriEnvironment::new(hdr, 0.0, 1.0);
         let mut rng = rand::thread_rng();
 
@@ -302,7 +322,7 @@ mod tests {
 
     #[test]
     fn pdf_matches_direction() {
-        let hdr = HdrImage::load(test_hdr_path()).expect("Failed to load HDR");
+        let hdr = test_hdr_image();
         let env = HdriEnvironment::new(hdr, 0.0, 1.0);
 
         let dir = Vec3::new(1.0, 0.5, 0.3).normalize();
@@ -312,7 +332,7 @@ mod tests {
 
     #[test]
     fn sample_with_params_rotates() {
-        let hdr = HdrImage::load(test_hdr_path()).expect("Failed to load HDR");
+        let hdr = test_hdr_image();
         let env = HdriEnvironment::new(hdr, 0.0, 1.0);
         let dir = Vec3::new(1.0, 0.0, 0.0);
         let c0 = env.sample_with_params(dir, 0.0, 1.0);
@@ -327,7 +347,7 @@ mod tests {
 
     #[test]
     fn sample_with_params_scales_intensity() {
-        let hdr = HdrImage::load(test_hdr_path()).expect("Failed to load HDR");
+        let hdr = test_hdr_image();
         let env = HdriEnvironment::new(hdr, 0.0, 1.0);
         let dir = Vec3::new(0.0, 1.0, 0.0);
         let c1 = env.sample_with_params(dir, 0.0, 1.0);

@@ -3133,6 +3133,7 @@ mod tests {
                 return;
             }
         };
+        stage.load_payloads().expect("load_payloads failed");
 
         // Should have 100 meshes (one lucy_low mesh per Xform reference)
         let mesh_count = stage.mesh_count().expect("mesh_count failed");
@@ -3167,6 +3168,7 @@ mod tests {
                 return;
             }
         };
+        stage.load_payloads().expect("load_payloads failed");
 
         // Should have 1 instancer
         let instancer_count = stage.instancer_count().expect("instancer_count failed");
