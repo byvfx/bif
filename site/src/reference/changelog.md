@@ -6,6 +6,15 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **Repo-owned shared agent-config layer** (2026-04-22). Added `agents/` as the canonical source for shared project guidance, handoff contract, roles, workflows, plan-saving guidance, and a dedicated Codex `bif-commit` walkthrough. Added `docs/agent-plans/` and `docs/agent-handoffs/` repo conventions plus a Claude `/save-plan` command that writes plans into the repo instead of relying on user-folder artifacts.
+- **Repo-local Codex `bif-commit` skill generation + install path** (2026-04-22). Added generated Codex artifacts under `agents/generated/codex/`, `scripts/sync-agent-config.ps1` to regenerate tool wrappers/artifacts, and `scripts/install-codex-skills.ps1` to copy repo-generated skills into `~/.codex/skills`.
+
+### Changed
+
+- **Claude and Kilo agent wrappers are now thin adapters** (2026-04-22). `.claude/` and `.kilo/` workflow/agent files now point back to canonical docs under `agents/` instead of carrying unique repo logic inline.
+
 ### Removed
 
 - **`bif_qt_spike` crate deleted** (2026-04-21). Self-labelled "GATE crate — delete after Phase 0 decision lands in ADR-006"; ADR-006 merged, Phase 0 gate passed, `bif_qt` shipped the production path. Removing eliminates ~600 LOC of maintenance surface and trims every `cargo build` (no more wgpu + cxx-build + qt-build-utils double-compilation). Git history retains the spike for posterity. Also removed from `setup_qt_env.ps1`'s doc comment.
