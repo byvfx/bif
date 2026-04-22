@@ -1235,6 +1235,8 @@ impl Renderer {
     pub fn apply_ortho_view(&mut self, preset: bif_math::OrthoPreset) {
         let dir = preset.direction();
         let up = preset.up();
+        let (_, _, vp_w, vp_h) = self.viewport_rect();
+        self.cam.camera.set_aspect(vp_w / vp_h);
         let dist = (self.cam.camera.target - self.cam.camera.position)
             .length()
             .max(5.0);

@@ -18,6 +18,7 @@
 #include <QDockWidget>
 #include <QFileDialog>
 #include <QFrame>
+#include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QHash>
 #include <QKeySequence>
@@ -989,9 +990,20 @@ int bif_qt_run_shell(ViewportCallbacks* viewport_cb, ::rust::Str stylesheet) {
         const int fps = qMax(1, shell_state->getPlayback_fps());
         return qMax(1, 1000 / fps);
     };
+    auto should_run_timeline = [shell_state, &window]() {
+        return shell_state->getIs_playing()
+            && window.isVisible()
+            && !window.isMinimized()
+            && QApplication::applicationState() == Qt::ApplicationActive;
+    };
     timeline_timer->setInterval(compute_timer_interval());
     QObject::connect(timeline_timer, &QTimer::timeout, &window,
-        [shell_state]() {
+        [shell_state, &window]() {
+            if (!window.isVisible()
+                || window.isMinimized()
+                || QApplication::applicationState() != Qt::ApplicationActive) {
+                return;
+            }
             const int cur = shell_state->getCurrent_frame();
             const int start = shell_state->getStart_frame();
             const int end = shell_state->getEnd_frame();
@@ -1008,22 +1020,26 @@ int bif_qt_run_shell(ViewportCallbacks* viewport_cb, ::rust::Str stylesheet) {
             }
             shell_state->setCurrent_frame(next);
         });
-    QObject::connect(shell_state, &BifShellState::is_playingChanged, &window,
-        [shell_state, timeline_timer]() {
-            if (shell_state->getIs_playing()) {
-                timeline_timer->start();
-            } else {
-                timeline_timer->stop();
-            }
-        });
-    // Re-tune the interval on fps / realtime change.
-    auto retune_timer = [timeline_timer, compute_timer_interval]() {
+    auto sync_timeline_timer =
+        [timeline_timer, compute_timer_interval, should_run_timeline]() {
         timeline_timer->setInterval(compute_timer_interval());
+        if (should_run_timeline()) {
+            timeline_timer->start();
+        } else {
+            timeline_timer->stop();
+        }
     };
+    QObject::connect(shell_state, &BifShellState::is_playingChanged, &window,
+                     sync_timeline_timer);
+    // Re-tune the interval on fps / realtime change.
     QObject::connect(shell_state, &BifShellState::playback_fpsChanged,
-                     &window, retune_timer);
+                     &window, sync_timeline_timer);
     QObject::connect(shell_state, &BifShellState::realtime_playbackChanged,
-                     &window, retune_timer);
+                     &window, sync_timeline_timer);
+    QObject::connect(qApp, &QGuiApplication::applicationStateChanged, &window,
+        [sync_timeline_timer](Qt::ApplicationState) {
+            sync_timeline_timer();
+        });
 
     // Push every frame change into `Renderer::set_time` so animated
     // prims actually move. Covers both the QTimer tick above (playback)
