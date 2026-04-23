@@ -12,3 +12,7 @@
 *.hip filter=lfs diff=lfs merge=lfs -text
 *.pdf filter=lfs diff=lfs merge=lfs -text
 *.tx filter=lfs diff=lfs merge=lfs -text
+
+# Pages needs these UI mockup PNGs without a repo-wide LFS fetch.
+assets/stitch_bif_ui/**/screen.png -filter -diff -merge -text
+assets/stitch_bif_ui_01/**/screen.png -filter -diff -merge -text
