@@ -17,46 +17,29 @@ Roadmap organized by semantic version. Each release is testable, demoable, and g
 | v0.13.5 | UsdSkel Import | 2026-04-10 | UsdSkelCache + SkeletonQuery, CPU LBS skinning module, Mesh::skin/bind_positions, per-frame anim eval FFI, multi-draw skinning path, joint-order remap, UV-seam vertex expansion, rigid-binding broadcast, SkelRoot world xform override, validated on Pixar HumanFemale |
 | v0.13.6 | UsdSkel Blend Shapes + Rigid Fix | 2026-04-12 | CPU morph target deformation via `UsdSkelBlendShape` (dense-expand at load, shape-order remap, per-frame `UsdSkelAnimQuery` eval, shapes→skin composition), multi-joint rigid binding fix (`SkinKind::Rigid` gated on `element_size==1`; hair/fingernails on HumanFemale now render correctly) |
 | v0.14.0 | Layer-Aware Stage | 2026-04-13 | `SdfLayer` + `GetPrimStack` + `GetPropertyStack` FFI, `SceneLayerState` on `SceneManager` (sublayer tree + mute set + `layer_for_prim` map), `LayerStackPanel` egui panel (mute checkbox + working-layer radio + isolation header + layer-color dots), composition-arc collapsing header + per-attribute winning-layer dot in property inspector, scene-browser layer color dots, `PayloadPolicy::{LoadAll, LoadNone}` stage open, 4 integration tests on a 3-layer fixture |
+| v0.15.0 | Qt Migration | 2026-04-22 | Qt 6 shell via `bif_qt`, docked panel port (layer stack, scene browser, property inspector, timeline, node graph, render settings), real USD stage load + selection sync, lazy scene-browser loading, egui bridge deletion |
 
 ---
 
 ## In Progress
 
-### v0.15.0 — Qt Migration (M28 Shell)
+### v0.16.0 — Edit Operations + Save
 
-Branch: `v0.15-qt`. Plan: `C:\Users\brandon\.claude\plans\iridescent-soaring-hamster.md`. ~50h ceiling.
+Current active milestone. BIF moves from a Qt-native USD viewer/orchestrator into authored edit ops + save.
 
-- **Phase 0 ✅ (2026-04-13):** wgpu-into-QWidget spike gate PASSED. Qt 6.8.3 LTS + MSVC 2022 + cxx 1.0 + qt-build-utils 0.7 toolchain proven. See [ADR-006](wiki/architecture/adr/006-qt-via-cxx-qt.md). Evidence: `assets/screenshots/qt_spike_wgpu.PNG`.
-- **Phase A ✅ (2026-04-13):** `crates/bif_qt/` scaffolding landed. First real `#[cxx_qt::bridge]` compiles against Qt 6.8.3 LTS + cxx-qt 0.7 + MSVC. `BifShellState` QObject with 2 qproperties + 1 qinvokable. `src/theme.rs` port (34 colors + Qt stylesheet generator). C++ window assembly with menu bar + 4 dock placeholders + `bif_qt_shell` dogfood binary. Runs clean — see devlog 2026-04-13 session 3.
-- **Phase B slices 1–4 ✅ (2026-04-14):** shell is functional — wgpu viewport in the central widget (B.1), theme stylesheet applied via `QApplication::setStyleSheet` (B.2), menu actions wired through cxx-qt invokables on `BifShellState` with shortcuts (B.3), zen mode toggles all dock visibility via `Ctrl+\` (B.4). 5 new `#[qinvokable]` methods.
-- **Phase B slices 5–8 ✅ (2026-04-14):** workspace switcher (4 presets persisted in `QSettings`), first-launch screen with New/Open cards + Recent Stages list, breadcrumb `QToolBar` above viewport, command palette `Ctrl+P` (`QDialog` + `QSortFilterProxyModel` over 11 menu commands). Central widget restructured to `QWidget(QVBoxLayout(breadcrumb, QStackedWidget(first-launch, viewport)))`. **Phase B complete — all 8 slices in the plan landed.**
-- **Phase C ✅ (2026-04-14):** 3 panels ported — Layer Stack (`QListView` + `QAbstractListModel` + color-dot delegate + editorEvent-aligned checkbox), Scene Browser (`QTreeView` + `QAbstractItemModel` + hierarchical filter), Property Inspector (QTabWidget + composition arcs + opinion-dot attributes table). 11 new `#[qinvokable]` methods + 3 new qproperties on `BifShellState`. Demo data in C++ until Phase E wires real USD reads.
-- **Phase D ✅ (2026-04-14):** 3 secondary panels — Timeline (custom paintEvent ruler + keyframe diamonds + playhead, scrub via mouse, toolbar with Play/Prev/Next/spinbox), Node Graph (`QGraphicsScene` replacing egui-snarl; `NodeGraphView` subclass for wheel-zoom + middle-mouse pan; `BifNodeGraphicsItem` with category-colored headers and pin lollipops; bezier wires that reroute on node move), Render Settings (QFormLayout in styled QGroupBoxes — path tracer + post-processing). Bottom dock tabifies Node Graph + Timeline; Render Settings tabifies with Property Inspector on the right.
-- **Phase E.1 ✅ (2026-04-14):** Input + event wiring (stubs). Viewport mouse orbit/pan/zoom + prim-pick signals on RenderWidget (status-bar echo until Phase E.2 dispatches to real Renderer). Keyboard shortcuts (F/Space/Left/Right/Shift+Left/Shift+Right) routed through a new `ShortcutRegistry` that supports QSettings overrides for a v0.16 Preferences dialog. Real QFileDialog on File → Open (writes `recent_stages` QSettings, stub load). Timeline QTimer-driven playback with configurable fps, real-time mode, and loop toggle. Nuke-style 3-zone toolbar (fps/RT/Loop left, transport + orange frame counter center, Start/End/Detect right). 9 new qproperties + 6 new invokables on `BifShellState`.
-- Phase B — shell: viewport widget + docks + menu + command palette + breadcrumb + 4 workspaces + first-launch + zen mode (~12h)
-- Phase C — core panels: Layer Stack + Scene Browser (virtualized 100K+) + Property Inspector (~18h)
-- Phase D — secondary panels: Timeline + Node Graph (QGraphicsScene) + Render Settings (~10h)
-- Phase E — input + event wiring (~3h)
-- **Phase F ✅ (2026-04-16):** Renderer egui bridge deleted (`egui_ctx` / `egui_state` / `egui_renderer` fields, `attach_egui` / `egui_state_mut` / `egui_ctx` methods, `run_egui_frame` ~870 LOC, egui paint pass in `submit_gpu_frame`). `Renderer::render` simplified to `render(&mut self, clear_color) -> Result<()>`. `render_ui.rs` deleted (~729 LOC). `egui-wgpu` + `egui-winit` dropped from `bif_viewport/Cargo.toml`. `bif_viewer/src/main.rs` rewritten 905 → 14 lines as a `bif_qt::run()` shim; `wgpu`/`winit`/`egui`/`egui-wgpu`/`egui-winit`/`pollster` dropped from `bif_viewer/Cargo.toml`. `egui_panels_legacy` feature gating deferred — would have required also gating `NodeGraphContext` (egui-snarl typed); panel modules stay in-tree as dead code until Qt replacements land. Tier 0 (Qt scene browser parity — CompositeProvider routing + 4 columns + eye chrome) shipped in same session as the parity gate.
-- Phase G/H — tests + release + merge `v0.15-qt` → `main` (~4h)
-
-Deferred to v0.15.5/v0.16: asset browser (M28.1), asset library (M28.2), drag-and-drop, Wacom pressure/tilt.
-
-### v0.14.5 — Layer Polish (follow-up)
-
-File watcher + node graph integration. Split out of v0.14.0 to keep the core release tight.
-
-- File watcher (`notify` crate, 500ms debounce, reload prompt)
-- Layer Stack display node + node graph blue/orange color coding (composition / operations)
-- Layer offset UI display + tooltip
+- `EditOperation` enum + undo/redo for authored layer changes
+- Ctrl+S save path for the active layer + auto-save recovery
+- Editable USDA panel with validation on save
+- Material param sheet + lookdev orb
+- usdview round-trip validation for authored edits
+- Lower-priority Qt follow-up spillover from v0.15.0: asset browser, asset library, drag-and-drop, Wacom pressure/tilt
 
 ---
 
-## Upcoming
+## Next Releases
 
 | Version | Theme | Est. Hours | Key Milestones |
 |---------|-------|-----------|----------------|
-| v0.16.0 | Edit Operations + Save | 30-40h | Workflow Phase 2 + material param sheet + lookdev orb |
 | v0.17.0 | Viewport Performance | 25-35h | M22 + payload policies + texture nodes in material editor |
 | v0.18.0 | AI Integration | 38-59h | Material creator, scene builder, ComfyUI |
 | v0.19.0 | Context System | 30-40h | M39 |
@@ -67,11 +50,9 @@ File watcher + node graph integration. Split out of v0.14.0 to keep the core rel
 | v0.24.0 | API & Integration | 40-55h | M35, M34 |
 | v0.25.0+ | Framework Extraction | 40+h | M36+ |
 
-**Total estimated:** ~418-564h remaining to 1.0
-
 ---
 
-v0.14.0 shipped 2026-04-13. Full release notes in [CHANGELOG.md](CHANGELOG.md), archived details in [MILESTONES_HISTORY.md](MILESTONES_HISTORY.md).
+Latest release: v0.15.0 shipped 2026-04-22. Full release notes in [CHANGELOG.md](CHANGELOG.md), archived details in [MILESTONES_HISTORY.md](MILESTONES_HISTORY.md).
 
 ### v0.14.0 — Layer-Aware Stage
 
@@ -93,19 +74,16 @@ Merges workflow Phase 1 + old M32/M33. BIF starts understanding USD layers. **La
 
 ### v0.15.0 — Qt Migration
 
-M28 (Qt 6 UI framework). **The pivot — everything after is Qt-native.** Target: viewport-dominant T-layout (see [UI Design](docs/ux/UI_DESIGN.md)).
+M28 shipped on 2026-04-22. **The pivot release — everything after is Qt-native.**
 
-- Port scene browser, property inspector, node graph, viewport
-- **T-layout:** Viewport-dominant center, left dock (scene tree + layers), right dock (properties), tabbed bottom dock (node graph | USDA preview | render log)
-- **Layer color coding (full):** Colors flow through all panels — tree dots, property borders, node badges, USDA syntax highlighting
-- USDA code preview panel (read-only, syntax highlighted, shows active layer content)
-- Three-panel sync: select in one → highlights in others
-- Command palette (`Ctrl+P`) — fuzzy-search prims, commands, layers, node types
-- Breadcrumb bar: `stage > layer (edit) > /selected/prim`
-- Multi-monitor: pop-out panels via QDockWidget
-- Virtualized scene tree (design for 100K+ prims)
-- **"Quiet confidence" theme:** `#1c1c1c` bg, shadow gaps, single blue accent, 6px radius
-- Micro-interactions: 150ms panel collapse, 100ms selection fade
+- Qt 6 shell via `bif_qt` + cxx-qt
+- Viewport-dominant docked layout with Layer Stack, Scene Browser, Property Inspector, Timeline, Node Graph, and Render Settings
+- Real USD stage load/close, layer-aware property inspector, scene-browser lazy `fetchMore`, three-panel selection sync, timeline playback/keyframe wiring
+- Camera orbit/pan/zoom + prim picking routed through the live renderer
+- `bif_viewer` reduced to a thin `bif_qt::run()` shim; egui bridge deleted from the shipped viewer path
+- Release validation green in a Qt/USD-ready shell
+
+Deferred from the original Qt roadmap: asset browser, asset library, drag-and-drop, Wacom pressure/tilt.
 
 ### v0.16.0 — Edit Operations + Save
 

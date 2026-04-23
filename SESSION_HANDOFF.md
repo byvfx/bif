@@ -8,8 +8,8 @@
 
 - **Cleanup batch landed on `main`.** Property inspector composition arcs now read from a selected-prim stack cache instead of re-querying the prim stack per row. Scene browser now lazy-loads one level at a time via `fetchMore`, and the demo tree no longer reappears after a real stage has been loaded and then closed.
 - **Playback/viewport polish.** Orthographic preset switches now refresh aspect from the live viewport rect before updating the camera. Timeline playback stops ticking while the app is minimized/inactive and resumes cleanly when the window becomes active again.
-- **Release docs updated.** `CLAUDE.md` now points at v0.16/v0.17+, `CHANGELOG.md` promotes the prior `[Unreleased]` block to `## [0.15.0] - 2026-04-22`, and this handoff now treats v0.15.0 as shipped instead of "merge pending."
-- **Known follow-up mismatches still worth cleaning up soon.** `MILESTONES.md` and `README.md` still carry pre-ship roadmap wording from before the Qt migration landed on `main`; they were not part of the original handoff doc but are now the main stale release-state docs.
+- **Release docs updated.** `CLAUDE.md` now points at v0.16/v0.17+, `CHANGELOG.md` promotes the prior `[Unreleased]` block to `## [0.15.0] - 2026-04-22`, and the main roadmap docs (`README.md`, `MILESTONES.md`, `ROADMAP_DETAIL.md`) now treat v0.15.0 as shipped instead of "merge pending."
+- **Remaining external follow-up.** `main` and the local `v0.15.0` tag still need to be pushed, and Pages still needs remote verification after that push.
 
 ---
 

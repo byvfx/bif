@@ -126,120 +126,42 @@ For the high-level roadmap, see [MILESTONES.md](MILESTONES.md). For completed mi
 
 ## v0.15.0 — Qt Migration
 
-**Milestones:** M28 (Qt 6 UI framework), M28.1 (asset browser), M28.2 (asset library)
-**Estimate:** 85-105h total (M28: 50+h, M28.1: 20-25h, M28.2: 15-20h)
+**Status:** Released (2026-04-22)
+**Milestones:** M28 (Qt 6 UI framework)
 **Dependencies:** v0.14.0
 **The pivot release — everything after is Qt-native.**
 
-### Tasks — Qt 6 Shell (M28)
+### Shipped Scope
 
-- Qt 6 application shell via cxx-qt (C++ <-> Rust bridge)
-- Embed wgpu viewport in Qt widget
-- QDockWidget — true floating/docking panels, multi-monitor pop-out support
-- QTreeView with model/view separation (scene browser), virtualized for 100K+ prims
-- Professional node editor (QGraphicsScene-based)
-- QMenuBar, QToolBar, QShortcut — standard DCC conventions
-- QUndoStack integration (replace simple undo stack from M20)
-- Port theme/styling to Qt stylesheets
+- Qt 6 application shell via cxx-qt in `crates/bif_qt`
+- Embedded wgpu viewport in a Qt widget; `bif_viewer` now boots `bif_qt::run()`
+- Viewport-dominant dockable layout with Layer Stack, Scene Browser, Property Inspector, Timeline, Node Graph, and Render Settings
+- Real USD stage load/close, layer stack wiring, scene browser parity, property inspector composition arcs/attributes, timeline playback/keyframe detection, camera orbit/pan/zoom, prim picking, and breadcrumb sync
+- Three-panel selection sync and layer-color/opinion cues across the Qt shell
+- Lazy `fetchMore` scene-browser population and release-validation hardening
+- egui bridge deleted from the shipped viewer path; legacy egui panel code remains in-tree only for future cannibalization
 
-### Tasks — T-Layout & Visual Design
+### Deferred From Original Draft
 
-- **Viewport-dominant T-layout:** Center viewport (60%+), left dock (scene tree + layer stack tabs), right dock (context-sensitive properties + opinion inspector), tabbed bottom dock (node graph | USDA preview | render log)
-- All docks collapsible (thin grab bar), `Ctrl+\` zen mode (viewport only)
-- Double-click dock edge → auto-fit to content width
-- `Tab` key cycles bottom dock tabs
-- Panel size remembered per-session
-- **"Quiet confidence" theme:**
-  - Background `#1c1c1c`, panels `#252525`, elevated `#2d2d2d`
-  - Primary text `#d4d4d4`, secondary `#808080`, accent `#4a9eff`
-  - Shadow gaps between panels (no visible borders)
-  - 6px border radius, 8px panel padding, 24px min click targets
-  - 150ms panel collapse, 100ms selection fade, 400ms tooltip delay
+- Asset browser (M28.1)
+- Asset library (M28.2)
+- Drag-and-drop workflows
+- Wacom pressure/tilt
 
-### Tasks — Layer Color Coding (Full)
+### Acceptance Criteria Met
 
-- Colors flow through all panels consistently:
-  - Scene tree: colored dots per prim (strongest opinion source)
-  - Property inspector: colored left-borders per property row
-  - Node graph: node header color + layer badge pill
-  - USDA preview: syntax coloring by layer origin (not just keywords)
-  - Viewport: optional colored wireframe overlay (layer ownership)
-- Default 8-color palette: teal/purple/orange/gold/pink/blue/green/red
-- User/studio configurable override in settings
-
-### Tasks — Command Palette & Navigation
-
-- `Ctrl+P` command palette — fuzzy-search prims, commands, layers, node types, settings
-- Breadcrumb bar (top of viewport): `stage > layer (edit) > /selected/prim` — each segment clickable
-- Hybrid input: everything has a hotkey AND a mouse path (right-click context menus + palette)
-
-### Tasks — USDA Code Preview
-
-- Read-only syntax-highlighted USDA panel (bottom dock tab)
-- Shows active edit layer content, updates live as artist works
-- Layer-aware coloring: opinions from different layers in different colors
-
-### Tasks — Asset Browser (M28.1)
-
-- **Format Registry:**
-  - `AssetFormat` trait: `extensions()`, `icon()`, `can_thumbnail()`, `generate_thumbnail()`, `node_type()`
-  - Ships with: USD (.usd/.usda/.usdc), textures (.exr/.tx/.png/.jpg), HDRI (.hdr/.exr), OBJ (.obj)
-  - New formats added without touching browser code
-- **Directory Scanner:**
-  - Async recursive scan with background thread
-  - File watcher for live updates (notify crate)
-  - Respect `.bifignore` for excluding paths
-- **Thumbnail Pipeline:**
-  - Background thread pool for thumbnail generation
-  - Thumbnail cache on disk (`.bif_thumbs/`)
-  - Texture/HDRI decode via existing image crate / OIIO
-  - Type icons for USD and unknown formats
-- **Drag-and-Drop:**
-  - Node graph: drop creates appropriate node (UsdRead, HdriEnvironment, etc.) at cursor position
-  - Viewport: drop USD at raycast hit point (reuse Embree pick from M20), creates UsdRead + Xform
-  - Panels: drop texture onto material slot, drop HDRI onto environment panel
-- **Panel UI:** Path breadcrumb bar, grid/list toggle, sort by name/date/size/type, filter by format
-- Reference: Clarisse iFX browser, Houdini file chooser, Blender asset browser
-
-### Tasks — Asset Library (M28.2)
-
-- **SQLite Schema (rusqlite):**
-  - Assets table: path, format, tags, metadata, thumbnail_hash, created, modified
-  - Tags with many-to-many junction table
-  - Collections and smart collections (saved filter queries)
-- **Asset Registration:** directory scan, file watcher auto-registration, bulk import with progress
-- **Search:** FTS5 full-text search on name + tags, filter by format/collection/date, tag autocomplete
-- **Collections:** user-created (manual grouping), smart (saved queries, auto-populate), favorites (starred)
-- **UI:** toggle between file browser / library view, inline tag chips, search bar with autocomplete
-
-### Technical Notes
-
-- All subsystems already have UI-agnostic APIs (per project design principle)
-- Largest single release — consider phasing: v0.15.0 (core shell + viewport) then v0.15.x (browser + library)
-- Node graph is the highest-risk port (egui-snarl has no Qt equivalent — may need custom QGraphicsScene widget)
-- Qt C++ interop through cxx-qt
-- `bif_core::asset_browser` and `bif_core::asset_library` are UI-agnostic core modules
-
-### Acceptance Criteria
-
-- All current UI functionality works in Qt
-- T-layout with viewport-dominant center, dockable/undockable/pop-out panels
-- Layer colors visible consistently across all panels (tree, properties, nodes, USDA)
-- Command palette (`Ctrl+P`) finds prims, commands, layers, node types
-- Breadcrumb bar shows current context (stage > layer > prim)
-- USDA code preview (read-only) with syntax highlighting and layer-aware coloring
-- Zen mode (`Ctrl+\`) hides all docks
-- Scene tree handles 100K+ prims without lag (virtualized)
-- Keyboard shortcuts match egui version + new hybrid input
-- Viewport rendering unchanged (wgpu backend)
-- .bif/.bifa project files still load
-- Asset browser with thumbnails, drag-and-drop into graph/viewport/panels
-- Asset library with SQLite-backed search, tags, collections
+- Qt replaced the egui application path on `main`
+- Current browsing, inspection, and rendering flows run through the Qt shell
+- Layer-aware panels work against real USD stages
+- Scene tree populates lazily instead of eager full-subtree walks
+- `bif_viewer` boots the shipped Qt shell
+- Release validation passed in a Qt/USD-ready shell
 
 ---
 
 ## v0.16.0 — Edit Operations + Save
 
+**Status:** In progress
 **Estimate:** 30-40h
 **Dependencies:** v0.15.0
 **BIF becomes a real editor.**

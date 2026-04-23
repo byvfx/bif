@@ -37,10 +37,11 @@ Built from scratch in Rust with a USD-native pipeline. Inspired by Katana's laye
 ## Quick Start
 
 ```bash
-# Build and run
+# Qt shell
+. .\setup_qt_env.ps1
 cargo run -p bif_viewer
 
-# With USD scene (needs USD env)
+# Same shell, with USD scene support
 . .\setup_usd_env.ps1
 cargo run -p bif_viewer
 
@@ -70,9 +71,10 @@ bif/
 │   ├── bif_math/       # Vec3, Ray, AABB, Camera, Transform
 │   ├── bif_core/       # Scene graph, USD bridge, materials, textures
 │   ├── bif_renderer/   # "Ivar" CPU path tracer (Embree, OpenPBR)
-│   ├── bif_viewport/   # GPU viewport (wgpu/Vulkan, egui)
-│   ├── bif_viewer/     # Application shell
-│   └── bif_maketx/     # Standalone .tx converter
+│   ├── bif_viewport/   # GPU viewport + interaction engine
+│   ├── bif_viewer/     # Thin runner that boots bif_qt
+│   ├── bif_maketx/     # Standalone .tx converter
+│   └── bif_qt/         # Qt 6 shell (cxx-qt, docks, panels)
 ├── cpp/usd_bridge/     # C++ FFI to Pixar USD
 └── benchmarks/         # bif_perf performance harness
 ```
@@ -84,7 +86,7 @@ bif/
 | Metric | Value |
 |--------|-------|
 | Rust LOC | ~50,000 |
-| Tests | 400+ |
+| Tests | 500+ |
 | Node types | 10 |
 | Viewport FPS | 60+ (VSync) |
 | Max instances | 1M+ with LOD |
@@ -94,7 +96,7 @@ bif/
 
 ## Tech Stack
 
-**Rust** · wgpu 22 (Vulkan/DX12/Metal) · egui 0.29 · Intel Embree 4 · Pixar USD 25.11 (C++) · glam (SIMD) · OpenImageIO (optional) · Intel OIDN (optional)
+**Rust** · Qt 6.8 + cxx-qt · wgpu 22 (Vulkan/DX12/Metal) · Intel Embree 4 · Pixar USD 25.11 (C++) · glam (SIMD) · OpenImageIO (optional) · Intel OIDN (optional)
 
 ---
 
@@ -127,10 +129,10 @@ See **[MILESTONES.md](MILESTONES.md)** for the full version-organized roadmap.
 
 | Next | Theme |
 |------|-------|
-| v0.13.0 | Pipeline foundation *(in progress)* |
-| v0.14.0 | USD debugging tools |
-| v0.15.0 | Qt 6 migration |
-| v0.16.0 | Viewport performance |
+| v0.16.0 | Edit operations + save *(current)* |
+| v0.17.0 | Viewport performance |
+| v0.18.0 | AI integration |
+| v0.19.0 | Context system |
 | ... | [Full roadmap](MILESTONES.md) |
 
 ---
