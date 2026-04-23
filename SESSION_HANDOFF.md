@@ -1,8 +1,8 @@
 # Session Handoff — April 22, 2026 (v0.15.0 shipped on main)
 
-**Last Updated:** 2026-04-22. v0.15.0 ship-closeout landed on `main`: property inspector stack caching, ortho/timeline/demo-tree cleanup, lazy scene-browser `fetchMore`, release docs bump, and CHANGELOG split. Agent-config work from 2026-04-22 ships inside the v0.15.0 release notes. Workspace/package version is `0.15.0`; release validation is green in a Qt/USD-ready shell; next active milestone is v0.16.0.
+**Last Updated:** 2026-04-22. v0.15.0 ship-closeout landed on `main`: property inspector stack caching, ortho/timeline/demo-tree cleanup, lazy scene-browser `fetchMore`, release docs bump, and CHANGELOG split. Agent-config work from 2026-04-22 ships inside the v0.15.0 release notes. Workspace/package version is `0.15.0`; release validation is green in a Qt/USD-ready shell; next active milestone is v0.16.0. The deferred Obsidian Graphite / "Quiet Confidence" styling pass is now explicitly split into a follow-on `v0.16.5` docket so the editor tranche stays function-first.
 
-**Next action:** start v0.16.0 kickoff work on Edit Operations + Save. If publishing this ship state externally, push `main` plus the annotated `v0.15.0` tag and confirm the Pages deploy succeeds on the main-branch push.
+**Next action:** start v0.16.0 kickoff work on Edit Operations + Save, keeping Graphite styling work parked in `v0.16.5`. If publishing this ship state externally, push `main` plus the annotated `v0.15.0` tag and confirm the Pages deploy succeeds on the main-branch push.
 
 ## 🏁 2026-04-22 — v0.15.0 ship closeout
 

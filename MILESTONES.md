@@ -40,6 +40,7 @@ Current active milestone. BIF moves from a Qt-native USD viewer/orchestrator int
 
 | Version | Theme | Est. Hours | Key Milestones |
 |---------|-------|-----------|----------------|
+| v0.16.5 | Qt Polish (Graphite) | 8-12h | Obsidian Graphite styling pass, workspace chrome polish, design-token cleanup |
 | v0.17.0 | Viewport Performance | 25-35h | M22 + payload policies + texture nodes in material editor |
 | v0.18.0 | AI Integration | 38-59h | Material creator, scene builder, ComfyUI |
 | v0.19.0 | Context System | 30-40h | M39 |
@@ -104,6 +105,15 @@ Workflow Phase 2. BIF becomes a real editor.
 - **Opinion stack (full hover):** Hover any property → see full layer contribution stack
 - **Workspace presets:** Assembly, Lighting, Materials, Review — reconfigure panels + payload policy
 - **Validation**: Make edits in BIF, save, open in usdview, verify edits compose correctly
+
+### v0.16.5 — Qt Polish (Graphite)
+
+Dedicated styling/polish pass after the v0.16.0 functional editor work lands. Keep behavior changes out; this milestone is for presentation, consistency, and finish.
+
+- Apply the Obsidian Graphite / "Quiet Confidence" design system from `assets/stitch_bif_ui/obsidian_graphite/DESIGN.md`
+- Polish dock chrome, toolbar spacing, status surfaces, and workspace differentiation without changing core workflows
+- Consolidate Qt styling tokens and remove one-off widget styling drift introduced during the functional tranche
+- Validation: visual pass against `docs/ux/UI_DESIGN.md` plus the Graphite design doc, with no regressions to v0.16.0 editing flows
 
 ### v0.17.0 — Viewport Performance
 

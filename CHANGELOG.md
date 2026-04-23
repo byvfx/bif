@@ -10,6 +10,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- **Qt polish is now a separate `v0.16.5` docket** (2026-04-22). Split the deferred Obsidian Graphite / "Quiet Confidence" styling pass out of the live `v0.16.0` editor tranche so edit/save work stays function-first and styling stays off the critical path.
+
 ### Fixed
 
 ## [0.15.0] - 2026-04-22

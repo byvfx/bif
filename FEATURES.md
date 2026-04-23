@@ -1,6 +1,6 @@
 # FEATURES
 
-Last updated: 2026-04-20
+Last updated: 2026-04-22
 
 ## Rendering
 
@@ -45,5 +45,6 @@ Last updated: 2026-04-20
 
 ## UX
 
+- Qt Graphite / "Quiet Confidence" styling polish is now docketed under `v0.16.5`, not the live `v0.16.0` editor tranche. Keep function-first UI work separate from design-token polish.
 - Remove the extra USD file loading window.
 - NEED a way to see the USD primvars and values.
