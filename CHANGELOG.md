@@ -8,6 +8,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+### Changed
+
+### Fixed
+
+## [0.15.0] - 2026-04-22
+
+### Added
+
 - **Repo-owned shared agent-config layer** (2026-04-22). Added `agents/` as the canonical source for shared project guidance, handoff contract, roles, workflows, plan-saving guidance, and a dedicated Codex `bif-commit` walkthrough. Added `docs/agent-plans/` and `docs/agent-handoffs/` repo conventions plus a Claude `/save-plan` command that writes plans into the repo instead of relying on user-folder artifacts.
 - **Repo-local Codex `bif-commit` skill generation + install path** (2026-04-22). Added generated Codex artifacts under `agents/generated/codex/`, `scripts/sync-agent-config.ps1` to regenerate tool wrappers/artifacts, and `scripts/install-codex-skills.ps1` to copy repo-generated skills into `~/.codex/skills`.
 
