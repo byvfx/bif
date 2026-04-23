@@ -47,6 +47,7 @@ cargo run -p bif_viewer
 # Optional features
 cargo build --features oidn    # Intel OIDN denoising
 cargo build --features oiio    # OpenImageIO .tx conversion
+cargo run -p bif_viewer --features oiio,oidn  # Viewer with OIIO + OIDN
 ```
 
 ### Viewport Controls

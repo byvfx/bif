@@ -14,9 +14,9 @@ BIF is a USD Orchestration Tool for VFX — layer-aware USD editing + procedural
 
 **BIF** - USD Orchestration Tool for VFX (layer-aware editing + procedural assembly + rendering).
 
-- **Status:** v0.12.0 released (USD export, OpenPBR, subsystem extraction). v0.13.0 in progress.
-- **Current:** v0.13.0 — Pipeline Foundation (M29.5 UI overhaul, M30 persistence, M31 per-node viz)
-- **Next:** v0.14.0 (layer-aware stage) → v0.15.0 (Qt migration) → v0.16.0 (edit ops + save) — see [MILESTONES.md](MILESTONES.md)
+- **Status:** v0.15.0 shipped (Qt migration complete — egui→cxx-qt, layer-aware UI, camera picker).
+- **Current:** v0.16.0 — Edit Operations + Save (Workflow Phase 2)
+- **Next:** v0.17.0 (viewport perf) → v0.18.0 (AI integration) — see [MILESTONES.md](MILESTONES.md)
 - **Goal:** Layer-aware USD editor + scene assembler — open stage, pick layer, edit, save clean USD
 - **Design:** [BIF_USD_WORKFLOW.md](BIF_USD_WORKFLOW.md) — hybrid approach (procedural nodes + layer awareness)
 - **Timeline:** Side project, 10-20 hrs/week
@@ -49,7 +49,7 @@ cargo test -p bif_core -- --test-threads=1  # 163 tests (needs USD DLLs)
 
 # Run
 cargo run -p bif_viewer
-cargo run -p bif_viewer --features oidn  # With denoising
+cargo run -p bif_viewer --features oiio,oidn  # With OpenImageIO + denoising
 
 # Checks
 cargo clippy -- -D warnings

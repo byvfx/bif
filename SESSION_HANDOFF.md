@@ -1,3 +1,18 @@
+# Session Handoff — April 22, 2026 (v0.15.0 shipped on main)
+
+**Last Updated:** 2026-04-22. v0.15.0 ship-closeout landed on `main`: property inspector stack caching, ortho/timeline/demo-tree cleanup, lazy scene-browser `fetchMore`, release docs bump, and CHANGELOG split. Agent-config work from 2026-04-22 ships inside the v0.15.0 release notes. Workspace/package version is `0.15.0`; release validation is green in a Qt/USD-ready shell; next active milestone is v0.16.0.
+
+**Next action:** start v0.16.0 kickoff work on Edit Operations + Save. If publishing this ship state externally, push `main` plus the annotated `v0.15.0` tag and confirm the Pages deploy succeeds on the main-branch push.
+
+## 🏁 2026-04-22 — v0.15.0 ship closeout
+
+- **Cleanup batch landed on `main`.** Property inspector composition arcs now read from a selected-prim stack cache instead of re-querying the prim stack per row. Scene browser now lazy-loads one level at a time via `fetchMore`, and the demo tree no longer reappears after a real stage has been loaded and then closed.
+- **Playback/viewport polish.** Orthographic preset switches now refresh aspect from the live viewport rect before updating the camera. Timeline playback stops ticking while the app is minimized/inactive and resumes cleanly when the window becomes active again.
+- **Release docs updated.** `CLAUDE.md` now points at v0.16/v0.17+, `CHANGELOG.md` promotes the prior `[Unreleased]` block to `## [0.15.0] - 2026-04-22`, and this handoff now treats v0.15.0 as shipped instead of "merge pending."
+- **Known follow-up mismatches still worth cleaning up soon.** `MILESTONES.md` and `README.md` still carry pre-ship roadmap wording from before the Qt migration landed on `main`; they were not part of the original handoff doc but are now the main stale release-state docs.
+
+---
+
 # Session Handoff — April 22, 2026 (shared agent-config layer + Codex skill path)
 
 **Last Updated:** 2026-04-22. New branch `agent-config-unification` establishes a repo-owned shared agent-config layer: canonical docs now live under `agents/` (project guidance, handoff contract, roles, workflows), Claude/Kilo wrappers are thin adapters, plans/handoffs now have repo homes under `docs/agent-plans/` and `docs/agent-handoffs/`, and Codex has a repo-generated `bif-commit` skill artifact plus installer path. Checks for this branch are clean **when the Qt env is loaded** (`. .\setup_qt_env.ps1; cargo build`, `. .\setup_qt_env.ps1; cargo clippy -- -D warnings`, `cargo fmt --check`). Unrelated artifacts remain intentionally uncommitted: `assets/screenshots/bif_ui_15.png`, `assets/screenshots/bif_ui_15_timeline.png`, `review/`.
