@@ -44,6 +44,26 @@
 
 namespace {
 
+constexpr auto kNodeGraphPreviewProperty = "_bif_node_graph_preview_enabled";
+constexpr auto kNodeGraphPreviewSettingsKey = "experiments/node_graph_preview";
+
+bool node_graph_preview_enabled(QMainWindow* window) {
+    return window->property(kNodeGraphPreviewProperty).toBool();
+}
+
+void set_node_graph_preview_enabled(QMainWindow* window, bool enabled) {
+    window->setProperty(kNodeGraphPreviewProperty, enabled);
+    QSettings settings;
+    settings.setValue(QLatin1String(kNodeGraphPreviewSettingsKey), enabled);
+}
+
+void enforce_node_graph_preview_gate(QMainWindow* window) {
+    auto* node_graph = window->findChild<QDockWidget*>(QStringLiteral("dock_node_graph"));
+    if (node_graph && !node_graph_preview_enabled(window)) {
+        node_graph->hide();
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Workspace presets (B.5)
 // ---------------------------------------------------------------------------
@@ -63,12 +83,13 @@ void apply_default_layout(QMainWindow* window, const QString& name) {
     auto* layer_stack = dock("dock_layer_stack");
     auto* property_inspector = dock("dock_property_inspector");
     auto* node_graph = dock("dock_node_graph");
+    const bool node_graph_preview = node_graph_preview_enabled(window);
 
     auto show_all = [&](bool s) {
         if (scene_browser) scene_browser->setVisible(s);
         if (layer_stack) layer_stack->setVisible(s);
         if (property_inspector) property_inspector->setVisible(s);
-        if (node_graph) node_graph->setVisible(s);
+        if (node_graph) node_graph->setVisible(node_graph_preview && s);
     };
 
     if (name == QLatin1String(ws::ASSEMBLY)) {
@@ -82,7 +103,7 @@ void apply_default_layout(QMainWindow* window, const QString& name) {
         if (scene_browser) scene_browser->setVisible(false);
         if (layer_stack) layer_stack->setVisible(false);
         if (property_inspector) property_inspector->setVisible(true);
-        if (node_graph) node_graph->setVisible(true);
+        if (node_graph) node_graph->setVisible(node_graph_preview);
     } else if (name == QLatin1String(ws::RENDER)) {
         if (scene_browser) scene_browser->setVisible(false);
         if (layer_stack) layer_stack->setVisible(false);
@@ -116,6 +137,7 @@ void switch_to(
     } else if (!window->restoreState(blob)) {
         apply_default_layout(window, target);
     }
+    enforce_node_graph_preview_gate(window);
 
     state->setCurrent_workspace(target);
     settings.setValue(QLatin1String(SETTINGS_LAST_KEY), target);
@@ -134,6 +156,8 @@ struct MenuActions {
     QAction* save;
     QAction* save_as;
     QAction* exit_app;
+    QAction* undo;
+    QAction* redo;
 
     QAction* workspace_assembly;
     QAction* workspace_lighting;
@@ -141,6 +165,7 @@ struct MenuActions {
     QAction* workspace_render;
     QAction* zen_mode;
     QAction* toggle_lod;
+    QAction* toggle_node_graph_experimental;
 
     QAction* about;
 };
@@ -172,6 +197,7 @@ QDockWidget* make_placeholder_dock(
 }
 
 MenuActions build_menu_bar(QMainWindow* window) {
+    namespace sc = bif_qt::shortcuts;
     MenuActions a{};
     auto* menu = window->menuBar();
 
@@ -191,6 +217,16 @@ MenuActions build_menu_bar(QMainWindow* window) {
     a.exit_app = file->addAction(QStringLiteral("E&xit"));
     a.exit_app->setShortcut(QKeySequence(QStringLiteral("Ctrl+Q")));
 
+    auto* edit = menu->addMenu(QStringLiteral("&Edit"));
+    a.undo = edit->addAction(QStringLiteral("&Undo"));
+    a.undo->setShortcut(sc::lookup(sc::kEditUndo, QKeySequence(QStringLiteral("Ctrl+Z"))));
+    a.undo->setShortcutContext(Qt::ApplicationShortcut);
+    a.undo->setEnabled(false);
+    a.redo = edit->addAction(QStringLiteral("&Redo"));
+    a.redo->setShortcut(sc::lookup(sc::kEditRedo, QKeySequence(QStringLiteral("Ctrl+Shift+Z"))));
+    a.redo->setShortcutContext(Qt::ApplicationShortcut);
+    a.redo->setEnabled(false);
+
     auto* view = menu->addMenu(QStringLiteral("&View"));
     a.workspace_assembly = view->addAction(QStringLiteral("&Assembly Workspace"));
     a.workspace_assembly->setShortcut(QKeySequence(QStringLiteral("Ctrl+1")));
@@ -208,6 +244,9 @@ MenuActions build_menu_bar(QMainWindow* window) {
     a.toggle_lod->setShortcut(QKeySequence(QStringLiteral("Ctrl+L")));
     a.toggle_lod->setCheckable(true);
     a.toggle_lod->setChecked(true);  // DisplaySettings::default = true
+    a.toggle_node_graph_experimental =
+        view->addAction(QStringLiteral("&Node Graph (Experimental)"));
+    a.toggle_node_graph_experimental->setCheckable(true);
 
     auto* help = menu->addMenu(QStringLiteral("&Help"));
     a.about = help->addAction(QStringLiteral("&About BIF"));
@@ -599,6 +638,17 @@ void wire_shell_actions(
     auto update_status = [shell_state, window]() {
         window->statusBar()->showMessage(shell_state->getStatus_message());
     };
+    auto* undo_action = actions.undo;
+    auto* redo_action = actions.redo;
+    auto refresh_edit_actions = [shell_state, undo_action, redo_action]() {
+        undo_action->setEnabled(shell_state->getCan_undo());
+        redo_action->setEnabled(shell_state->getCan_redo());
+    };
+    QObject::connect(shell_state, &BifShellState::can_undoChanged,
+                     window, refresh_edit_actions);
+    QObject::connect(shell_state, &BifShellState::can_redoChanged,
+                     window, refresh_edit_actions);
+    refresh_edit_actions();
 
     auto new_stage_flow = [shell_state, central_stack, update_status]() {
         shell_state->on_new_stage();
@@ -633,6 +683,16 @@ void wire_shell_actions(
             shell_state->on_save_as();
             update_status();
         });
+    QObject::connect(actions.undo, &QAction::triggered, window,
+        [shell_state, update_status]() {
+            shell_state->on_undo();
+            update_status();
+        });
+    QObject::connect(actions.redo, &QAction::triggered, window,
+        [shell_state, update_status]() {
+            shell_state->on_redo();
+            update_status();
+        });
     QObject::connect(actions.exit_app, &QAction::triggered,
         qApp, &QCoreApplication::quit);
 
@@ -660,6 +720,24 @@ void wire_shell_actions(
     QObject::connect(actions.toggle_lod, &QAction::toggled, window,
         [shell_state, update_status](bool enabled) {
             shell_state->on_set_lod_enabled(enabled);
+            update_status();
+        });
+    QObject::connect(actions.toggle_node_graph_experimental, &QAction::toggled, window,
+        [window, shell_state, update_status](bool enabled) {
+            set_node_graph_preview_enabled(window, enabled);
+            auto* node_graph =
+                window->findChild<QDockWidget*>(QStringLiteral("dock_node_graph"));
+            if (node_graph) {
+                if (enabled) {
+                    node_graph->show();
+                    node_graph->raise();
+                } else {
+                    node_graph->hide();
+                }
+            }
+            shell_state->setStatus_message(enabled
+                ? QStringLiteral("Node graph preview: ON")
+                : QStringLiteral("Node graph preview: OFF"));
             update_status();
         });
 
@@ -730,8 +808,9 @@ void connect_viewport_signals(
 
     QObject::connect(
         viewport, &RenderWidget::frameRequested, viewport,
-        [cb]() {
+        [cb, shell_state]() {
             viewport_on_frame(*cb);
+            shell_state->sync_undo_redo_state();
         });
 
     // Camera + selection input — Phase E.1 routes deltas to
@@ -931,6 +1010,17 @@ int bif_qt_run_shell(ViewportCallbacks* viewport_cb, ::rust::Str stylesheet) {
 
     {
         QSettings settings;
+        const bool node_graph_preview = settings
+            .value(QLatin1String(kNodeGraphPreviewSettingsKey), false)
+            .toBool();
+        window.setProperty(kNodeGraphPreviewProperty, node_graph_preview);
+        menu_actions.toggle_node_graph_experimental->blockSignals(true);
+        menu_actions.toggle_node_graph_experimental->setChecked(node_graph_preview);
+        menu_actions.toggle_node_graph_experimental->blockSignals(false);
+    }
+
+    {
+        QSettings settings;
         const QString last = settings
             .value(QLatin1String(ws::SETTINGS_LAST_KEY),
                    QLatin1String(ws::DEFAULT_WORKSPACE))
@@ -953,12 +1043,17 @@ int bif_qt_run_shell(ViewportCallbacks* viewport_cb, ::rust::Str stylesheet) {
         commands.insert(QStringLiteral("File: Save"), menu_actions.save);
         commands.insert(QStringLiteral("File: Save As..."), menu_actions.save_as);
         commands.insert(QStringLiteral("File: Exit"), menu_actions.exit_app);
+        commands.insert(QStringLiteral("Edit: Undo"), menu_actions.undo);
+        commands.insert(QStringLiteral("Edit: Redo"), menu_actions.redo);
         commands.insert(QStringLiteral("Workspace: Assembly"), menu_actions.workspace_assembly);
         commands.insert(QStringLiteral("Workspace: Lighting"), menu_actions.workspace_lighting);
         commands.insert(QStringLiteral("Workspace: Materials"), menu_actions.workspace_materials);
         commands.insert(QStringLiteral("Workspace: Render"), menu_actions.workspace_render);
         commands.insert(QStringLiteral("View: Toggle Zen Mode"), menu_actions.zen_mode);
         commands.insert(QStringLiteral("View: Toggle Viewport LOD"), menu_actions.toggle_lod);
+        commands.insert(
+            QStringLiteral("View: Toggle Node Graph (Experimental)"),
+            menu_actions.toggle_node_graph_experimental);
         commands.insert(QStringLiteral("Help: About BIF"), menu_actions.about);
 
         // Owned by `window` via Qt parent-child; deleted on shutdown.

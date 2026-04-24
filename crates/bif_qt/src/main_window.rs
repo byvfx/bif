@@ -122,11 +122,11 @@ fn color_index_for_layer(state: &BifShellStateRust, identifier: &str) -> i32 {
         .unwrap_or(-1)
 }
 
-/// Pragmatic "is this layer a valid edit target?" check for Tier 1.
-/// Anonymous layers can't persist; muted layers shouldn't accept new
-/// opinions. Real `SdfLayer::PermissionToEdit()` is Tier 1.5 FFI work.
+/// Pick only layers USD says can accept authored edits. Muted layers
+/// are still excluded even if writable — the shell should not author
+/// new opinions into a muted layer.
 fn is_writable_layer(info: &bif_core::usd::LayerInfo) -> bool {
-    !info.is_anonymous && !info.is_muted
+    info.permission_to_edit && !info.is_muted
 }
 
 /// Pick the strongest writable sublayer as the edit target. Walks the
@@ -227,6 +227,8 @@ pub mod qobject {
         #[qproperty(QString, title)]
         #[qproperty(QString, status_message)]
         #[qproperty(QString, current_workspace)]
+        #[qproperty(bool, can_undo)]
+        #[qproperty(bool, can_redo)]
         // Bumped on every scene_layer_state mutation. C++ models
         // connect to the auto-generated `layer_state_revisionChanged`
         // signal to trigger a reset/refresh.
@@ -294,6 +296,19 @@ pub mod qobject {
         /// screen (index 0).
         #[qinvokable]
         fn close_stage(self: Pin<&mut BifShellState>);
+
+        /// Edit → Undo (Ctrl+Z). Mirrors `Viewport::undo_last_command`.
+        #[qinvokable]
+        fn on_undo(self: Pin<&mut BifShellState>);
+
+        /// Edit → Redo (Ctrl+Shift+Z). Mirrors `Viewport::redo_last_command`.
+        #[qinvokable]
+        fn on_redo(self: Pin<&mut BifShellState>);
+
+        /// Poll the live viewport undo stack and mirror it onto
+        /// `can_undo` / `can_redo` for C++ action enable state.
+        #[qinvokable]
+        fn sync_undo_redo_state(self: Pin<&mut BifShellState>);
 
         /// Camera orbit delta forwarded from RenderWidget::cameraOrbit.
         /// Phase E.1 just updates status; Phase E.2 dispatches a
@@ -638,6 +653,10 @@ pub struct BifShellStateRust {
     /// "materials", "render". Empty on first launch (C++ side
     /// initializes from QSettings or falls back to "assembly").
     pub current_workspace: cxx_qt_lib::QString,
+    /// Edit menu enable state — mirrored from the live viewport undo stack.
+    pub can_undo: bool,
+    /// Edit menu enable state — mirrored from the live viewport redo stack.
+    pub can_redo: bool,
     /// Monotonic counter bumped on every scene_layer_state mutation.
     /// Auto-emits `layer_state_revisionChanged` for panel models.
     pub layer_state_revision: i32,
@@ -702,6 +721,8 @@ impl Default for BifShellStateRust {
             title: cxx_qt_lib::QString::from("BIF — USD Orchestration (Qt)"),
             status_message: cxx_qt_lib::QString::from("Ready."),
             current_workspace: cxx_qt_lib::QString::from(""),
+            can_undo: false,
+            can_redo: false,
             layer_state_revision: 0,
             scene_browser_revision: 0,
             scene_layer_state: None,
@@ -872,6 +893,7 @@ impl qobject::BifShellState {
         match load_result {
             None => {
                 log::warn!("stage open: viewport not ready yet (surface not created?)");
+                refresh_undo_redo_qprops(self.as_mut());
                 self.as_mut()
                     .set_status_message(cxx_qt_lib::QString::from(&format!(
                         "Viewport not ready — cannot load {path_str}",
@@ -879,6 +901,7 @@ impl qobject::BifShellState {
             }
             Some(Err(e)) => {
                 log::error!("stage load failed: {e:?}");
+                refresh_undo_redo_qprops(self.as_mut());
                 self.as_mut()
                     .set_status_message(cxx_qt_lib::QString::from(&format!("Load failed: {e:?}",)));
             }
@@ -926,6 +949,7 @@ impl qobject::BifShellState {
                     r.active_camera_source = "free".to_string();
                 }
                 bump_camera_list_revision(self.as_mut());
+                refresh_undo_redo_qprops(self.as_mut());
 
                 log::info!("stage loaded: {path_str}");
                 let msg = if edit_target_name.is_empty() {
@@ -979,9 +1003,40 @@ impl qobject::BifShellState {
         refresh_selected_prim_stack_cache(self.as_mut());
         bump_revision(self.as_mut());
         bump_scene_browser_revision(self.as_mut());
+        refresh_undo_redo_qprops(self.as_mut());
 
         self.as_mut()
             .set_status_message(cxx_qt_lib::QString::from("Stage closed."));
+    }
+
+    fn on_undo(mut self: Pin<&mut Self>) {
+        log::info!("action: Edit/Undo");
+        let outcome = with_viewport_mut(|vp| vp.renderer_mut().undo());
+        let message = match outcome {
+            Some(Some(desc)) => format!("Undo: {desc}"),
+            Some(None) => "Undo: nothing to undo".to_string(),
+            None => "Undo failed — viewport not ready".to_string(),
+        };
+        refresh_undo_redo_qprops(self.as_mut());
+        self.as_mut()
+            .set_status_message(cxx_qt_lib::QString::from(&message));
+    }
+
+    fn on_redo(mut self: Pin<&mut Self>) {
+        log::info!("action: Edit/Redo");
+        let outcome = with_viewport_mut(|vp| vp.renderer_mut().redo());
+        let message = match outcome {
+            Some(Some(desc)) => format!("Redo: {desc}"),
+            Some(None) => "Redo: nothing to redo".to_string(),
+            None => "Redo failed — viewport not ready".to_string(),
+        };
+        refresh_undo_redo_qprops(self.as_mut());
+        self.as_mut()
+            .set_status_message(cxx_qt_lib::QString::from(&message));
+    }
+
+    fn sync_undo_redo_state(mut self: Pin<&mut Self>) {
+        refresh_undo_redo_qprops(self.as_mut());
     }
 
     fn on_camera_orbit(self: Pin<&mut Self>, dx: i32, dy: i32) {
@@ -1162,6 +1217,7 @@ impl qobject::BifShellState {
                 is_muted: false,
                 is_anonymous: false,
                 is_dirty: false,
+                permission_to_edit: true,
                 real_path: std::path::PathBuf::new(),
                 offset: LayerOffset::default(),
             },
@@ -1173,6 +1229,7 @@ impl qobject::BifShellState {
                 is_muted: false,
                 is_anonymous: false,
                 is_dirty: false,
+                permission_to_edit: true,
                 real_path: std::path::PathBuf::new(),
                 offset: LayerOffset::default(),
             },
@@ -1184,6 +1241,7 @@ impl qobject::BifShellState {
                 is_muted: false,
                 is_anonymous: false,
                 is_dirty: false,
+                permission_to_edit: true,
                 real_path: std::path::PathBuf::new(),
                 offset: LayerOffset::default(),
             },
@@ -1887,6 +1945,29 @@ fn refresh_selected_prim_stack_cache(mut state: Pin<&mut qobject::BifShellState>
     state.as_mut().rust_mut().selected_prim_stack_cache = cache;
 }
 
+fn current_undo_redo_availability() -> (bool, bool) {
+    with_viewport_mut(|vp| {
+        let scene = &vp.renderer_mut().scene;
+        (scene.undo_stack.can_undo(), scene.undo_stack.can_redo())
+    })
+    .unwrap_or((false, false))
+}
+
+fn refresh_undo_redo_qprops(mut state: Pin<&mut qobject::BifShellState>) {
+    let (can_undo, can_redo) = current_undo_redo_availability();
+    let (prev_undo, prev_redo) = {
+        let pin_ref = state.as_ref();
+        let r = pin_ref.rust();
+        (r.can_undo, r.can_redo)
+    };
+    if prev_undo != can_undo {
+        state.as_mut().set_can_undo(can_undo);
+    }
+    if prev_redo != can_redo {
+        state.as_mut().set_can_redo(can_redo);
+    }
+}
+
 /// Increment `scene_browser_revision` to trigger
 /// `scene_browser_revisionChanged`. SceneBrowserModel listens for
 /// this and calls `beginResetModel/endResetModel`.
@@ -1961,4 +2042,45 @@ fn selected_prim_keyframes(selected: &cxx_qt_lib::QString) -> Vec<i32> {
         times
     })
     .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bif_core::scene_layer_state::SceneLayerState;
+
+    fn make_layer(identifier: &str, permission_to_edit: bool, muted: bool) -> LayerInfo {
+        LayerInfo {
+            identifier: identifier.to_string(),
+            display_name: identifier.to_string(),
+            real_path: Default::default(),
+            is_anonymous: false,
+            is_dirty: false,
+            is_muted: muted,
+            permission_to_edit,
+            offset: LayerOffset::default(),
+            parent_index: None,
+            depth: 0,
+        }
+    }
+
+    #[test]
+    fn pick_strongest_writable_sublayer_skips_locked_layers() {
+        let state = SceneLayerState {
+            stack: LayerStack {
+                layers: vec![
+                    make_layer("locked.usda", false, false),
+                    make_layer("anim.usda", true, false),
+                ],
+                root_index: 0,
+            },
+            working_layer: 0,
+            muted: Default::default(),
+            isolation_mode: false,
+            payload_policy: PayloadPolicy::LoadAll,
+            layer_for_prim: Default::default(),
+        };
+
+        assert_eq!(pick_strongest_writable_sublayer(&state), Some(1));
+    }
 }

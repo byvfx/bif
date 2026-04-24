@@ -189,6 +189,7 @@ mod tests {
                         is_anonymous: false,
                         is_dirty: false,
                         is_muted: false,
+                        permission_to_edit: true,
                         offset: LayerOffset::default(),
                         parent_index: None,
                         depth: 0,
@@ -200,6 +201,7 @@ mod tests {
                         is_anonymous: false,
                         is_dirty: false,
                         is_muted: true,
+                        permission_to_edit: true,
                         offset: LayerOffset {
                             offset: 24.0,
                             scale: 1.0,

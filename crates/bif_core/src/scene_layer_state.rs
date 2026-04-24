@@ -146,6 +146,7 @@ mod tests {
             is_anonymous: false,
             is_dirty: false,
             is_muted: muted,
+            permission_to_edit: true,
             offset: LayerOffset::default(),
             parent_index: parent,
             depth,

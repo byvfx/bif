@@ -66,6 +66,9 @@ pub struct LayerInfo {
     pub is_dirty: bool,
     /// True if this layer is currently muted on the stage.
     pub is_muted: bool,
+    /// True when USD permits authored edits on this layer
+    /// (`SdfLayer::PermissionToEdit()`).
+    pub permission_to_edit: bool,
     /// Time offset + scale applied to this layer's opinions when composed.
     pub offset: LayerOffset,
     /// Index into [`LayerStack::layers`] of this layer's parent in the

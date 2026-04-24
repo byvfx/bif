@@ -39,6 +39,10 @@ inline constexpr const char* kTimelineTogglePlayback = "timeline.toggle_playback
 // ---- Camera / Viewport --------------------------------------------
 inline constexpr const char* kCameraFrameSelected = "camera.frame_selected";
 
+// ---- Edit ----------------------------------------------------------
+inline constexpr const char* kEditUndo = "edit.undo";
+inline constexpr const char* kEditRedo = "edit.redo";
+
 // ---- File ----------------------------------------------------------
 inline constexpr const char* kFileNewStage = "file.new_stage";
 inline constexpr const char* kFileOpenStage = "file.open_stage";

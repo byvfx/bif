@@ -6334,6 +6334,33 @@ void collect_sublayers(
     }
 }
 
+SdfLayerRefPtr find_layer_by_identifier(
+    const SdfLayerRefPtr& root,
+    const std::string& identifier
+) {
+    if (!root) return {};
+    if (root->GetIdentifier() == identifier) {
+        return root;
+    }
+
+    const auto& paths = root->GetSubLayerPaths();
+    for (const auto& path : paths) {
+        std::string abs_path = SdfComputeAssetPathRelativeToLayer(root, path);
+        SdfLayerRefPtr sub = SdfLayer::FindOrOpen(abs_path);
+        if (!sub) {
+            continue;
+        }
+        if (sub->GetIdentifier() == identifier) {
+            return sub;
+        }
+        if (SdfLayerRefPtr nested = find_layer_by_identifier(sub, identifier)) {
+            return nested;
+        }
+    }
+
+    return {};
+}
+
 } // anonymous namespace
 
 UsdBridgeError usd_bridge_stage_get_layer_stack(
@@ -6370,6 +6397,7 @@ UsdBridgeError usd_bridge_stage_get_layer_stack(
             info_array[i].is_anonymous = e.layer->IsAnonymous() ? 1 : 0;
             info_array[i].is_dirty     = e.layer->IsDirty() ? 1 : 0;
             info_array[i].is_muted     = is_muted(e.layer) ? 1 : 0;
+            info_array[i].permission_to_edit = e.layer->PermissionToEdit() ? 1 : 0;
             info_array[i].time_offset  = e.offset.GetOffset();
             info_array[i].time_scale   = e.offset.GetScale();
             info_array[i].parent_index = e.parent_index;
@@ -6445,6 +6473,31 @@ UsdBridgeError usd_bridge_stage_mute_layer(
         return USD_BRIDGE_SUCCESS;
     } catch (const std::exception& e) {
         TF_WARN("usd_bridge_stage_mute_layer: %s", e.what());
+        return USD_BRIDGE_ERROR_UNKNOWN;
+    }
+}
+
+UsdBridgeError usd_bridge_layer_set_permission_to_edit(
+    const UsdBridgeStage* stage,
+    const char* layer_identifier,
+    int permission_to_edit
+) {
+    if (!stage || !layer_identifier) {
+        return USD_BRIDGE_ERROR_NULL_POINTER;
+    }
+    try {
+        SdfLayerRefPtr root = stage->stage->GetRootLayer();
+        if (!root) {
+            return USD_BRIDGE_ERROR_INVALID_STAGE;
+        }
+        SdfLayerRefPtr layer = find_layer_by_identifier(root, layer_identifier);
+        if (!layer) {
+            return USD_BRIDGE_ERROR_INVALID_PRIM;
+        }
+        layer->SetPermissionToEdit(permission_to_edit != 0);
+        return USD_BRIDGE_SUCCESS;
+    } catch (const std::exception& e) {
+        TF_WARN("usd_bridge_layer_set_permission_to_edit: %s", e.what());
         return USD_BRIDGE_ERROR_UNKNOWN;
     }
 }

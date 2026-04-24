@@ -456,6 +456,7 @@ pub(crate) struct UsdBridgeLayerInfoRaw {
     pub is_anonymous: i32,
     pub is_dirty: i32,
     pub is_muted: i32,
+    pub permission_to_edit: i32,
     pub time_offset: f64,
     pub time_scale: f64,
     pub parent_index: i32,
@@ -1075,6 +1076,12 @@ extern "C" {
         stage: *mut UsdBridgeStageRaw,
         layer_identifier: *const c_char,
         muted: i32,
+    ) -> UsdBridgeErrorCode;
+
+    pub(crate) fn usd_bridge_layer_set_permission_to_edit(
+        stage: *const UsdBridgeStageRaw,
+        layer_identifier: *const c_char,
+        permission_to_edit: i32,
     ) -> UsdBridgeErrorCode;
 
     pub(crate) fn usd_bridge_layer_get_offset(

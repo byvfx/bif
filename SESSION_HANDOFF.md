@@ -1,3 +1,18 @@
+# Session Handoff — April 23, 2026 (`finish-qt-ui` C1 foundations ready)
+
+**Last Updated:** 2026-04-23. Branch `finish-qt-ui` now has the C1 foundations tranche from `docs/agent-handoffs/2026-04-22-finish-qt-ui.md` ready to land: Qt Edit menu undo/redo actions are wired to the live `bif_core::UndoStack`, edit-target layer picking now uses real USD `SdfLayer::PermissionToEdit()`, and the node graph dock stays hidden by default behind a persisted experimental toggle. Automated validation is green in a Qt/USD-ready shell: `cargo build`, `cargo clippy -- -D warnings`, `cargo fmt --check`, `cargo test -p bif_math`, `cargo test -p bif_renderer`, `cargo test -p bif_viewport`, `cargo test -p bif_viewer`, `cargo test -p bif_qt pick_strongest_writable_sublayer_skips_locked_layers`, and `cargo test -p bif_core -- --test-threads=1`. The `bif_core` suite still emits the known noisy USD secondary-thread diagnostics after completion, but the suite itself passes.
+
+**Next action:** commit the C1 foundations tranche on `finish-qt-ui`, then continue C2 quick wins: outline width/color controls, drag-and-drop stage open, property-row opinion tooltip, and the Ivar render trigger/status path.
+
+## 🏁 2026-04-23 — `finish-qt-ui` C1 foundations
+
+- **Undo/redo surfaced in the Qt shell.** `BifShellState` now mirrors `can_undo` / `can_redo`, Edit menu actions call renderer undo/redo, and action enable state refreshes off the viewport frame pump plus stage open/close transitions.
+- **Writable-layer detection is now real.** `LayerInfo` carries a USD-backed `permission_to_edit` bit from the C++ bridge, and `pick_strongest_writable_sublayer` now skips locked sublayers instead of relying on the old anonymous-layer heuristic.
+- **Node graph stays in-tree but hidden by default.** The dock is still present, but it only reappears when the experimental preview toggle is enabled and persists through QSettings.
+- **Regression coverage added for the new foundations.** Core USD tests now assert the reported `PermissionToEdit` state, and Qt tests cover the writable-layer picker when a locked layer sits above a writable sublayer.
+
+---
+
 # Session Handoff — April 22, 2026 (v0.15.0 shipped on main)
 
 **Last Updated:** 2026-04-22. v0.15.0 ship-closeout landed on `main`: property inspector stack caching, ortho/timeline/demo-tree cleanup, lazy scene-browser `fetchMore`, release docs bump, and CHANGELOG split. Agent-config work from 2026-04-22 ships inside the v0.15.0 release notes. Workspace/package version is `0.15.0`; release validation is green in a Qt/USD-ready shell; next active milestone is v0.16.0. The deferred Obsidian Graphite / "Quiet Confidence" styling pass is now explicitly split into a follow-on `v0.16.5` docket so the editor tranche stays function-first.

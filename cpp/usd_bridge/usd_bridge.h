@@ -1748,6 +1748,7 @@ typedef struct UsdBridgeLayerInfo {
     int is_anonymous;           // 1 if anonymous (in-memory), 0 otherwise
     int is_dirty;               // 1 if dirty (unsaved), 0 otherwise
     int is_muted;               // 1 if this layer is currently muted on the stage
+    int permission_to_edit;     // 1 if SdfLayer::PermissionToEdit() allows edits
     double time_offset;         // SdfLayerOffset::GetOffset (0.0 for root)
     double time_scale;          // SdfLayerOffset::GetScale (1.0 for root)
     int32_t parent_index;       // Index into UsdBridgeLayerStack.layers, -1 for root
@@ -1788,6 +1789,13 @@ UsdBridgeError usd_bridge_stage_mute_layer(
     UsdBridgeStage* stage,
     const char* layer_identifier,
     int muted
+);
+
+/// Override a layer's SdfLayer::PermissionToEdit() bit.
+UsdBridgeError usd_bridge_layer_set_permission_to_edit(
+    const UsdBridgeStage* stage,
+    const char* layer_identifier,
+    int permission_to_edit
 );
 
 /// Time offset + scale authored on a root sublayer reference.

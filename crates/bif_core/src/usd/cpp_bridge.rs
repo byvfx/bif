@@ -2402,6 +2402,26 @@ impl UsdStage {
         Ok(())
     }
 
+    #[cfg(test)]
+    pub fn set_layer_permission_to_edit(
+        &self,
+        identifier: &str,
+        permission_to_edit: bool,
+    ) -> UsdBridgeResult<()> {
+        let c_id = CString::new(identifier).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let code = unsafe {
+            usd_bridge_layer_set_permission_to_edit(
+                self.raw,
+                c_id.as_ptr(),
+                if permission_to_edit { 1 } else { 0 },
+            )
+        };
+        if code != UsdBridgeErrorCode::Success {
+            return Err(code.into());
+        }
+        Ok(())
+    }
+
     /// Get a layer's time offset + scale as authored on the root layer's
     /// sublayer reference list. Returns identity `(0.0, 1.0)` if the layer
     /// isn't a direct sublayer of the root.
@@ -3469,6 +3489,51 @@ mod tests {
             stack.layers.iter().all(|l| !l.is_muted),
             "no layer should be muted at load time"
         );
+    }
+
+    #[test]
+    fn test_get_layer_stack_reports_permission_to_edit() {
+        let stage = UsdStage::open(LAYERS_ROOT_FIXTURE).expect("open fixture");
+        let shot_id = stage
+            .get_layer_stack()
+            .expect("layer stack")
+            .layers
+            .iter()
+            .find(|l| l.identifier.ends_with("shot.usda"))
+            .map(|l| l.identifier.clone())
+            .expect("shot.usda in stack");
+
+        stage
+            .set_layer_permission_to_edit(&shot_id, false)
+            .expect("disable shot permission");
+
+        let stack = stage
+            .get_layer_stack()
+            .expect("layer stack after permission edit");
+
+        let shot = stack
+            .layers
+            .iter()
+            .find(|l| l.identifier.ends_with("shot.usda"))
+            .expect("shot.usda in stack");
+        let anim = stack
+            .layers
+            .iter()
+            .find(|l| l.identifier.ends_with("anim.usda"))
+            .expect("anim.usda in stack");
+
+        assert!(
+            !shot.permission_to_edit,
+            "read-only shot.usda should report permission_to_edit=false"
+        );
+        assert!(
+            anim.permission_to_edit,
+            "writable anim.usda should remain editable"
+        );
+
+        stage
+            .set_layer_permission_to_edit(&shot_id, true)
+            .expect("restore shot permission");
     }
 
     #[test]
