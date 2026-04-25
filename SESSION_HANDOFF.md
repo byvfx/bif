@@ -1,3 +1,19 @@
+# Session Handoff — April 23, 2026 (`finish-qt-ui` C2 quick wins landed)
+
+**Last Updated:** 2026-04-23. Branch `finish-qt-ui` now has the C2 quick-wins tranche from `docs/agent-handoffs/2026-04-22-finish-qt-ui.md` landed: Render Settings now drives selection-outline width/color, `.usd*` files can be dropped onto the Qt shell to open stages, Property Inspector rows expose the full opinion stack as a rich tooltip, and Ivar render/status is surfaced in both Render Settings and the new Render menu/status bar. Automated validation is green on the current tree: `cargo build`, `cargo clippy -- -D warnings`, `cargo fmt --check`, `cargo test -p bif_math`, `cargo test -p bif_renderer`, `cargo test -p bif_viewport`, `cargo test -p bif_viewer`, `cargo test -p bif_qt`, and `cargo test -p bif_core -- --test-threads=1`. The `bif_core` suite still emits the known noisy USD secondary-thread diagnostics after completion, but the suite itself passes.
+
+**Next action:** start C3 navigation on `finish-qt-ui`: surface a `View → Look Through…` camera action, finish the ortho/workspace navigation path, and wire workspace-specific payload policy handling with a confirm dialog when a stage is already loaded.
+
+## 🏁 2026-04-23 — `finish-qt-ui` C2 quick wins
+
+- **Selection outline controls are live.** Render Settings now binds directly to shell qproperties/invokables for outline width and color, and the renderer/shader path now uses an `OutlineParams` uniform instead of a hard-coded WGSL constant.
+- **Stage open is easier to hit.** Dragging a `.usd`, `.usda`, `.usdc`, or `.usdz` file onto the Qt shell routes through the same `trigger_open_stage` flow as the File menu and recent-stage surfaces.
+- **Property inspection exposes composition context.** Attribute rows now show a rich HTML tooltip that preserves the raw USD attribute name and enumerates the full opinion stack with winning-layer emphasis and layer-color markers.
+- **Ivar render/status is surfaced as a first-class Qt action.** Render Settings adds an `Ivar Render` button and live status label, the menu bar adds a Render menu entry, and the status bar mirrors in-progress state off the existing frame pump.
+- **Regression coverage expanded with the quick wins.** Qt tests now cover outline-color conversion and opinion-tooltip HTML escaping, and the renderer default outline color matches the live shell conversion path.
+
+---
+
 # Session Handoff — April 23, 2026 (`finish-qt-ui` C1 foundations ready)
 
 **Last Updated:** 2026-04-23. Branch `finish-qt-ui` now has the C1 foundations tranche from `docs/agent-handoffs/2026-04-22-finish-qt-ui.md` ready to land: Qt Edit menu undo/redo actions are wired to the live `bif_core::UndoStack`, edit-target layer picking now uses real USD `SdfLayer::PermissionToEdit()`, and the node graph dock stays hidden by default behind a persisted experimental toggle. Automated validation is green in a Qt/USD-ready shell: `cargo build`, `cargo clippy -- -D warnings`, `cargo fmt --check`, `cargo test -p bif_math`, `cargo test -p bif_renderer`, `cargo test -p bif_viewport`, `cargo test -p bif_viewer`, `cargo test -p bif_qt pick_strongest_writable_sublayer_skips_locked_layers`, and `cargo test -p bif_core -- --test-threads=1`. The `bif_core` suite still emits the known noisy USD secondary-thread diagnostics after completion, but the suite itself passes.

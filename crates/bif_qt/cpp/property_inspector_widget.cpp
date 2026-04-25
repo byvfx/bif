@@ -291,17 +291,23 @@ void PropertyInspectorWidget::populate_attributes(const QString& prim_path,
         const auto name = m_state->selected_prim_attribute_name_at(i);
         const auto value = m_state->selected_prim_attribute_value_at(i);
         const auto type_name = m_state->selected_prim_attribute_type_at(i);
+        const auto opinions = m_state->selected_prim_attr_tooltip_at(i);
 
         // Tier 1 item #3: friendly attribute label, raw USD name in tooltip.
         const auto friendly = m_state->friendly_attribute_name(name);
         auto* name_item = new QStandardItem(friendly);
-        if (friendly != name) {
-            name_item->setToolTip(QStringLiteral("USD: %1").arg(name));
+        QString tooltip = QStringLiteral("<b>USD name:</b> <code>%1</code>")
+            .arg(name.toHtmlEscaped());
+        if (!opinions.isEmpty()) {
+            tooltip += QStringLiteral("<br/><br/>") + opinions;
         }
+        name_item->setToolTip(tooltip);
         // Per-attribute winning opinion color (Tier 1.5).
         name_item->setData(m_state->selected_prim_attr_color_index_at(i), ColorIndexRole);
         auto* value_item = new QStandardItem(value);
         auto* type_item = new QStandardItem(type_name);
+        value_item->setToolTip(tooltip);
+        type_item->setToolTip(tooltip);
         type_item->setForeground(QColor(140, 145, 155));
         m_attrs_model->appendRow({name_item, value_item, type_item});
     }

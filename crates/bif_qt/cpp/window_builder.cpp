@@ -16,7 +16,11 @@
 #include <QByteArray>
 #include <QColor>
 #include <QDockWidget>
+#include <QDragEnterEvent>
+#include <QDragMoveEvent>
+#include <QDropEvent>
 #include <QFileDialog>
+#include <QFileInfo>
 #include <QFrame>
 #include <QGuiApplication>
 #include <QHBoxLayout>
@@ -27,6 +31,7 @@
 #include <QMainWindow>
 #include <QMenu>
 #include <QMenuBar>
+#include <QMimeData>
 #include <QPushButton>
 #include <QScreen>
 #include <QSettings>
@@ -37,6 +42,7 @@
 #include <QStringList>
 #include <QTimer>
 #include <QToolBar>
+#include <QUrl>
 #include <QVBoxLayout>
 #include <QWidget>
 
@@ -62,6 +68,26 @@ void enforce_node_graph_preview_gate(QMainWindow* window) {
     if (node_graph && !node_graph_preview_enabled(window)) {
         node_graph->hide();
     }
+}
+
+bool is_supported_stage_path(const QString& path) {
+    const auto suffix = QFileInfo(path).suffix().toLower();
+    return suffix == QStringLiteral("usd")
+        || suffix == QStringLiteral("usda")
+        || suffix == QStringLiteral("usdc")
+        || suffix == QStringLiteral("usdz");
+}
+
+QString first_supported_stage_path(const QMimeData* mime_data) {
+    if (!mime_data) return QString();
+    for (const auto& url : mime_data->urls()) {
+        if (!url.isLocalFile()) continue;
+        const auto path = url.toLocalFile();
+        if (is_supported_stage_path(path)) {
+            return path;
+        }
+    }
+    return QString();
 }
 
 // ---------------------------------------------------------------------------
@@ -158,6 +184,7 @@ struct MenuActions {
     QAction* exit_app;
     QAction* undo;
     QAction* redo;
+    QAction* ivar_render;
 
     QAction* workspace_assembly;
     QAction* workspace_lighting;
@@ -247,6 +274,9 @@ MenuActions build_menu_bar(QMainWindow* window) {
     a.toggle_node_graph_experimental =
         view->addAction(QStringLiteral("&Node Graph (Experimental)"));
     a.toggle_node_graph_experimental->setCheckable(true);
+
+    auto* render = menu->addMenu(QStringLiteral("&Render"));
+    a.ivar_render = render->addAction(QStringLiteral("Ivar &Render"));
 
     auto* help = menu->addMenu(QStringLiteral("&Help"));
     a.about = help->addAction(QStringLiteral("&About BIF"));
@@ -629,6 +659,74 @@ static void trigger_open_stage(
     update_status();
 }
 
+class StageDropFilter : public QObject {
+public:
+    StageDropFilter(
+        QMainWindow* window,
+        BifShellState* shell_state,
+        QStackedWidget* central_stack,
+        RenderWidget* viewport)
+        : QObject(window),
+          m_window(window),
+          m_shell_state(shell_state),
+          m_central_stack(central_stack),
+          m_viewport(viewport) {}
+
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override {
+        auto* target = qobject_cast<QWidget*>(watched);
+        if (!target || !m_window || !m_shell_state || !m_central_stack) {
+            return QObject::eventFilter(watched, event);
+        }
+        if (target != m_window && !m_window->isAncestorOf(target)) {
+            return QObject::eventFilter(watched, event);
+        }
+
+        switch (event->type()) {
+        case QEvent::DragEnter: {
+            auto* drag = static_cast<QDragEnterEvent*>(event);
+            if (first_supported_stage_path(drag->mimeData()).isEmpty()) {
+                return QObject::eventFilter(watched, event);
+            }
+            drag->acceptProposedAction();
+            return true;
+        }
+        case QEvent::DragMove: {
+            auto* drag = static_cast<QDragMoveEvent*>(event);
+            if (first_supported_stage_path(drag->mimeData()).isEmpty()) {
+                return QObject::eventFilter(watched, event);
+            }
+            drag->acceptProposedAction();
+            return true;
+        }
+        case QEvent::Drop: {
+            auto* drop = static_cast<QDropEvent*>(event);
+            const auto path = first_supported_stage_path(drop->mimeData());
+            if (path.isEmpty()) {
+                return QObject::eventFilter(watched, event);
+            }
+            drop->acceptProposedAction();
+            trigger_open_stage(
+                m_window,
+                m_shell_state,
+                m_central_stack,
+                m_viewport,
+                path);
+            return true;
+        }
+        default:
+            break;
+        }
+        return QObject::eventFilter(watched, event);
+    }
+
+private:
+    QMainWindow* m_window;
+    BifShellState* m_shell_state;
+    QStackedWidget* m_central_stack;
+    RenderWidget* m_viewport;
+};
+
 void wire_shell_actions(
     MenuActions& actions,
     BifShellState* shell_state,
@@ -691,6 +789,11 @@ void wire_shell_actions(
     QObject::connect(actions.redo, &QAction::triggered, window,
         [shell_state, update_status]() {
             shell_state->on_redo();
+            update_status();
+        });
+    QObject::connect(actions.ivar_render, &QAction::triggered, window,
+        [shell_state, update_status]() {
+            shell_state->on_start_ivar_render();
             update_status();
         });
     QObject::connect(actions.exit_app, &QAction::triggered,
@@ -796,6 +899,7 @@ void connect_viewport_signals(
             shell_state->setStatus_message(ok
                 ? QStringLiteral("wgpu viewport live")
                 : QStringLiteral("FAILED to init wgpu viewport — see stderr"));
+            shell_state->sync_ivar_status();
             window->statusBar()->showMessage(shell_state->getStatus_message());
         });
 
@@ -811,6 +915,7 @@ void connect_viewport_signals(
         [cb, shell_state]() {
             viewport_on_frame(*cb);
             shell_state->sync_undo_redo_state();
+            shell_state->sync_ivar_status();
         });
 
     // Camera + selection input — Phase E.1 routes deltas to
@@ -877,6 +982,15 @@ int bif_qt_run_shell(ViewportCallbacks* viewport_cb, ::rust::Str stylesheet) {
     // Central area: breadcrumb toolbar + QStackedWidget(first-launch | viewport).
     auto central = build_central_area(&window, shell_state);
     window.setCentralWidget(central.container);
+    window.setAcceptDrops(true);
+    central.container->setAcceptDrops(true);
+    central.viewport_frame->setAcceptDrops(true);
+    central.stack->setAcceptDrops(true);
+    central.first_launch->setAcceptDrops(true);
+    central.viewport->setAcceptDrops(true);
+    auto* stage_drop_filter = new StageDropFilter(
+        &window, shell_state, central.stack, central.viewport);
+    app.installEventFilter(stage_drop_filter);
 
     wire_shell_actions(menu_actions, shell_state, &window, central.stack, central.viewport);
     wire_first_launch(central.first_launch, shell_state, central.stack, central.viewport, &window);
@@ -999,7 +1113,7 @@ int bif_qt_run_shell(ViewportCallbacks* viewport_cb, ::rust::Str stylesheet) {
             QDockWidget::DockWidgetMovable |
             QDockWidget::DockWidgetFloatable |
             QDockWidget::DockWidgetClosable);
-        auto* panel = new RenderSettingsWidget(dock);
+        auto* panel = new RenderSettingsWidget(shell_state, dock);
         dock->setWidget(panel);
         window.addDockWidget(Qt::RightDockWidgetArea, dock);
         if (prop_dock) {
@@ -1054,6 +1168,7 @@ int bif_qt_run_shell(ViewportCallbacks* viewport_cb, ::rust::Str stylesheet) {
         commands.insert(
             QStringLiteral("View: Toggle Node Graph (Experimental)"),
             menu_actions.toggle_node_graph_experimental);
+        commands.insert(QStringLiteral("Render: Ivar Render"), menu_actions.ivar_render);
         commands.insert(QStringLiteral("Help: About BIF"), menu_actions.about);
 
         // Owned by `window` via Qt parent-child; deleted on shutdown.
@@ -1196,6 +1311,23 @@ int bif_qt_run_shell(ViewportCallbacks* viewport_cb, ::rust::Str stylesheet) {
 
     // Tier 1 — status-bar edit-target chip (permanent, right-aligned).
     // Hides itself when no stage is loaded via the internal refresh hook.
+    {
+        auto* ivar_status = new QLabel(window.statusBar());
+        ivar_status->setObjectName(QStringLiteral("ivar_status_chip"));
+        ivar_status->setStyleSheet(QStringLiteral(
+            "color: rgba(180, 185, 195, 255);"
+            "padding: 0 10px;"
+            "border-left: 1px solid rgba(60, 65, 75, 180);"));
+        auto refresh_ivar_status = [shell_state, ivar_status]() {
+            const auto text = shell_state->getIvar_status();
+            ivar_status->setVisible(!text.isEmpty());
+            ivar_status->setText(text);
+        };
+        QObject::connect(shell_state, &BifShellState::ivar_statusChanged,
+                         &window, refresh_ivar_status);
+        refresh_ivar_status();
+        window.statusBar()->addPermanentWidget(ivar_status);
+    }
     {
         auto* chip = build_edit_target_chip(window.statusBar(), shell_state, /*compact=*/true);
         window.statusBar()->addPermanentWidget(chip);

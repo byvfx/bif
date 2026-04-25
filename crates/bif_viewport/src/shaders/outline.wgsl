@@ -16,6 +16,15 @@ struct CameraUniform {
 @group(0) @binding(0)
 var<uniform> camera: CameraUniform;
 
+struct OutlineParams {
+    color: vec4<f32>,
+    width_ndc: f32,
+    _pad0: vec3<f32>,
+}
+
+@group(1) @binding(0)
+var<uniform> outline: OutlineParams;
+
 struct VertexInput {
     @location(0) position: vec3<f32>,
     @location(1) normal: vec3<f32>,
@@ -33,10 +42,6 @@ struct VertexInput {
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
 }
-
-// Outline thickness in NDC units (multiplied by w for constant screen-pixel width).
-// ~3px at 1920-wide viewport.
-const OUTLINE_SIZE: f32 = 0.004;
 
 @vertex
 fn vs_main(in: VertexInput) -> VertexOutput {
@@ -58,14 +63,13 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     // Expand along normal in clip space for consistent screen-pixel outline width.
     // Multiplying by clip.w converts NDC offset to clip-space offset.
     let clip_normal = normalize((camera.view_proj * vec4<f32>(world_normal, 0.0)).xy);
-    clip.x += clip_normal.x * clip.w * OUTLINE_SIZE;
-    clip.y += clip_normal.y * clip.w * OUTLINE_SIZE;
+    clip.x += clip_normal.x * clip.w * outline.width_ndc;
+    clip.y += clip_normal.y * clip.w * outline.width_ndc;
 
     return VertexOutput(clip);
 }
 
 @fragment
 fn fs_main() -> @location(0) vec4<f32> {
-    // Orange-gold — matches Houdini selection color.
-    return vec4<f32>(1.0, 0.65, 0.0, 1.0);
+    return outline.color;
 }

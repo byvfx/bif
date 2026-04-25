@@ -23,7 +23,9 @@ use cxx_qt::CxxQtType;
 use std::cell::Cell;
 
 use bif_core::scene_layer_state::SceneLayerState;
-use bif_core::usd::layer::{LayerInfo, LayerOffset, LayerStack, PayloadPolicy, PrimStackEntry};
+use bif_core::usd::layer::{
+    LayerInfo, LayerOffset, LayerStack, OpinionSource, PayloadPolicy, PrimStackEntry,
+};
 
 use crate::viewport::{
     viewport_on_frame, viewport_on_resize, viewport_on_shutdown, viewport_on_surface_ready,
@@ -129,6 +131,88 @@ fn is_writable_layer(info: &bif_core::usd::LayerInfo) -> bool {
     info.permission_to_edit && !info.is_muted
 }
 
+const DEFAULT_OUTLINE_COLOR_HEX: &str = "#FFA600";
+
+fn srgb_u8_to_linear(component: u8) -> f32 {
+    let srgb = component as f32 / 255.0;
+    if srgb <= 0.04045 {
+        srgb / 12.92
+    } else {
+        ((srgb + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+fn parse_outline_color_hex(hex: &str) -> Option<[f32; 4]> {
+    let bytes = hex.strip_prefix('#')?;
+    if bytes.len() != 6 {
+        return None;
+    }
+    let r = u8::from_str_radix(&bytes[0..2], 16).ok()?;
+    let g = u8::from_str_radix(&bytes[2..4], 16).ok()?;
+    let b = u8::from_str_radix(&bytes[4..6], 16).ok()?;
+    Some([
+        srgb_u8_to_linear(r),
+        srgb_u8_to_linear(g),
+        srgb_u8_to_linear(b),
+        1.0,
+    ])
+}
+
+fn escape_html(raw: &str) -> String {
+    raw.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
+}
+
+fn layer_palette_hex(index: i32) -> &'static str {
+    match index {
+        0 => "#50BEB4",
+        1 => "#B478DC",
+        2 => "#E69646",
+        3 => "#DCBE50",
+        4 => "#E682B4",
+        5 => "#5A96E6",
+        6 => "#78C864",
+        7 => "#DC6464",
+        _ => "#8C919B",
+    }
+}
+
+fn format_attr_opinion_tooltip(
+    attr_name: &str,
+    opinions: &[OpinionSource],
+    state: &BifShellStateRust,
+) -> String {
+    let escaped_name = escape_html(attr_name);
+    if opinions.is_empty() {
+        return format!(
+            "<b>{escaped_name}</b><br/><span style=\"color:#8C919B;\">No authored opinions.</span>"
+        );
+    }
+
+    let mut html = format!("<b>{escaped_name}</b><br/><br/>");
+    for opinion in opinions {
+        let color = layer_palette_hex(color_index_for_layer(state, &opinion.layer_identifier));
+        let label = if opinion.is_winning {
+            " <span style=\"color:#F0D67A;\">(winning)</span>"
+        } else {
+            ""
+        };
+        html.push_str(&format!(
+            "<span style=\"color:{color};\">&#9679;</span> \
+             <b>{layer}</b>{label}<br/>\
+             <span style=\"padding-left:14px;\"><code>{value}</code> \
+             <span style=\"color:#8C919B;\">{value_type}</span></span><br/><br/>",
+            layer = escape_html(&opinion.layer_identifier),
+            value = escape_html(&opinion.value_display),
+            value_type = escape_html(&opinion.value_type),
+        ));
+    }
+    html
+}
+
 /// Pick the strongest writable sublayer as the edit target. Walks the
 /// flattened stack in natural (strength) order — `SceneLayerState::from_stage`
 /// pushes the root first then sublayers depth-first, so index 0 is the
@@ -229,6 +313,9 @@ pub mod qobject {
         #[qproperty(QString, current_workspace)]
         #[qproperty(bool, can_undo)]
         #[qproperty(bool, can_redo)]
+        #[qproperty(f64, outline_width)]
+        #[qproperty(QString, outline_color_hex)]
+        #[qproperty(QString, ivar_status)]
         // Bumped on every scene_layer_state mutation. C++ models
         // connect to the auto-generated `layer_state_revisionChanged`
         // signal to trigger a reset/refresh.
@@ -309,6 +396,23 @@ pub mod qobject {
         /// `can_undo` / `can_redo` for C++ action enable state.
         #[qinvokable]
         fn sync_undo_redo_state(self: Pin<&mut BifShellState>);
+
+        /// Update selection-outline width and mirror it onto the live viewport.
+        #[qinvokable]
+        fn on_set_outline_width(self: Pin<&mut BifShellState>, width: f64);
+
+        /// Update selection-outline color from a `#RRGGBB` string and mirror
+        /// it onto the live viewport as linear RGBA.
+        #[qinvokable]
+        fn on_set_outline_color(self: Pin<&mut BifShellState>, color_hex: QString);
+
+        /// Trigger an Ivar preview render from the Qt shell.
+        #[qinvokable]
+        fn on_start_ivar_render(self: Pin<&mut BifShellState>);
+
+        /// Poll the live renderer's Ivar state and mirror it onto `ivar_status`.
+        #[qinvokable]
+        fn sync_ivar_status(self: Pin<&mut BifShellState>);
 
         /// Camera orbit delta forwarded from RenderWidget::cameraOrbit.
         /// Phase E.1 just updates status; Phase E.2 dispatches a
@@ -622,6 +726,11 @@ pub mod qobject {
         #[qinvokable]
         fn selected_prim_attr_color_index_at(self: &BifShellState, attr_index: i32) -> i32;
 
+        /// Rich-HTML tooltip enumerating the full opinion stack for the selected
+        /// prim attribute at `attr_index`.
+        #[qinvokable]
+        fn selected_prim_attr_tooltip_at(self: &BifShellState, attr_index: i32) -> QString;
+
         // ---- Camera picker surface ----
 
         /// Number of UsdGeomCamera prims in the loaded stage. 0 when no stage.
@@ -657,6 +766,12 @@ pub struct BifShellStateRust {
     pub can_undo: bool,
     /// Edit menu enable state — mirrored from the live viewport redo stack.
     pub can_redo: bool,
+    /// Selection-outline width mirrored onto `Renderer::display_settings`.
+    pub outline_width: f64,
+    /// Outline color as an sRGB `#RRGGBB` string for Qt controls.
+    pub outline_color_hex: cxx_qt_lib::QString,
+    /// Live Ivar progress/status string for Render Settings + status bar.
+    pub ivar_status: cxx_qt_lib::QString,
     /// Monotonic counter bumped on every scene_layer_state mutation.
     /// Auto-emits `layer_state_revisionChanged` for panel models.
     pub layer_state_revision: i32,
@@ -723,6 +838,9 @@ impl Default for BifShellStateRust {
             current_workspace: cxx_qt_lib::QString::from(""),
             can_undo: false,
             can_redo: false,
+            outline_width: 0.004,
+            outline_color_hex: cxx_qt_lib::QString::from(DEFAULT_OUTLINE_COLOR_HEX),
+            ivar_status: cxx_qt_lib::QString::from(""),
             layer_state_revision: 0,
             scene_browser_revision: 0,
             scene_layer_state: None,
@@ -894,6 +1012,7 @@ impl qobject::BifShellState {
             None => {
                 log::warn!("stage open: viewport not ready yet (surface not created?)");
                 refresh_undo_redo_qprops(self.as_mut());
+                refresh_ivar_status_qprop(self.as_mut());
                 self.as_mut()
                     .set_status_message(cxx_qt_lib::QString::from(&format!(
                         "Viewport not ready — cannot load {path_str}",
@@ -902,6 +1021,7 @@ impl qobject::BifShellState {
             Some(Err(e)) => {
                 log::error!("stage load failed: {e:?}");
                 refresh_undo_redo_qprops(self.as_mut());
+                refresh_ivar_status_qprop(self.as_mut());
                 self.as_mut()
                     .set_status_message(cxx_qt_lib::QString::from(&format!("Load failed: {e:?}",)));
             }
@@ -950,6 +1070,7 @@ impl qobject::BifShellState {
                 }
                 bump_camera_list_revision(self.as_mut());
                 refresh_undo_redo_qprops(self.as_mut());
+                refresh_ivar_status_qprop(self.as_mut());
 
                 log::info!("stage loaded: {path_str}");
                 let msg = if edit_target_name.is_empty() {
@@ -1004,6 +1125,7 @@ impl qobject::BifShellState {
         bump_revision(self.as_mut());
         bump_scene_browser_revision(self.as_mut());
         refresh_undo_redo_qprops(self.as_mut());
+        refresh_ivar_status_qprop(self.as_mut());
 
         self.as_mut()
             .set_status_message(cxx_qt_lib::QString::from("Stage closed."));
@@ -1037,6 +1159,75 @@ impl qobject::BifShellState {
 
     fn sync_undo_redo_state(mut self: Pin<&mut Self>) {
         refresh_undo_redo_qprops(self.as_mut());
+    }
+
+    fn on_set_outline_width(mut self: Pin<&mut Self>, width: f64) {
+        let clamped = width.clamp(0.001, 0.05);
+        self.as_mut().set_outline_width(clamped);
+        let applied = with_viewport_mut(|vp| {
+            let renderer = vp.renderer_mut();
+            renderer.display_settings.outline_width = clamped as f32;
+            renderer.update_camera();
+        })
+        .is_some();
+        let msg = if applied {
+            format!("Outline width: {:.3}", clamped)
+        } else {
+            format!("Outline width queued: {:.3} (viewport not ready)", clamped)
+        };
+        self.as_mut()
+            .set_status_message(cxx_qt_lib::QString::from(&msg));
+    }
+
+    fn on_set_outline_color(mut self: Pin<&mut Self>, color_hex: cxx_qt_lib::QString) {
+        let raw: String = (&color_hex).into();
+        let mut normalized = raw.trim().to_ascii_uppercase();
+        if !normalized.starts_with('#') {
+            normalized.insert(0, '#');
+        }
+        let Some(linear) = parse_outline_color_hex(&normalized) else {
+            self.as_mut().set_status_message(cxx_qt_lib::QString::from(
+                "Outline color must be a #RRGGBB value",
+            ));
+            return;
+        };
+        self.as_mut()
+            .set_outline_color_hex(cxx_qt_lib::QString::from(&normalized));
+        let applied = with_viewport_mut(|vp| {
+            let renderer = vp.renderer_mut();
+            renderer.display_settings.outline_color = linear;
+            renderer.update_camera();
+        })
+        .is_some();
+        let msg = if applied {
+            format!("Outline color: {normalized}")
+        } else {
+            format!("Outline color queued: {normalized} (viewport not ready)")
+        };
+        self.as_mut()
+            .set_status_message(cxx_qt_lib::QString::from(&msg));
+    }
+
+    fn on_start_ivar_render(mut self: Pin<&mut Self>) {
+        let outcome = with_viewport_mut(|vp| {
+            let renderer = vp.renderer_mut();
+            let started = renderer.trigger_ivar_render();
+            let status = renderer.ivar_status_line();
+            (started, status)
+        });
+        refresh_ivar_status_qprop(self.as_mut());
+        let message = match outcome {
+            Some((true, status)) if !status.is_empty() => status,
+            Some((true, _)) => "Ivar render started".to_string(),
+            Some((false, _)) => "Ivar render unavailable — load a stage first".to_string(),
+            None => "Ivar render deferred — viewport not ready".to_string(),
+        };
+        self.as_mut()
+            .set_status_message(cxx_qt_lib::QString::from(&message));
+    }
+
+    fn sync_ivar_status(mut self: Pin<&mut Self>) {
+        refresh_ivar_status_qprop(self.as_mut());
     }
 
     fn on_camera_orbit(self: Pin<&mut Self>, dx: i32, dy: i32) {
@@ -1876,6 +2067,28 @@ impl qobject::BifShellState {
         }
     }
 
+    fn selected_prim_attr_tooltip_at(&self, attr_index: i32) -> cxx_qt_lib::QString {
+        let prim_path: String = (&self.rust().selected_prim_path).into();
+        if prim_path.is_empty() {
+            return cxx_qt_lib::QString::from("");
+        }
+        let tooltip = with_stage(|stage| {
+            let Some(attr_name) = stage
+                .get_prim_attributes(&prim_path)
+                .ok()
+                .and_then(|v| v.get(attr_index as usize).map(|a| a.name.clone()))
+            else {
+                return String::new();
+            };
+            let opinions = stage
+                .get_attribute_opinions(&prim_path, &attr_name)
+                .unwrap_or_default();
+            format_attr_opinion_tooltip(&attr_name, &opinions, self.rust())
+        })
+        .unwrap_or_default();
+        cxx_qt_lib::QString::from(&tooltip)
+    }
+
     // -----------------------------------------------------------------
     // Camera picker surface
     // -----------------------------------------------------------------
@@ -1965,6 +2178,20 @@ fn refresh_undo_redo_qprops(mut state: Pin<&mut qobject::BifShellState>) {
     }
     if prev_redo != can_redo {
         state.as_mut().set_can_redo(can_redo);
+    }
+}
+
+fn current_ivar_status_line() -> String {
+    with_viewport_mut(|vp| vp.renderer_mut().ivar_status_line()).unwrap_or_default()
+}
+
+fn refresh_ivar_status_qprop(mut state: Pin<&mut qobject::BifShellState>) {
+    let status = current_ivar_status_line();
+    let previous: String = (&state.as_ref().rust().ivar_status).into();
+    if previous != status {
+        state
+            .as_mut()
+            .set_ivar_status(cxx_qt_lib::QString::from(&status));
     }
 }
 
@@ -2082,5 +2309,57 @@ mod tests {
         };
 
         assert_eq!(pick_strongest_writable_sublayer(&state), Some(1));
+    }
+
+    #[test]
+    fn parse_outline_color_hex_converts_srgb_to_linear() {
+        let color = parse_outline_color_hex("#FFA600").expect("valid outline color");
+        assert!((color[0] - 1.0).abs() < 1e-6);
+        assert!((color[1] - 0.381_326_02).abs() < 1e-6);
+        assert!((color[2] - 0.0).abs() < 1e-6);
+        assert!((color[3] - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn format_attr_opinion_tooltip_marks_winning_and_escapes_html() {
+        let mut state = BifShellStateRust::default();
+        state.scene_layer_state = Some(SceneLayerState {
+            stack: LayerStack {
+                layers: vec![
+                    make_layer("shot<&>.usda", true, false),
+                    make_layer("anim.usda", true, false),
+                ],
+                root_index: 0,
+            },
+            working_layer: 0,
+            muted: Default::default(),
+            isolation_mode: false,
+            payload_policy: PayloadPolicy::LoadAll,
+            layer_for_prim: Default::default(),
+        });
+        let opinions = vec![
+            OpinionSource {
+                layer_identifier: "shot<&>.usda".to_string(),
+                value_display: "\"<rough>\"".to_string(),
+                value_type: "token&".to_string(),
+                is_winning: true,
+            },
+            OpinionSource {
+                layer_identifier: "anim.usda".to_string(),
+                value_display: "0.15".to_string(),
+                value_type: "float".to_string(),
+                is_winning: false,
+            },
+        ];
+
+        let html = format_attr_opinion_tooltip("inputs:roughness<1>", &opinions, &state);
+
+        assert!(html.contains("inputs:roughness&lt;1&gt;"));
+        assert!(html.contains("shot&lt;&amp;&gt;.usda"));
+        assert!(html.contains("&quot;&lt;rough&gt;&quot;"));
+        assert!(html.contains("token&amp;"));
+        assert!(html.contains("(winning)"));
+        assert!(!html.contains("shot<&>.usda"));
+        assert!(!html.contains("\"<rough>\""));
     }
 }

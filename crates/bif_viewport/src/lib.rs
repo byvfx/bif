@@ -118,6 +118,14 @@ pub(crate) struct GpuTextureState {
     pub bind_group: wgpu::BindGroup,
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct OutlineParamsUniform {
+    pub color: [f32; 4],
+    pub width_ndc: f32,
+    pub _padding: [f32; 3],
+}
+
 /// GPU plumbing — surface, device, queue, config.
 pub(crate) struct GpuContext {
     pub surface: Surface<'static>,
@@ -206,6 +214,8 @@ pub struct Renderer {
     pub(crate) wireframe_pipeline: wgpu::RenderPipeline,
     pub(crate) wireframe_cam_buffer: wgpu::Buffer,
     pub(crate) wireframe_cam_bind_group: wgpu::BindGroup,
+    pub(crate) outline_params_buffer: wgpu::Buffer,
+    pub(crate) outline_params_bind_group: wgpu::BindGroup,
     pub(crate) vertex_buffer: wgpu::Buffer,
     pub(crate) index_buffer: wgpu::Buffer,
     pub(crate) num_indices: u32,
@@ -626,12 +636,33 @@ impl Renderer {
             cache: None,
         });
 
+        let outline_params_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Outline Params Bind Group Layout"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+            });
+        let outline_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Outline Pipeline Layout"),
+                bind_group_layouts: &[&camera_bind_group_layout, &outline_params_bind_group_layout],
+                push_constant_ranges: &[],
+            });
+
         // Outline pipeline for selection highlight — normal-expanded back-face silhouette.
         // Uses outline.wgsl: expands vertices along normals in clip space, renders back
         // faces only so only the protruding rim (silhouette) passes depth test.
         let wireframe_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Selection Outline Pipeline"),
-            layout: Some(&pipeline_layout),
+            layout: Some(&outline_pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &outline_shader,
                 entry_point: "vs_main",
@@ -693,6 +724,24 @@ impl Renderer {
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: wireframe_cam_buffer.as_entire_binding(),
+            }],
+        });
+        let outline_params = OutlineParamsUniform {
+            color: DisplaySettings::default().outline_color,
+            width_ndc: DisplaySettings::default().outline_width,
+            _padding: [0.0; 3],
+        };
+        let outline_params_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Outline Params Buffer"),
+            contents: bytemuck::cast_slice(&[outline_params]),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+        let outline_params_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Outline Params Bind Group"),
+            layout: &wireframe_pipeline.get_bind_group_layout(1),
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: outline_params_buffer.as_entire_binding(),
             }],
         });
 
@@ -816,6 +865,8 @@ impl Renderer {
             wireframe_pipeline,
             wireframe_cam_buffer,
             wireframe_cam_bind_group,
+            outline_params_buffer,
+            outline_params_bind_group,
             vertex_buffer,
             index_buffer,
             num_indices: 0, // Empty scene - no indices
@@ -1088,10 +1139,24 @@ impl Renderer {
             0,
             bytemuck::cast_slice(&[wf_uniform]),
         );
+        self.write_outline_params();
 
         // Update gnomon uniform with camera rotation
         self.gnomon
             .update_from_camera(&self.gpu.queue, &self.cam.camera);
+    }
+
+    fn write_outline_params(&mut self) {
+        let outline = OutlineParamsUniform {
+            color: self.display_settings.outline_color,
+            width_ndc: self.display_settings.outline_width,
+            _padding: [0.0; 3],
+        };
+        self.gpu.queue.write_buffer(
+            &self.outline_params_buffer,
+            0,
+            bytemuck::cast_slice(&[outline]),
+        );
     }
 
     /// Update environment parameters without regenerating maps.

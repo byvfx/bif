@@ -691,10 +691,7 @@ impl Renderer {
                             wf_pass.set_scissor_rect(sx, sy, sw, sh);
                             wf_pass.set_pipeline(&self.wireframe_pipeline);
                             wf_pass.set_bind_group(0, &self.wireframe_cam_bind_group, &[]);
-                            wf_pass.set_bind_group(1, &self.materials.bind_group, &[]);
-                            wf_pass.set_bind_group(2, &self.textures.bind_group, &[]);
-                            wf_pass.set_bind_group(3, self.environment.bind_group(), &[]);
-                            wf_pass.set_bind_group(4, &self.lights.bind_group, &[]);
+                            wf_pass.set_bind_group(1, &self.outline_params_bind_group, &[]);
                             wf_pass.set_vertex_buffer(0, proto_gpu.vertex_buffer.slice(..));
                             wf_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
                             wf_pass.set_index_buffer(

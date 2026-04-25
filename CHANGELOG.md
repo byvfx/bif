@@ -9,11 +9,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 
 - **Qt C1 foundations for the v0.16 editor tranche** (2026-04-23). Added Edit menu Undo/Redo wiring in the Qt shell with `can_undo` / `can_redo` action-state sync, and kept the node graph dock hidden by default behind a persisted experimental preview toggle.
+- **Qt C2 quick wins for the v0.16 editor tranche** (2026-04-23). Added live selection-outline controls in Render Settings, drag-and-drop USD stage open in the Qt shell, rich per-property opinion-stack tooltips, and an `Ivar Render` trigger surfaced in both Render Settings and the new Render menu with status-bar progress.
 
 ### Changed
 
 - **Qt polish is now a separate `v0.16.5` docket** (2026-04-22). Split the deferred Obsidian Graphite / "Quiet Confidence" styling pass out of the live `v0.16.0` editor tranche so edit/save work stays function-first and styling stays off the critical path.
 - **Edit-target layer picking now uses real USD `PermissionToEdit()`** (2026-04-23). Replaced the old anonymous-layer heuristic with layer-stack FFI that reports the actual USD editability bit, so locked sublayers no longer win the writable-layer pick path. Added regression coverage on both the core USD bridge and the Qt-side picker helper.
+- **Selection-outline color now stays color-space consistent across Qt and wgpu** (2026-04-23). The Qt shell stores outline color as sRGB `#RRGGBB` for controls, converts it to linear RGBA at the shell boundary, and the renderer now keeps the default outline color in the same linear space as the live color-picker path.
 
 ### Fixed
 
