@@ -1,3 +1,18 @@
+# Session Handoff — April 25, 2026 (`finish-qt-ui` C3 navigation landed)
+
+**Last Updated:** 2026-04-25. Branch `finish-qt-ui` now has the C3 navigation tranche from `docs/agent-handoffs/2026-04-22-finish-qt-ui.md` landed: `View → Look Through…` now mirrors the stage camera list, an orthographic toggle drives the existing aspect-correct ortho camera path, and workspace presets are now `Assembly / Lighting / Materials / Review` with payload-policy-aware stage reloads plus a confirmation dialog when a policy-changing switch happens while a stage is already open. Automated validation is green on the current tree: `cargo build`, `cargo clippy -- -D warnings`, `cargo fmt --check`, `cargo test -p bif_math`, `cargo test -p bif_renderer`, `cargo test -p bif_viewport`, `cargo test -p bif_viewer`, `cargo test -p bif_qt`, and `cargo test -p bif_core -- --test-threads=1`. The `bif_core` suite still emits the known noisy USD secondary-thread diagnostics after completion, but the suite itself passes.
+
+**Next action:** start C4 editing on `finish-qt-ui`: material-sheet population, USDA panel author/apply flow, and shading-model switching with undo/save-safe edit operations.
+
+## 🏁 2026-04-25 — `finish-qt-ui` C3 navigation
+
+- **Camera navigation is now surfaced in the menu bar.** `View → Look Through…` reuses the same camera list as the breadcrumb picker, routes every selection through `on_select_camera`, and stays aligned with stage camera refreshes.
+- **Orthographic switching is now a first-class Qt action.** A new View-menu toggle switches into the existing aspect-correct ortho path and back to perspective without adding a parallel camera code path.
+- **Workspace presets now drive behavior, not just dock visibility.** The shell now uses `Assembly / Lighting / Materials / Review`, persists the active preset, restores older saved `"render"` state as `Review`, and applies distinct default dock/tab emphasis per workspace.
+- **Workspace changes now own payload policy.** `BifShellState` stores the current payload policy, stage open/reload paths thread it through the core loader and viewport loader, and policy-changing workspace switches confirm before reloading an already-open stage.
+
+---
+
 # Session Handoff — April 23, 2026 (`finish-qt-ui` C2 quick wins landed)
 
 **Last Updated:** 2026-04-23. Branch `finish-qt-ui` now has the C2 quick-wins tranche from `docs/agent-handoffs/2026-04-22-finish-qt-ui.md` landed: Render Settings now drives selection-outline width/color, `.usd*` files can be dropped onto the Qt shell to open stages, Property Inspector rows expose the full opinion stack as a rich tooltip, and Ivar render/status is surfaced in both Render Settings and the new Render menu/status bar. Automated validation is green on the current tree: `cargo build`, `cargo clippy -- -D warnings`, `cargo fmt --check`, `cargo test -p bif_math`, `cargo test -p bif_renderer`, `cargo test -p bif_viewport`, `cargo test -p bif_viewer`, `cargo test -p bif_qt`, and `cargo test -p bif_core -- --test-threads=1`. The `bif_core` suite still emits the known noisy USD secondary-thread diagnostics after completion, but the suite itself passes.

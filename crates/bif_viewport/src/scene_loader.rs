@@ -5,6 +5,7 @@ use std::time::Instant;
 
 use wgpu::util::DeviceExt;
 
+use bif_core::usd::layer::PayloadPolicy;
 use bif_math::{Aabb, Mat4, Mat4Ext, Vec3};
 
 use crate::gpu_types::{InstanceData, MaterialGpu, MaterialUniform, PrototypeGpuData};
@@ -1468,7 +1469,7 @@ impl Renderer {
         // Delegate to the synchronous path which already handles everything
         // after the stage/scene are loaded. We stash them and call the existing
         // GPU finalization inline.
-        self.finalize_usd_scene(scene, stage, path)
+        self.finalize_usd_scene(scene, stage, path, PayloadPolicy::LoadAll)
     }
 
     /// Load a USD scene file and update the viewport (synchronous).
@@ -1479,7 +1480,22 @@ impl Renderer {
     /// 3. Updates the scene browser with the new hierarchy
     /// 4. Invalidates the Ivar cache for re-rendering
     pub fn load_usd_scene<P: AsRef<std::path::Path>>(&mut self, path: P) -> Result<()> {
-        use bif_core::usd::load_usd_with_stage_muted;
+        let payload_policy = self
+            .scene
+            .layer_state
+            .as_ref()
+            .map(|s| s.payload_policy)
+            .unwrap_or(PayloadPolicy::LoadAll);
+        self.load_usd_scene_with_policy(path, payload_policy)
+    }
+
+    /// Load a USD scene file with an explicit payload policy.
+    pub fn load_usd_scene_with_policy<P: AsRef<std::path::Path>>(
+        &mut self,
+        path: P,
+        payload_policy: PayloadPolicy,
+    ) -> Result<()> {
+        use bif_core::usd::load_usd_with_stage_policy_muted;
 
         let path = path.as_ref();
         log::info!("Loading USD scene: {:?}", path);
@@ -1501,13 +1517,18 @@ impl Renderer {
             .unwrap_or_default();
 
         // Load USD file via C++ bridge (handles usda, usdc, usd)
-        let (scene, stage) = load_usd_with_stage_muted(path, &muted_snapshot).map_err(|e| {
+        let (scene, stage) = load_usd_with_stage_policy_muted(
+            path,
+            payload_policy,
+            &muted_snapshot,
+        )
+        .map_err(|e| {
             log::error!("USD bridge error: {:?}", e);
             log::error!("Hint: Ensure USD environment is set up. Run: . .\\setup_usd_env.ps1");
             anyhow::anyhow!("Failed to load USD: {}", e)
         })?;
 
-        self.finalize_usd_scene(scene, stage, path)
+        self.finalize_usd_scene(scene, stage, path, payload_policy)
     }
 
     /// Finalize a loaded USD scene — create GPU resources and update viewport state.
@@ -1518,6 +1539,7 @@ impl Renderer {
         scene: bif_core::Scene,
         stage: bif_core::usd::UsdStage,
         path: &std::path::Path,
+        payload_policy: PayloadPolicy,
     ) -> Result<()> {
         let viewport_load_start = Instant::now();
 
@@ -1532,7 +1554,6 @@ impl Renderer {
                  clearing viewport; Layer Stack panel remains active for unmute"
             );
 
-            let payload_policy = bif_core::usd::layer::PayloadPolicy::LoadAll;
             if let Ok(mut layer_state) =
                 bif_core::SceneLayerState::from_stage(&stage, payload_policy)
             {
@@ -1559,15 +1580,13 @@ impl Renderer {
         // v0.14.0 — seed layer-aware state from the stage. We capture the
         // sublayer tree, edit target, and mute flags up front, then walk
         // every prim to build the `prim_path → strongest-layer-index` map
-        // that drives scene-browser color dots. Stage open always uses
-        // LoadAll today; the `PayloadPolicyChanged` event reopens the
-        // stage with a different policy when the UI adds that control.
+        // that drives scene-browser color dots. The caller threads the active
+        // payload policy in so workspace-driven reloads preserve their mode.
         //
         // Stored on `SceneManager` directly (not `working_scene.layer_state`)
         // because this function doesn't assign the parsed `Scene` back into
         // `self.scene.working_scene` — any field set on the local `scene`
         // binding is lost at end of function.
-        let payload_policy = bif_core::usd::layer::PayloadPolicy::LoadAll;
         match bif_core::SceneLayerState::from_stage(&stage, payload_policy) {
             Ok(mut layer_state) => {
                 let prim_paths: Vec<String> = stage

@@ -10,6 +10,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - **Qt C1 foundations for the v0.16 editor tranche** (2026-04-23). Added Edit menu Undo/Redo wiring in the Qt shell with `can_undo` / `can_redo` action-state sync, and kept the node graph dock hidden by default behind a persisted experimental preview toggle.
 - **Qt C2 quick wins for the v0.16 editor tranche** (2026-04-23). Added live selection-outline controls in Render Settings, drag-and-drop USD stage open in the Qt shell, rich per-property opinion-stack tooltips, and an `Ivar Render` trigger surfaced in both Render Settings and the new Render menu with status-bar progress.
+- **Qt C3 navigation for the v0.16 editor tranche** (2026-04-25). Added `View → Look Through…` camera surfacing, an orthographic toggle wired to the existing aspect-correct ortho camera path, and persisted Assembly / Lighting / Materials / Review workspaces that drive payload-policy-aware stage reloads with a confirmation dialog when a stage is already open.
 
 ### Changed
 

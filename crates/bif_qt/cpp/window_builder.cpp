@@ -32,6 +32,7 @@
 #include <QMenu>
 #include <QMenuBar>
 #include <QMimeData>
+#include <QMessageBox>
 #include <QPushButton>
 #include <QScreen>
 #include <QSettings>
@@ -90,6 +91,61 @@ QString first_supported_stage_path(const QMimeData* mime_data) {
     return QString();
 }
 
+struct CameraChoice {
+    QString label;
+    QString key;
+    bool separator_before = false;
+};
+
+QList<CameraChoice> collect_camera_choices(BifShellState* state) {
+    QList<CameraChoice> choices;
+    choices.append(CameraChoice{QStringLiteral("Perspective"), QStringLiteral("free"), false});
+
+    const struct { const char* label; const char* key; } ortho_views[] = {
+        {"Top",    "ortho:Top"},
+        {"Bottom", "ortho:Bottom"},
+        {"Front",  "ortho:Front"},
+        {"Back",   "ortho:Back"},
+        {"Right",  "ortho:Right"},
+        {"Left",   "ortho:Left"},
+    };
+    bool first_ortho = true;
+    for (const auto& view : ortho_views) {
+        choices.append(CameraChoice{
+            QString::fromLatin1(view.label),
+            QString::fromLatin1(view.key),
+            first_ortho,
+        });
+        first_ortho = false;
+    }
+
+    const int usd_count = state->usd_camera_count();
+    for (int i = 0; i < usd_count; ++i) {
+        const auto path = state->usd_camera_path_at(i);
+        const auto leaf = path.split(QLatin1Char('/')).last();
+        choices.append(CameraChoice{
+            leaf,
+            QStringLiteral("usd:") + path,
+            i == 0,
+        });
+    }
+    return choices;
+}
+
+void sync_camera_picker_selection(QComboBox* picker, const QString& active_key) {
+    if (!picker) return;
+    for (int i = 0; i < picker->count(); ++i) {
+        if (picker->itemData(i).toString() == active_key) {
+            picker->setCurrentIndex(i);
+            return;
+        }
+    }
+}
+
+bool is_ortho_camera_source(const QString& key) {
+    return key.startsWith(QStringLiteral("ortho:"));
+}
+
 // ---------------------------------------------------------------------------
 // Workspace presets (B.5)
 // ---------------------------------------------------------------------------
@@ -97,77 +153,150 @@ namespace ws {
 constexpr const char* ASSEMBLY = "assembly";
 constexpr const char* LIGHTING = "lighting";
 constexpr const char* MATERIALS = "materials";
-constexpr const char* RENDER = "render";
+constexpr const char* REVIEW = "review";
 constexpr const char* DEFAULT_WORKSPACE = ASSEMBLY;
 constexpr const char* SETTINGS_LAST_KEY = "workspaces/last_active";
 
+QString canonical_name(const QString& name) {
+    if (name == QStringLiteral("render")) return QString::fromLatin1(REVIEW);
+    return name;
+}
+
+QString display_name(const QString& name) {
+    const auto canonical = canonical_name(name);
+    if (canonical == QLatin1String(ASSEMBLY)) return QStringLiteral("Assembly");
+    if (canonical == QLatin1String(LIGHTING)) return QStringLiteral("Lighting");
+    if (canonical == QLatin1String(MATERIALS)) return QStringLiteral("Materials");
+    if (canonical == QLatin1String(REVIEW)) return QStringLiteral("Review");
+    return canonical;
+}
+
+QString payload_policy_for_workspace(const QString& name) {
+    // C3 only has native LoadAll/LoadNone. Lighting keeps LoadAll until the
+    // future frustum-based policy exists in bif_core.
+    if (canonical_name(name) == QLatin1String(REVIEW)) return QStringLiteral("LoadNone");
+    return QStringLiteral("LoadAll");
+}
+
 void apply_default_layout(QMainWindow* window, const QString& name) {
+    const auto canonical = canonical_name(name);
     auto dock = [window](const char* obj_name) -> QDockWidget* {
         return window->findChild<QDockWidget*>(QString::fromLatin1(obj_name));
     };
     auto* scene_browser = dock("dock_scene_browser");
     auto* layer_stack = dock("dock_layer_stack");
     auto* property_inspector = dock("dock_property_inspector");
+    auto* render_settings = dock("dock_render_settings");
     auto* node_graph = dock("dock_node_graph");
+    auto* timeline = dock("dock_timeline");
     const bool node_graph_preview = node_graph_preview_enabled(window);
 
-    auto show_all = [&](bool s) {
-        if (scene_browser) scene_browser->setVisible(s);
-        if (layer_stack) layer_stack->setVisible(s);
-        if (property_inspector) property_inspector->setVisible(s);
-        if (node_graph) node_graph->setVisible(node_graph_preview && s);
+    auto show = [](QDockWidget* dock_widget, bool visible) {
+        if (dock_widget) dock_widget->setVisible(visible);
     };
 
-    if (name == QLatin1String(ws::ASSEMBLY)) {
-        show_all(true);
-    } else if (name == QLatin1String(ws::LIGHTING)) {
-        if (scene_browser) scene_browser->setVisible(true);
-        if (layer_stack) layer_stack->setVisible(false);
-        if (property_inspector) property_inspector->setVisible(true);
-        if (node_graph) node_graph->setVisible(false);
-    } else if (name == QLatin1String(ws::MATERIALS)) {
-        if (scene_browser) scene_browser->setVisible(false);
-        if (layer_stack) layer_stack->setVisible(false);
-        if (property_inspector) property_inspector->setVisible(true);
-        if (node_graph) node_graph->setVisible(node_graph_preview);
-    } else if (name == QLatin1String(ws::RENDER)) {
-        if (scene_browser) scene_browser->setVisible(false);
-        if (layer_stack) layer_stack->setVisible(false);
-        if (property_inspector) property_inspector->setVisible(true);
-        if (node_graph) node_graph->setVisible(false);
+    if (canonical == QLatin1String(ws::ASSEMBLY)) {
+        show(scene_browser, true);
+        show(layer_stack, true);
+        show(property_inspector, true);
+        show(render_settings, false);
+        show(node_graph, node_graph_preview);
+        show(timeline, true);
+        if (node_graph && node_graph_preview) {
+            node_graph->raise();
+        } else if (timeline) {
+            timeline->raise();
+        }
+        if (property_inspector) property_inspector->raise();
+    } else if (canonical == QLatin1String(ws::LIGHTING)) {
+        show(scene_browser, true);
+        show(layer_stack, false);
+        show(property_inspector, true);
+        show(render_settings, true);
+        show(node_graph, false);
+        show(timeline, false);
+        if (render_settings) render_settings->raise();
+    } else if (canonical == QLatin1String(ws::MATERIALS)) {
+        show(scene_browser, true);
+        show(layer_stack, false);
+        show(property_inspector, true);
+        show(render_settings, false);
+        show(node_graph, node_graph_preview);
+        show(timeline, false);
+        if (node_graph && node_graph_preview) node_graph->raise();
+        if (property_inspector) property_inspector->raise();
+    } else if (canonical == QLatin1String(ws::REVIEW)) {
+        show(scene_browser, false);
+        show(layer_stack, false);
+        show(property_inspector, false);
+        show(render_settings, true);
+        show(node_graph, false);
+        show(timeline, false);
+        if (render_settings) render_settings->raise();
     } else {
-        show_all(true);
+        show(scene_browser, true);
+        show(layer_stack, true);
+        show(property_inspector, true);
+        show(render_settings, false);
+        show(node_graph, node_graph_preview);
+        show(timeline, true);
     }
 }
 
 QString state_key(const QString& name) {
-    return QStringLiteral("workspaces/%1/state").arg(name);
+    return QStringLiteral("workspaces/%1/state").arg(canonical_name(name));
 }
 
 void save_current(QMainWindow* window, const QString& current) {
-    if (current.isEmpty()) return;
+    const auto canonical = canonical_name(current);
+    if (canonical.isEmpty()) return;
     QSettings settings;
-    settings.setValue(state_key(current), window->saveState());
+    settings.setValue(state_key(canonical), window->saveState());
 }
 
 void switch_to(
     QMainWindow* window,
     BifShellState* state,
     const QString& target) {
+    const auto canonical_target = canonical_name(target);
+    const auto target_policy = payload_policy_for_workspace(canonical_target);
+    const auto current_policy = state->payload_policy_name();
+    if (target_policy != current_policy) {
+        if (state->has_loaded_stage()) {
+            const auto answer = QMessageBox::question(
+                window,
+                QStringLiteral("Reload Stage For Workspace"),
+                QStringLiteral(
+                    "Switching to %1 changes payload loading from %2 to %3 and reloads the "
+                    "open stage. Continue?")
+                    .arg(display_name(canonical_target), current_policy, target_policy),
+                QMessageBox::Yes | QMessageBox::No,
+                QMessageBox::No);
+            if (answer != QMessageBox::Yes) {
+                return;
+            }
+        }
+        if (!state->on_set_payload_policy(target_policy)) {
+            window->statusBar()->showMessage(state->getStatus_message());
+            return;
+        }
+    }
+
     save_current(window, state->getCurrent_workspace());
 
     QSettings settings;
-    const QByteArray blob = settings.value(state_key(target)).toByteArray();
+    const QByteArray blob = settings.value(state_key(canonical_target)).toByteArray();
     if (blob.isEmpty()) {
-        apply_default_layout(window, target);
+        apply_default_layout(window, canonical_target);
     } else if (!window->restoreState(blob)) {
-        apply_default_layout(window, target);
+        apply_default_layout(window, canonical_target);
     }
     enforce_node_graph_preview_gate(window);
 
-    state->setCurrent_workspace(target);
-    settings.setValue(QLatin1String(SETTINGS_LAST_KEY), target);
-    state->setStatus_message(QStringLiteral("Workspace: %1").arg(target));
+    state->setCurrent_workspace(canonical_target);
+    settings.setValue(QLatin1String(SETTINGS_LAST_KEY), canonical_target);
+    state->setStatus_message(
+        QStringLiteral("Workspace: %1").arg(display_name(canonical_target)));
     window->statusBar()->showMessage(state->getStatus_message());
 }
 }  // namespace ws
@@ -186,10 +315,12 @@ struct MenuActions {
     QAction* redo;
     QAction* ivar_render;
 
+    QMenu* look_through;
+    QAction* toggle_orthographic;
     QAction* workspace_assembly;
     QAction* workspace_lighting;
     QAction* workspace_materials;
-    QAction* workspace_render;
+    QAction* workspace_review;
     QAction* zen_mode;
     QAction* toggle_lod;
     QAction* toggle_node_graph_experimental;
@@ -255,14 +386,18 @@ MenuActions build_menu_bar(QMainWindow* window) {
     a.redo->setEnabled(false);
 
     auto* view = menu->addMenu(QStringLiteral("&View"));
+    a.look_through = view->addMenu(QStringLiteral("Look &Through"));
+    a.toggle_orthographic = view->addAction(QStringLiteral("&Orthographic Projection"));
+    a.toggle_orthographic->setCheckable(true);
+    view->addSeparator();
     a.workspace_assembly = view->addAction(QStringLiteral("&Assembly Workspace"));
     a.workspace_assembly->setShortcut(QKeySequence(QStringLiteral("Ctrl+1")));
     a.workspace_lighting = view->addAction(QStringLiteral("&Lighting Workspace"));
     a.workspace_lighting->setShortcut(QKeySequence(QStringLiteral("Ctrl+2")));
     a.workspace_materials = view->addAction(QStringLiteral("&Materials Workspace"));
     a.workspace_materials->setShortcut(QKeySequence(QStringLiteral("Ctrl+3")));
-    a.workspace_render = view->addAction(QStringLiteral("&Render Workspace"));
-    a.workspace_render->setShortcut(QKeySequence(QStringLiteral("Ctrl+4")));
+    a.workspace_review = view->addAction(QStringLiteral("&Review Workspace"));
+    a.workspace_review->setShortcut(QKeySequence(QStringLiteral("Ctrl+4")));
     view->addSeparator();
     a.zen_mode = view->addAction(QStringLiteral("&Zen Mode"));
     a.zen_mode->setShortcut(QKeySequence(QStringLiteral("Ctrl+\\")));
@@ -501,36 +636,15 @@ CentralArea build_central_area(QMainWindow* window, BifShellState* state) {
     auto populate_camera_picker = [=]() {
         camera_picker->blockSignals(true);
         camera_picker->clear();
-        camera_picker->addItem(QStringLiteral("Perspective"), QStringLiteral("free"));
-        camera_picker->insertSeparator(camera_picker->count());
-        const struct { const char* label; const char* key; } ortho_views[] = {
-            {"Top",    "ortho:Top"},
-            {"Bottom", "ortho:Bottom"},
-            {"Front",  "ortho:Front"},
-            {"Back",   "ortho:Back"},
-            {"Right",  "ortho:Right"},
-            {"Left",   "ortho:Left"},
-        };
-        for (const auto& v : ortho_views)
-            camera_picker->addItem(QString::fromLatin1(v.label),
-                                   QString::fromLatin1(v.key));
-        int usd_count = state->usd_camera_count();
-        if (usd_count > 0) {
-            camera_picker->insertSeparator(camera_picker->count());
-            for (int i = 0; i < usd_count; ++i) {
-                auto path = state->usd_camera_path_at(i);
-                auto leaf = path.split(QLatin1Char('/')).last();
-                camera_picker->addItem(leaf, QStringLiteral("usd:") + path);
+        const auto choices = collect_camera_choices(state);
+        for (const auto& choice : choices) {
+            if (choice.separator_before) {
+                camera_picker->insertSeparator(camera_picker->count());
             }
+            camera_picker->addItem(choice.label, choice.key);
         }
         // Restore active selection
-        auto active = state->active_camera_name();
-        for (int i = 0; i < camera_picker->count(); ++i) {
-            if (camera_picker->itemData(i).toString() == active) {
-                camera_picker->setCurrentIndex(i);
-                break;
-            }
-        }
+        sync_camera_picker_selection(camera_picker, state->active_camera_name());
         camera_picker->blockSignals(false);
     };
 
@@ -748,6 +862,56 @@ void wire_shell_actions(
                      window, refresh_edit_actions);
     refresh_edit_actions();
 
+    auto* camera_picker = window->findChild<QComboBox*>(QStringLiteral("camera_picker"));
+    auto* look_through_menu = actions.look_through;
+    auto* ortho_action = actions.toggle_orthographic;
+    auto sync_camera_surfaces = [camera_picker, look_through_menu, ortho_action, shell_state]() {
+        const auto active = shell_state->active_camera_name();
+        if (camera_picker) {
+            camera_picker->blockSignals(true);
+            sync_camera_picker_selection(camera_picker, active);
+            camera_picker->blockSignals(false);
+        }
+        if (look_through_menu) {
+            for (auto* action : look_through_menu->actions()) {
+                if (action->isSeparator()) continue;
+                action->setChecked(action->data().toString() == active);
+            }
+        }
+        ortho_action->blockSignals(true);
+        ortho_action->setChecked(is_ortho_camera_source(active));
+        ortho_action->blockSignals(false);
+    };
+    auto repopulate_look_through_menu =
+        [window, look_through_menu, shell_state, sync_camera_surfaces]() {
+            look_through_menu->clear();
+            const auto choices = collect_camera_choices(shell_state);
+            for (const auto& choice : choices) {
+                if (choice.separator_before) {
+                    look_through_menu->addSeparator();
+                }
+                auto* action = look_through_menu->addAction(choice.label);
+                action->setData(choice.key);
+                action->setCheckable(true);
+                const auto key = choice.key;
+                QObject::connect(action, &QAction::triggered, window,
+                    [shell_state, sync_camera_surfaces, key]() {
+                        shell_state->on_select_camera(key);
+                        sync_camera_surfaces();
+                    });
+            }
+            sync_camera_surfaces();
+        };
+    QObject::connect(shell_state, &BifShellState::camera_list_revisionChanged,
+                     window, repopulate_look_through_menu);
+    if (camera_picker) {
+        QObject::connect(camera_picker,
+                         QOverload<int>::of(&QComboBox::currentIndexChanged),
+                         window,
+                         [sync_camera_surfaces](int) { sync_camera_surfaces(); });
+    }
+    repopulate_look_through_menu();
+
     auto new_stage_flow = [shell_state, central_stack, update_status]() {
         shell_state->on_new_stage();
         central_stack->setCurrentIndex(1);
@@ -805,8 +969,20 @@ void wire_shell_actions(
         [window, shell_state]() { ws::switch_to(window, shell_state, QLatin1String(ws::LIGHTING)); });
     QObject::connect(actions.workspace_materials, &QAction::triggered, window,
         [window, shell_state]() { ws::switch_to(window, shell_state, QLatin1String(ws::MATERIALS)); });
-    QObject::connect(actions.workspace_render, &QAction::triggered, window,
-        [window, shell_state]() { ws::switch_to(window, shell_state, QLatin1String(ws::RENDER)); });
+    QObject::connect(actions.workspace_review, &QAction::triggered, window,
+        [window, shell_state]() { ws::switch_to(window, shell_state, QLatin1String(ws::REVIEW)); });
+    QObject::connect(actions.toggle_orthographic, &QAction::toggled, window,
+        [shell_state, sync_camera_surfaces](bool enabled) {
+            const auto active = shell_state->active_camera_name();
+            if (enabled) {
+                if (!is_ortho_camera_source(active)) {
+                    shell_state->on_select_camera(QStringLiteral("ortho:Top"));
+                }
+            } else if (is_ortho_camera_source(active)) {
+                shell_state->on_select_camera(QStringLiteral("free"));
+            }
+            sync_camera_surfaces();
+        });
 
     QObject::connect(actions.zen_mode, &QAction::toggled, window,
         [window, shell_state, update_status](bool zen) {
@@ -1159,10 +1335,13 @@ int bif_qt_run_shell(ViewportCallbacks* viewport_cb, ::rust::Str stylesheet) {
         commands.insert(QStringLiteral("File: Exit"), menu_actions.exit_app);
         commands.insert(QStringLiteral("Edit: Undo"), menu_actions.undo);
         commands.insert(QStringLiteral("Edit: Redo"), menu_actions.redo);
+        commands.insert(
+            QStringLiteral("View: Toggle Orthographic Projection"),
+            menu_actions.toggle_orthographic);
         commands.insert(QStringLiteral("Workspace: Assembly"), menu_actions.workspace_assembly);
         commands.insert(QStringLiteral("Workspace: Lighting"), menu_actions.workspace_lighting);
         commands.insert(QStringLiteral("Workspace: Materials"), menu_actions.workspace_materials);
-        commands.insert(QStringLiteral("Workspace: Render"), menu_actions.workspace_render);
+        commands.insert(QStringLiteral("Workspace: Review"), menu_actions.workspace_review);
         commands.insert(QStringLiteral("View: Toggle Zen Mode"), menu_actions.zen_mode);
         commands.insert(QStringLiteral("View: Toggle Viewport LOD"), menu_actions.toggle_lod);
         commands.insert(

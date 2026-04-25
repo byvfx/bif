@@ -158,6 +158,21 @@ fn parse_outline_color_hex(hex: &str) -> Option<[f32; 4]> {
     ])
 }
 
+fn payload_policy_to_name(policy: PayloadPolicy) -> &'static str {
+    match policy {
+        PayloadPolicy::LoadAll => "LoadAll",
+        PayloadPolicy::LoadNone => "LoadNone",
+    }
+}
+
+fn parse_payload_policy_name(name: &str) -> Option<PayloadPolicy> {
+    match name {
+        "LoadAll" => Some(PayloadPolicy::LoadAll),
+        "LoadNone" => Some(PayloadPolicy::LoadNone),
+        _ => None,
+    }
+}
+
 fn escape_html(raw: &str) -> String {
     raw.replace('&', "&amp;")
         .replace('<', "&lt;")
@@ -526,6 +541,19 @@ pub mod qobject {
         #[qinvokable]
         fn toggle_isolation_mode(self: Pin<&mut BifShellState>);
 
+        /// Whether a real USD stage is currently loaded.
+        #[qinvokable]
+        fn has_loaded_stage(self: &BifShellState) -> bool;
+
+        /// Current payload-policy mode as `LoadAll` or `LoadNone`.
+        #[qinvokable]
+        fn payload_policy_name(self: &BifShellState) -> QString;
+
+        /// Update payload loading policy. Reloads the current stage when one
+        /// is open so workspace switches take effect immediately.
+        #[qinvokable]
+        fn on_set_payload_policy(self: Pin<&mut BifShellState>, policy_name: QString) -> bool;
+
         /// Tier 1 edit-target surface. All 4 read `scene_layer_state
         /// .working_layer`; pill / status chip / viewport edge tint /
         /// breadcrumb layer segment all refresh on
@@ -759,7 +787,7 @@ pub struct BifShellStateRust {
     pub title: cxx_qt_lib::QString,
     pub status_message: cxx_qt_lib::QString,
     /// Active workspace preset — one of "assembly", "lighting",
-    /// "materials", "render". Empty on first launch (C++ side
+    /// "materials", "review". Empty on first launch (C++ side
     /// initializes from QSettings or falls back to "assembly").
     pub current_workspace: cxx_qt_lib::QString,
     /// Edit menu enable state — mirrored from the live viewport undo stack.
@@ -781,6 +809,8 @@ pub struct BifShellStateRust {
     /// Layer stack + mute set + working layer + isolation flag.
     /// None until a stage is loaded (Phase E) or demo data seeded.
     pub scene_layer_state: Option<SceneLayerState>,
+    /// Workspace-driven payload policy used for the next stage load/reload.
+    pub payload_policy: PayloadPolicy,
     /// Current prim selection — driven by scene browser clicks.
     pub selected_prim_path: cxx_qt_lib::QString,
     /// Type name of the selected prim (e.g. "Mesh", "Xform").
@@ -844,6 +874,7 @@ impl Default for BifShellStateRust {
             layer_state_revision: 0,
             scene_browser_revision: 0,
             scene_layer_state: None,
+            payload_policy: PayloadPolicy::LoadAll,
             selected_prim_path: cxx_qt_lib::QString::from(""),
             selected_prim_type: cxx_qt_lib::QString::from(""),
             current_frame: 0,
@@ -1006,7 +1037,11 @@ impl qobject::BifShellState {
         // blocks on the C++ bridge + GPU buffer uploads. Matches bif_viewer's
         // startup-load behavior; acceptable for now. Async path is a future
         // optimization (scene_manager.rs already has `load_usd_scene_async`).
-        let load_result = with_viewport_mut(|vp| vp.renderer_mut().load_usd_scene(&path_buf));
+        let payload_policy = self.as_ref().rust().payload_policy;
+        let load_result = with_viewport_mut(|vp| {
+            vp.renderer_mut()
+                .load_usd_scene_with_policy(&path_buf, payload_policy)
+        });
 
         match load_result {
             None => {
@@ -1039,22 +1074,28 @@ impl qobject::BifShellState {
                 // `working_layer` to the root; re-pick so anonymous / muted
                 // roots skip to the next candidate instead of silently
                 // authoring into a non-persistent layer.
-                let edit_target_name = {
+                let (edit_target_name, loaded_policy) = {
                     let mut r = self.as_mut().rust_mut();
                     if let Some(state) = r.scene_layer_state.as_mut() {
                         if let Some(idx) = pick_strongest_writable_sublayer(state) {
                             state.working_layer = idx;
                         }
-                        state
-                            .stack
-                            .layers
-                            .get(state.working_layer)
-                            .map(|l| l.display_name.clone())
-                            .unwrap_or_default()
+                        (
+                            state
+                                .stack
+                                .layers
+                                .get(state.working_layer)
+                                .map(|l| l.display_name.clone())
+                                .unwrap_or_default(),
+                            Some(state.payload_policy),
+                        )
                     } else {
-                        String::new()
+                        (String::new(), None)
                     }
                 };
+                if let Some(policy) = loaded_policy {
+                    self.as_mut().rust_mut().payload_policy = policy;
+                }
 
                 bump_revision(self.as_mut());
                 bump_scene_browser_revision(self.as_mut());
@@ -1399,6 +1440,7 @@ impl qobject::BifShellState {
         // Mimic `test_assets/layers/root.usda` — three layers with
         // shot overriding anim overriding root. Fake identifiers so
         // we don't need a real USD load for Phase C.1 visual testing.
+        let payload_policy = self.as_ref().rust().payload_policy;
         let layers = vec![
             LayerInfo {
                 identifier: "G:/demo/root.usda".into(),
@@ -1446,7 +1488,7 @@ impl qobject::BifShellState {
             working_layer: 0,
             muted: Default::default(),
             isolation_mode: false,
-            payload_policy: PayloadPolicy::LoadAll,
+            payload_policy,
             layer_for_prim: Default::default(),
         };
         self.as_mut().rust_mut().scene_layer_state = Some(state);
@@ -1579,7 +1621,14 @@ impl qobject::BifShellState {
                 // per-prim strongest-layer assignments may have shifted).
                 let fresh_state =
                     with_viewport_mut(|vp| vp.renderer_mut().scene.layer_state.clone()).flatten();
-                self.as_mut().rust_mut().scene_layer_state = fresh_state;
+                let fresh_policy = fresh_state.as_ref().map(|s| s.payload_policy);
+                {
+                    let mut r = self.as_mut().rust_mut();
+                    r.scene_layer_state = fresh_state;
+                    if let Some(policy) = fresh_policy {
+                        r.payload_policy = policy;
+                    }
+                }
                 bump_revision(self.as_mut());
                 bump_scene_browser_revision(self.as_mut());
                 let verb = if muted { "muted" } else { "unmuted" };
@@ -1612,6 +1661,106 @@ impl qobject::BifShellState {
             state.isolation_mode = !state.isolation_mode;
         }
         bump_revision(self.as_mut());
+    }
+
+    fn has_loaded_stage(&self) -> bool {
+        self.rust().current_stage_path.is_some()
+    }
+
+    fn payload_policy_name(&self) -> cxx_qt_lib::QString {
+        cxx_qt_lib::QString::from(payload_policy_to_name(self.rust().payload_policy))
+    }
+
+    fn on_set_payload_policy(mut self: Pin<&mut Self>, policy_name: cxx_qt_lib::QString) -> bool {
+        let policy_name: String = (&policy_name).into();
+        let Some(policy) = parse_payload_policy_name(&policy_name) else {
+            let msg = format!("Unknown payload policy: {policy_name}");
+            log::warn!("{msg}");
+            self.as_mut()
+                .set_status_message(cxx_qt_lib::QString::from(&msg));
+            return false;
+        };
+
+        if policy == self.as_ref().rust().payload_policy {
+            return true;
+        }
+
+        let status_line = format!("Payload policy: {}", payload_policy_to_name(policy));
+        let Some(path) = self.as_ref().rust().current_stage_path.clone() else {
+            {
+                let mut r = self.as_mut().rust_mut();
+                r.payload_policy = policy;
+                if let Some(state) = r.scene_layer_state.as_mut() {
+                    state.payload_policy = policy;
+                }
+            }
+            bump_revision(self.as_mut());
+            self.as_mut()
+                .set_status_message(cxx_qt_lib::QString::from(&status_line));
+            return true;
+        };
+
+        let reload_result =
+            with_viewport_mut(|vp| vp.renderer_mut().load_usd_scene_with_policy(&path, policy));
+
+        match reload_result {
+            Some(Ok(())) => {
+                let fresh_state =
+                    with_viewport_mut(|vp| vp.renderer_mut().scene.layer_state.clone()).flatten();
+                let camera_paths =
+                    with_stage(|stage| stage.list_camera_prims().unwrap_or_default())
+                        .unwrap_or_default();
+                let edit_target_name = {
+                    let mut r = self.as_mut().rust_mut();
+                    r.payload_policy = policy;
+                    r.scene_layer_state = fresh_state;
+                    r.usd_camera_paths = camera_paths;
+                    r.active_camera_source = "free".to_string();
+                    if let Some(state) = r.scene_layer_state.as_mut() {
+                        if let Some(idx) = pick_strongest_writable_sublayer(state) {
+                            state.working_layer = idx;
+                        }
+                        state
+                            .stack
+                            .layers
+                            .get(state.working_layer)
+                            .map(|l| l.display_name.clone())
+                            .unwrap_or_default()
+                    } else {
+                        String::new()
+                    }
+                };
+                bump_revision(self.as_mut());
+                bump_scene_browser_revision(self.as_mut());
+                bump_camera_list_revision(self.as_mut());
+                refresh_undo_redo_qprops(self.as_mut());
+                refresh_ivar_status_qprop(self.as_mut());
+
+                let msg = if edit_target_name.is_empty() {
+                    status_line
+                } else {
+                    format!("{status_line}  •  Edit target: {edit_target_name}")
+                };
+                self.as_mut()
+                    .set_status_message(cxx_qt_lib::QString::from(&msg));
+                true
+            }
+            Some(Err(e)) => {
+                log::error!("payload policy reload failed: {e:?}");
+                self.as_mut()
+                    .set_status_message(cxx_qt_lib::QString::from(&format!(
+                        "Payload reload failed: {e:?}"
+                    )));
+                false
+            }
+            None => {
+                log::warn!("payload policy change: viewport not ready");
+                self.as_mut().set_status_message(cxx_qt_lib::QString::from(
+                    "Payload policy deferred — viewport not ready",
+                ));
+                false
+            }
+        }
     }
 
     // -----------------------------------------------------------------
@@ -2318,6 +2467,19 @@ mod tests {
         assert!((color[1] - 0.381_326_02).abs() < 1e-6);
         assert!((color[2] - 0.0).abs() < 1e-6);
         assert!((color[3] - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn parse_payload_policy_name_accepts_known_values() {
+        assert_eq!(
+            parse_payload_policy_name("LoadAll"),
+            Some(PayloadPolicy::LoadAll)
+        );
+        assert_eq!(
+            parse_payload_policy_name("LoadNone"),
+            Some(PayloadPolicy::LoadNone)
+        );
+        assert_eq!(parse_payload_policy_name("Review"), None);
     }
 
     #[test]
