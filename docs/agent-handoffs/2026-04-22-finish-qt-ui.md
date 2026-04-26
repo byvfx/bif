@@ -15,7 +15,7 @@ In scope (five commits, sequential):
 - **C1 — Foundations** — undo/redo UI wired to existing `bif_core::UndoStack`; real `SdfLayer::PermissionToEdit()` FFI replacing the writable-sublayer heuristic; node graph dock tab hidden by default behind an experimental flag.
 - **C2 — Quick wins** — selection outline width + color uniform wired to Render Settings; drag-and-drop USD open on main window; opinion-stack full hover tooltip on property rows; Ivar Render button + status-bar progress in Render Settings / `Render` menu.
 - **C3 — Navigation** — `View → Look Through…` camera picker populated from `usd_camera_count()`; orthographic toggle; workspace presets (Assembly / Lighting / Materials / Review) persisted via QSettings with per-preset payload policy.
-- **C4 — Editing** — editable USDA code panel (active edit-target layer only, parse + validate via new FFI, commit as `EditOperation`); material param sheet tab in Property Inspector reading OpenPBR inputs from bound `UsdShadeMaterial`; shading model dropdown (OpenPBR ↔ UsdPreviewSurface) with lossy-param warning.
+- **C4 — Editing (superseded)** — superseded by `docs/agent-handoffs/2026-04-24-v0.16-c4a-edit-foundation.md`. C4 is now split into C4a foundation (edit history, working-layer FFI, save, variant fix) and C4b UI features (editable USDA panel, material sheet, shading model dropdown).
 
 ## Files Or Modules
 
@@ -115,12 +115,9 @@ UI-visible verification is listed per-commit under Acceptance Criteria.
 - Workspace presets (Assembly / Lighting / Materials / Review) each rearrange docks and flip `PayloadPolicy` appropriately; QSettings persist the last-active preset across app restart.
 - Payload-policy change prompts a confirm dialog when a stage is currently loaded.
 
-**C4 — Editing:**
-- Selecting a prim with a bound material populates the Material Sheet tab with OpenPBR inputs grouped by section (Base, Specular, Transmission, Subsurface, Coat, Emission, Geometry).
-- A slider edit shows in the viewport and produces one `EditOperation` in the undo stack; Ctrl+Z reverts.
-- USDA panel serializes the active edit-target layer; user edits + Apply commits as `EditOperation::ReplaceLayerContents`; parse errors show red gutter + toast with line/column.
-- Shading model dropdown switches OpenPBR ↔ UsdPreviewSurface, warns via QMessageBox listing lossy params, commits as a compound edit.
-- Ctrl+S writes the active edit target; reopening the file in `usdview` shows the authored edits composing correctly.
+**C4 — Editing (superseded):**
+- See `docs/agent-handoffs/2026-04-24-v0.16-c4a-edit-foundation.md` for the C4a foundation acceptance criteria.
+- C4b keeps the user-facing feature work: editable USDA panel, material sheet, and shading model dropdown.
 
 ## Out Of Scope
 

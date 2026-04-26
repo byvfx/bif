@@ -1,6 +1,6 @@
 # FEATURES
 
-Last updated: 2026-04-22
+Last updated: 2026-04-26
 
 ## Rendering
 
@@ -34,6 +34,7 @@ Last updated: 2026-04-22
 
 - Add USD skeletal animation support (joints, skinning, blendshapes).
 - Add compound prototype support for multi-mesh Xforms.
+- Save active working layer with C4a edit foundation is in progress: authored transform, visibility, material binding, material parameter, and variant selection ops now have the substrate for clean layer save.
 - When editing materials, have some way for the user to preview the models it's attached to, like a drop-down, and then it would load it in the viewport. Then the user can go back to the shot camera.
   
 ## Tools

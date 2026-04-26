@@ -3,7 +3,7 @@ title: "Architecture"
 type: article
 tags: [architecture]
 created: "2026-04-05"
-updated: "2026-04-16"
+updated: "2026-04-26"
 sources: [ARCHITECTURE.md, ARCHITECTURE_REVIEW.md, ARCHITECTURE_REFACTORS.md, MILESTONES.md]
 ---
 
@@ -33,6 +33,7 @@ BIF is a USD Orchestration Tool for VFX built in Rust — layer-aware USD editin
 - [[005-layer-aware-read-model|ADR 005: Layer-aware read model (v0.14.0)]] — Read-only layer inspection in v0.14; UI-agnostic `SceneLayerState` / `LayerStack` / `OpinionSource`
 - [[006-qt-via-cxx-qt|ADR 006: Qt 6 via cxx-qt (v0.15.0)]] — Qt binding choice, wgpu-QWidget embedding recipe, LGPL dynamic linking, shell-first migration on `v0.15-qt` branch
 - [[007-shell-state-to-viewport-bridge|ADR 007: BifShellState ↔ ViewportCallbacks bridge (v0.15.0)]] — `thread_local!` raw-pointer bridge from cxx-qt invokables to the renderer; single-threaded Qt UI lifetime invariant
+- [[008-edit-operation-architecture|ADR 008: Edit operation architecture (v0.16 C4a)]] — Parallel procedural/USD undo, dual identity, `SceneLayerState` edit target, working-layer FFI writes
 
 ## Key Principles
 

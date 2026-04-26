@@ -34,6 +34,7 @@
 
 pub mod cpp_bridge;
 pub mod displacement;
+pub mod edit_history;
 pub mod export;
 pub(crate) mod ffi_convert;
 pub(crate) mod ffi_raw;
@@ -50,6 +51,7 @@ pub use cpp_bridge::{
     UsdMeshData, UsdNativeInstance, UsdPointsData, UsdPrimType, UsdPrimvarData, UsdSkeletonData,
     UsdSkinBindingData, UsdSpecifier, UsdStage, UsdTimelineData, UsdVolumeData,
 };
+pub use edit_history::{AttrSlot, EditHistory, EditOperation, OpinionKey, ShaderValue, UndoFrame};
 pub use export::{AuthoredPrim, ExportConfig, ExportResult};
 pub use layer::{
     EditTarget, LayerInfo, LayerOffset, LayerStack, OpinionSource, PayloadPolicy, PrimSpecifier,

@@ -185,6 +185,39 @@ impl Renderer {
 
     pub(crate) fn handle_transform_edit(&mut self, edit: TransformEdit) {
         if edit.committed {
+            let can_author_usd = self.scene.usd_stage.is_some() && self.scene.layer_state.is_some();
+            if can_author_usd {
+                if let Some(key) = self
+                    .instance_to_opinion_key(edit.instance_index, bif_core::usd::AttrSlot::Xform)
+                {
+                    let op = bif_core::usd::EditOperation::Transform {
+                        key,
+                        before: Some(edit.old_transform.to_matrix().to_cols_array()),
+                        after: edit.new_transform.to_matrix().to_cols_array(),
+                    };
+                    match self.apply_usd_edit(op) {
+                        Ok(_) => {
+                            let idx = edit.instance_index;
+                            let mat = edit.new_transform.to_matrix();
+                            if idx < self.scene.instances.current.len() {
+                                self.scene.instances.current[idx] = mat;
+                                self.culling.mark_dirty();
+                                self.update_visible_instances();
+                                if let Some(pick_scene) = &self.pick_scene {
+                                    pick_scene.update_instance_transform(idx, &mat);
+                                }
+                            }
+                            if self.ivar.ivar_state.mode == RenderMode::Ivar {
+                                self.invalidate_ivar_scene();
+                            }
+                        }
+                        Err(e) => {
+                            log::error!("Failed to author USD transform edit: {e}");
+                        }
+                    }
+                    return;
+                }
+            }
             self.project.mark_dirty();
             self.push_transform_command(
                 edit.instance_index,
@@ -274,11 +307,26 @@ impl Renderer {
             variant_name
         );
         // Lock, set variant, release lock before reload (which needs &mut self)
-        let set_result = self.scene.usd_stage.as_ref().map(|s| {
+        let before = self.scene.usd_stage.as_ref().and_then(|s| {
             s.lock()
-                .expect("UsdStage mutex poisoned")
-                .set_variant_selection(&prim_path, &variant_set, &variant_name)
+                .ok()
+                .and_then(|stage| stage.get_variant_selection(&prim_path, &variant_set).ok())
         });
+        let op = bif_core::usd::EditOperation::VariantSelect {
+            key: bif_core::usd::OpinionKey::new(
+                prim_path.clone(),
+                bif_core::usd::AttrSlot::VariantSelection {
+                    vset: variant_set.clone(),
+                },
+            ),
+            before,
+            after: variant_name.clone(),
+        };
+        let set_result = if self.scene.usd_stage.is_some() && self.scene.layer_state.is_some() {
+            Some(self.apply_usd_edit(op).map(|_| ()))
+        } else {
+            None
+        };
         match set_result {
             Some(Err(e)) => log::error!("Failed to set variant: {:?}", e),
             Some(Ok(())) => {

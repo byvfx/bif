@@ -65,9 +65,11 @@
 #include <pxr/usd/usdGeom/tokens.h>
 #include <pxr/usd/sdf/layerUtils.h>
 #include <pxr/usd/sdf/primSpec.h>
+#include <pxr/usd/sdf/attributeSpec.h>
 #include <pxr/usd/sdf/propertySpec.h>
 #include <pxr/usd/sdf/layerOffset.h>
 #include <pxr/usd/sdf/schema.h>
+#include <pxr/usd/usd/editContext.h>
 #include <pxr/usd/usd/editTarget.h>
 #include <pxr/base/tf/stringUtils.h>
 #include <pxr/base/work/loops.h>
@@ -78,6 +80,8 @@
 #include <iostream>
 #include <set>
 #include <algorithm>
+#include <sstream>
+#include <cctype>
 #include <chrono>
 #include <cfloat>
 #include <mutex>
@@ -5216,6 +5220,13 @@ UsdBridgeError usd_bridge_edit_layer_add_payload(
 // Variant Query / Selection
 // ============================================================================
 
+namespace {
+SdfLayerRefPtr find_layer_by_identifier(
+    const SdfLayerRefPtr& root,
+    const std::string& identifier
+);
+}
+
 // Thread-local string storage for variant query results
 static thread_local std::vector<std::string> tl_variant_names;
 static thread_local std::string tl_variant_selection;
@@ -5287,15 +5298,31 @@ UsdBridgeError usd_bridge_get_variant_selection(
 
 UsdBridgeError usd_bridge_set_variant_selection(
     UsdBridgeStage* stage, const char* prim_path,
-    const char* variant_set_name, const char* variant_name
+    const char* variant_set_name, const char* variant_name,
+    const char* layer_identifier
 ) {
-    if (!stage || !prim_path || !variant_set_name || !variant_name) return USD_BRIDGE_ERROR_NULL_POINTER;
-    UsdPrim prim = stage->stage->GetPrimAtPath(SdfPath(prim_path));
-    if (!prim) return USD_BRIDGE_ERROR_INVALID_PRIM;
-    UsdVariantSet vs = prim.GetVariantSets().GetVariantSet(variant_set_name);
-    if (!vs.SetVariantSelection(variant_name)) return USD_BRIDGE_ERROR_UNKNOWN;
-    invalidate_all_caches(stage);
-    return USD_BRIDGE_SUCCESS;
+    if (!stage || !prim_path || !variant_set_name || !variant_name || !layer_identifier) return USD_BRIDGE_ERROR_NULL_POINTER;
+    try {
+        SdfLayerRefPtr root = stage->stage->GetRootLayer();
+        if (!root) return USD_BRIDGE_ERROR_INVALID_STAGE;
+        SdfLayerRefPtr layer = find_layer_by_identifier(root, layer_identifier);
+        if (!layer) return USD_BRIDGE_ERROR_INVALID_PRIM;
+        if (!layer->PermissionToEdit()) return USD_BRIDGE_ERROR_UNKNOWN;
+
+        UsdEditContext edit_context(stage->stage, layer);
+        UsdPrim prim = stage->stage->GetPrimAtPath(SdfPath(prim_path));
+        if (!prim) return USD_BRIDGE_ERROR_INVALID_PRIM;
+        UsdVariantSet vs = prim.GetVariantSets().GetVariantSet(variant_set_name);
+        if (!vs.SetVariantSelection(variant_name)) return USD_BRIDGE_ERROR_UNKNOWN;
+        invalidate_all_caches(stage);
+        return USD_BRIDGE_SUCCESS;
+    } catch (const std::exception& e) {
+        TF_WARN("usd_bridge_set_variant_selection: %s", e.what());
+        return USD_BRIDGE_ERROR_UNKNOWN;
+    } catch (...) {
+        TF_WARN("usd_bridge_set_variant_selection: unknown exception");
+        return USD_BRIDGE_ERROR_UNKNOWN;
+    }
 }
 
 // ============================================================================
@@ -6361,6 +6388,19 @@ SdfLayerRefPtr find_layer_by_identifier(
     return {};
 }
 
+bool parse_vec3f_string(const char* value, GfVec3f* out) {
+    if (!value || !out) return false;
+    std::string s(value);
+    std::replace(s.begin(), s.end(), ',', ' ');
+    std::istringstream stream(s);
+    float x = 0.0f;
+    float y = 0.0f;
+    float z = 0.0f;
+    if (!(stream >> x >> y >> z)) return false;
+    *out = GfVec3f(x, y, z);
+    return true;
+}
+
 } // anonymous namespace
 
 UsdBridgeError usd_bridge_stage_get_layer_stack(
@@ -6498,6 +6538,342 @@ UsdBridgeError usd_bridge_layer_set_permission_to_edit(
         return USD_BRIDGE_SUCCESS;
     } catch (const std::exception& e) {
         TF_WARN("usd_bridge_layer_set_permission_to_edit: %s", e.what());
+        return USD_BRIDGE_ERROR_UNKNOWN;
+    }
+}
+
+UsdBridgeError usd_bridge_layer_save(
+    const UsdBridgeStage* stage,
+    const char* layer_identifier
+) {
+    if (!stage || !layer_identifier) {
+        return USD_BRIDGE_ERROR_NULL_POINTER;
+    }
+    try {
+        SdfLayerRefPtr root = stage->stage->GetRootLayer();
+        if (!root) return USD_BRIDGE_ERROR_INVALID_STAGE;
+        SdfLayerRefPtr layer = find_layer_by_identifier(root, layer_identifier);
+        if (!layer) return USD_BRIDGE_ERROR_INVALID_PRIM;
+        if (!layer->PermissionToEdit()) return USD_BRIDGE_ERROR_UNKNOWN;
+        return layer->Save() ? USD_BRIDGE_SUCCESS : USD_BRIDGE_ERROR_UNKNOWN;
+    } catch (const std::exception& e) {
+        TF_WARN("usd_bridge_layer_save: %s", e.what());
+        return USD_BRIDGE_ERROR_UNKNOWN;
+    }
+}
+
+UsdBridgeError usd_bridge_layer_permission_to_edit(
+    const UsdBridgeStage* stage,
+    const char* layer_identifier,
+    int* out_permission_to_edit
+) {
+    if (!stage || !layer_identifier || !out_permission_to_edit) {
+        return USD_BRIDGE_ERROR_NULL_POINTER;
+    }
+    try {
+        SdfLayerRefPtr root = stage->stage->GetRootLayer();
+        if (!root) return USD_BRIDGE_ERROR_INVALID_STAGE;
+        SdfLayerRefPtr layer = find_layer_by_identifier(root, layer_identifier);
+        if (!layer) return USD_BRIDGE_ERROR_INVALID_PRIM;
+        *out_permission_to_edit = layer->PermissionToEdit() ? 1 : 0;
+        return USD_BRIDGE_SUCCESS;
+    } catch (const std::exception& e) {
+        TF_WARN("usd_bridge_layer_permission_to_edit: %s", e.what());
+        return USD_BRIDGE_ERROR_UNKNOWN;
+    }
+}
+
+static thread_local std::string tl_layer_string;
+
+UsdBridgeError usd_bridge_layer_export_as_string(
+    const UsdBridgeStage* stage,
+    const char* layer_identifier,
+    const char** out_text
+) {
+    if (!stage || !layer_identifier || !out_text) {
+        return USD_BRIDGE_ERROR_NULL_POINTER;
+    }
+    *out_text = nullptr;
+    try {
+        SdfLayerRefPtr root = stage->stage->GetRootLayer();
+        if (!root) return USD_BRIDGE_ERROR_INVALID_STAGE;
+        SdfLayerRefPtr layer = find_layer_by_identifier(root, layer_identifier);
+        if (!layer) return USD_BRIDGE_ERROR_INVALID_PRIM;
+        if (!layer->ExportToString(&tl_layer_string)) {
+            return USD_BRIDGE_ERROR_UNKNOWN;
+        }
+        *out_text = tl_layer_string.c_str();
+        return USD_BRIDGE_SUCCESS;
+    } catch (const std::exception& e) {
+        TF_WARN("usd_bridge_layer_export_as_string: %s", e.what());
+        return USD_BRIDGE_ERROR_UNKNOWN;
+    }
+}
+
+UsdBridgeError usd_bridge_layer_import_from_string(
+    const UsdBridgeStage* stage,
+    const char* layer_identifier,
+    const char* text
+) {
+    if (!stage || !layer_identifier || !text) {
+        return USD_BRIDGE_ERROR_NULL_POINTER;
+    }
+    try {
+        SdfLayerRefPtr root = stage->stage->GetRootLayer();
+        if (!root) return USD_BRIDGE_ERROR_INVALID_STAGE;
+        SdfLayerRefPtr layer = find_layer_by_identifier(root, layer_identifier);
+        if (!layer) return USD_BRIDGE_ERROR_INVALID_PRIM;
+        if (!layer->PermissionToEdit()) return USD_BRIDGE_ERROR_UNKNOWN;
+        SdfLayerRefPtr scratch = SdfLayer::CreateAnonymous(".usda");
+        if (!scratch || !scratch->ImportFromString(text)) {
+            return USD_BRIDGE_ERROR_UNKNOWN;
+        }
+        layer->TransferContent(scratch);
+        return USD_BRIDGE_SUCCESS;
+    } catch (const std::exception& e) {
+        TF_WARN("usd_bridge_layer_import_from_string: %s", e.what());
+        return USD_BRIDGE_ERROR_UNKNOWN;
+    }
+}
+
+UsdBridgeError usd_bridge_parse_usda(const char* text) {
+    if (!text) {
+        return USD_BRIDGE_ERROR_NULL_POINTER;
+    }
+    try {
+        SdfLayerRefPtr scratch = SdfLayer::CreateAnonymous(".usda");
+        if (!scratch || !scratch->ImportFromString(text)) {
+            return USD_BRIDGE_ERROR_UNKNOWN;
+        }
+        return USD_BRIDGE_SUCCESS;
+    } catch (const std::exception& e) {
+        TF_WARN("usd_bridge_parse_usda: %s", e.what());
+        return USD_BRIDGE_ERROR_UNKNOWN;
+    }
+}
+
+UsdBridgeError usd_bridge_layer_get_attr_value(
+    const UsdBridgeStage* stage,
+    const char* layer_identifier,
+    const char* prim_path,
+    const char* attr_name,
+    const char** out_value
+) {
+    if (!stage || !layer_identifier || !prim_path || !attr_name || !out_value) {
+        return USD_BRIDGE_ERROR_NULL_POINTER;
+    }
+    *out_value = nullptr;
+    try {
+        SdfLayerRefPtr root = stage->stage->GetRootLayer();
+        if (!root) return USD_BRIDGE_ERROR_INVALID_STAGE;
+        SdfLayerRefPtr layer = find_layer_by_identifier(root, layer_identifier);
+        if (!layer) return USD_BRIDGE_ERROR_INVALID_PRIM;
+        SdfPath attr_path = SdfPath(prim_path).AppendProperty(TfToken(attr_name));
+        SdfAttributeSpecHandle spec = layer->GetAttributeAtPath(attr_path);
+        if (!spec) {
+            return USD_BRIDGE_SUCCESS;
+        }
+        VtValue value = spec->GetDefaultValue();
+        if (value.IsEmpty()) {
+            return USD_BRIDGE_SUCCESS;
+        }
+        tl_layer_string = TfStringify(value);
+        *out_value = tl_layer_string.c_str();
+        return USD_BRIDGE_SUCCESS;
+    } catch (const std::exception& e) {
+        TF_WARN("usd_bridge_layer_get_attr_value: %s", e.what());
+        return USD_BRIDGE_ERROR_UNKNOWN;
+    }
+}
+
+UsdBridgeError usd_bridge_layer_write_xform(
+    UsdBridgeStage* stage,
+    const char* layer_identifier,
+    const char* prim_path,
+    double time,
+    const float* matrix_16
+) {
+    if (!stage || !layer_identifier || !prim_path || !matrix_16) {
+        return USD_BRIDGE_ERROR_NULL_POINTER;
+    }
+    try {
+        SdfLayerRefPtr root = stage->stage->GetRootLayer();
+        if (!root) return USD_BRIDGE_ERROR_INVALID_STAGE;
+        SdfLayerRefPtr layer = find_layer_by_identifier(root, layer_identifier);
+        if (!layer) return USD_BRIDGE_ERROR_INVALID_PRIM;
+        if (!layer->PermissionToEdit()) return USD_BRIDGE_ERROR_UNKNOWN;
+
+        UsdEditContext edit_context(stage->stage, layer);
+        SdfPath path(prim_path);
+        UsdPrim prim = stage->stage->OverridePrim(path);
+        if (!prim) return USD_BRIDGE_ERROR_UNKNOWN;
+        UsdGeomXformable xformable(prim);
+        if (!xformable) {
+            prim = stage->stage->DefinePrim(path, TfToken("Xform"));
+            if (!prim) return USD_BRIDGE_ERROR_UNKNOWN;
+            xformable = UsdGeomXformable(prim);
+            if (!xformable) return USD_BRIDGE_ERROR_UNKNOWN;
+        }
+
+        GfMatrix4d mat;
+        for (int col = 0; col < 4; ++col) {
+            for (int row = 0; row < 4; ++row) {
+                mat[row][col] = static_cast<double>(matrix_16[col * 4 + row]);
+            }
+        }
+
+        bool reset_stack = false;
+        auto ops = xformable.GetOrderedXformOps(&reset_stack);
+        UsdGeomXformOp op;
+        if (ops.empty()) {
+            op = xformable.AddTransformOp();
+        } else {
+            op = ops[0];
+        }
+        op.Set(mat, time < 0.0 ? UsdTimeCode::Default() : UsdTimeCode(time));
+        invalidate_all_caches(stage);
+        return USD_BRIDGE_SUCCESS;
+    } catch (const std::exception& e) {
+        TF_WARN("usd_bridge_layer_write_xform: %s", e.what());
+        return USD_BRIDGE_ERROR_UNKNOWN;
+    }
+}
+
+UsdBridgeError usd_bridge_layer_write_visibility(
+    UsdBridgeStage* stage,
+    const char* layer_identifier,
+    const char* prim_path,
+    int visible
+) {
+    if (!stage || !layer_identifier || !prim_path) {
+        return USD_BRIDGE_ERROR_NULL_POINTER;
+    }
+    try {
+        SdfLayerRefPtr root = stage->stage->GetRootLayer();
+        if (!root) return USD_BRIDGE_ERROR_INVALID_STAGE;
+        SdfLayerRefPtr layer = find_layer_by_identifier(root, layer_identifier);
+        if (!layer) return USD_BRIDGE_ERROR_INVALID_PRIM;
+        if (!layer->PermissionToEdit()) return USD_BRIDGE_ERROR_UNKNOWN;
+
+        UsdEditContext edit_context(stage->stage, layer);
+        UsdPrim prim = stage->stage->OverridePrim(SdfPath(prim_path));
+        if (!prim) return USD_BRIDGE_ERROR_UNKNOWN;
+        UsdGeomImageable imageable(prim);
+        if (!imageable) return USD_BRIDGE_ERROR_INVALID_PRIM;
+        imageable.CreateVisibilityAttr().Set(
+            visible ? UsdGeomTokens->inherited : UsdGeomTokens->invisible
+        );
+        invalidate_all_caches(stage);
+        return USD_BRIDGE_SUCCESS;
+    } catch (const std::exception& e) {
+        TF_WARN("usd_bridge_layer_write_visibility: %s", e.what());
+        return USD_BRIDGE_ERROR_UNKNOWN;
+    }
+}
+
+UsdBridgeError usd_bridge_layer_bind_material(
+    UsdBridgeStage* stage,
+    const char* layer_identifier,
+    const char* prim_path,
+    const char* material_path
+) {
+    if (!stage || !layer_identifier || !prim_path || !material_path) {
+        return USD_BRIDGE_ERROR_NULL_POINTER;
+    }
+    try {
+        SdfLayerRefPtr root = stage->stage->GetRootLayer();
+        if (!root) return USD_BRIDGE_ERROR_INVALID_STAGE;
+        SdfLayerRefPtr layer = find_layer_by_identifier(root, layer_identifier);
+        if (!layer) return USD_BRIDGE_ERROR_INVALID_PRIM;
+        if (!layer->PermissionToEdit()) return USD_BRIDGE_ERROR_UNKNOWN;
+
+        UsdEditContext edit_context(stage->stage, layer);
+        UsdPrim prim = stage->stage->OverridePrim(SdfPath(prim_path));
+        if (!prim) return USD_BRIDGE_ERROR_UNKNOWN;
+        UsdPrim mat_prim = stage->stage->GetPrimAtPath(SdfPath(material_path));
+        UsdShadeMaterial material(mat_prim);
+        if (!material) return USD_BRIDGE_ERROR_INVALID_PRIM;
+        UsdShadeMaterialBindingAPI binding_api = UsdShadeMaterialBindingAPI::Apply(prim);
+        binding_api.Bind(material);
+        invalidate_all_caches(stage);
+        return USD_BRIDGE_SUCCESS;
+    } catch (const std::exception& e) {
+        TF_WARN("usd_bridge_layer_bind_material: %s", e.what());
+        return USD_BRIDGE_ERROR_UNKNOWN;
+    }
+}
+
+UsdBridgeError usd_bridge_layer_set_shader_input(
+    UsdBridgeStage* stage,
+    const char* layer_identifier,
+    const char* shader_path,
+    const char* input_name,
+    const char* value_type,
+    const char* value
+) {
+    if (!stage || !layer_identifier || !shader_path || !input_name || !value_type || !value) {
+        return USD_BRIDGE_ERROR_NULL_POINTER;
+    }
+    try {
+        SdfLayerRefPtr root = stage->stage->GetRootLayer();
+        if (!root) return USD_BRIDGE_ERROR_INVALID_STAGE;
+        SdfLayerRefPtr layer = find_layer_by_identifier(root, layer_identifier);
+        if (!layer) return USD_BRIDGE_ERROR_INVALID_PRIM;
+        if (!layer->PermissionToEdit()) return USD_BRIDGE_ERROR_UNKNOWN;
+
+        UsdEditContext edit_context(stage->stage, layer);
+        UsdShadeShader shader(stage->stage->GetPrimAtPath(SdfPath(shader_path)));
+        if (!shader) return USD_BRIDGE_ERROR_INVALID_PRIM;
+
+        TfToken type_name(value_type);
+        TfToken input_token(input_name);
+        UsdShadeInput input;
+        if (type_name == TfToken("float")) {
+            input = shader.GetInput(input_token);
+            if (!input) input = shader.CreateInput(input_token, SdfValueTypeNames->Float);
+            input.Set(std::stof(value));
+        } else if (type_name == TfToken("double")) {
+            input = shader.GetInput(input_token);
+            if (!input) input = shader.CreateInput(input_token, SdfValueTypeNames->Double);
+            input.Set(std::stod(value));
+        } else if (type_name == TfToken("int")) {
+            input = shader.GetInput(input_token);
+            if (!input) input = shader.CreateInput(input_token, SdfValueTypeNames->Int);
+            input.Set(std::stoi(value));
+        } else if (type_name == TfToken("bool")) {
+            input = shader.GetInput(input_token);
+            if (!input) input = shader.CreateInput(input_token, SdfValueTypeNames->Bool);
+            std::string lowered(value);
+            std::transform(lowered.begin(), lowered.end(), lowered.begin(), ::tolower);
+            input.Set(lowered == "true" || lowered == "1");
+        } else if (type_name == TfToken("token")) {
+            input = shader.GetInput(input_token);
+            if (!input) input = shader.CreateInput(input_token, SdfValueTypeNames->Token);
+            input.Set(TfToken(value));
+        } else if (type_name == TfToken("string")) {
+            input = shader.GetInput(input_token);
+            if (!input) input = shader.CreateInput(input_token, SdfValueTypeNames->String);
+            input.Set(std::string(value));
+        } else if (type_name == TfToken("color3f")) {
+            GfVec3f vec;
+            if (!parse_vec3f_string(value, &vec)) return USD_BRIDGE_ERROR_UNKNOWN;
+            input = shader.GetInput(input_token);
+            if (!input) input = shader.CreateInput(input_token, SdfValueTypeNames->Color3f);
+            input.Set(vec);
+        } else if (type_name == TfToken("float3")) {
+            GfVec3f vec;
+            if (!parse_vec3f_string(value, &vec)) return USD_BRIDGE_ERROR_UNKNOWN;
+            input = shader.GetInput(input_token);
+            if (!input) input = shader.CreateInput(input_token, SdfValueTypeNames->Float3);
+            input.Set(vec);
+        } else {
+            return USD_BRIDGE_ERROR_INVALID_PRIM;
+        }
+
+        invalidate_all_caches(stage);
+        return USD_BRIDGE_SUCCESS;
+    } catch (const std::exception& e) {
+        TF_WARN("usd_bridge_layer_set_shader_input: %s", e.what());
         return USD_BRIDGE_ERROR_UNKNOWN;
     }
 }

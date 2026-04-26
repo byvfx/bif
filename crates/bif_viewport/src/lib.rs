@@ -178,6 +178,12 @@ pub(crate) struct NodeGraphContext {
     pub node_prim_counts: std::collections::HashMap<node_graph::GraphNodeId, usize>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum UndoActionKind {
+    Procedural,
+    Usd,
+}
+
 /// Convert a synthetic `/BIF/{real_path}/{idx}` instance path back to the real path.
 ///
 /// `resolve_prim_path` generates synthetic paths when an instance has no USD prim path
@@ -251,6 +257,8 @@ pub struct Renderer {
 
     // Scene data (geometry, instances, materials, USD stage, undo/redo)
     pub scene: SceneManager,
+    pub(crate) last_action_stack: Vec<UndoActionKind>,
+    pub(crate) redo_action_stack: Vec<UndoActionKind>,
 
     // Multi-draw state for per-prototype rendering
     pub(crate) multi_draw: MultiDrawState,
@@ -923,6 +931,8 @@ impl Renderer {
                 mesh_data,
                 ..SceneManager::new()
             },
+            last_action_stack: Vec::new(),
+            redo_action_stack: Vec::new(),
             multi_draw: MultiDrawState::new(),
             culling,
             selection: SelectionManager::new(),
@@ -1021,6 +1031,8 @@ impl Renderer {
     pub fn reset_scene_state(&mut self) {
         self.wait_for_gpu();
         self.scene = SceneManager::new();
+        self.last_action_stack.clear();
+        self.redo_action_stack.clear();
         self.nodes.cached_scene_graph = scene_browser::CachedSceneGraph::default();
         self.nodes.node_proto_map.clear();
         self.nodes.node_cloud_map.clear();
@@ -1575,6 +1587,8 @@ impl Renderer {
         self.scene
             .undo_stack
             .push(Box::new(cmd), &mut self.scene.edit_state);
+        self.last_action_stack.push(UndoActionKind::Procedural);
+        self.redo_action_stack.clear();
         self.apply_transform_override(instance_index);
         self.project.mark_dirty();
 
@@ -1584,14 +1598,107 @@ impl Renderer {
         }
     }
 
+    pub(crate) fn instance_to_opinion_key(
+        &self,
+        idx: usize,
+        slot: bif_core::usd::AttrSlot,
+    ) -> Option<bif_core::usd::OpinionKey> {
+        let prim_path = self.scene.instances.prim_paths.get(idx)?;
+        if prim_path.is_empty() {
+            return None;
+        }
+        Some(bif_core::usd::OpinionKey::new(
+            denormalize_synthetic_path(prim_path),
+            slot,
+        ))
+    }
+
+    pub(crate) fn apply_usd_edit(
+        &mut self,
+        op: bif_core::usd::EditOperation,
+    ) -> anyhow::Result<String> {
+        let stage_arc = self
+            .scene
+            .usd_stage
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("no USD stage loaded"))?;
+        let mut layer_state = self
+            .scene
+            .layer_state
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("no layer state loaded"))?;
+        let result = {
+            let stage = stage_arc
+                .lock()
+                .map_err(|e| anyhow::anyhow!("UsdStage mutex poisoned: {e}"))?;
+            layer_state.apply_edit_operation(&stage, op)
+        };
+        self.scene.layer_state = Some(layer_state);
+        let desc = result.map_err(|e| anyhow::anyhow!("{e}"))?;
+        self.last_action_stack.push(UndoActionKind::Usd);
+        self.redo_action_stack.clear();
+        self.project.mark_dirty();
+        Ok(desc)
+    }
+
+    pub fn can_undo(&self) -> bool {
+        !self.last_action_stack.is_empty()
+            || self.scene.undo_stack.can_undo()
+            || self
+                .scene
+                .layer_state
+                .as_ref()
+                .is_some_and(bif_core::SceneLayerState::has_usd_undo)
+    }
+
+    pub fn can_redo(&self) -> bool {
+        !self.redo_action_stack.is_empty()
+            || self.scene.undo_stack.can_redo()
+            || self
+                .scene
+                .layer_state
+                .as_ref()
+                .is_some_and(bif_core::SceneLayerState::has_usd_redo)
+    }
+
     /// Undo the last command. Returns description if successful.
     pub fn undo(&mut self) -> Option<String> {
-        let desc = self
-            .scene
-            .undo_stack
-            .undo(&mut self.scene.edit_state)?
-            .to_string();
-        self.apply_all_transform_overrides();
+        let kind = self.last_action_stack.pop().or_else(|| {
+            if self.scene.undo_stack.can_undo() {
+                Some(UndoActionKind::Procedural)
+            } else if self
+                .scene
+                .layer_state
+                .as_ref()
+                .is_some_and(bif_core::SceneLayerState::has_usd_undo)
+            {
+                Some(UndoActionKind::Usd)
+            } else {
+                None
+            }
+        })?;
+        let desc = match kind {
+            UndoActionKind::Procedural => {
+                let desc = self
+                    .scene
+                    .undo_stack
+                    .undo(&mut self.scene.edit_state)?
+                    .to_string();
+                self.apply_all_transform_overrides();
+                desc
+            }
+            UndoActionKind::Usd => {
+                let stage_arc = self.scene.usd_stage.clone()?;
+                let mut layer_state = self.scene.layer_state.take()?;
+                let result = {
+                    let stage = stage_arc.lock().ok()?;
+                    layer_state.undo_usd_edit(&stage)
+                };
+                self.scene.layer_state = Some(layer_state);
+                result.ok().flatten()?
+            }
+        };
+        self.redo_action_stack.push(kind);
         self.project.mark_dirty();
         if self.ivar.ivar_state.mode == ivar_state::RenderMode::Ivar {
             self.invalidate_ivar_scene();
@@ -1601,12 +1708,42 @@ impl Renderer {
 
     /// Redo the next command. Returns description if successful.
     pub fn redo(&mut self) -> Option<String> {
-        let desc = self
-            .scene
-            .undo_stack
-            .redo(&mut self.scene.edit_state)?
-            .to_string();
-        self.apply_all_transform_overrides();
+        let kind = self.redo_action_stack.pop().or_else(|| {
+            if self.scene.undo_stack.can_redo() {
+                Some(UndoActionKind::Procedural)
+            } else if self
+                .scene
+                .layer_state
+                .as_ref()
+                .is_some_and(bif_core::SceneLayerState::has_usd_redo)
+            {
+                Some(UndoActionKind::Usd)
+            } else {
+                None
+            }
+        })?;
+        let desc = match kind {
+            UndoActionKind::Procedural => {
+                let desc = self
+                    .scene
+                    .undo_stack
+                    .redo(&mut self.scene.edit_state)?
+                    .to_string();
+                self.apply_all_transform_overrides();
+                desc
+            }
+            UndoActionKind::Usd => {
+                let stage_arc = self.scene.usd_stage.clone()?;
+                let mut layer_state = self.scene.layer_state.take()?;
+                let result = {
+                    let stage = stage_arc.lock().ok()?;
+                    layer_state.redo_usd_edit(&stage)
+                };
+                self.scene.layer_state = Some(layer_state);
+                result.ok().flatten()?
+            }
+        };
+        self.last_action_stack.push(kind);
         self.project.mark_dirty();
         if self.ivar.ivar_state.mode == ivar_state::RenderMode::Ivar {
             self.invalidate_ivar_scene();

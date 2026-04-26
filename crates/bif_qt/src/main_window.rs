@@ -918,13 +918,38 @@ impl qobject::BifShellState {
     /// happened and flags the no-edit-target case explicitly.
     fn on_save(mut self: Pin<&mut Self>) {
         log::info!("action: File/Save");
-        let msg = if !self.as_ref().active_edit_target_is_set() {
-            "Save: no stage loaded — open a stage first"
-        } else {
-            "Save: write path not yet wired (v0.16)"
+        let Some(layer_id) = self
+            .as_ref()
+            .rust()
+            .scene_layer_state
+            .as_ref()
+            .and_then(|s| s.stack.layers.get(s.working_layer))
+            .map(|l| l.identifier.clone())
+        else {
+            self.as_mut().set_status_message(cxx_qt_lib::QString::from(
+                "Save: no stage loaded — open a stage first",
+            ));
+            return;
+        };
+
+        let msg = match with_stage(|stage| stage.save_layer(&layer_id)) {
+            Some(Ok(())) => {
+                if let Some(state) = self.as_mut().rust_mut().scene_layer_state.as_mut() {
+                    state.mark_working_layer_dirty(false);
+                }
+                with_viewport_mut(|vp| {
+                    if let Some(state) = vp.renderer_mut().scene.layer_state.as_mut() {
+                        state.mark_working_layer_dirty(false);
+                    }
+                });
+                bump_revision(self.as_mut());
+                format!("Saved {layer_id}")
+            }
+            Some(Err(e)) => format!("Save failed: {e}"),
+            None => "Save failed: viewport not ready".to_string(),
         };
         self.as_mut()
-            .set_status_message(cxx_qt_lib::QString::from(msg));
+            .set_status_message(cxx_qt_lib::QString::from(&msg));
     }
 
     fn on_save_as(mut self: Pin<&mut Self>) {
@@ -1074,11 +1099,12 @@ impl qobject::BifShellState {
                 // `working_layer` to the root; re-pick so anonymous / muted
                 // roots skip to the next candidate instead of silently
                 // authoring into a non-persistent layer.
-                let (edit_target_name, loaded_policy) = {
+                let (edit_target_name, loaded_policy, picked_idx) = {
                     let mut r = self.as_mut().rust_mut();
                     if let Some(state) = r.scene_layer_state.as_mut() {
-                        if let Some(idx) = pick_strongest_writable_sublayer(state) {
-                            state.working_layer = idx;
+                        let picked_idx = pick_strongest_writable_sublayer(state);
+                        if let Some(idx) = picked_idx {
+                            state.set_working_layer(idx);
                         }
                         (
                             state
@@ -1088,11 +1114,29 @@ impl qobject::BifShellState {
                                 .map(|l| l.display_name.clone())
                                 .unwrap_or_default(),
                             Some(state.payload_policy),
+                            picked_idx,
                         )
                     } else {
-                        (String::new(), None)
+                        (String::new(), None, None)
                     }
                 };
+                if let Some(idx) = picked_idx {
+                    with_viewport_mut(|vp| {
+                        let renderer = vp.renderer_mut();
+                        let stage_arc = renderer.scene.usd_stage.clone();
+                        if let Some(state) = renderer.scene.layer_state.as_mut() {
+                            if let Some(stage_arc) = stage_arc {
+                                if let Ok(stage) = stage_arc.lock() {
+                                    if let Err(e) = state.set_edit_target(idx, &stage) {
+                                        log::warn!("edit target sync failed: {e}");
+                                    }
+                                }
+                            } else {
+                                state.set_working_layer(idx);
+                            }
+                        }
+                    });
+                }
                 if let Some(policy) = loaded_policy {
                     self.as_mut().rust_mut().payload_policy = policy;
                 }
@@ -1490,6 +1534,7 @@ impl qobject::BifShellState {
             isolation_mode: false,
             payload_policy,
             layer_for_prim: Default::default(),
+            edit_history: bif_core::usd::EditHistory::with_working_layer("root.usda"),
         };
         self.as_mut().rust_mut().scene_layer_state = Some(state);
         bump_revision(self.as_mut());
@@ -1649,9 +1694,28 @@ impl qobject::BifShellState {
     }
 
     fn set_working_layer(mut self: Pin<&mut Self>, index: i32) {
-        if let Some(state) = self.as_mut().rust_mut().scene_layer_state.as_mut() {
-            state.set_working_layer(index as usize);
+        if index < 0 {
+            return;
         }
+        let idx = index as usize;
+        if let Some(state) = self.as_mut().rust_mut().scene_layer_state.as_mut() {
+            state.set_working_layer(idx);
+        }
+        with_viewport_mut(|vp| {
+            let renderer = vp.renderer_mut();
+            let stage_arc = renderer.scene.usd_stage.clone();
+            if let Some(state) = renderer.scene.layer_state.as_mut() {
+                if let Some(stage_arc) = stage_arc {
+                    if let Ok(stage) = stage_arc.lock() {
+                        if let Err(e) = state.set_edit_target(idx, &stage) {
+                            log::warn!("working layer edit-target sync failed: {e}");
+                        }
+                    }
+                } else {
+                    state.set_working_layer(idx);
+                }
+            }
+        });
         bump_revision(self.as_mut());
         log::info!("working layer → {index}");
     }
@@ -2309,8 +2373,8 @@ fn refresh_selected_prim_stack_cache(mut state: Pin<&mut qobject::BifShellState>
 
 fn current_undo_redo_availability() -> (bool, bool) {
     with_viewport_mut(|vp| {
-        let scene = &vp.renderer_mut().scene;
-        (scene.undo_stack.can_undo(), scene.undo_stack.can_redo())
+        let renderer = vp.renderer_mut();
+        (renderer.can_undo(), renderer.can_redo())
     })
     .unwrap_or((false, false))
 }
@@ -2455,6 +2519,7 @@ mod tests {
             isolation_mode: false,
             payload_policy: PayloadPolicy::LoadAll,
             layer_for_prim: Default::default(),
+            edit_history: bif_core::usd::EditHistory::with_working_layer("locked.usda"),
         };
 
         assert_eq!(pick_strongest_writable_sublayer(&state), Some(1));
@@ -2498,6 +2563,7 @@ mod tests {
             isolation_mode: false,
             payload_policy: PayloadPolicy::LoadAll,
             layer_for_prim: Default::default(),
+            edit_history: bif_core::usd::EditHistory::with_working_layer("shot<&>.usda"),
         });
         let opinions = vec![
             OpinionSource {

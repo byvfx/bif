@@ -267,8 +267,20 @@ impl Renderer {
                     }
                 }
                 AppEvent::WorkingLayerChanged(idx) => {
+                    let stage_arc = self.scene.usd_stage.clone();
                     if let Some(state) = self.scene.layer_state.as_mut() {
-                        state.set_working_layer(idx);
+                        if let Some(stage_arc) = stage_arc {
+                            match stage_arc.lock() {
+                                Ok(stage) => {
+                                    if let Err(e) = state.set_edit_target(idx, &stage) {
+                                        log::warn!("Failed to set edit target {idx}: {e}");
+                                    }
+                                }
+                                Err(e) => log::warn!("UsdStage lock poisoned: {e}"),
+                            }
+                        } else {
+                            state.set_working_layer(idx);
+                        }
                     }
                 }
                 AppEvent::PayloadPolicyChanged(policy) => {

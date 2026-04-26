@@ -217,6 +217,7 @@ mod tests {
             isolation_mode: false,
             payload_policy: PayloadPolicy::LoadAll,
             layer_for_prim: Default::default(),
+            edit_history: bif_core::usd::EditHistory::with_working_layer("root.usd"),
         };
         let mut bus = EventBus::default();
         let _ = ctx.run(Default::default(), |ctx| {

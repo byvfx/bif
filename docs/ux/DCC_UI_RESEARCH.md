@@ -1,4 +1,4 @@
-﻿# DCC Tool UI/UX Research for BIF
+# DCC Tool UI/UX Research for BIF
 
 **Date:** 2026-03-30
 **Purpose:** Inform BIF's Qt migration (v0.15.0) and layer-aware UI (v0.14.0) with evidence-based design patterns from industry-leading VFX and creative tools.
@@ -316,12 +316,12 @@ The `*` indicator and blue highlight mark the active edit layer. The `[Diff]` bu
 **BIF should implement workspace tabs (Blender model) with these defaults:**
 
 1. **Assembly** - Scene browser prominent, node graph large, viewport medium, code preview hidden
-   - Payload policy: BoundingBoxOnly
+   - Payload policy: proxy placeholder mode
    - Scene tree: full expansion
    - Node graph: all node types visible
 
 2. **Lighting** - Viewport dominant, property inspector wide, render catalog visible
-   - Payload policy: CameraFrustum
+   - Payload policy: camera-based deferred loading
    - Property inspector: light properties expanded by default
    - Spreadsheet editor available for multi-light editing
 

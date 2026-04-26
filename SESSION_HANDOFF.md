@@ -1,8 +1,16 @@
-# Session Handoff — April 25, 2026 (`finish-qt-ui` C3 navigation landed)
+# Session Handoff — April 26, 2026 (`finish-qt-ui` C4a edit foundation)
 
-**Last Updated:** 2026-04-25. Branch `finish-qt-ui` now has the C3 navigation tranche from `docs/agent-handoffs/2026-04-22-finish-qt-ui.md` landed: `View → Look Through…` now mirrors the stage camera list, an orthographic toggle drives the existing aspect-correct ortho camera path, and workspace presets are now `Assembly / Lighting / Materials / Review` with payload-policy-aware stage reloads plus a confirmation dialog when a policy-changing switch happens while a stage is already open. Automated validation is green on the current tree: `cargo build`, `cargo clippy -- -D warnings`, `cargo fmt --check`, `cargo test -p bif_math`, `cargo test -p bif_renderer`, `cargo test -p bif_viewport`, `cargo test -p bif_viewer`, `cargo test -p bif_qt`, and `cargo test -p bif_core -- --test-threads=1`. The `bif_core` suite still emits the known noisy USD secondary-thread diagnostics after completion, but the suite itself passes.
+**Last Updated:** 2026-04-26. Branch `finish-qt-ui` now has the C4a edit/save foundation from `docs/agent-handoffs/2026-04-24-v0.16-c4a-edit-foundation.md`: `EditOperation` / `EditHistory`, working-layer FFI writes, variant selections authored through `UsdEditContext`, Ctrl+S working-layer save, dirty-bit clearing, and ADR-008. Validation so far is green for `cargo build` with Qt/USD env and `cargo test -p bif_core --test edit_op_roundtrip --test edit_history -- --test-threads=1`.
 
-**Next action:** start C4 editing on `finish-qt-ui`: material-sheet population, USDA panel author/apply flow, and shading-model switching with undo/save-safe edit operations.
+**Next action:** finish the full validation sweep (`cargo clippy -- -D warnings`, `cargo fmt --check`, crate tests, full `bif_core -- --test-threads=1`), then continue C4b: editable USDA layer panel, material sheet, and shading-model switching.
+
+## 🏁 2026-04-26 — `finish-qt-ui` C4a edit foundation
+
+- **Edit history exists in core.** `bif_core::usd::edit_history` owns `EditOperation`, `EditHistory`, `OpinionKey`, `AttrSlot`, `ShaderValue`, and grouped USD undo frames.
+- **Working-layer FFI writes are wired.** The USD bridge can save, parse, export/import layer text, read layer-specific attr values, and author transform/visibility/material/shader-input/variant opinions on the selected layer without caching `SdfLayer*` in Rust.
+- **Viewport dispatch now bridges instance identity to USD identity.** Transform edits and variant selections route through `EditHistory`; procedural undo remains parallel behind the viewport action router.
+- **Ctrl+S now saves the working layer.** `on_save` resolves the active layer id, calls `save_layer`, clears dirty state in shell + viewport mirrors, and reports `Saved <id>` / `Save failed: ...`.
+- **Docs are resynced.** `BIF_USD_WORKFLOW.md`, milestones, roadmap, feature notes, ADR-008, and the prior C4 handoff now reflect C4a/C4b split and remove the doc-only claims flagged by the audit.
 
 ## 🏁 2026-04-25 — `finish-qt-ui` C3 navigation
 

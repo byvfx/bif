@@ -1733,16 +1733,19 @@ impl UsdStage {
         prim_path: &str,
         variant_set: &str,
         variant_name: &str,
+        layer_identifier: &str,
     ) -> UsdBridgeResult<()> {
         let c_path = CString::new(prim_path).map_err(|_| UsdBridgeError::InvalidPath)?;
         let c_set = CString::new(variant_set).map_err(|_| UsdBridgeError::InvalidPath)?;
         let c_name = CString::new(variant_name).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_layer = CString::new(layer_identifier).map_err(|_| UsdBridgeError::InvalidPath)?;
         let code = unsafe {
             usd_bridge_set_variant_selection(
                 self.raw as *mut _,
                 c_path.as_ptr(),
                 c_set.as_ptr(),
                 c_name.as_ptr(),
+                c_layer.as_ptr(),
             )
         };
         if code != UsdBridgeErrorCode::Success {
@@ -2394,6 +2397,189 @@ impl UsdStage {
                 self.raw as *mut _,
                 c_id.as_ptr(),
                 if muted { 1 } else { 0 },
+            )
+        };
+        if code != UsdBridgeErrorCode::Success {
+            return Err(code.into());
+        }
+        Ok(())
+    }
+
+    pub fn save_layer(&self, identifier: &str) -> UsdBridgeResult<()> {
+        let c_id = CString::new(identifier).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let code = unsafe { usd_bridge_layer_save(self.raw, c_id.as_ptr()) };
+        if code != UsdBridgeErrorCode::Success {
+            return Err(code.into());
+        }
+        Ok(())
+    }
+
+    pub fn layer_permission_to_edit(&self, identifier: &str) -> UsdBridgeResult<bool> {
+        let c_id = CString::new(identifier).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let mut can_edit = 0;
+        let code =
+            unsafe { usd_bridge_layer_permission_to_edit(self.raw, c_id.as_ptr(), &mut can_edit) };
+        if code != UsdBridgeErrorCode::Success {
+            return Err(code.into());
+        }
+        Ok(can_edit != 0)
+    }
+
+    pub fn export_layer_as_string(&self, identifier: &str) -> UsdBridgeResult<String> {
+        let c_id = CString::new(identifier).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let mut text_ptr: *const std::ffi::c_char = ptr::null();
+        let code =
+            unsafe { usd_bridge_layer_export_as_string(self.raw, c_id.as_ptr(), &mut text_ptr) };
+        if code != UsdBridgeErrorCode::Success {
+            return Err(code.into());
+        }
+        if text_ptr.is_null() {
+            return Ok(String::new());
+        }
+        Ok(unsafe { CStr::from_ptr(text_ptr).to_string_lossy().into_owned() })
+    }
+
+    pub fn import_layer_from_string(&self, identifier: &str, text: &str) -> UsdBridgeResult<()> {
+        let c_id = CString::new(identifier).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_text = CString::new(text).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let code = unsafe {
+            usd_bridge_layer_import_from_string(self.raw, c_id.as_ptr(), c_text.as_ptr())
+        };
+        if code != UsdBridgeErrorCode::Success {
+            return Err(code.into());
+        }
+        Ok(())
+    }
+
+    pub fn parse_usda(text: &str) -> UsdBridgeResult<()> {
+        let c_text = CString::new(text).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let code = unsafe { usd_bridge_parse_usda(c_text.as_ptr()) };
+        if code != UsdBridgeErrorCode::Success {
+            return Err(code.into());
+        }
+        Ok(())
+    }
+
+    pub fn layer_get_attr_value(
+        &self,
+        identifier: &str,
+        prim_path: &str,
+        attr_name: &str,
+    ) -> UsdBridgeResult<Option<String>> {
+        let c_id = CString::new(identifier).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_path = CString::new(prim_path).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_attr = CString::new(attr_name).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let mut value_ptr: *const std::ffi::c_char = ptr::null();
+        let code = unsafe {
+            usd_bridge_layer_get_attr_value(
+                self.raw,
+                c_id.as_ptr(),
+                c_path.as_ptr(),
+                c_attr.as_ptr(),
+                &mut value_ptr,
+            )
+        };
+        if code != UsdBridgeErrorCode::Success {
+            return Err(code.into());
+        }
+        if value_ptr.is_null() {
+            return Ok(None);
+        }
+        Ok(Some(unsafe {
+            CStr::from_ptr(value_ptr).to_string_lossy().into_owned()
+        }))
+    }
+
+    pub fn write_layer_xform(
+        &self,
+        identifier: &str,
+        prim_path: &str,
+        time: f64,
+        matrix_16: &[f32; 16],
+    ) -> UsdBridgeResult<()> {
+        let c_id = CString::new(identifier).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_path = CString::new(prim_path).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let code = unsafe {
+            usd_bridge_layer_write_xform(
+                self.raw as *mut _,
+                c_id.as_ptr(),
+                c_path.as_ptr(),
+                time,
+                matrix_16.as_ptr(),
+            )
+        };
+        if code != UsdBridgeErrorCode::Success {
+            return Err(code.into());
+        }
+        Ok(())
+    }
+
+    pub fn write_layer_visibility(
+        &self,
+        identifier: &str,
+        prim_path: &str,
+        visible: bool,
+    ) -> UsdBridgeResult<()> {
+        let c_id = CString::new(identifier).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_path = CString::new(prim_path).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let code = unsafe {
+            usd_bridge_layer_write_visibility(
+                self.raw as *mut _,
+                c_id.as_ptr(),
+                c_path.as_ptr(),
+                if visible { 1 } else { 0 },
+            )
+        };
+        if code != UsdBridgeErrorCode::Success {
+            return Err(code.into());
+        }
+        Ok(())
+    }
+
+    pub fn bind_layer_material(
+        &self,
+        identifier: &str,
+        prim_path: &str,
+        material_path: &str,
+    ) -> UsdBridgeResult<()> {
+        let c_id = CString::new(identifier).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_prim = CString::new(prim_path).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_mat = CString::new(material_path).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let code = unsafe {
+            usd_bridge_layer_bind_material(
+                self.raw as *mut _,
+                c_id.as_ptr(),
+                c_prim.as_ptr(),
+                c_mat.as_ptr(),
+            )
+        };
+        if code != UsdBridgeErrorCode::Success {
+            return Err(code.into());
+        }
+        Ok(())
+    }
+
+    pub fn set_layer_shader_input(
+        &self,
+        identifier: &str,
+        shader_path: &str,
+        input_name: &str,
+        value_type: &str,
+        value: &str,
+    ) -> UsdBridgeResult<()> {
+        let c_id = CString::new(identifier).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_shader = CString::new(shader_path).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_input = CString::new(input_name).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_type = CString::new(value_type).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_value = CString::new(value).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let code = unsafe {
+            usd_bridge_layer_set_shader_input(
+                self.raw as *mut _,
+                c_id.as_ptr(),
+                c_shader.as_ptr(),
+                c_input.as_ptr(),
+                c_type.as_ptr(),
+                c_value.as_ptr(),
             )
         };
         if code != UsdBridgeErrorCode::Success {
@@ -3138,6 +3324,97 @@ mod tests {
         let _ = UsdBridgeError::from(UsdBridgeErrorCode::NullPointer);
         let _ = UsdBridgeError::from(UsdBridgeErrorCode::FileNotFound);
         let _ = UsdBridgeError::from(UsdBridgeErrorCode::InvalidStage);
+    }
+
+    fn temp_usda_path(prefix: &str) -> std::path::PathBuf {
+        let id = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "bif_bridge_{prefix}_{}_{}.usda",
+            std::process::id(),
+            id
+        ))
+    }
+
+    #[test]
+    fn parse_usda_rejects_garbage() {
+        assert!(UsdStage::parse_usda("not valid usda").is_err());
+    }
+
+    #[test]
+    fn parse_usda_accepts_minimal() {
+        UsdStage::parse_usda(
+            r#"#usda 1.0
+
+def Xform "World"
+{
+}
+
+"#,
+        )
+        .expect("parse minimal usda");
+    }
+
+    #[test]
+    fn direct_ffi_save_roundtrip_persists_working_layer() {
+        let dir = temp_usda_path("roundtrip_dir");
+        let dir = dir.with_extension("");
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        let root = dir.join("root.usda");
+        let working = dir.join("working.usda");
+        let asset = dir.join("asset.usda");
+        std::fs::write(&working, "#usda 1.0\n\n").expect("write working");
+        std::fs::write(
+            &asset,
+            r#"#usda 1.0
+
+def Xform "World"
+{
+    def Xform "Cube"
+    {
+    }
+}
+
+"#,
+        )
+        .expect("write asset");
+        std::fs::write(
+            &root,
+            r#"#usda 1.0
+(
+    subLayers = [
+        @working.usda@,
+        @asset.usda@
+    ]
+)
+
+"#,
+        )
+        .expect("write root");
+
+        let stage = UsdStage::open(&root).expect("open root");
+        let working_id = stage
+            .get_layer_stack()
+            .expect("layer stack")
+            .layers
+            .into_iter()
+            .find(|l| l.identifier.ends_with("working.usda"))
+            .map(|l| l.identifier)
+            .expect("working layer");
+        stage
+            .write_layer_visibility(&working_id, "/World/Cube", false)
+            .expect("write visibility");
+        stage.save_layer(&working_id).expect("save working");
+
+        let reopened = UsdStage::open(&root).expect("reopen root");
+        let text = reopened
+            .export_layer_as_string(&working_id)
+            .expect("export working");
+        assert!(text.contains("invisible"));
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Test loading USD file with relative references (Xform refs).

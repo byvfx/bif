@@ -27,11 +27,9 @@ Roadmap organized by semantic version. Each release is testable, demoable, and g
 
 Current active milestone. BIF moves from a Qt-native USD viewer/orchestrator into authored edit ops + save.
 
-- `EditOperation` enum + undo/redo for authored layer changes
-- Ctrl+S save path for the active layer + auto-save recovery
-- Editable USDA panel with validation on save
-- Material param sheet + lookdev orb
-- usdview round-trip validation for authored edits
+- **C4a foundation:** `EditOperation` / `EditHistory`, working-layer FFI writes, variant edit-context fix, Ctrl+S save for the active layer, dirty-bit/title wiring
+- **C4b features:** editable USDA layer panel, material param sheet, shading-model dropdown
+- Round-trip validation for transform, visibility, material binding, material parameter, and variant selection edits
 - Lower-priority Qt follow-up spillover from v0.15.0: asset browser, asset library, drag-and-drop, Wacom pressure/tilt
 
 ---
@@ -62,7 +60,7 @@ Merges workflow Phase 1 + old M32/M33. BIF starts understanding USD layers. **La
 - FFI expansion: minimal subset — `SdfLayer` read, `GetEditTarget`, `GetPrimStack`, payload load/unload
 - Open USD stage → parse sublayer stack → display layer list in UI
 - Select working layer → layer isolation mode (edit layer writable, others locked)
-- `PayloadPolicy::LoadAll` and `PayloadPolicy::BoundingBoxOnly`
+- `PayloadPolicy::LoadAll` and `PayloadPolicy::LoadNone`
 - Opinion inspector (which layer contributes which value)
 - Composition arc visualization
 - File watching: detect external sublayer changes, offer reload
@@ -88,23 +86,12 @@ Deferred from the original Qt roadmap: asset browser, asset library, drag-and-dr
 
 ### v0.16.0 — Edit Operations + Save
 
-Workflow Phase 2. BIF becomes a real editor.
+Workflow Phase 2. BIF becomes a real editor in two tranches:
 
-- `EditOperation` enum with `to_usda()` for core types (Transform, MaterialAssign, Visibility, MaterialParamOverride)
-- `EditHistory` with undo/redo (builds on existing `EditState` + `UndoStack`)
-- Save to layer file on disk (Ctrl+S writes active layer only)
-- Auto-save to `.bif_autosave_<layer>.usd`
-- **USDA code preview becomes editable** (parse + validate on save)
-- Live USDA code preview updates as artist works
-- Existing nodes (scatter, instancer) gain `to_usda()` — write to active layer continuously
-- Shot templates: JSON-configurable presets (`~/.bif/templates/`), `BIF_TEMPLATE_DIR` env var override
-- Material overrides per-instance (per-instance material binding table)
-- **Material param sheet:** Right-panel property editor for OpenPBR/UsdPreviewSurface (sliders, swatches, texture slots, collapsible sections)
-- **Lookdev orb:** Floating 192px preview sphere in viewport corner (1 SPP drag, progressive to 64 SPP)
-- **Shading model dropdown:** OpenPBR / UsdPreviewSurface switch with auto-conversion + lossy-param warnings
-- **Opinion stack (full hover):** Hover any property → see full layer contribution stack
-- **Workspace presets:** Assembly, Lighting, Materials, Review — reconfigure panels + payload policy
-- **Validation**: Make edits in BIF, save, open in usdview, verify edits compose correctly
+- **C4a foundation:** `EditOperation`, `EditHistory`, stage-layer FFI writes, working-layer Ctrl+S, variant selections authored on the working layer, dirty-bit/title feedback, ADR-008
+- **C4b editor features:** editable USDA layer panel, material parameter sheet, shading-model dropdown
+- **Deferred:** auto-save, lookdev orb, node-to-opinion continuous authoring, shot-template workflow, richer payload policies, and schema-registry validation
+- **Validation:** save authored edits, reopen the stage, verify the working layer contains only the new opinions
 
 ### v0.16.5 — Qt Polish (Graphite)
 
@@ -119,7 +106,7 @@ Dedicated styling/polish pass after the v0.16.0 functional editor work lands. Ke
 
 M22 (Vulkan 1.3, lazy loading, GPU-driven rendering) + deferred loading from workflow doc.
 
-- `PayloadPolicy::CameraFrustum` and `PayloadPolicy::Manual`
+- `future camera-based payload policy` and `PayloadPolicy::Manual`
 - `RenderContext` with on-demand prototype loading
 - `PrototypeState` enum (BoundingBox / Loaded / Deferred)
 - LRU cache for prototype eviction + Embree BVH integration

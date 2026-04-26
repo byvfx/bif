@@ -819,7 +819,8 @@ UsdBridgeError usd_bridge_set_variant_selection(
     UsdBridgeStage* stage,
     const char* prim_path,
     const char* variant_set_name,
-    const char* variant_name
+    const char* variant_name,
+    const char* layer_identifier
 );
 
 // ============================================================================
@@ -1796,6 +1797,82 @@ UsdBridgeError usd_bridge_layer_set_permission_to_edit(
     const UsdBridgeStage* stage,
     const char* layer_identifier,
     int permission_to_edit
+);
+
+/// Save a layer by identifier.
+UsdBridgeError usd_bridge_layer_save(
+    const UsdBridgeStage* stage,
+    const char* layer_identifier
+);
+
+/// Read a layer's SdfLayer::PermissionToEdit() bit.
+UsdBridgeError usd_bridge_layer_permission_to_edit(
+    const UsdBridgeStage* stage,
+    const char* layer_identifier,
+    int* out_permission_to_edit
+);
+
+/// Export a layer's USDA text. Pointer stays valid until the next bridge
+/// string-return call on this thread.
+UsdBridgeError usd_bridge_layer_export_as_string(
+    const UsdBridgeStage* stage,
+    const char* layer_identifier,
+    const char** out_text
+);
+
+/// Replace a layer's contents from USDA text after parsing through USD.
+UsdBridgeError usd_bridge_layer_import_from_string(
+    const UsdBridgeStage* stage,
+    const char* layer_identifier,
+    const char* text
+);
+
+/// Parse USDA text into an anonymous scratch layer.
+UsdBridgeError usd_bridge_parse_usda(const char* text);
+
+/// Read a layer-specific authored attribute value. Returns NULL in out_value
+/// when the layer has no authored opinion for that property.
+UsdBridgeError usd_bridge_layer_get_attr_value(
+    const UsdBridgeStage* stage,
+    const char* layer_identifier,
+    const char* prim_path,
+    const char* attr_name,
+    const char** out_value
+);
+
+/// Author a transform opinion on a specific layer.
+UsdBridgeError usd_bridge_layer_write_xform(
+    UsdBridgeStage* stage,
+    const char* layer_identifier,
+    const char* prim_path,
+    double time,
+    const float* matrix_16
+);
+
+/// Author a visibility opinion on a specific layer.
+UsdBridgeError usd_bridge_layer_write_visibility(
+    UsdBridgeStage* stage,
+    const char* layer_identifier,
+    const char* prim_path,
+    int visible
+);
+
+/// Author a material binding relationship on a specific layer.
+UsdBridgeError usd_bridge_layer_bind_material(
+    UsdBridgeStage* stage,
+    const char* layer_identifier,
+    const char* prim_path,
+    const char* material_path
+);
+
+/// Author a shader input value on a specific layer.
+UsdBridgeError usd_bridge_layer_set_shader_input(
+    UsdBridgeStage* stage,
+    const char* layer_identifier,
+    const char* shader_path,
+    const char* input_name,
+    const char* value_type,
+    const char* value
 );
 
 /// Time offset + scale authored on a root sublayer reference.
