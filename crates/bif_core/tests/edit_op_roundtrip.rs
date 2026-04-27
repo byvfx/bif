@@ -161,6 +161,51 @@ fn variant_selection_roundtrips_after_save_reopen() {
     assert!(text.contains("high"));
 }
 
+/// Mirrors the surface that `Renderer::dispatch_visibility` exercises:
+/// read computed visibility as `before`, build `EditOperation::Visibility`,
+/// apply, save → reopen text contains the new opinion, then undo restores
+/// the bit on the working layer.
+#[test]
+fn visibility_roundtrips_via_dispatcher() {
+    let fixture = helpers::LayeredStageFixture::new("visibility_dispatcher");
+    let stage = UsdStage::open(&fixture.root).expect("open stage");
+    let (mut state, working_id) = state_for_working_layer(&stage);
+
+    // Read current `before` like the dispatcher does.
+    let before = stage
+        .get_prim_info_by_path("/World/Cube")
+        .expect("get prim info")
+        .visible;
+    assert!(before, "fixture cube starts visible");
+
+    state
+        .apply_edit_operation(
+            &stage,
+            EditOperation::Visibility {
+                key: bif_core::usd::OpinionKey::new("/World/Cube", AttrSlot::Visibility),
+                before: Some(before),
+                after: false,
+            },
+        )
+        .expect("dispatch visibility");
+
+    // Apply path lands the opinion on the working layer.
+    let after_text = stage
+        .export_layer_as_string(&working_id)
+        .expect("export after");
+    assert!(after_text.contains("invisible"));
+
+    // Undo restores the bit and re-asserts the inverse opinion.
+    state
+        .undo_usd_edit(&stage)
+        .expect("undo")
+        .expect("undo desc");
+    let restored_text = stage
+        .export_layer_as_string(&working_id)
+        .expect("export restored");
+    assert!(restored_text.contains("inherited"));
+}
+
 #[test]
 fn replace_layer_contents_roundtrips() {
     let fixture = helpers::LayeredStageFixture::new("replace_layer");

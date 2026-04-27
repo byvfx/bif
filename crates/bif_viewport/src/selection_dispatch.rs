@@ -408,6 +408,34 @@ impl Renderer {
         }
     }
 
+    /// Author a working-layer visibility opinion for `prim_path` and
+    /// record it on the C4a edit history (one undo step per call).
+    /// Mirrors `handle_transform_edit` but for the Visibility slot —
+    /// `before` is read from the live composed stage, `after` is the
+    /// caller-supplied target. No-op when no USD stage / layer state.
+    pub fn dispatch_visibility(&mut self, prim_path: &str, after: bool) -> anyhow::Result<String> {
+        let stage_arc = self
+            .scene
+            .usd_stage
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("no USD stage loaded"))?;
+        if self.scene.layer_state.is_none() {
+            return Err(anyhow::anyhow!("no scene layer state"));
+        }
+        let normalized = normalize_prim_path(prim_path);
+        let before = stage_arc
+            .lock()
+            .ok()
+            .and_then(|stage| stage.get_prim_info_by_path(&normalized).ok())
+            .map(|info| info.visible);
+        let op = bif_core::usd::EditOperation::Visibility {
+            key: bif_core::usd::OpinionKey::new(normalized, bif_core::usd::AttrSlot::Visibility),
+            before,
+            after,
+        };
+        self.apply_usd_edit(op)
+    }
+
     pub(crate) fn handle_stage_corrections_changed(&mut self) {
         if let Err(e) = self.reload_working_scene() {
             log::error!("Failed to reload after stage correction toggle: {}", e);

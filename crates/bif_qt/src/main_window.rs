@@ -784,6 +784,13 @@ pub mod qobject {
         /// Switch camera. `source` is "free", "ortho:<Preset>", or "usd:<path>".
         #[qinvokable]
         fn on_select_camera(self: Pin<&mut BifShellState>, source: QString);
+
+        /// Author a working-layer visibility opinion for `path`.
+        /// Routes through `Renderer::dispatch_visibility` → C4a
+        /// `EditOperation::Visibility` so the toggle is one undo step
+        /// and saves cleanly through Ctrl+S. C4b-Carry-1.
+        #[qinvokable]
+        fn on_set_visibility(self: Pin<&mut BifShellState>, path: QString, visible: bool);
     }
 }
 
@@ -2382,6 +2389,34 @@ impl qobject::BifShellState {
 
     fn active_camera_name(&self) -> cxx_qt_lib::QString {
         cxx_qt_lib::QString::from(self.rust().active_camera_source.as_str())
+    }
+
+    fn on_set_visibility(mut self: Pin<&mut Self>, path: cxx_qt_lib::QString, visible: bool) {
+        let path_str: String = (&path).into();
+        if path_str.is_empty() {
+            return;
+        }
+        let result =
+            with_viewport_mut(|vp| vp.renderer_mut().dispatch_visibility(&path_str, visible));
+        match result {
+            Some(Ok(_desc)) => {
+                self.as_mut()
+                    .set_status_message(cxx_qt_lib::QString::from(&format!(
+                        "Visibility {} for {}",
+                        if visible { "shown" } else { "hidden" },
+                        path_str
+                    )));
+                refresh_undo_redo_qprops(self.as_mut());
+                bump_revision(self.as_mut());
+            }
+            Some(Err(e)) => {
+                self.as_mut()
+                    .set_status_message(cxx_qt_lib::QString::from(&format!(
+                        "Visibility edit failed: {e}"
+                    )));
+            }
+            None => {}
+        }
     }
 
     fn on_select_camera(mut self: Pin<&mut Self>, source: cxx_qt_lib::QString) {

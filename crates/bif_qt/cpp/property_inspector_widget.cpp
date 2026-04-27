@@ -1,8 +1,10 @@
 #include "property_inspector_widget.h"
 
+#include <QCheckBox>
 #include <QColor>
 #include <QGroupBox>
 #include <QHeaderView>
+#include <QHBoxLayout>
 #include <QLabel>
 #include <QListWidget>
 #include <QPainter>
@@ -83,6 +85,7 @@ PropertyInspectorWidget::PropertyInspectorWidget(BifShellState* state, QWidget* 
       m_state(state),
       m_header_path(nullptr),
       m_header_type(nullptr),
+      m_visibility_box(nullptr),
       m_arcs_group(nullptr),
       m_arcs_list(nullptr),
       m_tabs(nullptr),
@@ -106,6 +109,17 @@ PropertyInspectorWidget::PropertyInspectorWidget(BifShellState* state, QWidget* 
     m_header_type->setStyleSheet(QStringLiteral(
         "color: rgba(74, 144, 217, 255); font-size: 11px; font-weight: 400;"));
     outer->addWidget(m_header_type);
+
+    // Visibility checkbox (C4b-Carry-1). Authors a working-layer
+    // `visibility = invisible/inherited` opinion via the Renderer
+    // edit-history dispatcher so toggles save through Ctrl+S and
+    // collapse to one undo step.
+    m_visibility_box = new QCheckBox(QStringLiteral("Visible"), this);
+    m_visibility_box->setStyleSheet(QStringLiteral(
+        "QCheckBox { color: rgba(220, 222, 226, 255); font-size: 11px; }"));
+    QObject::connect(m_visibility_box, &QCheckBox::toggled,
+        this, &PropertyInspectorWidget::on_visibility_toggled);
+    outer->addWidget(m_visibility_box);
 
     // Composition Arcs (collapsible via checkable group box).
     m_arcs_group = new QGroupBox(QStringLiteral("Composition Arcs"), this);
@@ -217,6 +231,11 @@ void PropertyInspectorWidget::rebuild() {
     if (path.isEmpty()) {
         m_header_path->setText(QStringLiteral("(none)"));
         m_header_type->setText(QString());
+        if (m_visibility_box) {
+            m_visibility_box->setEnabled(false);
+            const QSignalBlocker blocker(m_visibility_box);
+            m_visibility_box->setChecked(true);
+        }
         m_arcs_list->clear();
         m_attrs_model->removeRows(0, m_attrs_model->rowCount());
         return;
@@ -234,8 +253,22 @@ void PropertyInspectorWidget::rebuild() {
         m_header_type->setToolTip(QStringLiteral("USD schema: %1").arg(type));
     }
 
+    if (m_visibility_box) {
+        const bool visible = m_state->prim_is_visible_at(path);
+        m_visibility_box->setEnabled(true);
+        const QSignalBlocker blocker(m_visibility_box);
+        m_visibility_box->setChecked(visible);
+    }
+
     populate_composition_arcs(path);
     populate_attributes(path, type);
+}
+
+void PropertyInspectorWidget::on_visibility_toggled(bool checked) {
+    if (!m_state) return;
+    const auto path = m_state->getSelected_prim_path();
+    if (path.isEmpty()) return;
+    m_state->on_set_visibility(path, checked);
 }
 
 void PropertyInspectorWidget::populate_composition_arcs(const QString& prim_path) {

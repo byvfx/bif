@@ -14,6 +14,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **C4a edit/save foundation for v0.16** (2026-04-26). Added `EditOperation` / `EditHistory`, working-layer USD FFI writes, stage-layer save/export/import/parse helpers, variant selections authored through `UsdEditContext`, viewport USD/procedural undo routing, and round-trip tests for transform, visibility, material binding, material parameter, and variant edits.
 - **Qt transform gizmo for C4 dogfood** (2026-04-27). Added a viewport translate gizmo in the Qt path with axis hover, drag preview, release-to-commit through `TransformEdit`, C4a working-layer save support, and translate-op preserving USD xform saves.
 - **C4b-Carry-2 `EditOperation::ReplaceLayerContents`** (2026-04-27). Added a wholesale-layer USDA-replace variant on `EditOperation` (with `EditOperation::replace_layer` constructor), threading apply through `import_layer_from_string` and inverse through the captured `before` text. Wired round-trip test to lock the apply→undo contract for the upcoming USDA panel Apply path.
+- **C4b-Carry-1 visibility dispatcher** (2026-04-27). Property Inspector now ships a `Visible` checkbox in its header that authors a working-layer `visibility` opinion through a new `Renderer::dispatch_visibility` mirroring the `handle_transform_edit` Xform path. Each toggle is one undo step and saves through Ctrl+S. Round-trip test covers the apply → undo bit restoration end-to-end.
 
 ### Changed
 
