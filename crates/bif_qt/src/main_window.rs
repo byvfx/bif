@@ -791,6 +791,52 @@ pub mod qobject {
         /// and saves cleanly through Ctrl+S. C4b-Carry-1.
         #[qinvokable]
         fn on_set_visibility(self: Pin<&mut BifShellState>, path: QString, visible: bool);
+
+        // ---- Material Sheet surface (C4b-1) ----
+        //
+        // The Material Sheet C++ panel queries cached input rows from
+        // these invokables (count + per-row name/type/value) and
+        // dispatches edits via `on_set_material_param` /
+        // `on_bind_material`. Cache refreshes on selection change.
+
+        /// Number of shader inputs on the bound material's surface
+        /// shader for the selected prim. 0 when nothing bound.
+        #[qinvokable]
+        fn selected_prim_material_input_count(self: &BifShellState) -> i32;
+
+        /// Input name at `index` (e.g. "base_color").
+        #[qinvokable]
+        fn selected_prim_material_input_name_at(self: &BifShellState, index: i32) -> QString;
+
+        /// USD type token at `index` (e.g. "float", "color3f").
+        #[qinvokable]
+        fn selected_prim_material_input_type_at(self: &BifShellState, index: i32) -> QString;
+
+        /// Stringified current value at `index`.
+        #[qinvokable]
+        fn selected_prim_material_input_value_at(self: &BifShellState, index: i32) -> QString;
+
+        /// Surface shader prim path for the bound material on the
+        /// selected prim. Empty when no binding.
+        #[qinvokable]
+        fn selected_prim_material_shader_path(self: &BifShellState) -> QString;
+
+        /// Author a working-layer shader-input override on the
+        /// surface shader of the bound material. `value_str` is
+        /// type-encoded ("0.5", "1,0,0" for color3f, "true"/"false"
+        /// for bool). Records one undo step. C4b-1.
+        #[qinvokable]
+        fn on_set_material_param(
+            self: Pin<&mut BifShellState>,
+            input_name: QString,
+            type_name: QString,
+            value_str: QString,
+        );
+
+        /// Bind material `material_path` to the selected prim on the
+        /// working layer. C4b-1.
+        #[qinvokable]
+        fn on_bind_material(self: Pin<&mut BifShellState>, material_path: QString);
     }
 }
 
@@ -873,6 +919,12 @@ pub struct BifShellStateRust {
     /// Cached prim-stack snapshot for the property inspector's composition arcs.
     /// Refreshed on selected-prim changes and layer-state revision bumps.
     pub selected_prim_stack_cache: Vec<PrimStackEntry>,
+    /// Cached bound-material shader inputs for the Material Sheet tab.
+    /// Refreshed on selection / layer revision bumps. C4b-1.
+    pub selected_material_inputs_cache: Vec<bif_core::usd::BoundMaterialInput>,
+    /// Surface shader prim path for the bound material on the selected
+    /// prim. Empty when nothing bound. C4b-1.
+    pub selected_material_shader_path: String,
 }
 
 impl Default for BifShellStateRust {
@@ -905,6 +957,8 @@ impl Default for BifShellStateRust {
             active_camera_source: "free".to_string(),
             lod_enabled: true,
             selected_prim_stack_cache: Vec::new(),
+            selected_material_inputs_cache: Vec::new(),
+            selected_material_shader_path: String::new(),
         }
     }
 }
@@ -2419,6 +2473,119 @@ impl qobject::BifShellState {
         }
     }
 
+    fn selected_prim_material_input_count(&self) -> i32 {
+        self.rust().selected_material_inputs_cache.len() as i32
+    }
+
+    fn selected_prim_material_input_name_at(&self, index: i32) -> cxx_qt_lib::QString {
+        let idx = if index < 0 { 0 } else { index as usize };
+        self.rust()
+            .selected_material_inputs_cache
+            .get(idx)
+            .map(|i| cxx_qt_lib::QString::from(i.name.as_str()))
+            .unwrap_or_default()
+    }
+
+    fn selected_prim_material_input_type_at(&self, index: i32) -> cxx_qt_lib::QString {
+        let idx = if index < 0 { 0 } else { index as usize };
+        self.rust()
+            .selected_material_inputs_cache
+            .get(idx)
+            .map(|i| cxx_qt_lib::QString::from(i.type_name.as_str()))
+            .unwrap_or_default()
+    }
+
+    fn selected_prim_material_input_value_at(&self, index: i32) -> cxx_qt_lib::QString {
+        let idx = if index < 0 { 0 } else { index as usize };
+        self.rust()
+            .selected_material_inputs_cache
+            .get(idx)
+            .map(|i| cxx_qt_lib::QString::from(i.value.as_str()))
+            .unwrap_or_default()
+    }
+
+    fn selected_prim_material_shader_path(&self) -> cxx_qt_lib::QString {
+        cxx_qt_lib::QString::from(self.rust().selected_material_shader_path.as_str())
+    }
+
+    fn on_set_material_param(
+        mut self: Pin<&mut Self>,
+        input_name: cxx_qt_lib::QString,
+        type_name: cxx_qt_lib::QString,
+        value_str: cxx_qt_lib::QString,
+    ) {
+        let name: String = (&input_name).into();
+        let ty: String = (&type_name).into();
+        let value: String = (&value_str).into();
+        let shader_path = self.as_ref().rust().selected_material_shader_path.clone();
+        if shader_path.is_empty() || name.is_empty() || ty.is_empty() {
+            return;
+        }
+        // Capture before-value from the cached snapshot for the inverse.
+        let before = self
+            .as_ref()
+            .rust()
+            .selected_material_inputs_cache
+            .iter()
+            .find(|i| i.name == name)
+            .and_then(|i| parse_shader_value(&ty, &i.value));
+        let Some(after) = parse_shader_value(&ty, &value) else {
+            self.as_mut()
+                .set_status_message(cxx_qt_lib::QString::from(&format!(
+                    "Material edit: unsupported type/value {ty}={value}"
+                )));
+            return;
+        };
+        let result = with_viewport_mut(|vp| {
+            vp.renderer_mut()
+                .dispatch_material_param_override(&shader_path, &name, before, after)
+        });
+        match result {
+            Some(Ok(_desc)) => {
+                self.as_mut()
+                    .set_status_message(cxx_qt_lib::QString::from(&format!(
+                        "Material {name}={value}"
+                    )));
+                refresh_undo_redo_qprops(self.as_mut());
+                bump_revision(self.as_mut());
+            }
+            Some(Err(e)) => {
+                self.as_mut()
+                    .set_status_message(cxx_qt_lib::QString::from(&format!(
+                        "Material edit failed: {e}"
+                    )));
+            }
+            None => {}
+        }
+    }
+
+    fn on_bind_material(mut self: Pin<&mut Self>, material_path: cxx_qt_lib::QString) {
+        let prim_path: String = (&self.as_ref().rust().selected_prim_path).into();
+        let mat: String = (&material_path).into();
+        if prim_path.is_empty() || mat.is_empty() {
+            return;
+        }
+        let result =
+            with_viewport_mut(|vp| vp.renderer_mut().dispatch_material_assign(&prim_path, &mat));
+        match result {
+            Some(Ok(_desc)) => {
+                self.as_mut()
+                    .set_status_message(cxx_qt_lib::QString::from(&format!(
+                        "Bound {prim_path} → {mat}"
+                    )));
+                refresh_undo_redo_qprops(self.as_mut());
+                bump_revision(self.as_mut());
+            }
+            Some(Err(e)) => {
+                self.as_mut()
+                    .set_status_message(cxx_qt_lib::QString::from(&format!(
+                        "Bind material failed: {e}"
+                    )));
+            }
+            None => {}
+        }
+    }
+
     fn on_select_camera(mut self: Pin<&mut Self>, source: cxx_qt_lib::QString) {
         let source_str: String = (&source).into();
         self.as_mut().rust_mut().active_camera_source = source_str.clone();
@@ -2450,8 +2617,63 @@ impl qobject::BifShellState {
 /// this and refresh.
 fn bump_revision(mut state: Pin<&mut qobject::BifShellState>) {
     refresh_selected_prim_stack_cache(state.as_mut());
+    refresh_selected_material_inputs_cache(state.as_mut());
     let next = state.as_ref().rust().layer_state_revision.wrapping_add(1);
     state.as_mut().set_layer_state_revision(next);
+}
+
+fn refresh_selected_material_inputs_cache(mut state: Pin<&mut qobject::BifShellState>) {
+    let path: String = (&state.as_ref().rust().selected_prim_path).into();
+    if path.is_empty() {
+        let mut r = state.as_mut().rust_mut();
+        r.selected_material_inputs_cache.clear();
+        r.selected_material_shader_path.clear();
+        return;
+    }
+    let snapshot = with_stage(|stage| {
+        stage
+            .get_bound_material_inputs(&path)
+            .ok()
+            .unwrap_or_else(|| (String::new(), Vec::new()))
+    })
+    .unwrap_or_else(|| (String::new(), Vec::new()));
+    let mut r = state.as_mut().rust_mut();
+    r.selected_material_shader_path = snapshot.0;
+    r.selected_material_inputs_cache = snapshot.1;
+}
+
+/// Parse a UI-supplied value string into a `ShaderValue` for the given
+/// USD type token. Returns `None` for unsupported types or parse errors.
+/// Color3f / float3 strings are comma-separated triples.
+fn parse_shader_value(type_name: &str, value: &str) -> Option<bif_core::usd::ShaderValue> {
+    use bif_core::usd::ShaderValue;
+    match type_name {
+        "float" => value.parse::<f32>().ok().map(ShaderValue::Float),
+        "double" => value.parse::<f64>().ok().map(ShaderValue::Double),
+        "int" => value.parse::<i32>().ok().map(ShaderValue::Int),
+        "bool" => match value.to_ascii_lowercase().as_str() {
+            "true" | "1" => Some(ShaderValue::Bool(true)),
+            "false" | "0" => Some(ShaderValue::Bool(false)),
+            _ => None,
+        },
+        "token" => Some(ShaderValue::Token(value.to_string())),
+        "string" => Some(ShaderValue::String(value.to_string())),
+        "color3f" | "float3" => {
+            let parts: Vec<&str> = value.split(',').map(str::trim).collect();
+            if parts.len() != 3 {
+                return None;
+            }
+            let r = parts[0].parse::<f32>().ok()?;
+            let g = parts[1].parse::<f32>().ok()?;
+            let b = parts[2].parse::<f32>().ok()?;
+            if type_name == "color3f" {
+                Some(ShaderValue::Color3f([r, g, b]))
+            } else {
+                Some(ShaderValue::Vec3f([r, g, b]))
+            }
+        }
+        _ => None,
+    }
 }
 
 fn selected_prim_stack_snapshot(path: &cxx_qt_lib::QString) -> Vec<PrimStackEntry> {
@@ -2466,6 +2688,7 @@ fn refresh_selected_prim_stack_cache(mut state: Pin<&mut qobject::BifShellState>
     let path = state.as_ref().rust().selected_prim_path.clone();
     let cache = selected_prim_stack_snapshot(&path);
     state.as_mut().rust_mut().selected_prim_stack_cache = cache;
+    refresh_selected_material_inputs_cache(state.as_mut());
 }
 
 fn current_undo_redo_availability() -> (bool, bool) {

@@ -6912,6 +6912,78 @@ UsdBridgeError usd_bridge_layer_set_shader_input(
     }
 }
 
+// C4b-1: Enumerate the surface shader inputs of the material bound to
+// `prim_path`. Encodes records as `name\ttype\tvalue\n`. Function-local
+// thread_local buffer (per the C4a code review fix) so the returned
+// pointer stays valid until the next call from the same thread.
+UsdBridgeError usd_bridge_prim_get_bound_material_inputs(
+    const UsdBridgeStage* stage,
+    const char* prim_path,
+    const char** out_text,
+    const char** out_shader_path
+) {
+    static thread_local std::string buf;
+    static thread_local std::string shader_buf;
+    if (!stage || !prim_path || !out_text || !out_shader_path) {
+        return USD_BRIDGE_ERROR_NULL_POINTER;
+    }
+    buf.clear();
+    shader_buf.clear();
+    *out_text = buf.c_str();
+    *out_shader_path = shader_buf.c_str();
+    try {
+        UsdPrim prim = stage->stage->GetPrimAtPath(SdfPath(prim_path));
+        if (!prim) return USD_BRIDGE_ERROR_INVALID_PRIM;
+
+        UsdShadeMaterialBindingAPI binding_api(prim);
+        UsdShadeMaterial material = binding_api.ComputeBoundMaterial();
+        if (!material) {
+            // No bound material → empty output, success.
+            return USD_BRIDGE_SUCCESS;
+        }
+
+        UsdShadeOutput surface_output = material.GetSurfaceOutput();
+        if (!surface_output) return USD_BRIDGE_SUCCESS;
+
+        UsdShadeConnectableAPI source;
+        TfToken source_name;
+        UsdShadeAttributeType source_type;
+        if (!surface_output.GetConnectedSource(&source, &source_name, &source_type)) {
+            return USD_BRIDGE_SUCCESS;
+        }
+
+        UsdShadeShader shader(source.GetPrim());
+        if (!shader) return USD_BRIDGE_SUCCESS;
+        shader_buf = shader.GetPath().GetString();
+        *out_shader_path = shader_buf.c_str();
+
+        std::ostringstream out;
+        for (const UsdShadeInput& input : shader.GetInputs()) {
+            std::string name = input.GetBaseName().GetString();
+            SdfValueTypeName type_name = input.GetTypeName();
+            std::string type_str = type_name.GetAsToken().GetString();
+
+            std::string value_str;
+            VtValue v;
+            if (input.Get(&v) && !v.IsEmpty()) {
+                value_str = TfStringify(v);
+            }
+            // Strip parens around vec3-like values so caller sees a
+            // bare comma-separated triple.
+            if (!value_str.empty() && value_str.front() == '(' && value_str.back() == ')') {
+                value_str = value_str.substr(1, value_str.size() - 2);
+            }
+            out << name << '\t' << type_str << '\t' << value_str << '\n';
+        }
+        buf = out.str();
+        *out_text = buf.c_str();
+        return USD_BRIDGE_SUCCESS;
+    } catch (const std::exception& e) {
+        TF_WARN("usd_bridge_prim_get_bound_material_inputs: %s", e.what());
+        return USD_BRIDGE_ERROR_UNKNOWN;
+    }
+}
+
 UsdBridgeError usd_bridge_layer_get_offset(
     const UsdBridgeStage* stage,
     const char* layer_identifier,

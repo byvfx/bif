@@ -1149,6 +1149,13 @@ extern "C" {
         value: *const c_char,
     ) -> UsdBridgeErrorCode;
 
+    pub(crate) fn usd_bridge_prim_get_bound_material_inputs(
+        stage: *const UsdBridgeStageRaw,
+        prim_path: *const c_char,
+        out_text: *mut *const c_char,
+        out_shader_path: *mut *const c_char,
+    ) -> UsdBridgeErrorCode;
+
     pub(crate) fn usd_bridge_layer_get_offset(
         stage: *const UsdBridgeStageRaw,
         layer_identifier: *const c_char,

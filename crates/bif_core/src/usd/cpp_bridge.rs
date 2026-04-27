@@ -264,6 +264,15 @@ pub struct UsdInstancerData {
     pub invisible_ids: Vec<i64>,
 }
 
+/// One shader input row from `UsdStage::get_bound_material_inputs`.
+/// Used by the Material Sheet to populate per-input editors. C4b-1.
+#[derive(Clone, Debug)]
+pub struct BoundMaterialInput {
+    pub name: String,
+    pub type_name: String,
+    pub value: String,
+}
+
 /// Prim info for scene hierarchy browsing.
 #[derive(Clone, Debug)]
 pub struct UsdPrimInfo {
@@ -2586,6 +2595,66 @@ impl UsdStage {
             return Err(code.into());
         }
         Ok(())
+    }
+
+    /// Enumerate the surface shader inputs of the material bound to
+    /// `prim_path`. Returns `(shader_path, inputs)` where inputs are
+    /// `(name, type, value)` triples. `shader_path` is empty when no
+    /// surface shader is bound. Inputs vec is empty when no material
+    /// is bound. C4b-1.
+    pub fn get_bound_material_inputs(
+        &self,
+        prim_path: &str,
+    ) -> UsdBridgeResult<(String, Vec<BoundMaterialInput>)> {
+        let c_path = CString::new(prim_path).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let mut out_text: *const std::os::raw::c_char = std::ptr::null();
+        let mut out_shader: *const std::os::raw::c_char = std::ptr::null();
+        let code = unsafe {
+            usd_bridge_prim_get_bound_material_inputs(
+                self.raw,
+                c_path.as_ptr(),
+                &mut out_text,
+                &mut out_shader,
+            )
+        };
+        if code != UsdBridgeErrorCode::Success {
+            return Err(code.into());
+        }
+
+        let shader_path = if out_shader.is_null() {
+            String::new()
+        } else {
+            unsafe { std::ffi::CStr::from_ptr(out_shader) }
+                .to_string_lossy()
+                .into_owned()
+        };
+        let text = if out_text.is_null() {
+            String::new()
+        } else {
+            unsafe { std::ffi::CStr::from_ptr(out_text) }
+                .to_string_lossy()
+                .into_owned()
+        };
+
+        let mut inputs = Vec::new();
+        for line in text.lines() {
+            if line.is_empty() {
+                continue;
+            }
+            let mut parts = line.splitn(3, '\t');
+            let name = parts.next().unwrap_or("").to_string();
+            let type_name = parts.next().unwrap_or("").to_string();
+            let value = parts.next().unwrap_or("").to_string();
+            if name.is_empty() {
+                continue;
+            }
+            inputs.push(BoundMaterialInput {
+                name,
+                type_name,
+                value,
+            });
+        }
+        Ok((shader_path, inputs))
     }
 
     #[cfg(test)]

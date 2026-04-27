@@ -161,6 +161,41 @@ fn variant_selection_roundtrips_after_save_reopen() {
     assert!(text.contains("high"));
 }
 
+#[test]
+fn bound_material_inputs_returns_shader_inputs() {
+    // Fixture has /Materials/Red/PreviewSurface (UsdPreviewSurface
+    // with `roughness=0.2`) but doesn't bind it. Bind on the working
+    // layer, then the new C4b-1 FFI should report the surface shader
+    // path + at least the roughness input.
+    let fixture = helpers::LayeredStageFixture::new("material_inputs_ffi");
+    let stage = UsdStage::open(&fixture.root).expect("open stage");
+    let (mut state, _working_id) = state_for_working_layer(&stage);
+
+    state
+        .apply_edit_operation(
+            &stage,
+            EditOperation::MaterialAssign {
+                key: bif_core::usd::OpinionKey::new("/World/Cube", AttrSlot::MaterialBinding),
+                before: None,
+                after: "/Materials/Red".to_string(),
+            },
+        )
+        .expect("bind material");
+
+    let (shader_path, inputs) = stage
+        .get_bound_material_inputs("/World/Cube")
+        .expect("get bound material inputs");
+
+    assert_eq!(shader_path, "/Materials/Red/PreviewSurface");
+    assert!(!inputs.is_empty(), "shader should have at least one input");
+    let roughness = inputs
+        .iter()
+        .find(|i| i.name == "roughness")
+        .expect("roughness input present");
+    assert_eq!(roughness.type_name, "float");
+    assert!(roughness.value.starts_with("0.2"));
+}
+
 /// Mirrors the surface that `Renderer::dispatch_visibility` exercises:
 /// read computed visibility as `before`, build `EditOperation::Visibility`,
 /// apply, save → reopen text contains the new opinion, then undo restores

@@ -1875,6 +1875,20 @@ UsdBridgeError usd_bridge_layer_set_shader_input(
     const char* value
 );
 
+/// Enumerate shader inputs of the surface shader bound to `prim_path`.
+/// `out_text` receives a pointer to a `\n`-separated list of records, one
+/// per input encoded as `name\ttype\tvalue`. Empty when no material is
+/// bound. `out_shader_path` receives the surface shader's prim path
+/// (empty when no surface). Both pointers are owned by a function-local
+/// thread_local buffer and are valid until the next call from this
+/// thread (per the C4a thread-local string contract).
+UsdBridgeError usd_bridge_prim_get_bound_material_inputs(
+    const UsdBridgeStage* stage,
+    const char* prim_path,
+    const char** out_text,
+    const char** out_shader_path
+);
+
 /// Time offset + scale authored on a root sublayer reference.
 /// Returns identity (0.0, 1.0) if the layer isn't a direct sublayer of root.
 typedef struct UsdBridgeLayerOffset {

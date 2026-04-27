@@ -44,8 +44,8 @@ mod types;
 pub mod validate;
 
 pub use cpp_bridge::{
-    CameraProperties, CurveBasis, CurveType, CurveWrap, MeshPurpose, NormalsInterpolation,
-    PrimvarInterpolation, PrimvarType, SubdivisionScheme, TransformSample,
+    BoundMaterialInput, CameraProperties, CurveBasis, CurveType, CurveWrap, MeshPurpose,
+    NormalsInterpolation, PrimvarInterpolation, PrimvarType, SubdivisionScheme, TransformSample,
     UsdAnimatedInstancerData, UsdAnimatedMeshData, UsdAttributeData, UsdBridgeError, UsdCurvesData,
     UsdEditLayer, UsdInstancerData, UsdKind, UsdLightData, UsdLightShaping, UsdLightType,
     UsdMeshData, UsdNativeInstance, UsdPointsData, UsdPrimType, UsdPrimvarData, UsdSkeletonData,

@@ -21,6 +21,8 @@ class BifShellState;
 class QCheckBox;
 class QGroupBox;
 class QLabel;
+class QPushButton;
+class QScrollArea;
 class QStandardItemModel;
 class QTabWidget;
 class QTableView;
@@ -37,11 +39,13 @@ private slots:
     void on_selection_changed();
     void on_layer_state_changed();
     void on_visibility_toggled(bool checked);
+    void on_bind_material_clicked();
 
 private:
     void rebuild();
     void populate_composition_arcs(const QString& prim_path);
     void populate_attributes(const QString& prim_path, const QString& prim_type);
+    void populate_material_sheet();
 
     BifShellState* m_state;
 
@@ -54,4 +58,11 @@ private:
     QTableView* m_attrs_view;
     QStandardItemModel* m_attrs_model;
     QWidget* m_relationships_tab;
+    // C4b-1 Material Sheet tab — scrollable container with grouped
+    // OpenPBR / UsdPreviewSurface input editors per bound shader.
+    QWidget* m_material_tab;
+    QScrollArea* m_material_scroll;
+    QWidget* m_material_content;
+    QLabel* m_material_shader_label;
+    QPushButton* m_bind_material_button;
 };

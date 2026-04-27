@@ -408,6 +408,55 @@ impl Renderer {
         }
     }
 
+    /// Author a `MaterialAssign` opinion on the working layer.
+    /// Records one undo step. C4b-1.
+    pub fn dispatch_material_assign(
+        &mut self,
+        prim_path: &str,
+        material_path: &str,
+    ) -> anyhow::Result<String> {
+        if self.scene.usd_stage.is_none() || self.scene.layer_state.is_none() {
+            return Err(anyhow::anyhow!("no stage/layer state"));
+        }
+        let normalized = normalize_prim_path(prim_path);
+        let op = bif_core::usd::EditOperation::MaterialAssign {
+            key: bif_core::usd::OpinionKey::new(
+                normalized,
+                bif_core::usd::AttrSlot::MaterialBinding,
+            ),
+            before: None,
+            after: material_path.to_string(),
+        };
+        self.apply_usd_edit(op)
+    }
+
+    /// Author a `MaterialParamOverride` opinion on the working layer.
+    /// `before` is supplied by the caller (cache holds the pre-edit
+    /// value). C4b-1.
+    pub fn dispatch_material_param_override(
+        &mut self,
+        shader_path: &str,
+        input_name: &str,
+        before: Option<bif_core::usd::ShaderValue>,
+        after: bif_core::usd::ShaderValue,
+    ) -> anyhow::Result<String> {
+        if self.scene.usd_stage.is_none() || self.scene.layer_state.is_none() {
+            return Err(anyhow::anyhow!("no stage/layer state"));
+        }
+        let op = bif_core::usd::EditOperation::MaterialParamOverride {
+            key: bif_core::usd::OpinionKey::new(
+                shader_path,
+                bif_core::usd::AttrSlot::ShaderInput {
+                    shader_path: shader_path.to_string(),
+                    name: input_name.to_string(),
+                },
+            ),
+            before,
+            after,
+        };
+        self.apply_usd_edit(op)
+    }
+
     /// Author a working-layer visibility opinion for `prim_path` and
     /// record it on the C4a edit history (one undo step per call).
     /// Mirrors `handle_transform_edit` but for the Visibility slot —
