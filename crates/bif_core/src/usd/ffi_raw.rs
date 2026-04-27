@@ -1156,6 +1156,19 @@ extern "C" {
         out_shader_path: *mut *const c_char,
     ) -> UsdBridgeErrorCode;
 
+    pub(crate) fn usd_bridge_layer_set_shader_id(
+        stage: *mut UsdBridgeStageRaw,
+        layer_identifier: *const c_char,
+        shader_path: *const c_char,
+        shader_id: *const c_char,
+    ) -> UsdBridgeErrorCode;
+
+    pub(crate) fn usd_bridge_prim_get_bound_shader_id(
+        stage: *const UsdBridgeStageRaw,
+        prim_path: *const c_char,
+        out_id: *mut *const c_char,
+    ) -> UsdBridgeErrorCode;
+
     pub(crate) fn usd_bridge_layer_get_offset(
         stage: *const UsdBridgeStageRaw,
         layer_identifier: *const c_char,

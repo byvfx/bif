@@ -2597,6 +2597,49 @@ impl UsdStage {
         Ok(())
     }
 
+    /// Author the `info:id` token attribute on `shader_path` for the
+    /// shading-model swap dropdown. C4b-3.
+    pub fn set_layer_shader_id(
+        &self,
+        layer_identifier: &str,
+        shader_path: &str,
+        shader_id: &str,
+    ) -> UsdBridgeResult<()> {
+        let c_id = CString::new(layer_identifier).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_shader = CString::new(shader_path).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_value = CString::new(shader_id).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let code = unsafe {
+            usd_bridge_layer_set_shader_id(
+                self.raw as *mut _,
+                c_id.as_ptr(),
+                c_shader.as_ptr(),
+                c_value.as_ptr(),
+            )
+        };
+        if code != UsdBridgeErrorCode::Success {
+            return Err(code.into());
+        }
+        Ok(())
+    }
+
+    /// Read the surface shader's `info:id` for the material bound to
+    /// `prim_path`. Empty when nothing bound. C4b-3.
+    pub fn get_bound_shader_id(&self, prim_path: &str) -> UsdBridgeResult<String> {
+        let c_path = CString::new(prim_path).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let mut out_id: *const std::os::raw::c_char = std::ptr::null();
+        let code =
+            unsafe { usd_bridge_prim_get_bound_shader_id(self.raw, c_path.as_ptr(), &mut out_id) };
+        if code != UsdBridgeErrorCode::Success {
+            return Err(code.into());
+        }
+        if out_id.is_null() {
+            return Ok(String::new());
+        }
+        Ok(unsafe { CStr::from_ptr(out_id) }
+            .to_string_lossy()
+            .into_owned())
+    }
+
     /// Enumerate the surface shader inputs of the material bound to
     /// `prim_path`. Returns `(shader_path, inputs)` where inputs are
     /// `(name, type, value)` triples. `shader_path` is empty when no

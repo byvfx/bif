@@ -46,6 +46,9 @@ pub enum AttrSlot {
     },
     /// Whole-layer USDA replace — `prim_path` carries the layer id.
     LayerContents,
+    /// Surface-shader `info:id` token swap. `prim_path` carries the
+    /// shader prim path. Used by the shading-model dropdown. C4b-3.
+    ShaderId,
 }
 
 /// USD shader input value supported by the v0.16 foundation.
@@ -127,6 +130,12 @@ pub enum EditOperation {
         before: String,
         after: String,
     },
+    /// Author `info:id` on a surface shader. C4b-3.
+    SetShaderId {
+        key: OpinionKey,
+        before: Option<String>,
+        after: String,
+    },
 }
 
 impl EditOperation {
@@ -137,7 +146,8 @@ impl EditOperation {
             | EditOperation::MaterialAssign { key, .. }
             | EditOperation::MaterialParamOverride { key, .. }
             | EditOperation::VariantSelect { key, .. }
-            | EditOperation::ReplaceLayerContents { key, .. } => key,
+            | EditOperation::ReplaceLayerContents { key, .. }
+            | EditOperation::SetShaderId { key, .. } => key,
         }
     }
 
@@ -158,6 +168,7 @@ impl EditOperation {
             EditOperation::MaterialParamOverride { .. } => "USD material parameter",
             EditOperation::VariantSelect { .. } => "USD variant",
             EditOperation::ReplaceLayerContents { .. } => "USDA layer replace",
+            EditOperation::SetShaderId { .. } => "USD shader id",
         }
     }
 
@@ -201,6 +212,14 @@ impl EditOperation {
                     ));
                 }
                 stage.import_layer_from_string(&key.prim_path, after)?;
+            }
+            EditOperation::SetShaderId { key, after, .. } => {
+                if !matches!(key.attr, AttrSlot::ShaderId) {
+                    return Err(crate::usd::cpp_bridge::UsdBridgeError::InvalidPrim(
+                        "SetShaderId requires ShaderId key".to_string(),
+                    ));
+                }
+                stage.set_layer_shader_id(working_layer_id, &key.prim_path, after)?;
             }
         }
         Ok(self.description().to_string())
@@ -249,6 +268,13 @@ impl EditOperation {
                 Some(EditOperation::ReplaceLayerContents {
                     key: key.clone(),
                     before: after.clone(),
+                    after: before.clone(),
+                })
+            }
+            EditOperation::SetShaderId { key, before, after } => {
+                before.as_ref().map(|before| EditOperation::SetShaderId {
+                    key: key.clone(),
+                    before: Some(after.clone()),
                     after: before.clone(),
                 })
             }

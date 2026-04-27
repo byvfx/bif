@@ -19,6 +19,7 @@
 
 class BifShellState;
 class QCheckBox;
+class QComboBox;
 class QGroupBox;
 class QLabel;
 class QPushButton;
@@ -40,6 +41,7 @@ private slots:
     void on_layer_state_changed();
     void on_visibility_toggled(bool checked);
     void on_bind_material_clicked();
+    void on_shading_model_changed(const QString& model);
 
 private:
     void rebuild();
@@ -65,4 +67,6 @@ private:
     QWidget* m_material_content;
     QLabel* m_material_shader_label;
     QPushButton* m_bind_material_button;
+    // C4b-3 shading-model swap dropdown.
+    QComboBox* m_shading_model_combo;
 };

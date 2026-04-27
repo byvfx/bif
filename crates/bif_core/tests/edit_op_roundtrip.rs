@@ -162,6 +162,98 @@ fn variant_selection_roundtrips_after_save_reopen() {
 }
 
 #[test]
+fn set_shader_id_roundtrips() {
+    // C4b-3 — verify the SetShaderId variant authors `info:id` and
+    // that the inverse re-authors the original id.
+    let fixture = helpers::LayeredStageFixture::new("set_shader_id");
+    let stage = UsdStage::open(&fixture.root).expect("open stage");
+    let (mut state, working_id) = state_for_working_layer(&stage);
+
+    let shader_path = "/Materials/Red/PreviewSurface";
+    let before_id = stage
+        .get_bound_shader_id("/World/Cube") // unbound, returns "" — fine
+        .unwrap_or_default();
+    // Apply: swap to a new id.
+    state
+        .apply_edit_operation(
+            &stage,
+            EditOperation::SetShaderId {
+                key: bif_core::usd::OpinionKey::new(shader_path, AttrSlot::ShaderId),
+                before: Some("UsdPreviewSurface".to_string()),
+                after: "OpenPBR".to_string(),
+            },
+        )
+        .expect("apply shader id");
+
+    let after_text = stage
+        .export_layer_as_string(&working_id)
+        .expect("export after");
+    assert!(after_text.contains("info:id"));
+    assert!(after_text.contains("OpenPBR"));
+
+    // Undo restores the prior id.
+    state
+        .undo_usd_edit(&stage)
+        .expect("undo")
+        .expect("undo desc");
+    let restored = stage
+        .export_layer_as_string(&working_id)
+        .expect("export restored");
+    assert!(restored.contains("UsdPreviewSurface"));
+    let _ = before_id; // kept for future direct-id assertions
+}
+
+#[test]
+fn shading_model_swap_undoes_atomically() {
+    // C4b-3 — the begin_group/end_group dance around a shading
+    // model swap must collapse multiple op records into a single
+    // UndoFrame so one Ctrl+Z reverts the whole sequence.
+    let fixture = helpers::LayeredStageFixture::new("shading_swap_atomic");
+    let stage = UsdStage::open(&fixture.root).expect("open stage");
+    let (mut state, _working_id) = state_for_working_layer(&stage);
+
+    let shader_path = "/Materials/Red/PreviewSurface";
+    state.edit_history.begin_group("swap shading model");
+    state
+        .apply_edit_operation(
+            &stage,
+            EditOperation::SetShaderId {
+                key: bif_core::usd::OpinionKey::new(shader_path, AttrSlot::ShaderId),
+                before: Some("UsdPreviewSurface".to_string()),
+                after: "OpenPBR".to_string(),
+            },
+        )
+        .expect("set id");
+    state
+        .apply_edit_operation(
+            &stage,
+            EditOperation::MaterialParamOverride {
+                key: bif_core::usd::OpinionKey::new(
+                    shader_path,
+                    AttrSlot::ShaderInput {
+                        shader_path: shader_path.to_string(),
+                        name: "base_color".to_string(),
+                    },
+                ),
+                before: None,
+                after: ShaderValue::Color3f([0.5, 0.6, 0.7]),
+            },
+        )
+        .expect("remap input");
+    state.edit_history.end_group();
+
+    // Two records should have collapsed into one frame.
+    assert_eq!(state.edit_history.undo_len(), 1);
+    state
+        .undo_usd_edit(&stage)
+        .expect("undo")
+        .expect("undo desc");
+    // Single Ctrl+Z reverted both.
+    assert_eq!(state.edit_history.undo_len(), 0);
+    assert!(state.edit_history.can_redo());
+}
+
+#[test]
 fn bound_material_inputs_returns_shader_inputs() {
     // Fixture has /Materials/Red/PreviewSurface (UsdPreviewSurface
     // with `roughness=0.2`) but doesn't bind it. Bind on the working

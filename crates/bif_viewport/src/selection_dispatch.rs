@@ -408,6 +408,157 @@ impl Renderer {
         }
     }
 
+    /// Swap the surface shader's `info:id` to a new shading model
+    /// and best-effort remap inputs whose name has a known analogue
+    /// in the target model. The whole sequence — id swap + remap —
+    /// is wrapped in `begin_group`/`end_group` so a single Ctrl+Z
+    /// reverts the entire swap as one undo step. Returns the list
+    /// of source-only inputs that won't round-trip (lossy params).
+    /// C4b-3.
+    pub fn dispatch_swap_shading_model(
+        &mut self,
+        prim_path: &str,
+        target_model: &str,
+    ) -> anyhow::Result<Vec<String>> {
+        let stage_arc = self
+            .scene
+            .usd_stage
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("no USD stage loaded"))?;
+        if self.scene.layer_state.is_none() {
+            return Err(anyhow::anyhow!("no scene layer state"));
+        }
+        let normalized = normalize_prim_path(prim_path);
+
+        // Resolve the surface shader path + current id under the lock.
+        let (shader_path, current_id, current_inputs) = {
+            let stage = stage_arc
+                .lock()
+                .map_err(|_| anyhow::anyhow!("UsdStage mutex poisoned"))?;
+            let (shader_path, inputs) = stage
+                .get_bound_material_inputs(&normalized)
+                .map_err(|e| anyhow::anyhow!("get bound material: {e:?}"))?;
+            let current_id = stage.get_bound_shader_id(&normalized).unwrap_or_default();
+            (shader_path, current_id, inputs)
+        };
+        if shader_path.is_empty() {
+            return Err(anyhow::anyhow!("no surface shader bound"));
+        }
+
+        // Best-effort name map between OpenPBR and UsdPreviewSurface.
+        let map_name = |from: &str| -> Option<&'static str> {
+            match (current_id.as_str(), target_model, from) {
+                ("OpenPBR", "UsdPreviewSurface", "base_color") => Some("diffuseColor"),
+                ("OpenPBR", "UsdPreviewSurface", "specular_roughness") => Some("roughness"),
+                ("OpenPBR", "UsdPreviewSurface", "base_metalness") => Some("metallic"),
+                ("OpenPBR", "UsdPreviewSurface", "specular_ior") => Some("ior"),
+                ("OpenPBR", "UsdPreviewSurface", "emission_color") => Some("emissiveColor"),
+                ("UsdPreviewSurface", "OpenPBR", "diffuseColor") => Some("base_color"),
+                ("UsdPreviewSurface", "OpenPBR", "roughness") => Some("specular_roughness"),
+                ("UsdPreviewSurface", "OpenPBR", "metallic") => Some("base_metalness"),
+                ("UsdPreviewSurface", "OpenPBR", "ior") => Some("specular_ior"),
+                ("UsdPreviewSurface", "OpenPBR", "emissiveColor") => Some("emission_color"),
+                _ => None,
+            }
+        };
+        // Inputs the target model can't represent at all — surfaced
+        // to the UI for the lossy QMessageBox warning.
+        let lossy = |from: &str| -> bool {
+            match (current_id.as_str(), target_model) {
+                ("OpenPBR", "UsdPreviewSurface") => matches!(
+                    from,
+                    "subsurface_weight"
+                        | "subsurface_color"
+                        | "subsurface_radius"
+                        | "subsurface_radius_scale"
+                        | "subsurface_scatter_anisotropy"
+                        | "transmission_weight"
+                        | "transmission_color"
+                        | "transmission_depth"
+                        | "transmission_scatter"
+                        | "transmission_dispersion_scale"
+                        | "transmission_dispersion_abbe_number"
+                        | "coat_weight"
+                        | "coat_color"
+                        | "coat_roughness"
+                        | "coat_anisotropy"
+                        | "coat_rotation"
+                        | "coat_ior"
+                        | "coat_darkening"
+                ),
+                _ => false,
+            }
+        };
+
+        let mut dropped: Vec<String> = current_inputs
+            .iter()
+            .filter(|i| lossy(&i.name))
+            .map(|i| i.name.clone())
+            .collect();
+        // Fallback: if mapping didn't recognize current_id, mark all
+        // inputs as dropped so the UI surfaces something useful.
+        if dropped.is_empty() && current_id != target_model {
+            dropped = current_inputs
+                .iter()
+                .filter(|i| map_name(&i.name).is_none())
+                .map(|i| i.name.clone())
+                .collect();
+        }
+
+        let layer_state = self
+            .scene
+            .layer_state
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("no scene layer state"))?;
+
+        layer_state.edit_history.begin_group("swap shading model");
+
+        // 1. Author the new info:id.
+        let id_op = bif_core::usd::EditOperation::SetShaderId {
+            key: bif_core::usd::OpinionKey::new(
+                shader_path.clone(),
+                bif_core::usd::AttrSlot::ShaderId,
+            ),
+            before: Some(current_id.clone()),
+            after: target_model.to_string(),
+        };
+        let stage_locked = stage_arc
+            .lock()
+            .map_err(|_| anyhow::anyhow!("UsdStage mutex poisoned"))?;
+        let _ = layer_state
+            .edit_history
+            .apply_and_record(&stage_locked, id_op)
+            .map_err(|e| anyhow::anyhow!("set shader id: {e:?}"))?;
+
+        // 2. Best-effort remap of mapped inputs (preserves authored
+        //    values under the new model's analogous input name).
+        for input in &current_inputs {
+            let Some(mapped) = map_name(&input.name) else {
+                continue;
+            };
+            let after = match parse_shader_value_for_dispatch(&input.type_name, &input.value) {
+                Some(v) => v,
+                None => continue,
+            };
+            let op = bif_core::usd::EditOperation::MaterialParamOverride {
+                key: bif_core::usd::OpinionKey::new(
+                    shader_path.clone(),
+                    bif_core::usd::AttrSlot::ShaderInput {
+                        shader_path: shader_path.clone(),
+                        name: mapped.to_string(),
+                    },
+                ),
+                before: None,
+                after,
+            };
+            let _ = layer_state.edit_history.apply_and_record(&stage_locked, op);
+        }
+
+        layer_state.edit_history.end_group();
+        layer_state.mark_working_layer_dirty(true);
+        Ok(dropped)
+    }
+
     /// Validate `new_text` as USDA, then atomically replace the
     /// contents of the layer at `layer_id` with it. The pre-replace
     /// text is captured as `before` so undo restores byte-equivalent
@@ -655,6 +806,43 @@ fn immediate_parent(path: &str) -> Option<String> {
         return None;
     }
     Some(path[..slash].to_string())
+}
+
+/// Mirror of `bif_qt::parse_shader_value`. Used by the shading-model
+/// swap remap. Defined here so the bif_viewport dispatcher doesn't
+/// take a UI-crate dependency. C4b-3.
+fn parse_shader_value_for_dispatch(
+    type_name: &str,
+    value: &str,
+) -> Option<bif_core::usd::ShaderValue> {
+    use bif_core::usd::ShaderValue;
+    match type_name {
+        "float" => value.parse::<f32>().ok().map(ShaderValue::Float),
+        "double" => value.parse::<f64>().ok().map(ShaderValue::Double),
+        "int" => value.parse::<i32>().ok().map(ShaderValue::Int),
+        "bool" => match value.to_ascii_lowercase().as_str() {
+            "true" | "1" => Some(ShaderValue::Bool(true)),
+            "false" | "0" => Some(ShaderValue::Bool(false)),
+            _ => None,
+        },
+        "token" => Some(ShaderValue::Token(value.to_string())),
+        "string" => Some(ShaderValue::String(value.to_string())),
+        "color3f" | "float3" => {
+            let parts: Vec<&str> = value.split(',').map(str::trim).collect();
+            if parts.len() != 3 {
+                return None;
+            }
+            let r = parts[0].parse::<f32>().ok()?;
+            let g = parts[1].parse::<f32>().ok()?;
+            let b = parts[2].parse::<f32>().ok()?;
+            if type_name == "color3f" {
+                Some(ShaderValue::Color3f([r, g, b]))
+            } else {
+                Some(ShaderValue::Vec3f([r, g, b]))
+            }
+        }
+        _ => None,
+    }
 }
 
 #[cfg(test)]

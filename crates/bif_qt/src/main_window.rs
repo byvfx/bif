@@ -838,6 +838,24 @@ pub mod qobject {
         #[qinvokable]
         fn on_bind_material(self: Pin<&mut BifShellState>, material_path: QString);
 
+        // ---- Shading model dropdown (C4b-3) ----
+
+        /// Read the bound material's surface shader `info:id` token.
+        /// Empty when nothing bound. Used by the Material Sheet
+        /// header dropdown to reflect the current shading model.
+        #[qinvokable]
+        fn selected_prim_material_shader_id(self: &BifShellState) -> QString;
+
+        /// Swap the bound material's surface shader `info:id` to
+        /// `model` and best-effort remap inputs (e.g. `base_color`
+        /// ↔ `diffuseColor`). Wraps the change in `begin_group`/
+        /// `end_group` so a single Ctrl+Z reverts the entire swap.
+        /// Returns a `\n`-separated list of input names that don't
+        /// round-trip into the new model. Empty on success without
+        /// losses. C4b-3.
+        #[qinvokable]
+        fn on_set_shading_model(self: Pin<&mut BifShellState>, model: QString) -> QString;
+
         // ---- USDA Source panel surface (C4b-2) ----
 
         /// Serialize the active edit-target layer back to USDA text
@@ -2598,6 +2616,52 @@ impl qobject::BifShellState {
                     )));
             }
             None => {}
+        }
+    }
+
+    fn selected_prim_material_shader_id(&self) -> cxx_qt_lib::QString {
+        let path: String = (&self.rust().selected_prim_path).into();
+        if path.is_empty() {
+            return cxx_qt_lib::QString::default();
+        }
+        let id = with_stage(|stage| stage.get_bound_shader_id(&path).ok())
+            .flatten()
+            .unwrap_or_default();
+        cxx_qt_lib::QString::from(&id)
+    }
+
+    fn on_set_shading_model(
+        mut self: Pin<&mut Self>,
+        model: cxx_qt_lib::QString,
+    ) -> cxx_qt_lib::QString {
+        let model_str: String = (&model).into();
+        let prim_path: String = (&self.as_ref().rust().selected_prim_path).into();
+        if prim_path.is_empty() || model_str.is_empty() {
+            return cxx_qt_lib::QString::default();
+        }
+        let result = with_viewport_mut(|vp| {
+            vp.renderer_mut()
+                .dispatch_swap_shading_model(&prim_path, &model_str)
+        });
+        match result {
+            Some(Ok(dropped)) => {
+                self.as_mut()
+                    .set_status_message(cxx_qt_lib::QString::from(&format!(
+                        "Shading model → {model_str}"
+                    )));
+                refresh_undo_redo_qprops(self.as_mut());
+                bump_revision(self.as_mut());
+                cxx_qt_lib::QString::from(&dropped.join("\n"))
+            }
+            Some(Err(e)) => {
+                let msg = format!("{e}");
+                self.as_mut()
+                    .set_status_message(cxx_qt_lib::QString::from(&format!(
+                        "Shading swap failed: {msg}"
+                    )));
+                cxx_qt_lib::QString::from(&format!("error:{msg}"))
+            }
+            None => cxx_qt_lib::QString::default(),
         }
     }
 

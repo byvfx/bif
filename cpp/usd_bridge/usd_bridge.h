@@ -1889,6 +1889,24 @@ UsdBridgeError usd_bridge_prim_get_bound_material_inputs(
     const char** out_shader_path
 );
 
+/// C4b-3: Author the `info:id` token attribute on `shader_path` to
+/// `shader_id` (e.g. "OpenPBR" or "UsdPreviewSurface").
+UsdBridgeError usd_bridge_layer_set_shader_id(
+    UsdBridgeStage* stage,
+    const char* layer_identifier,
+    const char* shader_path,
+    const char* shader_id
+);
+
+/// C4b-3: Read the surface shader's `info:id` for the material bound
+/// to `prim_path`. Empty when no binding. Pointer owned by a
+/// function-local thread_local buffer.
+UsdBridgeError usd_bridge_prim_get_bound_shader_id(
+    const UsdBridgeStage* stage,
+    const char* prim_path,
+    const char** out_id
+);
+
 /// Time offset + scale authored on a root sublayer reference.
 /// Returns identity (0.0, 1.0) if the layer isn't a direct sublayer of root.
 typedef struct UsdBridgeLayerOffset {

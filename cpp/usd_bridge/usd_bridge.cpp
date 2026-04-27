@@ -6912,6 +6912,84 @@ UsdBridgeError usd_bridge_layer_set_shader_input(
     }
 }
 
+// C4b-3: Author the `info:id` token attribute on `shader_path` to
+// `shader_id` (e.g. "OpenPBR" or "UsdPreviewSurface"). Used by the
+// shading-model swap dropdown.
+UsdBridgeError usd_bridge_layer_set_shader_id(
+    UsdBridgeStage* stage,
+    const char* layer_identifier,
+    const char* shader_path,
+    const char* shader_id
+) {
+    if (!stage || !layer_identifier || !shader_path || !shader_id) {
+        return USD_BRIDGE_ERROR_NULL_POINTER;
+    }
+    try {
+        SdfLayerRefPtr root = stage->stage->GetRootLayer();
+        if (!root) return USD_BRIDGE_ERROR_INVALID_STAGE;
+        SdfLayerRefPtr layer = find_layer_by_identifier(root, layer_identifier);
+        if (!layer) return USD_BRIDGE_ERROR_INVALID_PRIM;
+        if (!layer->PermissionToEdit()) return USD_BRIDGE_ERROR_UNKNOWN;
+
+        UsdEditContext edit_context(stage->stage, layer);
+        UsdShadeShader shader(stage->stage->GetPrimAtPath(SdfPath(shader_path)));
+        if (!shader) return USD_BRIDGE_ERROR_INVALID_PRIM;
+
+        UsdAttribute id_attr = shader.GetIdAttr();
+        if (!id_attr) {
+            id_attr = shader.CreateIdAttr();
+        }
+        if (!id_attr) return USD_BRIDGE_ERROR_UNKNOWN;
+        id_attr.Set(TfToken(shader_id));
+
+        invalidate_all_caches(stage);
+        return USD_BRIDGE_SUCCESS;
+    } catch (const std::exception& e) {
+        TF_WARN("usd_bridge_layer_set_shader_id: %s", e.what());
+        return USD_BRIDGE_ERROR_UNKNOWN;
+    }
+}
+
+// C4b-3: Read the surface shader's `info:id` for the material bound
+// to `prim_path`. Empty when no binding or no surface shader.
+UsdBridgeError usd_bridge_prim_get_bound_shader_id(
+    const UsdBridgeStage* stage,
+    const char* prim_path,
+    const char** out_id
+) {
+    static thread_local std::string buf;
+    if (!stage || !prim_path || !out_id) {
+        return USD_BRIDGE_ERROR_NULL_POINTER;
+    }
+    buf.clear();
+    *out_id = buf.c_str();
+    try {
+        UsdPrim prim = stage->stage->GetPrimAtPath(SdfPath(prim_path));
+        if (!prim) return USD_BRIDGE_ERROR_INVALID_PRIM;
+        UsdShadeMaterialBindingAPI binding_api(prim);
+        UsdShadeMaterial material = binding_api.ComputeBoundMaterial();
+        if (!material) return USD_BRIDGE_SUCCESS;
+        UsdShadeOutput surface_output = material.GetSurfaceOutput();
+        if (!surface_output) return USD_BRIDGE_SUCCESS;
+        UsdShadeConnectableAPI source;
+        TfToken source_name;
+        UsdShadeAttributeType source_type;
+        if (!surface_output.GetConnectedSource(&source, &source_name, &source_type)) {
+            return USD_BRIDGE_SUCCESS;
+        }
+        UsdShadeShader shader(source.GetPrim());
+        if (!shader) return USD_BRIDGE_SUCCESS;
+        TfToken id;
+        shader.GetIdAttr().Get(&id);
+        buf = id.GetString();
+        *out_id = buf.c_str();
+        return USD_BRIDGE_SUCCESS;
+    } catch (const std::exception& e) {
+        TF_WARN("usd_bridge_prim_get_bound_shader_id: %s", e.what());
+        return USD_BRIDGE_ERROR_UNKNOWN;
+    }
+}
+
 // C4b-1: Enumerate the surface shader inputs of the material bound to
 // `prim_path`. Encodes records as `name\ttype\tvalue\n`. Function-local
 // thread_local buffer (per the C4a code review fix) so the returned

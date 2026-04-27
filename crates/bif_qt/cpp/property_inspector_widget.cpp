@@ -3,6 +3,7 @@
 #include <QCheckBox>
 #include <QColor>
 #include <QColorDialog>
+#include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QGroupBox>
 #include <QHeaderView>
@@ -11,6 +12,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QMessageBox>
 #include <QPainter>
 #include <QPushButton>
 #include <QScrollArea>
@@ -163,7 +165,8 @@ PropertyInspectorWidget::PropertyInspectorWidget(BifShellState* state, QWidget* 
       m_material_scroll(nullptr),
       m_material_content(nullptr),
       m_material_shader_label(nullptr),
-      m_bind_material_button(nullptr) {
+      m_bind_material_button(nullptr),
+      m_shading_model_combo(nullptr) {
     setObjectName(QStringLiteral("property_inspector_widget"));
 
     auto* outer = new QVBoxLayout(this);
@@ -267,18 +270,29 @@ PropertyInspectorWidget::PropertyInspectorWidget(BifShellState* state, QWidget* 
     mat_layout->setContentsMargins(4, 4, 4, 4);
     mat_layout->setSpacing(4);
 
-    // Header: bound shader path + Bind Material action.
+    // Header: bound shader path + shading model dropdown + Bind action.
     auto* mat_header = new QHBoxLayout();
     m_material_shader_label = new QLabel(QStringLiteral("(no material bound)"), m_material_tab);
     m_material_shader_label->setStyleSheet(QStringLiteral(
         "color: rgba(140, 145, 155, 255); font-size: 11px;"));
     m_material_shader_label->setWordWrap(true);
+
+    m_shading_model_combo = new QComboBox(m_material_tab);
+    m_shading_model_combo->addItem(QStringLiteral("OpenPBR"));
+    m_shading_model_combo->addItem(QStringLiteral("UsdPreviewSurface"));
+    m_shading_model_combo->setStyleSheet(QStringLiteral(
+        "QComboBox { padding: 2px 6px; font-size: 11px; }"));
+    QObject::connect(m_shading_model_combo, &QComboBox::currentTextChanged,
+        this, &PropertyInspectorWidget::on_shading_model_changed);
+
     m_bind_material_button = new QPushButton(QStringLiteral("Bind…"), m_material_tab);
     m_bind_material_button->setStyleSheet(QStringLiteral(
         "QPushButton { padding: 2px 10px; font-size: 11px; }"));
     QObject::connect(m_bind_material_button, &QPushButton::clicked,
         this, &PropertyInspectorWidget::on_bind_material_clicked);
+
     mat_header->addWidget(m_material_shader_label, 1);
+    mat_header->addWidget(m_shading_model_combo, 0);
     mat_header->addWidget(m_bind_material_button, 0);
     mat_layout->addLayout(mat_header);
 
@@ -379,6 +393,50 @@ void PropertyInspectorWidget::on_visibility_toggled(bool checked) {
     m_state->on_set_visibility(path, checked);
 }
 
+void PropertyInspectorWidget::on_shading_model_changed(const QString& model) {
+    if (!m_state || model.isEmpty()) return;
+    if (model == m_state->selected_prim_material_shader_id()) {
+        return;
+    }
+
+    // Confirm the lossy swap with the user before authoring. The
+    // dispatcher returns the dropped param list as `\n`-separated;
+    // we surface them in the QMessageBox before kicking off the
+    // begin_group/end_group sequence.
+    const auto dropped_preview = QMessageBox::question(
+        this,
+        QStringLiteral("Swap shading model"),
+        QStringLiteral("Switching to <b>%1</b> may drop parameters that the "
+                       "target shader can't represent (Subsurface, Transmission, "
+                       "Coat for UsdPreviewSurface). The whole swap will land "
+                       "as a single Ctrl+Z step. Continue?")
+            .arg(model.toHtmlEscaped()),
+        QMessageBox::Yes | QMessageBox::No,
+        QMessageBox::No);
+    if (dropped_preview != QMessageBox::Yes) {
+        // Revert the dropdown without retriggering the slot.
+        const QSignalBlocker blocker(m_shading_model_combo);
+        const auto current_id = m_state->selected_prim_material_shader_id();
+        const int idx = m_shading_model_combo->findText(current_id);
+        if (idx >= 0) m_shading_model_combo->setCurrentIndex(idx);
+        return;
+    }
+
+    const QString result = m_state->on_set_shading_model(model);
+    if (result.startsWith(QStringLiteral("error:"))) {
+        QMessageBox::warning(this,
+            QStringLiteral("Shading swap failed"),
+            result.mid(6));
+        return;
+    }
+    if (!result.isEmpty()) {
+        QMessageBox::information(this,
+            QStringLiteral("Shading model swapped"),
+            QStringLiteral("Dropped parameters that don't round-trip into %1:\n\n%2")
+                .arg(model, result));
+    }
+}
+
 void PropertyInspectorWidget::on_bind_material_clicked() {
     if (!m_state) return;
     const auto prim_path = m_state->getSelected_prim_path();
@@ -420,6 +478,9 @@ void PropertyInspectorWidget::populate_material_sheet() {
     const auto shader_path = m_state->selected_prim_material_shader_path();
     if (shader_path.isEmpty()) {
         m_material_shader_label->setText(QStringLiteral("(no material bound)"));
+        if (m_shading_model_combo) {
+            m_shading_model_combo->setEnabled(false);
+        }
         auto* hint = new QLabel(
             QStringLiteral("Click <b>Bind…</b> to assign a material to this prim."),
             m_material_content);
@@ -432,6 +493,26 @@ void PropertyInspectorWidget::populate_material_sheet() {
     }
     m_material_shader_label->setText(
         QStringLiteral("Shader: <code>%1</code>").arg(shader_path.toHtmlEscaped()));
+
+    // Reflect current shader id on the dropdown without retriggering
+    // the swap path. C4b-3.
+    if (m_shading_model_combo) {
+        const auto shader_id = m_state->selected_prim_material_shader_id();
+        const QSignalBlocker blocker(m_shading_model_combo);
+        m_shading_model_combo->setEnabled(true);
+        const int idx = m_shading_model_combo->findText(shader_id);
+        if (idx >= 0) {
+            m_shading_model_combo->setCurrentIndex(idx);
+        } else {
+            // Unknown id: surface as a non-selectable placeholder
+            // so the user sees the actual stored value.
+            int existing = m_shading_model_combo->findText(shader_id);
+            if (existing < 0 && !shader_id.isEmpty()) {
+                m_shading_model_combo->insertItem(0, shader_id);
+                m_shading_model_combo->setCurrentIndex(0);
+            }
+        }
+    }
 
     // Bucket inputs by OpenPBR section.
     const int n = m_state->selected_prim_material_input_count();
