@@ -408,6 +408,39 @@ impl Renderer {
         }
     }
 
+    /// Validate `new_text` as USDA, then atomically replace the
+    /// contents of the layer at `layer_id` with it. The pre-replace
+    /// text is captured as `before` so undo restores byte-equivalent
+    /// text. C4b-2 — USDA panel Apply path.
+    pub fn dispatch_replace_layer_contents(
+        &mut self,
+        layer_id: &str,
+        new_text: &str,
+    ) -> anyhow::Result<String> {
+        let stage_arc = self
+            .scene
+            .usd_stage
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("no USD stage loaded"))?;
+        if self.scene.layer_state.is_none() {
+            return Err(anyhow::anyhow!("no scene layer state"));
+        }
+        // Validate before authoring so a bad parse never lands a
+        // partial change on the live stage.
+        bif_core::usd::UsdStage::parse_usda(new_text)
+            .map_err(|e| anyhow::anyhow!("USDA parse failed: {e:?}"))?;
+
+        let before = stage_arc
+            .lock()
+            .ok()
+            .and_then(|stage| stage.export_layer_as_string(layer_id).ok())
+            .unwrap_or_default();
+
+        let op =
+            bif_core::usd::EditOperation::replace_layer(layer_id, before, new_text.to_string());
+        self.apply_usd_edit(op)
+    }
+
     /// Author a `MaterialAssign` opinion on the working layer.
     /// Records one undo step. C4b-1.
     pub fn dispatch_material_assign(

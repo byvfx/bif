@@ -3,6 +3,7 @@
 #include "first_launch_widget.h"
 #include "layer_stack_widget.h"
 #include "node_graph_widget.h"
+#include "usda_panel_widget.h"
 #include "property_inspector_widget.h"
 #include "render_settings_widget.h"
 #include "render_widget.h"
@@ -324,6 +325,7 @@ struct MenuActions {
     QAction* zen_mode;
     QAction* toggle_lod;
     QAction* toggle_node_graph_experimental;
+    QAction* toggle_usda_source;
 
     QAction* about;
 };
@@ -409,6 +411,9 @@ MenuActions build_menu_bar(QMainWindow* window) {
     a.toggle_node_graph_experimental =
         view->addAction(QStringLiteral("&Node Graph (Experimental)"));
     a.toggle_node_graph_experimental->setCheckable(true);
+    a.toggle_usda_source = view->addAction(QStringLiteral("&USDA Source"));
+    a.toggle_usda_source->setCheckable(true);
+    a.toggle_usda_source->setChecked(false);
 
     auto* render = menu->addMenu(QStringLiteral("&Render"));
     a.ivar_render = render->addAction(QStringLiteral("Ivar &Render"));
@@ -1020,6 +1025,24 @@ void wire_shell_actions(
             update_status();
         });
 
+    QObject::connect(actions.toggle_usda_source, &QAction::toggled, window,
+        [window, shell_state, update_status](bool enabled) {
+            auto* dock = window->findChild<QDockWidget*>(
+                QStringLiteral("dock_usda_source"));
+            if (dock) {
+                if (enabled) {
+                    dock->show();
+                    dock->raise();
+                } else {
+                    dock->hide();
+                }
+            }
+            shell_state->setStatus_message(enabled
+                ? QStringLiteral("USDA Source: ON")
+                : QStringLiteral("USDA Source: OFF"));
+            update_status();
+        });
+
     QObject::connect(actions.about, &QAction::triggered, window,
         [shell_state, update_status]() {
             shell_state->on_about();
@@ -1310,6 +1333,25 @@ int bif_qt_run_shell(ViewportCallbacks* viewport_cb, ::rust::Str stylesheet) {
         }
     }
 
+    // USDA Source dock (C4b-2) — tabified with Node Graph at the
+    // bottom; hidden by default. View → USDA Source toggles it.
+    {
+        auto* dock = new QDockWidget(QStringLiteral("USDA Source"), &window);
+        dock->setObjectName(QStringLiteral("dock_usda_source"));
+        dock->setAllowedAreas(Qt::AllDockWidgetAreas);
+        dock->setFeatures(
+            QDockWidget::DockWidgetMovable |
+            QDockWidget::DockWidgetFloatable |
+            QDockWidget::DockWidgetClosable);
+        auto* panel = new UsdaPanelWidget(shell_state, dock);
+        dock->setWidget(panel);
+        window.addDockWidget(Qt::BottomDockWidgetArea, dock);
+        if (node_graph_dock) {
+            window.tabifyDockWidget(node_graph_dock, dock);
+        }
+        dock->hide();
+    }
+
     {
         QSettings settings;
         const bool node_graph_preview = settings
@@ -1359,6 +1401,9 @@ int bif_qt_run_shell(ViewportCallbacks* viewport_cb, ::rust::Str stylesheet) {
         commands.insert(
             QStringLiteral("View: Toggle Node Graph (Experimental)"),
             menu_actions.toggle_node_graph_experimental);
+        commands.insert(
+            QStringLiteral("View: Toggle USDA Source"),
+            menu_actions.toggle_usda_source);
         commands.insert(QStringLiteral("Render: Ivar Render"), menu_actions.ivar_render);
         commands.insert(QStringLiteral("Help: About BIF"), menu_actions.about);
 

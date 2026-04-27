@@ -36,6 +36,7 @@ fn main() {
             cc.file("cpp/render_settings_widget.cpp");
             cc.file("cpp/node_graph_widget.cpp");
             cc.file("cpp/shortcut_registry.cpp");
+            cc.file("cpp/usda_panel_widget.cpp");
             cc.include("cpp");
             cc.std("c++17");
 
@@ -59,6 +60,7 @@ fn main() {
         .qobject_header("cpp/timeline_widget.h")
         .qobject_header("cpp/render_settings_widget.h")
         .qobject_header("cpp/node_graph_widget.h")
+        .qobject_header("cpp/usda_panel_widget.h")
         .build();
 
     println!("cargo:rerun-if-changed=src/main_window.rs");

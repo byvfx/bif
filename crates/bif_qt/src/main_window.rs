@@ -837,6 +837,21 @@ pub mod qobject {
         /// working layer. C4b-1.
         #[qinvokable]
         fn on_bind_material(self: Pin<&mut BifShellState>, material_path: QString);
+
+        // ---- USDA Source panel surface (C4b-2) ----
+
+        /// Serialize the active edit-target layer back to USDA text
+        /// for the USDA panel's QPlainTextEdit. Empty when no stage.
+        #[qinvokable]
+        fn active_edit_target_layer_text(self: &BifShellState) -> QString;
+
+        /// Validate `text` as USDA and, on success, replace the
+        /// active edit-target layer's contents through C4a edit
+        /// history. Returns an empty string on success, or a
+        /// human-readable error message on parse / dispatch failure.
+        /// C4b-2.
+        #[qinvokable]
+        fn on_apply_usda(self: Pin<&mut BifShellState>, text: QString) -> QString;
     }
 }
 
@@ -2583,6 +2598,68 @@ impl qobject::BifShellState {
                     )));
             }
             None => {}
+        }
+    }
+
+    fn active_edit_target_layer_text(&self) -> cxx_qt_lib::QString {
+        let Some(layer_id) = self
+            .rust()
+            .scene_layer_state
+            .as_ref()
+            .and_then(|s| s.stack.layers.get(s.working_layer))
+            .map(|l| l.identifier.clone())
+        else {
+            return cxx_qt_lib::QString::default();
+        };
+        let text = with_stage(|stage| stage.export_layer_as_string(&layer_id).ok())
+            .flatten()
+            .unwrap_or_default();
+        cxx_qt_lib::QString::from(&text)
+    }
+
+    fn on_apply_usda(mut self: Pin<&mut Self>, text: cxx_qt_lib::QString) -> cxx_qt_lib::QString {
+        let Some(layer_id) = self
+            .as_ref()
+            .rust()
+            .scene_layer_state
+            .as_ref()
+            .and_then(|s| s.stack.layers.get(s.working_layer))
+            .map(|l| l.identifier.clone())
+        else {
+            self.as_mut()
+                .set_status_message(cxx_qt_lib::QString::from("USDA Apply: no edit target"));
+            return cxx_qt_lib::QString::from("No edit-target layer is set.");
+        };
+        let text_str: String = (&text).into();
+
+        let result = with_viewport_mut(|vp| {
+            vp.renderer_mut()
+                .dispatch_replace_layer_contents(&layer_id, &text_str)
+        });
+        match result {
+            Some(Ok(_desc)) => {
+                self.as_mut()
+                    .set_status_message(cxx_qt_lib::QString::from(&format!(
+                        "USDA Apply: replaced {layer_id}"
+                    )));
+                refresh_undo_redo_qprops(self.as_mut());
+                bump_revision(self.as_mut());
+                cxx_qt_lib::QString::default()
+            }
+            Some(Err(e)) => {
+                let msg = format!("{e}");
+                self.as_mut()
+                    .set_status_message(cxx_qt_lib::QString::from(&format!(
+                        "USDA Apply failed: {msg}"
+                    )));
+                cxx_qt_lib::QString::from(&msg)
+            }
+            None => {
+                self.as_mut().set_status_message(cxx_qt_lib::QString::from(
+                    "USDA Apply: no viewport available",
+                ));
+                cxx_qt_lib::QString::from("Viewport not initialized.")
+            }
         }
     }
 
