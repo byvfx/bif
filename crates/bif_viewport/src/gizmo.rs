@@ -1,4 +1,4 @@
-//! Translate gizmo drawn as egui overlay.
+//! Translate gizmo math shared by the old egui overlay and the Qt viewport.
 //!
 //! Projects 3D axis endpoints to screen space and draws colored lines/arrows.
 //! Handles mouse hit testing and drag-to-translate along a single axis.
@@ -29,7 +29,7 @@ impl GizmoAxis {
 }
 
 /// Gizmo interaction state.
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct GizmoState {
     /// Currently hovered axis (for visual feedback).
     pub hovered_axis: GizmoAxis,
@@ -43,6 +43,8 @@ pub struct GizmoState {
     pub drag_start_world: Vec3,
     /// Accumulated drag delta in world units along the active axis.
     pub drag_world_delta: f32,
+    /// Transform at drag start, used to commit one undoable edit on release.
+    pub drag_start_transform: Option<bif_core::Transform>,
 }
 
 impl Default for GizmoState {
@@ -60,6 +62,7 @@ impl GizmoState {
             drag_start_screen: (0.0, 0.0),
             drag_start_world: Vec3::ZERO,
             drag_world_delta: 0.0,
+            drag_start_transform: None,
         }
     }
 
@@ -69,13 +72,32 @@ impl GizmoState {
         self.active_axis = GizmoAxis::None;
         self.is_dragging = false;
         self.drag_world_delta = 0.0;
+        self.drag_start_transform = None;
+    }
+}
+
+pub fn axis_direction(axis: GizmoAxis) -> Option<Vec3> {
+    match axis {
+        GizmoAxis::X => Some(Vec3::X),
+        GizmoAxis::Y => Some(Vec3::Y),
+        GizmoAxis::Z => Some(Vec3::Z),
+        GizmoAxis::None => None,
+    }
+}
+
+pub fn axis_name(axis: GizmoAxis) -> &'static str {
+    match axis {
+        GizmoAxis::X => "X",
+        GizmoAxis::Y => "Y",
+        GizmoAxis::Z => "Z",
+        GizmoAxis::None => "",
     }
 }
 
 /// Project a world-space point to screen-space (pixels).
 ///
 /// Returns `None` if the point is behind the camera.
-fn project_to_screen(
+pub(crate) fn project_to_screen(
     point: Vec3,
     view_proj: &Mat4,
     viewport_rect: (f32, f32, f32, f32), // (x, y, w, h) in pixels
@@ -93,6 +115,50 @@ fn project_to_screen(
     let screen_y = vp_y + (1.0 - ndc_y) * 0.5 * vp_h; // Y-down in screen
 
     Some((screen_x, screen_y))
+}
+
+/// Hit-test the screen-space translate axes without drawing them.
+pub fn hit_test_axis(
+    camera: &Camera,
+    world_pos: Vec3,
+    viewport_rect: (f32, f32, f32, f32),
+    mouse_pos: (f32, f32),
+) -> GizmoAxis {
+    let vp = camera.view_projection_matrix();
+    let Some(origin_screen) = project_to_screen(world_pos, &vp, viewport_rect) else {
+        return GizmoAxis::None;
+    };
+
+    let cam_dist = (camera.position - world_pos).length();
+    let axis_length = cam_dist * 0.14;
+    let mut closest_axis = GizmoAxis::None;
+    let mut closest_dist = f32::MAX;
+    let hit_threshold = 8.0;
+
+    for axis in [GizmoAxis::X, GizmoAxis::Y, GizmoAxis::Z] {
+        let Some(axis_dir) = axis_direction(axis) else {
+            continue;
+        };
+        let Some(end_screen) =
+            project_to_screen(world_pos + axis_dir * axis_length, &vp, viewport_rect)
+        else {
+            continue;
+        };
+        let dist = point_to_segment_dist(
+            mouse_pos.0,
+            mouse_pos.1,
+            origin_screen.0,
+            origin_screen.1,
+            end_screen.0,
+            end_screen.1,
+        );
+        if dist < hit_threshold && dist < closest_dist {
+            closest_dist = dist;
+            closest_axis = axis;
+        }
+    }
+
+    closest_axis
 }
 
 /// Distance from a point to a line segment in 2D.
@@ -125,7 +191,7 @@ pub fn draw_gizmo(
 
     // Axis length scales with camera distance for consistent screen size
     let cam_dist = (camera.position - world_pos).length();
-    let axis_length = cam_dist * 0.08;
+    let axis_length = cam_dist * 0.14;
 
     let origin = world_pos;
     let x_end = origin + Vec3::X * axis_length;
@@ -245,16 +311,13 @@ pub fn compute_drag_delta(
 ) -> f32 {
     let vp = camera.view_projection_matrix();
 
-    let axis_dir = match axis {
-        GizmoAxis::X => Vec3::X,
-        GizmoAxis::Y => Vec3::Y,
-        GizmoAxis::Z => Vec3::Z,
-        GizmoAxis::None => return 0.0,
+    let Some(axis_dir) = axis_direction(axis) else {
+        return 0.0;
     };
 
     // Project origin and origin+axis to screen
     let cam_dist = (camera.position - world_pos).length();
-    let axis_length = cam_dist * 0.08;
+    let axis_length = cam_dist * 0.14;
 
     let Some(origin_screen) = project_to_screen(world_pos, &vp, viewport_rect) else {
         return 0.0;
@@ -308,6 +371,7 @@ mod tests {
         assert_eq!(state.hovered_axis, GizmoAxis::None);
         assert_eq!(state.active_axis, GizmoAxis::None);
         assert!(!state.is_dragging);
+        assert!(state.drag_start_transform.is_none());
     }
 
     #[test]

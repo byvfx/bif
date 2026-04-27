@@ -21,7 +21,7 @@ RenderWidget::RenderWidget(QWidget* parent) : QWidget(parent) {
     setAttribute(Qt::WA_NoSystemBackground, true);
     // Accept focus so the viewport can handle key events later.
     setFocusPolicy(Qt::StrongFocus);
-    setMouseTracking(false);
+    setMouseTracking(true);
     setMinimumSize(320, 240);
 }
 
@@ -84,9 +84,11 @@ void RenderWidget::resumePainting() {
 
 // ---------------------------------------------------------------------------
 // Camera input (Phase E.1)
-// LMB (no mods)      → primPickRequested (Phase E.2 ray-cast)
+// LMB (no mods)      → primPickRequested (gizmo press, else ray-cast)
 // Alt+LMB drag       → cameraOrbit (dx, dy pixels)
 // MMB drag           → cameraPan   (dx, dy pixels)
+// Mouse move         → transformGizmoMoved (hover or active drag)
+// LMB release        → transformGizmoReleased (commit active drag)
 // Wheel              → cameraZoom  (QWheelEvent::angleDelta().y())
 // Raw pixel deltas are emitted; a downstream handler scales by the
 // ORBIT_SENSITIVITY / PAN_SENSITIVITY constants from bif_viewer/main.
@@ -98,6 +100,7 @@ void RenderWidget::mousePressEvent(QMouseEvent* event) {
         if (event->modifiers() & Qt::AltModifier) {
             m_orbit_active = true;
         } else {
+            m_primary_active = true;
             // Emit framebuffer (physical) pixel coords so the ray-cast
             // matches the wgpu surface dims (which are DPR-scaled).
             const auto dpr = devicePixelRatioF();
@@ -119,12 +122,24 @@ void RenderWidget::mouseMoveEvent(QMouseEvent* event) {
         emit cameraOrbit(delta.x(), delta.y());
     } else if (m_pan_active) {
         emit cameraPan(delta.x(), delta.y());
+    } else {
+        const auto dpr = devicePixelRatioF();
+        emit transformGizmoMoved(
+            static_cast<int>(event->pos().x() * dpr),
+            static_cast<int>(event->pos().y() * dpr));
     }
     event->accept();
 }
 
 void RenderWidget::mouseReleaseEvent(QMouseEvent* event) {
     if (event->button() == Qt::LeftButton) {
+        if (m_primary_active) {
+            const auto dpr = devicePixelRatioF();
+            emit transformGizmoReleased(
+                static_cast<int>(event->pos().x() * dpr),
+                static_cast<int>(event->pos().y() * dpr));
+        }
+        m_primary_active = false;
         m_orbit_active = false;
     } else if (event->button() == Qt::MiddleButton) {
         m_pan_active = false;

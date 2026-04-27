@@ -1125,6 +1125,18 @@ void connect_viewport_signals(
             shell_state->on_prim_pick(x, y);
             update_status();
         });
+    QObject::connect(
+        viewport, &RenderWidget::transformGizmoMoved, shell_state,
+        [shell_state](int x, int y) {
+            shell_state->on_transform_gizmo_move(x, y);
+        });
+    QObject::connect(
+        viewport, &RenderWidget::transformGizmoReleased, shell_state,
+        [shell_state, update_status](int x, int y) {
+            if (shell_state->on_transform_gizmo_release(x, y)) {
+                update_status();
+            }
+        });
 }
 
 }  // namespace

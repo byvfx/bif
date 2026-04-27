@@ -715,6 +715,39 @@ impl Renderer {
                     }
                 }
 
+                if let Some(origin) = self.selected_gizmo_origin() {
+                    let viewport_rect = self.viewport_rect();
+                    self.transform_gizmo.update(
+                        &self.gpu.queue,
+                        origin,
+                        &self.cam.camera,
+                        viewport_rect,
+                        &self.selection.gizmo_state,
+                    );
+                    let mut gizmo_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("Transform Gizmo Pass"),
+                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                            view: &view,
+                            resolve_target: None,
+                            ops: wgpu::Operations {
+                                load: wgpu::LoadOp::Load,
+                                store: wgpu::StoreOp::Store,
+                            },
+                        })],
+                        depth_stencil_attachment: None,
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
+                    });
+                    let (vp_x, vp_y, vp_w, vp_h) = viewport_rect;
+                    let (sx, sy, sw, sh) = self.viewport_scissor();
+                    gizmo_pass.set_viewport(vp_x, vp_y, vp_w, vp_h, 0.0, 1.0);
+                    gizmo_pass.set_scissor_rect(sx, sy, sw, sh);
+                    self.transform_gizmo
+                        .render(&mut gizmo_pass, &self.cam.camera_bind_group);
+                } else {
+                    self.transform_gizmo.clear();
+                }
+
                 // Render gnomon in bottom-right corner
                 {
                     let mut gnomon_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {

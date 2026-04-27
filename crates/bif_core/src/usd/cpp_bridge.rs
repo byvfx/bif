@@ -3417,6 +3417,79 @@ def Xform "World"
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    #[test]
+    fn write_layer_xform_preserves_translate_op_type() {
+        let dir = temp_usda_path("translate_xform_dir");
+        let dir = dir.with_extension("");
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        let root = dir.join("root.usda");
+        let working = dir.join("working.usda");
+        let asset = dir.join("asset.usda");
+        std::fs::write(&working, "#usda 1.0\n\n").expect("write working");
+        std::fs::write(
+            &asset,
+            r#"#usda 1.0
+
+def Xform "World"
+{
+    def Xform "Cube"
+    {
+        float3 xformOp:translate = (0, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+}
+
+"#,
+        )
+        .expect("write asset");
+        std::fs::write(
+            &root,
+            r#"#usda 1.0
+(
+    subLayers = [
+        @working.usda@,
+        @asset.usda@
+    ]
+)
+
+"#,
+        )
+        .expect("write root");
+
+        let stage = UsdStage::open(&root).expect("open root");
+        let working_id = stage
+            .get_layer_stack()
+            .expect("layer stack")
+            .layers
+            .into_iter()
+            .find(|l| l.identifier.ends_with("working.usda"))
+            .map(|l| l.identifier)
+            .expect("working layer");
+        let matrix = Mat4::from_translation(Vec3::new(4.0, 5.0, 6.0)).to_cols_array();
+
+        stage
+            .write_layer_xform(&working_id, "/World/Cube", -1.0, &matrix)
+            .expect("write translate-backed xform");
+
+        let value = stage
+            .layer_get_attr_value(&working_id, "/World/Cube", "xformOp:translate")
+            .expect("get authored translate")
+            .expect("authored translate value");
+        assert!(
+            value.contains('4') && value.contains('5') && value.contains('6'),
+            "translate op should receive vector value from matrix translation, got {value}"
+        );
+        assert!(
+            stage
+                .layer_get_attr_value(&working_id, "/World/Cube", "xformOp:transform")
+                .expect("get authored transform")
+                .is_none(),
+            "translate-backed prim should not receive matrix transform op"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// Test loading USD file with relative references (Xform refs).
     /// lucy_100.usda has 100 Xform prims each referencing @./lucy_low.usda@
     #[test]

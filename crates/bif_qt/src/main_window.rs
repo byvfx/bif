@@ -457,6 +457,14 @@ pub mod qobject {
         #[qinvokable]
         fn on_prim_pick(self: Pin<&mut BifShellState>, x: i32, y: i32);
 
+        /// Viewport mouse move / primary drag for the translate gizmo.
+        #[qinvokable]
+        fn on_transform_gizmo_move(self: Pin<&mut BifShellState>, x: i32, y: i32) -> bool;
+
+        /// Viewport primary-button release for translate gizmo commit.
+        #[qinvokable]
+        fn on_transform_gizmo_release(self: Pin<&mut BifShellState>, x: i32, y: i32) -> bool;
+
         /// Scene-browser tree selection change. Routes through the
         /// renderer so viewport gizmo + outline highlight sync to the
         /// clicked row. Also mirrors path/type into shell qprops so the
@@ -1370,6 +1378,17 @@ impl qobject::BifShellState {
     }
 
     fn on_prim_pick(mut self: Pin<&mut Self>, x: i32, y: i32) {
+        let gizmo_axis = with_viewport_mut(|vp| {
+            vp.renderer_mut()
+                .begin_transform_gizmo_drag(x as f32, y as f32)
+        })
+        .flatten();
+        if let Some(axis) = gizmo_axis {
+            self.as_mut()
+                .set_status_message(cxx_qt_lib::QString::from(&format!("Move {axis} axis")));
+            return;
+        }
+
         // Route through the renderer's unified selection path so viewport
         // outline + gizmo state stay in sync with tree/property panels.
         // `select_at_screen` ray-casts into the pick BVH, updates
@@ -1407,20 +1426,28 @@ impl qobject::BifShellState {
                 })
                 .unwrap_or_default();
             log::debug!("pick idx={idx} raw={raw} path={path} type={type_name}");
-            Some((path, type_name))
+            let has_gizmo = r.has_transform_gizmo();
+            Some((path, type_name, has_gizmo))
         })
         .flatten();
 
         match pick_result {
-            Some((path, type_name)) => {
+            Some((path, type_name, has_gizmo)) => {
                 log::info!("pick hit: path={path} type={type_name}");
                 self.as_mut()
                     .set_selected_prim_path(cxx_qt_lib::QString::from(&path));
                 self.as_mut()
                     .set_selected_prim_type(cxx_qt_lib::QString::from(&type_name));
                 refresh_selected_prim_stack_cache(self.as_mut());
+                let suffix = if has_gizmo {
+                    " — move handles ready"
+                } else {
+                    " — no movable viewport instance"
+                };
                 self.as_mut()
-                    .set_status_message(cxx_qt_lib::QString::from(&format!("Selected: {path}")));
+                    .set_status_message(cxx_qt_lib::QString::from(&format!(
+                        "Selected: {path}{suffix}"
+                    )));
             }
             None => {
                 self.as_mut()
@@ -1432,6 +1459,27 @@ impl qobject::BifShellState {
                     .set_status_message(cxx_qt_lib::QString::from("Selection cleared."));
             }
         }
+    }
+
+    fn on_transform_gizmo_move(self: Pin<&mut Self>, x: i32, y: i32) -> bool {
+        with_viewport_mut(|vp| {
+            vp.renderer_mut()
+                .update_transform_gizmo_drag(x as f32, y as f32)
+        })
+        .unwrap_or(false)
+    }
+
+    fn on_transform_gizmo_release(mut self: Pin<&mut Self>, x: i32, y: i32) -> bool {
+        let moved = with_viewport_mut(|vp| {
+            vp.renderer_mut()
+                .end_transform_gizmo_drag(x as f32, y as f32)
+        })
+        .unwrap_or(false);
+        if moved {
+            self.as_mut()
+                .set_status_message(cxx_qt_lib::QString::from("Transform moved"));
+        }
+        moved
     }
 
     fn on_tree_prim_selected(
@@ -1446,12 +1494,26 @@ impl qobject::BifShellState {
         // Drive renderer-side selection so the viewport gizmo + outline
         // highlight follow the tree click. `select_prim_by_path` resolves
         // the prim path back to an instance index when available.
-        with_viewport_mut(|vp| vp.renderer_mut().select_prim_by_path(&path_str));
+        let has_gizmo = with_viewport_mut(|vp| {
+            let renderer = vp.renderer_mut();
+            renderer.select_prim_by_path(&path_str);
+            renderer.has_transform_gizmo()
+        })
+        .unwrap_or(false);
         // Mirror path/type into shell qprops so the property inspector
         // (which binds to `selected_prim_pathChanged`) updates too.
         self.as_mut().set_selected_prim_path(path);
         self.as_mut().set_selected_prim_type(type_name);
         refresh_selected_prim_stack_cache(self.as_mut());
+        let suffix = if has_gizmo {
+            " — move handles ready"
+        } else {
+            " — no movable viewport instance"
+        };
+        self.as_mut()
+            .set_status_message(cxx_qt_lib::QString::from(&format!(
+                "Selected: {path_str}{suffix}"
+            )));
     }
 
     fn on_set_lod_enabled(mut self: Pin<&mut Self>, enabled: bool) {

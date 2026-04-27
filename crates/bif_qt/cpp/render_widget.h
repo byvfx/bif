@@ -15,7 +15,8 @@
 //   emits resized(w, h)    — whenever the widget's pixel size changes
 //   emits frameRequested() — Qt update() path triggers a paintEvent
 //   emits cameraOrbit / cameraPan / cameraZoom — camera input (Phase E.1)
-//   emits primPickRequested(x, y) — LMB click for ray-cast (Phase E.1)
+//   emits primPickRequested(x, y) — LMB click for ray-cast / gizmo press
+//   emits transformGizmoMoved/Released(x, y) — hover + LMB drag updates
 //
 // The Rust side drives wgpu::Surface creation/render/resize entirely;
 // this widget is a glorified HWND carrier with a render tick + input.
@@ -72,10 +73,15 @@ signals:
     void cameraZoom(int angle_delta);
     /// Unmodified LMB click — Phase E.2 ray-casts into selection.rs.
     void primPickRequested(int x, int y);
+    /// Mouse move over the viewport, or unmodified LMB drag for transform gizmo.
+    void transformGizmoMoved(int x, int y);
+    /// Unmodified LMB release for transform gizmo commit.
+    void transformGizmoReleased(int x, int y);
 
 private:
     QTimer* m_tick = nullptr;
     QPoint m_last_mouse_pos;
     bool m_orbit_active = false;
     bool m_pan_active = false;
+    bool m_primary_active = false;
 };

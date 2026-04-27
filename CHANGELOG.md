@@ -12,6 +12,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Qt C2 quick wins for the v0.16 editor tranche** (2026-04-23). Added live selection-outline controls in Render Settings, drag-and-drop USD stage open in the Qt shell, rich per-property opinion-stack tooltips, and an `Ivar Render` trigger surfaced in both Render Settings and the new Render menu with status-bar progress.
 - **Qt C3 navigation for the v0.16 editor tranche** (2026-04-25). Added `View → Look Through…` camera surfacing, an orthographic toggle wired to the existing aspect-correct ortho camera path, and persisted Assembly / Lighting / Materials / Review workspaces that drive payload-policy-aware stage reloads with a confirmation dialog when a stage is already open.
 - **C4a edit/save foundation for v0.16** (2026-04-26). Added `EditOperation` / `EditHistory`, working-layer USD FFI writes, stage-layer save/export/import/parse helpers, variant selections authored through `UsdEditContext`, viewport USD/procedural undo routing, and round-trip tests for transform, visibility, material binding, material parameter, and variant edits.
+- **Qt transform gizmo for C4 dogfood** (2026-04-27). Added a viewport translate gizmo in the Qt path with axis hover, drag preview, release-to-commit through `TransformEdit`, C4a working-layer save support, and translate-op preserving USD xform saves.
 
 ### Changed
 

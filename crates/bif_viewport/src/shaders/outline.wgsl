@@ -19,7 +19,9 @@ var<uniform> camera: CameraUniform;
 struct OutlineParams {
     color: vec4<f32>,
     width_ndc: f32,
-    _pad0: vec3<f32>,
+    _pad0: f32,
+    _pad1: f32,
+    _pad2: f32,
 }
 
 @group(1) @binding(0)

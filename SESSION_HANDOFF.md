@@ -1,8 +1,22 @@
+# Session Handoff — April 27, 2026 (`finish-qt-ui` C4a dogfood transform gizmo)
+
+**Last Updated:** 2026-04-27. Branch `finish-qt-ui` has the C4a edit/save foundation plus a Qt viewport translate gizmo for dogfood. Selecting a movable prim in the viewport or scene tree now shows axis handles; dragging previews through the renderer transform path and release commits a `TransformEdit` through `EditHistory` to the active working layer. The USD bridge now preserves existing xform op types when writing movement, so translate-backed prims receive vec3 values instead of matrix opinions.
+
+**Validation:** `cargo build` passed in `C:/Users/brandon/.cargo-target-bif-commit` with Qt/USD env because the live Qt shell was holding the default `bif_qt_shell.exe`; `cargo clippy -- -D warnings` and `cargo fmt --check` passed in the default shared target. Focused regression checks also passed for `write_layer_xform_preserves_translate_op_type` and `selection_resolver_tests`.
+
+**Next action:** continue C4b with the missing Qt relationships panel, then variant/material editing surfaces. Keep `test_assets/layers/*.usda` dogfood saves out of source commits unless intentionally refreshing fixtures.
+
+## 🏁 2026-04-27 — `finish-qt-ui` C4a dogfood transform gizmo
+
+- **Qt can move selected prims again.** `RenderWidget` forwards hover/primary-drag/release events to Rust; the renderer owns gizmo hit testing, drag preview, and release commit.
+- **Selection resolves real and synthetic paths.** Viewport and tree selection now normalize `/BIF/.../<instance>` paths and parent/mesh-child paths before resolving a movable instance.
+- **Working-layer transform authoring survives real USD xform ops.** The bridge writes matrices to transform ops, vectors to translate ops, and adds a transform op only when no compatible op exists.
+- **Rendering validation issue fixed.** `outline.wgsl` padding now matches the Rust uniform layout, avoiding the wgpu 32-vs-48 byte validation panic.
+- **Dogfood state.** User confirmed the gizmo appears and movement works; `Ctrl+S` remains working-layer-only from C4a.
+
+---
+
 # Session Handoff — April 26, 2026 (`finish-qt-ui` C4a edit foundation)
-
-**Last Updated:** 2026-04-26. Branch `finish-qt-ui` now has the C4a edit/save foundation from `docs/agent-handoffs/2026-04-24-v0.16-c4a-edit-foundation.md`: `EditOperation` / `EditHistory`, working-layer FFI writes, variant selections authored through `UsdEditContext`, Ctrl+S working-layer save, dirty-bit clearing, and ADR-008. Validation so far is green for `cargo build` with Qt/USD env and `cargo test -p bif_core --test edit_op_roundtrip --test edit_history -- --test-threads=1`.
-
-**Next action:** finish the full validation sweep (`cargo clippy -- -D warnings`, `cargo fmt --check`, crate tests, full `bif_core -- --test-threads=1`), then continue C4b: editable USDA layer panel, material sheet, and shading-model switching.
 
 ## 🏁 2026-04-26 — `finish-qt-ui` C4a edit foundation
 

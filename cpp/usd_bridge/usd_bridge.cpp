@@ -31,6 +31,7 @@
 #include <pxr/usd/usdRender/settings.h>
 #include <pxr/base/gf/matrix4f.h>
 #include <pxr/base/gf/vec2f.h>
+#include <pxr/base/gf/vec3d.h>
 #include <pxr/base/gf/vec3f.h>
 #include <pxr/base/gf/quath.h>
 #include <pxr/base/vt/array.h>
@@ -4194,6 +4195,69 @@ struct UsdBridgeEditLayer {
     std::string output_path;
 };
 
+static GfMatrix4d matrix_from_col_major_f32(const float* matrix_16) {
+    GfMatrix4d mat;
+    for (int col = 0; col < 4; ++col) {
+        for (int row = 0; row < 4; ++row) {
+            mat[row][col] = static_cast<double>(matrix_16[col * 4 + row]);
+        }
+    }
+    return mat;
+}
+
+static GfVec3d translation_from_col_major_f32(const float* matrix_16) {
+    return GfVec3d(
+        static_cast<double>(matrix_16[12]),
+        static_cast<double>(matrix_16[13]),
+        static_cast<double>(matrix_16[14])
+    );
+}
+
+static bool set_translate_op_value(
+    const UsdGeomXformOp& op,
+    const GfVec3d& translation,
+    UsdTimeCode time_code
+) {
+    if (op.GetPrecision() == UsdGeomXformOp::PrecisionDouble) {
+        return op.Set(translation, time_code);
+    }
+    return op.Set(
+        GfVec3f(
+            static_cast<float>(translation[0]),
+            static_cast<float>(translation[1]),
+            static_cast<float>(translation[2])
+        ),
+        time_code
+    );
+}
+
+static bool set_xform_from_matrix_preserving_op_type(
+    UsdGeomXformable& xformable,
+    const float* matrix_16,
+    UsdTimeCode time_code
+) {
+    const GfMatrix4d mat = matrix_from_col_major_f32(matrix_16);
+    const GfVec3d translation = translation_from_col_major_f32(matrix_16);
+
+    bool reset_stack = false;
+    auto ops = xformable.GetOrderedXformOps(&reset_stack);
+
+    for (const auto& op : ops) {
+        if (op.GetOpType() == UsdGeomXformOp::TypeTransform) {
+            return op.Set(mat, time_code);
+        }
+    }
+
+    for (const auto& op : ops) {
+        if (op.GetOpType() == UsdGeomXformOp::TypeTranslate) {
+            return set_translate_op_value(op, translation, time_code);
+        }
+    }
+
+    auto op = xformable.AddTransformOp();
+    return op.Set(mat, time_code);
+}
+
 UsdBridgeError usd_bridge_create_edit_layer(
     const char* output_path,
     UsdBridgeEditLayer** out_layer
@@ -4251,31 +4315,9 @@ UsdBridgeError usd_bridge_write_xform_opinion(
             }
         }
 
-        // Build GfMatrix4d from column-major float[16]
-        GfMatrix4d mat;
-        for (int col = 0; col < 4; ++col) {
-            for (int row = 0; row < 4; ++row) {
-                mat[row][col] = static_cast<double>(matrix_16[col * 4 + row]);
-            }
-        }
-
-        // Clear existing xform ops and set single transform op
-        bool reset_stack = false;
-        auto ops = xformable.GetOrderedXformOps(&reset_stack);
-        if (ops.empty()) {
-            auto op = xformable.AddTransformOp();
-            if (time < 0.0) {
-                op.Set(mat, UsdTimeCode::Default());
-            } else {
-                op.Set(mat, UsdTimeCode(time));
-            }
-        } else {
-            // Reuse existing transform op
-            if (time < 0.0) {
-                ops[0].Set(mat, UsdTimeCode::Default());
-            } else {
-                ops[0].Set(mat, UsdTimeCode(time));
-            }
+        const UsdTimeCode time_code = time < 0.0 ? UsdTimeCode::Default() : UsdTimeCode(time);
+        if (!set_xform_from_matrix_preserving_op_type(xformable, matrix_16, time_code)) {
+            return USD_BRIDGE_ERROR_UNKNOWN;
         }
 
         return USD_BRIDGE_SUCCESS;
@@ -6715,22 +6757,10 @@ UsdBridgeError usd_bridge_layer_write_xform(
             if (!xformable) return USD_BRIDGE_ERROR_UNKNOWN;
         }
 
-        GfMatrix4d mat;
-        for (int col = 0; col < 4; ++col) {
-            for (int row = 0; row < 4; ++row) {
-                mat[row][col] = static_cast<double>(matrix_16[col * 4 + row]);
-            }
+        const UsdTimeCode time_code = time < 0.0 ? UsdTimeCode::Default() : UsdTimeCode(time);
+        if (!set_xform_from_matrix_preserving_op_type(xformable, matrix_16, time_code)) {
+            return USD_BRIDGE_ERROR_UNKNOWN;
         }
-
-        bool reset_stack = false;
-        auto ops = xformable.GetOrderedXformOps(&reset_stack);
-        UsdGeomXformOp op;
-        if (ops.empty()) {
-            op = xformable.AddTransformOp();
-        } else {
-            op = ops[0];
-        }
-        op.Set(mat, time < 0.0 ? UsdTimeCode::Default() : UsdTimeCode(time));
         invalidate_all_caches(stage);
         return USD_BRIDGE_SUCCESS;
     } catch (const std::exception& e) {

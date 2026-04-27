@@ -1,7 +1,9 @@
 //! Selection event dispatch — prim selection, transforms, variants, framing.
 
 use bif_core::SceneQuery;
+use bif_math::Vec3;
 
+use crate::gizmo::{axis_direction, axis_name, hit_test_axis, GizmoAxis};
 use crate::ivar_state::RenderMode;
 use crate::property_inspector::{PrimProperties, TransformEdit};
 use crate::scene_browser::{CompositeProvider, PrimDataProvider, ProceduralPrimKind};
@@ -10,34 +12,175 @@ use crate::Renderer;
 impl Renderer {
     /// Resolve a prim path to an instance index in the viewport's SceneInstances.
     ///
-    /// Uses 3-strategy lookup (same logic as `SceneQuery::find_instance_by_prim_path`
-    /// but against the viewport's parallel prim_paths array):
+    /// Uses layered lookup against the viewport's parallel prim_paths array:
     /// 1. Exact match
-    /// 2. Descendant prefix (`{path}/...`)
-    /// 3. Synthetic `/BIF/` fallback (loader-generated paths)
+    /// 2. Synthetic `/BIF/` display-path match
+    /// 3. Descendant prefix (`{path}/...`) for parent Xform selection
+    /// 4. Immediate-parent match for mesh children backed by parent Xform instances
     fn resolve_instance_index(&self, prim_path: &str) -> Option<usize> {
-        self.scene
-            .instances
-            .prim_paths
+        let query = normalize_prim_path(prim_path);
+        let instance_paths = &self.scene.instances.prim_paths;
+        let has_transform = |idx: usize| self.scene.instances.current.get(idx).is_some();
+
+        instance_paths
             .iter()
-            .position(|p| p.as_str() == prim_path)
+            .enumerate()
+            .position(|(idx, p)| has_transform(idx) && normalize_prim_path(p) == query)
             .or_else(|| {
-                let prefix = format!("{}/", prim_path);
-                self.scene
-                    .instances
-                    .prim_paths
-                    .iter()
-                    .position(|p| p.starts_with(&prefix))
+                instance_paths.iter().enumerate().position(|(idx, p)| {
+                    has_transform(idx) && normalize_instance_display_path(p) == query
+                })
             })
             .or_else(|| {
-                let trimmed = prim_path.strip_prefix('/').unwrap_or(prim_path);
-                let synth_prefix = format!("/BIF/{}", trimmed);
-                self.scene
-                    .instances
-                    .prim_paths
-                    .iter()
-                    .position(|p| p.starts_with(&synth_prefix))
+                instance_paths.iter().enumerate().position(|(idx, p)| {
+                    has_transform(idx)
+                        && path_is_descendant_of(&normalize_instance_display_path(p), &query)
+                })
             })
+            .or_else(|| {
+                instance_paths.iter().enumerate().position(|(idx, p)| {
+                    has_transform(idx)
+                        && immediate_parent(&query)
+                            .is_some_and(|parent| parent == normalize_instance_display_path(p))
+                })
+            })
+    }
+
+    fn selected_instance_transform(&self) -> Option<(usize, bif_core::Transform)> {
+        let idx = self.selection.selected_instance_index?;
+        let mat = self.scene.instances.current.get(idx).copied()?;
+        Some((idx, bif_core::Transform::from_matrix(mat)))
+    }
+
+    pub(crate) fn selected_gizmo_origin(&self) -> Option<Vec3> {
+        let idx = self.selection.selected_instance_index?;
+        let mat = self.scene.instances.current.get(idx).copied()?;
+        let proto_id = self
+            .scene
+            .instances
+            .prototype_ids
+            .get(idx)
+            .copied()
+            .unwrap_or(0);
+        let local_center = self
+            .scene
+            .working_scene
+            .prototypes
+            .get(proto_id)
+            .map(|p| p.mesh.bounds.centroid())
+            .unwrap_or(Vec3::ZERO);
+        Some(
+            (mat * bif_math::Vec4::new(local_center.x, local_center.y, local_center.z, 1.0))
+                .truncate(),
+        )
+    }
+
+    pub fn has_transform_gizmo(&self) -> bool {
+        self.selected_gizmo_origin().is_some()
+    }
+
+    fn hover_transform_gizmo_axis(&self, screen_x: f32, screen_y: f32) -> Option<GizmoAxis> {
+        let origin = self.selected_gizmo_origin()?;
+        Some(hit_test_axis(
+            &self.cam.camera,
+            origin,
+            self.viewport_rect(),
+            (screen_x, screen_y),
+        ))
+    }
+
+    pub fn begin_transform_gizmo_drag(
+        &mut self,
+        screen_x: f32,
+        screen_y: f32,
+    ) -> Option<&'static str> {
+        let (_, transform) = self.selected_instance_transform()?;
+        let origin = self.selected_gizmo_origin()?;
+        let axis = self.hover_transform_gizmo_axis(screen_x, screen_y)?;
+        if axis == GizmoAxis::None {
+            self.selection.gizmo_state.hovered_axis = GizmoAxis::None;
+            return None;
+        }
+
+        let state = &mut self.selection.gizmo_state;
+        state.hovered_axis = axis;
+        state.active_axis = axis;
+        state.is_dragging = true;
+        state.drag_start_screen = (screen_x, screen_y);
+        state.drag_start_world = origin;
+        state.drag_world_delta = 0.0;
+        state.drag_start_transform = Some(transform);
+        Some(axis_name(axis))
+    }
+
+    pub fn update_transform_gizmo_drag(&mut self, screen_x: f32, screen_y: f32) -> bool {
+        if !self.selection.gizmo_state.is_dragging {
+            if let Some(axis) = self.hover_transform_gizmo_axis(screen_x, screen_y) {
+                self.selection.gizmo_state.hovered_axis = axis;
+                return axis != GizmoAxis::None;
+            }
+            self.selection.gizmo_state.hovered_axis = GizmoAxis::None;
+            return false;
+        }
+
+        let Some((idx, _)) = self.selected_instance_transform() else {
+            self.selection.gizmo_state.reset();
+            return false;
+        };
+        let state = self.selection.gizmo_state;
+        let Some(start_transform) = state.drag_start_transform else {
+            self.selection.gizmo_state.reset();
+            return false;
+        };
+        let Some(axis_dir) = axis_direction(state.active_axis) else {
+            self.selection.gizmo_state.reset();
+            return false;
+        };
+
+        let delta = crate::gizmo::compute_drag_delta(
+            (screen_x, screen_y),
+            state.drag_start_screen,
+            &self.cam.camera,
+            state.active_axis,
+            state.drag_start_world,
+            self.viewport_rect(),
+        );
+        let mut new_transform = start_transform;
+        new_transform.translation = start_transform.translation + axis_dir * delta;
+        self.selection.gizmo_state.drag_world_delta = delta;
+        self.handle_transform_edit(TransformEdit {
+            instance_index: idx,
+            old_transform: start_transform,
+            new_transform,
+            committed: false,
+        });
+        true
+    }
+
+    pub fn end_transform_gizmo_drag(&mut self, screen_x: f32, screen_y: f32) -> bool {
+        if !self.selection.gizmo_state.is_dragging {
+            self.selection.gizmo_state.hovered_axis = GizmoAxis::None;
+            return false;
+        }
+
+        self.update_transform_gizmo_drag(screen_x, screen_y);
+        let Some((idx, final_transform)) = self.selected_instance_transform() else {
+            self.selection.gizmo_state.reset();
+            return false;
+        };
+        let Some(start_transform) = self.selection.gizmo_state.drag_start_transform else {
+            self.selection.gizmo_state.reset();
+            return false;
+        };
+
+        self.handle_transform_edit(TransformEdit {
+            instance_index: idx,
+            old_transform: start_transform,
+            new_transform: final_transform,
+            committed: true,
+        });
+        self.selection.gizmo_state.reset();
+        true
     }
 
     /// Build prim properties for the property inspector from scene + USD data.
@@ -181,6 +324,29 @@ impl Renderer {
             .map(|s| s.lock().expect("UsdStage mutex poisoned"));
         self.selection.selected_prim_properties =
             Some(self.build_prim_properties(&prim_path, &stage_guard));
+        if let Some(origin) = self.selected_gizmo_origin() {
+            log::info!(
+                "Transform gizmo ready for {prim_path}: instance={:?}, origin=({:.3},{:.3},{:.3})",
+                self.selection.selected_instance_index,
+                origin.x,
+                origin.y,
+                origin.z
+            );
+        } else {
+            let sample = self
+                .scene
+                .instances
+                .prim_paths
+                .iter()
+                .take(8)
+                .enumerate()
+                .map(|(idx, path)| format!("{idx}:{path}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            log::info!(
+                "No transform gizmo instance resolved for {prim_path}; instance_paths=[{sample}]"
+            );
+        }
     }
 
     pub(crate) fn handle_transform_edit(&mut self, edit: TransformEdit) {
@@ -339,5 +505,75 @@ impl Renderer {
             }
             None => {}
         }
+    }
+}
+
+fn normalize_prim_path(path: &str) -> String {
+    let trimmed = path.trim().trim_matches('/');
+    if trimmed.is_empty() {
+        "/".to_string()
+    } else {
+        format!("/{trimmed}")
+    }
+}
+
+fn normalize_instance_display_path(path: &str) -> String {
+    normalize_prim_path(&denormalize_synthetic_instance_path(path))
+}
+
+fn denormalize_synthetic_instance_path(path: &str) -> String {
+    if let Some(stripped) = path.strip_prefix("/BIF/") {
+        if let Some(last_slash) = stripped.rfind('/') {
+            let suffix = &stripped[last_slash + 1..];
+            if suffix.parse::<usize>().is_ok() {
+                return stripped[..last_slash].to_string();
+            }
+        }
+        return stripped.to_string();
+    }
+    path.to_string()
+}
+
+fn path_is_descendant_of(path: &str, ancestor: &str) -> bool {
+    ancestor != "/" && path.starts_with(&format!("{ancestor}/"))
+}
+
+fn immediate_parent(path: &str) -> Option<String> {
+    let path = normalize_prim_path(path);
+    let slash = path.rfind('/')?;
+    if slash == 0 {
+        return None;
+    }
+    Some(path[..slash].to_string())
+}
+
+#[cfg(test)]
+mod selection_resolver_tests {
+    use super::{
+        immediate_parent, normalize_instance_display_path, normalize_prim_path,
+        path_is_descendant_of,
+    };
+
+    #[test]
+    fn normalizes_synthetic_instance_paths_to_display_paths() {
+        assert_eq!(
+            normalize_instance_display_path("/BIF/cube/mesh_0/12"),
+            "/cube/mesh_0"
+        );
+    }
+
+    #[test]
+    fn parent_selection_matches_descendant_instance_path() {
+        assert!(path_is_descendant_of("/ground/mesh_0", "/ground"));
+    }
+
+    #[test]
+    fn mesh_child_selection_can_match_parent_instance_path() {
+        assert_eq!(immediate_parent("/cube/mesh_0").as_deref(), Some("/cube"));
+    }
+
+    #[test]
+    fn normalization_restores_leading_slash() {
+        assert_eq!(normalize_prim_path("cube/mesh_0"), "/cube/mesh_0");
     }
 }

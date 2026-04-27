@@ -28,6 +28,7 @@ pub mod mesh_data;
 pub mod multi_draw;
 pub mod point_preview;
 pub mod texture_loader;
+mod transform_gizmo;
 
 // Scene browser and property inspector modules
 mod animation;
@@ -81,6 +82,7 @@ pub use texture_loader::{
     TextureLoadMessage, DEFAULT_MAX_VIEWPORT_TEXTURE_SIZE,
 };
 pub use timeline::TimelineState;
+use transform_gizmo::TransformGizmoRenderer;
 pub use types::*;
 
 pub use node_graph::{render_node_graph, GraphNodeId, NodeGraphEvent, NodeGraphState, SceneNode};
@@ -240,6 +242,9 @@ pub struct Renderer {
 
     // Ground grid
     pub(crate) grid: GridRenderer,
+
+    // Selected-prim transform gizmo
+    pub(crate) transform_gizmo: TransformGizmoRenderer,
 
     // UI state
     pub fps: f32,
@@ -815,6 +820,11 @@ impl Renderer {
         let grid = GridRenderer::new(&device, config.format, &camera_bind_group_layout);
         log::info!("Grid initialized");
 
+        // Create selected-prim transform gizmo renderer
+        let transform_gizmo =
+            TransformGizmoRenderer::new(&device, config.format, &camera_bind_group_layout);
+        log::info!("Transform gizmo initialized");
+
         // Create point preview renderer
         let point_preview = point_preview::PointPreviewRenderer::new(
             &device,
@@ -911,6 +921,7 @@ impl Renderer {
             depth_view,
             gnomon,
             grid,
+            transform_gizmo,
             fps: 0.0,
             frame_count: 0,
             fps_update_timer: 0.0,
