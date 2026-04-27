@@ -33,10 +33,19 @@ pub enum AttrSlot {
     Xform,
     Visibility,
     MaterialBinding,
-    ShaderInput { shader_path: String, name: String },
-    VariantSelection { vset: String },
+    ShaderInput {
+        shader_path: String,
+        name: String,
+    },
+    VariantSelection {
+        vset: String,
+    },
     PayloadLoad,
-    Reference { index: u32 },
+    Reference {
+        index: u32,
+    },
+    /// Whole-layer USDA replace — `prim_path` carries the layer id.
+    LayerContents,
 }
 
 /// USD shader input value supported by the v0.16 foundation.
@@ -108,6 +117,16 @@ pub enum EditOperation {
         before: Option<String>,
         after: String,
     },
+    /// Wholesale replace of the working layer's USDA text.
+    /// Authored by the USDA panel Apply path. `before` is the
+    /// pre-replace serialized layer (captured immediately before
+    /// import); the inverse re-imports `before`. `key` carries
+    /// the layer identifier in `prim_path` and `AttrSlot::LayerContents`.
+    ReplaceLayerContents {
+        key: OpinionKey,
+        before: String,
+        after: String,
+    },
 }
 
 impl EditOperation {
@@ -117,7 +136,17 @@ impl EditOperation {
             | EditOperation::Visibility { key, .. }
             | EditOperation::MaterialAssign { key, .. }
             | EditOperation::MaterialParamOverride { key, .. }
-            | EditOperation::VariantSelect { key, .. } => key,
+            | EditOperation::VariantSelect { key, .. }
+            | EditOperation::ReplaceLayerContents { key, .. } => key,
+        }
+    }
+
+    /// Construct a ReplaceLayerContents op for `layer_id`.
+    pub fn replace_layer(layer_id: impl Into<String>, before: String, after: String) -> Self {
+        EditOperation::ReplaceLayerContents {
+            key: OpinionKey::new(layer_id, AttrSlot::LayerContents),
+            before,
+            after,
         }
     }
 
@@ -128,6 +157,7 @@ impl EditOperation {
             EditOperation::MaterialAssign { .. } => "USD material",
             EditOperation::MaterialParamOverride { .. } => "USD material parameter",
             EditOperation::VariantSelect { .. } => "USD variant",
+            EditOperation::ReplaceLayerContents { .. } => "USDA layer replace",
         }
     }
 
@@ -163,6 +193,14 @@ impl EditOperation {
                     ));
                 };
                 stage.set_variant_selection(&key.prim_path, vset, after, working_layer_id)?;
+            }
+            EditOperation::ReplaceLayerContents { key, after, .. } => {
+                if !matches!(key.attr, AttrSlot::LayerContents) {
+                    return Err(crate::usd::cpp_bridge::UsdBridgeError::InvalidPrim(
+                        "ReplaceLayerContents requires LayerContents key".to_string(),
+                    ));
+                }
+                stage.import_layer_from_string(&key.prim_path, after)?;
             }
         }
         Ok(self.description().to_string())
@@ -204,6 +242,13 @@ impl EditOperation {
                 before.as_ref().map(|before| EditOperation::VariantSelect {
                     key: key.clone(),
                     before: Some(after.clone()),
+                    after: before.clone(),
+                })
+            }
+            EditOperation::ReplaceLayerContents { key, before, after } => {
+                Some(EditOperation::ReplaceLayerContents {
+                    key: key.clone(),
+                    before: after.clone(),
                     after: before.clone(),
                 })
             }

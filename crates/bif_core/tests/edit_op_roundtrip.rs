@@ -160,3 +160,52 @@ fn variant_selection_roundtrips_after_save_reopen() {
         .expect("export working layer");
     assert!(text.contains("high"));
 }
+
+#[test]
+fn replace_layer_contents_roundtrips() {
+    let fixture = helpers::LayeredStageFixture::new("replace_layer");
+    let stage = UsdStage::open(&fixture.root).expect("open stage");
+    let (mut state, working_id) = state_for_working_layer(&stage);
+
+    // Use existing visibility writer to author a valid `before`,
+    // then capture text. Reset, then ReplaceLayerContents should
+    // round-trip both the apply (matches `after`) and the inverse
+    // (matches `before`).
+    let before = stage
+        .export_layer_as_string(&working_id)
+        .expect("export before");
+
+    stage
+        .write_layer_visibility(&working_id, "/World/Cube", false)
+        .expect("seed visibility opinion");
+    let after = stage
+        .export_layer_as_string(&working_id)
+        .expect("export after");
+    assert_ne!(before, after, "visibility seed should change layer text");
+
+    // Reset to `before` so apply has work to do.
+    stage
+        .import_layer_from_string(&working_id, &before)
+        .expect("reset to before");
+
+    state
+        .apply_edit_operation(
+            &stage,
+            EditOperation::replace_layer(working_id.clone(), before.clone(), after.clone()),
+        )
+        .expect("apply replace");
+
+    let after_text = stage
+        .export_layer_as_string(&working_id)
+        .expect("export after");
+    assert!(after_text.contains("invisible"));
+
+    state
+        .undo_usd_edit(&stage)
+        .expect("undo")
+        .expect("undo desc");
+    let restored = stage
+        .export_layer_as_string(&working_id)
+        .expect("export restored");
+    assert_eq!(restored.trim(), before.trim());
+}

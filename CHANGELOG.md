@@ -13,6 +13,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Qt C3 navigation for the v0.16 editor tranche** (2026-04-25). Added `View → Look Through…` camera surfacing, an orthographic toggle wired to the existing aspect-correct ortho camera path, and persisted Assembly / Lighting / Materials / Review workspaces that drive payload-policy-aware stage reloads with a confirmation dialog when a stage is already open.
 - **C4a edit/save foundation for v0.16** (2026-04-26). Added `EditOperation` / `EditHistory`, working-layer USD FFI writes, stage-layer save/export/import/parse helpers, variant selections authored through `UsdEditContext`, viewport USD/procedural undo routing, and round-trip tests for transform, visibility, material binding, material parameter, and variant edits.
 - **Qt transform gizmo for C4 dogfood** (2026-04-27). Added a viewport translate gizmo in the Qt path with axis hover, drag preview, release-to-commit through `TransformEdit`, C4a working-layer save support, and translate-op preserving USD xform saves.
+- **C4b-Carry-2 `EditOperation::ReplaceLayerContents`** (2026-04-27). Added a wholesale-layer USDA-replace variant on `EditOperation` (with `EditOperation::replace_layer` constructor), threading apply through `import_layer_from_string` and inverse through the captured `before` text. Wired round-trip test to lock the apply→undo contract for the upcoming USDA panel Apply path.
 
 ### Changed
 
