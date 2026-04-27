@@ -24,6 +24,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 
 - **Ctrl+S now saves the selected working layer** (2026-04-26). The Qt save action resolves `SceneLayerState.working_layer`, calls `UsdStage::save_layer`, clears the dirty bit in shell and viewport mirrors, and reports `Saved <id>` or `Save failed: ...`.
+- **C4a code review followup: USD FFI string buffers no longer collide** (2026-04-27). `usd_bridge_layer_export_as_string` and `usd_bridge_layer_get_attr_value` previously shared a single `thread_local std::string` so any caller holding the returned `*const c_char` across a second call could see silent corruption; each getter now owns a function-local `thread_local` buffer with the lifetime contract documented inline. Added a v0.17 tech-debt entry to split `crates/bif_core/src/usd/cpp_bridge.rs` (~4000 lines) into per-area FFI modules.
 
 ## [0.15.0] - 2026-04-22
 

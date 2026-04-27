@@ -112,6 +112,7 @@ M22 (Vulkan 1.3, lazy loading, GPU-driven rendering) + deferred loading from wor
 - LRU cache for prototype eviction + Embree BVH integration
 - Camera depth of field and lens distortion
 - **Material editor texture nodes:** UsdUVTexture, PrimvarReader, Transform2d nodes in material graph
+- **Tech debt — split `crates/bif_core/src/usd/cpp_bridge.rs`** (~4000 lines after v0.16 C4a). Target layout: `usd/ffi/{stage,layer,prim,xform,material,variant,instance}.rs`. Carry-over from v0.16 audit (ADR-008 follow-up).
 
 ### v0.18.0 — AI Integration
 

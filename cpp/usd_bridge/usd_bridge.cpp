@@ -6625,13 +6625,16 @@ UsdBridgeError usd_bridge_layer_permission_to_edit(
     }
 }
 
-static thread_local std::string tl_layer_string;
+// Each layer-string getter owns its own thread_local buffer so callers may hold
+// the returned `*const char` across other FFI calls without silent corruption.
+// Pointer remains valid until the same function is called again on the same thread.
 
 UsdBridgeError usd_bridge_layer_export_as_string(
     const UsdBridgeStage* stage,
     const char* layer_identifier,
     const char** out_text
 ) {
+    static thread_local std::string buf;
     if (!stage || !layer_identifier || !out_text) {
         return USD_BRIDGE_ERROR_NULL_POINTER;
     }
@@ -6641,10 +6644,10 @@ UsdBridgeError usd_bridge_layer_export_as_string(
         if (!root) return USD_BRIDGE_ERROR_INVALID_STAGE;
         SdfLayerRefPtr layer = find_layer_by_identifier(root, layer_identifier);
         if (!layer) return USD_BRIDGE_ERROR_INVALID_PRIM;
-        if (!layer->ExportToString(&tl_layer_string)) {
+        if (!layer->ExportToString(&buf)) {
             return USD_BRIDGE_ERROR_UNKNOWN;
         }
-        *out_text = tl_layer_string.c_str();
+        *out_text = buf.c_str();
         return USD_BRIDGE_SUCCESS;
     } catch (const std::exception& e) {
         TF_WARN("usd_bridge_layer_export_as_string: %s", e.what());
@@ -6701,6 +6704,7 @@ UsdBridgeError usd_bridge_layer_get_attr_value(
     const char* attr_name,
     const char** out_value
 ) {
+    static thread_local std::string buf;
     if (!stage || !layer_identifier || !prim_path || !attr_name || !out_value) {
         return USD_BRIDGE_ERROR_NULL_POINTER;
     }
@@ -6719,8 +6723,8 @@ UsdBridgeError usd_bridge_layer_get_attr_value(
         if (value.IsEmpty()) {
             return USD_BRIDGE_SUCCESS;
         }
-        tl_layer_string = TfStringify(value);
-        *out_value = tl_layer_string.c_str();
+        buf = TfStringify(value);
+        *out_value = buf.c_str();
         return USD_BRIDGE_SUCCESS;
     } catch (const std::exception& e) {
         TF_WARN("usd_bridge_layer_get_attr_value: %s", e.what());
