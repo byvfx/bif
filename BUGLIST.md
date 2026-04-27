@@ -6,10 +6,13 @@ Last updated: 2026-04-19
 
 - **bif_qt scene browser: residual child-count gap under some sections vs egui.** Tier 0 routed Qt through `CompositeProvider` (parity with egui's data path), but a few sections still show fewer children than egui in side-by-side. Likely a `UsdStage::child_prim_paths` quirk (composed-stage iteration vs root-layer iteration) or empty `inst.prim_path` synthesis not reaching the cache in Qt builds. Noted 2026-04-16.
 - **bif_qt: scale factor hardcoded to 1.0.** `Viewport::new` / `resize` ignore `QScreen::devicePixelRatio()`; HiDPI monitors render at wrong scale. Wire through the cxx-qt bridge. Noted 2026-04-15.
-- OCIO ACES is not working in the viewport (Hill/Narkowicz approx active, full OCIO deferred).
+- OCIO ACES is not working in the viewport (Hill/Narkowicz approx active) full OCIO still needs to be implemented.
 
 - Pre-existing C++ bridge test crashes: `test_load_pointinstancer_external_prototype` (lucy_100_fixed.usda), `test_load_relative_reference_usda` (lucy_100.usda), `test_define_scope_prim` — all crash at `UsdStage::Open` with STATUS_BREAKPOINT. Not caused by recent changes.
 - `inst.prim_path` left empty for some USD load paths (observed on lucy.usd) — workaround via synthetic `/BIF/` path fallbacks in selection handler.
+- implement an on/off button for the grid
+- need to see aovs, add aovs, plan this out, i want to implement aovs with ease and flexibility.
+- need viewport switch between vulkan and render
 
 ## Fixed (since last update)
 
