@@ -1,10 +1,21 @@
-# Session Handoff — April 27, 2026 (`finish-qt-ui` C4a dogfood transform gizmo)
+# Session Handoff — April 27, 2026 (`finish-qt-ui` C4b editor features shipped)
 
-**Last Updated:** 2026-04-27. Branch `finish-qt-ui` has the C4a edit/save foundation plus a Qt viewport translate gizmo for dogfood. Selecting a movable prim in the viewport or scene tree now shows axis handles; dragging previews through the renderer transform path and release commits a `TransformEdit` through `EditHistory` to the active working layer. The USD bridge now preserves existing xform op types when writing movement, so translate-backed prims receive vec3 values instead of matrix opinions.
+**Last Updated:** 2026-04-27. Branch `finish-qt-ui` shipped the full C4b editor tranche on top of C4a/dogfood. The editor now exposes per-prim Visibility (Property Inspector header checkbox), Material binding + per-input editors grouped by OpenPBR/UsdPreviewSurface section (Material Sheet tab with sRGB→linear color picker), wholesale layer USDA edits (`View → USDA Source` dock with Apply-only validation), and shading-model swap (Material Sheet header `QComboBox` with atomic-undo + lossy-param `QMessageBox`). All edits route through `EditHistory` and save through Ctrl+S.
 
-**Validation:** `cargo build` passed in `C:/Users/brandon/.cargo-target-bif-commit` with Qt/USD env because the live Qt shell was holding the default `bif_qt_shell.exe`; `cargo clippy -- -D warnings` and `cargo fmt --check` passed in the default shared target. Focused regression checks also passed for `write_layer_xform_preserves_translate_op_type` and `selection_resolver_tests`.
+**Validation:** `cargo build` / `cargo clippy --workspace -- -D warnings` / `cargo fmt --check` clean. `cargo test -p bif_core --test edit_op_roundtrip --test edit_history -- --test-threads=1` green at 10 tests. New round-trip coverage includes `replace_layer_contents_roundtrips`, `visibility_roundtrips_via_dispatcher`, `bound_material_inputs_returns_shader_inputs`, `set_shader_id_roundtrips`, `shading_model_swap_undoes_atomically`. Manual `usdview` reopen of a Ctrl+S output remains the recommended human-in-the-loop sanity check; not run from the autonomous session.
 
-**Next action:** continue C4b with the missing Qt relationships panel, then variant/material editing surfaces. Keep `test_assets/layers/*.usda` dogfood saves out of source commits unless intentionally refreshing fixtures.
+**Next action:** v0.16.5 Graphite styling pass — the function-first work is complete. v0.17 picks up `cpp_bridge.rs` split, payload policies, file-watcher save-conflict prompt, line/col in USDA parse errors, real-time USDA parse, drag-drop material binding, lookdev orb, and `usd_bridge_layer_clear_attr`.
+
+## 🏁 2026-04-27 — `finish-qt-ui` C4b editor features
+
+- **C4b-Carry-2 (`4dc7392`):** New `EditOperation::ReplaceLayerContents` + `AttrSlot::LayerContents`. Round-trip test covers apply → undo restoring captured `before` text.
+- **C4b-Carry-1 (`53b8b53`):** `Renderer::dispatch_visibility` + `on_set_visibility` qinvokable + `Visible` checkbox in the Property Inspector header.
+- **C4b-1 (`ca31587`):** New FFI `usd_bridge_prim_get_bound_material_inputs` + safe wrapper. `Renderer::dispatch_material_param_override` / `dispatch_material_assign`. Material Sheet tab grouped by OpenPBR / UsdPreviewSurface section with per-type editors and sRGB→linear at the color picker boundary. `Bind…` header action.
+- **C4b-2 (`8455b8e`):** `View → USDA Source` dock with `QPlainTextEdit` and Apply button. New `Renderer::dispatch_replace_layer_contents` validates via `parse_usda` then routes through `ReplaceLayerContents`. Red status label surfaces parse / dispatch errors. New `usda_panel_widget.{h,cpp}` registered in `build.rs`.
+- **C4b-3 (`622db71`):** New FFI `usd_bridge_layer_set_shader_id` + `usd_bridge_prim_get_bound_shader_id`. `EditOperation::SetShaderId` variant + `AttrSlot::ShaderId` slot. `dispatch_swap_shading_model` wraps id swap and best-effort param remap (`base_color` ↔ `diffuseColor`, `specular_roughness` ↔ `roughness`, etc.) in `begin_group` / `end_group`. Material Sheet header `QComboBox`. `QMessageBox` lossy-param warning.
+- **C4b-4 doc sync:** `CHANGELOG.md`, `MILESTONES.md`, `FEATURES.md`, `SESSION_HANDOFF.md`, devlog.
+
+---
 
 ## 🏁 2026-04-27 — `finish-qt-ui` C4a dogfood transform gizmo
 

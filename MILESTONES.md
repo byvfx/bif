@@ -23,14 +23,13 @@ Roadmap organized by semantic version. Each release is testable, demoable, and g
 
 ## In Progress
 
-### v0.16.0 — Edit Operations + Save
+### v0.16.5 — Qt Polish (Graphite)
 
-Current active milestone. BIF moves from a Qt-native USD viewer/orchestrator into authored edit ops + save.
+Current active milestone after v0.16.0 shipped on 2026-04-27. Function-first edit work is complete; this docket is the styling polish pass that intentionally stayed off the v0.16.0 critical path. See archive details below.
 
-- **C4a foundation:** `EditOperation` / `EditHistory`, working-layer FFI writes, variant edit-context fix, Ctrl+S save for the active layer, dirty-bit/title wiring
-- **C4b features:** editable USDA layer panel, material param sheet, shading-model dropdown
-- Round-trip validation for transform, visibility, material binding, material parameter, and variant selection edits
-- Lower-priority Qt follow-up spillover from v0.15.0: asset browser, asset library, drag-and-drop, Wacom pressure/tilt
+- Obsidian Graphite / "Quiet Confidence" styling pass
+- Workspace chrome polish
+- Design-token cleanup
 
 ---
 
@@ -38,8 +37,7 @@ Current active milestone. BIF moves from a Qt-native USD viewer/orchestrator int
 
 | Version | Theme | Est. Hours | Key Milestones |
 |---------|-------|-----------|----------------|
-| v0.16.5 | Qt Polish (Graphite) | 8-12h | Obsidian Graphite styling pass, workspace chrome polish, design-token cleanup |
-| v0.17.0 | Viewport Performance | 25-35h | M22 + payload policies + texture nodes in material editor |
+| v0.17.0 | Viewport Performance | 25-35h | M22 + payload policies + texture nodes in material editor + `cpp_bridge.rs` split |
 | v0.18.0 | AI Integration | 38-59h | Material creator, scene builder, ComfyUI |
 | v0.19.0 | Context System | 30-40h | M39 |
 | v0.20.0 | Scene Authoring + Layer Diff | 35-45h | M37, M38 + workflow Phase 7 |
@@ -84,14 +82,20 @@ M28 shipped on 2026-04-22. **The pivot release — everything after is Qt-native
 
 Deferred from the original Qt roadmap: asset browser, asset library, drag-and-drop, Wacom pressure/tilt.
 
-### v0.16.0 — Edit Operations + Save
+### v0.16.0 — Edit Operations + Save (shipped 2026-04-27)
 
-Workflow Phase 2. BIF becomes a real editor in two tranches:
+Workflow Phase 2. BIF became a real editor across two tranches:
 
-- **C4a foundation:** `EditOperation`, `EditHistory`, stage-layer FFI writes, working-layer Ctrl+S, variant selections authored on the working layer, dirty-bit/title feedback, ADR-008
-- **C4b editor features:** editable USDA layer panel, material parameter sheet, shading-model dropdown
-- **Deferred:** auto-save, lookdev orb, node-to-opinion continuous authoring, shot-template workflow, richer payload policies, and schema-registry validation
-- **Validation:** save authored edits, reopen the stage, verify the working layer contains only the new opinions
+- **C4a foundation (shipped 2026-04-26):** `EditOperation`, `EditHistory`, stage-layer FFI writes, working-layer Ctrl+S, variant selections authored on the working layer, dirty-bit/title feedback, ADR-008. Transform gizmo wired through the same path on 2026-04-27.
+- **C4b editor features (shipped 2026-04-27):**
+  - C4b-Carry-2 — `EditOperation::ReplaceLayerContents` variant + `AttrSlot::LayerContents` + `replace_layer` constructor (apply via `import_layer_from_string`, inverse re-imports captured `before`).
+  - C4b-Carry-1 — `Renderer::dispatch_visibility` mirroring the Xform path, `Visible` checkbox in the Property Inspector header.
+  - C4b-1 — Material Sheet tab with OpenPBR / UsdPreviewSurface section grouping (Base, Specular, Transmission, Subsurface, Coat, Emission, Geometry, Other), per-type editors (`QDoubleSpinBox`, `QSpinBox`, `QCheckBox`, color swatch + `QColorDialog` with sRGB→linear at the boundary, `QLineEdit`). New FFI `usd_bridge_prim_get_bound_material_inputs`. `Bind…` header action via `QInputDialog`.
+  - C4b-2 — `View → USDA Source` dock with monospace `QPlainTextEdit` + Apply button. Apply validates via `parse_usda` then dispatches `ReplaceLayerContents` through the C4a edit history. Parse errors render in a red status label. Apply-only validation (no real-time keystroke parse).
+  - C4b-3 — Shading model dropdown in the Material Sheet header (OpenPBR ↔ UsdPreviewSurface) with new FFI `usd_bridge_layer_set_shader_id` / `usd_bridge_prim_get_bound_shader_id`. `EditOperation::SetShaderId` variant. `dispatch_swap_shading_model` wraps id swap + best-effort param remap (`base_color` ↔ `diffuseColor` etc.) in `begin_group` / `end_group` so a single Ctrl+Z reverts the whole swap. `QMessageBox` lossy-param warning.
+- **Round-trip tests:** transform, visibility (+ via dispatcher), material binding, material parameter, variant selection, replace-layer contents, set-shader-id, atomic shading-model swap.
+- **Deferred to v0.17:** auto-save, lookdev orb, node-to-opinion continuous authoring, shot-template workflow, richer payload policies, schema-registry validation, real-time USDA parse, drag-drop material binding, file-watcher save-conflict prompt, line/col in USDA parse errors, `cpp_bridge.rs` module split, `usd_bridge_layer_clear_attr` (true "remove opinion" inverse).
+- **Validation:** running `cargo test -p bif_core --test edit_op_roundtrip --test edit_history -- --test-threads=1` is green (10 tests, all opinion variants exercise the C4a save substrate). Manual `usdview` reopen of the saved working layer is a recommended sanity check.
 
 ### v0.16.5 — Qt Polish (Graphite)
 

@@ -34,7 +34,7 @@ Last updated: 2026-04-26
 
 - Add USD skeletal animation support (joints, skinning, blendshapes).
 - Add compound prototype support for multi-mesh Xforms.
-- Save active working layer with C4a edit foundation is in progress: authored transform, visibility, material binding, material parameter, and variant selection ops now have the substrate for clean layer save.
+- Save active working layer with the C4a/C4b edit pipeline is shipped (v0.16.0, 2026-04-27): transform, visibility (Property Inspector checkbox), material binding (Material Sheet `Bind…`), material parameter override (Material Sheet OpenPBR/UsdPreviewSurface inputs grouped by section), variant selection, shading-model swap (Material Sheet header dropdown with atomic-undo + lossy warning), and wholesale USDA edits via the `View → USDA Source` dock all author opinions to the active working layer and round-trip through Ctrl+S. Reference: C4b sub-commits `4dc7392`/`53b8b53`/`ca31587`/`8455b8e`/`622db71`.
 - When editing materials, have some way for the user to preview the models it's attached to, like a drop-down, and then it would load it in the viewport. Then the user can go back to the shot camera.
   
 ## Tools
