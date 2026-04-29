@@ -381,3 +381,26 @@ fn replace_layer_contents_roundtrips() {
         .expect("export restored");
     assert_eq!(restored.trim(), before.trim());
 }
+
+#[test]
+fn import_layer_from_garbage_leaves_layer_intact() {
+    let fixture = helpers::LayeredStageFixture::new("rollback");
+    let stage = UsdStage::open(&fixture.root).expect("open stage");
+    let working_id = helpers::working_layer_id(&stage);
+    let original = stage
+        .export_layer_as_string(&working_id)
+        .expect("export original");
+
+    // Garbage that the USDA parser must reject. Live layer must be byte-identical after.
+    let result = stage.import_layer_from_string(&working_id, "this is not valid usda {{{ ###");
+    assert!(result.is_err(), "garbage USDA should be rejected");
+
+    let after = stage
+        .export_layer_as_string(&working_id)
+        .expect("export after");
+    assert_eq!(
+        original.trim(),
+        after.trim(),
+        "rejected import must leave layer unchanged"
+    );
+}

@@ -6581,6 +6581,9 @@ UsdBridgeError usd_bridge_layer_set_permission_to_edit(
     } catch (const std::exception& e) {
         TF_WARN("usd_bridge_layer_set_permission_to_edit: %s", e.what());
         return USD_BRIDGE_ERROR_UNKNOWN;
+    } catch (...) {
+        TF_WARN("usd_bridge_layer_set_permission_to_edit: unknown exception");
+        return USD_BRIDGE_ERROR_UNKNOWN;
     }
 }
 
@@ -6600,6 +6603,9 @@ UsdBridgeError usd_bridge_layer_save(
         return layer->Save() ? USD_BRIDGE_SUCCESS : USD_BRIDGE_ERROR_UNKNOWN;
     } catch (const std::exception& e) {
         TF_WARN("usd_bridge_layer_save: %s", e.what());
+        return USD_BRIDGE_ERROR_UNKNOWN;
+    } catch (...) {
+        TF_WARN("usd_bridge_layer_save: unknown exception");
         return USD_BRIDGE_ERROR_UNKNOWN;
     }
 }
@@ -6621,6 +6627,9 @@ UsdBridgeError usd_bridge_layer_permission_to_edit(
         return USD_BRIDGE_SUCCESS;
     } catch (const std::exception& e) {
         TF_WARN("usd_bridge_layer_permission_to_edit: %s", e.what());
+        return USD_BRIDGE_ERROR_UNKNOWN;
+    } catch (...) {
+        TF_WARN("usd_bridge_layer_permission_to_edit: unknown exception");
         return USD_BRIDGE_ERROR_UNKNOWN;
     }
 }
@@ -6652,6 +6661,9 @@ UsdBridgeError usd_bridge_layer_export_as_string(
     } catch (const std::exception& e) {
         TF_WARN("usd_bridge_layer_export_as_string: %s", e.what());
         return USD_BRIDGE_ERROR_UNKNOWN;
+    } catch (...) {
+        TF_WARN("usd_bridge_layer_export_as_string: unknown exception");
+        return USD_BRIDGE_ERROR_UNKNOWN;
     }
 }
 
@@ -6669,14 +6681,32 @@ UsdBridgeError usd_bridge_layer_import_from_string(
         SdfLayerRefPtr layer = find_layer_by_identifier(root, layer_identifier);
         if (!layer) return USD_BRIDGE_ERROR_INVALID_PRIM;
         if (!layer->PermissionToEdit()) return USD_BRIDGE_ERROR_UNKNOWN;
+        // Parse new contents on a scratch layer first — if it fails the live layer is untouched.
         SdfLayerRefPtr scratch = SdfLayer::CreateAnonymous(".usda");
         if (!scratch || !scratch->ImportFromString(text)) {
             return USD_BRIDGE_ERROR_UNKNOWN;
         }
-        layer->TransferContent(scratch);
+        // Snapshot live layer so a TransferContent throw mid-mutation can be rolled back.
+        std::string backup_str;
+        if (!layer->ExportToString(&backup_str)) {
+            return USD_BRIDGE_ERROR_UNKNOWN;
+        }
+        try {
+            layer->TransferContent(scratch);
+        } catch (...) {
+            SdfLayerRefPtr restore = SdfLayer::CreateAnonymous(".usda");
+            if (restore && restore->ImportFromString(backup_str)) {
+                try { layer->TransferContent(restore); } catch (...) {}
+            }
+            TF_WARN("usd_bridge_layer_import_from_string: TransferContent threw, rolled back");
+            return USD_BRIDGE_ERROR_UNKNOWN;
+        }
         return USD_BRIDGE_SUCCESS;
     } catch (const std::exception& e) {
         TF_WARN("usd_bridge_layer_import_from_string: %s", e.what());
+        return USD_BRIDGE_ERROR_UNKNOWN;
+    } catch (...) {
+        TF_WARN("usd_bridge_layer_import_from_string: unknown exception");
         return USD_BRIDGE_ERROR_UNKNOWN;
     }
 }
@@ -6693,6 +6723,9 @@ UsdBridgeError usd_bridge_parse_usda(const char* text) {
         return USD_BRIDGE_SUCCESS;
     } catch (const std::exception& e) {
         TF_WARN("usd_bridge_parse_usda: %s", e.what());
+        return USD_BRIDGE_ERROR_UNKNOWN;
+    } catch (...) {
+        TF_WARN("usd_bridge_parse_usda: unknown exception");
         return USD_BRIDGE_ERROR_UNKNOWN;
     }
 }
@@ -6728,6 +6761,9 @@ UsdBridgeError usd_bridge_layer_get_attr_value(
         return USD_BRIDGE_SUCCESS;
     } catch (const std::exception& e) {
         TF_WARN("usd_bridge_layer_get_attr_value: %s", e.what());
+        return USD_BRIDGE_ERROR_UNKNOWN;
+    } catch (...) {
+        TF_WARN("usd_bridge_layer_get_attr_value: unknown exception");
         return USD_BRIDGE_ERROR_UNKNOWN;
     }
 }
@@ -6909,6 +6945,9 @@ UsdBridgeError usd_bridge_layer_set_shader_input(
     } catch (const std::exception& e) {
         TF_WARN("usd_bridge_layer_set_shader_input: %s", e.what());
         return USD_BRIDGE_ERROR_UNKNOWN;
+    } catch (...) {
+        TF_WARN("usd_bridge_layer_set_shader_input: unknown exception");
+        return USD_BRIDGE_ERROR_UNKNOWN;
     }
 }
 
@@ -6946,6 +6985,9 @@ UsdBridgeError usd_bridge_layer_set_shader_id(
         return USD_BRIDGE_SUCCESS;
     } catch (const std::exception& e) {
         TF_WARN("usd_bridge_layer_set_shader_id: %s", e.what());
+        return USD_BRIDGE_ERROR_UNKNOWN;
+    } catch (...) {
+        TF_WARN("usd_bridge_layer_set_shader_id: unknown exception");
         return USD_BRIDGE_ERROR_UNKNOWN;
     }
 }
@@ -6986,6 +7028,9 @@ UsdBridgeError usd_bridge_prim_get_bound_shader_id(
         return USD_BRIDGE_SUCCESS;
     } catch (const std::exception& e) {
         TF_WARN("usd_bridge_prim_get_bound_shader_id: %s", e.what());
+        return USD_BRIDGE_ERROR_UNKNOWN;
+    } catch (...) {
+        TF_WARN("usd_bridge_prim_get_bound_shader_id: unknown exception");
         return USD_BRIDGE_ERROR_UNKNOWN;
     }
 }
@@ -7058,6 +7103,9 @@ UsdBridgeError usd_bridge_prim_get_bound_material_inputs(
         return USD_BRIDGE_SUCCESS;
     } catch (const std::exception& e) {
         TF_WARN("usd_bridge_prim_get_bound_material_inputs: %s", e.what());
+        return USD_BRIDGE_ERROR_UNKNOWN;
+    } catch (...) {
+        TF_WARN("usd_bridge_prim_get_bound_material_inputs: unknown exception");
         return USD_BRIDGE_ERROR_UNKNOWN;
     }
 }

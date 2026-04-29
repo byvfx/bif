@@ -4,6 +4,15 @@ Last updated: 2026-04-19
 
 ## Active Bugs
 
+- **v0.16.0 code-review followups for v0.16.1** (2026-04-28). Deferred findings from finish-qt-ui review:
+  - `usd_bridge_layer_save` swallows `TfError` detail — return reason string instead of bare `ERROR_UNKNOWN` so users see "permission denied" vs "asset resolver". Wrap with `TfErrorMark`.
+  - Shading-model swap (commit `622bf6c`) is "atomic on the Rust group side" but not in one C-ABI call — `set_layer_shader_id` then `set_layer_shader_input` cross the boundary twice. If second call fails, layer has new `info:id` but stale inputs. Either fold into one server-side `_swap_shader` entry, or add explicit per-step rollback in `dispatch_swap_shading_model`.
+  - `property_inspector_widget.cpp:602-627` lambdas capture raw `BifShellState*` — switch to `QPointer<BifShellState>` + null guard so dock rebuild during pending signal can't dangle.
+  - `window_builder.cpp:267-276` and `property_inspector_widget.cpp:406-416` — `QMessageBox::question(...).exec()` reachable from selection-change slots; defer via `QTimer::singleShot(0, ...)` to avoid modal re-entrancy.
+  - `main_window.rs:1231,1865` — `if let Ok(stage) = stage_arc.lock()` silently no-ops on poisoned mutex; log on `Err(_)` so stage poisoning surfaces.
+  - `edit_op_roundtrip.rs` / `edit_history.rs` — add negative tests: `save_without_permission_returns_error`, `undo_after_target_switch_targets_recorded_layer`, double-apply idempotency.
+  - `cpp_bridge.rs` — extract `cstr(s)` helper to dedupe ~28 `CString::new(...).map_err(...)` sites.
+  - Dead-code claim: thread_local export buffer contract — add a guard test that calls export twice and asserts contract (pointer invalidates on second call).
 - **bif_qt scene browser: residual child-count gap under some sections vs egui.** Tier 0 routed Qt through `CompositeProvider` (parity with egui's data path), but a few sections still show fewer children than egui in side-by-side. Likely a `UsdStage::child_prim_paths` quirk (composed-stage iteration vs root-layer iteration) or empty `inst.prim_path` synthesis not reaching the cache in Qt builds. Noted 2026-04-16.
 - **bif_qt: scale factor hardcoded to 1.0.** `Viewport::new` / `resize` ignore `QScreen::devicePixelRatio()`; HiDPI monitors render at wrong scale. Wire through the cxx-qt bridge. Noted 2026-04-15.
 - OCIO ACES is not working in the viewport (Hill/Narkowicz approx active) full OCIO still needs to be implemented.
