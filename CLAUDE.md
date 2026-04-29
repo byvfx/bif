@@ -14,9 +14,9 @@ BIF is a USD Orchestration Tool for VFX — layer-aware USD editing + procedural
 
 **BIF** - USD Orchestration Tool for VFX (layer-aware editing + procedural assembly + rendering).
 
-- **Status:** v0.15.0 shipped (Qt migration complete — egui→cxx-qt, layer-aware UI, camera picker).
-- **Current:** v0.16.0 — Edit Operations + Save (Workflow Phase 2)
-- **Next:** v0.17.0 (viewport perf) → v0.18.0 (AI integration) — see [MILESTONES.md](MILESTONES.md)
+- **Status:** v0.16.0 shipped (Edit Operations + Save — EditHistory, working-layer Ctrl+S, USDA Source dock, Material Sheet, transform gizmo, shading-model swap).
+- **Current:** v0.16.5 — Qt Polish (Graphite styling pass)
+- **Next:** v0.17.0 (viewport perf, `cpp_bridge.rs` split, payload policies) → v0.18.0 (AI integration) — see [MILESTONES.md](MILESTONES.md)
 - **Goal:** Layer-aware USD editor + scene assembler — open stage, pick layer, edit, save clean USD
 - **Design:** [BIF_USD_WORKFLOW.md](BIF_USD_WORKFLOW.md) — hybrid approach (procedural nodes + layer awareness)
 - **Timeline:** Side project, 10-20 hrs/week

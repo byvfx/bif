@@ -6,6 +6,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-04-28
+
 ### Added
 
 - **Qt C1 foundations for the v0.16 editor tranche** (2026-04-23). Added Edit menu Undo/Redo wiring in the Qt shell with `can_undo` / `can_redo` action-state sync, and kept the node graph dock hidden by default behind a persisted experimental preview toggle.

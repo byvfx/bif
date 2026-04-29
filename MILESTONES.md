@@ -18,6 +18,7 @@ Roadmap organized by semantic version. Each release is testable, demoable, and g
 | v0.13.6 | UsdSkel Blend Shapes + Rigid Fix | 2026-04-12 | CPU morph target deformation via `UsdSkelBlendShape` (dense-expand at load, shape-order remap, per-frame `UsdSkelAnimQuery` eval, shapes→skin composition), multi-joint rigid binding fix (`SkinKind::Rigid` gated on `element_size==1`; hair/fingernails on HumanFemale now render correctly) |
 | v0.14.0 | Layer-Aware Stage | 2026-04-13 | `SdfLayer` + `GetPrimStack` + `GetPropertyStack` FFI, `SceneLayerState` on `SceneManager` (sublayer tree + mute set + `layer_for_prim` map), `LayerStackPanel` egui panel (mute checkbox + working-layer radio + isolation header + layer-color dots), composition-arc collapsing header + per-attribute winning-layer dot in property inspector, scene-browser layer color dots, `PayloadPolicy::{LoadAll, LoadNone}` stage open, 4 integration tests on a 3-layer fixture |
 | v0.15.0 | Qt Migration | 2026-04-22 | Qt 6 shell via `bif_qt`, docked panel port (layer stack, scene browser, property inspector, timeline, node graph, render settings), real USD stage load + selection sync, lazy scene-browser loading, egui bridge deletion |
+| v0.16.0 | Edit Operations + Save | 2026-04-28 | C4a foundation: `EditOperation`/`EditHistory`/`OpinionKey`, working-layer FFI writes (xform/visibility/material/shader-input/variant), Ctrl+S save through `UsdStage::save_layer`, ADR-008. C4b features: `Visible` checkbox, Material Sheet tab (OpenPBR/UsdPreviewSurface, sRGB→linear color), USDA Source dock with Apply-only validation, shading-model dropdown with atomic-undo + lossy-param warning, transform gizmo. Code-review hardening: USDA Apply rollback on TransferContent throw + `catch (...)` on all new C-ABI entries. |
 
 ---
 
@@ -49,7 +50,7 @@ Current active milestone after v0.16.0 shipped on 2026-04-27. Function-first edi
 
 ---
 
-Latest release: v0.15.0 shipped 2026-04-22. Full release notes in [CHANGELOG.md](CHANGELOG.md), archived details in [MILESTONES_HISTORY.md](MILESTONES_HISTORY.md).
+Latest release: v0.16.0 shipped 2026-04-28. Full release notes in [CHANGELOG.md](CHANGELOG.md), archived details in [MILESTONES_HISTORY.md](MILESTONES_HISTORY.md).
 
 ### v0.14.0 — Layer-Aware Stage
 

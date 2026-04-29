@@ -1,3 +1,21 @@
+# Session Handoff — April 28, 2026 (v0.16.0 shipped on main)
+
+**Last Updated:** 2026-04-28. v0.16.0 ship-closeout: Code Reviewer agent ran on `finish-qt-ui` (16 commits, ~7.7k LOC). Two real ship-blockers fixed in `03e9622`: USDA Apply now snapshots-and-rolls-back if `TransferContent` throws mid-mutation, and all new C-ABI entry points have `catch (...)` so non-`std::exception` USD throws can never unwind across the FFI boundary. New regression test `import_layer_from_garbage_leaves_layer_intact` locks the rollback contract. Workspace bumped to `0.16.0`. CHANGELOG `[Unreleased]` promoted to `[0.16.0] - 2026-04-28`. MILESTONES table now lists v0.16.0 as shipped 2026-04-28; `Latest release` line + CLAUDE.md status both bumped.
+
+**Validation:** `cargo fmt --check`, `cargo clippy --all -- -D warnings`, and `cargo build --all` clean. Test suite green: `bif_math` 74, `bif_renderer` 109, `bif_viewport` 157, `bif_core` 236 lib + 4 + 11 integration (single-threaded with `setup_usd_env.ps1`). `bif_viewer` has no in-tree tests by design. New rollback test confirmed running.
+
+**Next action:** push `main` + annotated `v0.16.0` tag (push not done by autonomous session — local tag pending). Then move to v0.16.5 Graphite styling pass and the v0.16.1 follow-up bug list (TfErrorMark on save, atomic shader-swap composite op, QPointer captures in property_inspector lambdas, modal-reentrancy guards, mutex-poison logging, additional negative tests).
+
+## 🏁 2026-04-28 — v0.16.0 ship closeout
+
+- **Code Reviewer pass on `finish-qt-ui`.** Triaged into 5 BLOCKER / 7 MAJOR / 6 NIT findings. Verified by reading the actual code and downgraded paranoid blockers (thread_local contract is documented and copy-on-receive in Rust; outline-color expect on a hardcoded literal; `ReplaceLayerContents` correctly ignores `working_layer_id` in favor of the recorded layer id — adding the suggested debug_assert would have broken legitimate cross-layer redo). Real ship-blockers: TransferContent rollback + FFI exception hardening. Real majors: tracked in BUGLIST for v0.16.1.
+- **TransferContent rollback (`usd_bridge.cpp:6680+`).** `usd_bridge_layer_import_from_string` now `ExportToString`s the live layer into a `std::string` snapshot before `TransferContent`. If transfer throws, restore from the snapshot. Inner `try { ... } catch (...)` so non-`std::exception` USD throws are caught.
+- **`catch (...)` on all new C-ABI entries.** Added to `_layer_save`, `_layer_export_as_string`, `_layer_import_from_string`, `_parse_usda`, `_layer_get_attr_value`, `_layer_permission_to_edit`, `_layer_set_permission_to_edit`, `_layer_set_shader_input`, `_layer_set_shader_id`, `_prim_get_bound_shader_id`, `_prim_get_bound_material_inputs`. Matches the `catch (...)` pattern used by older entries (e.g. `set_variant_selection`).
+- **New regression test.** `import_layer_from_garbage_leaves_layer_intact` (in `tests/edit_op_roundtrip.rs`) feeds garbage USDA, asserts the call returns `Err`, and asserts the layer text is byte-identical after — confirms the parse-first guard plus the rollback contract.
+- **BUGLIST followups for v0.16.1.** Captured: TfErrorMark on save, atomic shader-swap composite op, QPointer captures in property_inspector lambdas, modal-reentrancy guards on QMessageBox::question, mutex-poison logging, additional negative tests, `cstr(s)` helper in `cpp_bridge.rs`, thread_local contract test.
+
+---
+
 # Session Handoff — April 27, 2026 (`finish-qt-ui` C4b editor features shipped)
 
 **Last Updated:** 2026-04-27. Branch `finish-qt-ui` shipped the full C4b editor tranche on top of C4a/dogfood. The editor now exposes per-prim Visibility (Property Inspector header checkbox), Material binding + per-input editors grouped by OpenPBR/UsdPreviewSurface section (Material Sheet tab with sRGB→linear color picker), wholesale layer USDA edits (`View → USDA Source` dock with Apply-only validation), and shading-model swap (Material Sheet header `QComboBox` with atomic-undo + lossy-param `QMessageBox`). All edits route through `EditHistory` and save through Ctrl+S.
