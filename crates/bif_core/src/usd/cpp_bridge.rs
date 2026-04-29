@@ -264,6 +264,15 @@ pub struct UsdInstancerData {
     pub invisible_ids: Vec<i64>,
 }
 
+/// One shader input row from `UsdStage::get_bound_material_inputs`.
+/// Used by the Material Sheet to populate per-input editors. C4b-1.
+#[derive(Clone, Debug)]
+pub struct BoundMaterialInput {
+    pub name: String,
+    pub type_name: String,
+    pub value: String,
+}
+
 /// Prim info for scene hierarchy browsing.
 #[derive(Clone, Debug)]
 pub struct UsdPrimInfo {
@@ -1733,16 +1742,19 @@ impl UsdStage {
         prim_path: &str,
         variant_set: &str,
         variant_name: &str,
+        layer_identifier: &str,
     ) -> UsdBridgeResult<()> {
         let c_path = CString::new(prim_path).map_err(|_| UsdBridgeError::InvalidPath)?;
         let c_set = CString::new(variant_set).map_err(|_| UsdBridgeError::InvalidPath)?;
         let c_name = CString::new(variant_name).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_layer = CString::new(layer_identifier).map_err(|_| UsdBridgeError::InvalidPath)?;
         let code = unsafe {
             usd_bridge_set_variant_selection(
                 self.raw as *mut _,
                 c_path.as_ptr(),
                 c_set.as_ptr(),
                 c_name.as_ptr(),
+                c_layer.as_ptr(),
             )
         };
         if code != UsdBridgeErrorCode::Success {
@@ -2394,6 +2406,312 @@ impl UsdStage {
                 self.raw as *mut _,
                 c_id.as_ptr(),
                 if muted { 1 } else { 0 },
+            )
+        };
+        if code != UsdBridgeErrorCode::Success {
+            return Err(code.into());
+        }
+        Ok(())
+    }
+
+    pub fn save_layer(&self, identifier: &str) -> UsdBridgeResult<()> {
+        let c_id = CString::new(identifier).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let code = unsafe { usd_bridge_layer_save(self.raw, c_id.as_ptr()) };
+        if code != UsdBridgeErrorCode::Success {
+            return Err(code.into());
+        }
+        Ok(())
+    }
+
+    pub fn layer_permission_to_edit(&self, identifier: &str) -> UsdBridgeResult<bool> {
+        let c_id = CString::new(identifier).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let mut can_edit = 0;
+        let code =
+            unsafe { usd_bridge_layer_permission_to_edit(self.raw, c_id.as_ptr(), &mut can_edit) };
+        if code != UsdBridgeErrorCode::Success {
+            return Err(code.into());
+        }
+        Ok(can_edit != 0)
+    }
+
+    pub fn export_layer_as_string(&self, identifier: &str) -> UsdBridgeResult<String> {
+        let c_id = CString::new(identifier).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let mut text_ptr: *const std::ffi::c_char = ptr::null();
+        let code =
+            unsafe { usd_bridge_layer_export_as_string(self.raw, c_id.as_ptr(), &mut text_ptr) };
+        if code != UsdBridgeErrorCode::Success {
+            return Err(code.into());
+        }
+        if text_ptr.is_null() {
+            return Ok(String::new());
+        }
+        Ok(unsafe { CStr::from_ptr(text_ptr).to_string_lossy().into_owned() })
+    }
+
+    pub fn import_layer_from_string(&self, identifier: &str, text: &str) -> UsdBridgeResult<()> {
+        let c_id = CString::new(identifier).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_text = CString::new(text).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let code = unsafe {
+            usd_bridge_layer_import_from_string(self.raw, c_id.as_ptr(), c_text.as_ptr())
+        };
+        if code != UsdBridgeErrorCode::Success {
+            return Err(code.into());
+        }
+        Ok(())
+    }
+
+    pub fn parse_usda(text: &str) -> UsdBridgeResult<()> {
+        let c_text = CString::new(text).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let code = unsafe { usd_bridge_parse_usda(c_text.as_ptr()) };
+        if code != UsdBridgeErrorCode::Success {
+            return Err(code.into());
+        }
+        Ok(())
+    }
+
+    pub fn layer_get_attr_value(
+        &self,
+        identifier: &str,
+        prim_path: &str,
+        attr_name: &str,
+    ) -> UsdBridgeResult<Option<String>> {
+        let c_id = CString::new(identifier).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_path = CString::new(prim_path).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_attr = CString::new(attr_name).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let mut value_ptr: *const std::ffi::c_char = ptr::null();
+        let code = unsafe {
+            usd_bridge_layer_get_attr_value(
+                self.raw,
+                c_id.as_ptr(),
+                c_path.as_ptr(),
+                c_attr.as_ptr(),
+                &mut value_ptr,
+            )
+        };
+        if code != UsdBridgeErrorCode::Success {
+            return Err(code.into());
+        }
+        if value_ptr.is_null() {
+            return Ok(None);
+        }
+        Ok(Some(unsafe {
+            CStr::from_ptr(value_ptr).to_string_lossy().into_owned()
+        }))
+    }
+
+    pub fn write_layer_xform(
+        &self,
+        identifier: &str,
+        prim_path: &str,
+        time: f64,
+        matrix_16: &[f32; 16],
+    ) -> UsdBridgeResult<()> {
+        let c_id = CString::new(identifier).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_path = CString::new(prim_path).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let code = unsafe {
+            usd_bridge_layer_write_xform(
+                self.raw as *mut _,
+                c_id.as_ptr(),
+                c_path.as_ptr(),
+                time,
+                matrix_16.as_ptr(),
+            )
+        };
+        if code != UsdBridgeErrorCode::Success {
+            return Err(code.into());
+        }
+        Ok(())
+    }
+
+    pub fn write_layer_visibility(
+        &self,
+        identifier: &str,
+        prim_path: &str,
+        visible: bool,
+    ) -> UsdBridgeResult<()> {
+        let c_id = CString::new(identifier).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_path = CString::new(prim_path).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let code = unsafe {
+            usd_bridge_layer_write_visibility(
+                self.raw as *mut _,
+                c_id.as_ptr(),
+                c_path.as_ptr(),
+                if visible { 1 } else { 0 },
+            )
+        };
+        if code != UsdBridgeErrorCode::Success {
+            return Err(code.into());
+        }
+        Ok(())
+    }
+
+    pub fn bind_layer_material(
+        &self,
+        identifier: &str,
+        prim_path: &str,
+        material_path: &str,
+    ) -> UsdBridgeResult<()> {
+        let c_id = CString::new(identifier).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_prim = CString::new(prim_path).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_mat = CString::new(material_path).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let code = unsafe {
+            usd_bridge_layer_bind_material(
+                self.raw as *mut _,
+                c_id.as_ptr(),
+                c_prim.as_ptr(),
+                c_mat.as_ptr(),
+            )
+        };
+        if code != UsdBridgeErrorCode::Success {
+            return Err(code.into());
+        }
+        Ok(())
+    }
+
+    pub fn set_layer_shader_input(
+        &self,
+        identifier: &str,
+        shader_path: &str,
+        input_name: &str,
+        value_type: &str,
+        value: &str,
+    ) -> UsdBridgeResult<()> {
+        let c_id = CString::new(identifier).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_shader = CString::new(shader_path).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_input = CString::new(input_name).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_type = CString::new(value_type).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_value = CString::new(value).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let code = unsafe {
+            usd_bridge_layer_set_shader_input(
+                self.raw as *mut _,
+                c_id.as_ptr(),
+                c_shader.as_ptr(),
+                c_input.as_ptr(),
+                c_type.as_ptr(),
+                c_value.as_ptr(),
+            )
+        };
+        if code != UsdBridgeErrorCode::Success {
+            return Err(code.into());
+        }
+        Ok(())
+    }
+
+    /// Author the `info:id` token attribute on `shader_path` for the
+    /// shading-model swap dropdown. C4b-3.
+    pub fn set_layer_shader_id(
+        &self,
+        layer_identifier: &str,
+        shader_path: &str,
+        shader_id: &str,
+    ) -> UsdBridgeResult<()> {
+        let c_id = CString::new(layer_identifier).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_shader = CString::new(shader_path).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_value = CString::new(shader_id).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let code = unsafe {
+            usd_bridge_layer_set_shader_id(
+                self.raw as *mut _,
+                c_id.as_ptr(),
+                c_shader.as_ptr(),
+                c_value.as_ptr(),
+            )
+        };
+        if code != UsdBridgeErrorCode::Success {
+            return Err(code.into());
+        }
+        Ok(())
+    }
+
+    /// Read the surface shader's `info:id` for the material bound to
+    /// `prim_path`. Empty when nothing bound. C4b-3.
+    pub fn get_bound_shader_id(&self, prim_path: &str) -> UsdBridgeResult<String> {
+        let c_path = CString::new(prim_path).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let mut out_id: *const std::os::raw::c_char = std::ptr::null();
+        let code =
+            unsafe { usd_bridge_prim_get_bound_shader_id(self.raw, c_path.as_ptr(), &mut out_id) };
+        if code != UsdBridgeErrorCode::Success {
+            return Err(code.into());
+        }
+        if out_id.is_null() {
+            return Ok(String::new());
+        }
+        Ok(unsafe { CStr::from_ptr(out_id) }
+            .to_string_lossy()
+            .into_owned())
+    }
+
+    /// Enumerate the surface shader inputs of the material bound to
+    /// `prim_path`. Returns `(shader_path, inputs)` where inputs are
+    /// `(name, type, value)` triples. `shader_path` is empty when no
+    /// surface shader is bound. Inputs vec is empty when no material
+    /// is bound. C4b-1.
+    pub fn get_bound_material_inputs(
+        &self,
+        prim_path: &str,
+    ) -> UsdBridgeResult<(String, Vec<BoundMaterialInput>)> {
+        let c_path = CString::new(prim_path).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let mut out_text: *const std::os::raw::c_char = std::ptr::null();
+        let mut out_shader: *const std::os::raw::c_char = std::ptr::null();
+        let code = unsafe {
+            usd_bridge_prim_get_bound_material_inputs(
+                self.raw,
+                c_path.as_ptr(),
+                &mut out_text,
+                &mut out_shader,
+            )
+        };
+        if code != UsdBridgeErrorCode::Success {
+            return Err(code.into());
+        }
+
+        let shader_path = if out_shader.is_null() {
+            String::new()
+        } else {
+            unsafe { std::ffi::CStr::from_ptr(out_shader) }
+                .to_string_lossy()
+                .into_owned()
+        };
+        let text = if out_text.is_null() {
+            String::new()
+        } else {
+            unsafe { std::ffi::CStr::from_ptr(out_text) }
+                .to_string_lossy()
+                .into_owned()
+        };
+
+        let mut inputs = Vec::new();
+        for line in text.lines() {
+            if line.is_empty() {
+                continue;
+            }
+            let mut parts = line.splitn(3, '\t');
+            let name = parts.next().unwrap_or("").to_string();
+            let type_name = parts.next().unwrap_or("").to_string();
+            let value = parts.next().unwrap_or("").to_string();
+            if name.is_empty() {
+                continue;
+            }
+            inputs.push(BoundMaterialInput {
+                name,
+                type_name,
+                value,
+            });
+        }
+        Ok((shader_path, inputs))
+    }
+
+    #[cfg(test)]
+    pub fn set_layer_permission_to_edit(
+        &self,
+        identifier: &str,
+        permission_to_edit: bool,
+    ) -> UsdBridgeResult<()> {
+        let c_id = CString::new(identifier).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let code = unsafe {
+            usd_bridge_layer_set_permission_to_edit(
+                self.raw,
+                c_id.as_ptr(),
+                if permission_to_edit { 1 } else { 0 },
             )
         };
         if code != UsdBridgeErrorCode::Success {
@@ -3120,6 +3438,170 @@ mod tests {
         let _ = UsdBridgeError::from(UsdBridgeErrorCode::InvalidStage);
     }
 
+    fn temp_usda_path(prefix: &str) -> std::path::PathBuf {
+        let id = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "bif_bridge_{prefix}_{}_{}.usda",
+            std::process::id(),
+            id
+        ))
+    }
+
+    #[test]
+    fn parse_usda_rejects_garbage() {
+        assert!(UsdStage::parse_usda("not valid usda").is_err());
+    }
+
+    #[test]
+    fn parse_usda_accepts_minimal() {
+        UsdStage::parse_usda(
+            r#"#usda 1.0
+
+def Xform "World"
+{
+}
+
+"#,
+        )
+        .expect("parse minimal usda");
+    }
+
+    #[test]
+    fn direct_ffi_save_roundtrip_persists_working_layer() {
+        let dir = temp_usda_path("roundtrip_dir");
+        let dir = dir.with_extension("");
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        let root = dir.join("root.usda");
+        let working = dir.join("working.usda");
+        let asset = dir.join("asset.usda");
+        std::fs::write(&working, "#usda 1.0\n\n").expect("write working");
+        std::fs::write(
+            &asset,
+            r#"#usda 1.0
+
+def Xform "World"
+{
+    def Xform "Cube"
+    {
+    }
+}
+
+"#,
+        )
+        .expect("write asset");
+        std::fs::write(
+            &root,
+            r#"#usda 1.0
+(
+    subLayers = [
+        @working.usda@,
+        @asset.usda@
+    ]
+)
+
+"#,
+        )
+        .expect("write root");
+
+        let stage = UsdStage::open(&root).expect("open root");
+        let working_id = stage
+            .get_layer_stack()
+            .expect("layer stack")
+            .layers
+            .into_iter()
+            .find(|l| l.identifier.ends_with("working.usda"))
+            .map(|l| l.identifier)
+            .expect("working layer");
+        stage
+            .write_layer_visibility(&working_id, "/World/Cube", false)
+            .expect("write visibility");
+        stage.save_layer(&working_id).expect("save working");
+
+        let reopened = UsdStage::open(&root).expect("reopen root");
+        let text = reopened
+            .export_layer_as_string(&working_id)
+            .expect("export working");
+        assert!(text.contains("invisible"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn write_layer_xform_preserves_translate_op_type() {
+        let dir = temp_usda_path("translate_xform_dir");
+        let dir = dir.with_extension("");
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        let root = dir.join("root.usda");
+        let working = dir.join("working.usda");
+        let asset = dir.join("asset.usda");
+        std::fs::write(&working, "#usda 1.0\n\n").expect("write working");
+        std::fs::write(
+            &asset,
+            r#"#usda 1.0
+
+def Xform "World"
+{
+    def Xform "Cube"
+    {
+        float3 xformOp:translate = (0, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+}
+
+"#,
+        )
+        .expect("write asset");
+        std::fs::write(
+            &root,
+            r#"#usda 1.0
+(
+    subLayers = [
+        @working.usda@,
+        @asset.usda@
+    ]
+)
+
+"#,
+        )
+        .expect("write root");
+
+        let stage = UsdStage::open(&root).expect("open root");
+        let working_id = stage
+            .get_layer_stack()
+            .expect("layer stack")
+            .layers
+            .into_iter()
+            .find(|l| l.identifier.ends_with("working.usda"))
+            .map(|l| l.identifier)
+            .expect("working layer");
+        let matrix = Mat4::from_translation(Vec3::new(4.0, 5.0, 6.0)).to_cols_array();
+
+        stage
+            .write_layer_xform(&working_id, "/World/Cube", -1.0, &matrix)
+            .expect("write translate-backed xform");
+
+        let value = stage
+            .layer_get_attr_value(&working_id, "/World/Cube", "xformOp:translate")
+            .expect("get authored translate")
+            .expect("authored translate value");
+        assert!(
+            value.contains('4') && value.contains('5') && value.contains('6'),
+            "translate op should receive vector value from matrix translation, got {value}"
+        );
+        assert!(
+            stage
+                .layer_get_attr_value(&working_id, "/World/Cube", "xformOp:transform")
+                .expect("get authored transform")
+                .is_none(),
+            "translate-backed prim should not receive matrix transform op"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// Test loading USD file with relative references (Xform refs).
     /// lucy_100.usda has 100 Xform prims each referencing @./lucy_low.usda@
     #[test]
@@ -3469,6 +3951,51 @@ mod tests {
             stack.layers.iter().all(|l| !l.is_muted),
             "no layer should be muted at load time"
         );
+    }
+
+    #[test]
+    fn test_get_layer_stack_reports_permission_to_edit() {
+        let stage = UsdStage::open(LAYERS_ROOT_FIXTURE).expect("open fixture");
+        let shot_id = stage
+            .get_layer_stack()
+            .expect("layer stack")
+            .layers
+            .iter()
+            .find(|l| l.identifier.ends_with("shot.usda"))
+            .map(|l| l.identifier.clone())
+            .expect("shot.usda in stack");
+
+        stage
+            .set_layer_permission_to_edit(&shot_id, false)
+            .expect("disable shot permission");
+
+        let stack = stage
+            .get_layer_stack()
+            .expect("layer stack after permission edit");
+
+        let shot = stack
+            .layers
+            .iter()
+            .find(|l| l.identifier.ends_with("shot.usda"))
+            .expect("shot.usda in stack");
+        let anim = stack
+            .layers
+            .iter()
+            .find(|l| l.identifier.ends_with("anim.usda"))
+            .expect("anim.usda in stack");
+
+        assert!(
+            !shot.permission_to_edit,
+            "read-only shot.usda should report permission_to_edit=false"
+        );
+        assert!(
+            anim.permission_to_edit,
+            "writable anim.usda should remain editable"
+        );
+
+        stage
+            .set_layer_permission_to_edit(&shot_id, true)
+            .expect("restore shot permission");
     }
 
     #[test]

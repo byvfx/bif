@@ -23,7 +23,9 @@ use cxx_qt::CxxQtType;
 use std::cell::Cell;
 
 use bif_core::scene_layer_state::SceneLayerState;
-use bif_core::usd::layer::{LayerInfo, LayerOffset, LayerStack, PayloadPolicy, PrimStackEntry};
+use bif_core::usd::layer::{
+    LayerInfo, LayerOffset, LayerStack, OpinionSource, PayloadPolicy, PrimStackEntry,
+};
 
 use crate::viewport::{
     viewport_on_frame, viewport_on_resize, viewport_on_shutdown, viewport_on_surface_ready,
@@ -122,11 +124,108 @@ fn color_index_for_layer(state: &BifShellStateRust, identifier: &str) -> i32 {
         .unwrap_or(-1)
 }
 
-/// Pragmatic "is this layer a valid edit target?" check for Tier 1.
-/// Anonymous layers can't persist; muted layers shouldn't accept new
-/// opinions. Real `SdfLayer::PermissionToEdit()` is Tier 1.5 FFI work.
+/// Pick only layers USD says can accept authored edits. Muted layers
+/// are still excluded even if writable — the shell should not author
+/// new opinions into a muted layer.
 fn is_writable_layer(info: &bif_core::usd::LayerInfo) -> bool {
-    !info.is_anonymous && !info.is_muted
+    info.permission_to_edit && !info.is_muted
+}
+
+const DEFAULT_OUTLINE_COLOR_HEX: &str = "#FFA600";
+
+fn srgb_u8_to_linear(component: u8) -> f32 {
+    let srgb = component as f32 / 255.0;
+    if srgb <= 0.04045 {
+        srgb / 12.92
+    } else {
+        ((srgb + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+fn parse_outline_color_hex(hex: &str) -> Option<[f32; 4]> {
+    let bytes = hex.strip_prefix('#')?;
+    if bytes.len() != 6 {
+        return None;
+    }
+    let r = u8::from_str_radix(&bytes[0..2], 16).ok()?;
+    let g = u8::from_str_radix(&bytes[2..4], 16).ok()?;
+    let b = u8::from_str_radix(&bytes[4..6], 16).ok()?;
+    Some([
+        srgb_u8_to_linear(r),
+        srgb_u8_to_linear(g),
+        srgb_u8_to_linear(b),
+        1.0,
+    ])
+}
+
+fn payload_policy_to_name(policy: PayloadPolicy) -> &'static str {
+    match policy {
+        PayloadPolicy::LoadAll => "LoadAll",
+        PayloadPolicy::LoadNone => "LoadNone",
+    }
+}
+
+fn parse_payload_policy_name(name: &str) -> Option<PayloadPolicy> {
+    match name {
+        "LoadAll" => Some(PayloadPolicy::LoadAll),
+        "LoadNone" => Some(PayloadPolicy::LoadNone),
+        _ => None,
+    }
+}
+
+fn escape_html(raw: &str) -> String {
+    raw.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
+}
+
+fn layer_palette_hex(index: i32) -> &'static str {
+    match index {
+        0 => "#50BEB4",
+        1 => "#B478DC",
+        2 => "#E69646",
+        3 => "#DCBE50",
+        4 => "#E682B4",
+        5 => "#5A96E6",
+        6 => "#78C864",
+        7 => "#DC6464",
+        _ => "#8C919B",
+    }
+}
+
+fn format_attr_opinion_tooltip(
+    attr_name: &str,
+    opinions: &[OpinionSource],
+    state: &BifShellStateRust,
+) -> String {
+    let escaped_name = escape_html(attr_name);
+    if opinions.is_empty() {
+        return format!(
+            "<b>{escaped_name}</b><br/><span style=\"color:#8C919B;\">No authored opinions.</span>"
+        );
+    }
+
+    let mut html = format!("<b>{escaped_name}</b><br/><br/>");
+    for opinion in opinions {
+        let color = layer_palette_hex(color_index_for_layer(state, &opinion.layer_identifier));
+        let label = if opinion.is_winning {
+            " <span style=\"color:#F0D67A;\">(winning)</span>"
+        } else {
+            ""
+        };
+        html.push_str(&format!(
+            "<span style=\"color:{color};\">&#9679;</span> \
+             <b>{layer}</b>{label}<br/>\
+             <span style=\"padding-left:14px;\"><code>{value}</code> \
+             <span style=\"color:#8C919B;\">{value_type}</span></span><br/><br/>",
+            layer = escape_html(&opinion.layer_identifier),
+            value = escape_html(&opinion.value_display),
+            value_type = escape_html(&opinion.value_type),
+        ));
+    }
+    html
 }
 
 /// Pick the strongest writable sublayer as the edit target. Walks the
@@ -227,6 +326,11 @@ pub mod qobject {
         #[qproperty(QString, title)]
         #[qproperty(QString, status_message)]
         #[qproperty(QString, current_workspace)]
+        #[qproperty(bool, can_undo)]
+        #[qproperty(bool, can_redo)]
+        #[qproperty(f64, outline_width)]
+        #[qproperty(QString, outline_color_hex)]
+        #[qproperty(QString, ivar_status)]
         // Bumped on every scene_layer_state mutation. C++ models
         // connect to the auto-generated `layer_state_revisionChanged`
         // signal to trigger a reset/refresh.
@@ -295,6 +399,36 @@ pub mod qobject {
         #[qinvokable]
         fn close_stage(self: Pin<&mut BifShellState>);
 
+        /// Edit → Undo (Ctrl+Z). Mirrors `Viewport::undo_last_command`.
+        #[qinvokable]
+        fn on_undo(self: Pin<&mut BifShellState>);
+
+        /// Edit → Redo (Ctrl+Shift+Z). Mirrors `Viewport::redo_last_command`.
+        #[qinvokable]
+        fn on_redo(self: Pin<&mut BifShellState>);
+
+        /// Poll the live viewport undo stack and mirror it onto
+        /// `can_undo` / `can_redo` for C++ action enable state.
+        #[qinvokable]
+        fn sync_undo_redo_state(self: Pin<&mut BifShellState>);
+
+        /// Update selection-outline width and mirror it onto the live viewport.
+        #[qinvokable]
+        fn on_set_outline_width(self: Pin<&mut BifShellState>, width: f64);
+
+        /// Update selection-outline color from a `#RRGGBB` string and mirror
+        /// it onto the live viewport as linear RGBA.
+        #[qinvokable]
+        fn on_set_outline_color(self: Pin<&mut BifShellState>, color_hex: QString);
+
+        /// Trigger an Ivar preview render from the Qt shell.
+        #[qinvokable]
+        fn on_start_ivar_render(self: Pin<&mut BifShellState>);
+
+        /// Poll the live renderer's Ivar state and mirror it onto `ivar_status`.
+        #[qinvokable]
+        fn sync_ivar_status(self: Pin<&mut BifShellState>);
+
         /// Camera orbit delta forwarded from RenderWidget::cameraOrbit.
         /// Phase E.1 just updates status; Phase E.2 dispatches a
         /// real AppEvent::CameraOrbit to bif_renderer::Renderer.
@@ -322,6 +456,14 @@ pub mod qobject {
         /// clears them on miss. Uses the ADR-007 β bridge.
         #[qinvokable]
         fn on_prim_pick(self: Pin<&mut BifShellState>, x: i32, y: i32);
+
+        /// Viewport mouse move / primary drag for the translate gizmo.
+        #[qinvokable]
+        fn on_transform_gizmo_move(self: Pin<&mut BifShellState>, x: i32, y: i32) -> bool;
+
+        /// Viewport primary-button release for translate gizmo commit.
+        #[qinvokable]
+        fn on_transform_gizmo_release(self: Pin<&mut BifShellState>, x: i32, y: i32) -> bool;
 
         /// Scene-browser tree selection change. Routes through the
         /// renderer so viewport gizmo + outline highlight sync to the
@@ -406,6 +548,19 @@ pub mod qobject {
         /// Toggle isolation mode. Bumps `layer_state_revision`.
         #[qinvokable]
         fn toggle_isolation_mode(self: Pin<&mut BifShellState>);
+
+        /// Whether a real USD stage is currently loaded.
+        #[qinvokable]
+        fn has_loaded_stage(self: &BifShellState) -> bool;
+
+        /// Current payload-policy mode as `LoadAll` or `LoadNone`.
+        #[qinvokable]
+        fn payload_policy_name(self: &BifShellState) -> QString;
+
+        /// Update payload loading policy. Reloads the current stage when one
+        /// is open so workspace switches take effect immediately.
+        #[qinvokable]
+        fn on_set_payload_policy(self: Pin<&mut BifShellState>, policy_name: QString) -> bool;
 
         /// Tier 1 edit-target surface. All 4 read `scene_layer_state
         /// .working_layer`; pill / status chip / viewport edge tint /
@@ -607,6 +762,11 @@ pub mod qobject {
         #[qinvokable]
         fn selected_prim_attr_color_index_at(self: &BifShellState, attr_index: i32) -> i32;
 
+        /// Rich-HTML tooltip enumerating the full opinion stack for the selected
+        /// prim attribute at `attr_index`.
+        #[qinvokable]
+        fn selected_prim_attr_tooltip_at(self: &BifShellState, attr_index: i32) -> QString;
+
         // ---- Camera picker surface ----
 
         /// Number of UsdGeomCamera prims in the loaded stage. 0 when no stage.
@@ -624,6 +784,92 @@ pub mod qobject {
         /// Switch camera. `source` is "free", "ortho:<Preset>", or "usd:<path>".
         #[qinvokable]
         fn on_select_camera(self: Pin<&mut BifShellState>, source: QString);
+
+        /// Author a working-layer visibility opinion for `path`.
+        /// Routes through `Renderer::dispatch_visibility` → C4a
+        /// `EditOperation::Visibility` so the toggle is one undo step
+        /// and saves cleanly through Ctrl+S. C4b-Carry-1.
+        #[qinvokable]
+        fn on_set_visibility(self: Pin<&mut BifShellState>, path: QString, visible: bool);
+
+        // ---- Material Sheet surface (C4b-1) ----
+        //
+        // The Material Sheet C++ panel queries cached input rows from
+        // these invokables (count + per-row name/type/value) and
+        // dispatches edits via `on_set_material_param` /
+        // `on_bind_material`. Cache refreshes on selection change.
+
+        /// Number of shader inputs on the bound material's surface
+        /// shader for the selected prim. 0 when nothing bound.
+        #[qinvokable]
+        fn selected_prim_material_input_count(self: &BifShellState) -> i32;
+
+        /// Input name at `index` (e.g. "base_color").
+        #[qinvokable]
+        fn selected_prim_material_input_name_at(self: &BifShellState, index: i32) -> QString;
+
+        /// USD type token at `index` (e.g. "float", "color3f").
+        #[qinvokable]
+        fn selected_prim_material_input_type_at(self: &BifShellState, index: i32) -> QString;
+
+        /// Stringified current value at `index`.
+        #[qinvokable]
+        fn selected_prim_material_input_value_at(self: &BifShellState, index: i32) -> QString;
+
+        /// Surface shader prim path for the bound material on the
+        /// selected prim. Empty when no binding.
+        #[qinvokable]
+        fn selected_prim_material_shader_path(self: &BifShellState) -> QString;
+
+        /// Author a working-layer shader-input override on the
+        /// surface shader of the bound material. `value_str` is
+        /// type-encoded ("0.5", "1,0,0" for color3f, "true"/"false"
+        /// for bool). Records one undo step. C4b-1.
+        #[qinvokable]
+        fn on_set_material_param(
+            self: Pin<&mut BifShellState>,
+            input_name: QString,
+            type_name: QString,
+            value_str: QString,
+        );
+
+        /// Bind material `material_path` to the selected prim on the
+        /// working layer. C4b-1.
+        #[qinvokable]
+        fn on_bind_material(self: Pin<&mut BifShellState>, material_path: QString);
+
+        // ---- Shading model dropdown (C4b-3) ----
+
+        /// Read the bound material's surface shader `info:id` token.
+        /// Empty when nothing bound. Used by the Material Sheet
+        /// header dropdown to reflect the current shading model.
+        #[qinvokable]
+        fn selected_prim_material_shader_id(self: &BifShellState) -> QString;
+
+        /// Swap the bound material's surface shader `info:id` to
+        /// `model` and best-effort remap inputs (e.g. `base_color`
+        /// ↔ `diffuseColor`). Wraps the change in `begin_group`/
+        /// `end_group` so a single Ctrl+Z reverts the entire swap.
+        /// Returns a `\n`-separated list of input names that don't
+        /// round-trip into the new model. Empty on success without
+        /// losses. C4b-3.
+        #[qinvokable]
+        fn on_set_shading_model(self: Pin<&mut BifShellState>, model: QString) -> QString;
+
+        // ---- USDA Source panel surface (C4b-2) ----
+
+        /// Serialize the active edit-target layer back to USDA text
+        /// for the USDA panel's QPlainTextEdit. Empty when no stage.
+        #[qinvokable]
+        fn active_edit_target_layer_text(self: &BifShellState) -> QString;
+
+        /// Validate `text` as USDA and, on success, replace the
+        /// active edit-target layer's contents through C4a edit
+        /// history. Returns an empty string on success, or a
+        /// human-readable error message on parse / dispatch failure.
+        /// C4b-2.
+        #[qinvokable]
+        fn on_apply_usda(self: Pin<&mut BifShellState>, text: QString) -> QString;
     }
 }
 
@@ -635,9 +881,19 @@ pub struct BifShellStateRust {
     pub title: cxx_qt_lib::QString,
     pub status_message: cxx_qt_lib::QString,
     /// Active workspace preset — one of "assembly", "lighting",
-    /// "materials", "render". Empty on first launch (C++ side
+    /// "materials", "review". Empty on first launch (C++ side
     /// initializes from QSettings or falls back to "assembly").
     pub current_workspace: cxx_qt_lib::QString,
+    /// Edit menu enable state — mirrored from the live viewport undo stack.
+    pub can_undo: bool,
+    /// Edit menu enable state — mirrored from the live viewport redo stack.
+    pub can_redo: bool,
+    /// Selection-outline width mirrored onto `Renderer::display_settings`.
+    pub outline_width: f64,
+    /// Outline color as an sRGB `#RRGGBB` string for Qt controls.
+    pub outline_color_hex: cxx_qt_lib::QString,
+    /// Live Ivar progress/status string for Render Settings + status bar.
+    pub ivar_status: cxx_qt_lib::QString,
     /// Monotonic counter bumped on every scene_layer_state mutation.
     /// Auto-emits `layer_state_revisionChanged` for panel models.
     pub layer_state_revision: i32,
@@ -647,6 +903,8 @@ pub struct BifShellStateRust {
     /// Layer stack + mute set + working layer + isolation flag.
     /// None until a stage is loaded (Phase E) or demo data seeded.
     pub scene_layer_state: Option<SceneLayerState>,
+    /// Workspace-driven payload policy used for the next stage load/reload.
+    pub payload_policy: PayloadPolicy,
     /// Current prim selection — driven by scene browser clicks.
     pub selected_prim_path: cxx_qt_lib::QString,
     /// Type name of the selected prim (e.g. "Mesh", "Xform").
@@ -694,6 +952,12 @@ pub struct BifShellStateRust {
     /// Cached prim-stack snapshot for the property inspector's composition arcs.
     /// Refreshed on selected-prim changes and layer-state revision bumps.
     pub selected_prim_stack_cache: Vec<PrimStackEntry>,
+    /// Cached bound-material shader inputs for the Material Sheet tab.
+    /// Refreshed on selection / layer revision bumps. C4b-1.
+    pub selected_material_inputs_cache: Vec<bif_core::usd::BoundMaterialInput>,
+    /// Surface shader prim path for the bound material on the selected
+    /// prim. Empty when nothing bound. C4b-1.
+    pub selected_material_shader_path: String,
 }
 
 impl Default for BifShellStateRust {
@@ -702,9 +966,15 @@ impl Default for BifShellStateRust {
             title: cxx_qt_lib::QString::from("BIF — USD Orchestration (Qt)"),
             status_message: cxx_qt_lib::QString::from("Ready."),
             current_workspace: cxx_qt_lib::QString::from(""),
+            can_undo: false,
+            can_redo: false,
+            outline_width: 0.004,
+            outline_color_hex: cxx_qt_lib::QString::from(DEFAULT_OUTLINE_COLOR_HEX),
+            ivar_status: cxx_qt_lib::QString::from(""),
             layer_state_revision: 0,
             scene_browser_revision: 0,
             scene_layer_state: None,
+            payload_policy: PayloadPolicy::LoadAll,
             selected_prim_path: cxx_qt_lib::QString::from(""),
             selected_prim_type: cxx_qt_lib::QString::from(""),
             current_frame: 0,
@@ -720,6 +990,8 @@ impl Default for BifShellStateRust {
             active_camera_source: "free".to_string(),
             lod_enabled: true,
             selected_prim_stack_cache: Vec::new(),
+            selected_material_inputs_cache: Vec::new(),
+            selected_material_shader_path: String::new(),
         }
     }
 }
@@ -748,13 +1020,38 @@ impl qobject::BifShellState {
     /// happened and flags the no-edit-target case explicitly.
     fn on_save(mut self: Pin<&mut Self>) {
         log::info!("action: File/Save");
-        let msg = if !self.as_ref().active_edit_target_is_set() {
-            "Save: no stage loaded — open a stage first"
-        } else {
-            "Save: write path not yet wired (v0.16)"
+        let Some(layer_id) = self
+            .as_ref()
+            .rust()
+            .scene_layer_state
+            .as_ref()
+            .and_then(|s| s.stack.layers.get(s.working_layer))
+            .map(|l| l.identifier.clone())
+        else {
+            self.as_mut().set_status_message(cxx_qt_lib::QString::from(
+                "Save: no stage loaded — open a stage first",
+            ));
+            return;
+        };
+
+        let msg = match with_stage(|stage| stage.save_layer(&layer_id)) {
+            Some(Ok(())) => {
+                if let Some(state) = self.as_mut().rust_mut().scene_layer_state.as_mut() {
+                    state.mark_working_layer_dirty(false);
+                }
+                with_viewport_mut(|vp| {
+                    if let Some(state) = vp.renderer_mut().scene.layer_state.as_mut() {
+                        state.mark_working_layer_dirty(false);
+                    }
+                });
+                bump_revision(self.as_mut());
+                format!("Saved {layer_id}")
+            }
+            Some(Err(e)) => format!("Save failed: {e}"),
+            None => "Save failed: viewport not ready".to_string(),
         };
         self.as_mut()
-            .set_status_message(cxx_qt_lib::QString::from(msg));
+            .set_status_message(cxx_qt_lib::QString::from(&msg));
     }
 
     fn on_save_as(mut self: Pin<&mut Self>) {
@@ -867,11 +1164,17 @@ impl qobject::BifShellState {
         // blocks on the C++ bridge + GPU buffer uploads. Matches bif_viewer's
         // startup-load behavior; acceptable for now. Async path is a future
         // optimization (scene_manager.rs already has `load_usd_scene_async`).
-        let load_result = with_viewport_mut(|vp| vp.renderer_mut().load_usd_scene(&path_buf));
+        let payload_policy = self.as_ref().rust().payload_policy;
+        let load_result = with_viewport_mut(|vp| {
+            vp.renderer_mut()
+                .load_usd_scene_with_policy(&path_buf, payload_policy)
+        });
 
         match load_result {
             None => {
                 log::warn!("stage open: viewport not ready yet (surface not created?)");
+                refresh_undo_redo_qprops(self.as_mut());
+                refresh_ivar_status_qprop(self.as_mut());
                 self.as_mut()
                     .set_status_message(cxx_qt_lib::QString::from(&format!(
                         "Viewport not ready — cannot load {path_str}",
@@ -879,6 +1182,8 @@ impl qobject::BifShellState {
             }
             Some(Err(e)) => {
                 log::error!("stage load failed: {e:?}");
+                refresh_undo_redo_qprops(self.as_mut());
+                refresh_ivar_status_qprop(self.as_mut());
                 self.as_mut()
                     .set_status_message(cxx_qt_lib::QString::from(&format!("Load failed: {e:?}",)));
             }
@@ -896,22 +1201,47 @@ impl qobject::BifShellState {
                 // `working_layer` to the root; re-pick so anonymous / muted
                 // roots skip to the next candidate instead of silently
                 // authoring into a non-persistent layer.
-                let edit_target_name = {
+                let (edit_target_name, loaded_policy, picked_idx) = {
                     let mut r = self.as_mut().rust_mut();
                     if let Some(state) = r.scene_layer_state.as_mut() {
-                        if let Some(idx) = pick_strongest_writable_sublayer(state) {
-                            state.working_layer = idx;
+                        let picked_idx = pick_strongest_writable_sublayer(state);
+                        if let Some(idx) = picked_idx {
+                            state.set_working_layer(idx);
                         }
-                        state
-                            .stack
-                            .layers
-                            .get(state.working_layer)
-                            .map(|l| l.display_name.clone())
-                            .unwrap_or_default()
+                        (
+                            state
+                                .stack
+                                .layers
+                                .get(state.working_layer)
+                                .map(|l| l.display_name.clone())
+                                .unwrap_or_default(),
+                            Some(state.payload_policy),
+                            picked_idx,
+                        )
                     } else {
-                        String::new()
+                        (String::new(), None, None)
                     }
                 };
+                if let Some(idx) = picked_idx {
+                    with_viewport_mut(|vp| {
+                        let renderer = vp.renderer_mut();
+                        let stage_arc = renderer.scene.usd_stage.clone();
+                        if let Some(state) = renderer.scene.layer_state.as_mut() {
+                            if let Some(stage_arc) = stage_arc {
+                                if let Ok(stage) = stage_arc.lock() {
+                                    if let Err(e) = state.set_edit_target(idx, &stage) {
+                                        log::warn!("edit target sync failed: {e}");
+                                    }
+                                }
+                            } else {
+                                state.set_working_layer(idx);
+                            }
+                        }
+                    });
+                }
+                if let Some(policy) = loaded_policy {
+                    self.as_mut().rust_mut().payload_policy = policy;
+                }
 
                 bump_revision(self.as_mut());
                 bump_scene_browser_revision(self.as_mut());
@@ -926,6 +1256,8 @@ impl qobject::BifShellState {
                     r.active_camera_source = "free".to_string();
                 }
                 bump_camera_list_revision(self.as_mut());
+                refresh_undo_redo_qprops(self.as_mut());
+                refresh_ivar_status_qprop(self.as_mut());
 
                 log::info!("stage loaded: {path_str}");
                 let msg = if edit_target_name.is_empty() {
@@ -979,9 +1311,110 @@ impl qobject::BifShellState {
         refresh_selected_prim_stack_cache(self.as_mut());
         bump_revision(self.as_mut());
         bump_scene_browser_revision(self.as_mut());
+        refresh_undo_redo_qprops(self.as_mut());
+        refresh_ivar_status_qprop(self.as_mut());
 
         self.as_mut()
             .set_status_message(cxx_qt_lib::QString::from("Stage closed."));
+    }
+
+    fn on_undo(mut self: Pin<&mut Self>) {
+        log::info!("action: Edit/Undo");
+        let outcome = with_viewport_mut(|vp| vp.renderer_mut().undo());
+        let message = match outcome {
+            Some(Some(desc)) => format!("Undo: {desc}"),
+            Some(None) => "Undo: nothing to undo".to_string(),
+            None => "Undo failed — viewport not ready".to_string(),
+        };
+        refresh_undo_redo_qprops(self.as_mut());
+        self.as_mut()
+            .set_status_message(cxx_qt_lib::QString::from(&message));
+    }
+
+    fn on_redo(mut self: Pin<&mut Self>) {
+        log::info!("action: Edit/Redo");
+        let outcome = with_viewport_mut(|vp| vp.renderer_mut().redo());
+        let message = match outcome {
+            Some(Some(desc)) => format!("Redo: {desc}"),
+            Some(None) => "Redo: nothing to redo".to_string(),
+            None => "Redo failed — viewport not ready".to_string(),
+        };
+        refresh_undo_redo_qprops(self.as_mut());
+        self.as_mut()
+            .set_status_message(cxx_qt_lib::QString::from(&message));
+    }
+
+    fn sync_undo_redo_state(mut self: Pin<&mut Self>) {
+        refresh_undo_redo_qprops(self.as_mut());
+    }
+
+    fn on_set_outline_width(mut self: Pin<&mut Self>, width: f64) {
+        let clamped = width.clamp(0.001, 0.05);
+        self.as_mut().set_outline_width(clamped);
+        let applied = with_viewport_mut(|vp| {
+            let renderer = vp.renderer_mut();
+            renderer.display_settings.outline_width = clamped as f32;
+            renderer.update_camera();
+        })
+        .is_some();
+        let msg = if applied {
+            format!("Outline width: {:.3}", clamped)
+        } else {
+            format!("Outline width queued: {:.3} (viewport not ready)", clamped)
+        };
+        self.as_mut()
+            .set_status_message(cxx_qt_lib::QString::from(&msg));
+    }
+
+    fn on_set_outline_color(mut self: Pin<&mut Self>, color_hex: cxx_qt_lib::QString) {
+        let raw: String = (&color_hex).into();
+        let mut normalized = raw.trim().to_ascii_uppercase();
+        if !normalized.starts_with('#') {
+            normalized.insert(0, '#');
+        }
+        let Some(linear) = parse_outline_color_hex(&normalized) else {
+            self.as_mut().set_status_message(cxx_qt_lib::QString::from(
+                "Outline color must be a #RRGGBB value",
+            ));
+            return;
+        };
+        self.as_mut()
+            .set_outline_color_hex(cxx_qt_lib::QString::from(&normalized));
+        let applied = with_viewport_mut(|vp| {
+            let renderer = vp.renderer_mut();
+            renderer.display_settings.outline_color = linear;
+            renderer.update_camera();
+        })
+        .is_some();
+        let msg = if applied {
+            format!("Outline color: {normalized}")
+        } else {
+            format!("Outline color queued: {normalized} (viewport not ready)")
+        };
+        self.as_mut()
+            .set_status_message(cxx_qt_lib::QString::from(&msg));
+    }
+
+    fn on_start_ivar_render(mut self: Pin<&mut Self>) {
+        let outcome = with_viewport_mut(|vp| {
+            let renderer = vp.renderer_mut();
+            let started = renderer.trigger_ivar_render();
+            let status = renderer.ivar_status_line();
+            (started, status)
+        });
+        refresh_ivar_status_qprop(self.as_mut());
+        let message = match outcome {
+            Some((true, status)) if !status.is_empty() => status,
+            Some((true, _)) => "Ivar render started".to_string(),
+            Some((false, _)) => "Ivar render unavailable — load a stage first".to_string(),
+            None => "Ivar render deferred — viewport not ready".to_string(),
+        };
+        self.as_mut()
+            .set_status_message(cxx_qt_lib::QString::from(&message));
+    }
+
+    fn sync_ivar_status(mut self: Pin<&mut Self>) {
+        refresh_ivar_status_qprop(self.as_mut());
     }
 
     fn on_camera_orbit(self: Pin<&mut Self>, dx: i32, dy: i32) {
@@ -1039,6 +1472,17 @@ impl qobject::BifShellState {
     }
 
     fn on_prim_pick(mut self: Pin<&mut Self>, x: i32, y: i32) {
+        let gizmo_axis = with_viewport_mut(|vp| {
+            vp.renderer_mut()
+                .begin_transform_gizmo_drag(x as f32, y as f32)
+        })
+        .flatten();
+        if let Some(axis) = gizmo_axis {
+            self.as_mut()
+                .set_status_message(cxx_qt_lib::QString::from(&format!("Move {axis} axis")));
+            return;
+        }
+
         // Route through the renderer's unified selection path so viewport
         // outline + gizmo state stay in sync with tree/property panels.
         // `select_at_screen` ray-casts into the pick BVH, updates
@@ -1076,20 +1520,28 @@ impl qobject::BifShellState {
                 })
                 .unwrap_or_default();
             log::debug!("pick idx={idx} raw={raw} path={path} type={type_name}");
-            Some((path, type_name))
+            let has_gizmo = r.has_transform_gizmo();
+            Some((path, type_name, has_gizmo))
         })
         .flatten();
 
         match pick_result {
-            Some((path, type_name)) => {
+            Some((path, type_name, has_gizmo)) => {
                 log::info!("pick hit: path={path} type={type_name}");
                 self.as_mut()
                     .set_selected_prim_path(cxx_qt_lib::QString::from(&path));
                 self.as_mut()
                     .set_selected_prim_type(cxx_qt_lib::QString::from(&type_name));
                 refresh_selected_prim_stack_cache(self.as_mut());
+                let suffix = if has_gizmo {
+                    " — move handles ready"
+                } else {
+                    " — no movable viewport instance"
+                };
                 self.as_mut()
-                    .set_status_message(cxx_qt_lib::QString::from(&format!("Selected: {path}")));
+                    .set_status_message(cxx_qt_lib::QString::from(&format!(
+                        "Selected: {path}{suffix}"
+                    )));
             }
             None => {
                 self.as_mut()
@@ -1101,6 +1553,27 @@ impl qobject::BifShellState {
                     .set_status_message(cxx_qt_lib::QString::from("Selection cleared."));
             }
         }
+    }
+
+    fn on_transform_gizmo_move(self: Pin<&mut Self>, x: i32, y: i32) -> bool {
+        with_viewport_mut(|vp| {
+            vp.renderer_mut()
+                .update_transform_gizmo_drag(x as f32, y as f32)
+        })
+        .unwrap_or(false)
+    }
+
+    fn on_transform_gizmo_release(mut self: Pin<&mut Self>, x: i32, y: i32) -> bool {
+        let moved = with_viewport_mut(|vp| {
+            vp.renderer_mut()
+                .end_transform_gizmo_drag(x as f32, y as f32)
+        })
+        .unwrap_or(false);
+        if moved {
+            self.as_mut()
+                .set_status_message(cxx_qt_lib::QString::from("Transform moved"));
+        }
+        moved
     }
 
     fn on_tree_prim_selected(
@@ -1115,12 +1588,26 @@ impl qobject::BifShellState {
         // Drive renderer-side selection so the viewport gizmo + outline
         // highlight follow the tree click. `select_prim_by_path` resolves
         // the prim path back to an instance index when available.
-        with_viewport_mut(|vp| vp.renderer_mut().select_prim_by_path(&path_str));
+        let has_gizmo = with_viewport_mut(|vp| {
+            let renderer = vp.renderer_mut();
+            renderer.select_prim_by_path(&path_str);
+            renderer.has_transform_gizmo()
+        })
+        .unwrap_or(false);
         // Mirror path/type into shell qprops so the property inspector
         // (which binds to `selected_prim_pathChanged`) updates too.
         self.as_mut().set_selected_prim_path(path);
         self.as_mut().set_selected_prim_type(type_name);
         refresh_selected_prim_stack_cache(self.as_mut());
+        let suffix = if has_gizmo {
+            " — move handles ready"
+        } else {
+            " — no movable viewport instance"
+        };
+        self.as_mut()
+            .set_status_message(cxx_qt_lib::QString::from(&format!(
+                "Selected: {path_str}{suffix}"
+            )));
     }
 
     fn on_set_lod_enabled(mut self: Pin<&mut Self>, enabled: bool) {
@@ -1153,6 +1640,7 @@ impl qobject::BifShellState {
         // Mimic `test_assets/layers/root.usda` — three layers with
         // shot overriding anim overriding root. Fake identifiers so
         // we don't need a real USD load for Phase C.1 visual testing.
+        let payload_policy = self.as_ref().rust().payload_policy;
         let layers = vec![
             LayerInfo {
                 identifier: "G:/demo/root.usda".into(),
@@ -1162,6 +1650,7 @@ impl qobject::BifShellState {
                 is_muted: false,
                 is_anonymous: false,
                 is_dirty: false,
+                permission_to_edit: true,
                 real_path: std::path::PathBuf::new(),
                 offset: LayerOffset::default(),
             },
@@ -1173,6 +1662,7 @@ impl qobject::BifShellState {
                 is_muted: false,
                 is_anonymous: false,
                 is_dirty: false,
+                permission_to_edit: true,
                 real_path: std::path::PathBuf::new(),
                 offset: LayerOffset::default(),
             },
@@ -1184,6 +1674,7 @@ impl qobject::BifShellState {
                 is_muted: false,
                 is_anonymous: false,
                 is_dirty: false,
+                permission_to_edit: true,
                 real_path: std::path::PathBuf::new(),
                 offset: LayerOffset::default(),
             },
@@ -1197,8 +1688,9 @@ impl qobject::BifShellState {
             working_layer: 0,
             muted: Default::default(),
             isolation_mode: false,
-            payload_policy: PayloadPolicy::LoadAll,
+            payload_policy,
             layer_for_prim: Default::default(),
+            edit_history: bif_core::usd::EditHistory::with_working_layer("root.usda"),
         };
         self.as_mut().rust_mut().scene_layer_state = Some(state);
         bump_revision(self.as_mut());
@@ -1330,7 +1822,14 @@ impl qobject::BifShellState {
                 // per-prim strongest-layer assignments may have shifted).
                 let fresh_state =
                     with_viewport_mut(|vp| vp.renderer_mut().scene.layer_state.clone()).flatten();
-                self.as_mut().rust_mut().scene_layer_state = fresh_state;
+                let fresh_policy = fresh_state.as_ref().map(|s| s.payload_policy);
+                {
+                    let mut r = self.as_mut().rust_mut();
+                    r.scene_layer_state = fresh_state;
+                    if let Some(policy) = fresh_policy {
+                        r.payload_policy = policy;
+                    }
+                }
                 bump_revision(self.as_mut());
                 bump_scene_browser_revision(self.as_mut());
                 let verb = if muted { "muted" } else { "unmuted" };
@@ -1351,9 +1850,28 @@ impl qobject::BifShellState {
     }
 
     fn set_working_layer(mut self: Pin<&mut Self>, index: i32) {
-        if let Some(state) = self.as_mut().rust_mut().scene_layer_state.as_mut() {
-            state.set_working_layer(index as usize);
+        if index < 0 {
+            return;
         }
+        let idx = index as usize;
+        if let Some(state) = self.as_mut().rust_mut().scene_layer_state.as_mut() {
+            state.set_working_layer(idx);
+        }
+        with_viewport_mut(|vp| {
+            let renderer = vp.renderer_mut();
+            let stage_arc = renderer.scene.usd_stage.clone();
+            if let Some(state) = renderer.scene.layer_state.as_mut() {
+                if let Some(stage_arc) = stage_arc {
+                    if let Ok(stage) = stage_arc.lock() {
+                        if let Err(e) = state.set_edit_target(idx, &stage) {
+                            log::warn!("working layer edit-target sync failed: {e}");
+                        }
+                    }
+                } else {
+                    state.set_working_layer(idx);
+                }
+            }
+        });
         bump_revision(self.as_mut());
         log::info!("working layer → {index}");
     }
@@ -1363,6 +1881,106 @@ impl qobject::BifShellState {
             state.isolation_mode = !state.isolation_mode;
         }
         bump_revision(self.as_mut());
+    }
+
+    fn has_loaded_stage(&self) -> bool {
+        self.rust().current_stage_path.is_some()
+    }
+
+    fn payload_policy_name(&self) -> cxx_qt_lib::QString {
+        cxx_qt_lib::QString::from(payload_policy_to_name(self.rust().payload_policy))
+    }
+
+    fn on_set_payload_policy(mut self: Pin<&mut Self>, policy_name: cxx_qt_lib::QString) -> bool {
+        let policy_name: String = (&policy_name).into();
+        let Some(policy) = parse_payload_policy_name(&policy_name) else {
+            let msg = format!("Unknown payload policy: {policy_name}");
+            log::warn!("{msg}");
+            self.as_mut()
+                .set_status_message(cxx_qt_lib::QString::from(&msg));
+            return false;
+        };
+
+        if policy == self.as_ref().rust().payload_policy {
+            return true;
+        }
+
+        let status_line = format!("Payload policy: {}", payload_policy_to_name(policy));
+        let Some(path) = self.as_ref().rust().current_stage_path.clone() else {
+            {
+                let mut r = self.as_mut().rust_mut();
+                r.payload_policy = policy;
+                if let Some(state) = r.scene_layer_state.as_mut() {
+                    state.payload_policy = policy;
+                }
+            }
+            bump_revision(self.as_mut());
+            self.as_mut()
+                .set_status_message(cxx_qt_lib::QString::from(&status_line));
+            return true;
+        };
+
+        let reload_result =
+            with_viewport_mut(|vp| vp.renderer_mut().load_usd_scene_with_policy(&path, policy));
+
+        match reload_result {
+            Some(Ok(())) => {
+                let fresh_state =
+                    with_viewport_mut(|vp| vp.renderer_mut().scene.layer_state.clone()).flatten();
+                let camera_paths =
+                    with_stage(|stage| stage.list_camera_prims().unwrap_or_default())
+                        .unwrap_or_default();
+                let edit_target_name = {
+                    let mut r = self.as_mut().rust_mut();
+                    r.payload_policy = policy;
+                    r.scene_layer_state = fresh_state;
+                    r.usd_camera_paths = camera_paths;
+                    r.active_camera_source = "free".to_string();
+                    if let Some(state) = r.scene_layer_state.as_mut() {
+                        if let Some(idx) = pick_strongest_writable_sublayer(state) {
+                            state.working_layer = idx;
+                        }
+                        state
+                            .stack
+                            .layers
+                            .get(state.working_layer)
+                            .map(|l| l.display_name.clone())
+                            .unwrap_or_default()
+                    } else {
+                        String::new()
+                    }
+                };
+                bump_revision(self.as_mut());
+                bump_scene_browser_revision(self.as_mut());
+                bump_camera_list_revision(self.as_mut());
+                refresh_undo_redo_qprops(self.as_mut());
+                refresh_ivar_status_qprop(self.as_mut());
+
+                let msg = if edit_target_name.is_empty() {
+                    status_line
+                } else {
+                    format!("{status_line}  •  Edit target: {edit_target_name}")
+                };
+                self.as_mut()
+                    .set_status_message(cxx_qt_lib::QString::from(&msg));
+                true
+            }
+            Some(Err(e)) => {
+                log::error!("payload policy reload failed: {e:?}");
+                self.as_mut()
+                    .set_status_message(cxx_qt_lib::QString::from(&format!(
+                        "Payload reload failed: {e:?}"
+                    )));
+                false
+            }
+            None => {
+                log::warn!("payload policy change: viewport not ready");
+                self.as_mut().set_status_message(cxx_qt_lib::QString::from(
+                    "Payload policy deferred — viewport not ready",
+                ));
+                false
+            }
+        }
     }
 
     // -----------------------------------------------------------------
@@ -1818,6 +2436,28 @@ impl qobject::BifShellState {
         }
     }
 
+    fn selected_prim_attr_tooltip_at(&self, attr_index: i32) -> cxx_qt_lib::QString {
+        let prim_path: String = (&self.rust().selected_prim_path).into();
+        if prim_path.is_empty() {
+            return cxx_qt_lib::QString::from("");
+        }
+        let tooltip = with_stage(|stage| {
+            let Some(attr_name) = stage
+                .get_prim_attributes(&prim_path)
+                .ok()
+                .and_then(|v| v.get(attr_index as usize).map(|a| a.name.clone()))
+            else {
+                return String::new();
+            };
+            let opinions = stage
+                .get_attribute_opinions(&prim_path, &attr_name)
+                .unwrap_or_default();
+            format_attr_opinion_tooltip(&attr_name, &opinions, self.rust())
+        })
+        .unwrap_or_default();
+        cxx_qt_lib::QString::from(&tooltip)
+    }
+
     // -----------------------------------------------------------------
     // Camera picker surface
     // -----------------------------------------------------------------
@@ -1836,6 +2476,255 @@ impl qobject::BifShellState {
 
     fn active_camera_name(&self) -> cxx_qt_lib::QString {
         cxx_qt_lib::QString::from(self.rust().active_camera_source.as_str())
+    }
+
+    fn on_set_visibility(mut self: Pin<&mut Self>, path: cxx_qt_lib::QString, visible: bool) {
+        let path_str: String = (&path).into();
+        if path_str.is_empty() {
+            return;
+        }
+        let result =
+            with_viewport_mut(|vp| vp.renderer_mut().dispatch_visibility(&path_str, visible));
+        match result {
+            Some(Ok(_desc)) => {
+                self.as_mut()
+                    .set_status_message(cxx_qt_lib::QString::from(&format!(
+                        "Visibility {} for {}",
+                        if visible { "shown" } else { "hidden" },
+                        path_str
+                    )));
+                refresh_undo_redo_qprops(self.as_mut());
+                bump_revision(self.as_mut());
+            }
+            Some(Err(e)) => {
+                self.as_mut()
+                    .set_status_message(cxx_qt_lib::QString::from(&format!(
+                        "Visibility edit failed: {e}"
+                    )));
+            }
+            None => {}
+        }
+    }
+
+    fn selected_prim_material_input_count(&self) -> i32 {
+        self.rust().selected_material_inputs_cache.len() as i32
+    }
+
+    fn selected_prim_material_input_name_at(&self, index: i32) -> cxx_qt_lib::QString {
+        let idx = if index < 0 { 0 } else { index as usize };
+        self.rust()
+            .selected_material_inputs_cache
+            .get(idx)
+            .map(|i| cxx_qt_lib::QString::from(i.name.as_str()))
+            .unwrap_or_default()
+    }
+
+    fn selected_prim_material_input_type_at(&self, index: i32) -> cxx_qt_lib::QString {
+        let idx = if index < 0 { 0 } else { index as usize };
+        self.rust()
+            .selected_material_inputs_cache
+            .get(idx)
+            .map(|i| cxx_qt_lib::QString::from(i.type_name.as_str()))
+            .unwrap_or_default()
+    }
+
+    fn selected_prim_material_input_value_at(&self, index: i32) -> cxx_qt_lib::QString {
+        let idx = if index < 0 { 0 } else { index as usize };
+        self.rust()
+            .selected_material_inputs_cache
+            .get(idx)
+            .map(|i| cxx_qt_lib::QString::from(i.value.as_str()))
+            .unwrap_or_default()
+    }
+
+    fn selected_prim_material_shader_path(&self) -> cxx_qt_lib::QString {
+        cxx_qt_lib::QString::from(self.rust().selected_material_shader_path.as_str())
+    }
+
+    fn on_set_material_param(
+        mut self: Pin<&mut Self>,
+        input_name: cxx_qt_lib::QString,
+        type_name: cxx_qt_lib::QString,
+        value_str: cxx_qt_lib::QString,
+    ) {
+        let name: String = (&input_name).into();
+        let ty: String = (&type_name).into();
+        let value: String = (&value_str).into();
+        let shader_path = self.as_ref().rust().selected_material_shader_path.clone();
+        if shader_path.is_empty() || name.is_empty() || ty.is_empty() {
+            return;
+        }
+        // Capture before-value from the cached snapshot for the inverse.
+        let before = self
+            .as_ref()
+            .rust()
+            .selected_material_inputs_cache
+            .iter()
+            .find(|i| i.name == name)
+            .and_then(|i| parse_shader_value(&ty, &i.value));
+        let Some(after) = parse_shader_value(&ty, &value) else {
+            self.as_mut()
+                .set_status_message(cxx_qt_lib::QString::from(&format!(
+                    "Material edit: unsupported type/value {ty}={value}"
+                )));
+            return;
+        };
+        let result = with_viewport_mut(|vp| {
+            vp.renderer_mut()
+                .dispatch_material_param_override(&shader_path, &name, before, after)
+        });
+        match result {
+            Some(Ok(_desc)) => {
+                self.as_mut()
+                    .set_status_message(cxx_qt_lib::QString::from(&format!(
+                        "Material {name}={value}"
+                    )));
+                refresh_undo_redo_qprops(self.as_mut());
+                bump_revision(self.as_mut());
+            }
+            Some(Err(e)) => {
+                self.as_mut()
+                    .set_status_message(cxx_qt_lib::QString::from(&format!(
+                        "Material edit failed: {e}"
+                    )));
+            }
+            None => {}
+        }
+    }
+
+    fn on_bind_material(mut self: Pin<&mut Self>, material_path: cxx_qt_lib::QString) {
+        let prim_path: String = (&self.as_ref().rust().selected_prim_path).into();
+        let mat: String = (&material_path).into();
+        if prim_path.is_empty() || mat.is_empty() {
+            return;
+        }
+        let result =
+            with_viewport_mut(|vp| vp.renderer_mut().dispatch_material_assign(&prim_path, &mat));
+        match result {
+            Some(Ok(_desc)) => {
+                self.as_mut()
+                    .set_status_message(cxx_qt_lib::QString::from(&format!(
+                        "Bound {prim_path} → {mat}"
+                    )));
+                refresh_undo_redo_qprops(self.as_mut());
+                bump_revision(self.as_mut());
+            }
+            Some(Err(e)) => {
+                self.as_mut()
+                    .set_status_message(cxx_qt_lib::QString::from(&format!(
+                        "Bind material failed: {e}"
+                    )));
+            }
+            None => {}
+        }
+    }
+
+    fn selected_prim_material_shader_id(&self) -> cxx_qt_lib::QString {
+        let path: String = (&self.rust().selected_prim_path).into();
+        if path.is_empty() {
+            return cxx_qt_lib::QString::default();
+        }
+        let id = with_stage(|stage| stage.get_bound_shader_id(&path).ok())
+            .flatten()
+            .unwrap_or_default();
+        cxx_qt_lib::QString::from(&id)
+    }
+
+    fn on_set_shading_model(
+        mut self: Pin<&mut Self>,
+        model: cxx_qt_lib::QString,
+    ) -> cxx_qt_lib::QString {
+        let model_str: String = (&model).into();
+        let prim_path: String = (&self.as_ref().rust().selected_prim_path).into();
+        if prim_path.is_empty() || model_str.is_empty() {
+            return cxx_qt_lib::QString::default();
+        }
+        let result = with_viewport_mut(|vp| {
+            vp.renderer_mut()
+                .dispatch_swap_shading_model(&prim_path, &model_str)
+        });
+        match result {
+            Some(Ok(dropped)) => {
+                self.as_mut()
+                    .set_status_message(cxx_qt_lib::QString::from(&format!(
+                        "Shading model → {model_str}"
+                    )));
+                refresh_undo_redo_qprops(self.as_mut());
+                bump_revision(self.as_mut());
+                cxx_qt_lib::QString::from(&dropped.join("\n"))
+            }
+            Some(Err(e)) => {
+                let msg = format!("{e}");
+                self.as_mut()
+                    .set_status_message(cxx_qt_lib::QString::from(&format!(
+                        "Shading swap failed: {msg}"
+                    )));
+                cxx_qt_lib::QString::from(&format!("error:{msg}"))
+            }
+            None => cxx_qt_lib::QString::default(),
+        }
+    }
+
+    fn active_edit_target_layer_text(&self) -> cxx_qt_lib::QString {
+        let Some(layer_id) = self
+            .rust()
+            .scene_layer_state
+            .as_ref()
+            .and_then(|s| s.stack.layers.get(s.working_layer))
+            .map(|l| l.identifier.clone())
+        else {
+            return cxx_qt_lib::QString::default();
+        };
+        let text = with_stage(|stage| stage.export_layer_as_string(&layer_id).ok())
+            .flatten()
+            .unwrap_or_default();
+        cxx_qt_lib::QString::from(&text)
+    }
+
+    fn on_apply_usda(mut self: Pin<&mut Self>, text: cxx_qt_lib::QString) -> cxx_qt_lib::QString {
+        let Some(layer_id) = self
+            .as_ref()
+            .rust()
+            .scene_layer_state
+            .as_ref()
+            .and_then(|s| s.stack.layers.get(s.working_layer))
+            .map(|l| l.identifier.clone())
+        else {
+            self.as_mut()
+                .set_status_message(cxx_qt_lib::QString::from("USDA Apply: no edit target"));
+            return cxx_qt_lib::QString::from("No edit-target layer is set.");
+        };
+        let text_str: String = (&text).into();
+
+        let result = with_viewport_mut(|vp| {
+            vp.renderer_mut()
+                .dispatch_replace_layer_contents(&layer_id, &text_str)
+        });
+        match result {
+            Some(Ok(_desc)) => {
+                self.as_mut()
+                    .set_status_message(cxx_qt_lib::QString::from(&format!(
+                        "USDA Apply: replaced {layer_id}"
+                    )));
+                refresh_undo_redo_qprops(self.as_mut());
+                bump_revision(self.as_mut());
+                cxx_qt_lib::QString::default()
+            }
+            Some(Err(e)) => {
+                let msg = format!("{e}");
+                self.as_mut()
+                    .set_status_message(cxx_qt_lib::QString::from(&format!(
+                        "USDA Apply failed: {msg}"
+                    )));
+                cxx_qt_lib::QString::from(&msg)
+            }
+            None => {
+                self.as_mut().set_status_message(cxx_qt_lib::QString::from(
+                    "USDA Apply: no viewport available",
+                ));
+                cxx_qt_lib::QString::from("Viewport not initialized.")
+            }
+        }
     }
 
     fn on_select_camera(mut self: Pin<&mut Self>, source: cxx_qt_lib::QString) {
@@ -1869,8 +2758,63 @@ impl qobject::BifShellState {
 /// this and refresh.
 fn bump_revision(mut state: Pin<&mut qobject::BifShellState>) {
     refresh_selected_prim_stack_cache(state.as_mut());
+    refresh_selected_material_inputs_cache(state.as_mut());
     let next = state.as_ref().rust().layer_state_revision.wrapping_add(1);
     state.as_mut().set_layer_state_revision(next);
+}
+
+fn refresh_selected_material_inputs_cache(mut state: Pin<&mut qobject::BifShellState>) {
+    let path: String = (&state.as_ref().rust().selected_prim_path).into();
+    if path.is_empty() {
+        let mut r = state.as_mut().rust_mut();
+        r.selected_material_inputs_cache.clear();
+        r.selected_material_shader_path.clear();
+        return;
+    }
+    let snapshot = with_stage(|stage| {
+        stage
+            .get_bound_material_inputs(&path)
+            .ok()
+            .unwrap_or_else(|| (String::new(), Vec::new()))
+    })
+    .unwrap_or_else(|| (String::new(), Vec::new()));
+    let mut r = state.as_mut().rust_mut();
+    r.selected_material_shader_path = snapshot.0;
+    r.selected_material_inputs_cache = snapshot.1;
+}
+
+/// Parse a UI-supplied value string into a `ShaderValue` for the given
+/// USD type token. Returns `None` for unsupported types or parse errors.
+/// Color3f / float3 strings are comma-separated triples.
+fn parse_shader_value(type_name: &str, value: &str) -> Option<bif_core::usd::ShaderValue> {
+    use bif_core::usd::ShaderValue;
+    match type_name {
+        "float" => value.parse::<f32>().ok().map(ShaderValue::Float),
+        "double" => value.parse::<f64>().ok().map(ShaderValue::Double),
+        "int" => value.parse::<i32>().ok().map(ShaderValue::Int),
+        "bool" => match value.to_ascii_lowercase().as_str() {
+            "true" | "1" => Some(ShaderValue::Bool(true)),
+            "false" | "0" => Some(ShaderValue::Bool(false)),
+            _ => None,
+        },
+        "token" => Some(ShaderValue::Token(value.to_string())),
+        "string" => Some(ShaderValue::String(value.to_string())),
+        "color3f" | "float3" => {
+            let parts: Vec<&str> = value.split(',').map(str::trim).collect();
+            if parts.len() != 3 {
+                return None;
+            }
+            let r = parts[0].parse::<f32>().ok()?;
+            let g = parts[1].parse::<f32>().ok()?;
+            let b = parts[2].parse::<f32>().ok()?;
+            if type_name == "color3f" {
+                Some(ShaderValue::Color3f([r, g, b]))
+            } else {
+                Some(ShaderValue::Vec3f([r, g, b]))
+            }
+        }
+        _ => None,
+    }
 }
 
 fn selected_prim_stack_snapshot(path: &cxx_qt_lib::QString) -> Vec<PrimStackEntry> {
@@ -1885,6 +2829,44 @@ fn refresh_selected_prim_stack_cache(mut state: Pin<&mut qobject::BifShellState>
     let path = state.as_ref().rust().selected_prim_path.clone();
     let cache = selected_prim_stack_snapshot(&path);
     state.as_mut().rust_mut().selected_prim_stack_cache = cache;
+    refresh_selected_material_inputs_cache(state.as_mut());
+}
+
+fn current_undo_redo_availability() -> (bool, bool) {
+    with_viewport_mut(|vp| {
+        let renderer = vp.renderer_mut();
+        (renderer.can_undo(), renderer.can_redo())
+    })
+    .unwrap_or((false, false))
+}
+
+fn refresh_undo_redo_qprops(mut state: Pin<&mut qobject::BifShellState>) {
+    let (can_undo, can_redo) = current_undo_redo_availability();
+    let (prev_undo, prev_redo) = {
+        let pin_ref = state.as_ref();
+        let r = pin_ref.rust();
+        (r.can_undo, r.can_redo)
+    };
+    if prev_undo != can_undo {
+        state.as_mut().set_can_undo(can_undo);
+    }
+    if prev_redo != can_redo {
+        state.as_mut().set_can_redo(can_redo);
+    }
+}
+
+fn current_ivar_status_line() -> String {
+    with_viewport_mut(|vp| vp.renderer_mut().ivar_status_line()).unwrap_or_default()
+}
+
+fn refresh_ivar_status_qprop(mut state: Pin<&mut qobject::BifShellState>) {
+    let status = current_ivar_status_line();
+    let previous: String = (&state.as_ref().rust().ivar_status).into();
+    if previous != status {
+        state
+            .as_mut()
+            .set_ivar_status(cxx_qt_lib::QString::from(&status));
+    }
 }
 
 /// Increment `scene_browser_revision` to trigger
@@ -1961,4 +2943,112 @@ fn selected_prim_keyframes(selected: &cxx_qt_lib::QString) -> Vec<i32> {
         times
     })
     .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bif_core::scene_layer_state::SceneLayerState;
+
+    fn make_layer(identifier: &str, permission_to_edit: bool, muted: bool) -> LayerInfo {
+        LayerInfo {
+            identifier: identifier.to_string(),
+            display_name: identifier.to_string(),
+            real_path: Default::default(),
+            is_anonymous: false,
+            is_dirty: false,
+            is_muted: muted,
+            permission_to_edit,
+            offset: LayerOffset::default(),
+            parent_index: None,
+            depth: 0,
+        }
+    }
+
+    #[test]
+    fn pick_strongest_writable_sublayer_skips_locked_layers() {
+        let state = SceneLayerState {
+            stack: LayerStack {
+                layers: vec![
+                    make_layer("locked.usda", false, false),
+                    make_layer("anim.usda", true, false),
+                ],
+                root_index: 0,
+            },
+            working_layer: 0,
+            muted: Default::default(),
+            isolation_mode: false,
+            payload_policy: PayloadPolicy::LoadAll,
+            layer_for_prim: Default::default(),
+            edit_history: bif_core::usd::EditHistory::with_working_layer("locked.usda"),
+        };
+
+        assert_eq!(pick_strongest_writable_sublayer(&state), Some(1));
+    }
+
+    #[test]
+    fn parse_outline_color_hex_converts_srgb_to_linear() {
+        let color = parse_outline_color_hex("#FFA600").expect("valid outline color");
+        assert!((color[0] - 1.0).abs() < 1e-6);
+        assert!((color[1] - 0.381_326_02).abs() < 1e-6);
+        assert!((color[2] - 0.0).abs() < 1e-6);
+        assert!((color[3] - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn parse_payload_policy_name_accepts_known_values() {
+        assert_eq!(
+            parse_payload_policy_name("LoadAll"),
+            Some(PayloadPolicy::LoadAll)
+        );
+        assert_eq!(
+            parse_payload_policy_name("LoadNone"),
+            Some(PayloadPolicy::LoadNone)
+        );
+        assert_eq!(parse_payload_policy_name("Review"), None);
+    }
+
+    #[test]
+    fn format_attr_opinion_tooltip_marks_winning_and_escapes_html() {
+        let mut state = BifShellStateRust::default();
+        state.scene_layer_state = Some(SceneLayerState {
+            stack: LayerStack {
+                layers: vec![
+                    make_layer("shot<&>.usda", true, false),
+                    make_layer("anim.usda", true, false),
+                ],
+                root_index: 0,
+            },
+            working_layer: 0,
+            muted: Default::default(),
+            isolation_mode: false,
+            payload_policy: PayloadPolicy::LoadAll,
+            layer_for_prim: Default::default(),
+            edit_history: bif_core::usd::EditHistory::with_working_layer("shot<&>.usda"),
+        });
+        let opinions = vec![
+            OpinionSource {
+                layer_identifier: "shot<&>.usda".to_string(),
+                value_display: "\"<rough>\"".to_string(),
+                value_type: "token&".to_string(),
+                is_winning: true,
+            },
+            OpinionSource {
+                layer_identifier: "anim.usda".to_string(),
+                value_display: "0.15".to_string(),
+                value_type: "float".to_string(),
+                is_winning: false,
+            },
+        ];
+
+        let html = format_attr_opinion_tooltip("inputs:roughness<1>", &opinions, &state);
+
+        assert!(html.contains("inputs:roughness&lt;1&gt;"));
+        assert!(html.contains("shot&lt;&amp;&gt;.usda"));
+        assert!(html.contains("&quot;&lt;rough&gt;&quot;"));
+        assert!(html.contains("token&amp;"));
+        assert!(html.contains("(winning)"));
+        assert!(!html.contains("shot<&>.usda"));
+        assert!(!html.contains("\"<rough>\""));
+    }
 }

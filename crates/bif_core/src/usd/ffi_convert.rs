@@ -921,6 +921,7 @@ pub(crate) unsafe fn convert_layer_info(raw: &UsdBridgeLayerInfoRaw) -> LayerInf
         is_anonymous: raw.is_anonymous != 0,
         is_dirty: raw.is_dirty != 0,
         is_muted: raw.is_muted != 0,
+        permission_to_edit: raw.permission_to_edit != 0,
         offset: LayerOffset {
             offset: raw.time_offset,
             scale: raw.time_scale,
@@ -2351,6 +2352,7 @@ mod tests {
         parent_index: i32,
         depth: u8,
         muted: bool,
+        permission_to_edit: bool,
     ) -> UsdBridgeLayerInfoRaw {
         UsdBridgeLayerInfoRaw {
             identifier: identifier.as_ptr(),
@@ -2359,6 +2361,7 @@ mod tests {
             is_anonymous: 0,
             is_dirty: 0,
             is_muted: if muted { 1 } else { 0 },
+            permission_to_edit: if permission_to_edit { 1 } else { 0 },
             time_offset: 0.0,
             time_scale: 1.0,
             parent_index,
@@ -2371,13 +2374,14 @@ mod tests {
         let ident = CString::new("root.usd").unwrap();
         let disp = CString::new("root.usd").unwrap();
         let real = CString::new("/abs/root.usd").unwrap();
-        let raw = make_layer_info_raw(&ident, &disp, &real, -1, 0, false);
+        let raw = make_layer_info_raw(&ident, &disp, &real, -1, 0, false, true);
         let info = unsafe { convert_layer_info(&raw) };
         assert_eq!(info.identifier, "root.usd");
         assert_eq!(info.parent_index, None);
         assert_eq!(info.depth, 0);
         assert!(info.offset.is_identity());
         assert!(!info.is_muted);
+        assert!(info.permission_to_edit);
     }
 
     #[test]
@@ -2385,11 +2389,12 @@ mod tests {
         let ident = CString::new("anim.usd").unwrap();
         let disp = CString::new("anim.usd").unwrap();
         let real = CString::new("/abs/anim.usd").unwrap();
-        let raw = make_layer_info_raw(&ident, &disp, &real, 0, 1, true);
+        let raw = make_layer_info_raw(&ident, &disp, &real, 0, 1, true, false);
         let info = unsafe { convert_layer_info(&raw) };
         assert_eq!(info.parent_index, Some(0));
         assert_eq!(info.depth, 1);
         assert!(info.is_muted);
+        assert!(!info.permission_to_edit);
     }
 
     #[test]
@@ -2408,8 +2413,8 @@ mod tests {
         let sub_disp = CString::new("anim.usd").unwrap();
         let sub_path = CString::new("/abs/anim.usd").unwrap();
         let mut layers = vec![
-            make_layer_info_raw(&root_id, &root_disp, &root_path, -1, 0, false),
-            make_layer_info_raw(&sub_id, &sub_disp, &sub_path, 0, 1, false),
+            make_layer_info_raw(&root_id, &root_disp, &root_path, -1, 0, false, true),
+            make_layer_info_raw(&sub_id, &sub_disp, &sub_path, 0, 1, false, true),
         ];
         let raw = UsdBridgeLayerStackRaw {
             layers: layers.as_mut_ptr(),

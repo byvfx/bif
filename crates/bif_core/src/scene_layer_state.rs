@@ -14,7 +14,8 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::usd::cpp_bridge::{UsdBridgeResult, UsdStage};
+use crate::usd::cpp_bridge::{UsdBridgeError, UsdBridgeResult, UsdStage};
+use crate::usd::edit_history::{EditHistory, EditOperation};
 use crate::usd::layer::{LayerStack, PayloadPolicy};
 
 /// Layer inspection state bound to a loaded USD stage.
@@ -39,6 +40,8 @@ pub struct SceneLayerState {
     /// opinion source for that prim. Drives the scene-browser color
     /// dots. Populated lazily by callers; may be partial.
     pub layer_for_prim: HashMap<String, usize>,
+    /// Parallel USD opinion history for authored layer edits.
+    pub edit_history: EditHistory,
 }
 
 impl SceneLayerState {
@@ -56,6 +59,11 @@ impl SceneLayerState {
             .filter(|l| l.is_muted)
             .map(|l| l.identifier.clone())
             .collect();
+        let working_layer_id = stack
+            .layers
+            .get(working_layer)
+            .map(|l| l.identifier.clone())
+            .unwrap_or_default();
         Ok(Self {
             stack,
             working_layer,
@@ -63,6 +71,7 @@ impl SceneLayerState {
             isolation_mode: false,
             payload_policy,
             layer_for_prim: HashMap::new(),
+            edit_history: EditHistory::with_working_layer(working_layer_id),
         })
     }
 
@@ -95,7 +104,67 @@ impl SceneLayerState {
     pub fn set_working_layer(&mut self, index: usize) {
         if index < self.stack.layers.len() {
             self.working_layer = index;
+            if let Some(layer) = self.stack.layers.get(index) {
+                self.edit_history
+                    .set_working_layer(layer.identifier.clone());
+            }
         }
+    }
+
+    /// Mutate the working-layer index after checking the target layer against
+    /// the live stage. This does not cache any C++ layer pointer.
+    pub fn set_edit_target(&mut self, index: usize, stage: &UsdStage) -> UsdBridgeResult<()> {
+        let layer = self
+            .stack
+            .layers
+            .get(index)
+            .ok_or_else(|| UsdBridgeError::InvalidPrim(format!("layer index {index}")))?;
+        let _can_edit = stage.layer_permission_to_edit(&layer.identifier)?;
+        self.working_layer = index;
+        self.edit_history
+            .set_working_layer(layer.identifier.clone());
+        Ok(())
+    }
+
+    /// Apply and record a USD edit against the active working layer.
+    pub fn apply_edit_operation(
+        &mut self,
+        stage: &UsdStage,
+        op: EditOperation,
+    ) -> UsdBridgeResult<String> {
+        let desc = self.edit_history.apply_and_record(stage, op)?;
+        self.mark_working_layer_dirty(true);
+        Ok(desc)
+    }
+
+    pub fn undo_usd_edit(&mut self, stage: &UsdStage) -> UsdBridgeResult<Option<String>> {
+        let result = self.edit_history.undo(stage)?;
+        if result.is_some() {
+            self.mark_working_layer_dirty(true);
+        }
+        Ok(result)
+    }
+
+    pub fn redo_usd_edit(&mut self, stage: &UsdStage) -> UsdBridgeResult<Option<String>> {
+        let result = self.edit_history.redo(stage)?;
+        if result.is_some() {
+            self.mark_working_layer_dirty(true);
+        }
+        Ok(result)
+    }
+
+    pub fn mark_working_layer_dirty(&mut self, dirty: bool) {
+        if let Some(layer) = self.stack.layers.get_mut(self.working_layer) {
+            layer.is_dirty = dirty;
+        }
+    }
+
+    pub fn has_usd_undo(&self) -> bool {
+        self.edit_history.can_undo()
+    }
+
+    pub fn has_usd_redo(&self) -> bool {
+        self.edit_history.can_redo()
     }
 
     /// Populate `layer_for_prim` by walking the given prim paths and
@@ -146,6 +215,7 @@ mod tests {
             is_anonymous: false,
             is_dirty: false,
             is_muted: muted,
+            permission_to_edit: true,
             offset: LayerOffset::default(),
             parent_index: parent,
             depth,
@@ -153,6 +223,10 @@ mod tests {
     }
 
     fn make_state(layers: Vec<LayerInfo>) -> SceneLayerState {
+        let working_layer_id = layers
+            .first()
+            .map(|l| l.identifier.clone())
+            .unwrap_or_default();
         let muted: HashSet<String> = layers
             .iter()
             .filter(|l| l.is_muted)
@@ -168,6 +242,7 @@ mod tests {
             isolation_mode: false,
             payload_policy: PayloadPolicy::LoadAll,
             layer_for_prim: HashMap::new(),
+            edit_history: EditHistory::with_working_layer(working_layer_id),
         }
     }
 
@@ -180,6 +255,7 @@ mod tests {
         assert!(!s.isolation_mode);
         assert_eq!(s.payload_policy, PayloadPolicy::LoadAll);
         assert!(s.layer_for_prim.is_empty());
+        assert!(s.edit_history.working_layer_id.is_empty());
     }
 
     #[test]
@@ -225,10 +301,25 @@ mod tests {
         ]);
         state.set_working_layer(1);
         assert_eq!(state.working_layer, 1);
+        assert_eq!(state.edit_history.working_layer_id, "anim.usd");
 
         // Out-of-range should be a no-op, not a panic.
         state.set_working_layer(99);
         assert_eq!(state.working_layer, 1);
+        assert_eq!(state.edit_history.working_layer_id, "anim.usd");
+    }
+
+    #[test]
+    fn mark_working_layer_dirty_updates_layer_flag() {
+        let mut state = make_state(vec![
+            make_layer("root.usd", None, 0, false),
+            make_layer("anim.usd", Some(0), 1, false),
+        ]);
+        state.set_working_layer(1);
+        state.mark_working_layer_dirty(true);
+        assert!(state.stack.layers[1].is_dirty);
+        state.mark_working_layer_dirty(false);
+        assert!(!state.stack.layers[1].is_dirty);
     }
 
     #[test]

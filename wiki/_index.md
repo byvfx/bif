@@ -1,7 +1,7 @@
 ---
 title: BIF Knowledge Base
 type: index
-updated: "2026-04-22"
+updated: "2026-04-26"
 ---
 
 # BIF Knowledge Base
@@ -14,7 +14,7 @@ BIF is a VFX scene assembler and renderer built in Rust with wgpu, USD, and Mate
 
 | Section | Articles | Description |
 |---------|----------|-------------|
-| [[architecture/_index\|Architecture]] | 9 + 7 ADRs | Crate structure, node graph, scene browser, Qt migration, key decisions |
+| [[architecture/_index\|Architecture]] | 9 + 8 ADRs | Crate structure, node graph, scene browser, Qt migration, key decisions |
 | [[usd/_index\|USD]] | 5 | Composition, schemas, shading, BIF integration |
 | [[rendering/_index\|Rendering]] | 3 | wgpu pipeline, OpenPBR, MaterialX bridge |
 | [[concepts/_index\|Concepts]] | 13 | Atomic notes on key technical concepts |
@@ -31,6 +31,10 @@ Existing project docs live outside this vault and are referenced by wiki article
 - `../docs/ux/` — 5 UX research/design docs
 - `../devlog/` — 93 development journal entries
 - `../ARCHITECTURE.md`, `../MILESTONES.md`, `../FEATURES.md` — project docs
+
+## Current ADRs
+
+- [[architecture/adr/008-edit-operation-architecture|ADR-008 — Edit operation architecture]]
 
 ## Conventions
 

@@ -24,6 +24,7 @@ use crate::scene::{
     TransformKeyframe,
 };
 use crate::usd::cpp_bridge::{UsdBridgeError, UsdLightType, UsdStage};
+use crate::usd::layer::PayloadPolicy;
 use bif_math::Mat4;
 
 /// Errors that can occur during USD loading.
@@ -97,7 +98,7 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
     // Strict variant — first-load callers expect geometry. Preserves the
     // pre-v0.14 contract where an empty scene is a user error (bad USD file,
     // missing geometry, etc.).
-    let (scene, stage) = load_usd_with_stage_muted(path, &[])?;
+    let (scene, stage) = load_usd_with_stage_policy_muted(path, PayloadPolicy::LoadAll, &[])?;
     if scene.prototypes.is_empty() {
         return Err(LoadError::NoGeometry);
     }
@@ -113,6 +114,17 @@ pub fn load_usd_with_stage<P: AsRef<Path>>(path: P) -> LoadResult<(Scene, UsdSta
 /// are silently ignored — the bridge would TF_WARN but we don't propagate.
 pub fn load_usd_with_stage_muted<P: AsRef<Path>>(
     path: P,
+    muted_layer_identifiers: &[String],
+) -> LoadResult<(Scene, UsdStage)> {
+    load_usd_with_stage_policy_muted(path, PayloadPolicy::LoadAll, muted_layer_identifiers)
+}
+
+/// Same as [`load_usd_with_stage_muted`], but lets callers decide whether
+/// payloads are populated eagerly (`LoadAll`) or left unloaded (`LoadNone`)
+/// after layer mutes are applied.
+pub fn load_usd_with_stage_policy_muted<P: AsRef<Path>>(
+    path: P,
+    payload_policy: PayloadPolicy,
     muted_layer_identifiers: &[String],
 ) -> LoadResult<(Scene, UsdStage)> {
     let path = path.as_ref();
@@ -137,9 +149,13 @@ pub fn load_usd_with_stage_muted<P: AsRef<Path>>(
         }
     }
 
-    // Load all payloads and cache mesh/material/animation data
-    let prim_count = stage.load_payloads()?;
-    log::info!("Stage loaded: {} prims", prim_count);
+    // Apply the requested payload policy after the mute set is in place so
+    // the first composition pass sees the final layer+payload configuration.
+    let prim_count = match payload_policy {
+        PayloadPolicy::LoadAll => stage.load_payloads()?,
+        PayloadPolicy::LoadNone => 0,
+    };
+    log::info!("Stage loaded: {} prims ({payload_policy:?})", prim_count);
     let stage_time = stage_start.elapsed();
 
     let mut scene = Scene::new(name);

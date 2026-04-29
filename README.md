@@ -129,8 +129,8 @@ See **[MILESTONES.md](MILESTONES.md)** for the full version-organized roadmap.
 
 | Next | Theme |
 |------|-------|
-| v0.16.0 | Edit operations + save *(current)* |
-| v0.17.0 | Viewport performance |
+| v0.16.0 | Edit operations + save *(shipped 2026-04-28)* |
+| v0.17.0 | Viewport performance *(next)* |
 | v0.18.0 | AI integration |
 | v0.19.0 | Context system |
 | ... | [Full roadmap](MILESTONES.md) |

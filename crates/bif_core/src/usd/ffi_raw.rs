@@ -456,6 +456,7 @@ pub(crate) struct UsdBridgeLayerInfoRaw {
     pub is_anonymous: i32,
     pub is_dirty: i32,
     pub is_muted: i32,
+    pub permission_to_edit: i32,
     pub time_offset: f64,
     pub time_scale: f64,
     pub parent_index: i32,
@@ -948,6 +949,7 @@ extern "C" {
         prim_path: *const c_char,
         variant_set_name: *const c_char,
         variant_name: *const c_char,
+        layer_identifier: *const c_char,
     ) -> UsdBridgeErrorCode;
 
     // BasisCurves
@@ -1075,6 +1077,96 @@ extern "C" {
         stage: *mut UsdBridgeStageRaw,
         layer_identifier: *const c_char,
         muted: i32,
+    ) -> UsdBridgeErrorCode;
+
+    pub(crate) fn usd_bridge_layer_set_permission_to_edit(
+        stage: *const UsdBridgeStageRaw,
+        layer_identifier: *const c_char,
+        permission_to_edit: i32,
+    ) -> UsdBridgeErrorCode;
+
+    pub(crate) fn usd_bridge_layer_save(
+        stage: *const UsdBridgeStageRaw,
+        layer_identifier: *const c_char,
+    ) -> UsdBridgeErrorCode;
+
+    pub(crate) fn usd_bridge_layer_permission_to_edit(
+        stage: *const UsdBridgeStageRaw,
+        layer_identifier: *const c_char,
+        out_permission_to_edit: *mut i32,
+    ) -> UsdBridgeErrorCode;
+
+    pub(crate) fn usd_bridge_layer_export_as_string(
+        stage: *const UsdBridgeStageRaw,
+        layer_identifier: *const c_char,
+        out_text: *mut *const c_char,
+    ) -> UsdBridgeErrorCode;
+
+    pub(crate) fn usd_bridge_layer_import_from_string(
+        stage: *const UsdBridgeStageRaw,
+        layer_identifier: *const c_char,
+        text: *const c_char,
+    ) -> UsdBridgeErrorCode;
+
+    pub(crate) fn usd_bridge_parse_usda(text: *const c_char) -> UsdBridgeErrorCode;
+
+    pub(crate) fn usd_bridge_layer_get_attr_value(
+        stage: *const UsdBridgeStageRaw,
+        layer_identifier: *const c_char,
+        prim_path: *const c_char,
+        attr_name: *const c_char,
+        out_value: *mut *const c_char,
+    ) -> UsdBridgeErrorCode;
+
+    pub(crate) fn usd_bridge_layer_write_xform(
+        stage: *mut UsdBridgeStageRaw,
+        layer_identifier: *const c_char,
+        prim_path: *const c_char,
+        time: f64,
+        matrix_16: *const f32,
+    ) -> UsdBridgeErrorCode;
+
+    pub(crate) fn usd_bridge_layer_write_visibility(
+        stage: *mut UsdBridgeStageRaw,
+        layer_identifier: *const c_char,
+        prim_path: *const c_char,
+        visible: i32,
+    ) -> UsdBridgeErrorCode;
+
+    pub(crate) fn usd_bridge_layer_bind_material(
+        stage: *mut UsdBridgeStageRaw,
+        layer_identifier: *const c_char,
+        prim_path: *const c_char,
+        material_path: *const c_char,
+    ) -> UsdBridgeErrorCode;
+
+    pub(crate) fn usd_bridge_layer_set_shader_input(
+        stage: *mut UsdBridgeStageRaw,
+        layer_identifier: *const c_char,
+        shader_path: *const c_char,
+        input_name: *const c_char,
+        value_type: *const c_char,
+        value: *const c_char,
+    ) -> UsdBridgeErrorCode;
+
+    pub(crate) fn usd_bridge_prim_get_bound_material_inputs(
+        stage: *const UsdBridgeStageRaw,
+        prim_path: *const c_char,
+        out_text: *mut *const c_char,
+        out_shader_path: *mut *const c_char,
+    ) -> UsdBridgeErrorCode;
+
+    pub(crate) fn usd_bridge_layer_set_shader_id(
+        stage: *mut UsdBridgeStageRaw,
+        layer_identifier: *const c_char,
+        shader_path: *const c_char,
+        shader_id: *const c_char,
+    ) -> UsdBridgeErrorCode;
+
+    pub(crate) fn usd_bridge_prim_get_bound_shader_id(
+        stage: *const UsdBridgeStageRaw,
+        prim_path: *const c_char,
+        out_id: *mut *const c_char,
     ) -> UsdBridgeErrorCode;
 
     pub(crate) fn usd_bridge_layer_get_offset(

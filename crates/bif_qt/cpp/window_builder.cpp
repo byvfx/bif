@@ -3,6 +3,7 @@
 #include "first_launch_widget.h"
 #include "layer_stack_widget.h"
 #include "node_graph_widget.h"
+#include "usda_panel_widget.h"
 #include "property_inspector_widget.h"
 #include "render_settings_widget.h"
 #include "render_widget.h"
@@ -16,7 +17,11 @@
 #include <QByteArray>
 #include <QColor>
 #include <QDockWidget>
+#include <QDragEnterEvent>
+#include <QDragMoveEvent>
+#include <QDropEvent>
 #include <QFileDialog>
+#include <QFileInfo>
 #include <QFrame>
 #include <QGuiApplication>
 #include <QHBoxLayout>
@@ -27,6 +32,8 @@
 #include <QMainWindow>
 #include <QMenu>
 #include <QMenuBar>
+#include <QMimeData>
+#include <QMessageBox>
 #include <QPushButton>
 #include <QScreen>
 #include <QSettings>
@@ -37,12 +44,108 @@
 #include <QStringList>
 #include <QTimer>
 #include <QToolBar>
+#include <QUrl>
 #include <QVBoxLayout>
 #include <QWidget>
 
 #include "bif_qt/src/main_window.cxxqt.h"
 
 namespace {
+
+constexpr auto kNodeGraphPreviewProperty = "_bif_node_graph_preview_enabled";
+constexpr auto kNodeGraphPreviewSettingsKey = "experiments/node_graph_preview";
+
+bool node_graph_preview_enabled(QMainWindow* window) {
+    return window->property(kNodeGraphPreviewProperty).toBool();
+}
+
+void set_node_graph_preview_enabled(QMainWindow* window, bool enabled) {
+    window->setProperty(kNodeGraphPreviewProperty, enabled);
+    QSettings settings;
+    settings.setValue(QLatin1String(kNodeGraphPreviewSettingsKey), enabled);
+}
+
+void enforce_node_graph_preview_gate(QMainWindow* window) {
+    auto* node_graph = window->findChild<QDockWidget*>(QStringLiteral("dock_node_graph"));
+    if (node_graph && !node_graph_preview_enabled(window)) {
+        node_graph->hide();
+    }
+}
+
+bool is_supported_stage_path(const QString& path) {
+    const auto suffix = QFileInfo(path).suffix().toLower();
+    return suffix == QStringLiteral("usd")
+        || suffix == QStringLiteral("usda")
+        || suffix == QStringLiteral("usdc")
+        || suffix == QStringLiteral("usdz");
+}
+
+QString first_supported_stage_path(const QMimeData* mime_data) {
+    if (!mime_data) return QString();
+    for (const auto& url : mime_data->urls()) {
+        if (!url.isLocalFile()) continue;
+        const auto path = url.toLocalFile();
+        if (is_supported_stage_path(path)) {
+            return path;
+        }
+    }
+    return QString();
+}
+
+struct CameraChoice {
+    QString label;
+    QString key;
+    bool separator_before = false;
+};
+
+QList<CameraChoice> collect_camera_choices(BifShellState* state) {
+    QList<CameraChoice> choices;
+    choices.append(CameraChoice{QStringLiteral("Perspective"), QStringLiteral("free"), false});
+
+    const struct { const char* label; const char* key; } ortho_views[] = {
+        {"Top",    "ortho:Top"},
+        {"Bottom", "ortho:Bottom"},
+        {"Front",  "ortho:Front"},
+        {"Back",   "ortho:Back"},
+        {"Right",  "ortho:Right"},
+        {"Left",   "ortho:Left"},
+    };
+    bool first_ortho = true;
+    for (const auto& view : ortho_views) {
+        choices.append(CameraChoice{
+            QString::fromLatin1(view.label),
+            QString::fromLatin1(view.key),
+            first_ortho,
+        });
+        first_ortho = false;
+    }
+
+    const int usd_count = state->usd_camera_count();
+    for (int i = 0; i < usd_count; ++i) {
+        const auto path = state->usd_camera_path_at(i);
+        const auto leaf = path.split(QLatin1Char('/')).last();
+        choices.append(CameraChoice{
+            leaf,
+            QStringLiteral("usd:") + path,
+            i == 0,
+        });
+    }
+    return choices;
+}
+
+void sync_camera_picker_selection(QComboBox* picker, const QString& active_key) {
+    if (!picker) return;
+    for (int i = 0; i < picker->count(); ++i) {
+        if (picker->itemData(i).toString() == active_key) {
+            picker->setCurrentIndex(i);
+            return;
+        }
+    }
+}
+
+bool is_ortho_camera_source(const QString& key) {
+    return key.startsWith(QStringLiteral("ortho:"));
+}
 
 // ---------------------------------------------------------------------------
 // Workspace presets (B.5)
@@ -51,75 +154,150 @@ namespace ws {
 constexpr const char* ASSEMBLY = "assembly";
 constexpr const char* LIGHTING = "lighting";
 constexpr const char* MATERIALS = "materials";
-constexpr const char* RENDER = "render";
+constexpr const char* REVIEW = "review";
 constexpr const char* DEFAULT_WORKSPACE = ASSEMBLY;
 constexpr const char* SETTINGS_LAST_KEY = "workspaces/last_active";
 
+QString canonical_name(const QString& name) {
+    if (name == QStringLiteral("render")) return QString::fromLatin1(REVIEW);
+    return name;
+}
+
+QString display_name(const QString& name) {
+    const auto canonical = canonical_name(name);
+    if (canonical == QLatin1String(ASSEMBLY)) return QStringLiteral("Assembly");
+    if (canonical == QLatin1String(LIGHTING)) return QStringLiteral("Lighting");
+    if (canonical == QLatin1String(MATERIALS)) return QStringLiteral("Materials");
+    if (canonical == QLatin1String(REVIEW)) return QStringLiteral("Review");
+    return canonical;
+}
+
+QString payload_policy_for_workspace(const QString& name) {
+    // C3 only has native LoadAll/LoadNone. Lighting keeps LoadAll until the
+    // future frustum-based policy exists in bif_core.
+    if (canonical_name(name) == QLatin1String(REVIEW)) return QStringLiteral("LoadNone");
+    return QStringLiteral("LoadAll");
+}
+
 void apply_default_layout(QMainWindow* window, const QString& name) {
+    const auto canonical = canonical_name(name);
     auto dock = [window](const char* obj_name) -> QDockWidget* {
         return window->findChild<QDockWidget*>(QString::fromLatin1(obj_name));
     };
     auto* scene_browser = dock("dock_scene_browser");
     auto* layer_stack = dock("dock_layer_stack");
     auto* property_inspector = dock("dock_property_inspector");
+    auto* render_settings = dock("dock_render_settings");
     auto* node_graph = dock("dock_node_graph");
+    auto* timeline = dock("dock_timeline");
+    const bool node_graph_preview = node_graph_preview_enabled(window);
 
-    auto show_all = [&](bool s) {
-        if (scene_browser) scene_browser->setVisible(s);
-        if (layer_stack) layer_stack->setVisible(s);
-        if (property_inspector) property_inspector->setVisible(s);
-        if (node_graph) node_graph->setVisible(s);
+    auto show = [](QDockWidget* dock_widget, bool visible) {
+        if (dock_widget) dock_widget->setVisible(visible);
     };
 
-    if (name == QLatin1String(ws::ASSEMBLY)) {
-        show_all(true);
-    } else if (name == QLatin1String(ws::LIGHTING)) {
-        if (scene_browser) scene_browser->setVisible(true);
-        if (layer_stack) layer_stack->setVisible(false);
-        if (property_inspector) property_inspector->setVisible(true);
-        if (node_graph) node_graph->setVisible(false);
-    } else if (name == QLatin1String(ws::MATERIALS)) {
-        if (scene_browser) scene_browser->setVisible(false);
-        if (layer_stack) layer_stack->setVisible(false);
-        if (property_inspector) property_inspector->setVisible(true);
-        if (node_graph) node_graph->setVisible(true);
-    } else if (name == QLatin1String(ws::RENDER)) {
-        if (scene_browser) scene_browser->setVisible(false);
-        if (layer_stack) layer_stack->setVisible(false);
-        if (property_inspector) property_inspector->setVisible(true);
-        if (node_graph) node_graph->setVisible(false);
+    if (canonical == QLatin1String(ws::ASSEMBLY)) {
+        show(scene_browser, true);
+        show(layer_stack, true);
+        show(property_inspector, true);
+        show(render_settings, false);
+        show(node_graph, node_graph_preview);
+        show(timeline, true);
+        if (node_graph && node_graph_preview) {
+            node_graph->raise();
+        } else if (timeline) {
+            timeline->raise();
+        }
+        if (property_inspector) property_inspector->raise();
+    } else if (canonical == QLatin1String(ws::LIGHTING)) {
+        show(scene_browser, true);
+        show(layer_stack, false);
+        show(property_inspector, true);
+        show(render_settings, true);
+        show(node_graph, false);
+        show(timeline, false);
+        if (render_settings) render_settings->raise();
+    } else if (canonical == QLatin1String(ws::MATERIALS)) {
+        show(scene_browser, true);
+        show(layer_stack, false);
+        show(property_inspector, true);
+        show(render_settings, false);
+        show(node_graph, node_graph_preview);
+        show(timeline, false);
+        if (node_graph && node_graph_preview) node_graph->raise();
+        if (property_inspector) property_inspector->raise();
+    } else if (canonical == QLatin1String(ws::REVIEW)) {
+        show(scene_browser, false);
+        show(layer_stack, false);
+        show(property_inspector, false);
+        show(render_settings, true);
+        show(node_graph, false);
+        show(timeline, false);
+        if (render_settings) render_settings->raise();
     } else {
-        show_all(true);
+        show(scene_browser, true);
+        show(layer_stack, true);
+        show(property_inspector, true);
+        show(render_settings, false);
+        show(node_graph, node_graph_preview);
+        show(timeline, true);
     }
 }
 
 QString state_key(const QString& name) {
-    return QStringLiteral("workspaces/%1/state").arg(name);
+    return QStringLiteral("workspaces/%1/state").arg(canonical_name(name));
 }
 
 void save_current(QMainWindow* window, const QString& current) {
-    if (current.isEmpty()) return;
+    const auto canonical = canonical_name(current);
+    if (canonical.isEmpty()) return;
     QSettings settings;
-    settings.setValue(state_key(current), window->saveState());
+    settings.setValue(state_key(canonical), window->saveState());
 }
 
 void switch_to(
     QMainWindow* window,
     BifShellState* state,
     const QString& target) {
+    const auto canonical_target = canonical_name(target);
+    const auto target_policy = payload_policy_for_workspace(canonical_target);
+    const auto current_policy = state->payload_policy_name();
+    if (target_policy != current_policy) {
+        if (state->has_loaded_stage()) {
+            const auto answer = QMessageBox::question(
+                window,
+                QStringLiteral("Reload Stage For Workspace"),
+                QStringLiteral(
+                    "Switching to %1 changes payload loading from %2 to %3 and reloads the "
+                    "open stage. Continue?")
+                    .arg(display_name(canonical_target), current_policy, target_policy),
+                QMessageBox::Yes | QMessageBox::No,
+                QMessageBox::No);
+            if (answer != QMessageBox::Yes) {
+                return;
+            }
+        }
+        if (!state->on_set_payload_policy(target_policy)) {
+            window->statusBar()->showMessage(state->getStatus_message());
+            return;
+        }
+    }
+
     save_current(window, state->getCurrent_workspace());
 
     QSettings settings;
-    const QByteArray blob = settings.value(state_key(target)).toByteArray();
+    const QByteArray blob = settings.value(state_key(canonical_target)).toByteArray();
     if (blob.isEmpty()) {
-        apply_default_layout(window, target);
+        apply_default_layout(window, canonical_target);
     } else if (!window->restoreState(blob)) {
-        apply_default_layout(window, target);
+        apply_default_layout(window, canonical_target);
     }
+    enforce_node_graph_preview_gate(window);
 
-    state->setCurrent_workspace(target);
-    settings.setValue(QLatin1String(SETTINGS_LAST_KEY), target);
-    state->setStatus_message(QStringLiteral("Workspace: %1").arg(target));
+    state->setCurrent_workspace(canonical_target);
+    settings.setValue(QLatin1String(SETTINGS_LAST_KEY), canonical_target);
+    state->setStatus_message(
+        QStringLiteral("Workspace: %1").arg(display_name(canonical_target)));
     window->statusBar()->showMessage(state->getStatus_message());
 }
 }  // namespace ws
@@ -134,13 +312,20 @@ struct MenuActions {
     QAction* save;
     QAction* save_as;
     QAction* exit_app;
+    QAction* undo;
+    QAction* redo;
+    QAction* ivar_render;
 
+    QMenu* look_through;
+    QAction* toggle_orthographic;
     QAction* workspace_assembly;
     QAction* workspace_lighting;
     QAction* workspace_materials;
-    QAction* workspace_render;
+    QAction* workspace_review;
     QAction* zen_mode;
     QAction* toggle_lod;
+    QAction* toggle_node_graph_experimental;
+    QAction* toggle_usda_source;
 
     QAction* about;
 };
@@ -172,6 +357,7 @@ QDockWidget* make_placeholder_dock(
 }
 
 MenuActions build_menu_bar(QMainWindow* window) {
+    namespace sc = bif_qt::shortcuts;
     MenuActions a{};
     auto* menu = window->menuBar();
 
@@ -191,15 +377,29 @@ MenuActions build_menu_bar(QMainWindow* window) {
     a.exit_app = file->addAction(QStringLiteral("E&xit"));
     a.exit_app->setShortcut(QKeySequence(QStringLiteral("Ctrl+Q")));
 
+    auto* edit = menu->addMenu(QStringLiteral("&Edit"));
+    a.undo = edit->addAction(QStringLiteral("&Undo"));
+    a.undo->setShortcut(sc::lookup(sc::kEditUndo, QKeySequence(QStringLiteral("Ctrl+Z"))));
+    a.undo->setShortcutContext(Qt::ApplicationShortcut);
+    a.undo->setEnabled(false);
+    a.redo = edit->addAction(QStringLiteral("&Redo"));
+    a.redo->setShortcut(sc::lookup(sc::kEditRedo, QKeySequence(QStringLiteral("Ctrl+Shift+Z"))));
+    a.redo->setShortcutContext(Qt::ApplicationShortcut);
+    a.redo->setEnabled(false);
+
     auto* view = menu->addMenu(QStringLiteral("&View"));
+    a.look_through = view->addMenu(QStringLiteral("Look &Through"));
+    a.toggle_orthographic = view->addAction(QStringLiteral("&Orthographic Projection"));
+    a.toggle_orthographic->setCheckable(true);
+    view->addSeparator();
     a.workspace_assembly = view->addAction(QStringLiteral("&Assembly Workspace"));
     a.workspace_assembly->setShortcut(QKeySequence(QStringLiteral("Ctrl+1")));
     a.workspace_lighting = view->addAction(QStringLiteral("&Lighting Workspace"));
     a.workspace_lighting->setShortcut(QKeySequence(QStringLiteral("Ctrl+2")));
     a.workspace_materials = view->addAction(QStringLiteral("&Materials Workspace"));
     a.workspace_materials->setShortcut(QKeySequence(QStringLiteral("Ctrl+3")));
-    a.workspace_render = view->addAction(QStringLiteral("&Render Workspace"));
-    a.workspace_render->setShortcut(QKeySequence(QStringLiteral("Ctrl+4")));
+    a.workspace_review = view->addAction(QStringLiteral("&Review Workspace"));
+    a.workspace_review->setShortcut(QKeySequence(QStringLiteral("Ctrl+4")));
     view->addSeparator();
     a.zen_mode = view->addAction(QStringLiteral("&Zen Mode"));
     a.zen_mode->setShortcut(QKeySequence(QStringLiteral("Ctrl+\\")));
@@ -208,6 +408,15 @@ MenuActions build_menu_bar(QMainWindow* window) {
     a.toggle_lod->setShortcut(QKeySequence(QStringLiteral("Ctrl+L")));
     a.toggle_lod->setCheckable(true);
     a.toggle_lod->setChecked(true);  // DisplaySettings::default = true
+    a.toggle_node_graph_experimental =
+        view->addAction(QStringLiteral("&Node Graph (Experimental)"));
+    a.toggle_node_graph_experimental->setCheckable(true);
+    a.toggle_usda_source = view->addAction(QStringLiteral("&USDA Source"));
+    a.toggle_usda_source->setCheckable(true);
+    a.toggle_usda_source->setChecked(false);
+
+    auto* render = menu->addMenu(QStringLiteral("&Render"));
+    a.ivar_render = render->addAction(QStringLiteral("Ivar &Render"));
 
     auto* help = menu->addMenu(QStringLiteral("&Help"));
     a.about = help->addAction(QStringLiteral("&About BIF"));
@@ -432,36 +641,15 @@ CentralArea build_central_area(QMainWindow* window, BifShellState* state) {
     auto populate_camera_picker = [=]() {
         camera_picker->blockSignals(true);
         camera_picker->clear();
-        camera_picker->addItem(QStringLiteral("Perspective"), QStringLiteral("free"));
-        camera_picker->insertSeparator(camera_picker->count());
-        const struct { const char* label; const char* key; } ortho_views[] = {
-            {"Top",    "ortho:Top"},
-            {"Bottom", "ortho:Bottom"},
-            {"Front",  "ortho:Front"},
-            {"Back",   "ortho:Back"},
-            {"Right",  "ortho:Right"},
-            {"Left",   "ortho:Left"},
-        };
-        for (const auto& v : ortho_views)
-            camera_picker->addItem(QString::fromLatin1(v.label),
-                                   QString::fromLatin1(v.key));
-        int usd_count = state->usd_camera_count();
-        if (usd_count > 0) {
-            camera_picker->insertSeparator(camera_picker->count());
-            for (int i = 0; i < usd_count; ++i) {
-                auto path = state->usd_camera_path_at(i);
-                auto leaf = path.split(QLatin1Char('/')).last();
-                camera_picker->addItem(leaf, QStringLiteral("usd:") + path);
+        const auto choices = collect_camera_choices(state);
+        for (const auto& choice : choices) {
+            if (choice.separator_before) {
+                camera_picker->insertSeparator(camera_picker->count());
             }
+            camera_picker->addItem(choice.label, choice.key);
         }
         // Restore active selection
-        auto active = state->active_camera_name();
-        for (int i = 0; i < camera_picker->count(); ++i) {
-            if (camera_picker->itemData(i).toString() == active) {
-                camera_picker->setCurrentIndex(i);
-                break;
-            }
-        }
+        sync_camera_picker_selection(camera_picker, state->active_camera_name());
         camera_picker->blockSignals(false);
     };
 
@@ -590,6 +778,74 @@ static void trigger_open_stage(
     update_status();
 }
 
+class StageDropFilter : public QObject {
+public:
+    StageDropFilter(
+        QMainWindow* window,
+        BifShellState* shell_state,
+        QStackedWidget* central_stack,
+        RenderWidget* viewport)
+        : QObject(window),
+          m_window(window),
+          m_shell_state(shell_state),
+          m_central_stack(central_stack),
+          m_viewport(viewport) {}
+
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override {
+        auto* target = qobject_cast<QWidget*>(watched);
+        if (!target || !m_window || !m_shell_state || !m_central_stack) {
+            return QObject::eventFilter(watched, event);
+        }
+        if (target != m_window && !m_window->isAncestorOf(target)) {
+            return QObject::eventFilter(watched, event);
+        }
+
+        switch (event->type()) {
+        case QEvent::DragEnter: {
+            auto* drag = static_cast<QDragEnterEvent*>(event);
+            if (first_supported_stage_path(drag->mimeData()).isEmpty()) {
+                return QObject::eventFilter(watched, event);
+            }
+            drag->acceptProposedAction();
+            return true;
+        }
+        case QEvent::DragMove: {
+            auto* drag = static_cast<QDragMoveEvent*>(event);
+            if (first_supported_stage_path(drag->mimeData()).isEmpty()) {
+                return QObject::eventFilter(watched, event);
+            }
+            drag->acceptProposedAction();
+            return true;
+        }
+        case QEvent::Drop: {
+            auto* drop = static_cast<QDropEvent*>(event);
+            const auto path = first_supported_stage_path(drop->mimeData());
+            if (path.isEmpty()) {
+                return QObject::eventFilter(watched, event);
+            }
+            drop->acceptProposedAction();
+            trigger_open_stage(
+                m_window,
+                m_shell_state,
+                m_central_stack,
+                m_viewport,
+                path);
+            return true;
+        }
+        default:
+            break;
+        }
+        return QObject::eventFilter(watched, event);
+    }
+
+private:
+    QMainWindow* m_window;
+    BifShellState* m_shell_state;
+    QStackedWidget* m_central_stack;
+    RenderWidget* m_viewport;
+};
+
 void wire_shell_actions(
     MenuActions& actions,
     BifShellState* shell_state,
@@ -599,6 +855,67 @@ void wire_shell_actions(
     auto update_status = [shell_state, window]() {
         window->statusBar()->showMessage(shell_state->getStatus_message());
     };
+    auto* undo_action = actions.undo;
+    auto* redo_action = actions.redo;
+    auto refresh_edit_actions = [shell_state, undo_action, redo_action]() {
+        undo_action->setEnabled(shell_state->getCan_undo());
+        redo_action->setEnabled(shell_state->getCan_redo());
+    };
+    QObject::connect(shell_state, &BifShellState::can_undoChanged,
+                     window, refresh_edit_actions);
+    QObject::connect(shell_state, &BifShellState::can_redoChanged,
+                     window, refresh_edit_actions);
+    refresh_edit_actions();
+
+    auto* camera_picker = window->findChild<QComboBox*>(QStringLiteral("camera_picker"));
+    auto* look_through_menu = actions.look_through;
+    auto* ortho_action = actions.toggle_orthographic;
+    auto sync_camera_surfaces = [camera_picker, look_through_menu, ortho_action, shell_state]() {
+        const auto active = shell_state->active_camera_name();
+        if (camera_picker) {
+            camera_picker->blockSignals(true);
+            sync_camera_picker_selection(camera_picker, active);
+            camera_picker->blockSignals(false);
+        }
+        if (look_through_menu) {
+            for (auto* action : look_through_menu->actions()) {
+                if (action->isSeparator()) continue;
+                action->setChecked(action->data().toString() == active);
+            }
+        }
+        ortho_action->blockSignals(true);
+        ortho_action->setChecked(is_ortho_camera_source(active));
+        ortho_action->blockSignals(false);
+    };
+    auto repopulate_look_through_menu =
+        [window, look_through_menu, shell_state, sync_camera_surfaces]() {
+            look_through_menu->clear();
+            const auto choices = collect_camera_choices(shell_state);
+            for (const auto& choice : choices) {
+                if (choice.separator_before) {
+                    look_through_menu->addSeparator();
+                }
+                auto* action = look_through_menu->addAction(choice.label);
+                action->setData(choice.key);
+                action->setCheckable(true);
+                const auto key = choice.key;
+                QObject::connect(action, &QAction::triggered, window,
+                    [shell_state, sync_camera_surfaces, key]() {
+                        shell_state->on_select_camera(key);
+                        sync_camera_surfaces();
+                    });
+            }
+            sync_camera_surfaces();
+        };
+    QObject::connect(shell_state, &BifShellState::camera_list_revisionChanged,
+                     window, repopulate_look_through_menu);
+    if (camera_picker) {
+        QObject::connect(camera_picker,
+                         QOverload<int>::of(&QComboBox::currentIndexChanged),
+                         window,
+                         [sync_camera_surfaces](int) { sync_camera_surfaces(); });
+    }
+    repopulate_look_through_menu();
 
     auto new_stage_flow = [shell_state, central_stack, update_status]() {
         shell_state->on_new_stage();
@@ -633,6 +950,21 @@ void wire_shell_actions(
             shell_state->on_save_as();
             update_status();
         });
+    QObject::connect(actions.undo, &QAction::triggered, window,
+        [shell_state, update_status]() {
+            shell_state->on_undo();
+            update_status();
+        });
+    QObject::connect(actions.redo, &QAction::triggered, window,
+        [shell_state, update_status]() {
+            shell_state->on_redo();
+            update_status();
+        });
+    QObject::connect(actions.ivar_render, &QAction::triggered, window,
+        [shell_state, update_status]() {
+            shell_state->on_start_ivar_render();
+            update_status();
+        });
     QObject::connect(actions.exit_app, &QAction::triggered,
         qApp, &QCoreApplication::quit);
 
@@ -642,8 +974,20 @@ void wire_shell_actions(
         [window, shell_state]() { ws::switch_to(window, shell_state, QLatin1String(ws::LIGHTING)); });
     QObject::connect(actions.workspace_materials, &QAction::triggered, window,
         [window, shell_state]() { ws::switch_to(window, shell_state, QLatin1String(ws::MATERIALS)); });
-    QObject::connect(actions.workspace_render, &QAction::triggered, window,
-        [window, shell_state]() { ws::switch_to(window, shell_state, QLatin1String(ws::RENDER)); });
+    QObject::connect(actions.workspace_review, &QAction::triggered, window,
+        [window, shell_state]() { ws::switch_to(window, shell_state, QLatin1String(ws::REVIEW)); });
+    QObject::connect(actions.toggle_orthographic, &QAction::toggled, window,
+        [shell_state, sync_camera_surfaces](bool enabled) {
+            const auto active = shell_state->active_camera_name();
+            if (enabled) {
+                if (!is_ortho_camera_source(active)) {
+                    shell_state->on_select_camera(QStringLiteral("ortho:Top"));
+                }
+            } else if (is_ortho_camera_source(active)) {
+                shell_state->on_select_camera(QStringLiteral("free"));
+            }
+            sync_camera_surfaces();
+        });
 
     QObject::connect(actions.zen_mode, &QAction::toggled, window,
         [window, shell_state, update_status](bool zen) {
@@ -660,6 +1004,42 @@ void wire_shell_actions(
     QObject::connect(actions.toggle_lod, &QAction::toggled, window,
         [shell_state, update_status](bool enabled) {
             shell_state->on_set_lod_enabled(enabled);
+            update_status();
+        });
+    QObject::connect(actions.toggle_node_graph_experimental, &QAction::toggled, window,
+        [window, shell_state, update_status](bool enabled) {
+            set_node_graph_preview_enabled(window, enabled);
+            auto* node_graph =
+                window->findChild<QDockWidget*>(QStringLiteral("dock_node_graph"));
+            if (node_graph) {
+                if (enabled) {
+                    node_graph->show();
+                    node_graph->raise();
+                } else {
+                    node_graph->hide();
+                }
+            }
+            shell_state->setStatus_message(enabled
+                ? QStringLiteral("Node graph preview: ON")
+                : QStringLiteral("Node graph preview: OFF"));
+            update_status();
+        });
+
+    QObject::connect(actions.toggle_usda_source, &QAction::toggled, window,
+        [window, shell_state, update_status](bool enabled) {
+            auto* dock = window->findChild<QDockWidget*>(
+                QStringLiteral("dock_usda_source"));
+            if (dock) {
+                if (enabled) {
+                    dock->show();
+                    dock->raise();
+                } else {
+                    dock->hide();
+                }
+            }
+            shell_state->setStatus_message(enabled
+                ? QStringLiteral("USDA Source: ON")
+                : QStringLiteral("USDA Source: OFF"));
             update_status();
         });
 
@@ -718,6 +1098,7 @@ void connect_viewport_signals(
             shell_state->setStatus_message(ok
                 ? QStringLiteral("wgpu viewport live")
                 : QStringLiteral("FAILED to init wgpu viewport — see stderr"));
+            shell_state->sync_ivar_status();
             window->statusBar()->showMessage(shell_state->getStatus_message());
         });
 
@@ -730,8 +1111,10 @@ void connect_viewport_signals(
 
     QObject::connect(
         viewport, &RenderWidget::frameRequested, viewport,
-        [cb]() {
+        [cb, shell_state]() {
             viewport_on_frame(*cb);
+            shell_state->sync_undo_redo_state();
+            shell_state->sync_ivar_status();
         });
 
     // Camera + selection input — Phase E.1 routes deltas to
@@ -764,6 +1147,18 @@ void connect_viewport_signals(
         [shell_state, update_status](int x, int y) {
             shell_state->on_prim_pick(x, y);
             update_status();
+        });
+    QObject::connect(
+        viewport, &RenderWidget::transformGizmoMoved, shell_state,
+        [shell_state](int x, int y) {
+            shell_state->on_transform_gizmo_move(x, y);
+        });
+    QObject::connect(
+        viewport, &RenderWidget::transformGizmoReleased, shell_state,
+        [shell_state, update_status](int x, int y) {
+            if (shell_state->on_transform_gizmo_release(x, y)) {
+                update_status();
+            }
         });
 }
 
@@ -798,6 +1193,15 @@ int bif_qt_run_shell(ViewportCallbacks* viewport_cb, ::rust::Str stylesheet) {
     // Central area: breadcrumb toolbar + QStackedWidget(first-launch | viewport).
     auto central = build_central_area(&window, shell_state);
     window.setCentralWidget(central.container);
+    window.setAcceptDrops(true);
+    central.container->setAcceptDrops(true);
+    central.viewport_frame->setAcceptDrops(true);
+    central.stack->setAcceptDrops(true);
+    central.first_launch->setAcceptDrops(true);
+    central.viewport->setAcceptDrops(true);
+    auto* stage_drop_filter = new StageDropFilter(
+        &window, shell_state, central.stack, central.viewport);
+    app.installEventFilter(stage_drop_filter);
 
     wire_shell_actions(menu_actions, shell_state, &window, central.stack, central.viewport);
     wire_first_launch(central.first_launch, shell_state, central.stack, central.viewport, &window);
@@ -920,13 +1324,43 @@ int bif_qt_run_shell(ViewportCallbacks* viewport_cb, ::rust::Str stylesheet) {
             QDockWidget::DockWidgetMovable |
             QDockWidget::DockWidgetFloatable |
             QDockWidget::DockWidgetClosable);
-        auto* panel = new RenderSettingsWidget(dock);
+        auto* panel = new RenderSettingsWidget(shell_state, dock);
         dock->setWidget(panel);
         window.addDockWidget(Qt::RightDockWidgetArea, dock);
         if (prop_dock) {
             window.tabifyDockWidget(prop_dock, dock);
             prop_dock->raise();
         }
+    }
+
+    // USDA Source dock (C4b-2) — tabified with Node Graph at the
+    // bottom; hidden by default. View → USDA Source toggles it.
+    {
+        auto* dock = new QDockWidget(QStringLiteral("USDA Source"), &window);
+        dock->setObjectName(QStringLiteral("dock_usda_source"));
+        dock->setAllowedAreas(Qt::AllDockWidgetAreas);
+        dock->setFeatures(
+            QDockWidget::DockWidgetMovable |
+            QDockWidget::DockWidgetFloatable |
+            QDockWidget::DockWidgetClosable);
+        auto* panel = new UsdaPanelWidget(shell_state, dock);
+        dock->setWidget(panel);
+        window.addDockWidget(Qt::BottomDockWidgetArea, dock);
+        if (node_graph_dock) {
+            window.tabifyDockWidget(node_graph_dock, dock);
+        }
+        dock->hide();
+    }
+
+    {
+        QSettings settings;
+        const bool node_graph_preview = settings
+            .value(QLatin1String(kNodeGraphPreviewSettingsKey), false)
+            .toBool();
+        window.setProperty(kNodeGraphPreviewProperty, node_graph_preview);
+        menu_actions.toggle_node_graph_experimental->blockSignals(true);
+        menu_actions.toggle_node_graph_experimental->setChecked(node_graph_preview);
+        menu_actions.toggle_node_graph_experimental->blockSignals(false);
     }
 
     {
@@ -953,12 +1387,24 @@ int bif_qt_run_shell(ViewportCallbacks* viewport_cb, ::rust::Str stylesheet) {
         commands.insert(QStringLiteral("File: Save"), menu_actions.save);
         commands.insert(QStringLiteral("File: Save As..."), menu_actions.save_as);
         commands.insert(QStringLiteral("File: Exit"), menu_actions.exit_app);
+        commands.insert(QStringLiteral("Edit: Undo"), menu_actions.undo);
+        commands.insert(QStringLiteral("Edit: Redo"), menu_actions.redo);
+        commands.insert(
+            QStringLiteral("View: Toggle Orthographic Projection"),
+            menu_actions.toggle_orthographic);
         commands.insert(QStringLiteral("Workspace: Assembly"), menu_actions.workspace_assembly);
         commands.insert(QStringLiteral("Workspace: Lighting"), menu_actions.workspace_lighting);
         commands.insert(QStringLiteral("Workspace: Materials"), menu_actions.workspace_materials);
-        commands.insert(QStringLiteral("Workspace: Render"), menu_actions.workspace_render);
+        commands.insert(QStringLiteral("Workspace: Review"), menu_actions.workspace_review);
         commands.insert(QStringLiteral("View: Toggle Zen Mode"), menu_actions.zen_mode);
         commands.insert(QStringLiteral("View: Toggle Viewport LOD"), menu_actions.toggle_lod);
+        commands.insert(
+            QStringLiteral("View: Toggle Node Graph (Experimental)"),
+            menu_actions.toggle_node_graph_experimental);
+        commands.insert(
+            QStringLiteral("View: Toggle USDA Source"),
+            menu_actions.toggle_usda_source);
+        commands.insert(QStringLiteral("Render: Ivar Render"), menu_actions.ivar_render);
         commands.insert(QStringLiteral("Help: About BIF"), menu_actions.about);
 
         // Owned by `window` via Qt parent-child; deleted on shutdown.
@@ -1101,6 +1547,23 @@ int bif_qt_run_shell(ViewportCallbacks* viewport_cb, ::rust::Str stylesheet) {
 
     // Tier 1 — status-bar edit-target chip (permanent, right-aligned).
     // Hides itself when no stage is loaded via the internal refresh hook.
+    {
+        auto* ivar_status = new QLabel(window.statusBar());
+        ivar_status->setObjectName(QStringLiteral("ivar_status_chip"));
+        ivar_status->setStyleSheet(QStringLiteral(
+            "color: rgba(180, 185, 195, 255);"
+            "padding: 0 10px;"
+            "border-left: 1px solid rgba(60, 65, 75, 180);"));
+        auto refresh_ivar_status = [shell_state, ivar_status]() {
+            const auto text = shell_state->getIvar_status();
+            ivar_status->setVisible(!text.isEmpty());
+            ivar_status->setText(text);
+        };
+        QObject::connect(shell_state, &BifShellState::ivar_statusChanged,
+                         &window, refresh_ivar_status);
+        refresh_ivar_status();
+        window.statusBar()->addPermanentWidget(ivar_status);
+    }
     {
         auto* chip = build_edit_target_chip(window.statusBar(), shell_state, /*compact=*/true);
         window.statusBar()->addPermanentWidget(chip);

@@ -1,8 +1,105 @@
+# Session Handoff — April 28, 2026 (v0.16.0 shipped on main)
+
+**Last Updated:** 2026-04-28. v0.16.0 ship-closeout: Code Reviewer agent ran on `finish-qt-ui` (16 commits, ~7.7k LOC). Two real ship-blockers fixed in `03e9622`: USDA Apply now snapshots-and-rolls-back if `TransferContent` throws mid-mutation, and all new C-ABI entry points have `catch (...)` so non-`std::exception` USD throws can never unwind across the FFI boundary. New regression test `import_layer_from_garbage_leaves_layer_intact` locks the rollback contract. Workspace bumped to `0.16.0`. CHANGELOG `[Unreleased]` promoted to `[0.16.0] - 2026-04-28`. MILESTONES table now lists v0.16.0 as shipped 2026-04-28; `Latest release` line + CLAUDE.md status both bumped.
+
+**Validation:** `cargo fmt --check`, `cargo clippy --all -- -D warnings`, and `cargo build --all` clean. Test suite green: `bif_math` 74, `bif_renderer` 109, `bif_viewport` 157, `bif_core` 236 lib + 4 + 11 integration (single-threaded with `setup_usd_env.ps1`). `bif_viewer` has no in-tree tests by design. New rollback test confirmed running.
+
+**Next action:** push `main` + annotated `v0.16.0` tag (push not done by autonomous session — local tag pending). Then move to v0.16.5 Graphite styling pass and the v0.16.1 follow-up bug list (TfErrorMark on save, atomic shader-swap composite op, QPointer captures in property_inspector lambdas, modal-reentrancy guards, mutex-poison logging, additional negative tests).
+
+## 🏁 2026-04-28 — v0.16.0 ship closeout
+
+- **Code Reviewer pass on `finish-qt-ui`.** Triaged into 5 BLOCKER / 7 MAJOR / 6 NIT findings. Verified by reading the actual code and downgraded paranoid blockers (thread_local contract is documented and copy-on-receive in Rust; outline-color expect on a hardcoded literal; `ReplaceLayerContents` correctly ignores `working_layer_id` in favor of the recorded layer id — adding the suggested debug_assert would have broken legitimate cross-layer redo). Real ship-blockers: TransferContent rollback + FFI exception hardening. Real majors: tracked in BUGLIST for v0.16.1.
+- **TransferContent rollback (`usd_bridge.cpp:6680+`).** `usd_bridge_layer_import_from_string` now `ExportToString`s the live layer into a `std::string` snapshot before `TransferContent`. If transfer throws, restore from the snapshot. Inner `try { ... } catch (...)` so non-`std::exception` USD throws are caught.
+- **`catch (...)` on all new C-ABI entries.** Added to `_layer_save`, `_layer_export_as_string`, `_layer_import_from_string`, `_parse_usda`, `_layer_get_attr_value`, `_layer_permission_to_edit`, `_layer_set_permission_to_edit`, `_layer_set_shader_input`, `_layer_set_shader_id`, `_prim_get_bound_shader_id`, `_prim_get_bound_material_inputs`. Matches the `catch (...)` pattern used by older entries (e.g. `set_variant_selection`).
+- **New regression test.** `import_layer_from_garbage_leaves_layer_intact` (in `tests/edit_op_roundtrip.rs`) feeds garbage USDA, asserts the call returns `Err`, and asserts the layer text is byte-identical after — confirms the parse-first guard plus the rollback contract.
+- **BUGLIST followups for v0.16.1.** Captured: TfErrorMark on save, atomic shader-swap composite op, QPointer captures in property_inspector lambdas, modal-reentrancy guards on QMessageBox::question, mutex-poison logging, additional negative tests, `cstr(s)` helper in `cpp_bridge.rs`, thread_local contract test.
+
+---
+
+# Session Handoff — April 27, 2026 (`finish-qt-ui` C4b editor features shipped)
+
+**Last Updated:** 2026-04-27. Branch `finish-qt-ui` shipped the full C4b editor tranche on top of C4a/dogfood. The editor now exposes per-prim Visibility (Property Inspector header checkbox), Material binding + per-input editors grouped by OpenPBR/UsdPreviewSurface section (Material Sheet tab with sRGB→linear color picker), wholesale layer USDA edits (`View → USDA Source` dock with Apply-only validation), and shading-model swap (Material Sheet header `QComboBox` with atomic-undo + lossy-param `QMessageBox`). All edits route through `EditHistory` and save through Ctrl+S.
+
+**Validation:** `cargo build` / `cargo clippy --workspace -- -D warnings` / `cargo fmt --check` clean. `cargo test -p bif_core --test edit_op_roundtrip --test edit_history -- --test-threads=1` green at 10 tests. New round-trip coverage includes `replace_layer_contents_roundtrips`, `visibility_roundtrips_via_dispatcher`, `bound_material_inputs_returns_shader_inputs`, `set_shader_id_roundtrips`, `shading_model_swap_undoes_atomically`. Manual `usdview` reopen of a Ctrl+S output remains the recommended human-in-the-loop sanity check; not run from the autonomous session.
+
+**Next action:** v0.16.5 Graphite styling pass — the function-first work is complete. v0.17 picks up `cpp_bridge.rs` split, payload policies, file-watcher save-conflict prompt, line/col in USDA parse errors, real-time USDA parse, drag-drop material binding, lookdev orb, and `usd_bridge_layer_clear_attr`.
+
+## 🏁 2026-04-27 — `finish-qt-ui` C4b editor features
+
+- **C4b-Carry-2 (`4dc7392`):** New `EditOperation::ReplaceLayerContents` + `AttrSlot::LayerContents`. Round-trip test covers apply → undo restoring captured `before` text.
+- **C4b-Carry-1 (`53b8b53`):** `Renderer::dispatch_visibility` + `on_set_visibility` qinvokable + `Visible` checkbox in the Property Inspector header.
+- **C4b-1 (`ca31587`):** New FFI `usd_bridge_prim_get_bound_material_inputs` + safe wrapper. `Renderer::dispatch_material_param_override` / `dispatch_material_assign`. Material Sheet tab grouped by OpenPBR / UsdPreviewSurface section with per-type editors and sRGB→linear at the color picker boundary. `Bind…` header action.
+- **C4b-2 (`8455b8e`):** `View → USDA Source` dock with `QPlainTextEdit` and Apply button. New `Renderer::dispatch_replace_layer_contents` validates via `parse_usda` then routes through `ReplaceLayerContents`. Red status label surfaces parse / dispatch errors. New `usda_panel_widget.{h,cpp}` registered in `build.rs`.
+- **C4b-3 (`622db71`):** New FFI `usd_bridge_layer_set_shader_id` + `usd_bridge_prim_get_bound_shader_id`. `EditOperation::SetShaderId` variant + `AttrSlot::ShaderId` slot. `dispatch_swap_shading_model` wraps id swap and best-effort param remap (`base_color` ↔ `diffuseColor`, `specular_roughness` ↔ `roughness`, etc.) in `begin_group` / `end_group`. Material Sheet header `QComboBox`. `QMessageBox` lossy-param warning.
+- **C4b-4 doc sync:** `CHANGELOG.md`, `MILESTONES.md`, `FEATURES.md`, `SESSION_HANDOFF.md`, devlog.
+
+---
+
+## 🏁 2026-04-27 — `finish-qt-ui` C4a dogfood transform gizmo
+
+- **Qt can move selected prims again.** `RenderWidget` forwards hover/primary-drag/release events to Rust; the renderer owns gizmo hit testing, drag preview, and release commit.
+- **Selection resolves real and synthetic paths.** Viewport and tree selection now normalize `/BIF/.../<instance>` paths and parent/mesh-child paths before resolving a movable instance.
+- **Working-layer transform authoring survives real USD xform ops.** The bridge writes matrices to transform ops, vectors to translate ops, and adds a transform op only when no compatible op exists.
+- **Rendering validation issue fixed.** `outline.wgsl` padding now matches the Rust uniform layout, avoiding the wgpu 32-vs-48 byte validation panic.
+- **Dogfood state.** User confirmed the gizmo appears and movement works; `Ctrl+S` remains working-layer-only from C4a.
+
+---
+
+# Session Handoff — April 26, 2026 (`finish-qt-ui` C4a edit foundation)
+
+## 🏁 2026-04-26 — `finish-qt-ui` C4a edit foundation
+
+- **Edit history exists in core.** `bif_core::usd::edit_history` owns `EditOperation`, `EditHistory`, `OpinionKey`, `AttrSlot`, `ShaderValue`, and grouped USD undo frames.
+- **Working-layer FFI writes are wired.** The USD bridge can save, parse, export/import layer text, read layer-specific attr values, and author transform/visibility/material/shader-input/variant opinions on the selected layer without caching `SdfLayer*` in Rust.
+- **Viewport dispatch now bridges instance identity to USD identity.** Transform edits and variant selections route through `EditHistory`; procedural undo remains parallel behind the viewport action router.
+- **Ctrl+S now saves the working layer.** `on_save` resolves the active layer id, calls `save_layer`, clears dirty state in shell + viewport mirrors, and reports `Saved <id>` / `Save failed: ...`.
+- **Docs are resynced.** `BIF_USD_WORKFLOW.md`, milestones, roadmap, feature notes, ADR-008, and the prior C4 handoff now reflect C4a/C4b split and remove the doc-only claims flagged by the audit.
+
+## 🏁 2026-04-25 — `finish-qt-ui` C3 navigation
+
+- **Camera navigation is now surfaced in the menu bar.** `View → Look Through…` reuses the same camera list as the breadcrumb picker, routes every selection through `on_select_camera`, and stays aligned with stage camera refreshes.
+- **Orthographic switching is now a first-class Qt action.** A new View-menu toggle switches into the existing aspect-correct ortho path and back to perspective without adding a parallel camera code path.
+- **Workspace presets now drive behavior, not just dock visibility.** The shell now uses `Assembly / Lighting / Materials / Review`, persists the active preset, restores older saved `"render"` state as `Review`, and applies distinct default dock/tab emphasis per workspace.
+- **Workspace changes now own payload policy.** `BifShellState` stores the current payload policy, stage open/reload paths thread it through the core loader and viewport loader, and policy-changing workspace switches confirm before reloading an already-open stage.
+
+---
+
+# Session Handoff — April 23, 2026 (`finish-qt-ui` C2 quick wins landed)
+
+**Last Updated:** 2026-04-23. Branch `finish-qt-ui` now has the C2 quick-wins tranche from `docs/agent-handoffs/2026-04-22-finish-qt-ui.md` landed: Render Settings now drives selection-outline width/color, `.usd*` files can be dropped onto the Qt shell to open stages, Property Inspector rows expose the full opinion stack as a rich tooltip, and Ivar render/status is surfaced in both Render Settings and the new Render menu/status bar. Automated validation is green on the current tree: `cargo build`, `cargo clippy -- -D warnings`, `cargo fmt --check`, `cargo test -p bif_math`, `cargo test -p bif_renderer`, `cargo test -p bif_viewport`, `cargo test -p bif_viewer`, `cargo test -p bif_qt`, and `cargo test -p bif_core -- --test-threads=1`. The `bif_core` suite still emits the known noisy USD secondary-thread diagnostics after completion, but the suite itself passes.
+
+**Next action:** start C3 navigation on `finish-qt-ui`: surface a `View → Look Through…` camera action, finish the ortho/workspace navigation path, and wire workspace-specific payload policy handling with a confirm dialog when a stage is already loaded.
+
+## 🏁 2026-04-23 — `finish-qt-ui` C2 quick wins
+
+- **Selection outline controls are live.** Render Settings now binds directly to shell qproperties/invokables for outline width and color, and the renderer/shader path now uses an `OutlineParams` uniform instead of a hard-coded WGSL constant.
+- **Stage open is easier to hit.** Dragging a `.usd`, `.usda`, `.usdc`, or `.usdz` file onto the Qt shell routes through the same `trigger_open_stage` flow as the File menu and recent-stage surfaces.
+- **Property inspection exposes composition context.** Attribute rows now show a rich HTML tooltip that preserves the raw USD attribute name and enumerates the full opinion stack with winning-layer emphasis and layer-color markers.
+- **Ivar render/status is surfaced as a first-class Qt action.** Render Settings adds an `Ivar Render` button and live status label, the menu bar adds a Render menu entry, and the status bar mirrors in-progress state off the existing frame pump.
+- **Regression coverage expanded with the quick wins.** Qt tests now cover outline-color conversion and opinion-tooltip HTML escaping, and the renderer default outline color matches the live shell conversion path.
+
+---
+
+# Session Handoff — April 23, 2026 (`finish-qt-ui` C1 foundations ready)
+
+**Last Updated:** 2026-04-23. Branch `finish-qt-ui` now has the C1 foundations tranche from `docs/agent-handoffs/2026-04-22-finish-qt-ui.md` ready to land: Qt Edit menu undo/redo actions are wired to the live `bif_core::UndoStack`, edit-target layer picking now uses real USD `SdfLayer::PermissionToEdit()`, and the node graph dock stays hidden by default behind a persisted experimental toggle. Automated validation is green in a Qt/USD-ready shell: `cargo build`, `cargo clippy -- -D warnings`, `cargo fmt --check`, `cargo test -p bif_math`, `cargo test -p bif_renderer`, `cargo test -p bif_viewport`, `cargo test -p bif_viewer`, `cargo test -p bif_qt pick_strongest_writable_sublayer_skips_locked_layers`, and `cargo test -p bif_core -- --test-threads=1`. The `bif_core` suite still emits the known noisy USD secondary-thread diagnostics after completion, but the suite itself passes.
+
+**Next action:** commit the C1 foundations tranche on `finish-qt-ui`, then continue C2 quick wins: outline width/color controls, drag-and-drop stage open, property-row opinion tooltip, and the Ivar render trigger/status path.
+
+## 🏁 2026-04-23 — `finish-qt-ui` C1 foundations
+
+- **Undo/redo surfaced in the Qt shell.** `BifShellState` now mirrors `can_undo` / `can_redo`, Edit menu actions call renderer undo/redo, and action enable state refreshes off the viewport frame pump plus stage open/close transitions.
+- **Writable-layer detection is now real.** `LayerInfo` carries a USD-backed `permission_to_edit` bit from the C++ bridge, and `pick_strongest_writable_sublayer` now skips locked sublayers instead of relying on the old anonymous-layer heuristic.
+- **Node graph stays in-tree but hidden by default.** The dock is still present, but it only reappears when the experimental preview toggle is enabled and persists through QSettings.
+- **Regression coverage added for the new foundations.** Core USD tests now assert the reported `PermissionToEdit` state, and Qt tests cover the writable-layer picker when a locked layer sits above a writable sublayer.
+
+---
+
 # Session Handoff — April 22, 2026 (v0.15.0 shipped on main)
 
-**Last Updated:** 2026-04-22. v0.15.0 ship-closeout landed on `main`: property inspector stack caching, ortho/timeline/demo-tree cleanup, lazy scene-browser `fetchMore`, release docs bump, and CHANGELOG split. Agent-config work from 2026-04-22 ships inside the v0.15.0 release notes. Workspace/package version is `0.15.0`; release validation is green in a Qt/USD-ready shell; next active milestone is v0.16.0.
+**Last Updated:** 2026-04-22. v0.15.0 ship-closeout landed on `main`: property inspector stack caching, ortho/timeline/demo-tree cleanup, lazy scene-browser `fetchMore`, release docs bump, and CHANGELOG split. Agent-config work from 2026-04-22 ships inside the v0.15.0 release notes. Workspace/package version is `0.15.0`; release validation is green in a Qt/USD-ready shell; next active milestone is v0.16.0. The deferred Obsidian Graphite / "Quiet Confidence" styling pass is now explicitly split into a follow-on `v0.16.5` docket so the editor tranche stays function-first.
 
-**Next action:** start v0.16.0 kickoff work on Edit Operations + Save. If publishing this ship state externally, push `main` plus the annotated `v0.15.0` tag and confirm the Pages deploy succeeds on the main-branch push.
+**Next action:** start v0.16.0 kickoff work on Edit Operations + Save, keeping Graphite styling work parked in `v0.16.5`. If publishing this ship state externally, push `main` plus the annotated `v0.15.0` tag and confirm the Pages deploy succeeds on the main-branch push.
 
 ## 🏁 2026-04-22 — v0.15.0 ship closeout
 

@@ -332,7 +332,7 @@ Each segment is clickable (switch stage, switch layer, navigate to prim).
 4 built-in layouts that reconfigure panels + payload policy:
 
 - **Assembly**: Node graph prominent, all layers visible, LoadAll, Bjorn tab available
-- **Lighting**: Viewport dominant, light properties, CameraFrustum loading, Console tab default
+- **Lighting**: Viewport dominant, light properties, camera-based deferred loading, Console tab default
 - **Materials**: Material editor + lookdev viewport, material layer active, shader graph prominent
 - **Render**: Viewport maximized, Render Catalog, console/log dock, glassmorphic HUDs
 
@@ -537,7 +537,7 @@ Each workspace reconfigures panels, default tabs, and payload policies.
 - **Right dock:** Inspector with full opinion attribution
 - **Bottom dock:** Node Graph tab active, Bjorn + USDA Preview + Console available
 - **Viewport:** Breadcrumb bar, tool HUD, status bar with layer indicator
-- **Payload policy:** BoundingBoxOnly
+- **Payload policy:** proxy placeholder mode
 - **Node graph filter:** All node types
 - **Alternate layout:** Vertical code split — USDA preview replaces left portion of viewport (see Section 1 Layout Variant). Activate via command palette or toolbar toggle.
 - **Icon sidebar:** Left rail with Explorer, Layers, Stages, Assets, History (labeled when expanded, icon-only when collapsed)
@@ -551,7 +551,7 @@ Each workspace reconfigures panels, default tabs, and payload policies.
 - **Bottom dock:** USDA Preview tab active (showing light definition code with line numbers), Console + Graph tabs available. "BAKE LIGHTING" action button at bottom-right.
 - **Viewport:** Dominant (~70%), render mode badge ("PERSPECTIVE | PATH TRACED"), status bar with layer indicator
 - **Active layer:** "ACTIVE LAYER: LIGHTING.USD" gold/amber accent bar
-- **Payload policy:** CameraFrustum
+- **Payload policy:** camera-based deferred loading
 
 ### Materials
 

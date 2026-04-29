@@ -4,7 +4,7 @@ type: adr
 status: accepted
 tags: [architecture, usd, layers, v0.14]
 created: 2026-04-13
-updated: 2026-04-13
+updated: 2026-04-26
 ---
 
 # ADR-005 — Layer-aware read model (v0.14.0)
@@ -71,5 +71,5 @@ v0.15 migrates egui → Qt. The plan considered introducing a `LayerStackView` t
 ## Consequences
 
 - v0.14.5 follow-up (file watcher + node graph color-coding + Layer Stack display node) can land incrementally without architectural changes.
-- v0.16 editing gains a known surface: write through `UsdStage::set_*` methods to the layer resolved from `SceneLayerState::working_layer`, then refresh `layer_state` to pick up new opinions.
+- v0.16 editing gained the write-side architecture in [[008-edit-operation-architecture|ADR-008]]: `EditOperation` / `EditHistory`, working-layer FFI writes through `UsdEditContext`, and Ctrl+S save for the active layer.
 - If v0.16 needs value-typed round-trip (not just display strings), the FFI must grow a `set_attribute_value(path, attr, VtValue)` entry point and a matching Rust-side type bridge.

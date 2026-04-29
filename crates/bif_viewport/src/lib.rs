@@ -28,6 +28,7 @@ pub mod mesh_data;
 pub mod multi_draw;
 pub mod point_preview;
 pub mod texture_loader;
+mod transform_gizmo;
 
 // Scene browser and property inspector modules
 mod animation;
@@ -81,6 +82,7 @@ pub use texture_loader::{
     TextureLoadMessage, DEFAULT_MAX_VIEWPORT_TEXTURE_SIZE,
 };
 pub use timeline::TimelineState;
+use transform_gizmo::TransformGizmoRenderer;
 pub use types::*;
 
 pub use node_graph::{render_node_graph, GraphNodeId, NodeGraphEvent, NodeGraphState, SceneNode};
@@ -116,6 +118,14 @@ pub(crate) struct GpuTextureState {
     pub sampler: wgpu::Sampler,
     pub bind_group_layout: wgpu::BindGroupLayout,
     pub bind_group: wgpu::BindGroup,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct OutlineParamsUniform {
+    pub color: [f32; 4],
+    pub width_ndc: f32,
+    pub _padding: [f32; 3],
 }
 
 /// GPU plumbing — surface, device, queue, config.
@@ -170,6 +180,12 @@ pub(crate) struct NodeGraphContext {
     pub node_prim_counts: std::collections::HashMap<node_graph::GraphNodeId, usize>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum UndoActionKind {
+    Procedural,
+    Usd,
+}
+
 /// Convert a synthetic `/BIF/{real_path}/{idx}` instance path back to the real path.
 ///
 /// `resolve_prim_path` generates synthetic paths when an instance has no USD prim path
@@ -206,6 +222,8 @@ pub struct Renderer {
     pub(crate) wireframe_pipeline: wgpu::RenderPipeline,
     pub(crate) wireframe_cam_buffer: wgpu::Buffer,
     pub(crate) wireframe_cam_bind_group: wgpu::BindGroup,
+    pub(crate) outline_params_buffer: wgpu::Buffer,
+    pub(crate) outline_params_bind_group: wgpu::BindGroup,
     pub(crate) vertex_buffer: wgpu::Buffer,
     pub(crate) index_buffer: wgpu::Buffer,
     pub(crate) num_indices: u32,
@@ -225,6 +243,9 @@ pub struct Renderer {
     // Ground grid
     pub(crate) grid: GridRenderer,
 
+    // Selected-prim transform gizmo
+    pub(crate) transform_gizmo: TransformGizmoRenderer,
+
     // UI state
     pub fps: f32,
     pub(crate) frame_count: u32,
@@ -241,6 +262,8 @@ pub struct Renderer {
 
     // Scene data (geometry, instances, materials, USD stage, undo/redo)
     pub scene: SceneManager,
+    pub(crate) last_action_stack: Vec<UndoActionKind>,
+    pub(crate) redo_action_stack: Vec<UndoActionKind>,
 
     // Multi-draw state for per-prototype rendering
     pub(crate) multi_draw: MultiDrawState,
@@ -626,12 +649,33 @@ impl Renderer {
             cache: None,
         });
 
+        let outline_params_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Outline Params Bind Group Layout"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+            });
+        let outline_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Outline Pipeline Layout"),
+                bind_group_layouts: &[&camera_bind_group_layout, &outline_params_bind_group_layout],
+                push_constant_ranges: &[],
+            });
+
         // Outline pipeline for selection highlight — normal-expanded back-face silhouette.
         // Uses outline.wgsl: expands vertices along normals in clip space, renders back
         // faces only so only the protruding rim (silhouette) passes depth test.
         let wireframe_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Selection Outline Pipeline"),
-            layout: Some(&pipeline_layout),
+            layout: Some(&outline_pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &outline_shader,
                 entry_point: "vs_main",
@@ -693,6 +737,24 @@ impl Renderer {
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: wireframe_cam_buffer.as_entire_binding(),
+            }],
+        });
+        let outline_params = OutlineParamsUniform {
+            color: DisplaySettings::default().outline_color,
+            width_ndc: DisplaySettings::default().outline_width,
+            _padding: [0.0; 3],
+        };
+        let outline_params_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Outline Params Buffer"),
+            contents: bytemuck::cast_slice(&[outline_params]),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+        let outline_params_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Outline Params Bind Group"),
+            layout: &wireframe_pipeline.get_bind_group_layout(1),
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: outline_params_buffer.as_entire_binding(),
             }],
         });
 
@@ -758,6 +820,11 @@ impl Renderer {
         let grid = GridRenderer::new(&device, config.format, &camera_bind_group_layout);
         log::info!("Grid initialized");
 
+        // Create selected-prim transform gizmo renderer
+        let transform_gizmo =
+            TransformGizmoRenderer::new(&device, config.format, &camera_bind_group_layout);
+        log::info!("Transform gizmo initialized");
+
         // Create point preview renderer
         let point_preview = point_preview::PointPreviewRenderer::new(
             &device,
@@ -816,6 +883,8 @@ impl Renderer {
             wireframe_pipeline,
             wireframe_cam_buffer,
             wireframe_cam_bind_group,
+            outline_params_buffer,
+            outline_params_bind_group,
             vertex_buffer,
             index_buffer,
             num_indices: 0, // Empty scene - no indices
@@ -852,6 +921,7 @@ impl Renderer {
             depth_view,
             gnomon,
             grid,
+            transform_gizmo,
             fps: 0.0,
             frame_count: 0,
             fps_update_timer: 0.0,
@@ -872,6 +942,8 @@ impl Renderer {
                 mesh_data,
                 ..SceneManager::new()
             },
+            last_action_stack: Vec::new(),
+            redo_action_stack: Vec::new(),
             multi_draw: MultiDrawState::new(),
             culling,
             selection: SelectionManager::new(),
@@ -970,6 +1042,8 @@ impl Renderer {
     pub fn reset_scene_state(&mut self) {
         self.wait_for_gpu();
         self.scene = SceneManager::new();
+        self.last_action_stack.clear();
+        self.redo_action_stack.clear();
         self.nodes.cached_scene_graph = scene_browser::CachedSceneGraph::default();
         self.nodes.node_proto_map.clear();
         self.nodes.node_cloud_map.clear();
@@ -1088,10 +1162,24 @@ impl Renderer {
             0,
             bytemuck::cast_slice(&[wf_uniform]),
         );
+        self.write_outline_params();
 
         // Update gnomon uniform with camera rotation
         self.gnomon
             .update_from_camera(&self.gpu.queue, &self.cam.camera);
+    }
+
+    fn write_outline_params(&mut self) {
+        let outline = OutlineParamsUniform {
+            color: self.display_settings.outline_color,
+            width_ndc: self.display_settings.outline_width,
+            _padding: [0.0; 3],
+        };
+        self.gpu.queue.write_buffer(
+            &self.outline_params_buffer,
+            0,
+            bytemuck::cast_slice(&[outline]),
+        );
     }
 
     /// Update environment parameters without regenerating maps.
@@ -1510,6 +1598,8 @@ impl Renderer {
         self.scene
             .undo_stack
             .push(Box::new(cmd), &mut self.scene.edit_state);
+        self.last_action_stack.push(UndoActionKind::Procedural);
+        self.redo_action_stack.clear();
         self.apply_transform_override(instance_index);
         self.project.mark_dirty();
 
@@ -1519,14 +1609,107 @@ impl Renderer {
         }
     }
 
+    pub(crate) fn instance_to_opinion_key(
+        &self,
+        idx: usize,
+        slot: bif_core::usd::AttrSlot,
+    ) -> Option<bif_core::usd::OpinionKey> {
+        let prim_path = self.scene.instances.prim_paths.get(idx)?;
+        if prim_path.is_empty() {
+            return None;
+        }
+        Some(bif_core::usd::OpinionKey::new(
+            denormalize_synthetic_path(prim_path),
+            slot,
+        ))
+    }
+
+    pub(crate) fn apply_usd_edit(
+        &mut self,
+        op: bif_core::usd::EditOperation,
+    ) -> anyhow::Result<String> {
+        let stage_arc = self
+            .scene
+            .usd_stage
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("no USD stage loaded"))?;
+        let mut layer_state = self
+            .scene
+            .layer_state
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("no layer state loaded"))?;
+        let result = {
+            let stage = stage_arc
+                .lock()
+                .map_err(|e| anyhow::anyhow!("UsdStage mutex poisoned: {e}"))?;
+            layer_state.apply_edit_operation(&stage, op)
+        };
+        self.scene.layer_state = Some(layer_state);
+        let desc = result.map_err(|e| anyhow::anyhow!("{e}"))?;
+        self.last_action_stack.push(UndoActionKind::Usd);
+        self.redo_action_stack.clear();
+        self.project.mark_dirty();
+        Ok(desc)
+    }
+
+    pub fn can_undo(&self) -> bool {
+        !self.last_action_stack.is_empty()
+            || self.scene.undo_stack.can_undo()
+            || self
+                .scene
+                .layer_state
+                .as_ref()
+                .is_some_and(bif_core::SceneLayerState::has_usd_undo)
+    }
+
+    pub fn can_redo(&self) -> bool {
+        !self.redo_action_stack.is_empty()
+            || self.scene.undo_stack.can_redo()
+            || self
+                .scene
+                .layer_state
+                .as_ref()
+                .is_some_and(bif_core::SceneLayerState::has_usd_redo)
+    }
+
     /// Undo the last command. Returns description if successful.
     pub fn undo(&mut self) -> Option<String> {
-        let desc = self
-            .scene
-            .undo_stack
-            .undo(&mut self.scene.edit_state)?
-            .to_string();
-        self.apply_all_transform_overrides();
+        let kind = self.last_action_stack.pop().or_else(|| {
+            if self.scene.undo_stack.can_undo() {
+                Some(UndoActionKind::Procedural)
+            } else if self
+                .scene
+                .layer_state
+                .as_ref()
+                .is_some_and(bif_core::SceneLayerState::has_usd_undo)
+            {
+                Some(UndoActionKind::Usd)
+            } else {
+                None
+            }
+        })?;
+        let desc = match kind {
+            UndoActionKind::Procedural => {
+                let desc = self
+                    .scene
+                    .undo_stack
+                    .undo(&mut self.scene.edit_state)?
+                    .to_string();
+                self.apply_all_transform_overrides();
+                desc
+            }
+            UndoActionKind::Usd => {
+                let stage_arc = self.scene.usd_stage.clone()?;
+                let mut layer_state = self.scene.layer_state.take()?;
+                let result = {
+                    let stage = stage_arc.lock().ok()?;
+                    layer_state.undo_usd_edit(&stage)
+                };
+                self.scene.layer_state = Some(layer_state);
+                result.ok().flatten()?
+            }
+        };
+        self.redo_action_stack.push(kind);
         self.project.mark_dirty();
         if self.ivar.ivar_state.mode == ivar_state::RenderMode::Ivar {
             self.invalidate_ivar_scene();
@@ -1536,12 +1719,42 @@ impl Renderer {
 
     /// Redo the next command. Returns description if successful.
     pub fn redo(&mut self) -> Option<String> {
-        let desc = self
-            .scene
-            .undo_stack
-            .redo(&mut self.scene.edit_state)?
-            .to_string();
-        self.apply_all_transform_overrides();
+        let kind = self.redo_action_stack.pop().or_else(|| {
+            if self.scene.undo_stack.can_redo() {
+                Some(UndoActionKind::Procedural)
+            } else if self
+                .scene
+                .layer_state
+                .as_ref()
+                .is_some_and(bif_core::SceneLayerState::has_usd_redo)
+            {
+                Some(UndoActionKind::Usd)
+            } else {
+                None
+            }
+        })?;
+        let desc = match kind {
+            UndoActionKind::Procedural => {
+                let desc = self
+                    .scene
+                    .undo_stack
+                    .redo(&mut self.scene.edit_state)?
+                    .to_string();
+                self.apply_all_transform_overrides();
+                desc
+            }
+            UndoActionKind::Usd => {
+                let stage_arc = self.scene.usd_stage.clone()?;
+                let mut layer_state = self.scene.layer_state.take()?;
+                let result = {
+                    let stage = stage_arc.lock().ok()?;
+                    layer_state.redo_usd_edit(&stage)
+                };
+                self.scene.layer_state = Some(layer_state);
+                result.ok().flatten()?
+            }
+        };
+        self.last_action_stack.push(kind);
         self.project.mark_dirty();
         if self.ivar.ivar_state.mode == ivar_state::RenderMode::Ivar {
             self.invalidate_ivar_scene();

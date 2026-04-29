@@ -34,6 +34,7 @@
 
 pub mod cpp_bridge;
 pub mod displacement;
+pub mod edit_history;
 pub mod export;
 pub(crate) mod ffi_convert;
 pub(crate) mod ffi_raw;
@@ -43,21 +44,22 @@ mod types;
 pub mod validate;
 
 pub use cpp_bridge::{
-    CameraProperties, CurveBasis, CurveType, CurveWrap, MeshPurpose, NormalsInterpolation,
-    PrimvarInterpolation, PrimvarType, SubdivisionScheme, TransformSample,
+    BoundMaterialInput, CameraProperties, CurveBasis, CurveType, CurveWrap, MeshPurpose,
+    NormalsInterpolation, PrimvarInterpolation, PrimvarType, SubdivisionScheme, TransformSample,
     UsdAnimatedInstancerData, UsdAnimatedMeshData, UsdAttributeData, UsdBridgeError, UsdCurvesData,
     UsdEditLayer, UsdInstancerData, UsdKind, UsdLightData, UsdLightShaping, UsdLightType,
     UsdMeshData, UsdNativeInstance, UsdPointsData, UsdPrimType, UsdPrimvarData, UsdSkeletonData,
     UsdSkinBindingData, UsdSpecifier, UsdStage, UsdTimelineData, UsdVolumeData,
 };
+pub use edit_history::{AttrSlot, EditHistory, EditOperation, OpinionKey, ShaderValue, UndoFrame};
 pub use export::{AuthoredPrim, ExportConfig, ExportResult};
 pub use layer::{
     EditTarget, LayerInfo, LayerOffset, LayerStack, OpinionSource, PayloadPolicy, PrimSpecifier,
     PrimStackEntry,
 };
 pub use loader::{
-    load_usd, load_usd_with_stage, load_usd_with_stage_muted, load_usda, load_usda_from_string,
-    LoadError, LoadResult,
+    load_usd, load_usd_with_stage, load_usd_with_stage_muted, load_usd_with_stage_policy_muted,
+    load_usda, load_usda_from_string, LoadError, LoadResult,
 };
 pub use types::{
     compose_xform_ops, UsdMesh, UsdPointInstancer, UsdPrim, UsdReference, UsdXform, XformOp,

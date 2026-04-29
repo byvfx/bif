@@ -267,8 +267,20 @@ impl Renderer {
                     }
                 }
                 AppEvent::WorkingLayerChanged(idx) => {
+                    let stage_arc = self.scene.usd_stage.clone();
                     if let Some(state) = self.scene.layer_state.as_mut() {
-                        state.set_working_layer(idx);
+                        if let Some(stage_arc) = stage_arc {
+                            match stage_arc.lock() {
+                                Ok(stage) => {
+                                    if let Err(e) = state.set_edit_target(idx, &stage) {
+                                        log::warn!("Failed to set edit target {idx}: {e}");
+                                    }
+                                }
+                                Err(e) => log::warn!("UsdStage lock poisoned: {e}"),
+                            }
+                        } else {
+                            state.set_working_layer(idx);
+                        }
                     }
                 }
                 AppEvent::PayloadPolicyChanged(policy) => {
@@ -691,10 +703,7 @@ impl Renderer {
                             wf_pass.set_scissor_rect(sx, sy, sw, sh);
                             wf_pass.set_pipeline(&self.wireframe_pipeline);
                             wf_pass.set_bind_group(0, &self.wireframe_cam_bind_group, &[]);
-                            wf_pass.set_bind_group(1, &self.materials.bind_group, &[]);
-                            wf_pass.set_bind_group(2, &self.textures.bind_group, &[]);
-                            wf_pass.set_bind_group(3, self.environment.bind_group(), &[]);
-                            wf_pass.set_bind_group(4, &self.lights.bind_group, &[]);
+                            wf_pass.set_bind_group(1, &self.outline_params_bind_group, &[]);
                             wf_pass.set_vertex_buffer(0, proto_gpu.vertex_buffer.slice(..));
                             wf_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
                             wf_pass.set_index_buffer(
@@ -704,6 +713,39 @@ impl Renderer {
                             wf_pass.draw_indexed(0..proto_gpu.num_indices, 0, 0..1);
                         }
                     }
+                }
+
+                if let Some(origin) = self.selected_gizmo_origin() {
+                    let viewport_rect = self.viewport_rect();
+                    self.transform_gizmo.update(
+                        &self.gpu.queue,
+                        origin,
+                        &self.cam.camera,
+                        viewport_rect,
+                        &self.selection.gizmo_state,
+                    );
+                    let mut gizmo_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("Transform Gizmo Pass"),
+                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                            view: &view,
+                            resolve_target: None,
+                            ops: wgpu::Operations {
+                                load: wgpu::LoadOp::Load,
+                                store: wgpu::StoreOp::Store,
+                            },
+                        })],
+                        depth_stencil_attachment: None,
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
+                    });
+                    let (vp_x, vp_y, vp_w, vp_h) = viewport_rect;
+                    let (sx, sy, sw, sh) = self.viewport_scissor();
+                    gizmo_pass.set_viewport(vp_x, vp_y, vp_w, vp_h, 0.0, 1.0);
+                    gizmo_pass.set_scissor_rect(sx, sy, sw, sh);
+                    self.transform_gizmo
+                        .render(&mut gizmo_pass, &self.cam.camera_bind_group);
+                } else {
+                    self.transform_gizmo.clear();
                 }
 
                 // Render gnomon in bottom-right corner

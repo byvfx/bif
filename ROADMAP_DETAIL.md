@@ -166,35 +166,30 @@ For the high-level roadmap, see [MILESTONES.md](MILESTONES.md). For completed mi
 **Dependencies:** v0.15.0
 **BIF becomes a real editor.**
 
-### Tasks — Edit Operations
+### C4a — Edit Foundation
 
-- `EditOperation` enum with `to_usda()` for core types (Transform, MaterialAssign, Visibility, MaterialParamOverride)
-- `EditHistory` with current-state map + undo/redo (builds on existing `EditState` + `UndoStack`)
-- Existing nodes (scatter, instancer) gain `to_usda()` — write to active layer continuously
-- Material overrides per-instance (per-instance material binding table)
+- `EditOperation` and `EditHistory` in `bif_core::usd::edit_history`
+- Stage-layer FFI for save, permission read, USDA export/import, parse, layer-specific attr read, and working-layer authoring calls
+- Variant selections authored through `UsdEditContext` on the selected working layer
+- Viewport dispatch routes USD transform and variant edits through `EditHistory`; procedural undo remains parallel
+- Ctrl+S saves the working layer only, clears the dirty bit, and reports `Saved <id>` / `Save failed: ...`
+- ADR-008 captures D1-D5: parallel undo, dual identity, edit target on `SceneLayerState`, composition arcs as operations, soft conflict warning
 
-### Tasks — Save Pipeline
+### C4b — Editor Features
 
-- Save to layer file on disk (Ctrl+S writes active layer only)
-- Auto-save to `.bif_autosave_<layer>.usd`
-- USDA code preview becomes **editable** (parse + validate on save)
-- Shot templates: JSON-configurable presets (`~/.bif/templates/`), `BIF_TEMPLATE_DIR` env var override
+- Editable USDA layer panel backed by the C4a parse/import/export bridge
+- Material parameter sheet for OpenPBR / UsdPreviewSurface
+- Shading-model dropdown with conversion warnings
+- Opinion-stack hover polish remains scoped to the property inspector
 
-### Tasks — Opinion Stack (Full Hover)
+### Deferred From v0.16.0
 
-- Hover any property → tooltip shows full layer contribution stack
-- All contributing layers with values, winning opinion highlighted
-- Click through to jump to source layer
-
-### Tasks — Workspace Presets
-
-- 4 built-in presets that reconfigure panels + payload policy:
-  - **Assembly**: Node graph prominent, all layers visible, LoadAll
-  - **Lighting**: Viewport dominant, light properties, CameraFrustum loading
-  - **Materials**: Material editor + lookdev viewport, material layer active
-  - **Review**: Viewport maximized, render settings, minimal UI
-- Switch via `Ctrl+1/2/3/4` or workspace tabs in top bar
-- Workspace-driven payload loading: switching workspace auto-adjusts what's in memory
+- Auto-save recovery
+- Shot-template creation workflow
+- Node-to-opinion continuous authoring for scatter / instancers
+- Workspace-driven payload loading presets
+- Lookdev preview orb
+- Schema-registry validation beyond hard USD bridge errors
 
 ### Tasks — Material Parameter Sheet
 
@@ -217,14 +212,10 @@ For the high-level roadmap, see [MILESTONES.md](MILESTONES.md). For completed mi
 ### Acceptance Criteria
 
 - Make edits in BIF, save, open in usdview, verify edits compose correctly
-- Undo/redo works across all edit operation types
-- Auto-save recovers work after crash
-- USDA panel is editable with validation feedback
-- Opinion stack hover shows full layer contributions
-- Workspace presets switch layout + payload policy in one click
-- Material param sheet edits OpenPBR/UsdPreviewSurface with sliders, swatches, textures
-- Lookdev orb renders preview sphere with <20ms feedback during drag
-- Shading model conversion works with lossy-param warnings
+- C4a round-trip tests pass for transform, visibility, material binding, material parameter, and variant selection
+- Ctrl+S saves only the selected working layer
+- Undo/redo can route between procedural and USD edit stacks
+- C4b feature UI lands only after the C4a foundation is green
 
 ---
 
@@ -274,7 +265,7 @@ Core architecture for rendering scenes that don't fit in memory. Exploits BIF's 
 
 ### Tasks — Payload Policies
 
-- `PayloadPolicy::CameraFrustum` — load geometry visible to camera + padding
+- Future camera-based payload policy — load geometry visible to camera + padding
 - `PayloadPolicy::Manual` — artist manually picks what to load/unload
 - Task-driven inference: suggest payloads based on active working layer
 - UI for payload management in stage tree (right-click load/unload)
@@ -295,7 +286,7 @@ Core architecture for rendering scenes that don't fit in memory. Exploits BIF's 
 - Smooth interaction at production scale
 - Render scenes exceeding memory budget via LRU prototype eviction
 - Prototype load-on-demand: first ray hit triggers geometry load from USD
-- Payload policies functional: CameraFrustum, Manual, BoundingBoxOnly
+- Payload policies functional: camera-based deferred loading, Manual, proxy placeholder mode
 
 ---
 

@@ -1,14 +1,16 @@
 # BIF USD Workflow Foundation
 
 **Version:** 0.3.0
-**Last Updated:** 2026-03-28
-**Status:** Design specification — hybrid approach adopted (see Implementation Notes)
+**Last Updated:** 2026-04-26
+**Status:** Living design note. v0.14-v0.16 code is authoritative where this older workflow text conflicts with accepted ADRs or current implementation.
 
 ## Implementation Notes
 
 **Hybrid approach (decided 2026-03-28):** BIF is a **USD Orchestration Tool** — it keeps its procedural node graph (scatter, instancer, etc.) as a differentiator while adding layer awareness underneath. Edits author USD opinions continuously instead of only at export time. The existing data-flow node graph uses blue/orange color-coding (composition vs operation nodes) as a visual UX distinction, not an architectural rewrite. Orchestration scope: arrange, compose, override, instance. Not: model, rig, animate, simulate.
 
-**Shot templates:** Implemented as JSON-configurable presets stored in `~/.bif/templates/`. Users can add/edit/remove templates by editing JSON. Studios can override via `BIF_TEMPLATE_DIR` env var. Built-in presets (feature_film, commercial, lookdev) ship as defaults.
+**Shot templates:** Future workflow, not shipped. Keep template creation out of the v0.16 edit/save foundation.
+
+**v0.16 C4a foundation (landed/in progress):** `EditOperation` + `EditHistory`, stage-layer FFI writes, variant selections authored through `UsdEditContext` on the working layer, Ctrl+S saving the active working layer, and ADR-008 for the edit architecture.
 
 **Milestone threading:** This spec is implemented incrementally across v0.14-v0.19 — see [MILESTONES.md](MILESTONES.md) for the release schedule.
 
@@ -78,649 +80,36 @@ This prevents accidental edits to other departments' work. The artist can only b
 
 USD payloads are the mechanism for deferred loading — a payload reference says "this geometry exists here, but don't load it until asked." BIF uses payload policies to control what's in memory:
 
-```rust
-/// Controls what geometry is loaded into memory for a given context.
-#[derive(Clone, Debug)]
-pub enum PayloadPolicy {
-    /// Load everything — used for final renders
-    LoadAll,
-    
-    /// Load only what the camera can see — used for layout/lighting
-    CameraFrustum {
-        camera_path: String,
-        padding: f32,          // frustum expansion percentage
-    },
-    
-    /// Load only bounding boxes — used for navigation/overview
-    BoundingBoxOnly,
-    
-    /// Load nothing — empty starting layer
-    None,
-    
-    /// Custom: artist manually picks what to load/unload
-    Manual {
-        loaded_prims: Vec<String>,
-    },
-}
-```
+Current implementation has two payload policies: `LoadAll` and `LoadNone`. Richer task-driven loading remains deferred to viewport-performance work.
 
 **Task-driven loading**: BIF can infer what to load based on which layer the artist is editing. A lighting artist needs all geo visible to camera + light rigs. A layout artist needs everything but can tolerate lower LODs. An FX artist needs specific areas.
 
 ---
 
-## Shot Templating
+## Future Shot Templating
 
-BIF provides a shot template system for quickly bootstrapping USD-based shots. This writes real `.usd` files to disk — immediately usable by any USD tool, not just BIF.
-
-### Template Definition
-
-```rust
-/// A shot template defines the layer structure for a new shot.
-pub struct ShotTemplate {
-    pub name: String,
-    pub description: String,
-    pub layers: Vec<LayerTemplate>,
-    pub default_references: Vec<ReferenceTemplate>,
-}
-
-pub struct LayerTemplate {
-    pub name: String,              // "layout", "animation", "lighting", "fx"
-    pub department: String,        // for UI grouping
-    pub default_prims: Vec<String>, // pre-populate with common roots like "/world"
-    pub payload_policy: PayloadPolicy,
-    pub layer_order: u32,          // position in sublayer stack (LIVRPS strength)
-}
-
-pub struct ReferenceTemplate {
-    pub prim_path: String,         // where to place the reference
-    pub asset_path: String,        // USD file to reference
-    pub as_payload: bool,          // true = deferred loading
-}
-```
-
-### Built-in Presets
-
-```rust
-impl ShotTemplate {
-    /// Standard VFX shot with typical department layers
-    pub fn feature_film_shot(shot_name: &str) -> Self {
-        Self {
-            name: shot_name.to_string(),
-            description: "Standard VFX shot with department layers".into(),
-            layers: vec![
-                LayerTemplate {
-                    name: format!("{}_layout.usd", shot_name),
-                    department: "Layout".into(),
-                    default_prims: vec!["/world".into(), "/cameras".into()],
-                    payload_policy: PayloadPolicy::CameraFrustum {
-                        camera_path: "/cameras/main".into(),
-                        padding: 0.2,
-                    },
-                    layer_order: 0, // weakest
-                },
-                LayerTemplate {
-                    name: format!("{}_animation.usd", shot_name),
-                    department: "Animation".into(),
-                    default_prims: vec!["/world/characters".into()],
-                    payload_policy: PayloadPolicy::CameraFrustum {
-                        camera_path: "/cameras/main".into(),
-                        padding: 0.1,
-                    },
-                    layer_order: 1,
-                },
-                LayerTemplate {
-                    name: format!("{}_fx.usd", shot_name),
-                    department: "FX".into(),
-                    default_prims: vec!["/world/fx".into()],
-                    payload_policy: PayloadPolicy::BoundingBoxOnly,
-                    layer_order: 2,
-                },
-                LayerTemplate {
-                    name: format!("{}_lighting.usd", shot_name),
-                    department: "Lighting".into(),
-                    default_prims: vec!["/world/lights".into()],
-                    payload_policy: PayloadPolicy::LoadAll,
-                    layer_order: 3, // strongest — lighting overrides win
-                },
-            ],
-            default_references: vec![],
-        }
-    }
-
-    /// Lightweight commercial/previz shot
-    pub fn commercial() -> Self {
-        Self {
-            name: "commercial".into(),
-            description: "Simple setup for commercials and previz".into(),
-            layers: vec![
-                LayerTemplate {
-                    name: "scene.usd".into(),
-                    department: "Scene".into(),
-                    default_prims: vec!["/world".into()],
-                    payload_policy: PayloadPolicy::LoadAll,
-                    layer_order: 0,
-                },
-                LayerTemplate {
-                    name: "overrides.usd".into(),
-                    department: "Overrides".into(),
-                    default_prims: vec![],
-                    payload_policy: PayloadPolicy::LoadAll,
-                    layer_order: 1,
-                },
-            ],
-            default_references: vec![],
-        }
-    }
-    
-    /// Lookdev template — single asset, all layers for material iteration
-    pub fn lookdev(asset_name: &str) -> Self {
-        Self {
-            name: format!("{}_lookdev", asset_name),
-            description: "Lookdev setup for material authoring".into(),
-            layers: vec![
-                LayerTemplate {
-                    name: format!("{}_base.usd", asset_name),
-                    department: "Model".into(),
-                    default_prims: vec![format!("/{}", asset_name)],
-                    payload_policy: PayloadPolicy::LoadAll,
-                    layer_order: 0,
-                },
-                LayerTemplate {
-                    name: format!("{}_materials.usd", asset_name),
-                    department: "Lookdev".into(),
-                    default_prims: vec!["/materials".into()],
-                    payload_policy: PayloadPolicy::LoadAll,
-                    layer_order: 1,
-                },
-            ],
-            default_references: vec![],
-        }
-    }
-}
-```
-
-### Template Execution: Writing USD Files
-
-```rust
-impl ShotTemplate {
-    /// Create the actual USD files on disk from this template.
-    pub fn create_on_disk(&self, output_dir: &Path) -> Result<PathBuf> {
-        std::fs::create_dir_all(output_dir)?;
-
-        // Write each layer as an empty .usda file with default prims
-        let mut layer_paths = Vec::new();
-        for layer in &self.layers {
-            let layer_path = output_dir.join(&layer.name);
-            let mut usda = String::new();
-            usda.push_str("#usda 1.0\n(\n");
-            usda.push_str(&format!("    doc = \"BIF {} layer\"\n", layer.department));
-            usda.push_str(")\n\n");
-
-            for prim in &layer.default_prims {
-                let prim_name = prim.trim_start_matches('/');
-                usda.push_str(&format!("def Xform \"{}\" {{\n}}\n\n", prim_name));
-            }
-
-            std::fs::write(&layer_path, &usda)?;
-            layer_paths.push(layer_path);
-        }
-
-        // Write the root stage that sublayers everything
-        let root_path = output_dir.join(format!("{}.usd", self.name));
-        let mut root_usda = String::new();
-        root_usda.push_str("#usda 1.0\n(\n");
-        root_usda.push_str("    subLayers = [\n");
-
-        // Strongest layer first in sublayer list (USD LIVRPS: first sublayer wins)
-        for layer in self.layers.iter().rev() {
-            root_usda.push_str(&format!("        @./{}@,\n", layer.name));
-        }
-        root_usda.push_str("    ]\n)\n\n");
-
-        // Add default references
-        for ref_template in &self.default_references {
-            let prim_name = ref_template.prim_path.trim_start_matches('/');
-            if ref_template.as_payload {
-                root_usda.push_str(&format!(
-                    "def Xform \"{}\" (\n    payload = @{}@\n) {{\n}}\n\n",
-                    prim_name, ref_template.asset_path
-                ));
-            } else {
-                root_usda.push_str(&format!(
-                    "def \"{}\" (\n    references = @{}@\n) {{\n}}\n\n",
-                    prim_name, ref_template.asset_path
-                ));
-            }
-        }
-
-        std::fs::write(&root_path, &root_usda)?;
-
-        Ok(root_path)
-    }
-}
-```
-
-### Template UI
-
-The template form is one of the first things an artist sees when creating a new shot:
-
-```text
-┌─────────────────────────────────────────────────┐
-│  New Shot from Template                         │
-├─────────────────────────────────────────────────┤
-│                                                 │
-│  Template:  [Feature Film Shot  ▾]              │
-│  Shot Name: [sh010_______________]              │
-│  Output:    [/show/seq01/sh010/  ] [Browse]     │
-│                                                 │
-│  Layers:                                        │
-│  ┌─────────────────────────────────────────┐    │
-│  │ ☑ layout.usd      (Layout)     [weak]  │    │
-│  │ ☑ animation.usd   (Animation)          │    │
-│  │ ☑ fx.usd          (FX)                 │    │
-│  │ ☑ lighting.usd    (Lighting)   [strong]│    │
-│  │ [+ Add Layer]                           │    │
-│  └─────────────────────────────────────────┘    │
-│                                                 │
-│  Asset References:                              │
-│  ┌─────────────────────────────────────────┐    │
-│  │ /world/hero  ← hero_char.usd  [payload]│    │
-│  │ /world/env   ← env_forest.usd [payload]│    │
-│  │ [+ Add Reference]                       │    │
-│  └─────────────────────────────────────────┘    │
-│                                                 │
-│             [Cancel]  [Create Shot]             │
-└─────────────────────────────────────────────────┘
-```
+Shot-template creation is not part of the v0.16 edit/save foundation. It remains a future workflow for creating a root stage plus department layers from studio presets. Until that lands, docs should not imply template files, environment overrides, or built-in presets are shipped.
 
 ---
-
 ## Edit Operations
 
-Every edit the artist makes in BIF is an `EditOperation`. Each operation knows how to author itself as USD on the active layer. This is the bridge between the UI and the `.usd` files on disk.
+Every authored USD change in v0.16 C4a is represented as an `EditOperation` and recorded in `EditHistory` on `SceneLayerState`.
 
-### Operation Types
+Current C4a operation surface:
 
-```rust
-/// Every user action that modifies the scene is an EditOperation.
-/// Operations are recorded, undoable, and know how to write themselves as USD.
-#[derive(Clone, Debug)]
-pub enum EditOperation {
-    // --- Transforms ---
-    Transform {
-        prim_path: String,
-        matrix: Mat4,
-    },
+- Transform
+- Visibility
+- MaterialAssign
+- MaterialParamOverride
+- VariantSelect
 
-    // --- Vertex Edits (sparse) ---
-    /// Move specific vertices without modifying the entire mesh.
-    /// USD stores this as a points override on the edit layer.
-    /// Only the changed verts are written — not the full mesh.
-    PointEdit {
-        prim_path: String,
-        edits: Vec<(u32, Vec3)>,  // (vertex_index, new_position)
-    },
+C4a writes through the USD C++ bridge under `UsdEditContext(stage, working_layer)`. The viewport keeps `instance_index` for interactive selection and translates to `(SdfPath, AttrSlot)` only at the edit boundary. This is the dual-track identity decision captured in ADR-008.
 
-    // --- Material Operations ---
-    MaterialAssign {
-        prim_path: String,
-        material_path: String,
-    },
-    MaterialParamOverride {
-        material_path: String,
-        param_name: String,
-        value: ParamValue,
-    },
-    MaterialCreate {
-        material_path: String,
-        material: OpenPbrMaterial,
-    },
+`EditHistory` is parallel to the existing procedural `EditState` / `UndoStack`. Procedural node edits stay in the existing stack. USD layer opinions use `EditHistory`. The viewport owns a small undo router so Ctrl+Z/redo can pop whichever stack received the most recent action.
 
-    // --- Visibility ---
-    Visibility {
-        prim_path: String,
-        visible: bool,
-    },
-
-    // --- Animation (simple keyframe overrides) ---
-    /// Override a value at a specific frame. Not a full animation system —
-    /// just "I need this light to dim at frame 48."
-    AnimKey {
-        prim_path: String,
-        attribute: String,
-        time: f64,
-        value: ParamValue,
-    },
-
-    // --- Instance Scattering (BIF's core feature) ---
-    /// Scatter instances of a prototype across a surface.
-    /// Authors a UsdGeomPointInstancer on the edit layer.
-    ScatterInstances {
-        instancer_path: String,
-        prototype_paths: Vec<String>,
-        transforms: Vec<Mat4>,
-    },
-
-    // --- Payload Control ---
-    PayloadLoad {
-        prim_path: String,
-    },
-    PayloadUnload {
-        prim_path: String,
-    },
-
-    // --- Layer Management ---
-    /// Add a new sublayer to the stage
-    AddSubLayer {
-        layer_path: String,
-        position: LayerPosition,
-    },
-}
-
-#[derive(Clone, Debug)]
-pub enum ParamValue {
-    Float(f32),
-    Vec3(Vec3),
-    Color3(Vec3),
-    String(String),
-    Bool(bool),
-    Matrix4(Mat4),
-}
-
-#[derive(Clone, Debug)]
-pub enum LayerPosition {
-    Strongest,
-    Weakest,
-    Above(String),  // above this layer
-    Below(String),
-}
-```
-
-### USD Text Output
-
-Every operation can serialize to USDA text for the **live code preview panel only**. Actual file I/O uses `UsdEditLayer` C++ FFI — never string concatenation. Each operation also implements `apply_to_layer()` which writes through the real USD API.
-
-> **Critical design rule:** `to_usda()` = preview/debug only. `apply_to_layer()` = all file writes.
-
-```rust
-impl EditOperation {
-    /// Generate the USD text representation of this operation.
-    /// Used for: live USDA preview, writing to layer files, debugging.
-    pub fn to_usda(&self) -> String {
-        match self {
-            EditOperation::Transform { prim_path, matrix } => {
-                let (scale, rotation, translation) = decompose_matrix(matrix);
-                let mut usda = format!("over \"{}\" {{\n", trim_path(prim_path));
-                usda.push_str(&format!(
-                    "    double3 xformOp:translate = ({}, {}, {})\n",
-                    translation.x, translation.y, translation.z
-                ));
-                if rotation != Quat::IDENTITY {
-                    usda.push_str(&format!(
-                        "    quatd xformOp:orient = ({}, {}, {}, {})\n",
-                        rotation.w, rotation.x, rotation.y, rotation.z
-                    ));
-                }
-                if scale != Vec3::ONE {
-                    usda.push_str(&format!(
-                        "    double3 xformOp:scale = ({}, {}, {})\n",
-                        scale.x, scale.y, scale.z
-                    ));
-                }
-                usda.push_str("    uniform token[] xformOpOrder = [");
-                usda.push_str("\"xformOp:translate\", \"xformOp:orient\", \"xformOp:scale\"");
-                usda.push_str("]\n}\n");
-                usda
-            }
-
-            EditOperation::PointEdit { prim_path, edits } => {
-                // Sparse vertex override — only changed verts
-                let mut usda = format!("over \"{}\" {{\n", trim_path(prim_path));
-                usda.push_str("    # Sparse vertex edits from BIF\n");
-                // In practice, USD requires writing the full points array
-                // with only the changed values modified. BIF handles this
-                // by reading the base points, applying edits, and writing
-                // the full array as an override.
-                usda.push_str("    point3f[] points = [ ... ] # modified\n");
-                usda.push_str("}\n");
-                usda
-            }
-
-            EditOperation::MaterialAssign { prim_path, material_path } => {
-                format!(
-                    "over \"{}\" {{\n    rel material:binding = <{}>\n}}\n",
-                    trim_path(prim_path), material_path
-                )
-            }
-
-            EditOperation::MaterialParamOverride { material_path, param_name, value } => {
-                format!(
-                    "over \"{}\" {{\n    {} = {}\n}}\n",
-                    trim_path(material_path), param_name, value.to_usda()
-                )
-            }
-
-            EditOperation::Visibility { prim_path, visible } => {
-                let vis = if *visible { "\"inherited\"" } else { "\"invisible\"" };
-                format!(
-                    "over \"{}\" {{\n    token visibility = {}\n}}\n",
-                    trim_path(prim_path), vis
-                )
-            }
-
-            EditOperation::AnimKey { prim_path, attribute, time, value } => {
-                format!(
-                    "over \"{}\" {{\n    {} .timeSamples = {{\n        {}: {},\n    }}\n}}\n",
-                    trim_path(prim_path), attribute, time, value.to_usda()
-                )
-            }
-
-            EditOperation::ScatterInstances { instancer_path, prototype_paths, transforms } => {
-                let mut usda = format!("def PointInstancer \"{}\" {{\n", trim_path(instancer_path));
-                
-                // Prototype references
-                usda.push_str("    rel prototypes = [\n");
-                for proto in prototype_paths {
-                    usda.push_str(&format!("        <{}>,\n", proto));
-                }
-                usda.push_str("    ]\n");
-
-                // Decompose transforms into positions, orientations, scales
-                let mut positions = Vec::new();
-                let mut orientations = Vec::new();
-                let mut scales = Vec::new();
-                let mut proto_indices = Vec::new();
-
-                for (i, xform) in transforms.iter().enumerate() {
-                    let (s, r, t) = decompose_matrix(xform);
-                    positions.push(format!("({}, {}, {})", t.x, t.y, t.z));
-                    orientations.push(format!("({}, {}, {}, {})", r.w, r.x, r.y, r.z));
-                    scales.push(format!("({}, {}, {})", s.x, s.y, s.z));
-                    proto_indices.push("0"); // TODO: multi-prototype support
-                }
-
-                usda.push_str(&format!("    point3f[] positions = [{}]\n", positions.join(", ")));
-                usda.push_str(&format!("    quath[] orientations = [{}]\n", orientations.join(", ")));
-                usda.push_str(&format!("    float3[] scales = [{}]\n", scales.join(", ")));
-                usda.push_str(&format!("    int[] protoIndices = [{}]\n", proto_indices.join(", ")));
-                usda.push_str("}\n");
-                usda
-            }
-
-            _ => "# TODO: not yet implemented\n".to_string(),
-        }
-    }
-}
-
-impl ParamValue {
-    pub fn to_usda(&self) -> String {
-        match self {
-            ParamValue::Float(v) => format!("{}", v),
-            ParamValue::Vec3(v) => format!("({}, {}, {})", v.x, v.y, v.z),
-            ParamValue::Color3(v) => format!("({}, {}, {})", v.x, v.y, v.z),
-            ParamValue::String(s) => format!("\"{}\"", s),
-            ParamValue::Bool(b) => if *b { "true".into() } else { "false".into() },
-            ParamValue::Matrix4(m) => {
-                let cols = m.to_cols_array();
-                format!("( ({}, {}, {}, {}), ({}, {}, {}, {}), ({}, {}, {}, {}), ({}, {}, {}, {}) )",
-                    cols[0], cols[1], cols[2], cols[3],
-                    cols[4], cols[5], cols[6], cols[7],
-                    cols[8], cols[9], cols[10], cols[11],
-                    cols[12], cols[13], cols[14], cols[15])
-            }
-        }
-    }
-}
-
-fn trim_path(path: &str) -> &str {
-    path.trim_start_matches('/')
-}
-
-/// Build nested `over` blocks for a multi-segment prim path.
-/// e.g. "/world/lights/key_light" → over "world" { over "lights" { over "key_light" { ... } } }
-fn prim_path_to_usda_nesting(path: &str, inner_body: &str) -> String {
-    let segments: Vec<&str> = path.trim_start_matches('/').split('/').collect();
-    let indent_base = "    ";
-    let mut usda = String::new();
-    for (i, seg) in segments.iter().enumerate() {
-        let indent = indent_base.repeat(i);
-        usda.push_str(&format!("{}over \"{}\" {{\n", indent, seg));
-    }
-    // Write inner body at deepest indent
-    let deep_indent = indent_base.repeat(segments.len());
-    for line in inner_body.lines() {
-        usda.push_str(&format!("{}{}\n", deep_indent, line));
-    }
-    // Close braces in reverse
-    for i in (0..segments.len()).rev() {
-        let indent = indent_base.repeat(i);
-        usda.push_str(&format!("{}}}\n", indent));
-    }
-    usda
-}
-```
-
-### Undo/Redo Stack + Current-State Map
-
-The edit layer is **declarative state**, not an operation log. `EditHistory` maintains a current-state map keyed by `(prim_path, property_name)` that represents the layer's current opinions. The undo stack tracks history for reversal, but saving always writes the current state — never replays operations.
-
-> **Critical design rule:** USD layers are declarative. Two transforms on the same prim produce one `over` block with the final value, not two duplicate blocks. The current-state map enforces this.
-
-```rust
-/// A single authored opinion on the edit layer.
-#[derive(Clone, Debug)]
-pub struct AuthoredOpinion {
-    pub prim_path: String,
-    pub property: String,       // e.g. "xformOp:translate", "material:binding"
-    pub value: ParamValue,
-    pub spec_type: SpecType,    // Over (modify existing) or Def (create new)
-}
-
-#[derive(Clone, Debug)]
-pub enum SpecType { Over, Def }
-
-/// Uniquely identifies an opinion slot on the layer.
-#[derive(Clone, Debug, Hash, Eq, PartialEq)]
-pub struct OpinionKey {
-    pub prim_path: String,
-    pub property: String,
-}
-
-pub struct EditHistory {
-    /// Current state of the edit layer — what gets saved to disk.
-    /// Keyed by (prim_path, property_name) → deduplicated by design.
-    current_state: HashMap<OpinionKey, AuthoredOpinion>,
-
-    /// Undo stack: stores (old_state, new_state) pairs for reversal.
-    undo_stack: Vec<UndoEntry>,
-    redo_stack: Vec<UndoEntry>,
-
-    active_layer: String,
-}
-
-pub struct UndoEntry {
-    /// Previous value (None if this was a new opinion)
-    old: Option<AuthoredOpinion>,
-    /// New value (None if this was a deletion)
-    new: Option<AuthoredOpinion>,
-    key: OpinionKey,
-}
-
-impl EditHistory {
-    pub fn apply(&mut self, op: EditOperation) {
-        // 1. Convert operation to one or more AuthoredOpinions
-        let opinions = op.to_opinions();
-
-        // 2. For each opinion, record old state for undo, then update current state
-        for opinion in opinions {
-            let key = OpinionKey {
-                prim_path: opinion.prim_path.clone(),
-                property: opinion.property.clone(),
-            };
-            let old = self.current_state.get(&key).cloned();
-            self.undo_stack.push(UndoEntry {
-                old,
-                new: Some(opinion.clone()),
-                key: key.clone(),
-            });
-            self.current_state.insert(key, opinion);
-        }
-        self.redo_stack.clear();
-    }
-
-    pub fn undo(&mut self) {
-        if let Some(entry) = self.undo_stack.pop() {
-            // Restore previous state (or remove if opinion didn't exist before)
-            match &entry.old {
-                Some(old) => { self.current_state.insert(entry.key.clone(), old.clone()); }
-                None => { self.current_state.remove(&entry.key); }
-            }
-            self.redo_stack.push(entry);
-        }
-    }
-
-    pub fn save_to_layer(&self, layer: &mut UsdEditLayer) -> Result<()> {
-        // Write current state through USD C++ FFI — not string concatenation
-        layer.clear()?;
-        for opinion in self.current_state.values() {
-            opinion.apply_to_layer(layer)?;
-        }
-        Ok(())
-    }
-
-    /// Preview-only: generate USDA text for the code preview panel.
-    pub fn to_usda_preview(&self) -> String {
-        let mut usda = String::from("#usda 1.0\n(\n    doc = \"BIF edit layer\"\n)\n\n");
-        // Group opinions by prim path for clean nested output
-        let mut by_prim: HashMap<&str, Vec<&AuthoredOpinion>> = HashMap::new();
-        for opinion in self.current_state.values() {
-            by_prim.entry(&opinion.prim_path).or_default().push(opinion);
-        }
-        for (prim_path, opinions) in &by_prim {
-            let body: String = opinions.iter()
-                .map(|o| format!("{} = {}", o.property, o.value.to_usda()))
-                .collect::<Vec<_>>()
-                .join("\n");
-            usda.push_str(&prim_path_to_usda_nesting(prim_path, &body));
-            usda.push('\n');
-        }
-        usda
-    }
-}
-```
-
-### Undo System Migration Plan
-
-BIF has an existing undo system (`EditState` + `UndoStack` in `undo.rs`) for procedural node edits. The new `EditHistory` handles USD layer opinions. Migration happens in 3 stages:
-
-1. **v0.14-v0.15 — Coexistence.** `EditState`/`UndoStack` handles procedural node edits (scatter params, instance transforms). `EditHistory` handles layer opinions (transform overrides, material assignments). Ownership boundary: if it touches the USD stage, it's `EditHistory`. If it's node-graph-internal, it's `EditState`.
-
-2. **v0.16 — Convergence.** Procedural nodes gain `to_opinions()` and `apply_to_layer()`. Scatter/instancer ops flow through `EditHistory`. `EditState` shrinks to node-graph-only state (connections, node positions, non-USD parameter values).
-
-3. **v0.17+ — Unified.** `EditHistory` is the single undo unit. `EditState` deprecated or reduced to UI-only state. One undo stack, one history, one save path.
+C4a deliberately does not build the editable USDA panel, node-to-opinion authoring for scatter/instancers, point edits, auto-save, or schema-registry validation. Those remain C4b or later.
 
 ---
-
 ## The Three-Panel UI
 
 BIF's editor shows three synchronized views of the same scene data. Each view is optimized for a different way of thinking about the scene.
@@ -1117,109 +506,56 @@ This tells the artist: "here's everything your layer does to the scene." Invalua
 
 ## File I/O and Save Workflow
 
-### Save Behavior
+Ctrl+S saves the active working layer only.
 
-When the artist hits Save (Ctrl+S):
+Current C4a save path:
 
-1. BIF reads the current-state map from `EditHistory`
-2. Calls `save_to_layer()` which writes through `UsdEditLayer` C++ FFI (never string concatenation)
-3. Validates all opinions via `validate()` before write — hard errors block, soft warnings proceed
-4. Writes to the layer `.usd` file on disk
-5. The master stage file is NOT modified (it just references the layers)
+1. Resolve `SceneLayerState.working_layer` to the layer identifier.
+2. Check the layer through USD `PermissionToEdit()`.
+3. Call `UsdStage::save_layer(&id)`, which resolves the `SdfLayer` C++-side and calls `SdfLayer::Save()`.
+4. Clear the matching `LayerInfo.is_dirty` bit in shell and viewport state.
+5. Report `Saved <id>` or `Save failed: ...`.
 
-This means saving is fast (only writes one layer file) and safe (other departments' layers are untouched).
-
-### Auto-Save
-
-BIF auto-saves to a temporary file (`.bif_autosave_lighting.usd`) on a timer. On crash recovery, BIF offers to restore from the auto-save.
-
-### File Watching
-
-BIF watches the master stage's sublayer files for changes. If another artist saves to `animation.usd` while you're working on `lighting.usd`, BIF detects the change and offers to reload. This is not live collaboration — it's file-system-level change detection, like how IDEs reload files modified externally.
+The root/master stage is not modified by Ctrl+S unless the root itself is the selected working layer. Multi-layer save, Save As, auto-save recovery, file-watcher conflict prompts, and sublayer dirty bubbling are deferred.
 
 ---
-
 ## Implementation Phases
 
-### Phase 1: Layer-Aware Stage Loading (Weeks 1-3)
+### Phase 1: Layer-Aware Stage Loading (v0.14, shipped)
 
-**What to build:**
+- Open USD stage through C++ FFI
+- Read root + recursive sublayer stack
+- Track mute state, edit-target candidate, payload policy, and strongest-opinion layer map
+- Support `PayloadPolicy::LoadAll` and `PayloadPolicy::LoadNone`
 
-- Open a USD stage via C++ FFI bridge
-- Parse the sublayer stack
-- Display the layer list in the UI
-- Let the artist select a working layer
-- Implement `PayloadPolicy::LoadAll` and `PayloadPolicy::BoundingBoxOnly`
+### Phase 2: Qt Layer-Aware Shell (v0.15, shipped)
 
-**Validation:** Open a multi-layer USD stage from Houdini, see the layer stack, toggle layers on/off.
+- Qt shell with layer stack, scene browser, property inspector, timeline, and render panels
+- Real stage load/close, selection sync, lazy scene tree, and edit-target status surfaces
 
-### Phase 2: Edit Operations + USDA Output (Weeks 4-6)
+### Phase 3: Edit Foundation (v0.16 C4a)
 
-**What to build:**
+- `EditOperation` / `EditHistory`
+- Working-layer FFI writes and save
+- Variant selections authored to the working layer
+- Dirty bit and combined undo router
+- ADR-008
 
-- `EditOperation` enum with `to_usda()` for all types
-- `EditHistory` with undo/redo
-- Save to layer file on disk
-- Live USDA code preview panel
+### Phase 4: Editor Features (v0.16 C4b)
 
-**Validation:** Make edits in BIF, save, open the saved layer in `usdview`, see the edits composed correctly.
+- Editable USDA layer panel
+- Material parameter sheet
+- Shading-model dropdown
 
-### Phase 3: Shot Templating (Week 7)
+### Deferred
 
-**What to build:**
-
-- `ShotTemplate` struct and built-in presets
-- Template creation UI (the form shown above)
-- `create_on_disk()` to write `.usd` files
-
-**Validation:** Create a shot from template, open in `usdview`, verify layer structure.
-
-### Phase 4: Node Graph + Stage Tree (Weeks 8-12)
-
-**What to build:**
-
-- Stage tree showing prim hierarchy with payload/layer indicators
-- Node graph showing composition arcs + operation nodes
-- Synchronization: selecting in one view highlights in the others
-- Right-click menus for common operations
-
-**Validation:** Navigate a complex USD stage using both views, perform operations via nodes, see results in all three panels.
-
-### Phase 5: Render Context (Weeks 13-16)
-
-**What to build:**
-
-- `RenderContext` with on-demand prototype loading
-- `PrototypeState` enum with `BoundingBox` / `Loaded` / `Deferred`
-- LRU cache for prototype eviction
-- Integration with `RenderCoordinator` for viewport → progressive transition
-
-**Validation:** Open a scene with more geometry than fits in memory, render it, verify LRU eviction works.
-
-### Phase 6: Selective Payload Loading (Weeks 17-18)
-
-**What to build:**
-
-- `PayloadPolicy::CameraFrustum` with frustum culling
-- `PayloadPolicy::Manual` with artist-driven load/unload
-- Task-driven inference: suggest what to load based on active layer
-- UI for payload management in stage tree
-
-**Validation:** Open a heavy shot, load only camera-visible payloads, verify memory usage stays bounded.
-
-### Phase 7: Layer Diffing + Vertex Editing (Weeks 19-22)
-
-**What to build:**
-
-- Layer diff computation: compare edit layer opinions vs composed base
-- Diff display panel
-- Point edit mode: soft-select, drag vertices, author `points` override
-- Animation keyframing: simple key at time, linear interp, `timeSamples` output
-
-**Validation:** Make various edits, verify diff shows exactly what changed, verify point edits round-trip through USD.
+- Rich payload policies and render-context loading
+- Shot-template creation
+- Point edits and layer diff UI
+- Auto-save / file-watcher conflict prompts
+- Schema-registry validation
 
 ---
-
 ## Key Design Decisions
 
 ### BIF Edits = USD Opinions, Always
@@ -1246,130 +582,25 @@ BIF is not a modeler. Adding face/edge operations, topology changes, or sculptin
 
 ## Variant Set Handling
 
-Variant sets handle switchable alternatives in USD (LODs, render/proxy, seasonal looks). BIF supports them at three levels:
+Variant selection is a USD opinion. In C4a, `VariantSelect` is an `EditOperation`, and the bridge writes it under `UsdEditContext(stage, working_layer)` instead of authoring into the session/root default target.
 
-### Read (v0.14)
+Current behavior:
 
-Display variant sets in stage tree. Show current selection per prim. Artist switches variants via dropdown — writes a `variantSelection` opinion to the active edit layer via `UsdEditLayer` FFI.
+- Read variant set names, variant names, and current selection from the composed stage.
+- Record selection changes in `EditHistory`.
+- Author the selection opinion on the active working layer.
+- Reload after the selection changes so composed geometry reflects the variant.
 
-```text
-Stage Tree:
-  /world/hero_char
-    ├── [variants: quality] → proxy | render | high  [render ▾]
-    ├── [variants: season]  → summer | winter        [summer ▾]
-    └── /mesh, /skeleton, /materials...
-```
-
-FFI needed: `UsdPrim::GetVariantSets()`, `UsdVariantSet::GetVariantSelection()`, `SetVariantSelection()`.
-
-### Author (v0.19+)
-
-Dedicated variant editor panel for creating new variant sets and populating variants. E.g. artist creates "quality" variant set on `/world/hero` with variants "proxy" / "render" / "high". Each variant contains different child prims or material bindings.
-
-```text
-┌───────────────────────────────────────┐
-│  Variant Editor: /world/hero_char     │
-├───────────────────────────────────────┤
-│  Variant Set: [quality ▾] [+ New Set]│
-│                                       │
-│  Variants:                            │
-│  ┌─────────────────────────────────┐  │
-│  │ ● proxy   (active)             │  │
-│  │   └ child prims: /proxy_mesh   │  │
-│  │ ○ render                       │  │
-│  │   └ child prims: /render_mesh  │  │
-│  │ ○ high                         │  │
-│  │   └ child prims: /high_mesh    │  │
-│  │ [+ Add Variant]                │  │
-│  └─────────────────────────────────┘  │
-│                                       │
-│  [Apply] [Cancel]                     │
-└───────────────────────────────────────┘
-```
-
-### Node Graph (future)
-
-A "Variant Switch" composition node (blue) that selects variants as part of the procedural graph. Lower priority — manual variant selection covers 80% of production use.
-
-**Key rule:** Variant selections are opinions like everything else — they go on the active edit layer via `UsdEditLayer` FFI, not string concatenation.
+Creating new variant sets and editing variant contents remains future work.
 
 ---
+## Future Schema Validation
 
-## Schema Validation
+C4a relies on hard errors from the USD bridge and `PermissionToEdit()` checks. A richer validation layer that knows schema-specific constraints, configurable warning levels, and inline USDA diagnostics is deferred.
 
-Validate authored opinions against USD schemas before writing to layer. Two levels, configurable per-schema via `~/.bif/schema_validation.toml`.
-
-### Level 1 — Type Validation (v0.16, ships with edit ops)
-
-- Attribute type matches schema (e.g. `xformOp:translate` must be `double3`)
-- Required attributes present (e.g. transform has `xformOpOrder`)
-- Relationship targets point to existing prims (warn on dangling `material:binding`)
-
-```rust
-impl EditOperation {
-    /// Validate this operation against USD schemas before applying.
-    pub fn validate(&self, stage: &UsdStage) -> Vec<ValidationWarning> {
-        let mut warnings = Vec::new();
-        match self {
-            EditOperation::Transform { prim_path, .. } => {
-                if !stage.prim_exists(prim_path) {
-                    warnings.push(ValidationWarning::hard(
-                        format!("Prim {} does not exist on stage", prim_path)
-                    ));
-                }
-            }
-            EditOperation::MaterialAssign { prim_path, material_path } => {
-                if !stage.prim_exists(material_path) {
-                    warnings.push(ValidationWarning::soft(
-                        format!("Material {} not found — dangling binding", material_path)
-                    ));
-                }
-            }
-            // ... other variants
-            _ => {}
-        }
-        warnings
-    }
-}
-
-pub struct ValidationWarning {
-    pub message: String,
-    pub severity: Severity,
-}
-
-pub enum Severity {
-    /// Blocks the write — type mismatch, missing prim
-    Hard,
-    /// Allows write with yellow indicator — dangling reference, missing optional attr
-    Soft,
-}
-```
-
-Call `validate()` before `apply_to_layer()`. Hard errors block. Soft warnings show in USDA preview as inline annotations.
-
-### Level 2 — Schema Conformance (v0.19+)
-
-- Prim conforms to its applied schemas (e.g. `UsdGeomMesh` has required attributes)
-- Custom schemas validated against registered schema definitions
-- Uses USD's `UsdSchemaRegistry` via FFI
-
-### Configuration
-
-Studios with custom schemas can register them and set severity levels:
-
-```toml
-# ~/.bif/schema_validation.toml
-[defaults]
-dangling_reference = "soft"    # warn but allow
-type_mismatch = "hard"         # block write
-missing_required = "hard"
-
-[custom_schemas]
-"StudioHero" = { path = "/studio/schemas/hero.usda", severity = "soft" }
-```
+Near-term rule: writes should fail clearly when the USD API rejects the operation; they should not run a parallel hand-written schema system.
 
 ---
-
 ## Eager Node Evaluation + Stale Opinion Cleanup
 
 ### Evaluation Model

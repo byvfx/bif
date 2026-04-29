@@ -64,6 +64,12 @@ pub struct DisplaySettings {
     pub lod_enabled: bool,
     /// Viewport shading mode (textured vs display color).
     pub shading_mode: ShadingMode,
+    /// Selection-outline width in clip-space NDC units.
+    #[serde(default = "default_outline_width")]
+    pub outline_width: f32,
+    /// Selection-outline color stored in linear RGBA.
+    #[serde(default = "default_outline_color_linear")]
+    pub outline_color: [f32; 4],
 }
 
 impl Default for DisplaySettings {
@@ -72,8 +78,19 @@ impl Default for DisplaySettings {
             purpose_mode: PurposeMode::Render,
             lod_enabled: true,
             shading_mode: ShadingMode::Textured,
+            outline_width: default_outline_width(),
+            outline_color: default_outline_color_linear(),
         }
     }
+}
+
+fn default_outline_width() -> f32 {
+    0.004
+}
+
+fn default_outline_color_linear() -> [f32; 4] {
+    // Matches the prior shader constant: sRGB #FFA600 converted to linear.
+    [1.0, 0.381_326_02, 0.0, 1.0]
 }
 
 /// Status of an asynchronous USD load operation.
