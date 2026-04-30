@@ -58,6 +58,9 @@ pub enum UsdBridgeError {
     #[error("USD bridge error: {0}")]
     Unknown(String),
 
+    #[error("Save failed: {0}")]
+    SaveFailed(String),
+
     #[error("Path contains invalid UTF-8")]
     InvalidPath,
 }
@@ -2416,8 +2419,15 @@ impl UsdStage {
 
     pub fn save_layer(&self, identifier: &str) -> UsdBridgeResult<()> {
         let c_id = CString::new(identifier).map_err(|_| UsdBridgeError::InvalidPath)?;
-        let code = unsafe { usd_bridge_layer_save(self.raw, c_id.as_ptr()) };
+        let mut error_ptr: *const std::ffi::c_char = ptr::null();
+        let code = unsafe { usd_bridge_layer_save(self.raw, c_id.as_ptr(), &mut error_ptr) };
         if code != UsdBridgeErrorCode::Success {
+            if !error_ptr.is_null() {
+                let message = unsafe { CStr::from_ptr(error_ptr).to_string_lossy().into_owned() };
+                if !message.is_empty() {
+                    return Err(UsdBridgeError::SaveFailed(message));
+                }
+            }
             return Err(code.into());
         }
         Ok(())
@@ -3996,6 +4006,41 @@ def Xform "World"
         stage
             .set_layer_permission_to_edit(&shot_id, true)
             .expect("restore shot permission");
+    }
+
+    #[test]
+    fn save_with_locked_layer_returns_message() {
+        let stage = UsdStage::open(LAYERS_ROOT_FIXTURE).expect("open fixture");
+        let shot_id = stage
+            .get_layer_stack()
+            .expect("layer stack")
+            .layers
+            .iter()
+            .find(|l| l.identifier.ends_with("shot.usda"))
+            .map(|l| l.identifier.clone())
+            .expect("shot.usda in stack");
+
+        stage
+            .set_layer_permission_to_edit(&shot_id, false)
+            .expect("disable shot permission");
+
+        let err = stage
+            .save_layer(&shot_id)
+            .expect_err("locked layer save fails");
+
+        stage
+            .set_layer_permission_to_edit(&shot_id, true)
+            .expect("restore shot permission");
+
+        match err {
+            UsdBridgeError::SaveFailed(message) => {
+                assert!(
+                    message.contains("not editable") && message.contains("shot.usda"),
+                    "expected concrete save failure, got {message:?}"
+                );
+            }
+            other => panic!("expected SaveFailed, got {other:?}"),
+        }
     }
 
     #[test]

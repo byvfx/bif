@@ -1802,7 +1802,8 @@ UsdBridgeError usd_bridge_layer_set_permission_to_edit(
 /// Save a layer by identifier.
 UsdBridgeError usd_bridge_layer_save(
     const UsdBridgeStage* stage,
-    const char* layer_identifier
+    const char* layer_identifier,
+    const char** out_error_message
 );
 
 /// Read a layer's SdfLayer::PermissionToEdit() bit.
