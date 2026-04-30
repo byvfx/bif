@@ -104,6 +104,7 @@ impl TransformGizmoRenderer {
         origin: bif_math::Vec3,
         camera: &bif_math::Camera,
         viewport_rect: (f32, f32, f32, f32),
+        scale_factor: f32,
         state: &GizmoState,
     ) {
         let camera_vec = camera.position - origin;
@@ -132,7 +133,7 @@ impl TransformGizmoRenderer {
                 8.0
             } else {
                 6.0
-            };
+            } * scale_factor.max(0.01);
             push_screen_segment(
                 &mut vertices,
                 origin_screen,
@@ -146,7 +147,7 @@ impl TransformGizmoRenderer {
             &mut vertices,
             origin_screen,
             viewport_rect,
-            7.0,
+            7.0 * scale_factor.max(0.01),
             [1.0, 0.95, 0.55],
         );
 

@@ -370,6 +370,8 @@ pub mod qobject {
         /// `Renderer::display_settings.lod_enabled` after a successful
         /// toggle; viewport owns the behavior, qprop owns the UI bind.
         #[qproperty(bool, lod_enabled)]
+        /// Viewport ground-grid visibility, bound to View → Grid.
+        #[qproperty(bool, grid_visible)]
         type BifShellState = super::BifShellStateRust;
 
         /// Smoke-test invokable — verifies Rust↔C++ round-trip.
@@ -480,6 +482,11 @@ pub mod qobject {
         /// swap is confusing selection or debugging geometry.
         #[qinvokable]
         fn on_set_lod_enabled(self: Pin<&mut BifShellState>, enabled: bool);
+
+        /// View → Grid. Mirrors the qprop to
+        /// `Renderer::display_settings.grid_visible`.
+        #[qinvokable]
+        fn on_set_grid_visible(self: Pin<&mut BifShellState>, visible: bool);
 
         /// File/Save As (Ctrl+Shift+S). Phase B stub.
         #[qinvokable]
@@ -949,6 +956,9 @@ pub struct BifShellStateRust {
     /// `DisplaySettings::default()` in bif_viewport. Mirrored onto
     /// `Renderer::display_settings.lod_enabled` by `on_set_lod_enabled`.
     pub lod_enabled: bool,
+    /// Viewport ground-grid visibility. Default `true` matches
+    /// `DisplaySettings::default()` in bif_viewport.
+    pub grid_visible: bool,
     /// Cached prim-stack snapshot for the property inspector's composition arcs.
     /// Refreshed on selected-prim changes and layer-state revision bumps.
     pub selected_prim_stack_cache: Vec<PrimStackEntry>,
@@ -989,6 +999,7 @@ impl Default for BifShellStateRust {
             usd_camera_paths: Vec::new(),
             active_camera_source: "free".to_string(),
             lod_enabled: true,
+            grid_visible: true,
             selected_prim_stack_cache: Vec::new(),
             selected_material_inputs_cache: Vec::new(),
             selected_material_shader_path: String::new(),
@@ -1635,6 +1646,26 @@ impl qobject::BifShellState {
             "LOD toggle deferred — viewport not ready"
         };
         log::info!("set_lod_enabled({enabled}) applied={applied}");
+        self.as_mut()
+            .set_status_message(cxx_qt_lib::QString::from(msg));
+    }
+
+    fn on_set_grid_visible(mut self: Pin<&mut Self>, visible: bool) {
+        self.as_mut().set_grid_visible(visible);
+        let applied = with_viewport_mut(|vp| {
+            vp.renderer_mut().display_settings.grid_visible = visible;
+        })
+        .is_some();
+        let msg = if applied {
+            if visible {
+                "Grid: visible"
+            } else {
+                "Grid: hidden"
+            }
+        } else {
+            "Grid toggle deferred — viewport not ready"
+        };
+        log::info!("set_grid_visible({visible}) applied={applied}");
         self.as_mut()
             .set_status_message(cxx_qt_lib::QString::from(msg));
     }

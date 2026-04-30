@@ -1,7 +1,7 @@
 //! # State Mutation Convention
 //!
 //! **Direct mutation** (in egui closures): Simple boolean toggles with no side
-//! effects (show_grid, point_preview.visible). Safe because they only
+//! effects (display_settings.grid_visible, point_preview.visible). Safe because they only
 //! affect the next frame's rendering, with no cascading state changes.
 //!
 //! **EventBus**: Anything triggering side effects (scene reload, camera sync,
@@ -636,7 +636,7 @@ impl Renderer {
                         .render(&mut render_pass, &self.cam.camera_bind_group);
 
                     // Render ground grid after opaque geometry (transparent, reads depth)
-                    if self.show_grid {
+                    if self.display_settings.grid_visible {
                         self.grid
                             .render(&mut render_pass, &self.cam.camera_bind_group);
                     }
@@ -722,6 +722,7 @@ impl Renderer {
                         origin,
                         &self.cam.camera,
                         viewport_rect,
+                        self.effective_px(1.0),
                         &self.selection.gizmo_state,
                     );
                     let mut gizmo_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {

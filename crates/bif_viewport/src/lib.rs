@@ -1023,6 +1023,10 @@ impl Renderer {
         self.scale_factor
     }
 
+    pub(crate) fn effective_px(&self, logical_px: f32) -> f32 {
+        logical_px * self.scale_factor.max(0.01)
+    }
+
     /// Block until all submitted GPU work completes. Call before dropping
     /// the Renderer to avoid `OBJECT_DELETED_WHILE_STILL_IN_USE` errors
     /// on D3D12/Vulkan.
@@ -1172,7 +1176,7 @@ impl Renderer {
     fn write_outline_params(&mut self) {
         let outline = OutlineParamsUniform {
             color: self.display_settings.outline_color,
-            width_ndc: self.display_settings.outline_width,
+            width_ndc: self.display_settings.outline_width * self.scale_factor.max(0.01),
             _padding: [0.0; 3],
         };
         self.gpu.queue.write_buffer(

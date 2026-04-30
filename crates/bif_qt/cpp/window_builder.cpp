@@ -343,6 +343,7 @@ struct MenuActions {
     QAction* workspace_materials;
     QAction* workspace_review;
     QAction* zen_mode;
+    QAction* toggle_grid;
     QAction* toggle_lod;
     QAction* toggle_node_graph_experimental;
     QAction* toggle_usda_source;
@@ -424,6 +425,9 @@ MenuActions build_menu_bar(QMainWindow* window) {
     a.zen_mode = view->addAction(QStringLiteral("&Zen Mode"));
     a.zen_mode->setShortcut(QKeySequence(QStringLiteral("Ctrl+\\")));
     a.zen_mode->setCheckable(true);
+    a.toggle_grid = view->addAction(QStringLiteral("&Grid"));
+    a.toggle_grid->setCheckable(true);
+    a.toggle_grid->setChecked(true);  // DisplaySettings::default = true
     a.toggle_lod = view->addAction(QStringLiteral("Viewport &LOD"));
     a.toggle_lod->setShortcut(QKeySequence(QStringLiteral("Ctrl+L")));
     a.toggle_lod->setCheckable(true);
@@ -1026,6 +1030,11 @@ void wire_shell_actions(
             shell_state->on_set_lod_enabled(enabled);
             update_status();
         });
+    QObject::connect(actions.toggle_grid, &QAction::toggled, window,
+        [shell_state, update_status](bool visible) {
+            shell_state->on_set_grid_visible(visible);
+            update_status();
+        });
     QObject::connect(actions.toggle_node_graph_experimental, &QAction::toggled, window,
         [window, shell_state, update_status](bool enabled) {
             set_node_graph_preview_enabled(window, enabled);
@@ -1417,6 +1426,7 @@ int bif_qt_run_shell(ViewportCallbacks* viewport_cb, ::rust::Str stylesheet) {
         commands.insert(QStringLiteral("Workspace: Materials"), menu_actions.workspace_materials);
         commands.insert(QStringLiteral("Workspace: Review"), menu_actions.workspace_review);
         commands.insert(QStringLiteral("View: Toggle Zen Mode"), menu_actions.zen_mode);
+        commands.insert(QStringLiteral("View: Toggle Grid"), menu_actions.toggle_grid);
         commands.insert(QStringLiteral("View: Toggle Viewport LOD"), menu_actions.toggle_lod);
         commands.insert(
             QStringLiteral("View: Toggle Node Graph (Experimental)"),
