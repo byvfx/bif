@@ -1,3 +1,15 @@
+# Session Handoff - April 30, 2026 (`v0.16.1-followups` local bug sweep)
+
+**Last Updated:** 2026-04-30. Branch `v0.16.1-followups` has the v0.16.1 bug-fix sweep committed locally on top of `v0.16.0`. The local history was cleaned to match `$bif-commit` style: no legacy AI co-author trailer and no literal escaped newlines in commit bodies. The sweep currently consists of seven focused code commits: scene-browser empty-path filtering, poisoned mutex logging, Qt callback/modal hardening, save-error reporting, `cpp_bridge.rs` `cstr(...)` cleanup, edit-target undo preservation, and grid/HiDPI viewport fixes.
+
+**Validation:** `cargo fmt --check`, `. .\setup_qt_env.ps1; . .\setup_usd_env.ps1; cargo build --all`, `. .\setup_qt_env.ps1; . .\setup_usd_env.ps1; cargo clippy --all -- -D warnings`, `. .\setup_usd_env.ps1; cargo test -p bif_math`, `. .\setup_usd_env.ps1; cargo test -p bif_renderer`, `. .\setup_usd_env.ps1; cargo test -p bif_viewport`, and `. .\setup_usd_env.ps1; cargo test -p bif_core -- --test-threads=1` passed during the sweep. For this docs cleanup commit, `$bif-commit` precommit checks also passed: `cargo fmt --check`, `. .\setup_qt_env.ps1; . .\setup_usd_env.ps1; cargo build`, and `. .\setup_qt_env.ps1; . .\setup_usd_env.ps1; cargo clippy -- -D warnings`.
+
+**Current state:** Release prep, merge, tag, and push are not done. Manual dogfood smoke and synthetic HiDPI visual verification are still pending. `Cargo.lock` has a pre-existing workspace-version diff and is intentionally left out of this docs cleanup unless release prep decides to stage it.
+
+**Next action:** commit the docs/upkeep cleanup, then do the human-visible dogfood path before any `v0.16.1` release merge/tag/push.
+
+---
+
 # Session Handoff — April 28, 2026 (v0.16.0 shipped on main)
 
 **Last Updated:** 2026-04-28. v0.16.0 ship-closeout: Code Reviewer agent ran on `finish-qt-ui` (16 commits, ~7.7k LOC). Two real ship-blockers fixed in `03e9622`: USDA Apply now snapshots-and-rolls-back if `TransferContent` throws mid-mutation, and all new C-ABI entry points have `catch (...)` so non-`std::exception` USD throws can never unwind across the FFI boundary. New regression test `import_layer_from_garbage_leaves_layer_intact` locks the rollback contract. Workspace bumped to `0.16.0`. CHANGELOG `[Unreleased]` promoted to `[0.16.0] - 2026-04-28`. MILESTONES table now lists v0.16.0 as shipped 2026-04-28; `Latest release` line + CLAUDE.md status both bumped.

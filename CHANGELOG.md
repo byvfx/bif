@@ -6,6 +6,23 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **v0.16.1 follow-up regression coverage** (2026-04-30). Added tests for locked-layer save errors, edit-target-switch undo routing, replace-layer idempotence, shader-swap rollback, scene-browser empty-path filtering, and the USD export-buffer lifetime contract.
+- **View → Grid toggle in the Qt shell** (2026-04-30). Added a checkable Grid action backed by `DisplaySettings::grid_visible`.
+
+### Changed
+
+- **USD bridge string conversion cleanup** (2026-04-30). Centralized Rust `CString` conversion through `cstr(...)` in `cpp_bridge.rs`.
+
+### Fixed
+
+- **USD save failures now report concrete error text** (2026-04-30). Layer save wraps USD errors with `TfErrorMark` detail so the UI can distinguish permissions, resolver, and write failures.
+- **Qt follow-up crash hardening** (2026-04-30). Property Inspector callbacks now use `QPointer` guards, modal confirmations are deferred out of selection-change slots, and poisoned stage mutex paths log errors instead of silently no-oping.
+- **Shading-model swaps roll back failed partial writes** (2026-04-30). If an input remap fails after `info:id` changes, the dispatcher restores the previous shader id before returning the error.
+- **Scene browser child enumeration filters empty paths** (2026-04-30). `CompositeProvider` now drops empty child paths before Qt's index traversal.
+- **Viewport HiDPI logical-pixel sizing** (2026-04-30). Gizmo and outline widths now use the renderer display scale factor.
+
 ## [0.16.0] - 2026-04-28
 
 ### Added

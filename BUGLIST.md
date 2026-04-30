@@ -1,30 +1,23 @@
 # BUGLIST
 
-Last updated: 2026-04-19
+Last updated: 2026-04-30
 
 ## Active Bugs
 
-- **v0.16.0 code-review followups for v0.16.1** (2026-04-28). Deferred findings from finish-qt-ui review:
-  - `usd_bridge_layer_save` swallows `TfError` detail — return reason string instead of bare `ERROR_UNKNOWN` so users see "permission denied" vs "asset resolver". Wrap with `TfErrorMark`.
-  - Shading-model swap (commit `622bf6c`) is "atomic on the Rust group side" but not in one C-ABI call — `set_layer_shader_id` then `set_layer_shader_input` cross the boundary twice. If second call fails, layer has new `info:id` but stale inputs. Either fold into one server-side `_swap_shader` entry, or add explicit per-step rollback in `dispatch_swap_shading_model`.
-  - `property_inspector_widget.cpp:602-627` lambdas capture raw `BifShellState*` — switch to `QPointer<BifShellState>` + null guard so dock rebuild during pending signal can't dangle.
-  - `window_builder.cpp:267-276` and `property_inspector_widget.cpp:406-416` — `QMessageBox::question(...).exec()` reachable from selection-change slots; defer via `QTimer::singleShot(0, ...)` to avoid modal re-entrancy.
-  - `main_window.rs:1231,1865` — `if let Ok(stage) = stage_arc.lock()` silently no-ops on poisoned mutex; log on `Err(_)` so stage poisoning surfaces.
-  - `edit_op_roundtrip.rs` / `edit_history.rs` — add negative tests: `save_without_permission_returns_error`, `undo_after_target_switch_targets_recorded_layer`, double-apply idempotency.
-  - `cpp_bridge.rs` — extract `cstr(s)` helper to dedupe ~28 `CString::new(...).map_err(...)` sites.
-  - Dead-code claim: thread_local export buffer contract — add a guard test that calls export twice and asserts contract (pointer invalidates on second call).
-- **bif_qt scene browser: residual child-count gap under some sections vs egui.** Tier 0 routed Qt through `CompositeProvider` (parity with egui's data path), but a few sections still show fewer children than egui in side-by-side. Likely a `UsdStage::child_prim_paths` quirk (composed-stage iteration vs root-layer iteration) or empty `inst.prim_path` synthesis not reaching the cache in Qt builds. Noted 2026-04-16.
-- **bif_qt: scale factor hardcoded to 1.0.** `Viewport::new` / `resize` ignore `QScreen::devicePixelRatio()`; HiDPI monitors render at wrong scale. Wire through the cxx-qt bridge. Noted 2026-04-15.
+- **bif_qt scene browser: residual child-count parity check vs egui/usdview.** Qt now routes through `CompositeProvider` and filters empty child paths at the source, but a real-scene parity pass against usdview is still useful if a visible gap reappears. Noted 2026-04-16; narrowed 2026-04-30.
 - OCIO ACES is not working in the viewport (Hill/Narkowicz approx active) full OCIO still needs to be implemented.
 
 - Pre-existing C++ bridge test crashes: `test_load_pointinstancer_external_prototype` (lucy_100_fixed.usda), `test_load_relative_reference_usda` (lucy_100.usda), `test_define_scope_prim` — all crash at `UsdStage::Open` with STATUS_BREAKPOINT. Not caused by recent changes.
 - `inst.prim_path` left empty for some USD load paths (observed on lucy.usd) — workaround via synthetic `/BIF/` path fallbacks in selection handler.
-- implement an on/off button for the grid
 - need to see aovs, add aovs, plan this out, i want to implement aovs with ease and flexibility.
 - need viewport switch between vulkan and render
 
 ## Fixed (since last update)
 
+- v0.16.1 code-review followups swept on `v0.16.1-followups` (2026-04-30): save failures now surface USD/TfError details, shader-swap rollback restores `info:id` after failed input writes, Property Inspector callbacks use `QPointer` guards, modal confirmations defer out of selection-change slots, poisoned stage mutex paths log errors, edit-op negative tests cover locked save / target-switch undo / replace-layer idempotence, `cpp_bridge.rs` uses a shared `cstr(...)` helper, and the export-buffer lifetime contract has regression coverage.
+- bif_qt View → Grid toggle added (2026-04-30): the Qt action now drives `DisplaySettings::grid_visible` and the viewport render path skips grid drawing when disabled.
+- bif_qt HiDPI downstream scale fixed (2026-04-30): viewport gizmo and selection-outline logical pixel widths now multiply by the display scale factor. Manual synthetic `scale_factor = 2.0` visual verification remains before release.
+- bif_qt scene browser empty child paths filtered at the `CompositeProvider` source (2026-04-30), preventing Qt index traversal from losing rows when USD returns empty paths.
 - bif_qt: no way to view through USD cameras or standard orthographic views — camera-picker QComboBox added with UsdGeomCamera enumeration + 6 ortho presets + free-fly toggle (commit c835eaf, 2026-04-19).
 - bif_qt property inspector opinion dot used prim-level winning layer for all attribute rows — replaced with per-attribute `get_attribute_opinions` call (Tier 1.5, 2026-04-17).
 - bif_qt animation playback — `Renderer::set_time` + `on_frame_changed` invokable wired to QTimer (commit 962a3b7, 2026-04-17).
