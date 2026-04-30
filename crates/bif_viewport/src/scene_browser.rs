@@ -928,6 +928,7 @@ impl PrimDataProvider for CompositeProvider<'_> {
 
         children.sort();
         children.dedup();
+        children.retain(|s| !s.is_empty());
         children
     }
 }
@@ -1249,5 +1250,25 @@ mod tests {
         // Selected node check
         assert!(filtered.is_from_selected_node("/World/Cube"));
         assert!(!filtered.is_from_selected_node("/World"));
+    }
+
+    #[test]
+    fn test_composite_provider_filters_empty_child_paths() {
+        let mut cache = CachedSceneGraph::default();
+        cache.children_index.insert(
+            "/World".to_string(),
+            vec![
+                String::new(),
+                "/World/Cube".to_string(),
+                "/World/Sphere".to_string(),
+            ],
+        );
+
+        let composite = CompositeProvider::new(None, &cache);
+
+        assert_eq!(
+            composite.get_children("/World"),
+            vec!["/World/Cube".to_string(), "/World/Sphere".to_string()]
+        );
     }
 }
