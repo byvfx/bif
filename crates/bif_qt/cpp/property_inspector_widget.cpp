@@ -14,6 +14,7 @@
 #include <QListWidget>
 #include <QMessageBox>
 #include <QPainter>
+#include <QPointer>
 #include <QPushButton>
 #include <QScrollArea>
 #include <QSignalBlocker>
@@ -22,6 +23,7 @@
 #include <QStyledItemDelegate>
 #include <QTabWidget>
 #include <QTableView>
+#include <QTimer>
 #include <QVBoxLayout>
 
 #include <array>
@@ -166,7 +168,8 @@ PropertyInspectorWidget::PropertyInspectorWidget(BifShellState* state, QWidget* 
       m_material_content(nullptr),
       m_material_shader_label(nullptr),
       m_bind_material_button(nullptr),
-      m_shading_model_combo(nullptr) {
+      m_shading_model_combo(nullptr),
+      m_shading_model_confirm_pending(false) {
     setObjectName(QStringLiteral("property_inspector_widget"));
 
     auto* outer = new QVBoxLayout(this);
@@ -398,43 +401,59 @@ void PropertyInspectorWidget::on_shading_model_changed(const QString& model) {
     if (model == m_state->selected_prim_material_shader_id()) {
         return;
     }
-
-    // Confirm the lossy swap with the user before authoring. The
-    // dispatcher returns the dropped param list as `\n`-separated;
-    // we surface them in the QMessageBox before kicking off the
-    // begin_group/end_group sequence.
-    const auto dropped_preview = QMessageBox::question(
-        this,
-        QStringLiteral("Swap shading model"),
-        QStringLiteral("Switching to <b>%1</b> may drop parameters that the "
-                       "target shader can't represent (Subsurface, Transmission, "
-                       "Coat for UsdPreviewSurface). The whole swap will land "
-                       "as a single Ctrl+Z step. Continue?")
-            .arg(model.toHtmlEscaped()),
-        QMessageBox::Yes | QMessageBox::No,
-        QMessageBox::No);
-    if (dropped_preview != QMessageBox::Yes) {
-        // Revert the dropdown without retriggering the slot.
+    if (m_shading_model_confirm_pending) {
         const QSignalBlocker blocker(m_shading_model_combo);
         const auto current_id = m_state->selected_prim_material_shader_id();
         const int idx = m_shading_model_combo->findText(current_id);
         if (idx >= 0) m_shading_model_combo->setCurrentIndex(idx);
         return;
     }
+    m_shading_model_confirm_pending = true;
 
-    const QString result = m_state->on_set_shading_model(model);
-    if (result.startsWith(QStringLiteral("error:"))) {
-        QMessageBox::warning(this,
-            QStringLiteral("Shading swap failed"),
-            result.mid(6));
-        return;
-    }
-    if (!result.isEmpty()) {
-        QMessageBox::information(this,
-            QStringLiteral("Shading model swapped"),
-            QStringLiteral("Dropped parameters that don't round-trip into %1:\n\n%2")
-                .arg(model, result));
-    }
+    // Confirm the lossy swap with the user before authoring. The
+    // dispatcher returns the dropped param list as `\n`-separated;
+    // we surface them in the QMessageBox before kicking off the
+    // begin_group/end_group sequence.
+    QPointer<PropertyInspectorWidget> self(this);
+    QPointer<BifShellState> state(m_state);
+    QTimer::singleShot(0, this, [self, state, model]() {
+        if (!self) return;
+        self->m_shading_model_confirm_pending = false;
+        if (!state || !self->m_shading_model_combo) return;
+
+        const auto dropped_preview = QMessageBox::question(
+            self,
+            QStringLiteral("Swap shading model"),
+            QStringLiteral("Switching to <b>%1</b> may drop parameters that the "
+                           "target shader can't represent (Subsurface, Transmission, "
+                           "Coat for UsdPreviewSurface). The whole swap will land "
+                           "as a single Ctrl+Z step. Continue?")
+                .arg(model.toHtmlEscaped()),
+            QMessageBox::Yes | QMessageBox::No,
+            QMessageBox::No);
+        if (dropped_preview != QMessageBox::Yes) {
+            // Revert the dropdown without retriggering the slot.
+            const QSignalBlocker blocker(self->m_shading_model_combo);
+            const auto current_id = state->selected_prim_material_shader_id();
+            const int idx = self->m_shading_model_combo->findText(current_id);
+            if (idx >= 0) self->m_shading_model_combo->setCurrentIndex(idx);
+            return;
+        }
+
+        const QString result = state->on_set_shading_model(model);
+        if (result.startsWith(QStringLiteral("error:"))) {
+            QMessageBox::warning(self,
+                QStringLiteral("Shading swap failed"),
+                result.mid(6));
+            return;
+        }
+        if (!result.isEmpty()) {
+            QMessageBox::information(self,
+                QStringLiteral("Shading model swapped"),
+                QStringLiteral("Dropped parameters that don't round-trip into %1:\n\n%2")
+                    .arg(model, result));
+        }
+    });
 }
 
 void PropertyInspectorWidget::on_bind_material_clicked() {
@@ -555,7 +574,7 @@ void PropertyInspectorWidget::populate_material_sheet() {
         label->setToolTip(QStringLiteral("USD type: %1").arg(type_name));
         h->addWidget(label, 0);
 
-        BifShellState* state = m_state;
+        QPointer<BifShellState> state(m_state);
         const QString cap_name = name;
         const QString cap_type = type_name;
 
@@ -566,6 +585,7 @@ void PropertyInspectorWidget::populate_material_sheet() {
             spin->setSingleStep(0.01);
             spin->setValue(value_str.toDouble());
             QObject::connect(spin, &QDoubleSpinBox::editingFinished, [state, cap_name, cap_type, spin]() {
+                if (!state) return;
                 state->on_set_material_param(cap_name, cap_type,
                     QString::number(spin->value(), 'g', 6));
             });
@@ -575,6 +595,7 @@ void PropertyInspectorWidget::populate_material_sheet() {
             spin->setRange(INT_MIN / 2, INT_MAX / 2);
             spin->setValue(value_str.toInt());
             QObject::connect(spin, &QSpinBox::editingFinished, [state, cap_name, cap_type, spin]() {
+                if (!state) return;
                 state->on_set_material_param(cap_name, cap_type, QString::number(spin->value()));
             });
             h->addWidget(spin, 1);
@@ -583,6 +604,7 @@ void PropertyInspectorWidget::populate_material_sheet() {
             box->setChecked(value_str.compare(QStringLiteral("true"), Qt::CaseInsensitive) == 0
                 || value_str == QStringLiteral("1"));
             QObject::connect(box, &QCheckBox::toggled, [state, cap_name, cap_type](bool v) {
+                if (!state) return;
                 state->on_set_material_param(cap_name, cap_type,
                     v ? QStringLiteral("true") : QStringLiteral("false"));
             });
@@ -601,6 +623,7 @@ void PropertyInspectorWidget::populate_material_sheet() {
             auto* edit = new QLineEdit(value_str, row);
             edit->setStyleSheet(QStringLiteral("font-size: 11px;"));
             QObject::connect(swatch, &QPushButton::clicked, [state, cap_name, cap_type, swatch, edit]() {
+                if (!state) return;
                 float cr = 0, cg = 0, cb = 0;
                 parse_color3(edit->text(), &cr, &cg, &cb);
                 const QColor seed = QColor::fromRgbF(qBound(0.0f, cr, 1.0f),
@@ -625,6 +648,7 @@ void PropertyInspectorWidget::populate_material_sheet() {
                 state->on_set_material_param(cap_name, cap_type, triple);
             });
             QObject::connect(edit, &QLineEdit::editingFinished, [state, cap_name, cap_type, edit]() {
+                if (!state) return;
                 state->on_set_material_param(cap_name, cap_type, edit->text().trimmed());
             });
             h->addWidget(swatch, 0);
@@ -634,6 +658,7 @@ void PropertyInspectorWidget::populate_material_sheet() {
             auto* edit = new QLineEdit(value_str, row);
             edit->setStyleSheet(QStringLiteral("font-size: 11px;"));
             QObject::connect(edit, &QLineEdit::editingFinished, [state, cap_name, cap_type, edit]() {
+                if (!state) return;
                 state->on_set_material_param(cap_name, cap_type, edit->text());
             });
             h->addWidget(edit, 1);

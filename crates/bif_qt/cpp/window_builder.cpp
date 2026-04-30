@@ -34,6 +34,7 @@
 #include <QMenuBar>
 #include <QMimeData>
 #include <QMessageBox>
+#include <QPointer>
 #include <QPushButton>
 #include <QScreen>
 #include <QSettings>
@@ -255,34 +256,10 @@ void save_current(QMainWindow* window, const QString& current) {
     settings.setValue(state_key(canonical), window->saveState());
 }
 
-void switch_to(
+void finish_switch_to(
     QMainWindow* window,
     BifShellState* state,
-    const QString& target) {
-    const auto canonical_target = canonical_name(target);
-    const auto target_policy = payload_policy_for_workspace(canonical_target);
-    const auto current_policy = state->payload_policy_name();
-    if (target_policy != current_policy) {
-        if (state->has_loaded_stage()) {
-            const auto answer = QMessageBox::question(
-                window,
-                QStringLiteral("Reload Stage For Workspace"),
-                QStringLiteral(
-                    "Switching to %1 changes payload loading from %2 to %3 and reloads the "
-                    "open stage. Continue?")
-                    .arg(display_name(canonical_target), current_policy, target_policy),
-                QMessageBox::Yes | QMessageBox::No,
-                QMessageBox::No);
-            if (answer != QMessageBox::Yes) {
-                return;
-            }
-        }
-        if (!state->on_set_payload_policy(target_policy)) {
-            window->statusBar()->showMessage(state->getStatus_message());
-            return;
-        }
-    }
-
+    const QString& canonical_target) {
     save_current(window, state->getCurrent_workspace());
 
     QSettings settings;
@@ -299,6 +276,49 @@ void switch_to(
     state->setStatus_message(
         QStringLiteral("Workspace: %1").arg(display_name(canonical_target)));
     window->statusBar()->showMessage(state->getStatus_message());
+}
+
+void switch_to(
+    QMainWindow* window,
+    BifShellState* state,
+    const QString& target) {
+    const auto canonical_target = canonical_name(target);
+    const auto target_policy = payload_policy_for_workspace(canonical_target);
+    const auto current_policy = state->payload_policy_name();
+    if (target_policy != current_policy) {
+        if (state->has_loaded_stage()) {
+            QPointer<QMainWindow> window_guard(window);
+            QPointer<BifShellState> state_guard(state);
+            QTimer::singleShot(0, window, [window_guard, state_guard, canonical_target,
+                                           current_policy, target_policy]() {
+                if (!window_guard || !state_guard) return;
+                const auto answer = QMessageBox::question(
+                    window_guard,
+                    QStringLiteral("Reload Stage For Workspace"),
+                    QStringLiteral(
+                        "Switching to %1 changes payload loading from %2 to %3 and reloads the "
+                        "open stage. Continue?")
+                        .arg(display_name(canonical_target), current_policy, target_policy),
+                    QMessageBox::Yes | QMessageBox::No,
+                    QMessageBox::No);
+                if (answer != QMessageBox::Yes) {
+                    return;
+                }
+                if (!state_guard->on_set_payload_policy(target_policy)) {
+                    window_guard->statusBar()->showMessage(state_guard->getStatus_message());
+                    return;
+                }
+                finish_switch_to(window_guard, state_guard, canonical_target);
+            });
+            return;
+        }
+        if (!state->on_set_payload_policy(target_policy)) {
+            window->statusBar()->showMessage(state->getStatus_message());
+            return;
+        }
+    }
+
+    finish_switch_to(window, state, canonical_target);
 }
 }  // namespace ws
 

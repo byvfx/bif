@@ -69,4 +69,5 @@ private:
     QPushButton* m_bind_material_button;
     // C4b-3 shading-model swap dropdown.
     QComboBox* m_shading_model_combo;
+    bool m_shading_model_confirm_pending;
 };
