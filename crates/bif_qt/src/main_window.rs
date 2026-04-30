@@ -1228,9 +1228,16 @@ impl qobject::BifShellState {
                         let stage_arc = renderer.scene.usd_stage.clone();
                         if let Some(state) = renderer.scene.layer_state.as_mut() {
                             if let Some(stage_arc) = stage_arc {
-                                if let Ok(stage) = stage_arc.lock() {
-                                    if let Err(e) = state.set_edit_target(idx, &stage) {
-                                        log::warn!("edit target sync failed: {e}");
+                                match stage_arc.lock() {
+                                    Ok(stage) => {
+                                        if let Err(e) = state.set_edit_target(idx, &stage) {
+                                            log::warn!("edit target sync failed: {e}");
+                                        }
+                                    }
+                                    Err(e) => {
+                                        log::error!(
+                                            "edit target sync skipped: stage mutex poisoned: {e}"
+                                        );
                                     }
                                 }
                             } else {
@@ -1862,9 +1869,16 @@ impl qobject::BifShellState {
             let stage_arc = renderer.scene.usd_stage.clone();
             if let Some(state) = renderer.scene.layer_state.as_mut() {
                 if let Some(stage_arc) = stage_arc {
-                    if let Ok(stage) = stage_arc.lock() {
-                        if let Err(e) = state.set_edit_target(idx, &stage) {
-                            log::warn!("working layer edit-target sync failed: {e}");
+                    match stage_arc.lock() {
+                        Ok(stage) => {
+                            if let Err(e) = state.set_edit_target(idx, &stage) {
+                                log::warn!("working layer edit-target sync failed: {e}");
+                            }
+                        }
+                        Err(e) => {
+                            log::error!(
+                                "working layer edit-target sync skipped: stage mutex poisoned: {e}"
+                            );
                         }
                     }
                 } else {
