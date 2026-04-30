@@ -42,6 +42,30 @@ fn transform_roundtrips_after_save_reopen() {
 }
 
 #[test]
+fn save_without_permission_returns_error() {
+    let fixture = helpers::LayeredStageFixture::new("save_without_permission");
+    let stage = UsdStage::open(&fixture.root).expect("open stage");
+    let working_id = helpers::working_layer_id(&stage);
+
+    stage
+        .set_layer_permission_to_edit(&working_id, false)
+        .expect("disable working-layer permission");
+
+    let err = stage
+        .save_layer(&working_id)
+        .expect_err("read-only layer save should fail");
+
+    stage
+        .set_layer_permission_to_edit(&working_id, true)
+        .expect("restore working-layer permission");
+
+    assert!(
+        err.to_string().contains("not editable"),
+        "save error should name the cause, got {err}"
+    );
+}
+
+#[test]
 fn visibility_roundtrips_after_save_reopen() {
     let fixture = helpers::LayeredStageFixture::new("visibility");
     let stage = UsdStage::open(&fixture.root).expect("open stage");
@@ -65,6 +89,57 @@ fn visibility_roundtrips_after_save_reopen() {
         .expect("export working layer");
     assert!(text.contains("visibility"));
     assert!(text.contains("invisible"));
+}
+
+#[test]
+fn undo_after_target_switch_targets_recorded_layer() {
+    let fixture = helpers::LayeredStageFixture::new("undo_target_switch");
+    let stage = UsdStage::open(&fixture.root).expect("open stage");
+    let (mut state, working_id) = state_for_working_layer(&stage);
+    let asset_id = stage
+        .get_layer_stack()
+        .expect("layer stack")
+        .layers
+        .into_iter()
+        .find(|l| l.identifier.ends_with("asset.usda"))
+        .map(|l| l.identifier)
+        .expect("asset layer");
+
+    state
+        .apply_edit_operation(
+            &stage,
+            EditOperation::Visibility {
+                key: bif_core::usd::OpinionKey::new("/World/Cube", AttrSlot::Visibility),
+                before: Some(true),
+                after: false,
+            },
+        )
+        .expect("apply visibility to working layer");
+
+    let asset_idx = state.layer_index(&asset_id).expect("asset index");
+    state
+        .set_edit_target(asset_idx, &stage)
+        .expect("switch edit target");
+
+    state
+        .undo_usd_edit(&stage)
+        .expect("undo")
+        .expect("undo desc");
+
+    let working_text = stage
+        .export_layer_as_string(&working_id)
+        .expect("export working");
+    let asset_text = stage
+        .export_layer_as_string(&asset_id)
+        .expect("export asset");
+    assert!(
+        working_text.contains("inherited"),
+        "undo should restore visibility on the originally edited layer"
+    );
+    assert!(
+        !asset_text.contains("visibility = \"inherited\""),
+        "undo must not author the inverse into the later edit target"
+    );
 }
 
 #[test]
@@ -254,6 +329,47 @@ fn shading_model_swap_undoes_atomically() {
 }
 
 #[test]
+fn shader_swap_input_failure_rolls_back_id() {
+    let fixture = helpers::LayeredStageFixture::new("shader_swap_rollback");
+    let stage = UsdStage::open(&fixture.root).expect("open stage");
+    let (mut state, working_id) = state_for_working_layer(&stage);
+    let shader_path = "/Materials/Red/PreviewSurface";
+    let original_id = "UsdPreviewSurface";
+
+    state.edit_history.begin_group("swap shading model");
+    state
+        .apply_edit_operation(
+            &stage,
+            EditOperation::SetShaderId {
+                key: bif_core::usd::OpinionKey::new(shader_path, AttrSlot::ShaderId),
+                before: Some(original_id.to_string()),
+                after: "OpenPBR".to_string(),
+            },
+        )
+        .expect("set id");
+
+    let bad_input = EditOperation::MaterialParamOverride {
+        key: bif_core::usd::OpinionKey::new(shader_path, AttrSlot::Visibility),
+        before: None,
+        after: ShaderValue::Float(1.0),
+    };
+    let result = state.apply_edit_operation(&stage, bad_input);
+    assert!(result.is_err(), "bad shader input op should fail");
+
+    state.edit_history.cancel_group();
+    stage
+        .set_layer_shader_id(&working_id, shader_path, original_id)
+        .expect("rollback shader id");
+
+    let text = stage
+        .export_layer_as_string(&working_id)
+        .expect("export working");
+    assert!(text.contains("UsdPreviewSurface"));
+    assert!(!text.contains("OpenPBR"));
+    assert_eq!(state.edit_history.undo_len(), 0);
+}
+
+#[test]
 fn bound_material_inputs_returns_shader_inputs() {
     // Fixture has /Materials/Red/PreviewSurface (UsdPreviewSurface
     // with `roughness=0.2`) but doesn't bind it. Bind on the working
@@ -380,6 +496,39 @@ fn replace_layer_contents_roundtrips() {
         .export_layer_as_string(&working_id)
         .expect("export restored");
     assert_eq!(restored.trim(), before.trim());
+}
+
+#[test]
+fn replace_layer_double_apply_idempotent() {
+    let fixture = helpers::LayeredStageFixture::new("replace_layer_idempotent");
+    let stage = UsdStage::open(&fixture.root).expect("open stage");
+    let (mut state, working_id) = state_for_working_layer(&stage);
+    let before = stage
+        .export_layer_as_string(&working_id)
+        .expect("export before");
+    stage
+        .write_layer_visibility(&working_id, "/World/Cube", false)
+        .expect("seed visibility opinion");
+    let after = stage
+        .export_layer_as_string(&working_id)
+        .expect("export after");
+
+    stage
+        .import_layer_from_string(&working_id, &before)
+        .expect("reset to before");
+
+    let op = EditOperation::replace_layer(working_id.clone(), before, after.clone());
+    state
+        .apply_edit_operation(&stage, op.clone())
+        .expect("first replace");
+    state
+        .apply_edit_operation(&stage, op)
+        .expect("second replace");
+
+    let text = stage
+        .export_layer_as_string(&working_id)
+        .expect("export final");
+    assert_eq!(text.trim(), after.trim());
 }
 
 #[test]

@@ -510,6 +510,7 @@ impl Renderer {
             .layer_state
             .as_mut()
             .ok_or_else(|| anyhow::anyhow!("no scene layer state"))?;
+        let working_layer_id = layer_state.edit_history.working_layer_id.clone();
 
         layer_state.edit_history.begin_group("swap shading model");
 
@@ -528,7 +529,10 @@ impl Renderer {
         let _ = layer_state
             .edit_history
             .apply_and_record(&stage_locked, id_op)
-            .map_err(|e| anyhow::anyhow!("set shader id: {e:?}"))?;
+            .map_err(|e| {
+                layer_state.edit_history.cancel_group();
+                anyhow::anyhow!("set shader id: {e:?}")
+            })?;
 
         // 2. Best-effort remap of mapped inputs (preserves authored
         //    values under the new model's analogous input name).
@@ -551,7 +555,17 @@ impl Renderer {
                 before: None,
                 after,
             };
-            let _ = layer_state.edit_history.apply_and_record(&stage_locked, op);
+            if let Err(e) = layer_state.edit_history.apply_and_record(&stage_locked, op) {
+                layer_state.edit_history.cancel_group();
+                stage_locked
+                    .set_layer_shader_id(&working_layer_id, &shader_path, &current_id)
+                    .map_err(|rollback| {
+                        anyhow::anyhow!(
+                            "set shader input {mapped}: {e:?}; rollback failed: {rollback:?}"
+                        )
+                    })?;
+                return Err(anyhow::anyhow!("set shader input {mapped}: {e:?}"));
+            }
         }
 
         layer_state.edit_history.end_group();

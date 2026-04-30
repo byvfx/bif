@@ -285,9 +285,13 @@ impl EditOperation {
 /// Undo unit for USD edits.
 #[derive(Clone, Debug, PartialEq)]
 pub enum UndoFrame {
-    Single(EditOperation),
+    Single {
+        layer_id: String,
+        operation: EditOperation,
+    },
     Group {
         label: String,
+        layer_id: String,
         operations: Vec<EditOperation>,
     },
 }
@@ -295,15 +299,21 @@ pub enum UndoFrame {
 impl UndoFrame {
     fn label(&self) -> String {
         match self {
-            UndoFrame::Single(op) => op.description().to_string(),
+            UndoFrame::Single { operation, .. } => operation.description().to_string(),
             UndoFrame::Group { label, .. } => label.clone(),
         }
     }
 
     fn operations(&self) -> &[EditOperation] {
         match self {
-            UndoFrame::Single(op) => std::slice::from_ref(op),
+            UndoFrame::Single { operation, .. } => std::slice::from_ref(operation),
             UndoFrame::Group { operations, .. } => operations,
+        }
+    }
+
+    fn layer_id(&self) -> &str {
+        match self {
+            UndoFrame::Single { layer_id, .. } | UndoFrame::Group { layer_id, .. } => layer_id,
         }
     }
 }
@@ -315,7 +325,7 @@ pub struct EditHistory {
     current_state: HashMap<OpinionKey, EditOperation>,
     undo: Vec<UndoFrame>,
     redo: Vec<UndoFrame>,
-    open_group: Option<(String, Vec<EditOperation>)>,
+    open_group: Option<(String, String, Vec<EditOperation>)>,
     cap: usize,
 }
 
@@ -374,32 +384,46 @@ impl EditHistory {
 
     pub fn begin_group(&mut self, label: impl Into<String>) {
         if self.open_group.is_none() {
-            self.open_group = Some((label.into(), Vec::new()));
+            self.open_group = Some((label.into(), self.working_layer_id.clone(), Vec::new()));
         }
     }
 
     pub fn end_group(&mut self) {
-        let Some((label, operations)) = self.open_group.take() else {
+        let Some((label, layer_id, operations)) = self.open_group.take() else {
             return;
         };
         if operations.is_empty() {
             return;
         }
         if operations.len() == 1 {
-            self.push_undo(UndoFrame::Single(operations[0].clone()));
+            self.push_undo(UndoFrame::Single {
+                layer_id,
+                operation: operations[0].clone(),
+            });
         } else {
-            self.push_undo(UndoFrame::Group { label, operations });
+            self.push_undo(UndoFrame::Group {
+                label,
+                layer_id,
+                operations,
+            });
         }
+    }
+
+    pub fn cancel_group(&mut self) {
+        self.open_group = None;
     }
 
     pub fn record(&mut self, op: EditOperation) {
         self.current_state.insert(op.key().clone(), op.clone());
         self.redo.clear();
-        if let Some((_, operations)) = self.open_group.as_mut() {
+        if let Some((_, _, operations)) = self.open_group.as_mut() {
             operations.push(op);
             return;
         }
-        self.push_undo(UndoFrame::Single(op));
+        self.push_undo(UndoFrame::Single {
+            layer_id: self.working_layer_id.clone(),
+            operation: op,
+        });
     }
 
     pub fn apply_and_record(
@@ -416,13 +440,14 @@ impl EditHistory {
         let Some(frame) = self.undo.pop() else {
             return Ok(None);
         };
+        let layer_id = frame.layer_id().to_string();
         for op in frame
             .operations()
             .iter()
             .rev()
             .filter_map(EditOperation::inverse)
         {
-            op.apply(stage, &self.working_layer_id)?;
+            op.apply(stage, &layer_id)?;
             self.current_state.insert(op.key().clone(), op);
         }
         let label = frame.label();
@@ -434,8 +459,9 @@ impl EditHistory {
         let Some(frame) = self.redo.pop() else {
             return Ok(None);
         };
+        let layer_id = frame.layer_id().to_string();
         for op in frame.operations() {
-            op.apply(stage, &self.working_layer_id)?;
+            op.apply(stage, &layer_id)?;
             self.current_state.insert(op.key().clone(), op.clone());
         }
         let label = frame.label();
