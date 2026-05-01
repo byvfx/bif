@@ -75,7 +75,10 @@ pub unsafe fn install_viewport_callbacks(cb: *mut ViewportCallbacks) {
 /// re-entrant guard doesn't hold across the stage lock.
 fn with_stage<R>(f: impl FnOnce(&bif_core::usd::UsdStage) -> R) -> Option<R> {
     let stage_arc = with_viewport_mut(|vp| vp.renderer_mut().scene.usd_stage.clone()).flatten()?;
-    let guard = stage_arc.lock().ok()?;
+    let guard = stage_arc
+        .lock()
+        .inspect_err(|e| log::error!("with_stage skipped: stage mutex poisoned: {e}"))
+        .ok()?;
     Some(f(&guard))
 }
 
@@ -99,7 +102,11 @@ fn with_scene_browser_provider<R>(
         // can't be split-borrowed across struct fields).
         let stage_arc = renderer.scene.usd_stage.clone();
         let cache = renderer.cached_scene_graph();
-        let stage_guard = stage_arc.as_ref().and_then(|s| s.lock().ok());
+        let stage_guard = stage_arc.as_ref().and_then(|s| {
+            s.lock()
+                .inspect_err(|e| log::error!("scene browser provider: stage mutex poisoned: {e}"))
+                .ok()
+        });
         let composite = CompositeProvider::new(
             stage_guard.as_deref().map(|s| s as &dyn PrimDataProvider),
             cache,
@@ -1532,6 +1539,9 @@ impl qobject::BifShellState {
             let type_name = stage_arc
                 .and_then(|arc| {
                     arc.lock()
+                        .inspect_err(|e| {
+                            log::error!("pick type lookup skipped: stage mutex poisoned: {e}")
+                        })
                         .ok()
                         .and_then(|stage| stage.get_prim_info_by_path(&path).ok())
                         .map(|info| info.type_name)
@@ -2195,7 +2205,10 @@ impl qobject::BifShellState {
         // Uses the ADR-007 bridge to reach the renderer's SceneManager.
         let timeline = with_viewport_mut(|vp| {
             let stage_arc = vp.renderer_mut().scene.usd_stage.as_ref()?;
-            let stage = stage_arc.lock().ok()?;
+            let stage = stage_arc
+                .lock()
+                .inspect_err(|e| log::error!("detect timeline skipped: stage mutex poisoned: {e}"))
+                .ok()?;
             stage.get_timeline().ok()
         })
         .flatten();

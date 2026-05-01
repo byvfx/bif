@@ -1,12 +1,17 @@
-# Session Handoff - April 30, 2026 (`v0.16.1-followups` local bug sweep)
+# Session Handoff - April 30, 2026 (`v0.16.1-followups` review fixes)
 
-**Last Updated:** 2026-04-30. Branch `v0.16.1-followups` has the v0.16.1 bug-fix sweep committed locally on top of `v0.16.0`. The local history was cleaned to match `$bif-commit` style: no legacy AI co-author trailer and no literal escaped newlines in commit bodies. The sweep currently consists of seven focused code commits: scene-browser empty-path filtering, poisoned mutex logging, Qt callback/modal hardening, save-error reporting, `cpp_bridge.rs` `cstr(...)` cleanup, edit-target undo preservation, and grid/HiDPI viewport fixes.
+**Last Updated:** 2026-04-30 (post review). `vfx-code-reviewer` audited the eight v0.16.1-followups commits and produced a Critical/Major/Minor punch list. Four review action items resolved on top of the sweep:
 
-**Validation:** `cargo fmt --check`, `. .\setup_qt_env.ps1; . .\setup_usd_env.ps1; cargo build --all`, `. .\setup_qt_env.ps1; . .\setup_usd_env.ps1; cargo clippy --all -- -D warnings`, `. .\setup_usd_env.ps1; cargo test -p bif_math`, `. .\setup_usd_env.ps1; cargo test -p bif_renderer`, `. .\setup_usd_env.ps1; cargo test -p bif_viewport`, and `. .\setup_usd_env.ps1; cargo test -p bif_core -- --test-threads=1` passed during the sweep. For this docs cleanup commit, `$bif-commit` precommit checks also passed: `cargo fmt --check`, `. .\setup_qt_env.ps1; . .\setup_usd_env.ps1; cargo build`, and `. .\setup_qt_env.ps1; . .\setup_usd_env.ps1; cargo clippy -- -D warnings`.
+- **C3** `cpp_bridge.rs:2264-2265` — `get_prim_attributes` now uses `cstr(prim_path)?` instead of the manual `CString::new` + `InvalidPrim("invalid path")` that was missed by the centralization refactor.
+- **C2** `tests/ffi_contract.rs` — added `layer_save_error_message_pointer_is_reused_per_thread` to lock the layer-save `error_buf` thread-local same-thread invalidation contract (mirrors the existing export-buffer test).
+- **M3** `crates/bif_qt/src/main_window.rs:78, 102, 1534, 2200` — extended stage-mutex poison logging to the four remaining silent `.lock().ok()` chains via `inspect_err`.
+- **M5** Inspector lambda guards — confirmed false alarm; all six `state->on_set_material_param` lambdas plus the shading-model `QTimer::singleShot` deferral already had `if (!state) return;`.
 
-**Current state:** Release prep, merge, tag, and push are not done. Manual dogfood smoke and synthetic HiDPI visual verification are still pending. `Cargo.lock` has a pre-existing workspace-version diff and is intentionally left out of this docs cleanup unless release prep decides to stage it.
+**Validation:** `cargo fmt --check` clean on the three touched files. `cargo clippy -p bif_core -p bif_qt --tests -- -D warnings` reports zero hits on touched files (44 pre-existing `useless_vec` errors in `crates/bif_core/src/usd/ffi_convert.rs` are unrelated rustc 1.92 stricter rules). `cargo test -p bif_core --test ffi_contract --test edit_op_roundtrip -- --test-threads=1` green at 17 tests including the new `error_buf` contract test. `cargo test -p bif_core --lib usd::` 119 / 119.
 
-**Next action:** commit the docs/upkeep cleanup, then do the human-visible dogfood path before any `v0.16.1` release merge/tag/push.
+**Current state:** Release prep, merge, tag, and push are not done. Manual dogfood smoke and synthetic HiDPI visual verification are still pending. M4's scale_factor=2.0 dogfood remains the gating manual check before v0.16.1 release prep.
+
+**Next action:** the long-list dogfood pass against `cargo run -p bif_viewer`, including the synthetic HiDPI visual verification. Then v0.16.1 release prep, merge, tag, push.
 
 ---
 

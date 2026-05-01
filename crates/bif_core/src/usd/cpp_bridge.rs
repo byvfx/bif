@@ -2262,8 +2262,7 @@ impl UsdStage {
 
     /// Get all attributes for a prim by path.
     pub fn get_prim_attributes(&self, prim_path: &str) -> UsdBridgeResult<Vec<UsdAttributeData>> {
-        let c_path = std::ffi::CString::new(prim_path)
-            .map_err(|_| UsdBridgeError::InvalidPrim("invalid path".to_string()))?;
+        let c_path = cstr(prim_path)?;
 
         let mut raw_ptr: *mut UsdBridgeAttributeDataRaw = std::ptr::null_mut();
         let mut count: usize = 0;

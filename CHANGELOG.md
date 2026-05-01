@@ -9,6 +9,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 
 - **v0.16.1 follow-up regression coverage** (2026-04-30). Added tests for locked-layer save errors, edit-target-switch undo routing, replace-layer idempotence, shader-swap rollback, scene-browser empty-path filtering, and the USD export-buffer lifetime contract.
+- **`error_buf` thread-local invalidation contract test** (2026-04-30). New `layer_save_error_message_pointer_is_reused_per_thread` in `tests/ffi_contract.rs` mirrors the existing export-buffer test for the layer-save error message buffer: locks two layers, asserts the second failing save reuses the same pointer and overwrites the first message text, locking the same-thread copy-before-next-call contract documented inline.
 - **View → Grid toggle in the Qt shell** (2026-04-30). Added a checkable Grid action backed by `DisplaySettings::grid_visible`.
 
 ### Changed
@@ -18,6 +19,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 
 - **USD save failures now report concrete error text** (2026-04-30). Layer save wraps USD errors with `TfErrorMark` detail so the UI can distinguish permissions, resolver, and write failures.
+- **`get_prim_attributes` CString conversion uses `cstr(...)`** (2026-04-30). Code-review followup: `cpp_bridge.rs:get_prim_attributes` was missed by the centralization pass and returned `InvalidPrim` for an FFI conversion failure; now routes through `cstr(...)` and returns `InvalidPath` consistently with every other path-conversion site.
+- **Stage-mutex poison now logged at every lock site** (2026-04-30). Code-review followup: extended poison logging from the two visible `match` sites to the four `stage.lock().ok()` chains in `with_stage`, the scene-browser `CompositeProvider` builder, the pick-handler type lookup, and `detect_timeline_from_stage`. Poisoned mutex no longer fails silently anywhere on the stage.
 - **Qt follow-up crash hardening** (2026-04-30). Property Inspector callbacks now use `QPointer` guards, modal confirmations are deferred out of selection-change slots, and poisoned stage mutex paths log errors instead of silently no-oping.
 - **Shading-model swaps roll back failed partial writes** (2026-04-30). If an input remap fails after `info:id` changes, the dispatcher restores the previous shader id before returning the error.
 - **Scene browser child enumeration filters empty paths** (2026-04-30). `CompositeProvider` now drops empty child paths before Qt's index traversal.
