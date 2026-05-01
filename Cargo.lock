@@ -361,7 +361,7 @@ checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
 
 [[package]]
 name = "bif_core"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "bif_math",
  "env_logger",
@@ -377,14 +377,14 @@ dependencies = [
 
 [[package]]
 name = "bif_maketx"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "bif_core",
 ]
 
 [[package]]
 name = "bif_math"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "bytemuck",
  "glam",
@@ -394,7 +394,7 @@ dependencies = [
 
 [[package]]
 name = "bif_perf"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "bif_core",
  "chrono",
@@ -410,7 +410,7 @@ dependencies = [
 
 [[package]]
 name = "bif_qt"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "anyhow",
  "bif_core",
@@ -430,7 +430,7 @@ dependencies = [
 
 [[package]]
 name = "bif_renderer"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "bif_core",
  "bif_math",
@@ -449,7 +449,7 @@ dependencies = [
 
 [[package]]
 name = "bif_viewer"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "bif_core",
  "bif_qt",
@@ -458,7 +458,7 @@ dependencies = [
 
 [[package]]
 name = "bif_viewport"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "anyhow",
  "bif_core",
