@@ -1,8 +1,8 @@
 # BIF USD Workflow Foundation
 
 **Version:** 0.3.0
-**Last Updated:** 2026-04-26
-**Status:** Living design note. v0.14-v0.16 code is authoritative where this older workflow text conflicts with accepted ADRs or current implementation.
+**Last Updated:** 2026-05-01
+**Status:** Living design note. v0.16.0 (C4a + C4b) is shipped. Sections marked _Future_ describe design intent, not shipped behavior.
 
 ## Implementation Notes
 
@@ -10,13 +10,13 @@
 
 **Shot templates:** Future workflow, not shipped. Keep template creation out of the v0.16 edit/save foundation.
 
-**v0.16 C4a foundation (landed/in progress):** `EditOperation` + `EditHistory`, stage-layer FFI writes, variant selections authored through `UsdEditContext` on the working layer, Ctrl+S saving the active working layer, and ADR-008 for the edit architecture.
+**v0.16 C4a + C4b shipped (v0.16.0, 2026-04-28):** `EditOperation` + `EditHistory`, stage-layer FFI writes, variant selections authored through `UsdEditContext` on the working layer, Ctrl+S saving the active working layer, ADR-008 for the edit architecture, plus the C4b editor surface (Apply-only USDA panel, Material Sheet, shading-model dropdown, transform gizmo). `EditOperation` now also covers `ReplaceLayerContents` (USDA round-trip) and `SetShaderId` (shading-model swap).
 
 **Milestone threading:** This spec is implemented incrementally across v0.14-v0.19 — see [MILESTONES.md](MILESTONES.md) for the release schedule.
 
 ## Overview
 
-BIF is a **USD Orchestration Tool** — not a USD viewer, not a version control system, not a modeling tool. BIF fills a gap in the VFX pipeline: no tool today lets an artist open a master USD stage, see the layer stack, pick their working layer, selectively load only what they need, make edits that author clean USD opinions, and save back to disk — all with a visual node graph and live USDA preview.
+BIF is a **USD Orchestration Tool** — not a USD viewer, not a version control system, not a modeling tool. BIF fills a gap in the VFX pipeline: no tool today lets an artist open a master USD stage, see the layer stack, pick their working layer, selectively load only what they need, make edits that author clean USD opinions, and save back to disk — all with a visual node graph and an Apply-only USDA preview.
 
 ### Design Philosophy
 
@@ -93,21 +93,23 @@ Shot-template creation is not part of the v0.16 edit/save foundation. It remains
 ---
 ## Edit Operations
 
-Every authored USD change in v0.16 C4a is represented as an `EditOperation` and recorded in `EditHistory` on `SceneLayerState`.
+Every authored USD change in v0.16 is represented as an `EditOperation` and recorded in `EditHistory` on `SceneLayerState`.
 
-Current C4a operation surface:
+Current operation surface (v0.16):
 
 - Transform
 - Visibility
 - MaterialAssign
 - MaterialParamOverride
 - VariantSelect
+- ReplaceLayerContents (USDA Apply round-trip)
+- SetShaderId (shading-model swap)
 
-C4a writes through the USD C++ bridge under `UsdEditContext(stage, working_layer)`. The viewport keeps `instance_index` for interactive selection and translates to `(SdfPath, AttrSlot)` only at the edit boundary. This is the dual-track identity decision captured in ADR-008.
+Writes go through the USD C++ bridge under `UsdEditContext(stage, working_layer)`. The viewport keeps `instance_index` for interactive selection and translates to `(SdfPath, AttrSlot)` only at the edit boundary. This is the dual-track identity decision captured in ADR-008.
 
-`EditHistory` is parallel to the existing procedural `EditState` / `UndoStack`. Procedural node edits stay in the existing stack. USD layer opinions use `EditHistory`. The viewport owns a small undo router so Ctrl+Z/redo can pop whichever stack received the most recent action.
+`EditHistory` runs parallel to the existing procedural `EditState` / `UndoStack`. Procedural node edits stay in the existing stack. USD layer opinions use `EditHistory`. _Future._ Cross-stack undo unification is deferred (ADR-008); today Ctrl+Z routes per-stack.
 
-C4a deliberately does not build the editable USDA panel, node-to-opinion authoring for scatter/instancers, point edits, auto-save, or schema-registry validation. Those remain C4b or later.
+v0.16 deliberately stops short of node-to-opinion authoring for scatter/instancers, point edits, auto-save, and schema-registry validation. Those remain later work.
 
 ---
 ## The Three-Panel UI
@@ -149,6 +151,8 @@ BIF's editor shows three synchronized views of the same scene data. Each view is
 ```
 
 ### Node Graph: Composition + Operations
+
+_Future direction._ The blue/orange categorization, the Composition node types listed below (USD Reference, Payload Gate, SubLayer, Layer Stack), and node-driven opinion authoring are not yet implemented in v0.16. Today only interactive viewport edits route through `EditOperation`/`EditHistory`; procedural nodes still emit USD only at `export_scene()` time.
 
 The node graph shows **how the scene is assembled**. There are two categories of nodes, visually distinguished by color:
 
@@ -203,9 +207,9 @@ Features:
 - **Override markers**: bold name if the active layer has opinions on this prim
 - **Right-click menu**: load/unload payload, assign material, hide, select in viewport
 
-### USD Code Preview: Live USDA Output
+### USD Code Preview: Active Edit Layer USDA
 
-The code panel shows the USDA text of the **active edit layer** in real-time. As the artist works — dragging a transform handle, assigning a material, tweaking a light — the code updates live.
+The code panel shows the USDA text of the **active edit layer**. Editing is Apply-only — type, hit Apply, and parse errors come back inline. The panel re-reads on focus and on apply. _Future._ Live keystroke-level preview is deferred.
 
 This serves three purposes:
 
@@ -254,6 +258,8 @@ def PointInstancer "scattered_trees" {
 ---
 
 ## Render Context
+
+_Future architecture (v0.17+ target). The `RenderContext` and `PrototypeState` types below are design sketches, not shipped APIs._
 
 BIF has two rendering modes that share the same scene but load data differently.
 
@@ -382,6 +388,8 @@ This is the Clarisse-inspired approach: the scene can contain millions of instan
 
 ## Vertex Editing
 
+_Future. No node or interactive tool exists in v0.16. Sketch retained for forward design._
+
 BIF is not a modeling tool. But artists need to nudge vertices when a prop clips through the ground or two objects intersect awkwardly. BIF provides minimal vertex editing that authors sparse USD overrides.
 
 ### What It Is
@@ -438,6 +446,8 @@ The edit layer stores the full points array, but BIF internally tracks which ver
 
 ## Animation Overrides
 
+_Future. No keyframe authoring tool exists in v0.16. Sketch retained for forward design._
+
 BIF provides simple keyframe overrides — not a full animation system. The use case is "I need this light to fade at frame 48" or "I want this prop to slide over 10 frames." For complex character animation, use Maya/Houdini.
 
 ### What BIF Supports
@@ -474,6 +484,8 @@ over "props" {
 
 ## Layer Diffing
 
+_Future. Layer diff UI is not implemented in v0.16._
+
 BIF can show the artist exactly what their edit layer changes compared to the composed base scene. This is a visual diff — not a text diff of USDA files, but a semantic diff of USD opinions.
 
 ### Diff Display
@@ -508,7 +520,7 @@ This tells the artist: "here's everything your layer does to the scene." Invalua
 
 Ctrl+S saves the active working layer only.
 
-Current C4a save path:
+Current save path (v0.16):
 
 1. Resolve `SceneLayerState.working_layer` to the layer identifier.
 2. Check the layer through USD `PermissionToEdit()`.
@@ -533,19 +545,20 @@ The root/master stage is not modified by Ctrl+S unless the root itself is the se
 - Qt shell with layer stack, scene browser, property inspector, timeline, and render panels
 - Real stage load/close, selection sync, lazy scene tree, and edit-target status surfaces
 
-### Phase 3: Edit Foundation (v0.16 C4a)
+### Phase 3: Edit Foundation (v0.16 C4a, shipped)
 
 - `EditOperation` / `EditHistory`
 - Working-layer FFI writes and save
 - Variant selections authored to the working layer
-- Dirty bit and combined undo router
+- Dirty bit and per-stack undo
 - ADR-008
 
-### Phase 4: Editor Features (v0.16 C4b)
+### Phase 4: Editor Features (v0.16 C4b, shipped)
 
-- Editable USDA layer panel
+- Apply-only USDA layer panel (live preview deferred)
 - Material parameter sheet
 - Shading-model dropdown
+- Transform gizmo
 
 ### Deferred
 
@@ -582,7 +595,7 @@ BIF is not a modeler. Adding face/edge operations, topology changes, or sculptin
 
 ## Variant Set Handling
 
-Variant selection is a USD opinion. In C4a, `VariantSelect` is an `EditOperation`, and the bridge writes it under `UsdEditContext(stage, working_layer)` instead of authoring into the session/root default target.
+Variant selection is a USD opinion. In v0.16, `VariantSelect` is an `EditOperation`, and the bridge writes it under `UsdEditContext(stage, working_layer)` instead of authoring into the session/root default target.
 
 Current behavior:
 
@@ -596,12 +609,14 @@ Creating new variant sets and editing variant contents remains future work.
 ---
 ## Future Schema Validation
 
-C4a relies on hard errors from the USD bridge and `PermissionToEdit()` checks. A richer validation layer that knows schema-specific constraints, configurable warning levels, and inline USDA diagnostics is deferred.
+v0.16 relies on hard errors from the USD bridge and `PermissionToEdit()` checks. A richer validation layer that knows schema-specific constraints, configurable warning levels, and inline USDA diagnostics is deferred.
 
 Near-term rule: writes should fail clearly when the USD API rejects the operation; they should not run a parallel hand-written schema system.
 
 ---
 ## Eager Node Evaluation + Stale Opinion Cleanup
+
+_Future. Today `EditHistory.current_state` overwrites by `OpinionKey` and procedural node re-eval routes through `export_scene()`. Per-node `authored_paths` tracking and the `clear_authored_opinions` cleanup pass below are not implemented._
 
 ### Evaluation Model
 
@@ -653,6 +668,8 @@ If two nodes write to the same prim path, last-write-wins within the current-sta
 
 ## Session Layer
 
+_Future. `LayerInfo::is_anonymous` exists in the layer model, but no anonymous session-layer edit target is wired in v0.16. Solo / viewport-hide flows below are unimplemented._
+
 Viewport-only state (solo, hide, display overrides) must not pollute the edit layer. BIF uses a USD anonymous session layer for temporary state that is never saved to disk.
 
 ```rust
@@ -702,4 +719,5 @@ The session layer sits above all other layers in composition strength. It affect
 | **Session Layer** | Anonymous in-memory USD layer for viewport-only state (solo, hide) — never saved |
 | **Variant Set** | USD mechanism for switchable alternatives (LODs, render/proxy) on a prim |
 | **Schema Validation** | Pre-write check that opinions match USD schema types and constraints |
-| **Eager Evaluation** | Operation nodes re-evaluate immediately on every parameter change |
+| **Eager Evaluation** | _Future._ Operation nodes re-evaluate immediately on every parameter change |
+| **Apply-only USDA panel** | The C4b USDA editor: read-on-focus, write-on-Apply. Keystroke-level live preview is deferred |

@@ -1,17 +1,17 @@
 ---
 title: ADR-008 — Edit operation architecture (v0.16 C4a)
 type: adr
-status: accepted
+status: implemented
 tags: [architecture, usd, layers, editing, v0.16]
 created: 2026-04-26
-updated: 2026-04-26
+updated: 2026-05-01
 ---
 
 # ADR-008 — Edit operation architecture (v0.16 C4a)
 
 ## Status
 
-Accepted for the v0.16 C4a edit/save foundation.
+Implemented in v0.16.0 (shipped 2026-04-28). C4b (Apply-only USDA panel, Material Sheet, shading-model dropdown) extended `EditOperation` with `ReplaceLayerContents` and `SetShaderId` on top of this foundation.
 
 ## Context
 
@@ -28,7 +28,7 @@ The goal of C4a is a foundation, not the full material/USDA editing UI.
 
 ### D1 — Keep Parallel Undo Stacks
 
-Procedural node edits remain in `EditState` / `UndoStack`. Authored USD opinions use `EditHistory`. The viewport owns a small action router that records whether the most recent action was procedural or USD-backed.
+Procedural node edits remain in `EditState` / `UndoStack`. Authored USD opinions use `EditHistory`. v0.16 ships per-stack undo; cross-stack unification (a single Ctrl+Z that pops whichever stack received the most recent action) is deferred.
 
 ### D2 — Use Dual-Track Identity
 

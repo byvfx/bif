@@ -1,16 +1,16 @@
 ---
 title: Layer-Aware Stage
 type: concept
-tags: [usd, layers, composition, opinion, sdflayer, v0.14]
+tags: [usd, layers, composition, opinion, sdflayer, v0.14, v0.16]
 created: 2026-04-13
-updated: 2026-04-13
+updated: 2026-05-01
 ---
 
 # Layer-Aware Stage
 
 ## Summary
 
-BIF v0.14.0 lifts the lid on USD composition: load a multi-layer stage and BIF exposes the sublayer tree, the per-prim spec stack (`UsdPrim::GetPrimStack`), and every layer's contribution to each attribute value (`UsdAttribute::GetPropertyStack`). Users mute sublayers, pick a working layer, and see layer authorship inline via color dots and tooltips. Read-only in v0.14; editing lands in v0.16.
+BIF v0.14.0 lifts the lid on USD composition: load a multi-layer stage and BIF exposes the sublayer tree, the per-prim spec stack (`UsdPrim::GetPrimStack`), and every layer's contribution to each attribute value (`UsdAttribute::GetPropertyStack`). Users mute sublayers, pick a working layer, and see layer authorship inline via color dots and tooltips. v0.16.0 added the edit/save path on top: working-layer FFI writes through `UsdEditContext`, `EditHistory`, and Ctrl+S save. `PayloadPolicy` still ships only `LoadAll` and `LoadNone`; selective task-driven loading is _Future_ work.
 
 ## Data model
 
@@ -84,9 +84,9 @@ All rendered by `bif_viewport` against `self.scene.layer_state.as_ref()`. None o
 
 - `LayerSelected(usize)` — panel focus (UI-only)
 - `LayerMuteToggled { index, muted }` — drives `UsdStage::set_layer_muted` + `SceneLayerState::set_muted`
-- `WorkingLayerChanged(usize)` — informational in v0.14 (edit-target binding lands v0.16)
-- `PayloadPolicyChanged(PayloadPolicy)` — recorded; full stage reopen deferred to v0.14.5
-- `IsolationModeToggled(bool)` — UI hint only until v0.16 writes arrive
+- `WorkingLayerChanged(usize)` — drives `EditHistory.working_layer_id` in v0.16
+- `PayloadPolicyChanged(PayloadPolicy)` — `LoadAll` / `LoadNone` only; richer policies are _Future_
+- `IsolationModeToggled(bool)` — UI hint; full isolation behavior remains _Future_ work
 
 ## Gotchas
 

@@ -3,7 +3,7 @@ title: "Node Graph System"
 type: article
 tags: [architecture]
 created: "2026-04-05"
-updated: "2026-04-11"
+updated: "2026-05-01"
 sources: [ARCHITECTURE.md, ARCHITECTURE_REVIEW.md, ARCHITECTURE_REFACTORS.md]
 ---
 
@@ -97,6 +97,8 @@ Terse reference card. Every item is mandatory unless noted. Compile the crate af
 **Design note.** This is the classic enum-based dispatch pattern. It works well for 10 nodes. At 15-20+ nodes, consider migrating to a `NodeBehavior` trait for open extensibility — at the cost of losing exhaustive match checking. See ARCHITECTURE_REVIEW.md §3.
 
 ### Future: Blue/Orange Classification
+
+_Future. Not implemented in v0.16. Procedural nodes still flow to USD only at `export_scene()` time; only interactive viewport edits route through `EditOperation` / `EditHistory` (see [[adr/008-edit-operation-architecture|ADR 008]])._
 
 Per the [[003-hybrid-usd-workflow|ADR 003: Hybrid USD Workflow]], nodes will be classified as:
 
