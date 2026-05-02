@@ -9,6 +9,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 
 - **CI compatibility for Rust 1.95 / no-default renderer checks** (2026-05-02). Replaced guarded manual LOD divisions with `checked_div` to satisfy newer clippy, and gated Embree/USD native links plus Embree-dependent renderer examples so `cargo test -p bif_renderer --no-default-features` no longer links optional native renderer paths.
+- **GitHub Actions Node 24 compatibility** (2026-05-02). Updated CI/CD and Pages checkout steps to `actions/checkout@v6` and replaced the CI rust-cache action with `actions/cache@v5` so the validated CI path stops emitting Node runtime deprecation warnings.
 
 ## [0.16.0] - 2026-04-28
 
