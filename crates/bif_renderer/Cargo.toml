@@ -7,12 +7,13 @@ license.workspace = true
 description = "CPU path tracing renderer for BIF"
 
 [features]
-default = ["embree"]
+default = ["embree", "bif-core"]
 embree = []
+bif-core = ["dep:bif_core"]
 oidn = ["dep:oidn"]
 
 [dependencies]
-bif_core = { path = "../bif_core" }
+bif_core = { path = "../bif_core", optional = true }
 bif_math = { path = "../bif_math" }
 glam.workspace = true
 serde = { workspace = true }
@@ -25,3 +26,11 @@ half = "2.4"
 thiserror.workspace = true
 oidn = { version = "2.3", optional = true }
 bytemuck = "1"
+
+[[example]]
+name = "simple_render"
+required-features = ["embree"]
+
+[[example]]
+name = "cache_bench"
+required-features = ["embree"]

@@ -4,6 +4,12 @@
 // Install via: vcpkg install embree[geometry-triangle,geometry-instance]:x64-windows
 
 fn main() {
+    // No-default CI intentionally builds without native Embree.
+    if std::env::var_os("CARGO_FEATURE_EMBREE").is_none() {
+        println!("cargo:rerun-if-changed=build.rs");
+        return;
+    }
+
     // vcpkg integration handles the linking automatically on Windows
     // but we need to tell Cargo the library name
 

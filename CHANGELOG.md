@@ -6,6 +6,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **CI compatibility for Rust 1.95 / no-default renderer checks** (2026-05-02). Replaced guarded manual LOD divisions with `checked_div` to satisfy newer clippy, and gated Embree/USD native links plus Embree-dependent renderer examples so `cargo test -p bif_renderer --no-default-features` no longer links optional native renderer paths.
+
 ## [0.16.0] - 2026-04-28
 
 ### Added
