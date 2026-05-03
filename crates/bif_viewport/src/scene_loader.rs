@@ -612,6 +612,11 @@ impl Renderer {
         // IDs (not duplicated per instance), keeping the GPU buffer small.
         let mut compact_tri_mats: Vec<u32> = Vec::new();
         let mut prototype_gpu_data: Vec<PrototypeGpuData> = Vec::new();
+        // Synthetic flat-color materials for prims with primvars:displayColor but no binding.
+        // Appended after scene.materials + default slot in the GPU material table.
+        // +1 for the implicit default grey entry that sits between real and synthetic.
+        let synthetic_mat_start = scene.materials.len() as u32 + 1;
+        let mut synthetic_materials: Vec<bif_core::Material> = Vec::new();
 
         for (proto_id, proto) in scene.prototypes.iter().enumerate() {
             let md = MeshData::from_core_mesh(&proto.mesh);
@@ -649,6 +654,17 @@ impl Renderer {
             let tri_mat_offset = compact_tri_mats.len() as u32;
             if let Some(ref tri_mats) = md.triangle_material_ids {
                 compact_tri_mats.extend_from_slice(tri_mats);
+            } else if let Some(dc) = md.display_color {
+                // Synthesize a flat-color material from primvars:displayColor
+                let mat_idx = synthetic_mat_start + synthetic_materials.len() as u32;
+                synthetic_materials.push(bif_core::Material {
+                    name: std::sync::Arc::from(format!("__display_color_{}", proto_id)),
+                    base_color: bif_math::Vec3::new(dc[0], dc[1], dc[2]),
+                    specular_roughness: 0.8,
+                    base_metalness: 0.0,
+                    ..bif_core::Material::default()
+                });
+                compact_tri_mats.extend(std::iter::repeat_n(mat_idx, num_triangles as usize));
             } else {
                 // No per-face materials: fill with sentinel (0xFFFFFFFF)
                 compact_tri_mats.extend(std::iter::repeat_n(0xFFFFFFFFu32, num_triangles as usize));
@@ -816,6 +832,13 @@ impl Renderer {
             &bif_core::Material::default(),
             &self.textures.gpu_textures,
         ));
+        // Append synthetic display_color materials (indices synthetic_mat_start..)
+        for syn_mat in &synthetic_materials {
+            material_table.push(crate::gpu_types::MaterialGpu::from_material(
+                syn_mat,
+                &self.textures.gpu_textures,
+            ));
+        }
         self.materials.table_len = material_table.len() as u32;
         self.materials.table_buffer =
             self.gpu
