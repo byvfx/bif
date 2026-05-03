@@ -2784,9 +2784,15 @@ UsdBridgeError usd_bridge_open_stage(const char* path, UsdBridgeStage** out_stag
         using namespace std::chrono;
         auto total_start = high_resolution_clock::now();
 
-        // Normalize path: convert backslashes to forward slashes for USD
+        // Normalize path: convert backslashes to forward slashes for USD.
+        // UNC paths (\\server\share\...) must keep their leading \\ — USD's AR on
+        // Windows cannot resolve //server/share/ (forward-slash UNC form).
         std::string normalized_path(path);
-        std::replace(normalized_path.begin(), normalized_path.end(), '\\', '/');
+        if (!(normalized_path.size() >= 2 &&
+              normalized_path[0] == '\\' &&
+              normalized_path[1] == '\\')) {
+            std::replace(normalized_path.begin(), normalized_path.end(), '\\', '/');
+        }
 
         std::cout << "[USD_BRIDGE] Opening stage: " << normalized_path << std::endl;
 
@@ -7331,7 +7337,11 @@ UsdBridgeError usd_bridge_open_stage_with_policy(
 
     try {
         std::string normalized_path(path);
-        std::replace(normalized_path.begin(), normalized_path.end(), '\\', '/');
+        if (!(normalized_path.size() >= 2 &&
+              normalized_path[0] == '\\' &&
+              normalized_path[1] == '\\')) {
+            std::replace(normalized_path.begin(), normalized_path.end(), '\\', '/');
+        }
 
         ArResolverContext context =
             ArGetResolver().CreateDefaultContextForAsset(normalized_path);
