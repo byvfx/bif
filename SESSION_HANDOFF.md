@@ -1,3 +1,21 @@
+# Session Handoff — 2026-05-03 (viewport fixes + test fixtures)
+
+**Last Updated:** 2026-05-03. Three commits on `v0.16.1-followups`:
+
+1. **UNC path fix** — `cpp/usd_bridge/usd_bridge.cpp`: guard `std::replace` at both path-normalization sites to skip `\\server\share\...` paths. USD's AR on Windows cannot resolve `//server/share/...` forward-slash UNC form.
+2. **Comprehensive USD test fixtures** — `test_assets/comprehensive.usda` (sublayer root + comp_overrides/comp_base) and `test_assets/scene/` (root/anim/shot_overrides/geo). Full feature coverage: variants, UsdPreviewSurface network, lights, camera, mesh primvars, PointInstancer, collections, timeSamples.
+3. **`primvars:displayColor` Vulkan fallback** — `MeshData` now carries `display_color`; `scene_loader.rs` synthesizes a flat-color `bif_core::Material` per prototype at the sentinel injection site, appended after the default-grey slot in the GPU material table.
+
+**MILESTONES**: v0.16.5 bullet added for displayColor; Backlog item added for animated xformOp freeze.
+
+**Known gaps (tracked):** Cylinder/Capsule/Cone tessellation (backlog), animated xformOp frozen at default time (backlog), `TallSpire` Cylinder in PointInstancer still invisible.
+
+**Validation:** `cargo build -p bif_viewport` clean (13.98s). `cargo fmt --check` clean. Build/clippy on full workspace require Qt in PATH — not available in this shell; all touched crates are pure Rust except bif_qt.
+
+**Next action:** v0.16.1 dogfood pass (HiDPI visual, visibility toggle redesign, USDA Apply fix). Then v0.16.5 Graphite styling pass.
+
+---
+
 # Session Handoff - April 30, 2026 (`v0.16.1-followups` review fixes)
 
 **Last Updated:** 2026-04-30 (post review). `vfx-code-reviewer` audited the eight v0.16.1-followups commits and produced a Critical/Major/Minor punch list. Four review action items resolved on top of the sweep:

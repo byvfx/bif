@@ -8,6 +8,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Comprehensive USD test fixtures** (2026-05-03). Two new fixture sets: `test_assets/comprehensive.usda` (root + comp_overrides/comp_base sublayers — variants, full UsdPreviewSurface network, lights, camera, mesh primvars, PointInstancer, collections, mute demos) and `test_assets/scene/` (root/anim/shot_overrides/geo — timeSamples for camera, visibility, wave mesh, rigged arm).
+
+### Fixed
+
+- **UNC path handling in USD bridge on Windows SMB drives** (2026-05-03). `usd_bridge.cpp` was converting `\\server\share\...` to `//server/share/...` at two sites, breaking USD's asset resolver. Guard added to skip the backslash→slash replacement for paths starting with `\\`.
+- **`primvars:displayColor` now visible in Vulkan viewport** (2026-05-03). Meshes with display color but no `material:binding` rendered grey. `MeshData` now carries the first display_color; `scene_loader` synthesizes a flat-color `bif_core::Material` per prototype and appends it to the GPU material table so the Vulkan shader resolves it correctly.
+
 - **v0.16.1 follow-up regression coverage** (2026-04-30). Added tests for locked-layer save errors, edit-target-switch undo routing, replace-layer idempotence, shader-swap rollback, scene-browser empty-path filtering, and the USD export-buffer lifetime contract.
 - **`error_buf` thread-local invalidation contract test** (2026-04-30). New `layer_save_error_message_pointer_is_reused_per_thread` in `tests/ffi_contract.rs` mirrors the existing export-buffer test for the layer-save error message buffer: locks two layers, asserts the second failing save reuses the same pointer and overwrites the first message text, locking the same-thread copy-before-next-call contract documented inline.
 - **View → Grid toggle in the Qt shell** (2026-04-30). Added a checkable Grid action backed by `DisplaySettings::grid_visible`.
