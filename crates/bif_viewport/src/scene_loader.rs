@@ -598,6 +598,13 @@ impl Renderer {
             .copied()
             .chain(display_hidden_proto_ids.iter().copied())
             .collect();
+        let is_instance_visible = |inst: &bif_core::Instance| {
+            inst.prim_path.is_empty()
+                || !self
+                    .scene
+                    .hidden_prim_paths
+                    .contains(inst.prim_path.as_ref())
+        };
         if !hidden_proto_ids.is_empty() {
             log::debug!(
                 "Hiding prototypes: {:?} (instanced: {:?}, scatter surface: {:?})",
@@ -718,6 +725,7 @@ impl Renderer {
                 .iter()
                 .enumerate()
                 .filter(|(_idx, inst)| !hidden_proto_ids.contains(&inst.prototype_id))
+                .filter(|(_idx, inst)| is_instance_visible(inst))
                 .filter(|(_idx, inst)| active_purpose.includes(inst.purpose))
                 .filter_map(|(mesh_idx, inst)| {
                     scene.prototypes.get(inst.prototype_id).map(|proto| {
@@ -1001,6 +1009,7 @@ impl Renderer {
                 .instances()
                 .iter()
                 .filter(|inst| !hidden_proto_ids.contains(&inst.prototype_id))
+                .filter(|inst| is_instance_visible(inst))
                 .map(|inst| {
                     let model_matrix = inst.model_matrix();
                     instance_transforms.push(model_matrix);
@@ -1232,6 +1241,7 @@ impl Renderer {
             .iter()
             .enumerate()
             .filter(|(_idx, inst)| !hidden_proto_ids.contains(&inst.prototype_id))
+            .filter(|(_idx, inst)| is_instance_visible(inst))
             .map(|(idx, inst)| resolve_prim_path(inst, scene, idx))
             .collect();
         // Extend for instancer-expanded instances (parallel to instance_transforms)
@@ -1263,6 +1273,7 @@ impl Renderer {
             .iter()
             .zip(scene.instances().iter())
             .filter(|(_, inst)| !hidden_proto_ids.contains(&inst.prototype_id))
+            .filter(|(_, inst)| is_instance_visible(inst))
             .map(|(anim, _)| anim.clone())
             .collect();
         animations.extend(std::iter::repeat_n(None, instancer_count));
@@ -1565,6 +1576,7 @@ impl Renderer {
         payload_policy: PayloadPolicy,
     ) -> Result<()> {
         let viewport_load_start = Instant::now();
+        self.scene.hidden_prim_paths.clear();
 
         // v0.14.0 — empty scenes are legitimate when the user mutes the
         // layer that provides the `def` (so composition strips the prim).

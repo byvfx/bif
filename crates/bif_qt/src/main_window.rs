@@ -1352,6 +1352,8 @@ impl qobject::BifShellState {
             None => "Undo failed — viewport not ready".to_string(),
         };
         refresh_undo_redo_qprops(self.as_mut());
+        bump_revision(self.as_mut());
+        bump_scene_browser_revision(self.as_mut());
         self.as_mut()
             .set_status_message(cxx_qt_lib::QString::from(&message));
     }
@@ -1365,6 +1367,8 @@ impl qobject::BifShellState {
             None => "Redo failed — viewport not ready".to_string(),
         };
         refresh_undo_redo_qprops(self.as_mut());
+        bump_revision(self.as_mut());
+        bump_scene_browser_revision(self.as_mut());
         self.as_mut()
             .set_status_message(cxx_qt_lib::QString::from(&message));
     }
@@ -2553,6 +2557,7 @@ impl qobject::BifShellState {
                     )));
                 refresh_undo_redo_qprops(self.as_mut());
                 bump_revision(self.as_mut());
+                bump_scene_browser_revision(self.as_mut());
             }
             Some(Err(e)) => {
                 self.as_mut()
@@ -2639,6 +2644,7 @@ impl qobject::BifShellState {
                     )));
                 refresh_undo_redo_qprops(self.as_mut());
                 bump_revision(self.as_mut());
+                bump_scene_browser_revision(self.as_mut());
             }
             Some(Err(e)) => {
                 self.as_mut()
@@ -2666,6 +2672,7 @@ impl qobject::BifShellState {
                     )));
                 refresh_undo_redo_qprops(self.as_mut());
                 bump_revision(self.as_mut());
+                bump_scene_browser_revision(self.as_mut());
             }
             Some(Err(e)) => {
                 self.as_mut()
@@ -2709,6 +2716,7 @@ impl qobject::BifShellState {
                     )));
                 refresh_undo_redo_qprops(self.as_mut());
                 bump_revision(self.as_mut());
+                bump_scene_browser_revision(self.as_mut());
                 cxx_qt_lib::QString::from(&dropped.join("\n"))
             }
             Some(Err(e)) => {
@@ -2766,6 +2774,7 @@ impl qobject::BifShellState {
                     )));
                 refresh_undo_redo_qprops(self.as_mut());
                 bump_revision(self.as_mut());
+                bump_scene_browser_revision(self.as_mut());
                 cxx_qt_lib::QString::default()
             }
             Some(Err(e)) => {

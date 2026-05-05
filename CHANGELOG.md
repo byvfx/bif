@@ -12,6 +12,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **Dogfood viewport edit refresh** (2026-05-05). USD edits, USDA Apply, visibility toggles, material parameter edits, material binding, shading-model swaps, undo, and redo now refresh the working viewport scene from the live stage path. The Qt scene browser uses a dedicated fixed-width visibility column for eye toggles, and the Property Inspector visibility checkbox was removed so visibility is controlled from the tree.
 - **UNC path handling in USD bridge on Windows SMB drives** (2026-05-03). `usd_bridge.cpp` was converting `\\server\share\...` to `//server/share/...` at two sites, breaking USD's asset resolver. Guard added to skip the backslash→slash replacement for paths starting with `\\`.
 - **`primvars:displayColor` now visible in Vulkan viewport** (2026-05-03). Meshes with display color but no `material:binding` rendered grey. `MeshData` now carries the first display_color; `scene_loader` synthesizes a flat-color `bif_core::Material` per prototype and appends it to the GPU material table so the Vulkan shader resolves it correctly.
 

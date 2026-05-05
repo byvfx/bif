@@ -36,7 +36,8 @@ public:
     };
 
     enum Columns {
-        ColName = 0,
+        ColVisibility = 0,
+        ColName,
         ColType,
         ColChildren,
         ColKind,

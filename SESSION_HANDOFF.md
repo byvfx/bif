@@ -1,3 +1,19 @@
+# Session Handoff — 2026-05-05 (dogfood viewport edit refresh)
+
+**Last Updated:** 2026-05-05 on `v0.16.1-followups`.
+
+**Current work:** Dogfood edit repair is ready to commit on the real `G:\__projects\_programming\rust\bif` checkout. The Qt scene browser now has a dedicated fixed-width visibility column; the Prim/name column keeps tree expansion and row selection. The Property Inspector visibility checkbox is removed.
+
+**Edit refresh path:** `Renderer::reload_after_usd_edit()` now handles post-edit viewport refresh for USD edits, undo, redo, material params, material binding, shading swaps, visibility, and USDA Apply. It refreshes hidden prim state, syncs material data from the live USD stage, marks materials dirty, and reloads the working scene. The USD bridge invalidates caches after layer import.
+
+**Validation:** `. .\setup_qt_env.ps1; . .\setup_usd_env.ps1; cargo build`, `cargo clippy -- -D warnings`, `cargo fmt --check`, `cargo test -p bif_viewport`, and `cargo test -p bif_core -- --test-threads=1` all pass on `G:`. The `bif_core` suite still emits noisy expected USD diagnostics during negative USDA parse/xform tests, but exits green.
+
+**Left unstaged intentionally:** `test_assets/scene/root.usda` is modified as an LFS pointer and looks like dogfood/manual-save dirt. Do not commit it unless a fixture update is intentional.
+
+**Next action:** Manual Qt smoke on the dogfood scene: eye toggle, material params, material bind, shading swap, USDA Apply, undo, redo. Then design the material binding/node-graph workflow before expanding the material UI.
+
+---
+
 # Session Handoff — 2026-05-03 (viewport fixes + test fixtures)
 
 **Last Updated:** 2026-05-03. Three commits on `v0.16.1-followups`:

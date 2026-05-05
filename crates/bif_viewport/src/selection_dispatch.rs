@@ -570,6 +570,10 @@ impl Renderer {
 
         layer_state.edit_history.end_group();
         layer_state.mark_working_layer_dirty(true);
+        self.last_action_stack.push(crate::UndoActionKind::Usd);
+        self.redo_action_stack.clear();
+        self.project.mark_dirty();
+        self.reload_after_usd_edit("shading model swap", None);
         Ok(dropped)
     }
 

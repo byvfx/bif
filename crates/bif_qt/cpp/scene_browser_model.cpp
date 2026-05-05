@@ -271,6 +271,7 @@ QVariant SceneBrowserModel::data(const QModelIndex& index, int role) const {
     switch (role) {
         case Qt::DisplayRole:
             switch (index.column()) {
+                case ColVisibility: return QString();
                 case ColName: return node->name;
                 case ColType: return node->type_name;
                 case ColChildren:
@@ -302,6 +303,7 @@ QVariant SceneBrowserModel::headerData(int section, Qt::Orientation orientation,
                                        int role) const {
     if (orientation != Qt::Horizontal || role != Qt::DisplayRole) return {};
     switch (section) {
+        case ColVisibility: return QString();
         case ColName: return QStringLiteral("Prim");
         case ColType: return QStringLiteral("Type");
         case ColChildren: return QStringLiteral("Children");

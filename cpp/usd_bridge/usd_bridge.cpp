@@ -3174,7 +3174,9 @@ UsdBridgeError usd_bridge_get_material_count(
         return USD_BRIDGE_ERROR_NULL_POINTER;
     }
 
-    // Data pre-cached at load time - just read
+    if (!stage->materials_cached) {
+        cache_material_data(const_cast<UsdBridgeStage*>(stage));
+    }
     *out_count = stage->materials.size();
     return USD_BRIDGE_SUCCESS;
 }
@@ -3268,7 +3270,9 @@ UsdBridgeError usd_bridge_get_prim_count(
         return USD_BRIDGE_ERROR_NULL_POINTER;
     }
 
-    // Data pre-cached at load time
+    if (!stage->prims_cached) {
+        cache_prim_data(const_cast<UsdBridgeStage*>(stage));
+    }
     *out_count = stage->all_prims.size();
     return USD_BRIDGE_SUCCESS;
 }
@@ -3282,7 +3286,9 @@ UsdBridgeError usd_bridge_get_prim_info(
         return USD_BRIDGE_ERROR_NULL_POINTER;
     }
 
-    // Data pre-cached at load time
+    if (!stage->prims_cached) {
+        cache_prim_data(const_cast<UsdBridgeStage*>(stage));
+    }
 
     if (index >= stage->all_prims.size()) {
         return USD_BRIDGE_ERROR_INVALID_PRIM;
@@ -3312,7 +3318,9 @@ UsdBridgeError usd_bridge_get_root_prim_count(
         return USD_BRIDGE_ERROR_NULL_POINTER;
     }
 
-    // Data pre-cached at load time
+    if (!stage->prims_cached) {
+        cache_prim_data(const_cast<UsdBridgeStage*>(stage));
+    }
     *out_count = stage->root_paths.size();
     return USD_BRIDGE_SUCCESS;
 }
@@ -3326,7 +3334,9 @@ UsdBridgeError usd_bridge_get_root_prim_path(
         return USD_BRIDGE_ERROR_NULL_POINTER;
     }
 
-    // Data pre-cached at load time
+    if (!stage->prims_cached) {
+        cache_prim_data(const_cast<UsdBridgeStage*>(stage));
+    }
 
     if (index >= stage->root_paths.size()) {
         return USD_BRIDGE_ERROR_INVALID_PRIM;
@@ -3345,7 +3355,9 @@ UsdBridgeError usd_bridge_get_children_count(
         return USD_BRIDGE_ERROR_NULL_POINTER;
     }
 
-    // Data pre-cached at load time
+    if (!stage->prims_cached) {
+        cache_prim_data(const_cast<UsdBridgeStage*>(stage));
+    }
 
     // Handle pseudo-root case
     std::string path_str(parent_path);
@@ -3375,7 +3387,9 @@ UsdBridgeError usd_bridge_get_child_path(
         return USD_BRIDGE_ERROR_NULL_POINTER;
     }
 
-    // Data pre-cached at load time
+    if (!stage->prims_cached) {
+        cache_prim_data(const_cast<UsdBridgeStage*>(stage));
+    }
 
     std::string path_str(parent_path);
     
@@ -3411,7 +3425,9 @@ UsdBridgeError usd_bridge_get_prim_info_by_path(
         return USD_BRIDGE_ERROR_NULL_POINTER;
     }
 
-    // Data pre-cached at load time
+    if (!stage->prims_cached) {
+        cache_prim_data(const_cast<UsdBridgeStage*>(stage));
+    }
 
     std::string path_str(path);
     for (const auto& info : stage->all_prims) {
@@ -6752,6 +6768,7 @@ UsdBridgeError usd_bridge_layer_import_from_string(
             TF_WARN("usd_bridge_layer_import_from_string: TransferContent threw, rolled back");
             return USD_BRIDGE_ERROR_UNKNOWN;
         }
+        invalidate_all_caches(const_cast<UsdBridgeStage*>(stage));
         return USD_BRIDGE_SUCCESS;
     } catch (const std::exception& e) {
         TF_WARN("usd_bridge_layer_import_from_string: %s", e.what());

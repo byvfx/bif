@@ -29,6 +29,9 @@ private slots:
     void on_filter_changed(const QString& text);
     void on_selection_changed(const QModelIndex& current, const QModelIndex& previous);
 
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override;
+
 private:
     BifShellState* m_state;
     SceneBrowserModel* m_model;
