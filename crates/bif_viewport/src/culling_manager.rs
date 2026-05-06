@@ -237,11 +237,10 @@ impl CullingManager {
         } else {
             let tris_per_instance = self.triangles_per_instance as u64;
             let max_polys = self.lod_max_polys as u64;
-            if tris_per_instance > 0 {
-                (max_polys / tris_per_instance) as usize
-            } else {
-                self.scratch.visible_with_distance.len()
-            }
+            max_polys
+                .checked_div(tris_per_instance)
+                .map(|count| count as usize)
+                .unwrap_or_else(|| self.scratch.visible_with_distance.len())
         };
 
         let visible_count = self.scratch.visible_with_distance.len();
