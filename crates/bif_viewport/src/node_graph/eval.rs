@@ -3,9 +3,6 @@
 //! Decoupled from egui — computes which nodes need cooking based on
 //! status flags and connectivity, independent of UI visibility.
 
-// TODO: remove once wired into the main loop (Phase 2)
-#![allow(dead_code)]
-
 use std::collections::HashSet;
 
 use egui_snarl::{InPinId, NodeId, Snarl};
@@ -175,6 +172,40 @@ fn evaluate_node(
                 } else {
                     dirty_nodes.insert(inst_graph_id);
                 }
+            }
+        }
+
+        // --- Xform: rebuild scene once input is connected ---------------
+        SceneNode::Xform {
+            is_applied: false, ..
+        } => {
+            if is_input_connected(node_id, 0, snarl).is_none() {
+                return;
+            }
+
+            let graph_id = GraphNodeId::from(node_id);
+            if eval_mode == EvalMode::Auto {
+                events.push(NodeGraphEvent::XformChanged { node_id: graph_id });
+                if let SceneNode::Xform { is_applied, .. } = &mut snarl[node_id] {
+                    *is_applied = true;
+                }
+            } else {
+                dirty_nodes.insert(graph_id);
+            }
+        }
+
+        // --- UsdPrim: register authored prim metadata -------------------
+        SceneNode::UsdPrim {
+            is_created: false, ..
+        } => {
+            let graph_id = GraphNodeId::from(node_id);
+            if eval_mode == EvalMode::Auto {
+                events.push(NodeGraphEvent::UsdPrimCreate { node_id: graph_id });
+                if let SceneNode::UsdPrim { is_created, .. } = &mut snarl[node_id] {
+                    *is_created = true;
+                }
+            } else {
+                dirty_nodes.insert(graph_id);
             }
         }
 
@@ -611,6 +642,63 @@ mod tests {
         let _id = snarl.insert_node(egui::pos2(0.0, 0.0), SceneNode::usd_read());
 
         let mut dirty = HashSet::new();
+        let events = collect_auto_compute_events(&mut snarl, EvalMode::Auto, &mut dirty);
+
+        assert!(events.is_empty());
+        assert!(dirty.is_empty());
+    }
+
+    #[test]
+    fn test_xform_auto_emits_when_connected() {
+        let mut snarl = Snarl::new();
+        let read_id = snarl.insert_node(egui::pos2(0.0, 0.0), SceneNode::usd_read());
+        let xform_id = snarl.insert_node(egui::pos2(200.0, 0.0), SceneNode::xform());
+        connect(&mut snarl, read_id, xform_id, 0);
+
+        let mut dirty = HashSet::new();
+        let events = collect_auto_compute_events(&mut snarl, EvalMode::Auto, &mut dirty);
+
+        assert_eq!(events.len(), 1);
+        assert!(matches!(&events[0], NodeGraphEvent::XformChanged { .. }));
+        assert!(matches!(
+            &snarl[xform_id],
+            SceneNode::Xform {
+                is_applied: true,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_usd_prim_auto_registers() {
+        let mut snarl = Snarl::new();
+        let prim_id = snarl.insert_node(egui::pos2(0.0, 0.0), SceneNode::usd_prim());
+
+        let mut dirty = HashSet::new();
+        let events = collect_auto_compute_events(&mut snarl, EvalMode::Auto, &mut dirty);
+
+        assert_eq!(events.len(), 1);
+        assert!(matches!(&events[0], NodeGraphEvent::UsdPrimCreate { .. }));
+        assert!(matches!(
+            &snarl[prim_id],
+            SceneNode::UsdPrim {
+                is_created: true,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_graft_branches_has_no_auto_eval_while_held() {
+        let mut snarl = Snarl::new();
+        let read_id = snarl.insert_node(egui::pos2(0.0, 0.0), SceneNode::usd_read());
+        let graft_id = snarl.insert_node(egui::pos2(200.0, 0.0), SceneNode::graft_branches());
+
+        let mut dirty = HashSet::new();
+        let events = collect_auto_compute_events(&mut snarl, EvalMode::Auto, &mut dirty);
+        assert!(events.is_empty());
+
+        connect(&mut snarl, read_id, graft_id, 0);
         let events = collect_auto_compute_events(&mut snarl, EvalMode::Auto, &mut dirty);
 
         assert!(events.is_empty());

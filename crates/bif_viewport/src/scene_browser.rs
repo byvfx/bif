@@ -17,7 +17,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::node_graph::GraphNodeId;
+use crate::node_graph::{GraphNodeId, SceneNode};
 use crate::theme;
 
 /// Which view mode the scene browser is in.
@@ -646,6 +646,10 @@ pub enum ProceduralPrimKind {
         point_count: usize,
         prototype_refs: Vec<String>,
     },
+    /// Transformable authored container.
+    Xform,
+    /// Typeless authored prim.
+    Typeless,
     /// Intermediate scope (auto-generated for path hierarchy).
     Scope,
 }
@@ -656,6 +660,8 @@ impl ProceduralPrimKind {
         match self {
             Self::Mesh { .. } => "Mesh",
             Self::PointInstancer { .. } => "PointInstancer",
+            Self::Xform => "Xform",
+            Self::Typeless => "",
             Self::Scope => "Scope",
         }
     }
@@ -702,6 +708,7 @@ impl CachedSceneGraph {
 /// its source graph node via reverse lookups on the node maps.
 pub fn build_scene_graph_cache(
     scene: &dyn bif_core::SceneQuery,
+    graph: &egui_snarl::Snarl<SceneNode>,
     node_proto_map: &HashMap<GraphNodeId, Vec<usize>>,
     node_cloud_map: &HashMap<GraphNodeId, usize>,
 ) -> CachedSceneGraph {
@@ -776,6 +783,28 @@ pub fn build_scene_graph_cache(
         );
     }
 
+    // Add authored graph-only prims. These do not own geometry yet, but they
+    // must be visible for node-assembly dogfooding and export context.
+    for (node_id, node) in graph.node_ids() {
+        match node {
+            SceneNode::UsdPrim {
+                prim_path,
+                prim_type,
+                ..
+            } if !prim_path.is_empty() => {
+                procedural_prims.insert(
+                    prim_path.clone(),
+                    ProceduralPrim {
+                        path: prim_path.clone(),
+                        kind: prim_type_to_procedural_kind(*prim_type),
+                        source_node: Some(GraphNodeId::from(node_id)),
+                    },
+                );
+            }
+            _ => {}
+        }
+    }
+
     // Auto-generate intermediate Scope prims for missing path segments
     let all_paths: Vec<String> = procedural_prims.keys().cloned().collect();
     for path in &all_paths {
@@ -818,6 +847,14 @@ pub fn build_scene_graph_cache(
     CachedSceneGraph {
         procedural_prims,
         children_index,
+    }
+}
+
+fn prim_type_to_procedural_kind(prim_type: bif_core::usd::UsdPrimType) -> ProceduralPrimKind {
+    match prim_type {
+        bif_core::usd::UsdPrimType::None => ProceduralPrimKind::Typeless,
+        bif_core::usd::UsdPrimType::Scope => ProceduralPrimKind::Scope,
+        bif_core::usd::UsdPrimType::Xform => ProceduralPrimKind::Xform,
     }
 }
 
@@ -1138,7 +1175,8 @@ mod tests {
         let scene = bif_core::Scene::new("test");
         let empty_proto = HashMap::new();
         let empty_cloud = HashMap::new();
-        let cache = build_scene_graph_cache(&scene, &empty_proto, &empty_cloud);
+        let graph = egui_snarl::Snarl::<SceneNode>::new();
+        let cache = build_scene_graph_cache(&scene, &graph, &empty_proto, &empty_cloud);
         // Empty scene should produce empty cache
         assert!(cache.procedural_prims.is_empty());
         assert!(cache.children_index.is_empty());
@@ -1162,7 +1200,8 @@ mod tests {
         proto_map.insert(node_a, vec![0]);
         let empty_cloud = HashMap::new();
 
-        let cache = build_scene_graph_cache(&scene, &proto_map, &empty_cloud);
+        let graph = egui_snarl::Snarl::<SceneNode>::new();
+        let cache = build_scene_graph_cache(&scene, &graph, &proto_map, &empty_cloud);
 
         // Mesh prim should be tagged with node_a
         let prim = cache.procedural_prims.get("/World/Cube").unwrap();
@@ -1199,11 +1238,35 @@ mod tests {
         proto_map.insert(node_b, vec![1]);
         let empty_cloud = HashMap::new();
 
-        let cache = build_scene_graph_cache(&scene, &proto_map, &empty_cloud);
+        let graph = egui_snarl::Snarl::<SceneNode>::new();
+        let cache = build_scene_graph_cache(&scene, &graph, &proto_map, &empty_cloud);
         let counts = cache.prim_count_by_node();
 
         assert_eq!(counts.get(&node_a), Some(&1));
         assert_eq!(counts.get(&node_b), Some(&1));
+    }
+
+    #[test]
+    fn test_authored_usd_prim_in_scene_graph_cache() {
+        let scene = bif_core::Scene::new("test");
+        let mut graph = egui_snarl::Snarl::<SceneNode>::new();
+        let node_id = graph.insert_node(egui::pos2(0.0, 0.0), SceneNode::usd_prim());
+        if let SceneNode::UsdPrim {
+            prim_path,
+            prim_type,
+            ..
+        } = &mut graph[node_id]
+        {
+            *prim_path = "/World/MyPrim".to_string();
+            *prim_type = bif_core::usd::UsdPrimType::Xform;
+        }
+
+        let cache = build_scene_graph_cache(&scene, &graph, &HashMap::new(), &HashMap::new());
+        let prim = cache.procedural_prims.get("/World/MyPrim").unwrap();
+
+        assert_eq!(prim.kind.type_name(), "Xform");
+        assert_eq!(prim.source_node, Some(GraphNodeId::from(node_id)));
+        assert!(cache.procedural_prims.contains_key("/World"));
     }
 
     #[test]
@@ -1232,7 +1295,8 @@ mod tests {
         proto_map.insert(node_b, vec![1]);
         let empty_cloud = HashMap::new();
 
-        let cache = build_scene_graph_cache(&scene, &proto_map, &empty_cloud);
+        let graph = egui_snarl::Snarl::<SceneNode>::new();
+        let cache = build_scene_graph_cache(&scene, &graph, &proto_map, &empty_cloud);
         let composite = CompositeProvider::new(None, &cache);
 
         // Filter to only node_a (upstream set = {node_a})

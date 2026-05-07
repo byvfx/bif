@@ -1312,8 +1312,7 @@ int bif_qt_run_shell(ViewportCallbacks* viewport_cb, ::rust::Str stylesheet) {
         dock->setWidget(panel);
         window.addDockWidget(Qt::RightDockWidgetArea, dock);
     }
-    // Bottom area: Node Graph (still a placeholder — Phase D.2) and
-    // Timeline (Phase D.1) tabified together.
+    // Bottom area: Node Graph and Timeline (Phase D.1) tabified together.
     QDockWidget* node_graph_dock = nullptr;
     QDockWidget* timeline_dock = nullptr;
     {
@@ -1324,7 +1323,7 @@ int bif_qt_run_shell(ViewportCallbacks* viewport_cb, ::rust::Str stylesheet) {
             QDockWidget::DockWidgetMovable |
             QDockWidget::DockWidgetFloatable |
             QDockWidget::DockWidgetClosable);
-        auto* panel = new NodeGraphWidget(node_graph_dock);
+        auto* panel = new NodeGraphWidget(shell_state, node_graph_dock);
         node_graph_dock->setWidget(panel);
         window.addDockWidget(Qt::BottomDockWidgetArea, node_graph_dock);
     }
@@ -1401,10 +1400,10 @@ int bif_qt_run_shell(ViewportCallbacks* viewport_cb, ::rust::Str stylesheet) {
         ws::switch_to(&window, shell_state, last);
     }
 
-    // Phase C.1 demo data — seed a 3-layer fake stack so the
-    // Layer Stack panel has something to show. Phase E replaces
-    // this with real USD stage load.
-    shell_state->seed_demo_layer_stack();
+    QObject::connect(shell_state, &BifShellState::status_messageChanged, &window,
+        [&window, shell_state]() {
+            window.statusBar()->showMessage(shell_state->getStatus_message());
+        });
 
     // Command palette (B.8) — Ctrl+P opens a centered overlay
     // listing the menu actions. Phase C widens to prims/layers/nodes.

@@ -222,7 +222,9 @@ impl Renderer {
                         props = props.with_attribute("Prototypes", &prototype_refs.join(", "));
                     }
                 }
-                ProceduralPrimKind::Scope => {}
+                ProceduralPrimKind::Xform
+                | ProceduralPrimKind::Typeless
+                | ProceduralPrimKind::Scope => {}
             }
         }
 

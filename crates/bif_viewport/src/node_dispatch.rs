@@ -1,5 +1,7 @@
 //! Node graph event dispatch — handles all NodeGraphEvent variants.
 
+use std::collections::{HashMap, HashSet};
+
 use crate::ivar_state::RenderMode;
 use crate::node_graph::{GraphNodeId, NodeGraphEvent, SceneNode};
 use crate::Renderer;
@@ -505,6 +507,12 @@ impl Renderer {
                 // Collect authored prims, graft prefix, and source USD path from upstream
                 let (authored_prims, graft_prefix, upstream_usd_path) =
                     collect_export_context(snarl_id, &self.nodes.node_graph_state.snarl);
+                let node_xform_overrides = collect_node_xform_overrides(
+                    snarl_id,
+                    &self.nodes.node_graph_state.snarl,
+                    &self.nodes.node_proto_map,
+                    self.scene.working_scene.instances(),
+                );
                 // Auto-enable sublayer when upstream UsdRead exists
                 let effective_as_sublayer = as_sublayer || upstream_usd_path.is_some();
                 let config = bif_core::ExportConfig {
@@ -517,7 +525,29 @@ impl Renderer {
                     stage_metadata: self.scene.working_scene.stage_metadata.clone(),
                     hidden_prim_paths: Vec::new(),
                 };
-                match self.export_with_config(&config) {
+                let mut export_edit_state = self.scene.edit_state.clone();
+                for (instance_index, transform) in node_xform_overrides {
+                    let base = export_edit_state
+                        .transform_overrides
+                        .get(&instance_index)
+                        .cloned()
+                        .unwrap_or(transform.base_transform);
+                    let final_matrix = transform.node_matrix * base.to_matrix();
+                    export_edit_state.transform_overrides.insert(
+                        instance_index,
+                        bif_core::Transform::from_matrix(final_matrix),
+                    );
+                }
+
+                let export_result = bif_core::usd::export::export_scene(
+                    &self.scene.working_scene,
+                    &export_edit_state,
+                    &self.scene.instances.prim_paths,
+                    &config,
+                )
+                .map_err(|e| anyhow::anyhow!("Export failed: {}", e));
+
+                match export_result {
                     Ok(result) => {
                         let status = format!("{}", result);
                         log::info!("USD export: {}", status);
@@ -547,10 +577,34 @@ impl Renderer {
                     }
                 }
             }
-            NodeGraphEvent::XformChanged { .. } => {
+            NodeGraphEvent::XformChanged { node_id } => {
+                let snarl_id: egui_snarl::NodeId = node_id.into();
+                if let SceneNode::Xform { is_applied, .. } =
+                    &mut self.nodes.node_graph_state.snarl[snarl_id]
+                {
+                    *is_applied = true;
+                }
                 if let Err(e) = self.reload_working_scene() {
                     log::error!("Failed to reload after xform change: {}", e);
                 }
+            }
+            NodeGraphEvent::UsdPrimCreate { node_id } => {
+                let snarl_id: egui_snarl::NodeId = node_id.into();
+                if let SceneNode::UsdPrim { is_created, .. } =
+                    &mut self.nodes.node_graph_state.snarl[snarl_id]
+                {
+                    *is_created = true;
+                }
+                self.nodes.scene_graph_dirty = true;
+            }
+            NodeGraphEvent::GraftBranchesCompute { node_id } => {
+                let snarl_id: egui_snarl::NodeId = node_id.into();
+                if let SceneNode::GraftBranches { is_computed, .. } =
+                    &mut self.nodes.node_graph_state.snarl[snarl_id]
+                {
+                    *is_computed = true;
+                }
+                self.nodes.scene_graph_dirty = true;
             }
             NodeGraphEvent::SetDisplayNode(id) => {
                 // Toggle: clicking the same node clears display
@@ -725,6 +779,8 @@ impl Renderer {
                             _ => None,
                         }
                     }
+                    SceneNode::Xform { .. } => Some(NodeGraphEvent::XformChanged { node_id }),
+                    SceneNode::UsdPrim { .. } => Some(NodeGraphEvent::UsdPrimCreate { node_id }),
                     _ => None,
                 };
                 if let Some(e) = event {
@@ -753,6 +809,106 @@ pub(crate) fn canonicalize_for_usd(path: &str) -> String {
     result.strip_prefix(r"\\?\").unwrap_or(&result).to_string()
 }
 
+struct NodeXformOverride {
+    node_matrix: bif_math::Mat4,
+    base_transform: bif_core::Transform,
+}
+
+fn collect_node_xform_overrides(
+    export_node: egui_snarl::NodeId,
+    snarl: &egui_snarl::Snarl<SceneNode>,
+    node_proto_map: &HashMap<GraphNodeId, Vec<usize>>,
+    instances: &[bif_core::Instance],
+) -> HashMap<usize, NodeXformOverride> {
+    let active_nodes = crate::node_graph::collect_upstream_nodes(export_node, snarl);
+    let mut xforms = Vec::new();
+
+    for &node_id in &active_nodes {
+        if let SceneNode::Xform {
+            translate,
+            rotate,
+            scale,
+            ..
+        } = &snarl[node_id]
+        {
+            let upstream = collect_xform_input_upstream(node_id, snarl);
+            if upstream.is_empty() {
+                continue;
+            }
+            let depth = upstream
+                .iter()
+                .filter(|&&uid| matches!(snarl[uid], SceneNode::Xform { .. }))
+                .count();
+            xforms.push((node_id, *translate, *rotate, *scale, upstream, depth));
+        }
+    }
+
+    xforms.sort_by_key(|(_, _, _, _, _, depth)| *depth);
+
+    let mut overrides = HashMap::new();
+    for (_, translate, rotate, scale, upstream, _) in xforms {
+        let node_matrix = node_xform_matrix(translate, rotate, scale);
+        if node_matrix.abs_diff_eq(bif_math::Mat4::IDENTITY, 1e-7) {
+            continue;
+        }
+
+        let affected_proto_ids: HashSet<usize> = node_proto_map
+            .iter()
+            .filter(|(node_id, _)| {
+                let snarl_id: egui_snarl::NodeId = (**node_id).into();
+                upstream.contains(&snarl_id)
+            })
+            .flat_map(|(_, proto_ids)| proto_ids.iter().copied())
+            .collect();
+
+        for (instance_index, instance) in instances.iter().enumerate() {
+            if !affected_proto_ids.contains(&instance.prototype_id) {
+                continue;
+            }
+            overrides
+                .entry(instance_index)
+                .and_modify(|entry: &mut NodeXformOverride| {
+                    entry.node_matrix = node_matrix * entry.node_matrix;
+                })
+                .or_insert_with(|| NodeXformOverride {
+                    node_matrix,
+                    base_transform: instance.transform,
+                });
+        }
+    }
+
+    overrides
+}
+
+fn collect_xform_input_upstream(
+    xform_node: egui_snarl::NodeId,
+    snarl: &egui_snarl::Snarl<SceneNode>,
+) -> HashSet<egui_snarl::NodeId> {
+    let in_pin = snarl.in_pin(egui_snarl::InPinId {
+        node: xform_node,
+        input: 0,
+    });
+    in_pin
+        .remotes
+        .first()
+        .map(|remote| crate::node_graph::collect_upstream_nodes(remote.node, snarl))
+        .unwrap_or_default()
+}
+
+fn node_xform_matrix(translate: [f32; 3], rotate: [f32; 3], scale: [f32; 3]) -> bif_math::Mat4 {
+    let rotation = bif_math::Quat::from_euler(
+        bif_math::EulerRot::XYZ,
+        rotate[0].to_radians(),
+        rotate[1].to_radians(),
+        rotate[2].to_radians(),
+    );
+    bif_math::Mat4::from_scale_rotation_translation(
+        bif_math::Vec3::new(scale[0], scale[1], scale[2]),
+        rotation,
+        bif_math::Vec3::new(translate[0], translate[1], translate[2]),
+    )
+}
+
 /// Walk upstream from an export node and collect AuthoredPrims, graft prefix,
 /// and the source USD path from an upstream UsdRead node.
 // TODO: move to node_graph/ops.rs — pure function of (NodeId, &Snarl), no Renderer dependency
@@ -772,6 +928,7 @@ pub(crate) fn collect_export_context(
                 prim_type,
                 kind,
                 specifier,
+                ..
             } => {
                 authored_prims.push(bif_core::AuthoredPrim {
                     path: prim_path.clone(),
@@ -780,7 +937,9 @@ pub(crate) fn collect_export_context(
                     specifier: *specifier,
                 });
             }
-            SceneNode::GraftBranches { destination_path } => {
+            SceneNode::GraftBranches {
+                destination_path, ..
+            } => {
                 graft_prefix = Some(destination_path.clone());
             }
             SceneNode::UsdRead {

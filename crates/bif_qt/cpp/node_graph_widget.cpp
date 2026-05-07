@@ -2,14 +2,19 @@
 
 #include <QBrush>
 #include <QColor>
+#include <QContextMenuEvent>
 #include <QFont>
 #include <QGraphicsScene>
 #include <QGraphicsView>
+#include <QKeyEvent>
+#include <QMenu>
 #include <QPainter>
 #include <QPainterPath>
 #include <QPen>
 #include <QVBoxLayout>
 #include <QWheelEvent>
+
+#include "bif_qt/src/main_window.cxxqt.h"
 
 namespace {
 
@@ -63,6 +68,7 @@ BifNodeGraphicsItem::BifNodeGraphicsItem(const QString& title,
       m_category(category),
       m_inputs(std::move(inputs)),
       m_outputs(std::move(outputs)),
+      m_backend_id(-1),
       m_width(kDefaultNodeWidth),
       m_header_height(kHeaderHeight),
       m_row_height(kRowHeight),
@@ -165,10 +171,20 @@ QPointF BifNodeGraphicsItem::scene_pin_pos(int pin_index, bool is_input) const {
     return mapToScene(pins[pin_index].local_pos);
 }
 
+void BifNodeGraphicsItem::set_backend_id(int backend_id) {
+    m_backend_id = backend_id;
+}
+
+int BifNodeGraphicsItem::backend_id() const {
+    return m_backend_id;
+}
+
 QVariant BifNodeGraphicsItem::itemChange(GraphicsItemChange change,
                                          const QVariant& value) {
     if (change == ItemPositionHasChanged) {
         emit moved();
+    } else if (change == ItemSelectedHasChanged && value.toBool()) {
+        emit selected(m_backend_id);
     }
     return QGraphicsObject::itemChange(change, value);
 }
@@ -215,6 +231,7 @@ NodeGraphView::NodeGraphView(QGraphicsScene* scene, QWidget* parent)
     setRenderHint(QPainter::Antialiasing, true);
     setRenderHint(QPainter::SmoothPixmapTransform, true);
     setDragMode(QGraphicsView::RubberBandDrag);
+    setFocusPolicy(Qt::StrongFocus);
     setTransformationAnchor(QGraphicsView::AnchorUnderMouse);
     setResizeAnchor(QGraphicsView::AnchorViewCenter);
     setViewportUpdateMode(QGraphicsView::BoundingRectViewportUpdate);
@@ -258,12 +275,50 @@ void NodeGraphView::mouseReleaseEvent(QMouseEvent* event) {
     QGraphicsView::mouseReleaseEvent(event);
 }
 
+void NodeGraphView::keyPressEvent(QKeyEvent* event) {
+    if (event->key() == Qt::Key_Delete || event->key() == Qt::Key_Backspace) {
+        emit deleteSelectedNodesRequested();
+        event->accept();
+        return;
+    }
+    QGraphicsView::keyPressEvent(event);
+}
+
+void NodeGraphView::contextMenuEvent(QContextMenuEvent* event) {
+    QMenu menu(this);
+
+    auto add_action = [&](const QString& label, const QString& type_name) {
+        QAction* action = menu.addAction(label);
+        connect(action, &QAction::triggered, this, [this, type_name, event]() {
+            emit addNodeRequested(type_name, mapToScene(event->pos()));
+        });
+    };
+
+    add_action(QStringLiteral("USD Read"), QStringLiteral("UsdRead"));
+    add_action(QStringLiteral("HDRI Environment"), QStringLiteral("HdriEnvironment"));
+    add_action(QStringLiteral("Ivar Render"), QStringLiteral("IvarRender"));
+    menu.addSeparator();
+    add_action(QStringLiteral("Cube"), QStringLiteral("Cube"));
+    add_action(QStringLiteral("Sphere"), QStringLiteral("Sphere"));
+    add_action(QStringLiteral("Camera"), QStringLiteral("Camera"));
+    add_action(QStringLiteral("Scatter Points"), QStringLiteral("ScatterPoints"));
+    add_action(QStringLiteral("Point Instancer"), QStringLiteral("PointInstancer"));
+    add_action(QStringLiteral("Xform"), QStringLiteral("Xform"));
+    add_action(QStringLiteral("USD Prim"), QStringLiteral("UsdPrim"));
+    add_action(QStringLiteral("Graft Branches"), QStringLiteral("GraftBranches"));
+    add_action(QStringLiteral("USD Export"), QStringLiteral("UsdExport"));
+    add_action(QStringLiteral("Cache"), QStringLiteral("Cache"));
+
+    menu.exec(event->globalPos());
+    event->accept();
+}
+
 // ---------------------------------------------------------------------------
 // NodeGraphWidget
 // ---------------------------------------------------------------------------
 
-NodeGraphWidget::NodeGraphWidget(QWidget* parent)
-    : QWidget(parent), m_scene(nullptr), m_view(nullptr) {
+NodeGraphWidget::NodeGraphWidget(BifShellState* state, QWidget* parent)
+    : QWidget(parent), m_state(state), m_scene(nullptr), m_view(nullptr) {
     setObjectName(QStringLiteral("node_graph_widget"));
 
     auto* layout = new QVBoxLayout(this);
@@ -280,11 +335,46 @@ NodeGraphWidget::NodeGraphWidget(QWidget* parent)
     // wrapping QWidget's wheelEvent).
     m_view = new NodeGraphView(m_scene, this);
     layout->addWidget(m_view, 1);
-
-    seed_demo_graph();
+    connect(m_view, &NodeGraphView::addNodeRequested,
+            this, &NodeGraphWidget::add_node_for_type);
+    connect(m_view, &NodeGraphView::deleteSelectedNodesRequested,
+            this, &NodeGraphWidget::delete_selected_nodes);
 }
 
 NodeGraphWidget::~NodeGraphWidget() = default;
+
+int NodeGraphWidget::create_backend_node(const QString& type_name, QPointF scene_pos) {
+    if (!m_state) return -1;
+    if (type_name == QLatin1String("GraftBranches")) {
+        m_state->setStatus_message(QStringLiteral(
+            "Graft Branches is held for redesign; added visual node only."));
+        return -1;
+    }
+    return m_state->on_node_graph_add_node(type_name, scene_pos.x(), scene_pos.y());
+}
+
+void NodeGraphWidget::delete_selected_nodes() {
+    const auto selected_items = m_scene->selectedItems();
+    for (QGraphicsItem* item : selected_items) {
+        auto* node = dynamic_cast<BifNodeGraphicsItem*>(item);
+        if (!node) continue;
+        const int backend_id = node->backend_id();
+        if (m_state && backend_id >= 0) {
+            m_state->on_node_graph_delete_node(backend_id);
+        }
+        m_nodes.removeAll(node);
+        m_scene->removeItem(node);
+        delete node;
+    }
+}
+
+void NodeGraphWidget::on_node_selected(int backend_id) {
+    if (!m_state || backend_id < 0) return;
+    const auto prim_path = m_state->on_node_graph_select_node(backend_id);
+    if (!prim_path.isEmpty()) {
+        m_state->setStatus_message(QStringLiteral("Node Graph: selected %1").arg(prim_path));
+    }
+}
 
 BifNodeGraphicsItem* NodeGraphWidget::add_node(const QString& title,
                                                const QString& type_name,
@@ -305,6 +395,8 @@ BifNodeGraphicsItem* NodeGraphWidget::add_node(const QString& title,
     node->setPos(scene_pos);
     m_scene->addItem(node);
     m_nodes.append(node);
+    connect(node, &BifNodeGraphicsItem::selected,
+            this, &NodeGraphWidget::on_node_selected);
     return node;
 }
 
@@ -326,32 +418,39 @@ BifNodeWire* NodeGraphWidget::connect_pins(BifNodeGraphicsItem* from, int from_p
     return wire;
 }
 
-void NodeGraphWidget::seed_demo_graph() {
-    // A small chain mimicking a typical BIF assembly graph:
-    //   UsdRead → Scatter → Xform → IvarRender
-    // + a branching UsdPrim feed into GraftBranches.
-    auto* read = add_node(
-        QStringLiteral("Hero"), QStringLiteral("UsdRead"),
-        NodeCategory::Composition, 0, 1, QPointF(-540, -80));
+void NodeGraphWidget::add_node_for_type(const QString& type_name, QPointF scene_pos) {
+    const int backend_id = create_backend_node(type_name, scene_pos);
+    BifNodeGraphicsItem* node = nullptr;
 
-    auto* scatter = add_node(
-        QStringLiteral("Scatter100"), QStringLiteral("Scatter"),
-        NodeCategory::Operation, 1, 1, QPointF(-280, -80));
+    if (type_name == QLatin1String("UsdRead")) {
+        node = add_node(QStringLiteral("USD Read"), type_name, NodeCategory::Composition, 0, 1, scene_pos);
+    } else if (type_name == QLatin1String("HdriEnvironment")) {
+        node = add_node(QStringLiteral("HDRI Environment"), type_name, NodeCategory::Environment, 0, 1, scene_pos);
+    } else if (type_name == QLatin1String("IvarRender")) {
+        node = add_node(QStringLiteral("Ivar Render"), type_name, NodeCategory::Render, 2, 0, scene_pos);
+    } else if (type_name == QLatin1String("Cube")) {
+        node = add_node(QStringLiteral("Cube"), type_name, NodeCategory::Operation, 1, 1, scene_pos);
+    } else if (type_name == QLatin1String("Sphere")) {
+        node = add_node(QStringLiteral("Sphere"), type_name, NodeCategory::Operation, 1, 1, scene_pos);
+    } else if (type_name == QLatin1String("Camera")) {
+        node = add_node(QStringLiteral("Camera"), type_name, NodeCategory::Operation, 1, 1, scene_pos);
+    } else if (type_name == QLatin1String("ScatterPoints")) {
+        node = add_node(QStringLiteral("Scatter Points"), type_name, NodeCategory::Operation, 1, 1, scene_pos);
+    } else if (type_name == QLatin1String("PointInstancer")) {
+        node = add_node(QStringLiteral("Point Instancer"), type_name, NodeCategory::Operation, 2, 1, scene_pos);
+    } else if (type_name == QLatin1String("Xform")) {
+        node = add_node(QStringLiteral("Xform"), type_name, NodeCategory::Operation, 1, 1, scene_pos);
+    } else if (type_name == QLatin1String("UsdPrim")) {
+        node = add_node(QStringLiteral("USD Prim"), type_name, NodeCategory::Composition, 1, 1, scene_pos);
+    } else if (type_name == QLatin1String("GraftBranches")) {
+        node = add_node(QStringLiteral("Graft Branches"), type_name, NodeCategory::Composition, 4, 1, scene_pos);
+    } else if (type_name == QLatin1String("UsdExport")) {
+        node = add_node(QStringLiteral("USD Export"), type_name, NodeCategory::Composition, 1, 0, scene_pos);
+    } else if (type_name == QLatin1String("Cache")) {
+        node = add_node(QStringLiteral("Cache"), type_name, NodeCategory::Operation, 1, 1, scene_pos);
+    }
 
-    auto* xform = add_node(
-        QStringLiteral("Offset"), QStringLiteral("Xform"),
-        NodeCategory::Operation, 1, 1, QPointF(-20, -80));
-
-    auto* render = add_node(
-        QStringLiteral("Beauty"), QStringLiteral("IvarRender"),
-        NodeCategory::Render, 2, 0, QPointF(240, -80));
-
-    auto* hdri = add_node(
-        QStringLiteral("Studio"), QStringLiteral("HdriEnvironment"),
-        NodeCategory::Environment, 0, 1, QPointF(-20, 120));
-
-    connect_pins(read, 0, scatter, 0);
-    connect_pins(scatter, 0, xform, 0);
-    connect_pins(xform, 0, render, 0);
-    connect_pins(hdri, 0, render, 1);
+    if (node) {
+        node->set_backend_id(backend_id);
+    }
 }

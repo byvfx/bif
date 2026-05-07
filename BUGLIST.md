@@ -1,9 +1,10 @@
 # BUGLIST
 
-Last updated: 2026-05-05
+Last updated: 2026-05-06
 
 ## Active Bugs
 
+- **Node MVP dogfood follow-ups (2026-05-06).** Qt node creation works, but several UX/state-sync gaps were observed: node-add confirmation was not visible in the status bar/log output; empty-stage startup still showed template/demo layer stack and scene browser data; viewport gizmo moves can snap back after release; Qt graph nodes could not be deleted; selecting a node did not mirror to the scene browser; newly added node prims did not refresh into the scene browser.
 - **bif_qt scene browser: residual child-count parity check vs egui/usdview.** Qt now routes through `CompositeProvider` and filters empty child paths at the source, but a real-scene parity pass against usdview is still useful if a visible gap reappears. Noted 2026-04-16; narrowed 2026-04-30.
 - OCIO ACES is not working in the viewport (Hill/Narkowicz approx active) full OCIO still needs to be implemented.
 

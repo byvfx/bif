@@ -450,6 +450,105 @@ pub fn required_limits() -> wgpu::Limits {
 }
 
 impl Renderer {
+    /// Create a node graph node from an external UI surface such as the Qt graph.
+    ///
+    /// `GraftBranches` is intentionally not bridged here while its behavior is
+    /// being redesigned.
+    pub fn node_graph_add_node(
+        &mut self,
+        type_name: &str,
+        x: f32,
+        y: f32,
+    ) -> Option<node_graph::GraphNodeId> {
+        let pos = egui::pos2(x, y);
+        let node_id = match type_name {
+            "UsdRead" => self.nodes.node_graph_state.add_usd_read(pos),
+            "HdriEnvironment" => self.nodes.node_graph_state.add_hdri_environment(pos),
+            "IvarRender" => self.nodes.node_graph_state.add_ivar_render(pos),
+            "Cube" => self
+                .nodes
+                .node_graph_state
+                .add_primitive(bif_core::PrimitiveKind::Cube, pos),
+            "Sphere" => self
+                .nodes
+                .node_graph_state
+                .add_primitive(bif_core::PrimitiveKind::Sphere, pos),
+            "Camera" => self
+                .nodes
+                .node_graph_state
+                .add_primitive(bif_core::PrimitiveKind::Camera, pos),
+            "ScatterPoints" => self.nodes.node_graph_state.add_scatter_points(pos),
+            "PointInstancer" => self.nodes.node_graph_state.add_point_instancer(pos),
+            "Xform" => self.nodes.node_graph_state.add_xform(pos),
+            "UsdPrim" => self.nodes.node_graph_state.add_usd_prim(pos),
+            "UsdExport" => self.nodes.node_graph_state.add_usd_export(pos),
+            "Cache" => self.nodes.node_graph_state.add_cache(pos),
+            "GraftBranches" => return None,
+            _ => return None,
+        };
+
+        let graph_id = node_graph::GraphNodeId::from(node_id);
+        self.nodes.node_graph_state.selected_node = Some(graph_id);
+        self.nodes.node_graph_state.dirty_nodes.insert(graph_id);
+        self.nodes.scene_graph_dirty = true;
+        self.project.mark_dirty();
+        Some(graph_id)
+    }
+
+    pub fn node_graph_delete_node(&mut self, node_id: node_graph::GraphNodeId) -> bool {
+        let snarl_id: egui_snarl::NodeId = node_id.into();
+        let node_exists = self
+            .nodes
+            .node_graph_state
+            .snarl
+            .node_ids()
+            .any(|(id, _)| id == snarl_id);
+        if !node_exists {
+            return false;
+        }
+
+        if self.nodes.node_graph_state.selected_node == Some(node_id) {
+            self.nodes.node_graph_state.selected_node = None;
+        }
+        if self.nodes.node_graph_state.display_node == Some(node_id) {
+            self.nodes.node_graph_state.display_node = None;
+        }
+        self.nodes.node_graph_state.dirty_nodes.remove(&node_id);
+        self.nodes.node_graph_state.snarl.remove_node(snarl_id);
+        self.handle_node_graph_event(node_graph::NodeGraphEvent::DeleteNode(node_id));
+        self.nodes.scene_graph_dirty = true;
+        self.project.mark_dirty();
+        true
+    }
+
+    pub fn node_graph_select_node(&mut self, node_id: node_graph::GraphNodeId) -> Option<String> {
+        let snarl_id: egui_snarl::NodeId = node_id.into();
+        let node_exists = self
+            .nodes
+            .node_graph_state
+            .snarl
+            .node_ids()
+            .any(|(id, _)| id == snarl_id);
+        if !node_exists {
+            return None;
+        }
+
+        self.handle_node_graph_event(node_graph::NodeGraphEvent::SelectNode(node_id));
+        let prim_path = match &self.nodes.node_graph_state.snarl[snarl_id] {
+            node_graph::SceneNode::Primitive { prim_path, .. }
+            | node_graph::SceneNode::PointInstancer { prim_path, .. }
+            | node_graph::SceneNode::UsdPrim { prim_path, .. } => Some(prim_path.clone()),
+            node_graph::SceneNode::GraftBranches {
+                destination_path, ..
+            } => Some(destination_path.clone()),
+            _ => None,
+        };
+        if let Some(path) = prim_path.as_deref() {
+            self.handle_prim_selected(path.to_string());
+        }
+        prim_path
+    }
+
     /// Create a new renderer from caller-provided wgpu primitives.
     ///
     /// `bif_viewer` (winit) and `bif_qt` (Qt / raw HWND) each build their own

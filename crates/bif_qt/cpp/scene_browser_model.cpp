@@ -15,42 +15,6 @@ struct PrimNodeData {
     int child_count = 0;
 };
 
-// Build a child node and parent it to `parent`. Returns the raw
-// pointer for further chaining. Color index alternates by depth so
-// the demo tree shows the layer-color-dot system across rows.
-SceneBrowserModel::PrimNode* add_child(
-    SceneBrowserModel::PrimNode* parent,
-    const QString& name,
-    const QString& type_name,
-    int color_index,
-    const QString& explicit_path = QString(),
-    const QString& kind = QString(),
-    bool is_visible = true,
-    bool is_active = true) {
-    auto node = std::make_unique<SceneBrowserModel::PrimNode>();
-    node->name = name;
-    node->type_name = type_name;
-    node->kind = kind;
-    node->color_index = color_index;
-    node->is_visible = is_visible;
-    node->is_active = is_active;
-    node->child_count = 0;
-    node->children_populated = true;
-    node->parent = parent;
-    if (!explicit_path.isEmpty()) {
-        node->path = explicit_path;
-    } else {
-        node->path = parent->path == QLatin1String("/")
-            ? QStringLiteral("/%1").arg(name)
-            : QStringLiteral("%1/%2").arg(parent->path).arg(name);
-    }
-    auto* raw = node.get();
-    parent->children.push_back(std::move(node));
-    parent->child_count = static_cast<int>(parent->children.size());
-    parent->children_populated = true;
-    return raw;
-}
-
 PrimNodeData describe_prim(BifShellState* state, const QString& path) {
     PrimNodeData data;
     data.path = path;
@@ -138,13 +102,10 @@ SceneBrowserModel::SceneBrowserModel(BifShellState* state, QObject* parent)
     m_root->color_index = -1;
     m_root->parent = nullptr;
 
-    // Initial content — if a stage is already loaded, pull real data;
-    // otherwise seed demo tree so first-launch still looks alive.
+    // Initial content: pull real data if a stage/procedural graph is loaded.
+    // Empty app state intentionally stays empty.
     if (m_state && m_state->root_prim_count() > 0) {
-        m_has_ever_loaded_stage = true;
         rebuild_from_state();
-    } else {
-        seed_demo_tree();
     }
 
     if (m_state) {
@@ -168,42 +129,11 @@ void SceneBrowserModel::rebuild_from_state() {
 
     if (m_state) {
         const auto roots = describe_root_prims(m_state);
-        if (!roots.empty()) {
-            m_has_ever_loaded_stage = true;
-        }
         for (const auto& root_data : roots) {
             m_root->children.push_back(make_node(m_root.get(), root_data));
         }
         m_root->child_count = static_cast<int>(m_root->children.size());
     }
-
-    endResetModel();
-
-    // Keep first-launch lively until a real stage has loaded once.
-    // After that, a close-stage should leave the tree empty.
-    if (m_root->children.empty() && !m_has_ever_loaded_stage) {
-        seed_demo_tree();
-    }
-}
-
-void SceneBrowserModel::seed_demo_tree() {
-    beginResetModel();
-    m_root->children.clear();
-
-    auto* world = add_child(m_root.get(), QStringLiteral("World"), QStringLiteral("Xform"), 0);
-
-    auto* hero = add_child(world, QStringLiteral("Hero"), QStringLiteral("Xform"), 1);
-    auto* geom = add_child(hero, QStringLiteral("Geom"), QStringLiteral("Scope"), 2);
-    add_child(geom, QStringLiteral("Body"), QStringLiteral("Mesh"), 2);
-    add_child(geom, QStringLiteral("Head"), QStringLiteral("Mesh"), 2);
-    auto* skel = add_child(hero, QStringLiteral("Skel"), QStringLiteral("SkelRoot"), 1);
-    add_child(skel, QStringLiteral("Skeleton"), QStringLiteral("Skeleton"), 1);
-
-    auto* sky = add_child(world, QStringLiteral("Sky"), QStringLiteral("Xform"), 0);
-    add_child(sky, QStringLiteral("Sun"), QStringLiteral("DistantLight"), 0);
-    add_child(sky, QStringLiteral("Dome"), QStringLiteral("DomeLight"), 0);
-
-    add_child(world, QStringLiteral("Ground"), QStringLiteral("Mesh"), 0);
 
     endResetModel();
 }

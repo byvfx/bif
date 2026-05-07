@@ -25,6 +25,15 @@ pub(crate) fn mark_node_dirty(node_id: NodeId, snarl: &mut Snarl<SceneNode>) {
         SceneNode::ScatterPoints { is_computed, .. } => {
             *is_computed = false;
         }
+        SceneNode::Xform { is_applied, .. } => {
+            *is_applied = false;
+        }
+        SceneNode::UsdPrim { is_created, .. } => {
+            *is_created = false;
+        }
+        SceneNode::GraftBranches { is_computed, .. } => {
+            *is_computed = false;
+        }
         SceneNode::Cache {
             is_cached,
             cache_key,

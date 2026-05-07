@@ -8,10 +8,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Qt node graph dogfood bridge** (2026-05-06). Right-click node creation in the Qt graph now creates backend renderer nodes for the supported node set, updates status-bar feedback, refreshes authored graph-only prims into the scene browser, and mirrors node selection into the scene browser. Graft Branches remains visual-only while its design is on hold.
 - **Comprehensive USD test fixtures** (2026-05-03). Two new fixture sets: `test_assets/comprehensive.usda` (root + comp_overrides/comp_base sublayers — variants, full UsdPreviewSurface network, lights, camera, mesh primvars, PointInstancer, collections, mute demos) and `test_assets/scene/` (root/anim/shot_overrides/geo — timeSamples for camera, visibility, wave mesh, rigged arm).
 
 ### Fixed
 
+- **Qt node graph delete and empty-state cleanup** (2026-05-06). New empty stages no longer seed template/demo layer-stack or scene-browser data, and deleting Qt graph nodes removes the matching backend graph node instead of leaving stale renderer state behind.
 - **Dogfood viewport edit refresh** (2026-05-05). USD edits, USDA Apply, visibility toggles, material parameter edits, material binding, shading-model swaps, undo, and redo now refresh the working viewport scene from the live stage path. The Qt scene browser uses a dedicated fixed-width visibility column for eye toggles, and the Property Inspector visibility checkbox was removed so visibility is controlled from the tree.
 - **UNC path handling in USD bridge on Windows SMB drives** (2026-05-03). `usd_bridge.cpp` was converting `\\server\share\...` to `//server/share/...` at two sites, breaking USD's asset resolver. Guard added to skip the backslash→slash replacement for paths starting with `\\`.
 - **`primvars:displayColor` now visible in Vulkan viewport** (2026-05-03). Meshes with display color but no `material:binding` rendered grey. `MeshData` now carries the first display_color; `scene_loader` synthesizes a flat-color `bif_core::Material` per prototype and appends it to the GPU material table so the Vulkan shader resolves it correctly.

@@ -3,6 +3,7 @@
 
 #include <QColor>
 #include <QHeaderView>
+#include <QItemSelectionModel>
 #include <QLineEdit>
 #include <QMouseEvent>
 #include <QPainter>
@@ -222,6 +223,10 @@ SceneBrowserWidget::SceneBrowserWidget(BifShellState* state, QWidget* parent)
         this, &SceneBrowserWidget::on_filter_changed);
     QObject::connect(m_view->selectionModel(), &QItemSelectionModel::currentChanged,
         this, &SceneBrowserWidget::on_selection_changed);
+    if (m_state) {
+        QObject::connect(m_state, &BifShellState::selected_prim_pathChanged,
+            this, &SceneBrowserWidget::on_external_selection_changed);
+    }
     QObject::connect(m_view, &QTreeView::expanded, this,
         [this](const QModelIndex& proxy_index) {
             if (!m_model || !m_filter) return;
@@ -233,6 +238,46 @@ SceneBrowserWidget::SceneBrowserWidget(BifShellState* state, QWidget* parent)
 }
 
 SceneBrowserWidget::~SceneBrowserWidget() = default;
+
+QModelIndex SceneBrowserWidget::find_source_index_for_path(const QString& path,
+                                                           const QModelIndex& parent) {
+    if (!m_model) return {};
+    const int rows = m_model->rowCount(parent);
+    for (int row = 0; row < rows; ++row) {
+        const QModelIndex idx = m_model->index(row, SceneBrowserModel::ColName, parent);
+        if (!idx.isValid()) continue;
+        if (idx.data(SceneBrowserModel::PathRole).toString() == path) {
+            return idx;
+        }
+        if (m_model->canFetchMore(idx)) {
+            m_model->fetchMore(idx);
+        }
+        const QModelIndex child = find_source_index_for_path(path, idx);
+        if (child.isValid()) return child;
+    }
+    return {};
+}
+
+void SceneBrowserWidget::select_path(const QString& path) {
+    if (!m_view || !m_model || !m_filter || path.isEmpty()) return;
+    const QModelIndex source_idx = find_source_index_for_path(path);
+    if (!source_idx.isValid()) return;
+    QModelIndex proxy_idx = m_filter->mapFromSource(source_idx);
+    if (!proxy_idx.isValid()) return;
+    if (m_view->currentIndex() == proxy_idx) return;
+
+    QModelIndex parent = proxy_idx.parent();
+    while (parent.isValid()) {
+        m_view->expand(parent);
+        parent = parent.parent();
+    }
+    m_syncing_external_selection = true;
+    m_view->selectionModel()->setCurrentIndex(
+        proxy_idx,
+        QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+    m_syncing_external_selection = false;
+    m_view->scrollTo(proxy_idx, QAbstractItemView::PositionAtCenter);
+}
 
 bool SceneBrowserWidget::eventFilter(QObject* watched, QEvent* event) {
     if (watched != m_view->viewport()
@@ -274,8 +319,14 @@ void SceneBrowserWidget::on_filter_changed(const QString& text) {
     }
 }
 
+void SceneBrowserWidget::on_external_selection_changed() {
+    if (!m_state) return;
+    select_path(m_state->getSelected_prim_path());
+}
+
 void SceneBrowserWidget::on_selection_changed(const QModelIndex& current,
                                               const QModelIndex& /*previous*/) {
+    if (m_syncing_external_selection) return;
     if (!m_state || !current.isValid()) return;
     const auto path = current.data(SceneBrowserModel::PathRole).toString();
     const auto type = current.data(SceneBrowserModel::TypeNameRole).toString();

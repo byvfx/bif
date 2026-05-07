@@ -495,6 +495,22 @@ pub mod qobject {
         #[qinvokable]
         fn on_set_grid_visible(self: Pin<&mut BifShellState>, visible: bool);
 
+        /// Node Graph: create a real viewport node for the Qt graph item.
+        /// Returns the backend node id, or -1 when the type is not currently bridged.
+        #[qinvokable]
+        fn on_node_graph_add_node(
+            self: Pin<&mut BifShellState>,
+            type_name: QString,
+            x: f64,
+            y: f64,
+        ) -> i32;
+
+        #[qinvokable]
+        fn on_node_graph_delete_node(self: Pin<&mut BifShellState>, node_id: i32) -> bool;
+
+        #[qinvokable]
+        fn on_node_graph_select_node(self: Pin<&mut BifShellState>, node_id: i32) -> QString;
+
         /// File/Save As (Ctrl+Shift+S). Phase B stub.
         #[qinvokable]
         fn on_save_as(self: Pin<&mut BifShellState>);
@@ -1024,13 +1040,18 @@ impl qobject::BifShellState {
         ))
     }
 
-    /// Phase B stub — logs, updates status. Phase C wires to
-    /// Scene reset + new-stage creation via bif_core.
     fn on_new_stage(mut self: Pin<&mut Self>) {
         log::info!("action: File/New Stage");
-        self.as_mut().set_status_message(cxx_qt_lib::QString::from(
-            "New Stage — not yet implemented (v0.16)",
-        ));
+        with_viewport_mut(|vp| vp.renderer_mut().reset_scene_state());
+        self.as_mut().rust_mut().scene_layer_state = None;
+        self.as_mut()
+            .set_selected_prim_path(cxx_qt_lib::QString::from(""));
+        self.as_mut()
+            .set_selected_prim_type(cxx_qt_lib::QString::from(""));
+        bump_revision(self.as_mut());
+        bump_scene_browser_revision(self.as_mut());
+        self.as_mut()
+            .set_status_message(cxx_qt_lib::QString::from("New Stage: empty scene"));
     }
 
     /// Phase B stub — Phase C (actually v0.16) wires to save logic.
@@ -1682,6 +1703,107 @@ impl qobject::BifShellState {
         log::info!("set_grid_visible({visible}) applied={applied}");
         self.as_mut()
             .set_status_message(cxx_qt_lib::QString::from(msg));
+    }
+
+    fn on_node_graph_add_node(
+        mut self: Pin<&mut Self>,
+        type_name: cxx_qt_lib::QString,
+        x: f64,
+        y: f64,
+    ) -> i32 {
+        let type_name_str: String = (&type_name).into();
+        if type_name_str == "GraftBranches" {
+            self.as_mut().set_status_message(cxx_qt_lib::QString::from(
+                "Graft Branches is held for redesign; added visual node only.",
+            ));
+            return -1;
+        }
+
+        let node_id = with_viewport_mut(|vp| {
+            let renderer = vp.renderer_mut();
+            let node_id = renderer.node_graph_add_node(&type_name_str, x as f32, y as f32);
+            renderer.flush_node_graph();
+            node_id
+        })
+        .flatten();
+
+        match node_id {
+            Some(id) if id.0 <= i32::MAX as u64 => {
+                let label = type_name_str.replace("Usd", "USD ");
+                bump_scene_browser_revision(self.as_mut());
+                log::info!("node graph: added {type_name_str} as {id}");
+                self.as_mut()
+                    .set_status_message(cxx_qt_lib::QString::from(&format!(
+                        "Node Graph: added {label} ({id})"
+                    )));
+                id.0 as i32
+            }
+            Some(id) => {
+                log::warn!("node graph id {id} does not fit Qt i32 bridge");
+                self.as_mut().set_status_message(cxx_qt_lib::QString::from(
+                    "Node Graph: node created, but Qt id bridge overflowed.",
+                ));
+                -1
+            }
+            None => {
+                self.as_mut()
+                    .set_status_message(cxx_qt_lib::QString::from(&format!(
+                        "Node Graph: unsupported node type {type_name_str}"
+                    )));
+                -1
+            }
+        }
+    }
+
+    fn on_node_graph_delete_node(mut self: Pin<&mut Self>, node_id: i32) -> bool {
+        if node_id < 0 {
+            return false;
+        }
+        let graph_id = bif_viewport::GraphNodeId(node_id as u64);
+        let deleted = with_viewport_mut(|vp| {
+            let renderer = vp.renderer_mut();
+            let deleted = renderer.node_graph_delete_node(graph_id);
+            if deleted {
+                renderer.flush_node_graph();
+            }
+            deleted
+        })
+        .unwrap_or(false);
+        if deleted {
+            bump_scene_browser_revision(self.as_mut());
+            log::info!("node graph: deleted {graph_id}");
+            self.as_mut()
+                .set_status_message(cxx_qt_lib::QString::from(&format!(
+                    "Node Graph: deleted {graph_id}"
+                )));
+        }
+        deleted
+    }
+
+    fn on_node_graph_select_node(mut self: Pin<&mut Self>, node_id: i32) -> cxx_qt_lib::QString {
+        if node_id < 0 {
+            return cxx_qt_lib::QString::default();
+        }
+        let graph_id = bif_viewport::GraphNodeId(node_id as u64);
+        let prim_path = with_viewport_mut(|vp| vp.renderer_mut().node_graph_select_node(graph_id))
+            .flatten()
+            .unwrap_or_default();
+        if !prim_path.is_empty() {
+            let type_name = with_scene_browser_provider(|provider| {
+                provider
+                    .get_prim_info(&prim_path)
+                    .map(|info| info.type_name)
+                    .unwrap_or_default()
+            })
+            .unwrap_or_default();
+            self.as_mut()
+                .set_selected_prim_path(cxx_qt_lib::QString::from(&prim_path));
+            self.as_mut()
+                .set_selected_prim_type(cxx_qt_lib::QString::from(&type_name));
+            refresh_selected_prim_stack_cache(self.as_mut());
+            log::info!("node graph: selected {graph_id} -> {prim_path}");
+        }
+        cxx_qt_lib::QString::from(&prim_path)
     }
 
     // -----------------------------------------------------------------

@@ -6,10 +6,9 @@
 // through BifNodeWire (QGraphicsPathItem). Pan via middle-mouse
 // drag, zoom via mouse wheel.
 //
-// Phase D.2 ships with a hardcoded 4-node demo graph (UsdRead →
-// Scatter → Xform → IvarRender) so the panel UX can be validated
-// independent of a real graph backend. Phase E replaces demo_graph
-// with a bridge to bif_viewport's NodeGraphContext + SceneNode enum.
+// Phase D.2 shipped as a visual graph surface independent of a real
+// graph backend. The current bridge creates matching SceneNode entries
+// in bif_viewport for Qt-created nodes; wires/properties follow later.
 //
 // Node color coding (ADR-003 blue/orange composition/operations) is
 // a Phase D.2 polish item — baseline here uses uniform neutral grey
@@ -25,6 +24,7 @@
 #include <QGraphicsView>
 
 class QGraphicsScene;
+class BifShellState;
 
 /// Category colors — composition nodes (USD ingest/export) get a
 /// blue accent, operations (scatter/xform/instance) get orange.
@@ -65,10 +65,14 @@ public:
     /// against `m_inputs`; otherwise `m_outputs`.
     QPointF scene_pin_pos(int pin_index, bool is_input) const;
 
+    void set_backend_id(int backend_id);
+    int backend_id() const;
+
 signals:
     /// Fired whenever the node's scene position changes so wires
     /// attached to its pins can repath themselves.
     void moved();
+    void selected(int backend_id);
 
 protected:
     QVariant itemChange(GraphicsItemChange change,
@@ -80,6 +84,7 @@ private:
     NodeCategory m_category;
     QVector<Pin> m_inputs;
     QVector<Pin> m_outputs;
+    int m_backend_id;
     qreal m_width;
     qreal m_header_height;
     qreal m_row_height;
@@ -112,20 +117,29 @@ class NodeGraphView : public QGraphicsView {
 public:
     explicit NodeGraphView(QGraphicsScene* scene, QWidget* parent = nullptr);
 
+signals:
+    void addNodeRequested(const QString& type_name, QPointF scene_pos);
+    void deleteSelectedNodesRequested();
+
 protected:
     void wheelEvent(QWheelEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
+    void keyPressEvent(QKeyEvent* event) override;
+    void contextMenuEvent(QContextMenuEvent* event) override;
 };
 
 class NodeGraphWidget : public QWidget {
     Q_OBJECT
 public:
-    explicit NodeGraphWidget(QWidget* parent = nullptr);
+    explicit NodeGraphWidget(BifShellState* state, QWidget* parent = nullptr);
     ~NodeGraphWidget() override;
 
 private:
-    void seed_demo_graph();
+    int create_backend_node(const QString& type_name, QPointF scene_pos);
+    void add_node_for_type(const QString& type_name, QPointF scene_pos);
+    void delete_selected_nodes();
+    void on_node_selected(int backend_id);
     BifNodeGraphicsItem* add_node(const QString& title,
                                   const QString& type_name,
                                   NodeCategory category,
@@ -135,6 +149,7 @@ private:
     BifNodeWire* connect_pins(BifNodeGraphicsItem* from, int from_pin,
                               BifNodeGraphicsItem* to, int to_pin);
 
+    BifShellState* m_state;
     QGraphicsScene* m_scene;
     NodeGraphView* m_view;
     QVector<BifNodeGraphicsItem*> m_nodes;
