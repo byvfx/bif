@@ -42,13 +42,13 @@ Current active milestone after v0.16.0 shipped on 2026-04-27. Function-first edi
 
 | Version | Theme | Est. Hours | Key Milestones |
 |---------|-------|-----------|----------------|
-| v0.17.0 | Viewport Performance | 25-35h | M22 + payload policies + texture nodes in material editor + `cpp_bridge.rs` split |
-| v0.18.0 | AI Integration | 38-59h | Material creator, scene builder, ComfyUI |
-| v0.19.0 | Context System | 30-40h | M39 |
-| v0.20.0 | Scene Authoring + Layer Diff | 35-45h | M37, M38 + workflow Phase 7 |
-| v0.21.0 | MaterialX Authoring | 25-30h | M40 |
-| v0.22.0 | GPU Path Tracing | 30-40h | M27 |
-| v0.23.0 | Volumes & OpenVDB | 20-30h | M25 |
+| v0.17.0 | Viewport Performance | 25-35h | M22 + payload policies + `cpp_bridge.rs` split |
+| v0.18.0 | Scene Authoring + Layer Diff | 35-45h | M37, M38 + workflow Phase 7 |
+| v0.19.0 | MaterialX Authoring | 25-30h | M40 — full node-based material editor, `standard_surface` graph, XML round-trip, node previews. Built on context system. |
+| v0.20.0 | Volumes & OpenVDB | 20-30h | M25 — volume prim loading, OpenVDB grid sampling, density→shader binding, volume rendering path |
+| v0.21.0 | GPU Path Tracing | 30-40h | M27 |
+| v0.22.0 | Context System | 30-40h | M39 — Assembly/Materials/Animation contexts, multi-graph architecture. Each context is a sandboxed node graph + viewport + property sheet. Materials context = MaterialX graph editor. Assembly context = scene layout + USD ops. Animation context = curve editor + clip sequencing. Highest architectural risk — touches scene_loader, render, property_inspector. |
+| v0.23.0 | AI Integration | 38-59h | Material creator, scene builder, ComfyUI |
 | v0.24.0 | API & Integration | 40-55h | M35, M34 |
 | v0.25.0+ | Framework Extraction | 40+h | M36+ |
 
@@ -121,25 +121,9 @@ M22 (Vulkan 1.3, lazy loading, GPU-driven rendering) + deferred loading from wor
 - `PrototypeState` enum (BoundingBox / Loaded / Deferred)
 - LRU cache for prototype eviction + Embree BVH integration
 - Camera depth of field and lens distortion
-- **Material editor texture nodes:** UsdUVTexture, PrimvarReader, Transform2d nodes in material graph
 - **Tech debt — split `crates/bif_core/src/usd/cpp_bridge.rs`** (~4000 lines after v0.16 C4a). Target layout: `usd/ffi/{stage,layer,prim,xform,material,variant,instance}.rs`. Carry-over from v0.16 audit (ADR-008 follow-up).
 
-### v0.18.0 — AI Integration
-
-New `bif_ai` crate (feature-gated `--features ai`). Three AI-assisted workflows: material creation from text, scene building from natural language, ComfyUI render post-processing. Provider-agnostic (Ollama default, OpenAI, Anthropic). Async bridge via channels — zero async contagion. AI produces inert data, viewport executes. Ships independently across 5 phases.
-
-- Phase 1: Material creator (text → OpenPBR params, validated)
-- Phase 2: Provider breadth (OpenAI + Anthropic + config UI)
-- Phase 3: Scene builder (text → SceneAction plan → preview/confirm → node graph)
-- Phase 4: ComfyUI integration (render → workflow template → post-processed result)
-- Phase 5: Polish (error UX, caching, multi-turn refinement)
-- **Validation**: "brushed steel" → valid Material; "red cube next to blue sphere" → node graph; render → ComfyUI upscale
-
-### v0.19.0 — Context System
-
-M39 (Assembly/Materials/Animation contexts, multi-graph). Built in Qt. Highest architectural risk — touches scene_loader, render, property_inspector.
-
-### v0.20.0 — Scene Authoring + Layer Diff
+### v0.18.0 — Scene Authoring + Layer Diff
 
 M37 (lights) + M38 (materials) + workflow Phase 7. "Create content + see what you changed."
 
@@ -155,7 +139,7 @@ M37 (lights) + M38 (materials) + workflow Phase 7. "Create content + see what yo
 - Shadow control per-light (UsdLuxShadowAPI — enable, color, distance, falloff)
 - Portal lights (DomeLight portals for interior scenes)
 
-### v0.21.0 — MaterialX Authoring
+### v0.19.0 — MaterialX Authoring
 
 M40 (standard_surface graph, XML round-trip, node previews). Built on context system in Materials context. Full node-based material editor. See [Material Editor Design](docs/ux/MATERIAL_EDITOR_DESIGN.md).
 
@@ -167,13 +151,34 @@ M40 (standard_surface graph, XML round-trip, node previews). Built on context sy
 - Node color coding: blue=OpenPBR, green=UsdPreview, gold=MaterialX, light blue=textures, gray=utility
 - Two-mode sync: param sheet edits update graph nodes and vice versa
 
-### v0.22.0 — GPU Path Tracing
+### v0.20.0 — Volumes & OpenVDB
+
+M25 (fog, smoke, clouds, VDB support). Fills the biggest production content gap.
+
+### v0.21.0 — GPU Path Tracing
 
 M27 (wgpu compute, BVH on GPU, ReSTIR). Fast material preview for authoring workflows.
 
-### v0.23.0 — Volumes & OpenVDB
+### v0.22.0 — Context System
 
-M25 (fog, smoke, clouds, VDB support). Fills the biggest production content gap.
+M39 — Assembly/Materials/Animation contexts, multi-graph architecture. Each context is a sandboxed environment with its own node graph, viewport, and property sheet, all sharing a single USD stage.
+
+- **Assembly context:** scene layout operations — arrange, compose, override, instance. Primary editing space.
+- **Materials context:** MaterialX graph editor (powers v0.19.0 MaterialX Authoring). Shader networks, preview renders.
+- **Animation context:** curve editor + clip sequencing. Keyframe operations, animation layers.
+- **Multi-graph:** independent node graphs per context, connected via shared stage + event bus.
+- Built in Qt. Highest architectural risk — touches `scene_loader`, render, `property_inspector`.
+
+### v0.23.0 — AI Integration
+
+New `bif_ai` crate (feature-gated `--features ai`). Three AI-assisted workflows: material creation from text, scene building from natural language, ComfyUI render post-processing. Provider-agnostic (Ollama default, OpenAI, Anthropic). Async bridge via channels — zero async contagion. AI produces inert data, viewport executes. Ships independently across 5 phases.
+
+- Phase 1: Material creator (text → OpenPBR params, validated)
+- Phase 2: Provider breadth (OpenAI + Anthropic + config UI)
+- Phase 3: Scene builder (text → SceneAction plan → preview/confirm → node graph)
+- Phase 4: ComfyUI integration (render → workflow template → post-processed result)
+- Phase 5: Polish (error UX, caching, multi-turn refinement)
+- **Validation**: "brushed steel" → valid Material; "red cube next to blue sphere" → node graph; render → ComfyUI upscale
 
 ### v0.24.0 — API & Integration
 
