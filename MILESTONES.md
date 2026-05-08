@@ -32,6 +32,9 @@ Current active milestone after v0.16.0 shipped on 2026-04-27. Function-first edi
 - Workspace chrome polish
 - Design-token cleanup
 - **Collection viewer/editor** — USD collection inspection and editing panel. Browse `Usd.CollectionAPI` prims, inspect includes/excludes, membership rules, expansion paths, and live resolved member list. Edit collection memberships and rules.
+- **Ivar↔Vulkan toggle** — switch between Ivar renderer (batch) and Vulkan viewport (interactive) from the render view. Needs clear UI affordance + state preservation on switch.
+- **AOV viewer in render view** — display render AOVs (beauty, albedo, normal, depth, etc.) as selectable layers in the render view widget. Required before 16.5 ships.
+- **Design note: Material editor → node-based** — long-term material authoring lives in the node graph (MaterialX nodes), not parameter sheets. Material Sheet is a viewer only; editing will be node-graph-driven.
 
 ---
 
