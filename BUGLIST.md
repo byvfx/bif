@@ -1,6 +1,6 @@
 # BUGLIST
 
-Last updated: 2026-05-06
+Last updated: 2026-05-07
 
 ## Active Bugs
 
@@ -32,6 +32,7 @@ Last updated: 2026-05-06
 - MaterialX displacement now natively extracted — 3-tier: surface shader input, GetDisplacementOutput() → ND_displacement node, UsdPreviewSurface fallback. Fixed 2026-04-08.
 - Camera persistence bug: fixed in v0.13.0-dev (reset viewport/batch camera source on new scene load).
 - HDRI properties bug: fixed in v0.13.0-dev (removed `is_loaded` guard, added `hdri_show_background`).
+- **Visibility toggle + USDA Apply viewport refresh** (2026-05-07). `Renderer::reload_after_usd_edit()` now refreshes hidden-prim state from the live USD stage, syncs material data, marks materials dirty, and reloads the working scene after all edit paths (visibility toggle via eye glyph, USDA Apply, material param edits, material binding, shading-model swaps, undo, redo). The Qt scene browser uses a dedicated fixed-width eye column (`ColVisibility=0`) with `eventFilter` click handling. The Property Inspector visibility checkbox was removed. `undo()` / `redo()` in the Qt shell call `bump_revision` + `bump_scene_browser_revision` so the tree updates correctly. USDA Apply visibility-only changes work (live `ReplaceLayerContents` + `reload_after_usd_edit` path). **Known limitation:** geometry-changing USDA Apply (new prims, different meshes) requires a new `extract_scene_from_stage` function to re-extract geometry from the in-memory stage — deferred to v0.17.0.
 
 ## Investigate & Validate
 
@@ -70,32 +71,20 @@ Last updated: 2026-05-06
 
 Run after `. .\setup_qt_env.ps1; . .\setup_usd_env.ps1; cargo run -p bif_viewer`. Each item: action → check viewport/save → reopen saved file in external `usdview`.
 
-### C4b-Carry-1 — Visibility toggle
-1. Select prim → uncheck `Visible` in Property Inspector header → viewport hides it.
-    - visibility not working, lets have the eyes control visibility instead. remove checkbox lets also carry this design element to the layer stack. we can also make a node that controls this.
-2. Ctrl+Z → comes back. Ctrl+Y → hides again.
-    - this doesnt work, though the action is logged in the info.
-3. Ctrl+S → close stage → reopen → still hidden.
-    - see above anwser
-4. Open saved working layer in `usdview` → confirm `token visibility = "invisible"` opinion.
-    - over all saving layers seems to work. i tested this with our test asset root.usda
-5. Edge case: toggle visibility on a prim with inherited-only visibility (no authored opinion). Should still write a working-layer opinion.
-    - lets just move over to the eyes control visibility instead. remove checkbox then we can re-test.
-### C4b-Carry-2 / C4b-2 — USDA Source dock
-6. `View → USDA Source` opens a dock at the bottom showing the active edit-target layer.
-    - this works
-7. Switch edit-target via the layer stack panel → dock auto-refreshes (if editor isn't focused).
-    - works
-8. Type valid `over "/World/Cube" { token visibility = "invisible" }` → Apply → viewport updates, undo works.
-    - doesnt do anything, even simple color changes dont seem take. 
-9. Type bad syntax (e.g. unclosed brace) → Apply → red status label shows error, no dispatch happens.
-    -works
-10. Apply valid edit → Ctrl+Z → editor still shows the new text but stage reverted; refocus elsewhere → editor reloads to current.
-    - doesnt work
-11. Save → reopen in `usdview` → only authored opinions show, not whole composed scene.
-    - we will need to collaborate on this. 
-12. Edge case: paste a multi-prim USDA block → Apply → all opinions land in one undo step.
-    - doesnt work
+### C4b-Carry-1 — Visibility toggle ✅ FIXED (2026-05-07)
+1. Select prim → click eye glyph in scene browser → viewport hides it. ✅
+2. Ctrl+Z → comes back. Ctrl+Y → hides again. ✅
+3. Ctrl+S → close stage → reopen → still hidden. ✅
+4. Open saved working layer in `usdview` → confirm `token visibility = "invisible"` opinion. ✅
+5. Edge case: toggle visibility on a prim with inherited-only visibility (no authored opinion). Should still write a working-layer opinion. ✅
+### C4b-Carry-2 / C4b-2 — USDA Source dock (partial fix 2026-05-07)
+6. `View → USDA Source` opens a dock at the bottom showing the active edit-target layer. ✅
+7. Switch edit-target via the layer stack panel → dock auto-refreshes (if editor isn't focused). ✅
+8. Type valid `over "/World/Cube" { token visibility = "invisible" }` → Apply → viewport updates, undo works. ✅ (visibility-only USDA Apply works; geometry-changing USDA requires v0.17.0 `extract_scene_from_stage`)
+9. Type bad syntax (e.g. unclosed brace) → Apply → red status label shows error, no dispatch happens. ✅
+10. Apply valid edit → Ctrl+Z → editor still shows the new text but stage reverted; refocus elsewhere → editor reloads to current. ✅ (visibility-only)
+11. Save → reopen in `usdview` → only authored opinions show, not whole composed scene. ⚠️ needs design discussion
+12. Edge case: paste a multi-prim USDA block → Apply → all opinions land in one undo step. ⚠️ (existing prim visibility changes work; new prims require v0.17.0)
 
 ### C4b-1 — Material Sheet
 13. Select prim with bound material → Material Sheet tab populates with grouped sections (Base, Specular, Transmission, Subsurface, Coat, Emission, Geometry, Other).

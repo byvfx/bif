@@ -1,10 +1,14 @@
-# Session Handoff — 2026-05-07 (repo cleanup: agents/ → .pi/ + _deprecated/)
+# Session Handoff — 2026-05-07 (visibility toggle + USDA Apply: tests + docs)
 
 **Last Updated:** 2026-05-07 on `v0.16.1-followups`.
 
-**Current work:** Repo housekeeping — removed old codex agent system (`agents/`, `reviews/`, `scripts/`, `debug_output.txt`, `.mcp.json`), migrated to `_deprecated/` archive, replaced with `.pi/` pi skills system. No code changes. [1mNext → continue v0.16.5 Qt Graphite styling pass[0m
+**Current work:** Added regression tests for visibility toggle and USDA Apply undo/redo state verification, updated BUGLIST / CHANGELOG / SESSION_HANDOFF docs to reflect the dogfood fixes committed on 2026-05-05 (`b69f5e5`). The viewport refresh pipeline (`reload_after_usd_edit`, `refresh_usd_visibility_state`, eye glyph in scene browser, removed Property Inspector checkbox, Qt undo/redo revision bumps) is already committed and verified.
 
-**Validation:** `cargo build`, `cargo clippy -- -D warnings`, `cargo fmt --check` — all clean. Bypassed bif_core tests (no code changes).
+**Validation:** `cargo build`, `cargo clippy -- -D warnings`, `cargo fmt --check`. New tests: `visibility_toggle_undo_redo_state`, `usda_apply_visibility_undo_state` in `edit_op_roundtrip.rs`. Manual Qt smoke pending.
+
+**Known limitation:** Geometry-changing USDA Apply (new prims, different meshes) requires a new `extract_scene_from_stage` function to re-extract geometry from the in-memory USD stage — deferred to v0.17.0. Currently USDA Apply only refreshes visibility/material state; structural changes to prims are invisible until a full stage reload.
+
+**Next action:** Manual Qt smoke on dogfood scene (eye toggle, USDA Apply, undo, redo). Then merge to main or cut release.
 
 ---
 

@@ -449,6 +449,126 @@ fn visibility_roundtrips_via_dispatcher() {
     assert!(restored_text.contains("inherited"));
 }
 
+/// Full visibility toggle cycle: apply visibility=false → verify stage
+/// visibility state updated → undo restores → redo hides again. Checks
+/// live `get_prim_info_by_path` rather than layer text.
+#[test]
+fn visibility_toggle_undo_redo_state() {
+    let fixture = helpers::LayeredStageFixture::new("visibility_undo_redo");
+    let stage = UsdStage::open(&fixture.root).expect("open stage");
+    let (mut state, _working_id) = state_for_working_layer(&stage);
+
+    let before = stage
+        .get_prim_info_by_path("/World/Cube")
+        .expect("get prim info")
+        .visible;
+    assert!(before, "fixture cube starts visible");
+
+    // Hide
+    state
+        .apply_edit_operation(
+            &stage,
+            EditOperation::Visibility {
+                key: bif_core::usd::OpinionKey::new("/World/Cube", AttrSlot::Visibility),
+                before: Some(before),
+                after: false,
+            },
+        )
+        .expect("hide");
+    assert!(
+        !stage
+            .get_prim_info_by_path("/World/Cube")
+            .expect("prim info after hide")
+            .visible,
+        "cube should be invisible after toggle"
+    );
+
+    // Undo → visible again
+    state
+        .undo_usd_edit(&stage)
+        .expect("undo")
+        .expect("undo desc");
+    assert!(
+        stage
+            .get_prim_info_by_path("/World/Cube")
+            .expect("prim info after undo")
+            .visible,
+        "cube should be visible after undo"
+    );
+
+    // Redo → hidden again
+    state
+        .redo_usd_edit(&stage)
+        .expect("redo")
+        .expect("redo desc");
+    assert!(
+        !stage
+            .get_prim_info_by_path("/World/Cube")
+            .expect("prim info after redo")
+            .visible,
+        "cube should be invisible after redo"
+    );
+}
+
+/// USDA Apply with visibility change: replace layer contents with USDA
+/// that authors `visibility = "invisible"`, verify live visibility state
+/// updates, then undo restores visibility.
+#[test]
+fn usda_apply_visibility_undo_state() {
+    let fixture = helpers::LayeredStageFixture::new("usda_visibility");
+    let stage = UsdStage::open(&fixture.root).expect("open stage");
+    let (mut state, working_id) = state_for_working_layer(&stage);
+
+    assert!(
+        stage
+            .get_prim_info_by_path("/World/Cube")
+            .expect("get prim info")
+            .visible,
+        "fixture cube starts visible"
+    );
+
+    let before = stage
+        .export_layer_as_string(&working_id)
+        .expect("export before");
+
+    // Use the bridge writer to produce valid USDA text with visibility.
+    stage
+        .write_layer_visibility(&working_id, "/World/Cube", false)
+        .expect("write visibility");
+    let usda_with_visibility = stage
+        .export_layer_as_string(&working_id)
+        .expect("export after visibility write");
+
+    // Reset to `before` so ReplaceLayerContents has work to do.
+    stage
+        .import_layer_from_string(&working_id, &before)
+        .expect("reset to before");
+
+    let op = EditOperation::replace_layer(working_id.clone(), before, usda_with_visibility);
+    state.apply_edit_operation(&stage, op).expect("apply usda");
+
+    assert!(
+        !stage
+            .get_prim_info_by_path("/World/Cube")
+            .expect("prim info after usda apply")
+            .visible,
+        "cube should be invisible after USDA Apply"
+    );
+
+    // Undo → visible again
+    state
+        .undo_usd_edit(&stage)
+        .expect("undo")
+        .expect("undo desc");
+    assert!(
+        stage
+            .get_prim_info_by_path("/World/Cube")
+            .expect("prim info after undo")
+            .visible,
+        "cube should be visible after USDA undo"
+    );
+}
+
 #[test]
 fn replace_layer_contents_roundtrips() {
     let fixture = helpers::LayeredStageFixture::new("replace_layer");
