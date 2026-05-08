@@ -31,6 +31,7 @@ Current active milestone after v0.16.0 shipped on 2026-04-27. Function-first edi
 - Obsidian Graphite / "Quiet Confidence" styling pass
 - Workspace chrome polish
 - Design-token cleanup
+- **Collection viewer/editor** — USD collection inspection and editing panel. Browse `Usd.CollectionAPI` prims, inspect includes/excludes, membership rules, expansion paths, and live resolved member list. Edit collection memberships and rules.
 
 ---
 
