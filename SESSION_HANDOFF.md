@@ -1,3 +1,21 @@
+# Session Handoff — 2026-05-08 (visibility toggle: prim_path, eye icon, tree collapse fixes)
+
+**Last Updated:** 2026-05-08 on `v0.16.1-followups`.
+
+**Current work:** Fixed three visibility toggle bugs. Committed `443b7e5`.
+
+**Changes:**
+- `scene_loader.rs`: preserve `inst.prim_path` during USD→working_scene merge via `add_instance_with_path` / `add_animated_instance_with_path`
+- `scene_browser.rs`: `CompositeProvider::get_prim_info` merges live visibility from USD stage for procedural prims shadowing USD mesh prims
+- `scene_browser_model.cpp`: recursive `refresh_child_visibility()` after model rebuild
+- `scene_browser_widget.cpp/h`: save/restore expanded state across model resets
+
+**Validation:** Rust `cargo build` + `cargo fmt` clean. Manual Qt smoke confirms eye icon updates + tree doesn't collapse.
+
+**Next:** Merge to main or cut release.
+
+---
+
 # Session Handoff — 2026-05-07 (visibility toggle + USDA Apply: tests + docs)
 
 **Last Updated:** 2026-05-07 on `v0.16.1-followups`.
