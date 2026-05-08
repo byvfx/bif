@@ -11,12 +11,44 @@ use crate::material::{
     cosine_weighted_hemisphere, gen_f32, reflect, refract, Color, ScatterResult,
 };
 use crate::{hittable::HitRecord, Material, Ray};
+#[cfg(feature = "bif-core")]
 use bif_core::texture::{is_udim_path, Texture, UdimTileSet};
 use bif_math::{build_orthonormal_basis, Vec3};
 use rand::RngCore;
 use std::f32::consts::PI;
+#[cfg(any(feature = "bif-core", test))]
 use std::path::Path;
 use std::sync::Arc;
+
+#[cfg(not(feature = "bif-core"))]
+#[derive(Clone)]
+pub struct Texture;
+
+#[cfg(not(feature = "bif-core"))]
+impl Texture {
+    fn sample(&self, _u: f32, _v: f32) -> Color {
+        Color::ZERO
+    }
+
+    fn sample_channel(&self, _u: f32, _v: f32, _channel: usize) -> f32 {
+        0.0
+    }
+}
+
+#[cfg(not(feature = "bif-core"))]
+#[derive(Clone)]
+pub struct UdimTileSet;
+
+#[cfg(not(feature = "bif-core"))]
+impl UdimTileSet {
+    fn sample(&self, _u: f32, _v: f32) -> Color {
+        Color::ZERO
+    }
+
+    fn sample_channel(&self, _u: f32, _v: f32, _channel: usize) -> f32 {
+        0.0
+    }
+}
 
 /// OpenPBR Surface material.
 ///
@@ -255,6 +287,7 @@ impl OpenPbrSurface {
 ///
 /// Maps OpenPBR material fields directly. Does not load textures.
 /// Use `from_material_with_textures` with a TextureCache for full rendering.
+#[cfg(feature = "bif-core")]
 impl From<&bif_core::Material> for OpenPbrSurface {
     fn from(mat: &bif_core::Material) -> Self {
         Self {
@@ -302,6 +335,7 @@ impl OpenPbrSurface {
     ///
     /// Resolves relative texture paths against `material.source_dir` (the USD
     /// layer directory), matching the viewport's `resolve_texture_path` behavior.
+    #[cfg(feature = "bif-core")]
     pub fn from_material_with_textures(
         mat: &bif_core::Material,
         cache: &mut bif_core::texture::TextureCache,
@@ -823,6 +857,7 @@ fn ior_to_f0(ior: f32) -> f32 {
 // =============================================================================
 
 /// Resolve a texture path against the material's source directory.
+#[cfg(any(feature = "bif-core", test))]
 fn resolve_texture_path(path: &str, source_dir: Option<&Path>) -> String {
     let p = Path::new(path);
     if p.is_absolute() || path.starts_with("//") || path.starts_with("\\\\") {
@@ -837,6 +872,7 @@ fn resolve_texture_path(path: &str, source_dir: Option<&Path>) -> String {
 /// Resolve a texture path, load via the provided loader, and log failures.
 /// Load a texture slot — returns (single_texture, udim_tileset).
 /// UDIM paths get a per-tile set; regular paths get a single texture.
+#[cfg(feature = "bif-core")]
 fn load_slot(
     raw_path: Option<&str>,
     source_dir: Option<&Path>,

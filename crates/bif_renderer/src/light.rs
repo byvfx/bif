@@ -496,6 +496,7 @@ impl LightList {
 }
 
 /// Create LightList from bif_core::Light scene lights.
+#[cfg(feature = "bif-core")]
 impl From<&[bif_core::Light]> for LightList {
     fn from(lights: &[bif_core::Light]) -> Self {
         let mut list = LightList {

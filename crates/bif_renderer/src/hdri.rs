@@ -6,11 +6,104 @@
 
 use std::f32::consts::PI;
 
+#[cfg(feature = "bif-core")]
 use bif_core::hdr::HdrImage;
 use rand::RngCore;
 use rayon::prelude::*;
 
 use crate::{gen_f32_generic, Color, Vec3};
+
+#[cfg(not(feature = "bif-core"))]
+#[derive(Clone)]
+pub struct HdrImage {
+    pub width: u32,
+    pub height: u32,
+    pub pixels: Vec<[f32; 3]>,
+}
+
+#[cfg(not(feature = "bif-core"))]
+impl HdrImage {
+    pub fn direction_to_uv(dir: [f32; 3], rotation: f32) -> (f32, f32) {
+        let len = (dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]).sqrt();
+        if len < 1e-10 {
+            return (0.5, 0.5);
+        }
+        let dx = dir[0] / len;
+        let dy = dir[1] / len;
+        let dz = dir[2] / len;
+
+        let phi = dz.atan2(dx);
+        let theta = dy.asin();
+        let mut u = 0.5 + phi / (2.0 * PI);
+        let v = 0.5 - theta / PI;
+        u += rotation / (2.0 * PI);
+        u -= u.floor();
+
+        (u, v)
+    }
+
+    pub fn uv_to_direction(u: f32, v: f32, rotation: f32) -> [f32; 3] {
+        let mut u = u - rotation / (2.0 * PI);
+        u -= u.floor();
+
+        let phi = (u - 0.5) * 2.0 * PI;
+        let theta = (0.5 - v) * PI;
+
+        let cos_theta = theta.cos();
+        [cos_theta * phi.cos(), theta.sin(), cos_theta * phi.sin()]
+    }
+
+    pub fn pixel(&self, x: i32, y: i32) -> [f32; 3] {
+        let x = x.max(0).min(self.width as i32 - 1) as usize;
+        let y = y.max(0).min(self.height as i32 - 1) as usize;
+        self.pixels[y * self.width as usize + x]
+    }
+
+    pub fn sample(&self, dir: [f32; 3], rotation: f32) -> [f32; 3] {
+        let (u, v) = Self::direction_to_uv(dir, rotation);
+        self.sample_uv(u, v)
+    }
+
+    pub fn sample_uv(&self, u: f32, v: f32) -> [f32; 3] {
+        let w = self.width as f32;
+        let h = self.height as f32;
+
+        let px = u * w - 0.5;
+        let py = v * h - 0.5;
+
+        let x0 = px.floor() as i32;
+        let y0 = py.floor() as i32;
+        let x1 = x0 + 1;
+        let y1 = y0 + 1;
+
+        let fx = px - x0 as f32;
+        let fy = py - y0 as f32;
+
+        let wrap_x = |x: i32| ((x % self.width as i32) + self.width as i32) % self.width as i32;
+        let x0w = wrap_x(x0);
+        let x1w = wrap_x(x1);
+
+        let y0c = y0.max(0).min(self.height as i32 - 1);
+        let y1c = y1.max(0).min(self.height as i32 - 1);
+
+        let c00 = self.pixel(x0w, y0c);
+        let c10 = self.pixel(x1w, y0c);
+        let c01 = self.pixel(x0w, y1c);
+        let c11 = self.pixel(x1w, y1c);
+
+        let lerp = |a: f32, b: f32, t: f32| a * (1.0 - t) + b * t;
+
+        [
+            lerp(lerp(c00[0], c10[0], fx), lerp(c01[0], c11[0], fx), fy),
+            lerp(lerp(c00[1], c10[1], fx), lerp(c01[1], c11[1], fx), fy),
+            lerp(lerp(c00[2], c10[2], fx), lerp(c01[2], c11[2], fx), fy),
+        ]
+    }
+
+    pub fn luminance(rgb: [f32; 3]) -> f32 {
+        0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]
+    }
+}
 
 /// HDRI environment map for path tracing with importance sampling.
 pub struct HdriEnvironment {

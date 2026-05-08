@@ -16,7 +16,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - **Qt node graph delete and empty-state cleanup** (2026-05-06). New empty stages no longer seed template/demo layer-stack or scene-browser data, and deleting Qt graph nodes removes the matching backend graph node instead of leaving stale renderer state behind.
 - **Dogfood viewport edit refresh** (2026-05-05). USD edits, USDA Apply, visibility toggles, material parameter edits, material binding, shading-model swaps, undo, and redo now refresh the working viewport scene from the live stage path. The Qt scene browser uses a dedicated fixed-width visibility column for eye toggles, and the Property Inspector visibility checkbox was removed so visibility is controlled from the tree.
-- **UNC path handling in USD bridge on Windows SMB drives** (2026-05-03). `usd_bridge.cpp` was converting `\\server\share\...` to `//server/share/...` at two sites, breaking USD's asset resolver. Guard added to skip the backslash→slash replacement for paths starting with `\\`.
+- **UNC path handling in USD bridge on Windows SMB drives** (2026-05-03). `usd_bridge.cpp` was converting `\\server\share\...` to `//server/share/...` at two sites, breaking USD's asset resolver. Guard added to skip the backslash→slash replacement for paths starting with `\\\\`.
 - **`primvars:displayColor` now visible in Vulkan viewport** (2026-05-03). Meshes with display color but no `material:binding` rendered grey. `MeshData` now carries the first display_color; `scene_loader` synthesizes a flat-color `bif_core::Material` per prototype and appends it to the GPU material table so the Vulkan shader resolves it correctly.
 
 - **v0.16.1 follow-up regression coverage** (2026-04-30). Added tests for locked-layer save errors, edit-target-switch undo routing, replace-layer idempotence, shader-swap rollback, scene-browser empty-path filtering, and the USD export-buffer lifetime contract.
@@ -31,6 +31,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **CI compatibility for Rust 1.95 / no-default renderer checks** (2026-05-02). Replaced guarded manual LOD divisions with `checked_div` to satisfy newer clippy, and gated Embree/USD native links plus Embree-dependent renderer examples so `cargo test -p bif_renderer --no-default-features` no longer links optional native renderer paths.
+- **GitHub Actions Node 24 compatibility** (2026-05-02). Updated CI/CD and Pages checkout steps to `actions/checkout@v6` and replaced the CI rust-cache action with `actions/cache@v5` so the validated CI path stops emitting Node runtime deprecation warnings.
 - **USD save failures now report concrete error text** (2026-04-30). Layer save wraps USD errors with `TfErrorMark` detail so the UI can distinguish permissions, resolver, and write failures.
 - **`get_prim_attributes` CString conversion uses `cstr(...)`** (2026-04-30). Code-review followup: `cpp_bridge.rs:get_prim_attributes` was missed by the centralization pass and returned `InvalidPrim` for an FFI conversion failure; now routes through `cstr(...)` and returns `InvalidPath` consistently with every other path-conversion site.
 - **Stage-mutex poison now logged at every lock site** (2026-04-30). Code-review followup: extended poison logging from the two visible `match` sites to the four `stage.lock().ok()` chains in `with_stage`, the scene-browser `CompositeProvider` builder, the pick-handler type lookup, and `detect_timeline_from_stage`. Poisoned mutex no longer fails silently anywhere on the stage.

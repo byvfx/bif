@@ -86,11 +86,10 @@ pub fn update_visible_instances(
     // Calculate how many instances fit in polygon budget
     let tris_per_instance = triangles_per_instance as u64;
     let max_polys = lod_max_polys as u64;
-    let budget_count = if tris_per_instance > 0 {
-        (max_polys / tris_per_instance) as usize
-    } else {
-        scratch.visible_with_distance.len()
-    };
+    let budget_count = max_polys
+        .checked_div(tris_per_instance)
+        .map(|count| count as usize)
+        .unwrap_or_else(|| scratch.visible_with_distance.len());
 
     let visible_count = scratch.visible_with_distance.len();
 
