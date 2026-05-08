@@ -658,7 +658,7 @@ impl Scene {
         idx
     }
 
-    /// Add an instance with animation data and an explicit USD prim path. Returns the instance index.
+    /// Add an animated instance with an explicit USD prim path. Returns the instance index.
     pub fn add_animated_instance_with_path(
         &mut self,
         prototype_id: usize,

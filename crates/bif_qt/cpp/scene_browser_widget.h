@@ -12,6 +12,7 @@
 #pragma once
 
 #include <QModelIndex>
+#include <QSet>
 #include <QWidget>
 
 class BifShellState;
@@ -38,6 +39,8 @@ private:
     QModelIndex find_source_index_for_path(const QString& path,
                                            const QModelIndex& parent = QModelIndex());
     void select_path(const QString& path);
+    void save_expanded_state(const QModelIndex& parent);
+    void restore_expanded_state(const QModelIndex& parent);
 
     BifShellState* m_state;
     SceneBrowserModel* m_model;
@@ -45,4 +48,5 @@ private:
     QLineEdit* m_search;
     QTreeView* m_view;
     bool m_syncing_external_selection{false};
+    QSet<QString> m_expanded_paths;
 };

@@ -235,6 +235,17 @@ SceneBrowserWidget::SceneBrowserWidget(BifShellState* state, QWidget* parent)
                 m_model->fetchMore(source_index);
             }
         });
+
+    // Save/restore expanded state across model resets (visibility toggle, reload).
+    QObject::connect(m_model, &QAbstractItemModel::modelAboutToBeReset, this,
+        [this]() {
+            m_expanded_paths.clear();
+            save_expanded_state(m_view->rootIndex());
+        });
+    QObject::connect(m_model, &QAbstractItemModel::modelReset, this,
+        [this]() {
+            restore_expanded_state(m_view->rootIndex());
+        });
 }
 
 SceneBrowserWidget::~SceneBrowserWidget() = default;
@@ -337,4 +348,38 @@ void SceneBrowserWidget::on_selection_changed(const QModelIndex& current,
     m_state->on_tree_prim_selected(path, type);
     m_state->setStatus_message(
         QStringLiteral("Selected: %1  [%2]").arg(path).arg(type));
+}
+
+void SceneBrowserWidget::save_expanded_state(const QModelIndex& parent) {
+    if (!m_filter || !m_model) return;
+    const int count = m_filter->rowCount(parent);
+    for (int r = 0; r < count; ++r) {
+        const QModelIndex idx = m_filter->index(r, 0, parent);
+        if (m_view->isExpanded(idx)) {
+            const auto src = m_filter->mapToSource(idx);
+            const QString path = m_model->data(src, SceneBrowserModel::PathRole).toString();
+            if (!path.isEmpty()) {
+                m_expanded_paths.insert(path);
+            }
+            save_expanded_state(idx);
+        }
+    }
+}
+
+void SceneBrowserWidget::restore_expanded_state(const QModelIndex& parent) {
+    if (!m_filter || !m_model) return;
+    const int count = m_filter->rowCount(parent);
+    for (int r = 0; r < count; ++r) {
+        const QModelIndex idx = m_filter->index(r, 0, parent);
+        const auto src = m_filter->mapToSource(idx);
+        const QString path = m_model->data(src, SceneBrowserModel::PathRole).toString();
+        if (m_expanded_paths.contains(path)) {
+            m_view->expand(idx);
+            // Fetch children if needed
+            if (m_model->canFetchMore(src)) {
+                m_model->fetchMore(src);
+            }
+            restore_expanded_state(idx);
+        }
+    }
 }

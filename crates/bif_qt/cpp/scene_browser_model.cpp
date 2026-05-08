@@ -76,6 +76,18 @@ std::unique_ptr<SceneBrowserModel::PrimNode> make_node(
     return node;
 }
 
+/// Recursively refresh `is_visible` for all populated child nodes.
+/// Called after a model reset so Qt re-queries `data()` with fresh values.
+static void refresh_child_visibility(SceneBrowserModel::PrimNode* parent, BifShellState* state) {
+    if (!parent || !state) return;
+    for (auto& child : parent->children) {
+        child->is_visible = state->prim_is_visible_at(child->path);
+        if (child->children_populated) {
+            refresh_child_visibility(child.get(), state);
+        }
+    }
+}
+
 }  // namespace
 
 SceneBrowserModel::PrimNode* SceneBrowserModel::PrimNode::child_at(int row) const {
@@ -134,6 +146,10 @@ void SceneBrowserModel::rebuild_from_state() {
         }
         m_root->child_count = static_cast<int>(m_root->children.size());
     }
+
+    // Refresh visibility for all previously-populated child nodes.
+    // Must run before endResetModel so Qt sees fresh is_visible values.
+    refresh_child_visibility(m_root.get(), m_state);
 
     endResetModel();
 }

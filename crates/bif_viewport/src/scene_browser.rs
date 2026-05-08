@@ -918,17 +918,10 @@ impl PrimDataProvider for CompositeProvider<'_> {
     }
 
     fn get_prim_info(&self, path: &str) -> Option<PrimDisplayInfo> {
-        // Procedural prims take priority (BIF-created data has richer stats)
+        // Procedural prims take priority (BIF-created data has richer stats),
+        // but visibility/active must come from the live USD stage when a
+        // USD prim exists at the same path (v0.16.5 visibility fix).
         if let Some(proc_prim) = self.cache.procedural_prims.get(path) {
-            // Warn if this shadows a USD prim
-            if self
-                .usd_stage
-                .as_ref()
-                .and_then(|u| u.get_prim_info(path))
-                .is_some()
-            {
-                log::debug!("Procedural prim shadows USD prim at {:?}", path);
-            }
             let children = self.get_children(path);
             let child_count = children.len();
             let mut info = PrimDisplayInfo::new(
@@ -939,6 +932,15 @@ impl PrimDataProvider for CompositeProvider<'_> {
                 child_count,
             );
             info.source_node = proc_prim.source_node;
+            // Merge live visibility/active from USD stage when a USD prim
+            // exists at the same path (e.g. USD-loaded mesh prims in the
+            // prototype cache). Without this, eye icon stays stale.
+            if let Some(usd) = self.usd_stage {
+                if let Some(usd_info) = usd.get_prim_info(path) {
+                    info.is_visible = usd_info.is_visible;
+                    info.is_active = usd_info.is_active;
+                }
+            }
             return Some(info);
         }
 

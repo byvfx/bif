@@ -2451,16 +2451,20 @@ impl Renderer {
         }
         for (inst, anim) in scene.instances_with_animations() {
             let remapped_proto_id = inst.prototype_id + proto_offset;
+            let prim_path = inst.prim_path.clone();
             let inst_idx = if let Some(anim) = anim {
-                self.scene.working_scene.add_animated_instance(
+                self.scene.working_scene.add_animated_instance_with_path(
                     remapped_proto_id,
                     inst.transform,
                     anim.clone(),
+                    prim_path,
                 )
             } else {
-                self.scene
-                    .working_scene
-                    .add_instance(remapped_proto_id, inst.transform)
+                self.scene.working_scene.add_instance_with_path(
+                    remapped_proto_id,
+                    inst.transform,
+                    prim_path,
+                )
             };
             // Preserve purpose from loaded scene
             self.scene
