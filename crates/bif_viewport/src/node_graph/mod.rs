@@ -151,6 +151,10 @@ pub enum NodeGraphEvent {
     },
     /// Xform node T/R/S changed — rebuild scene transforms
     XformChanged { node_id: GraphNodeId },
+    /// USD Prim node authored or changed — rebuild procedural scene graph cache.
+    UsdPrimCreate { node_id: GraphNodeId },
+    /// Graft Branches node changed — rebuild procedural scene graph cache.
+    GraftBranchesCompute { node_id: GraphNodeId },
     /// Set display flag on a node (which node feeds viewport/export)
     SetDisplayNode(GraphNodeId),
     /// Select a node (for keyboard delete, property inspector, etc.)
@@ -315,6 +319,9 @@ pub enum SceneNode {
         scale: [f32; 3],
         /// Prim filter (placeholder — non-functional in V1, always all upstream)
         prim_filter: String,
+        /// Whether this node has emitted an apply event for current inputs.
+        #[serde(skip, default)]
+        is_applied: bool,
     },
     /// USD Prim — defines organizational structure in the scene graph
     UsdPrim {
@@ -326,11 +333,17 @@ pub enum SceneNode {
         kind: bif_core::usd::UsdKind,
         /// Specifier (Define or Over)
         specifier: bif_core::usd::UsdSpecifier,
+        /// Whether this prim has been registered with the scene graph cache.
+        #[serde(skip, default)]
+        is_created: bool,
     },
     /// Graft Branches — merge multiple branches under a parent prim
     GraftBranches {
         /// Destination prim path (parent for all grafted branches)
         destination_path: String,
+        /// Whether this graft has been computed for current inputs.
+        #[serde(skip, default)]
+        is_computed: bool,
     },
     /// Cache node — stores evaluated scene snapshot for skip-recompute.
     Cache {
@@ -483,6 +496,7 @@ impl SceneNode {
             rotate: [0.0, 0.0, 0.0],
             scale: [1.0, 1.0, 1.0],
             prim_filter: String::new(),
+            is_applied: false,
         }
     }
 
@@ -493,6 +507,7 @@ impl SceneNode {
             prim_type: bif_core::usd::UsdPrimType::Scope,
             kind: bif_core::usd::UsdKind::None,
             specifier: bif_core::usd::UsdSpecifier::Define,
+            is_created: false,
         }
     }
 
@@ -500,6 +515,7 @@ impl SceneNode {
     pub fn graft_branches() -> Self {
         Self::GraftBranches {
             destination_path: "/shot".to_string(),
+            is_computed: false,
         }
     }
 
@@ -691,7 +707,9 @@ impl SceneNode {
             SceneNode::Primitive { prim_path, .. } => Some(prim_path.as_str()),
             SceneNode::PointInstancer { prim_path, .. } => Some(prim_path.as_str()),
             SceneNode::UsdPrim { prim_path, .. } => Some(prim_path.as_str()),
-            SceneNode::GraftBranches { destination_path } => Some(destination_path.as_str()),
+            SceneNode::GraftBranches {
+                destination_path, ..
+            } => Some(destination_path.as_str()),
             SceneNode::UsdRead { file_path, .. } if !file_path.is_empty() => {
                 // Show just the filename
                 file_path
@@ -1010,6 +1028,12 @@ pub fn render_node_graph(
         }
     }
 
+    pre_events.extend(eval::collect_auto_compute_events(
+        &mut state.snarl,
+        state.eval_mode,
+        &mut state.dirty_nodes,
+    ));
+
     // Context menu for adding nodes
     ui.horizontal(|ui| {
         ui.label("Nodes:");
@@ -1124,7 +1148,6 @@ pub fn render_node_graph(
     let mut viewer = SceneNodeViewer::new(
         state.display_node.map(|id| id.into()),
         state.selected_node.map(|id| id.into()),
-        state.eval_mode,
         &mut state.dirty_nodes,
         prim_counts,
     );

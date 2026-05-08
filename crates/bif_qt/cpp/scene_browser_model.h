@@ -3,8 +3,8 @@
 // Phase E.2 move 7 (2026-04-16): reads the live UsdStage via cxx-qt
 // invokables on `BifShellState`. Listens for
 // `scene_browser_revisionChanged` and rebuilds the tree on stage
-// load / close. A hardcoded `seed_demo_tree()` remains for headless
-// preview cases when no stage is loaded (Phase C.2 visual only).
+// load / close. Empty state stays empty; no demo USD hierarchy is
+// seeded into normal app sessions.
 //
 // Tree storage: owned `PrimNode`s with parent/children pointers,
 // `QModelIndex::internalPointer()` carries the node*. Fast O(1)
@@ -36,7 +36,8 @@ public:
     };
 
     enum Columns {
-        ColName = 0,
+        ColVisibility = 0,
+        ColName,
         ColType,
         ColChildren,
         ColKind,
@@ -61,12 +62,8 @@ public:
                         int role = Qt::DisplayRole) const override;
     QHash<int, QByteArray> roleNames() const override;
 
-    /// Replace the tree with a hardcoded demo (Phase C.2 fallback).
-    void seed_demo_tree();
-
     /// Rebuild the tree from the live UsdStage via BifShellState's
     /// prim-tree invokables. Called on `scene_browser_revisionChanged`.
-    /// Falls back to the demo tree when the state reports 0 root prims.
     void rebuild_from_state();
 
     // PrimNode is public so the demo-tree builder in the .cpp file
@@ -100,5 +97,4 @@ private:
 
     QPointer<BifShellState> m_state;
     std::unique_ptr<PrimNode> m_root;
-    bool m_has_ever_loaded_stage{false};
 };

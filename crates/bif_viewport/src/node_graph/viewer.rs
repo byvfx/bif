@@ -8,8 +8,7 @@ use egui_snarl::{
 };
 
 use super::ops::mark_node_dirty;
-use super::{GraphNodeId, NodeGraphEvent, ScatterPointsParams, SceneNode};
-use crate::persistence::EvalMode;
+use super::{GraphNodeId, NodeGraphEvent, SceneNode};
 use crate::theme;
 
 /// Resolve which node is connected to a given input pin.
@@ -30,8 +29,6 @@ pub(crate) struct SceneNodeViewer<'a> {
     pub display_node: Option<NodeId>,
     /// Currently selected node (for visual highlight)
     pub selected_node: Option<NodeId>,
-    /// Current evaluation mode
-    pub eval_mode: EvalMode,
     /// Nodes needing re-evaluation (for dirty indicator)
     pub dirty_nodes: &'a mut HashSet<GraphNodeId>,
     /// Prim count per node (for badge display)
@@ -42,7 +39,6 @@ impl<'a> SceneNodeViewer<'a> {
     pub fn new(
         display_node: Option<NodeId>,
         selected_node: Option<NodeId>,
-        eval_mode: EvalMode,
         dirty_nodes: &'a mut HashSet<GraphNodeId>,
         prim_counts: &'a HashMap<GraphNodeId, usize>,
     ) -> Self {
@@ -50,7 +46,6 @@ impl<'a> SceneNodeViewer<'a> {
             events: Vec::new(),
             display_node,
             selected_node,
-            eval_mode,
             dirty_nodes,
             prim_counts,
         }
@@ -148,8 +143,6 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer<'_> {
         });
     }
 
-    // TODO: decouple auto-compute from show_body — cook triggers should come from
-    // dependency graph evaluation, not UI rendering (nodes scrolled out of view won't cook)
     fn show_body(
         &mut self,
         node_id: NodeId,
@@ -198,26 +191,8 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer<'_> {
                     ui.colored_label(theme::STATUS_WARNING, "Converting .tx...");
                 }
             }
-            SceneNode::Primitive {
-                kind,
-                size,
-                is_created,
-                ..
-            } => {
-                // Auto-compute: create primitive when needed
+            SceneNode::Primitive { is_created, .. } => {
                 let graph_id = GraphNodeId::from(node_id);
-                if !*is_created {
-                    if self.eval_mode == EvalMode::Auto {
-                        self.events.push(NodeGraphEvent::CreatePrimitive {
-                            kind: *kind,
-                            size: *size,
-                            node_id: graph_id,
-                        });
-                        *is_created = true;
-                    } else {
-                        self.dirty_nodes.insert(graph_id);
-                    }
-                }
                 if *is_created {
                     ui.colored_label(theme::STATUS_OK, "Created");
                 } else if self.dirty_nodes.contains(&graph_id) {
@@ -227,64 +202,15 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer<'_> {
             SceneNode::ScatterPoints {
                 source,
                 count,
-                max_point_limit,
-                seed,
-                scatter_mode,
-                min_distance,
-                align_to_normal,
-                grid_size,
-                grid_spacing,
-                sphere_radius,
-                sphere_on_surface,
-                relax_iterations,
-                scale_radii,
-                max_relax_radius,
-                scale_min,
-                scale_max,
-                rotation_range,
-                target_proto_id: _,
                 is_computed,
                 ..
             } => {
-                // Auto-compute: check if inputs are satisfied
                 let inputs_satisfied = match source {
                     bif_core::PointSource::Surface => resolve_input_connection(inputs, 0).is_some(),
                     bif_core::PointSource::Grid | bif_core::PointSource::Sphere => true,
                 };
 
                 let graph_node_id = GraphNodeId::from(node_id);
-                if !*is_computed && inputs_satisfied {
-                    if self.eval_mode != EvalMode::Auto {
-                        self.dirty_nodes.insert(graph_node_id);
-                    } else {
-                        self.events.push(NodeGraphEvent::ScatterPointsCompute {
-                            node_id: graph_node_id,
-                            params: ScatterPointsParams {
-                                source: *source,
-                                count: *count,
-                                max_point_limit: *max_point_limit,
-                                seed: *seed,
-                                scatter_mode: *scatter_mode,
-                                min_distance: *min_distance,
-                                align_to_normal: *align_to_normal,
-                                grid_size: *grid_size,
-                                grid_spacing: *grid_spacing,
-                                sphere_radius: *sphere_radius,
-                                sphere_on_surface: *sphere_on_surface,
-                                relax_iterations: *relax_iterations,
-                                scale_radii: *scale_radii,
-                                max_relax_radius: *max_relax_radius,
-                                scale_min: *scale_min,
-                                scale_max: *scale_max,
-                                rotation_range: *rotation_range,
-                                target_proto_id: None,
-                            },
-                        });
-                        *is_computed = true;
-                    } // end Auto branch
-                }
-
-                // Status display
                 if *is_computed {
                     ui.colored_label(theme::STATUS_OK, format!("{} pts", count));
                 } else if self.dirty_nodes.contains(&graph_node_id) {
@@ -302,39 +228,7 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer<'_> {
             } => {
                 let points_node = resolve_input_connection(inputs, 0);
                 let proto_node = resolve_input_connection(inputs, 1);
-                let both_connected = points_node.is_some() && proto_node.is_some();
-
-                // Auto-invalidate: inputs disconnected but still marked instanced
-                if !both_connected && *is_instanced {
-                    self.events.push(NodeGraphEvent::InstancerInvalidate {
-                        node_id: GraphNodeId::from(node_id),
-                    });
-                    *is_instanced = false;
-                    *is_computing = false;
-                    *compute_failed = false;
-                    *instance_count = 0;
-                }
-
-                // Auto-compute: both inputs connected, not yet instanced, not failed
                 let inst_graph_id = GraphNodeId::from(node_id);
-                if both_connected && !*is_instanced && !*is_computing && !*compute_failed {
-                    if self.eval_mode == EvalMode::Auto {
-                        let (Some(points_source), Some(proto_source)) = (points_node, proto_node)
-                        else {
-                            return;
-                        };
-                        self.events.push(NodeGraphEvent::PointInstancerCompute {
-                            node_id: inst_graph_id,
-                            points_source_node: GraphNodeId::from(points_source),
-                            proto_source_node: GraphNodeId::from(proto_source),
-                        });
-                        *is_computing = true;
-                    } else {
-                        self.dirty_nodes.insert(inst_graph_id);
-                    }
-                }
-
-                // Status display
                 if *is_instanced {
                     ui.colored_label(theme::STATUS_OK, format!("{} instances", instance_count));
                 } else if *is_computing {
@@ -385,16 +279,29 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer<'_> {
                     ));
                 }
             }
-            SceneNode::UsdPrim { prim_path, .. } => {
+            SceneNode::UsdPrim {
+                prim_path,
+                is_created,
+                ..
+            } => {
                 ui.colored_label(theme::PIN_SCENE, prim_path.as_str());
+                if *is_created {
+                    ui.colored_label(theme::STATUS_OK, "Created");
+                }
             }
-            SceneNode::GraftBranches { destination_path } => {
+            SceneNode::GraftBranches {
+                destination_path,
+                is_computed,
+            } => {
                 // Show connected branch count (needs inputs from snarl)
                 let connected = (0..4)
                     .filter(|&i| !inputs.get(i).is_none_or(|p| p.remotes.is_empty()))
                     .count();
                 ui.label(format!("{}/4 branches", connected));
                 ui.colored_label(theme::PIN_SCENE, destination_path.as_str());
+                if *is_computed {
+                    ui.colored_label(theme::STATUS_OK, "Computed");
+                }
             }
             SceneNode::HdriEnvironment {
                 is_loaded,
@@ -467,6 +374,75 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer<'_> {
 
     fn has_node_menu(&mut self, _node: &SceneNode) -> bool {
         true
+    }
+
+    fn has_graph_menu(&mut self, _pos: egui::Pos2, _snarl: &mut Snarl<SceneNode>) -> bool {
+        true
+    }
+
+    fn show_graph_menu(
+        &mut self,
+        pos: egui::Pos2,
+        ui: &mut egui::Ui,
+        _scale: f32,
+        snarl: &mut Snarl<SceneNode>,
+    ) {
+        ui.label("Add node");
+        ui.separator();
+
+        if ui.button("USD Read").clicked() {
+            snarl.insert_node(pos, SceneNode::usd_read());
+            ui.close_menu();
+        }
+        if ui.button("HDRI Environment").clicked() {
+            snarl.insert_node(pos, SceneNode::hdri_environment());
+            ui.close_menu();
+        }
+        if ui.button("Ivar Render").clicked() {
+            snarl.insert_node(pos, SceneNode::ivar_render());
+            ui.close_menu();
+        }
+        ui.separator();
+        if ui.button("Cube").clicked() {
+            snarl.insert_node(pos, SceneNode::primitive(bif_core::PrimitiveKind::Cube));
+            ui.close_menu();
+        }
+        if ui.button("Sphere").clicked() {
+            snarl.insert_node(pos, SceneNode::primitive(bif_core::PrimitiveKind::Sphere));
+            ui.close_menu();
+        }
+        if ui.button("Camera").clicked() {
+            snarl.insert_node(pos, SceneNode::primitive(bif_core::PrimitiveKind::Camera));
+            ui.close_menu();
+        }
+        if ui.button("Scatter Points").clicked() {
+            snarl.insert_node(pos, SceneNode::scatter_points());
+            ui.close_menu();
+        }
+        if ui.button("Point Instancer").clicked() {
+            snarl.insert_node(pos, SceneNode::point_instancer());
+            ui.close_menu();
+        }
+        if ui.button("Xform").clicked() {
+            snarl.insert_node(pos, SceneNode::xform());
+            ui.close_menu();
+        }
+        if ui.button("USD Prim").clicked() {
+            snarl.insert_node(pos, SceneNode::usd_prim());
+            ui.close_menu();
+        }
+        if ui.button("Graft Branches").clicked() {
+            snarl.insert_node(pos, SceneNode::graft_branches());
+            ui.close_menu();
+        }
+        if ui.button("USD Export").clicked() {
+            snarl.insert_node(pos, SceneNode::usd_export());
+            ui.close_menu();
+        }
+        if ui.button("Cache").clicked() {
+            snarl.insert_node(pos, SceneNode::cache());
+            ui.close_menu();
+        }
     }
 
     fn show_node_menu(

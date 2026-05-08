@@ -3,7 +3,7 @@ title: "USD Edit Targets"
 type: concept
 tags: [usd, authoring, layers, composition]
 created: "2026-04-05"
-updated: "2026-04-05"
+updated: "2026-05-01"
 ---
 
 ## Summary
@@ -41,14 +41,11 @@ A USD stage is composed from a **layer stack** -- an ordered list of sublayers. 
 
 ## In BIF
 
-- **Current state**: BIF reads composed USD stages but writes flat exports -- no edit target support yet.
-- **v0.14.0 milestone**: Layer-aware stage editing is the next major feature. This will require:
-  - Exposing the layer stack in the UI
-  - Letting users pick an edit target layer
-  - Routing property edits through `SetEditTarget()` in the C++ bridge
-- **Design doc**: `BIF_USD_WORKFLOW.md` describes the hybrid approach -- procedural nodes + layer awareness.
-- **C++ bridge**: `bif_core::usd::cpp_bridge` will need `set_edit_target()` and `get_layer_stack()` FFI functions.
-- References in `MILESTONES.md` and `docs/usd/composition.md` discuss the edit target roadmap.
+- **Current state (v0.16):** Working-layer edits are wired. Interactive viewport actions (Transform, Visibility, MaterialAssign, MaterialParamOverride, VariantSelect, ReplaceLayerContents, SetShaderId) route through `EditOperation` / `EditHistory` and write under `UsdEditContext(stage, working_layer)` in the C++ bridge. Ctrl+S saves the active working layer.
+- **Procedural nodes** (Scatter, PointInstancer, etc.) still emit USD only at `export_scene()` time — node-driven opinion authoring is _Future_ work.
+- **Design doc:** `BIF_USD_WORKFLOW.md` describes the hybrid approach — procedural nodes + layer awareness.
+- **C++ bridge:** `cpp/usd_bridge/usd_bridge.cpp` exposes `UsdEditContext`-scoped writes via the FFI layer in `crates/bif_core/src/usd/cpp_bridge.rs`.
+- **Architecture:** see [[adr/008-edit-operation-architecture|ADR 008]] for the dual-track identity and parallel undo decisions.
 
 ## Related
 

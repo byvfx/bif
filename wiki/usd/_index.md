@@ -1,7 +1,7 @@
 ---
 title: USD Knowledge Map
 type: index
-updated: "2026-04-13"
+updated: "2026-05-01"
 ---
 
 # USD (Universal Scene Description)
@@ -16,7 +16,7 @@ BIF's core scene description is built on USD. These articles cover how USD works
 - [[geometry-schemas|Geometry Schemas]] — UsdGeom mesh, xformable, point instancer, cameras
 - [[bif-usd-integration|BIF USD Integration]] — Hybrid workflow, C++ bridge, export pipeline
 - [[usdskel-import|UsdSkel Import]] — Skeletal animation + CPU LBS skinning, SkelCache, joint remap, UV-seam expansion
-- [[layer-aware-stage|Layer-Aware Stage]] — v0.14.0 sublayer inspection, opinion stack, mute, layer color dots
+- [[layer-aware-stage|Layer-Aware Stage]] — v0.14 sublayer inspection + v0.16 edit/save (EditHistory, working-layer writes, Ctrl+S)
 
 ## Source Reference Docs
 
@@ -46,3 +46,4 @@ These curated docs live outside the vault:
 - [[architecture/adr/003-hybrid-usd-workflow|ADR 003: Hybrid USD Workflow]]
 - [[architecture/adr/004-cpp-bridge-for-usd|ADR 004: C++ Bridge for USD]]
 - [[architecture/adr/005-layer-aware-read-model|ADR 005: Layer-aware read model]]
+- [[architecture/adr/008-edit-operation-architecture|ADR 008: Edit operation architecture]]

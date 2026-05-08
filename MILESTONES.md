@@ -106,6 +106,7 @@ Dedicated styling/polish pass after the v0.16.0 functional editor work lands. Ke
 - Polish dock chrome, toolbar spacing, status surfaces, and workspace differentiation without changing core workflows
 - Consolidate Qt styling tokens and remove one-off widget styling drift introduced during the functional tranche
 - Validation: visual pass against `docs/ux/UI_DESIGN.md` plus the Graphite design doc, with no regressions to v0.16.0 editing flows
+- `primvars:displayColor` Vulkan fallback: synthesize flat-color material when mesh has no `material:binding`
 
 ### v0.17.0 — Viewport Performance
 
@@ -184,6 +185,7 @@ M36+ (widget crates, plugin system, DCC connectors). "Reusable VFX framework cra
 
 - UsdGeomNurbsPatch, UsdGeomNurbsCurves import
 - Intrinsic geometry USD read (Capsule, Cone, Cylinder — currently procedural-only)
+- Animated xformOp transform evaluation (`xformOp:rotateXYZ/translate/scale.timeSamples` frozen at `UsdTimeCode::Default()` in bridge — `GetLocalToWorldTransform()` never receives a timeCode)
 - Texture animation (UV offset keyframes)
 - Velocity-based motion blur (UsdGeomMotionAPI)
 - Native instancing read (instanceable prims — currently only PointInstancer)

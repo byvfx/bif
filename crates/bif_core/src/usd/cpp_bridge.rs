@@ -58,6 +58,9 @@ pub enum UsdBridgeError {
     #[error("USD bridge error: {0}")]
     Unknown(String),
 
+    #[error("Save failed: {0}")]
+    SaveFailed(String),
+
     #[error("Path contains invalid UTF-8")]
     InvalidPath,
 }
@@ -89,6 +92,10 @@ impl From<UsdBridgeErrorCode> for UsdBridgeError {
 }
 
 pub type UsdBridgeResult<T> = Result<T, UsdBridgeError>;
+
+fn cstr(s: &str) -> UsdBridgeResult<CString> {
+    CString::new(s).map_err(|_| UsdBridgeError::InvalidPath)
+}
 
 // ============================================================================
 // Safe Rust Types
@@ -927,7 +934,7 @@ impl UsdStage {
             path_str.to_string()
         };
 
-        let c_path = CString::new(path_str.as_str()).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_path = cstr(path_str.as_str())?;
 
         let mut raw: *mut UsdBridgeStageRaw = ptr::null_mut();
 
@@ -1620,7 +1627,7 @@ impl UsdStage {
 
     /// Load a prim's payload content.
     pub fn load_payload(&self, prim_path: &str) -> UsdBridgeResult<()> {
-        let c_path = CString::new(prim_path).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_path = cstr(prim_path)?;
         // Safety: load_payload invalidates caches in C++ (mutable through const pointer is ok
         // because the C++ side handles internal mutability via non-const stage member)
         let code = unsafe { usd_bridge_load_payload(self.raw as *mut _, c_path.as_ptr()) };
@@ -1632,7 +1639,7 @@ impl UsdStage {
 
     /// Unload a prim's payload to free memory.
     pub fn unload_payload(&self, prim_path: &str) -> UsdBridgeResult<()> {
-        let c_path = CString::new(prim_path).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_path = cstr(prim_path)?;
         let code = unsafe { usd_bridge_unload_payload(self.raw as *mut _, c_path.as_ptr()) };
         if code != UsdBridgeErrorCode::Success {
             return Err(code.into());
@@ -1650,7 +1657,7 @@ impl UsdStage {
     /// C++ returns pointers to thread-local strings — we copy immediately via
     /// `to_string_lossy().into_owned()`. Never store the raw pointer across calls.
     pub fn get_variant_set_names(&self, prim_path: &str) -> UsdBridgeResult<Vec<String>> {
-        let c_path = CString::new(prim_path).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_path = cstr(prim_path)?;
         let mut count: usize = 0;
         let code =
             unsafe { usd_bridge_get_variant_set_count(self.raw, c_path.as_ptr(), &mut count) };
@@ -1679,8 +1686,8 @@ impl UsdStage {
         prim_path: &str,
         variant_set: &str,
     ) -> UsdBridgeResult<Vec<String>> {
-        let c_path = CString::new(prim_path).map_err(|_| UsdBridgeError::InvalidPath)?;
-        let c_set = CString::new(variant_set).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_path = cstr(prim_path)?;
+        let c_set = cstr(variant_set)?;
         let mut count: usize = 0;
         let code = unsafe {
             usd_bridge_get_variant_count(self.raw, c_path.as_ptr(), c_set.as_ptr(), &mut count)
@@ -1716,8 +1723,8 @@ impl UsdStage {
         prim_path: &str,
         variant_set: &str,
     ) -> UsdBridgeResult<String> {
-        let c_path = CString::new(prim_path).map_err(|_| UsdBridgeError::InvalidPath)?;
-        let c_set = CString::new(variant_set).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_path = cstr(prim_path)?;
+        let c_set = cstr(variant_set)?;
         let mut sel_ptr: *const std::ffi::c_char = ptr::null();
         let code = unsafe {
             usd_bridge_get_variant_selection(
@@ -1744,10 +1751,10 @@ impl UsdStage {
         variant_name: &str,
         layer_identifier: &str,
     ) -> UsdBridgeResult<()> {
-        let c_path = CString::new(prim_path).map_err(|_| UsdBridgeError::InvalidPath)?;
-        let c_set = CString::new(variant_set).map_err(|_| UsdBridgeError::InvalidPath)?;
-        let c_name = CString::new(variant_name).map_err(|_| UsdBridgeError::InvalidPath)?;
-        let c_layer = CString::new(layer_identifier).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_path = cstr(prim_path)?;
+        let c_set = cstr(variant_set)?;
+        let c_name = cstr(variant_name)?;
+        let c_layer = cstr(layer_identifier)?;
         let code = unsafe {
             usd_bridge_set_variant_selection(
                 self.raw as *mut _,
@@ -1768,7 +1775,7 @@ impl UsdStage {
     /// Format is determined by file extension: `.usda`, `.usdc`, or `.usd`.
     pub fn export<P: AsRef<Path>>(&self, path: P) -> UsdBridgeResult<()> {
         let path_str = path.as_ref().to_str().ok_or(UsdBridgeError::InvalidPath)?;
-        let c_path = CString::new(path_str).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_path = cstr(path_str)?;
 
         let result = unsafe { usd_bridge_export_stage(self.raw, c_path.as_ptr()) };
 
@@ -1889,7 +1896,7 @@ impl UsdStage {
         &self,
         camera_path: &str,
     ) -> UsdBridgeResult<Vec<TransformSample>> {
-        let c_path = CString::new(camera_path).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_path = cstr(camera_path)?;
         let mut samples_ptr: *const UsdBridgeXformSampleRaw = ptr::null();
         let mut count: usize = 0;
 
@@ -1961,7 +1968,7 @@ impl UsdStage {
     ///
     /// Returns the interpolated world transform matrix for the camera at the given time.
     pub fn get_camera_xform_at_time(&self, camera_path: &str, time: f64) -> UsdBridgeResult<Mat4> {
-        let c_path = CString::new(camera_path).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_path = cstr(camera_path)?;
         let mut transform = [0.0f32; 16];
 
         let result = unsafe {
@@ -1986,7 +1993,7 @@ impl UsdStage {
         camera_path: &str,
         time: f64,
     ) -> UsdBridgeResult<CameraProperties> {
-        let c_path = CString::new(camera_path).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_path = cstr(camera_path)?;
         let mut props = UsdBridgeCameraPropertiesRaw {
             focal_length: 0.0,
             vertical_aperture: 0.0,
@@ -2124,7 +2131,7 @@ impl UsdStage {
 
     /// Get prim info by path.
     pub fn get_prim_info_by_path(&self, path: &str) -> UsdBridgeResult<UsdPrimInfo> {
-        let c_path = CString::new(path).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_path = cstr(path)?;
         let mut raw_info = UsdBridgePrimInfoRaw {
             path: ptr::null(),
             type_name: ptr::null(),
@@ -2189,7 +2196,7 @@ impl UsdStage {
     ///
     /// Pass "/" or empty string for root prims.
     pub fn child_prim_paths(&self, parent_path: &str) -> UsdBridgeResult<Vec<String>> {
-        let c_path = CString::new(parent_path).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_path = cstr(parent_path)?;
 
         let mut count: usize = 0;
         let result =
@@ -2255,8 +2262,7 @@ impl UsdStage {
 
     /// Get all attributes for a prim by path.
     pub fn get_prim_attributes(&self, prim_path: &str) -> UsdBridgeResult<Vec<UsdAttributeData>> {
-        let c_path = std::ffi::CString::new(prim_path)
-            .map_err(|_| UsdBridgeError::InvalidPrim("invalid path".to_string()))?;
+        let c_path = cstr(prim_path)?;
 
         let mut raw_ptr: *mut UsdBridgeAttributeDataRaw = std::ptr::null_mut();
         let mut count: usize = 0;
@@ -2348,7 +2354,7 @@ impl UsdStage {
             path_str.to_string()
         };
 
-        let c_path = CString::new(path_str.as_str()).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_path = cstr(path_str.as_str())?;
 
         let mut raw: *mut UsdBridgeStageRaw = ptr::null_mut();
         let code = unsafe {
@@ -2400,7 +2406,7 @@ impl UsdStage {
     /// Mute or unmute a layer by its authored identifier. Triggers stage
     /// recomposition — any cached prim data should be refreshed.
     pub fn set_layer_muted(&self, identifier: &str, muted: bool) -> UsdBridgeResult<()> {
-        let c_id = CString::new(identifier).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_id = cstr(identifier)?;
         let code = unsafe {
             usd_bridge_stage_mute_layer(
                 self.raw as *mut _,
@@ -2415,16 +2421,23 @@ impl UsdStage {
     }
 
     pub fn save_layer(&self, identifier: &str) -> UsdBridgeResult<()> {
-        let c_id = CString::new(identifier).map_err(|_| UsdBridgeError::InvalidPath)?;
-        let code = unsafe { usd_bridge_layer_save(self.raw, c_id.as_ptr()) };
+        let c_id = cstr(identifier)?;
+        let mut error_ptr: *const std::ffi::c_char = ptr::null();
+        let code = unsafe { usd_bridge_layer_save(self.raw, c_id.as_ptr(), &mut error_ptr) };
         if code != UsdBridgeErrorCode::Success {
+            if !error_ptr.is_null() {
+                let message = unsafe { CStr::from_ptr(error_ptr).to_string_lossy().into_owned() };
+                if !message.is_empty() {
+                    return Err(UsdBridgeError::SaveFailed(message));
+                }
+            }
             return Err(code.into());
         }
         Ok(())
     }
 
     pub fn layer_permission_to_edit(&self, identifier: &str) -> UsdBridgeResult<bool> {
-        let c_id = CString::new(identifier).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_id = cstr(identifier)?;
         let mut can_edit = 0;
         let code =
             unsafe { usd_bridge_layer_permission_to_edit(self.raw, c_id.as_ptr(), &mut can_edit) };
@@ -2435,7 +2448,7 @@ impl UsdStage {
     }
 
     pub fn export_layer_as_string(&self, identifier: &str) -> UsdBridgeResult<String> {
-        let c_id = CString::new(identifier).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_id = cstr(identifier)?;
         let mut text_ptr: *const std::ffi::c_char = ptr::null();
         let code =
             unsafe { usd_bridge_layer_export_as_string(self.raw, c_id.as_ptr(), &mut text_ptr) };
@@ -2449,8 +2462,8 @@ impl UsdStage {
     }
 
     pub fn import_layer_from_string(&self, identifier: &str, text: &str) -> UsdBridgeResult<()> {
-        let c_id = CString::new(identifier).map_err(|_| UsdBridgeError::InvalidPath)?;
-        let c_text = CString::new(text).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_id = cstr(identifier)?;
+        let c_text = cstr(text)?;
         let code = unsafe {
             usd_bridge_layer_import_from_string(self.raw, c_id.as_ptr(), c_text.as_ptr())
         };
@@ -2461,7 +2474,7 @@ impl UsdStage {
     }
 
     pub fn parse_usda(text: &str) -> UsdBridgeResult<()> {
-        let c_text = CString::new(text).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_text = cstr(text)?;
         let code = unsafe { usd_bridge_parse_usda(c_text.as_ptr()) };
         if code != UsdBridgeErrorCode::Success {
             return Err(code.into());
@@ -2475,9 +2488,9 @@ impl UsdStage {
         prim_path: &str,
         attr_name: &str,
     ) -> UsdBridgeResult<Option<String>> {
-        let c_id = CString::new(identifier).map_err(|_| UsdBridgeError::InvalidPath)?;
-        let c_path = CString::new(prim_path).map_err(|_| UsdBridgeError::InvalidPath)?;
-        let c_attr = CString::new(attr_name).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_id = cstr(identifier)?;
+        let c_path = cstr(prim_path)?;
+        let c_attr = cstr(attr_name)?;
         let mut value_ptr: *const std::ffi::c_char = ptr::null();
         let code = unsafe {
             usd_bridge_layer_get_attr_value(
@@ -2506,8 +2519,8 @@ impl UsdStage {
         time: f64,
         matrix_16: &[f32; 16],
     ) -> UsdBridgeResult<()> {
-        let c_id = CString::new(identifier).map_err(|_| UsdBridgeError::InvalidPath)?;
-        let c_path = CString::new(prim_path).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_id = cstr(identifier)?;
+        let c_path = cstr(prim_path)?;
         let code = unsafe {
             usd_bridge_layer_write_xform(
                 self.raw as *mut _,
@@ -2529,8 +2542,8 @@ impl UsdStage {
         prim_path: &str,
         visible: bool,
     ) -> UsdBridgeResult<()> {
-        let c_id = CString::new(identifier).map_err(|_| UsdBridgeError::InvalidPath)?;
-        let c_path = CString::new(prim_path).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_id = cstr(identifier)?;
+        let c_path = cstr(prim_path)?;
         let code = unsafe {
             usd_bridge_layer_write_visibility(
                 self.raw as *mut _,
@@ -2551,9 +2564,9 @@ impl UsdStage {
         prim_path: &str,
         material_path: &str,
     ) -> UsdBridgeResult<()> {
-        let c_id = CString::new(identifier).map_err(|_| UsdBridgeError::InvalidPath)?;
-        let c_prim = CString::new(prim_path).map_err(|_| UsdBridgeError::InvalidPath)?;
-        let c_mat = CString::new(material_path).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_id = cstr(identifier)?;
+        let c_prim = cstr(prim_path)?;
+        let c_mat = cstr(material_path)?;
         let code = unsafe {
             usd_bridge_layer_bind_material(
                 self.raw as *mut _,
@@ -2576,11 +2589,11 @@ impl UsdStage {
         value_type: &str,
         value: &str,
     ) -> UsdBridgeResult<()> {
-        let c_id = CString::new(identifier).map_err(|_| UsdBridgeError::InvalidPath)?;
-        let c_shader = CString::new(shader_path).map_err(|_| UsdBridgeError::InvalidPath)?;
-        let c_input = CString::new(input_name).map_err(|_| UsdBridgeError::InvalidPath)?;
-        let c_type = CString::new(value_type).map_err(|_| UsdBridgeError::InvalidPath)?;
-        let c_value = CString::new(value).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_id = cstr(identifier)?;
+        let c_shader = cstr(shader_path)?;
+        let c_input = cstr(input_name)?;
+        let c_type = cstr(value_type)?;
+        let c_value = cstr(value)?;
         let code = unsafe {
             usd_bridge_layer_set_shader_input(
                 self.raw as *mut _,
@@ -2605,9 +2618,9 @@ impl UsdStage {
         shader_path: &str,
         shader_id: &str,
     ) -> UsdBridgeResult<()> {
-        let c_id = CString::new(layer_identifier).map_err(|_| UsdBridgeError::InvalidPath)?;
-        let c_shader = CString::new(shader_path).map_err(|_| UsdBridgeError::InvalidPath)?;
-        let c_value = CString::new(shader_id).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_id = cstr(layer_identifier)?;
+        let c_shader = cstr(shader_path)?;
+        let c_value = cstr(shader_id)?;
         let code = unsafe {
             usd_bridge_layer_set_shader_id(
                 self.raw as *mut _,
@@ -2625,7 +2638,7 @@ impl UsdStage {
     /// Read the surface shader's `info:id` for the material bound to
     /// `prim_path`. Empty when nothing bound. C4b-3.
     pub fn get_bound_shader_id(&self, prim_path: &str) -> UsdBridgeResult<String> {
-        let c_path = CString::new(prim_path).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_path = cstr(prim_path)?;
         let mut out_id: *const std::os::raw::c_char = std::ptr::null();
         let code =
             unsafe { usd_bridge_prim_get_bound_shader_id(self.raw, c_path.as_ptr(), &mut out_id) };
@@ -2649,7 +2662,7 @@ impl UsdStage {
         &self,
         prim_path: &str,
     ) -> UsdBridgeResult<(String, Vec<BoundMaterialInput>)> {
-        let c_path = CString::new(prim_path).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_path = cstr(prim_path)?;
         let mut out_text: *const std::os::raw::c_char = std::ptr::null();
         let mut out_shader: *const std::os::raw::c_char = std::ptr::null();
         let code = unsafe {
@@ -2700,13 +2713,12 @@ impl UsdStage {
         Ok((shader_path, inputs))
     }
 
-    #[cfg(test)]
     pub fn set_layer_permission_to_edit(
         &self,
         identifier: &str,
         permission_to_edit: bool,
     ) -> UsdBridgeResult<()> {
-        let c_id = CString::new(identifier).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_id = cstr(identifier)?;
         let code = unsafe {
             usd_bridge_layer_set_permission_to_edit(
                 self.raw,
@@ -2724,7 +2736,7 @@ impl UsdStage {
     /// sublayer reference list. Returns identity `(0.0, 1.0)` if the layer
     /// isn't a direct sublayer of the root.
     pub fn get_layer_offset(&self, identifier: &str) -> UsdBridgeResult<LayerOffset> {
-        let c_id = CString::new(identifier).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_id = cstr(identifier)?;
         let mut raw_offset = UsdBridgeLayerOffsetRaw {
             offset: 0.0,
             scale: 1.0,
@@ -2740,7 +2752,7 @@ impl UsdStage {
     /// prim, ordered strongest-first. Returns empty `Vec` if the prim has no
     /// authored opinions (shouldn't happen for a composed prim).
     pub fn get_prim_stack(&self, prim_path: &str) -> UsdBridgeResult<Vec<PrimStackEntry>> {
-        let c_path = CString::new(prim_path).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_path = cstr(prim_path)?;
         let mut raw_stack: *mut UsdBridgePrimStackRaw = ptr::null_mut();
         let code =
             unsafe { usd_bridge_prim_get_prim_stack(self.raw, c_path.as_ptr(), &mut raw_stack) };
@@ -2760,8 +2772,8 @@ impl UsdStage {
         prim_path: &str,
         attr_name: &str,
     ) -> UsdBridgeResult<Vec<OpinionSource>> {
-        let c_path = CString::new(prim_path).map_err(|_| UsdBridgeError::InvalidPath)?;
-        let c_attr = CString::new(attr_name).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_path = cstr(prim_path)?;
+        let c_attr = cstr(attr_name)?;
         let mut raw_opinions: *mut UsdBridgeAttributeOpinionsRaw = ptr::null_mut();
         let code = unsafe {
             usd_bridge_attr_get_opinion_sources(
@@ -2814,7 +2826,7 @@ unsafe impl Send for UsdEditLayer {}
 impl UsdEditLayer {
     /// Create a new edit layer at the given output path.
     pub fn create(output_path: &str) -> UsdBridgeResult<Self> {
-        let c_path = CString::new(output_path).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_path = cstr(output_path)?;
         let mut raw: *mut UsdBridgeEditLayerRaw = std::ptr::null_mut();
         let code = unsafe { usd_bridge_create_edit_layer(c_path.as_ptr(), &mut raw) };
         if code != UsdBridgeErrorCode::Success {
@@ -2832,7 +2844,7 @@ impl UsdEditLayer {
         time: f64,
         matrix: &bif_math::Mat4,
     ) -> UsdBridgeResult<()> {
-        let c_path = CString::new(prim_path).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_path = cstr(prim_path)?;
         let cols = matrix.to_cols_array();
         let code = unsafe {
             usd_bridge_write_xform_opinion(self.raw, c_path.as_ptr(), time, cols.as_ptr())
@@ -2845,7 +2857,7 @@ impl UsdEditLayer {
 
     /// Add a sublayer to this edit layer (for composing over original USD).
     pub fn add_sublayer(&mut self, sublayer_path: &str) -> UsdBridgeResult<()> {
-        let c_path = CString::new(sublayer_path).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_path = cstr(sublayer_path)?;
         let code = unsafe { usd_bridge_edit_layer_add_sublayer(self.raw, c_path.as_ptr()) };
         if code != UsdBridgeErrorCode::Success {
             return Err(code.into());
@@ -2860,11 +2872,9 @@ impl UsdEditLayer {
         reference_file: &str,
         reference_prim_path: Option<&str>,
     ) -> UsdBridgeResult<()> {
-        let c_prim = CString::new(prim_path).map_err(|_| UsdBridgeError::InvalidPath)?;
-        let c_file = CString::new(reference_file).map_err(|_| UsdBridgeError::InvalidPath)?;
-        let c_ref_prim = reference_prim_path
-            .map(|p| CString::new(p).map_err(|_| UsdBridgeError::InvalidPath))
-            .transpose()?;
+        let c_prim = cstr(prim_path)?;
+        let c_file = cstr(reference_file)?;
+        let c_ref_prim = reference_prim_path.map(cstr).transpose()?;
         let ref_prim_ptr = c_ref_prim
             .as_ref()
             .map(|c| c.as_ptr())
@@ -2885,7 +2895,7 @@ impl UsdEditLayer {
 
     /// Set the default prim on the stage.
     pub fn set_default_prim(&mut self, prim_path: &str) -> UsdBridgeResult<()> {
-        let c_path = CString::new(prim_path).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_path = cstr(prim_path)?;
         let code = unsafe { usd_bridge_edit_layer_set_default_prim(self.raw, c_path.as_ptr()) };
         if code != UsdBridgeErrorCode::Success {
             return Err(code.into());
@@ -2900,7 +2910,7 @@ impl UsdEditLayer {
         cloud: &crate::point_cloud::PointCloud,
         proto_paths: &[String],
     ) -> UsdBridgeResult<()> {
-        let c_prim = CString::new(prim_path).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_prim = cstr(prim_path)?;
 
         // Flatten positions to f32 array
         let positions: Vec<f32> = cloud
@@ -2971,7 +2981,7 @@ impl UsdEditLayer {
         // Build C string array for prototype paths
         let c_proto_paths: Vec<CString> = proto_paths
             .iter()
-            .map(|p| CString::new(p.as_str()).map_err(|_| UsdBridgeError::InvalidPath))
+            .map(|p| cstr(p.as_str()))
             .collect::<Result<Vec<_>, _>>()?;
         let c_proto_ptrs: Vec<*const std::ffi::c_char> =
             c_proto_paths.iter().map(|c| c.as_ptr()).collect();
@@ -3000,7 +3010,7 @@ impl UsdEditLayer {
 
     /// Write a UsdGeomMesh prim from a `Mesh`.
     pub fn write_mesh(&mut self, prim_path: &str, mesh: &crate::mesh::Mesh) -> UsdBridgeResult<()> {
-        let c_path = CString::new(prim_path).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_path = cstr(prim_path)?;
 
         let points: Vec<f32> = mesh
             .positions
@@ -3055,9 +3065,9 @@ impl UsdEditLayer {
         prim_type: UsdPrimType,
         specifier: UsdSpecifier,
     ) -> UsdBridgeResult<()> {
-        let c_path = CString::new(path).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_path = cstr(path)?;
         let type_name = prim_type.as_usd_type_name();
-        let c_type = CString::new(type_name).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_type = cstr(type_name)?;
         let spec_raw = match specifier {
             UsdSpecifier::Define => UsdBridgeSpecifierRaw::Define,
             UsdSpecifier::Over => UsdBridgeSpecifierRaw::Over,
@@ -3072,7 +3082,7 @@ impl UsdEditLayer {
 
     /// Set the model kind on a prim (must already exist).
     pub fn set_prim_kind(&mut self, path: &str, kind: UsdKind) -> UsdBridgeResult<()> {
-        let c_path = CString::new(path).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_path = cstr(path)?;
         let kind_raw = match kind {
             UsdKind::None => UsdBridgeKindRaw::None,
             UsdKind::Component => UsdBridgeKindRaw::Component,
@@ -3096,8 +3106,8 @@ impl UsdEditLayer {
         asset_path: &str,
         target_path: Option<&str>,
     ) -> UsdBridgeResult<()> {
-        let c_prim = CString::new(prim_path).map_err(|_| UsdBridgeError::InvalidPath)?;
-        let c_asset = CString::new(asset_path).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_prim = cstr(prim_path)?;
+        let c_asset = cstr(asset_path)?;
         let c_target = target_path.and_then(|s| CString::new(s).ok());
         let code = unsafe {
             usd_bridge_edit_layer_add_payload(
@@ -3118,7 +3128,7 @@ impl UsdEditLayer {
         mat_path: &str,
         material: &crate::scene::Material,
     ) -> UsdBridgeResult<()> {
-        let c_path = CString::new(mat_path).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_path = cstr(mat_path)?;
         let diffuse = [
             material.base_color.x,
             material.base_color.y,
@@ -3178,8 +3188,8 @@ impl UsdEditLayer {
 
     /// Bind a material to a prim.
     pub fn bind_material(&mut self, prim_path: &str, material_path: &str) -> UsdBridgeResult<()> {
-        let c_prim = CString::new(prim_path).map_err(|_| UsdBridgeError::InvalidPath)?;
-        let c_mat = CString::new(material_path).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_prim = cstr(prim_path)?;
+        let c_mat = cstr(material_path)?;
         let code = unsafe { usd_bridge_bind_material(self.raw, c_prim.as_ptr(), c_mat.as_ptr()) };
         if code != UsdBridgeErrorCode::Success {
             return Err(code.into());
@@ -3189,7 +3199,7 @@ impl UsdEditLayer {
 
     /// Write visibility attribute on a prim.
     pub fn write_visibility(&mut self, prim_path: &str, visible: bool) -> UsdBridgeResult<()> {
-        let c_path = CString::new(prim_path).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_path = cstr(prim_path)?;
         let code = unsafe {
             usd_bridge_write_visibility(self.raw, c_path.as_ptr(), if visible { 1 } else { 0 })
         };
@@ -3228,7 +3238,7 @@ impl UsdEditLayer {
         time: f64,
         transform: &Mat4,
     ) -> UsdBridgeResult<()> {
-        let c_path = CString::new(path).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_path = cstr(path)?;
         let xform = transform.to_cols_array();
         let code = unsafe {
             usd_bridge_write_camera(
@@ -3252,7 +3262,7 @@ impl UsdEditLayer {
     /// Write a UsdLux light prim with type-specific properties.
     #[allow(clippy::too_many_arguments)]
     pub fn write_light(&mut self, light: &UsdLightData) -> UsdBridgeResult<()> {
-        let c_path = CString::new(light.path.as_str()).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_path = cstr(light.path.as_str())?;
         let color = [light.color.x, light.color.y, light.color.z];
         let xform = light.transform.to_cols_array();
         let light_type = match light.light_type {
@@ -3302,7 +3312,7 @@ impl UsdEditLayer {
         camera_path: Option<&str>,
         pixel_aspect_ratio: f32,
     ) -> UsdBridgeResult<()> {
-        let c_path = CString::new(path).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_path = cstr(path)?;
         let c_cam = camera_path.and_then(|s| CString::new(s).ok());
         let code = unsafe {
             usd_bridge_write_render_settings(
@@ -3328,8 +3338,8 @@ impl UsdEditLayer {
         face_indices: &[i32],
         material_path: Option<&str>,
     ) -> UsdBridgeResult<()> {
-        let c_mesh = CString::new(mesh_path).map_err(|_| UsdBridgeError::InvalidPath)?;
-        let c_name = CString::new(subset_name).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_mesh = cstr(mesh_path)?;
+        let c_name = cstr(subset_name)?;
         let c_mat = material_path.and_then(|s| CString::new(s).ok());
         let code = unsafe {
             usd_bridge_write_geom_subset(
@@ -3356,7 +3366,7 @@ impl UsdEditLayer {
         if ids.is_empty() {
             return Ok(());
         }
-        let c_path = CString::new(instancer_path).map_err(|_| UsdBridgeError::InvalidPath)?;
+        let c_path = cstr(instancer_path)?;
         let code = unsafe {
             usd_bridge_write_invisible_ids(self.raw, c_path.as_ptr(), ids.as_ptr(), ids.len())
         };
@@ -3996,6 +4006,41 @@ def Xform "World"
         stage
             .set_layer_permission_to_edit(&shot_id, true)
             .expect("restore shot permission");
+    }
+
+    #[test]
+    fn save_with_locked_layer_returns_message() {
+        let stage = UsdStage::open(LAYERS_ROOT_FIXTURE).expect("open fixture");
+        let shot_id = stage
+            .get_layer_stack()
+            .expect("layer stack")
+            .layers
+            .iter()
+            .find(|l| l.identifier.ends_with("shot.usda"))
+            .map(|l| l.identifier.clone())
+            .expect("shot.usda in stack");
+
+        stage
+            .set_layer_permission_to_edit(&shot_id, false)
+            .expect("disable shot permission");
+
+        let err = stage
+            .save_layer(&shot_id)
+            .expect_err("locked layer save fails");
+
+        stage
+            .set_layer_permission_to_edit(&shot_id, true)
+            .expect("restore shot permission");
+
+        match err {
+            UsdBridgeError::SaveFailed(message) => {
+                assert!(
+                    message.contains("not editable") && message.contains("shot.usda"),
+                    "expected concrete save failure, got {message:?}"
+                );
+            }
+            other => panic!("expected SaveFailed, got {other:?}"),
+        }
     }
 
     #[test]

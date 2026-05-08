@@ -59,6 +59,9 @@ pub struct SceneManager {
     /// Persistent working scene that accumulates all primitives and USD objects.
     pub working_scene: bif_core::Scene,
 
+    /// Computed invisible USD prim paths mirrored from the live stage for viewport filtering.
+    pub hidden_prim_paths: std::collections::HashSet<String>,
+
     /// Per-instance parallel arrays (transforms, materials, prototype IDs, prim paths).
     pub instances: SceneInstances,
 
@@ -115,6 +118,7 @@ impl SceneManager {
     pub fn new() -> Self {
         Self {
             working_scene: bif_core::Scene::new("Working"),
+            hidden_prim_paths: std::collections::HashSet::new(),
             instances: SceneInstances::default(),
             instance_animations: vec![],
             last_evaluated_frame: -1.0,

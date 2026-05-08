@@ -1,7 +1,7 @@
 //! # State Mutation Convention
 //!
 //! **Direct mutation** (in egui closures): Simple boolean toggles with no side
-//! effects (show_grid, point_preview.visible). Safe because they only
+//! effects (display_settings.grid_visible, point_preview.visible). Safe because they only
 //! affect the next frame's rendering, with no cascading state changes.
 //!
 //! **EventBus**: Anything triggering side effects (scene reload, camera sync,
@@ -28,6 +28,8 @@ impl Renderer {
 
     /// Phase 1: Poll async work — USD load, texture streaming, scene graph, scene ops.
     fn poll_async_work(&mut self) {
+        self.flush_node_graph();
+
         // Poll async USD load (non-blocking)
         self.poll_usd_load();
 
@@ -35,15 +37,7 @@ impl Renderer {
         self.poll_texture_loads();
 
         // Rebuild cached scene graph if dirty
-        if self.nodes.scene_graph_dirty {
-            self.nodes.cached_scene_graph = scene_browser::build_scene_graph_cache(
-                &self.scene.working_scene,
-                &self.nodes.node_proto_map,
-                &self.nodes.node_cloud_map,
-            );
-            self.nodes.node_prim_counts = self.nodes.cached_scene_graph.prim_count_by_node();
-            self.nodes.scene_graph_dirty = false;
-        }
+        self.rebuild_cached_scene_graph_if_dirty();
 
         // Process pending scene operations from undo/redo
         if !self.scene.edit_state.pending_scene_ops.is_empty() {
@@ -108,6 +102,35 @@ impl Renderer {
                 }
             }
         }
+    }
+
+    pub fn flush_node_graph(&mut self) {
+        let events = crate::node_graph::eval::collect_auto_compute_events(
+            &mut self.nodes.node_graph_state.snarl,
+            self.nodes.node_graph_state.eval_mode,
+            &mut self.nodes.node_graph_state.dirty_nodes,
+        );
+        if !events.is_empty() {
+            self.project.mark_dirty();
+            for event in events {
+                self.handle_node_graph_event(event);
+            }
+        }
+        self.rebuild_cached_scene_graph_if_dirty();
+    }
+
+    pub fn rebuild_cached_scene_graph_if_dirty(&mut self) {
+        if !self.nodes.scene_graph_dirty {
+            return;
+        }
+        self.nodes.cached_scene_graph = scene_browser::build_scene_graph_cache(
+            &self.scene.working_scene,
+            &self.nodes.node_graph_state.snarl,
+            &self.nodes.node_proto_map,
+            &self.nodes.node_cloud_map,
+        );
+        self.nodes.node_prim_counts = self.nodes.cached_scene_graph.prim_count_by_node();
+        self.nodes.scene_graph_dirty = false;
     }
 
     /// Phase 2: Poll environment — IBL, .tx conversion, batch render, selection sync, frustum culling.
@@ -636,7 +659,7 @@ impl Renderer {
                         .render(&mut render_pass, &self.cam.camera_bind_group);
 
                     // Render ground grid after opaque geometry (transparent, reads depth)
-                    if self.show_grid {
+                    if self.display_settings.grid_visible {
                         self.grid
                             .render(&mut render_pass, &self.cam.camera_bind_group);
                     }
@@ -722,6 +745,7 @@ impl Renderer {
                         origin,
                         &self.cam.camera,
                         viewport_rect,
+                        self.effective_px(1.0),
                         &self.selection.gizmo_state,
                     );
                     let mut gizmo_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {

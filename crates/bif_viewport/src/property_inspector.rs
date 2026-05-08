@@ -1640,9 +1640,11 @@ pub(crate) fn render_node_properties(
             rotate,
             scale,
             prim_filter,
+            is_applied,
         } => {
             let changed = render_xform_properties(ui, translate, rotate, scale, prim_filter);
             if changed {
+                *is_applied = false;
                 events.push(NodeGraphEvent::XformChanged { node_id });
             }
         }
@@ -1651,56 +1653,74 @@ pub(crate) fn render_node_properties(
             prim_type,
             kind,
             specifier,
+            is_created,
         } => {
             ui.heading("USD Prim");
+            let mut changed = false;
             ui.horizontal(|ui| {
                 ui.label("Path:");
-                ui.text_edit_singleline(prim_path);
+                changed |= ui.text_edit_singleline(prim_path).changed();
             });
             ui.horizontal(|ui| {
                 ui.label("Type:");
-                egui::ComboBox::from_id_salt("prim_type_inspector")
+                changed |= egui::ComboBox::from_id_salt("prim_type_inspector")
                     .selected_text(format!("{}", prim_type))
                     .show_ui(ui, |ui| {
                         for t in bif_core::usd::UsdPrimType::ALL {
                             ui.selectable_value(prim_type, t, format!("{}", t));
                         }
-                    });
+                    })
+                    .response
+                    .changed();
             });
             ui.horizontal(|ui| {
                 ui.label("Kind:");
-                egui::ComboBox::from_id_salt("prim_kind_inspector")
+                let response = egui::ComboBox::from_id_salt("prim_kind_inspector")
                     .selected_text(format!("{}", kind))
                     .show_ui(ui, |ui| {
                         for k in bif_core::usd::UsdKind::ALL {
                             ui.selectable_value(kind, k, format!("{}", k));
                         }
                     })
-                    .response
-                    .on_hover_text(
-                        "USD prim kind metadata (component, assembly, group, subcomponent)",
-                    );
+                    .response;
+                changed |= response.changed();
+                response.on_hover_text(
+                    "USD prim kind metadata (component, assembly, group, subcomponent)",
+                );
             });
             ui.horizontal(|ui| {
                 ui.label("Spec:");
-                egui::ComboBox::from_id_salt("prim_spec_inspector")
+                let response = egui::ComboBox::from_id_salt("prim_spec_inspector")
                     .selected_text(format!("{}", specifier))
                     .show_ui(ui, |ui| {
                         for s in bif_core::usd::UsdSpecifier::ALL {
                             ui.selectable_value(specifier, s, format!("{}", s));
                         }
                     })
-                    .response
-                    .on_hover_text("USD prim specifier (def = concrete prim, over = opinion, class = abstract)");
+                    .response;
+                changed |= response.changed();
+                response.on_hover_text(
+                    "USD prim specifier (def = concrete prim, over = opinion, class = abstract)",
+                );
             });
+            if changed {
+                *is_created = false;
+                events.push(NodeGraphEvent::UsdPrimCreate { node_id });
+            }
             ui.colored_label(theme::PIN_SCENE, prim_path.as_str());
         }
-        SceneNode::GraftBranches { destination_path } => {
+        SceneNode::GraftBranches {
+            destination_path,
+            is_computed: _,
+        } => {
             ui.heading("Graft Branches");
             ui.horizontal(|ui| {
                 ui.label("Dest:");
                 ui.text_edit_singleline(destination_path);
             });
+            ui.label(
+                "Held for redesign; editing this node does not compute a graph operation yet.",
+            );
             ui.colored_label(theme::PIN_SCENE, destination_path.as_str());
         }
         SceneNode::HdriEnvironment {

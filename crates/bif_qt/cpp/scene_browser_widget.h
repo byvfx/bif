@@ -11,6 +11,7 @@
 
 #pragma once
 
+#include <QModelIndex>
 #include <QWidget>
 
 class BifShellState;
@@ -28,11 +29,20 @@ public:
 private slots:
     void on_filter_changed(const QString& text);
     void on_selection_changed(const QModelIndex& current, const QModelIndex& previous);
+    void on_external_selection_changed();
+
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
+    QModelIndex find_source_index_for_path(const QString& path,
+                                           const QModelIndex& parent = QModelIndex());
+    void select_path(const QString& path);
+
     BifShellState* m_state;
     SceneBrowserModel* m_model;
     QSortFilterProxyModel* m_filter;
     QLineEdit* m_search;
     QTreeView* m_view;
+    bool m_syncing_external_selection{false};
 };

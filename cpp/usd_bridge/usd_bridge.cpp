@@ -39,6 +39,7 @@
 #include <pxr/base/plug/plugin.h>
 #include <pxr/base/tf/pathUtils.h>
 #include <pxr/base/tf/diagnostic.h>
+#include <pxr/base/tf/errorMark.h>
 #include <pxr/usd/sdf/layer.h>
 #include <pxr/usd/usd/references.h>
 #include <pxr/usd/usd/payloads.h>
@@ -2783,9 +2784,15 @@ UsdBridgeError usd_bridge_open_stage(const char* path, UsdBridgeStage** out_stag
         using namespace std::chrono;
         auto total_start = high_resolution_clock::now();
 
-        // Normalize path: convert backslashes to forward slashes for USD
+        // Normalize path: convert backslashes to forward slashes for USD.
+        // UNC paths (\\server\share\...) must keep their leading \\ — USD's AR on
+        // Windows cannot resolve //server/share/ (forward-slash UNC form).
         std::string normalized_path(path);
-        std::replace(normalized_path.begin(), normalized_path.end(), '\\', '/');
+        if (!(normalized_path.size() >= 2 &&
+              normalized_path[0] == '\\' &&
+              normalized_path[1] == '\\')) {
+            std::replace(normalized_path.begin(), normalized_path.end(), '\\', '/');
+        }
 
         std::cout << "[USD_BRIDGE] Opening stage: " << normalized_path << std::endl;
 
@@ -3167,7 +3174,9 @@ UsdBridgeError usd_bridge_get_material_count(
         return USD_BRIDGE_ERROR_NULL_POINTER;
     }
 
-    // Data pre-cached at load time - just read
+    if (!stage->materials_cached) {
+        cache_material_data(const_cast<UsdBridgeStage*>(stage));
+    }
     *out_count = stage->materials.size();
     return USD_BRIDGE_SUCCESS;
 }
@@ -3261,7 +3270,9 @@ UsdBridgeError usd_bridge_get_prim_count(
         return USD_BRIDGE_ERROR_NULL_POINTER;
     }
 
-    // Data pre-cached at load time
+    if (!stage->prims_cached) {
+        cache_prim_data(const_cast<UsdBridgeStage*>(stage));
+    }
     *out_count = stage->all_prims.size();
     return USD_BRIDGE_SUCCESS;
 }
@@ -3275,7 +3286,9 @@ UsdBridgeError usd_bridge_get_prim_info(
         return USD_BRIDGE_ERROR_NULL_POINTER;
     }
 
-    // Data pre-cached at load time
+    if (!stage->prims_cached) {
+        cache_prim_data(const_cast<UsdBridgeStage*>(stage));
+    }
 
     if (index >= stage->all_prims.size()) {
         return USD_BRIDGE_ERROR_INVALID_PRIM;
@@ -3305,7 +3318,9 @@ UsdBridgeError usd_bridge_get_root_prim_count(
         return USD_BRIDGE_ERROR_NULL_POINTER;
     }
 
-    // Data pre-cached at load time
+    if (!stage->prims_cached) {
+        cache_prim_data(const_cast<UsdBridgeStage*>(stage));
+    }
     *out_count = stage->root_paths.size();
     return USD_BRIDGE_SUCCESS;
 }
@@ -3319,7 +3334,9 @@ UsdBridgeError usd_bridge_get_root_prim_path(
         return USD_BRIDGE_ERROR_NULL_POINTER;
     }
 
-    // Data pre-cached at load time
+    if (!stage->prims_cached) {
+        cache_prim_data(const_cast<UsdBridgeStage*>(stage));
+    }
 
     if (index >= stage->root_paths.size()) {
         return USD_BRIDGE_ERROR_INVALID_PRIM;
@@ -3338,7 +3355,9 @@ UsdBridgeError usd_bridge_get_children_count(
         return USD_BRIDGE_ERROR_NULL_POINTER;
     }
 
-    // Data pre-cached at load time
+    if (!stage->prims_cached) {
+        cache_prim_data(const_cast<UsdBridgeStage*>(stage));
+    }
 
     // Handle pseudo-root case
     std::string path_str(parent_path);
@@ -3368,7 +3387,9 @@ UsdBridgeError usd_bridge_get_child_path(
         return USD_BRIDGE_ERROR_NULL_POINTER;
     }
 
-    // Data pre-cached at load time
+    if (!stage->prims_cached) {
+        cache_prim_data(const_cast<UsdBridgeStage*>(stage));
+    }
 
     std::string path_str(parent_path);
     
@@ -3404,7 +3425,9 @@ UsdBridgeError usd_bridge_get_prim_info_by_path(
         return USD_BRIDGE_ERROR_NULL_POINTER;
     }
 
-    // Data pre-cached at load time
+    if (!stage->prims_cached) {
+        cache_prim_data(const_cast<UsdBridgeStage*>(stage));
+    }
 
     std::string path_str(path);
     for (const auto& info : stage->all_prims) {
@@ -6589,22 +6612,63 @@ UsdBridgeError usd_bridge_layer_set_permission_to_edit(
 
 UsdBridgeError usd_bridge_layer_save(
     const UsdBridgeStage* stage,
-    const char* layer_identifier
+    const char* layer_identifier,
+    const char** out_error_message
 ) {
+    static thread_local std::string error_buf;
+    auto set_error = [&](const std::string& message) {
+        error_buf = message;
+        if (out_error_message) {
+            *out_error_message = error_buf.empty() ? nullptr : error_buf.c_str();
+        }
+    };
+
+    if (out_error_message) {
+        *out_error_message = nullptr;
+    }
     if (!stage || !layer_identifier) {
+        set_error("Missing stage or layer identifier");
         return USD_BRIDGE_ERROR_NULL_POINTER;
     }
     try {
         SdfLayerRefPtr root = stage->stage->GetRootLayer();
-        if (!root) return USD_BRIDGE_ERROR_INVALID_STAGE;
+        if (!root) {
+            set_error("Stage has no root layer");
+            return USD_BRIDGE_ERROR_INVALID_STAGE;
+        }
         SdfLayerRefPtr layer = find_layer_by_identifier(root, layer_identifier);
-        if (!layer) return USD_BRIDGE_ERROR_INVALID_PRIM;
-        if (!layer->PermissionToEdit()) return USD_BRIDGE_ERROR_UNKNOWN;
-        return layer->Save() ? USD_BRIDGE_SUCCESS : USD_BRIDGE_ERROR_UNKNOWN;
+        if (!layer) {
+            set_error(std::string("Layer not found: ") + layer_identifier);
+            return USD_BRIDGE_ERROR_INVALID_PRIM;
+        }
+        if (!layer->PermissionToEdit()) {
+            set_error(std::string("Layer is not editable: ") + layer_identifier);
+            return USD_BRIDGE_ERROR_UNKNOWN;
+        }
+
+        TfErrorMark mark;
+        if (layer->Save()) {
+            return USD_BRIDGE_SUCCESS;
+        }
+
+        std::ostringstream errors;
+        for (TfErrorMark::Iterator it = mark.GetBegin(); it != mark.GetEnd(); ++it) {
+            if (errors.tellp() > 0) {
+                errors << "\n";
+            }
+            errors << it->GetCommentary();
+        }
+        mark.Clear();
+
+        const std::string message = errors.str();
+        set_error(message.empty() ? "USD layer save failed" : message);
+        return USD_BRIDGE_ERROR_UNKNOWN;
     } catch (const std::exception& e) {
+        set_error(e.what());
         TF_WARN("usd_bridge_layer_save: %s", e.what());
         return USD_BRIDGE_ERROR_UNKNOWN;
     } catch (...) {
+        set_error("Unknown exception while saving layer");
         TF_WARN("usd_bridge_layer_save: unknown exception");
         return USD_BRIDGE_ERROR_UNKNOWN;
     }
@@ -6643,7 +6707,7 @@ UsdBridgeError usd_bridge_layer_export_as_string(
     const char* layer_identifier,
     const char** out_text
 ) {
-    static thread_local std::string buf;
+    static thread_local std::vector<char> buf;
     if (!stage || !layer_identifier || !out_text) {
         return USD_BRIDGE_ERROR_NULL_POINTER;
     }
@@ -6653,10 +6717,13 @@ UsdBridgeError usd_bridge_layer_export_as_string(
         if (!root) return USD_BRIDGE_ERROR_INVALID_STAGE;
         SdfLayerRefPtr layer = find_layer_by_identifier(root, layer_identifier);
         if (!layer) return USD_BRIDGE_ERROR_INVALID_PRIM;
-        if (!layer->ExportToString(&buf)) {
+        std::string exported;
+        if (!layer->ExportToString(&exported)) {
             return USD_BRIDGE_ERROR_UNKNOWN;
         }
-        *out_text = buf.c_str();
+        buf.assign(exported.begin(), exported.end());
+        buf.push_back('\0');
+        *out_text = buf.data();
         return USD_BRIDGE_SUCCESS;
     } catch (const std::exception& e) {
         TF_WARN("usd_bridge_layer_export_as_string: %s", e.what());
@@ -6701,6 +6768,7 @@ UsdBridgeError usd_bridge_layer_import_from_string(
             TF_WARN("usd_bridge_layer_import_from_string: TransferContent threw, rolled back");
             return USD_BRIDGE_ERROR_UNKNOWN;
         }
+        invalidate_all_caches(const_cast<UsdBridgeStage*>(stage));
         return USD_BRIDGE_SUCCESS;
     } catch (const std::exception& e) {
         TF_WARN("usd_bridge_layer_import_from_string: %s", e.what());
@@ -7286,7 +7354,11 @@ UsdBridgeError usd_bridge_open_stage_with_policy(
 
     try {
         std::string normalized_path(path);
-        std::replace(normalized_path.begin(), normalized_path.end(), '\\', '/');
+        if (!(normalized_path.size() >= 2 &&
+              normalized_path[0] == '\\' &&
+              normalized_path[1] == '\\')) {
+            std::replace(normalized_path.begin(), normalized_path.end(), '\\', '/');
+        }
 
         ArResolverContext context =
             ArGetResolver().CreateDefaultContextForAsset(normalized_path);

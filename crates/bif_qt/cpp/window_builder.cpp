@@ -34,6 +34,7 @@
 #include <QMenuBar>
 #include <QMimeData>
 #include <QMessageBox>
+#include <QPointer>
 #include <QPushButton>
 #include <QScreen>
 #include <QSettings>
@@ -255,34 +256,10 @@ void save_current(QMainWindow* window, const QString& current) {
     settings.setValue(state_key(canonical), window->saveState());
 }
 
-void switch_to(
+void finish_switch_to(
     QMainWindow* window,
     BifShellState* state,
-    const QString& target) {
-    const auto canonical_target = canonical_name(target);
-    const auto target_policy = payload_policy_for_workspace(canonical_target);
-    const auto current_policy = state->payload_policy_name();
-    if (target_policy != current_policy) {
-        if (state->has_loaded_stage()) {
-            const auto answer = QMessageBox::question(
-                window,
-                QStringLiteral("Reload Stage For Workspace"),
-                QStringLiteral(
-                    "Switching to %1 changes payload loading from %2 to %3 and reloads the "
-                    "open stage. Continue?")
-                    .arg(display_name(canonical_target), current_policy, target_policy),
-                QMessageBox::Yes | QMessageBox::No,
-                QMessageBox::No);
-            if (answer != QMessageBox::Yes) {
-                return;
-            }
-        }
-        if (!state->on_set_payload_policy(target_policy)) {
-            window->statusBar()->showMessage(state->getStatus_message());
-            return;
-        }
-    }
-
+    const QString& canonical_target) {
     save_current(window, state->getCurrent_workspace());
 
     QSettings settings;
@@ -299,6 +276,49 @@ void switch_to(
     state->setStatus_message(
         QStringLiteral("Workspace: %1").arg(display_name(canonical_target)));
     window->statusBar()->showMessage(state->getStatus_message());
+}
+
+void switch_to(
+    QMainWindow* window,
+    BifShellState* state,
+    const QString& target) {
+    const auto canonical_target = canonical_name(target);
+    const auto target_policy = payload_policy_for_workspace(canonical_target);
+    const auto current_policy = state->payload_policy_name();
+    if (target_policy != current_policy) {
+        if (state->has_loaded_stage()) {
+            QPointer<QMainWindow> window_guard(window);
+            QPointer<BifShellState> state_guard(state);
+            QTimer::singleShot(0, window, [window_guard, state_guard, canonical_target,
+                                           current_policy, target_policy]() {
+                if (!window_guard || !state_guard) return;
+                const auto answer = QMessageBox::question(
+                    window_guard,
+                    QStringLiteral("Reload Stage For Workspace"),
+                    QStringLiteral(
+                        "Switching to %1 changes payload loading from %2 to %3 and reloads the "
+                        "open stage. Continue?")
+                        .arg(display_name(canonical_target), current_policy, target_policy),
+                    QMessageBox::Yes | QMessageBox::No,
+                    QMessageBox::No);
+                if (answer != QMessageBox::Yes) {
+                    return;
+                }
+                if (!state_guard->on_set_payload_policy(target_policy)) {
+                    window_guard->statusBar()->showMessage(state_guard->getStatus_message());
+                    return;
+                }
+                finish_switch_to(window_guard, state_guard, canonical_target);
+            });
+            return;
+        }
+        if (!state->on_set_payload_policy(target_policy)) {
+            window->statusBar()->showMessage(state->getStatus_message());
+            return;
+        }
+    }
+
+    finish_switch_to(window, state, canonical_target);
 }
 }  // namespace ws
 
@@ -323,6 +343,7 @@ struct MenuActions {
     QAction* workspace_materials;
     QAction* workspace_review;
     QAction* zen_mode;
+    QAction* toggle_grid;
     QAction* toggle_lod;
     QAction* toggle_node_graph_experimental;
     QAction* toggle_usda_source;
@@ -404,6 +425,9 @@ MenuActions build_menu_bar(QMainWindow* window) {
     a.zen_mode = view->addAction(QStringLiteral("&Zen Mode"));
     a.zen_mode->setShortcut(QKeySequence(QStringLiteral("Ctrl+\\")));
     a.zen_mode->setCheckable(true);
+    a.toggle_grid = view->addAction(QStringLiteral("&Grid"));
+    a.toggle_grid->setCheckable(true);
+    a.toggle_grid->setChecked(true);  // DisplaySettings::default = true
     a.toggle_lod = view->addAction(QStringLiteral("Viewport &LOD"));
     a.toggle_lod->setShortcut(QKeySequence(QStringLiteral("Ctrl+L")));
     a.toggle_lod->setCheckable(true);
@@ -1006,6 +1030,11 @@ void wire_shell_actions(
             shell_state->on_set_lod_enabled(enabled);
             update_status();
         });
+    QObject::connect(actions.toggle_grid, &QAction::toggled, window,
+        [shell_state, update_status](bool visible) {
+            shell_state->on_set_grid_visible(visible);
+            update_status();
+        });
     QObject::connect(actions.toggle_node_graph_experimental, &QAction::toggled, window,
         [window, shell_state, update_status](bool enabled) {
             set_node_graph_preview_enabled(window, enabled);
@@ -1283,8 +1312,7 @@ int bif_qt_run_shell(ViewportCallbacks* viewport_cb, ::rust::Str stylesheet) {
         dock->setWidget(panel);
         window.addDockWidget(Qt::RightDockWidgetArea, dock);
     }
-    // Bottom area: Node Graph (still a placeholder — Phase D.2) and
-    // Timeline (Phase D.1) tabified together.
+    // Bottom area: Node Graph and Timeline (Phase D.1) tabified together.
     QDockWidget* node_graph_dock = nullptr;
     QDockWidget* timeline_dock = nullptr;
     {
@@ -1295,7 +1323,7 @@ int bif_qt_run_shell(ViewportCallbacks* viewport_cb, ::rust::Str stylesheet) {
             QDockWidget::DockWidgetMovable |
             QDockWidget::DockWidgetFloatable |
             QDockWidget::DockWidgetClosable);
-        auto* panel = new NodeGraphWidget(node_graph_dock);
+        auto* panel = new NodeGraphWidget(shell_state, node_graph_dock);
         node_graph_dock->setWidget(panel);
         window.addDockWidget(Qt::BottomDockWidgetArea, node_graph_dock);
     }
@@ -1372,10 +1400,10 @@ int bif_qt_run_shell(ViewportCallbacks* viewport_cb, ::rust::Str stylesheet) {
         ws::switch_to(&window, shell_state, last);
     }
 
-    // Phase C.1 demo data — seed a 3-layer fake stack so the
-    // Layer Stack panel has something to show. Phase E replaces
-    // this with real USD stage load.
-    shell_state->seed_demo_layer_stack();
+    QObject::connect(shell_state, &BifShellState::status_messageChanged, &window,
+        [&window, shell_state]() {
+            window.statusBar()->showMessage(shell_state->getStatus_message());
+        });
 
     // Command palette (B.8) — Ctrl+P opens a centered overlay
     // listing the menu actions. Phase C widens to prims/layers/nodes.
@@ -1397,6 +1425,7 @@ int bif_qt_run_shell(ViewportCallbacks* viewport_cb, ::rust::Str stylesheet) {
         commands.insert(QStringLiteral("Workspace: Materials"), menu_actions.workspace_materials);
         commands.insert(QStringLiteral("Workspace: Review"), menu_actions.workspace_review);
         commands.insert(QStringLiteral("View: Toggle Zen Mode"), menu_actions.zen_mode);
+        commands.insert(QStringLiteral("View: Toggle Grid"), menu_actions.toggle_grid);
         commands.insert(QStringLiteral("View: Toggle Viewport LOD"), menu_actions.toggle_lod);
         commands.insert(
             QStringLiteral("View: Toggle Node Graph (Experimental)"),

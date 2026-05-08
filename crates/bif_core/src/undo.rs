@@ -30,7 +30,7 @@ pub enum SceneOp {
 /// Mutable edit state that commands operate on.
 ///
 /// Stores transform overrides and keyframe overrides keyed by instance index.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct EditState {
     /// Per-instance transform overrides (instance_index -> Transform).
     pub transform_overrides: HashMap<usize, Transform>,

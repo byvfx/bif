@@ -62,6 +62,9 @@ pub struct DisplaySettings {
     pub purpose_mode: PurposeMode,
     /// Whether the built-in box-LOD system is enabled.
     pub lod_enabled: bool,
+    /// Whether the viewport ground grid is visible.
+    #[serde(default = "default_grid_visible")]
+    pub grid_visible: bool,
     /// Viewport shading mode (textured vs display color).
     pub shading_mode: ShadingMode,
     /// Selection-outline width in clip-space NDC units.
@@ -77,11 +80,16 @@ impl Default for DisplaySettings {
         Self {
             purpose_mode: PurposeMode::Render,
             lod_enabled: true,
+            grid_visible: default_grid_visible(),
             shading_mode: ShadingMode::Textured,
             outline_width: default_outline_width(),
             outline_color: default_outline_color_linear(),
         }
     }
+}
+
+fn default_grid_visible() -> bool {
+    true
 }
 
 fn default_outline_width() -> f32 {

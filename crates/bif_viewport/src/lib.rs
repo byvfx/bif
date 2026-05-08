@@ -204,6 +204,105 @@ fn denormalize_synthetic_path(prim_path: &str) -> String {
     prim_path.to_string()
 }
 
+fn normalize_display_path(path: &str) -> String {
+    let denormalized = denormalize_synthetic_path(path);
+    let trimmed = denormalized.trim().trim_matches('/');
+    if trimmed.is_empty() {
+        "/".to_string()
+    } else {
+        format!("/{trimmed}")
+    }
+}
+
+fn shader_value_as_f32(value: &bif_core::usd::ShaderValue) -> Option<f32> {
+    match value {
+        bif_core::usd::ShaderValue::Float(v) => Some(*v),
+        bif_core::usd::ShaderValue::Double(v) => Some(*v as f32),
+        bif_core::usd::ShaderValue::Int(v) => Some(*v as f32),
+        _ => None,
+    }
+}
+
+fn shader_value_as_vec3(value: &bif_core::usd::ShaderValue) -> Option<Vec3> {
+    match value {
+        bif_core::usd::ShaderValue::Color3f(v) | bif_core::usd::ShaderValue::Vec3f(v) => {
+            Some(Vec3::new(v[0], v[1], v[2]))
+        }
+        _ => None,
+    }
+}
+
+fn apply_shader_value_to_material(
+    material: &mut bif_core::Material,
+    input_name: &str,
+    value: &bif_core::usd::ShaderValue,
+) {
+    match input_name {
+        "base_color" | "diffuseColor" => {
+            if let Some(v) = shader_value_as_vec3(value) {
+                material.base_color = v;
+            }
+        }
+        "metallic" | "metalness" | "base_metalness" => {
+            if let Some(v) = shader_value_as_f32(value) {
+                material.base_metalness = v;
+            }
+        }
+        "roughness" | "specular_roughness" | "base_diffuse_roughness" => {
+            if let Some(v) = shader_value_as_f32(value) {
+                material.specular_roughness = v;
+            }
+        }
+        "specular_weight" => {
+            if let Some(v) = shader_value_as_f32(value) {
+                material.specular_weight = v;
+            }
+        }
+        "specular_ior" => {
+            if let Some(v) = shader_value_as_f32(value) {
+                material.specular_ior = v;
+            }
+        }
+        "geometry_opacity" | "opacity" => {
+            if let Some(v) = shader_value_as_f32(value) {
+                material.geometry_opacity = v;
+            }
+        }
+        _ => {}
+    }
+}
+
+fn apply_usd_material_to_material(
+    material: &mut bif_core::Material,
+    usd_material: &bif_core::usd::cpp_bridge::UsdMaterialData,
+) {
+    material.base_color = usd_material.base_color;
+    material.base_metalness = usd_material.base_metalness;
+    material.specular_roughness = usd_material.specular_roughness;
+    material.specular_weight = usd_material.specular_weight;
+    material.specular_ior = usd_material.specular_ior;
+    material.emission_color = usd_material.emission_color;
+    material.transmission_weight = usd_material.transmission_weight;
+    material.geometry_opacity = usd_material.geometry_opacity;
+    material.base_color_texture = usd_material.base_color_texture.as_deref().map(Arc::from);
+    material.specular_roughness_texture = usd_material
+        .specular_roughness_texture
+        .as_deref()
+        .map(Arc::from);
+    material.base_metalness_texture = usd_material
+        .base_metalness_texture
+        .as_deref()
+        .map(Arc::from);
+    material.normal_texture = usd_material.normal_texture.as_deref().map(Arc::from);
+    material.emission_texture = usd_material.emission_texture.as_deref().map(Arc::from);
+    material.geometry_opacity_texture = usd_material
+        .geometry_opacity_texture
+        .as_deref()
+        .map(Arc::from);
+    material.displacement_texture = usd_material.displacement_texture.as_deref().map(Arc::from);
+    material.displacement_scale = usd_material.displacement_scale;
+}
+
 /// Core renderer managing wgpu state
 pub struct Renderer {
     /// Display scale factor (device-independent pixels per point). Used for
@@ -351,6 +450,105 @@ pub fn required_limits() -> wgpu::Limits {
 }
 
 impl Renderer {
+    /// Create a node graph node from an external UI surface such as the Qt graph.
+    ///
+    /// `GraftBranches` is intentionally not bridged here while its behavior is
+    /// being redesigned.
+    pub fn node_graph_add_node(
+        &mut self,
+        type_name: &str,
+        x: f32,
+        y: f32,
+    ) -> Option<node_graph::GraphNodeId> {
+        let pos = egui::pos2(x, y);
+        let node_id = match type_name {
+            "UsdRead" => self.nodes.node_graph_state.add_usd_read(pos),
+            "HdriEnvironment" => self.nodes.node_graph_state.add_hdri_environment(pos),
+            "IvarRender" => self.nodes.node_graph_state.add_ivar_render(pos),
+            "Cube" => self
+                .nodes
+                .node_graph_state
+                .add_primitive(bif_core::PrimitiveKind::Cube, pos),
+            "Sphere" => self
+                .nodes
+                .node_graph_state
+                .add_primitive(bif_core::PrimitiveKind::Sphere, pos),
+            "Camera" => self
+                .nodes
+                .node_graph_state
+                .add_primitive(bif_core::PrimitiveKind::Camera, pos),
+            "ScatterPoints" => self.nodes.node_graph_state.add_scatter_points(pos),
+            "PointInstancer" => self.nodes.node_graph_state.add_point_instancer(pos),
+            "Xform" => self.nodes.node_graph_state.add_xform(pos),
+            "UsdPrim" => self.nodes.node_graph_state.add_usd_prim(pos),
+            "UsdExport" => self.nodes.node_graph_state.add_usd_export(pos),
+            "Cache" => self.nodes.node_graph_state.add_cache(pos),
+            "GraftBranches" => return None,
+            _ => return None,
+        };
+
+        let graph_id = node_graph::GraphNodeId::from(node_id);
+        self.nodes.node_graph_state.selected_node = Some(graph_id);
+        self.nodes.node_graph_state.dirty_nodes.insert(graph_id);
+        self.nodes.scene_graph_dirty = true;
+        self.project.mark_dirty();
+        Some(graph_id)
+    }
+
+    pub fn node_graph_delete_node(&mut self, node_id: node_graph::GraphNodeId) -> bool {
+        let snarl_id: egui_snarl::NodeId = node_id.into();
+        let node_exists = self
+            .nodes
+            .node_graph_state
+            .snarl
+            .node_ids()
+            .any(|(id, _)| id == snarl_id);
+        if !node_exists {
+            return false;
+        }
+
+        if self.nodes.node_graph_state.selected_node == Some(node_id) {
+            self.nodes.node_graph_state.selected_node = None;
+        }
+        if self.nodes.node_graph_state.display_node == Some(node_id) {
+            self.nodes.node_graph_state.display_node = None;
+        }
+        self.nodes.node_graph_state.dirty_nodes.remove(&node_id);
+        self.nodes.node_graph_state.snarl.remove_node(snarl_id);
+        self.handle_node_graph_event(node_graph::NodeGraphEvent::DeleteNode(node_id));
+        self.nodes.scene_graph_dirty = true;
+        self.project.mark_dirty();
+        true
+    }
+
+    pub fn node_graph_select_node(&mut self, node_id: node_graph::GraphNodeId) -> Option<String> {
+        let snarl_id: egui_snarl::NodeId = node_id.into();
+        let node_exists = self
+            .nodes
+            .node_graph_state
+            .snarl
+            .node_ids()
+            .any(|(id, _)| id == snarl_id);
+        if !node_exists {
+            return None;
+        }
+
+        self.handle_node_graph_event(node_graph::NodeGraphEvent::SelectNode(node_id));
+        let prim_path = match &self.nodes.node_graph_state.snarl[snarl_id] {
+            node_graph::SceneNode::Primitive { prim_path, .. }
+            | node_graph::SceneNode::PointInstancer { prim_path, .. }
+            | node_graph::SceneNode::UsdPrim { prim_path, .. } => Some(prim_path.clone()),
+            node_graph::SceneNode::GraftBranches {
+                destination_path, ..
+            } => Some(destination_path.clone()),
+            _ => None,
+        };
+        if let Some(path) = prim_path.as_deref() {
+            self.handle_prim_selected(path.to_string());
+        }
+        prim_path
+    }
+
     /// Create a new renderer from caller-provided wgpu primitives.
     ///
     /// `bif_viewer` (winit) and `bif_qt` (Qt / raw HWND) each build their own
@@ -1023,6 +1221,10 @@ impl Renderer {
         self.scale_factor
     }
 
+    pub(crate) fn effective_px(&self, logical_px: f32) -> f32 {
+        logical_px * self.scale_factor.max(0.01)
+    }
+
     /// Block until all submitted GPU work completes. Call before dropping
     /// the Renderer to avoid `OBJECT_DELETED_WHILE_STILL_IN_USE` errors
     /// on D3D12/Vulkan.
@@ -1172,7 +1374,7 @@ impl Renderer {
     fn write_outline_params(&mut self) {
         let outline = OutlineParamsUniform {
             color: self.display_settings.outline_color,
-            width_ndc: self.display_settings.outline_width,
+            width_ndc: self.display_settings.outline_width * self.scale_factor.max(0.01),
             _padding: [0.0; 3],
         };
         self.gpu.queue.write_buffer(
@@ -1628,6 +1830,7 @@ impl Renderer {
         &mut self,
         op: bif_core::usd::EditOperation,
     ) -> anyhow::Result<String> {
+        let op_for_viewport = op.clone();
         let stage_arc = self
             .scene
             .usd_stage
@@ -1649,7 +1852,118 @@ impl Renderer {
         self.last_action_stack.push(UndoActionKind::Usd);
         self.redo_action_stack.clear();
         self.project.mark_dirty();
+        self.reload_after_usd_edit("USD edit", Some(&op_for_viewport));
         Ok(desc)
+    }
+
+    pub(crate) fn reload_after_usd_edit(
+        &mut self,
+        action: &str,
+        op: Option<&bif_core::usd::EditOperation>,
+    ) {
+        if let Some(bif_core::usd::EditOperation::MaterialParamOverride { key, after, .. }) = op {
+            if let bif_core::usd::AttrSlot::ShaderInput { name, .. } = &key.attr {
+                self.update_working_material_param(&key.prim_path, name, after);
+            }
+        }
+        self.refresh_usd_visibility_state();
+        self.sync_working_materials_from_stage();
+        self.nodes.materials_dirty = true;
+        if let Err(e) = self.reload_working_scene() {
+            log::warn!("scene reload after {action} failed: {e}");
+        }
+    }
+
+    fn refresh_usd_visibility_state(&mut self) {
+        self.scene.hidden_prim_paths.clear();
+        let Some(stage_arc) = self.scene.usd_stage.clone() else {
+            return;
+        };
+        let Ok(stage) = stage_arc.lock() else {
+            return;
+        };
+        for inst in self.scene.working_scene.instances() {
+            let path = normalize_display_path(inst.prim_path.as_ref());
+            if path == "/" {
+                continue;
+            }
+            if stage
+                .get_prim_info_by_path(&path)
+                .ok()
+                .is_some_and(|info| !info.visible)
+            {
+                self.scene.hidden_prim_paths.insert(path);
+            }
+        }
+    }
+
+    fn sync_working_materials_from_stage(&mut self) {
+        let Some(stage_arc) = self.scene.usd_stage.clone() else {
+            return;
+        };
+        let materials = {
+            let Ok(stage) = stage_arc.lock() else {
+                return;
+            };
+            stage.materials().unwrap_or_default()
+        };
+        if materials.is_empty() {
+            return;
+        }
+
+        let by_path: std::collections::HashMap<&str, &bif_core::usd::cpp_bridge::UsdMaterialData> =
+            materials
+                .iter()
+                .map(|material| (material.path.as_str(), material))
+                .collect();
+
+        for material in &mut self.scene.working_scene.materials {
+            if let Some(usd_material) = by_path.get(material.name.as_ref()) {
+                apply_usd_material_to_material(std::sync::Arc::make_mut(material), usd_material);
+            }
+        }
+        for proto in &mut self.scene.working_scene.prototypes {
+            if let Some(material) = std::sync::Arc::make_mut(proto).material.as_mut() {
+                if let Some(usd_material) = by_path.get(material.name.as_ref()) {
+                    apply_usd_material_to_material(
+                        std::sync::Arc::make_mut(material),
+                        usd_material,
+                    );
+                }
+            }
+        }
+    }
+
+    fn update_working_material_param(
+        &mut self,
+        shader_path: &str,
+        input_name: &str,
+        value: &bif_core::usd::ShaderValue,
+    ) {
+        let material_path = shader_path
+            .rsplit_once('/')
+            .map(|(parent, _)| parent)
+            .unwrap_or(shader_path);
+        for material in &mut self.scene.working_scene.materials {
+            if material.name.as_ref() == material_path {
+                apply_shader_value_to_material(
+                    std::sync::Arc::make_mut(material),
+                    input_name,
+                    value,
+                );
+            }
+        }
+        for proto in &mut self.scene.working_scene.prototypes {
+            if let Some(material) = std::sync::Arc::make_mut(proto).material.as_mut() {
+                if material.name.as_ref() == material_path {
+                    apply_shader_value_to_material(
+                        std::sync::Arc::make_mut(material),
+                        input_name,
+                        value,
+                    );
+                }
+            }
+        }
     }
 
     pub fn can_undo(&self) -> bool {
@@ -1706,7 +2020,9 @@ impl Renderer {
                     layer_state.undo_usd_edit(&stage)
                 };
                 self.scene.layer_state = Some(layer_state);
-                result.ok().flatten()?
+                let desc = result.ok().flatten()?;
+                self.reload_after_usd_edit("USD undo", None);
+                desc
             }
         };
         self.redo_action_stack.push(kind);
@@ -1751,7 +2067,9 @@ impl Renderer {
                     layer_state.redo_usd_edit(&stage)
                 };
                 self.scene.layer_state = Some(layer_state);
-                result.ok().flatten()?
+                let desc = result.ok().flatten()?;
+                self.reload_after_usd_edit("USD redo", None);
+                desc
             }
         };
         self.last_action_stack.push(kind);

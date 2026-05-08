@@ -1,3 +1,64 @@
+# Session Handoff — 2026-05-07 (repo cleanup: agents/ → .pi/ + _deprecated/)
+
+**Last Updated:** 2026-05-07 on `v0.16.1-followups`.
+
+**Current work:** Repo housekeeping — removed old codex agent system (`agents/`, `reviews/`, `scripts/`, `debug_output.txt`, `.mcp.json`), migrated to `_deprecated/` archive, replaced with `.pi/` pi skills system. No code changes. [1mNext → continue v0.16.5 Qt Graphite styling pass[0m
+
+**Validation:** `cargo build`, `cargo clippy -- -D warnings`, `cargo fmt --check` — all clean. Bypassed bif_core tests (no code changes).
+
+---
+
+# Session Handoff — 2026-05-05 (dogfood viewport edit refresh)
+
+**Last Updated:** 2026-05-05 on `v0.16.1-followups`.
+
+**Current work:** Dogfood edit repair is ready to commit on the real `G:\__projects\_programming\rust\bif` checkout. The Qt scene browser now has a dedicated fixed-width visibility column; the Prim/name column keeps tree expansion and row selection. The Property Inspector visibility checkbox is removed.
+
+**Edit refresh path:** `Renderer::reload_after_usd_edit()` now handles post-edit viewport refresh for USD edits, undo, redo, material params, material binding, shading swaps, visibility, and USDA Apply. It refreshes hidden prim state, syncs material data from the live USD stage, marks materials dirty, and reloads the working scene. The USD bridge invalidates caches after layer import.
+
+**Validation:** `. .\setup_qt_env.ps1; . .\setup_usd_env.ps1; cargo build`, `cargo clippy -- -D warnings`, `cargo fmt --check`, `cargo test -p bif_viewport`, and `cargo test -p bif_core -- --test-threads=1` all pass on `G:`. The `bif_core` suite still emits noisy expected USD diagnostics during negative USDA parse/xform tests, but exits green.
+
+**Left unstaged intentionally:** `test_assets/scene/root.usda` is modified as an LFS pointer and looks like dogfood/manual-save dirt. Do not commit it unless a fixture update is intentional.
+
+**Next action:** Manual Qt smoke on the dogfood scene: eye toggle, material params, material bind, shading swap, USDA Apply, undo, redo. Then design the material binding/node-graph workflow before expanding the material UI.
+
+---
+
+# Session Handoff — 2026-05-03 (viewport fixes + test fixtures)
+
+**Last Updated:** 2026-05-03. Three commits on `v0.16.1-followups`:
+
+1. **UNC path fix** — `cpp/usd_bridge/usd_bridge.cpp`: guard `std::replace` at both path-normalization sites to skip `\\server\share\...` paths. USD's AR on Windows cannot resolve `//server/share/...` forward-slash UNC form.
+2. **Comprehensive USD test fixtures** — `test_assets/comprehensive.usda` (sublayer root + comp_overrides/comp_base) and `test_assets/scene/` (root/anim/shot_overrides/geo). Full feature coverage: variants, UsdPreviewSurface network, lights, camera, mesh primvars, PointInstancer, collections, timeSamples.
+3. **`primvars:displayColor` Vulkan fallback** — `MeshData` now carries `display_color`; `scene_loader.rs` synthesizes a flat-color `bif_core::Material` per prototype at the sentinel injection site, appended after the default-grey slot in the GPU material table.
+
+**MILESTONES**: v0.16.5 bullet added for displayColor; Backlog item added for animated xformOp freeze.
+
+**Known gaps (tracked):** Cylinder/Capsule/Cone tessellation (backlog), animated xformOp frozen at default time (backlog), `TallSpire` Cylinder in PointInstancer still invisible.
+
+**Validation:** `cargo build -p bif_viewport` clean (13.98s). `cargo fmt --check` clean. Build/clippy on full workspace require Qt in PATH — not available in this shell; all touched crates are pure Rust except bif_qt.
+
+**Next action:** v0.16.1 dogfood pass (HiDPI visual, visibility toggle redesign, USDA Apply fix). Then v0.16.5 Graphite styling pass.
+
+---
+
+# Session Handoff - April 30, 2026 (`v0.16.1-followups` review fixes)
+
+**Last Updated:** 2026-04-30 (post review). `vfx-code-reviewer` audited the eight v0.16.1-followups commits and produced a Critical/Major/Minor punch list. Four review action items resolved on top of the sweep:
+
+- **C3** `cpp_bridge.rs:2264-2265` — `get_prim_attributes` now uses `cstr(prim_path)?` instead of the manual `CString::new` + `InvalidPrim("invalid path")` that was missed by the centralization refactor.
+- **C2** `tests/ffi_contract.rs` — added `layer_save_error_message_pointer_is_reused_per_thread` to lock the layer-save `error_buf` thread-local same-thread invalidation contract (mirrors the existing export-buffer test).
+- **M3** `crates/bif_qt/src/main_window.rs:78, 102, 1534, 2200` — extended stage-mutex poison logging to the four remaining silent `.lock().ok()` chains via `inspect_err`.
+- **M5** Inspector lambda guards — confirmed false alarm; all six `state->on_set_material_param` lambdas plus the shading-model `QTimer::singleShot` deferral already had `if (!state) return;`.
+
+**Validation:** `cargo fmt --check` clean on the three touched files. `cargo clippy -p bif_core -p bif_qt --tests -- -D warnings` reports zero hits on touched files (44 pre-existing `useless_vec` errors in `crates/bif_core/src/usd/ffi_convert.rs` are unrelated rustc 1.92 stricter rules). `cargo test -p bif_core --test ffi_contract --test edit_op_roundtrip -- --test-threads=1` green at 17 tests including the new `error_buf` contract test. `cargo test -p bif_core --lib usd::` 119 / 119.
+
+**Current state:** Release prep, merge, tag, and push are not done. Manual dogfood smoke and synthetic HiDPI visual verification are still pending. M4's scale_factor=2.0 dogfood remains the gating manual check before v0.16.1 release prep.
+
+**Next action:** the long-list dogfood pass against `cargo run -p bif_viewer`, including the synthetic HiDPI visual verification. Then v0.16.1 release prep, merge, tag, push.
+
+---
+
 # Session Handoff — April 28, 2026 (v0.16.0 shipped on main)
 
 **Last Updated:** 2026-04-28. v0.16.0 ship-closeout: Code Reviewer agent ran on `finish-qt-ui` (16 commits, ~7.7k LOC). Two real ship-blockers fixed in `03e9622`: USDA Apply now snapshots-and-rolls-back if `TransferContent` throws mid-mutation, and all new C-ABI entry points have `catch (...)` so non-`std::exception` USD throws can never unwind across the FFI boundary. New regression test `import_layer_from_garbage_leaves_layer_intact` locks the rollback contract. Workspace bumped to `0.16.0`. CHANGELOG `[Unreleased]` promoted to `[0.16.0] - 2026-04-28`. MILESTONES table now lists v0.16.0 as shipped 2026-04-28; `Latest release` line + CLAUDE.md status both bumped.

@@ -53,6 +53,8 @@ pub struct MeshData {
     pub mesh_ranges: Option<Vec<MeshRange>>,
     /// Subdivision surface data for Embree (when source mesh is subdiv).
     pub subdiv_info: Option<SubdivInfo>,
+    /// First color from primvars:displayColor, used as Vulkan fallback when no material binding.
+    pub display_color: Option<[f32; 3]>,
 }
 
 impl Default for MeshData {
@@ -65,6 +67,7 @@ impl Default for MeshData {
             triangle_material_ids: None,
             mesh_ranges: None,
             subdiv_info: None,
+            display_color: None,
         }
     }
 }
@@ -328,6 +331,7 @@ impl MeshData {
             triangle_material_ids: None,
             mesh_ranges: None,
             subdiv_info: None,
+            display_color: None,
         }
     }
 
@@ -451,6 +455,7 @@ impl MeshData {
             triangle_material_ids: None,
             mesh_ranges: None,
             subdiv_info: None,
+            display_color: None,
         })
     }
 
@@ -573,6 +578,11 @@ impl MeshData {
             triangle_material_ids,
             mesh_ranges: None,
             subdiv_info,
+            display_color: mesh
+                .display_color
+                .as_ref()
+                .and_then(|dc| dc.first())
+                .map(|v| [v.x, v.y, v.z]),
         }
     }
 
@@ -724,6 +734,7 @@ impl MeshData {
             triangle_material_ids,
             mesh_ranges: Some(mesh_ranges),
             subdiv_info,
+            display_color: None,
         }
     }
 }

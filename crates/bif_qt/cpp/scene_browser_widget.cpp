@@ -3,7 +3,9 @@
 
 #include <QColor>
 #include <QHeaderView>
+#include <QItemSelectionModel>
 #include <QLineEdit>
+#include <QMouseEvent>
 #include <QPainter>
 #include <QSortFilterProxyModel>
 #include <QStyledItemDelegate>
@@ -27,11 +29,9 @@ constexpr QColor LAYER_PALETTE[8] = {
     QColor(220, 100, 100),
 };
 
-// Tree-row delegate that paints a small color dot before the
-// branch decoration, plus (col 0) an eye glyph reflecting visibility.
+// Tree-row delegate that paints visibility in its own column and a
+// small layer-color dot before the prim name.
 // Inactive prims (`is_active == false`) are dimmed across all columns.
-// Indent is handled natively by QTreeView; we only reserve the chrome
-// strip on column 0's left.
 class PrimRowDelegate : public QStyledItemDelegate {
 public:
     using QStyledItemDelegate::QStyledItemDelegate;
@@ -39,8 +39,8 @@ public:
     static constexpr int kDotDiameter = 6;
     static constexpr int kDotPad = 6;
     static constexpr int kEyeWidth = 12;
-    static constexpr int kEyePad = 4;
-    static constexpr int kReserved = kEyeWidth + kEyePad + kDotDiameter + kDotPad;
+    static constexpr int kVisibilityColumnWidth = 26;
+    static constexpr int kNameReserved = kDotDiameter + kDotPad;
 
     void paint(QPainter* painter,
                const QStyleOptionViewItem& option,
@@ -48,11 +48,12 @@ public:
         const bool is_active = index.data(SceneBrowserModel::IsActiveRole).toBool();
         const bool is_visible = index.data(SceneBrowserModel::IsVisibleRole).toBool();
         const int color_index = index.data(SceneBrowserModel::ColorIndexRole).toInt();
+        const bool is_visibility_col = index.column() == SceneBrowserModel::ColVisibility;
         const bool is_name_col = index.column() == SceneBrowserModel::ColName;
 
         QStyleOptionViewItem adjusted = option;
         if (is_name_col) {
-            adjusted.rect.setLeft(option.rect.left() + kReserved);
+            adjusted.rect.setLeft(option.rect.left() + kNameReserved);
         }
 
         // Inactive dimming — fade text across all columns.
@@ -68,35 +69,35 @@ public:
 
         QStyledItemDelegate::paint(painter, adjusted, index);
 
-        if (!is_name_col) return;
+        if (!is_visibility_col && !is_name_col) return;
 
         painter->save();
         painter->setRenderHint(QPainter::Antialiasing, true);
         const int cy = option.rect.center().y();
 
-        // Eye glyph (visibility) — flush left, before the color dot.
-        const int ex = option.rect.left() + 2;
-        const QRectF eye_rect(ex, cy - 4, kEyeWidth, 8);
-        const QColor eye_fg = is_visible
-            ? QColor(200, 204, 212, is_active ? 255 : 130)
-            : QColor(110, 114, 122, is_active ? 200 : 110);
-        painter->setPen(QPen(eye_fg, 1.0));
-        painter->setBrush(Qt::NoBrush);
-        painter->drawEllipse(eye_rect);
-        painter->setBrush(eye_fg);
-        painter->setPen(Qt::NoPen);
-        painter->drawEllipse(QPointF(ex + kEyeWidth / 2.0, cy), 1.6, 1.6);
-        if (!is_visible) {
+        if (is_visibility_col) {
+            const int ex = option.rect.center().x() - kEyeWidth / 2;
+            const QRectF eye_rect(ex, cy - 4, kEyeWidth, 8);
+            const QColor eye_fg = is_visible
+                ? QColor(200, 204, 212, is_active ? 255 : 130)
+                : QColor(110, 114, 122, is_active ? 200 : 110);
             painter->setPen(QPen(eye_fg, 1.0));
-            painter->drawLine(QPointF(ex - 1, cy + 5),
-                              QPointF(ex + kEyeWidth + 1, cy - 5));
+            painter->setBrush(Qt::NoBrush);
+            painter->drawEllipse(eye_rect);
+            painter->setBrush(eye_fg);
+            painter->setPen(Qt::NoPen);
+            painter->drawEllipse(QPointF(ex + kEyeWidth / 2.0, cy), 1.6, 1.6);
+            if (!is_visible) {
+                painter->setPen(QPen(eye_fg, 1.0));
+                painter->drawLine(QPointF(ex - 1, cy + 5),
+                                  QPointF(ex + kEyeWidth + 1, cy - 5));
+            }
         }
 
-        // Layer color dot (existing) — between eye and the row text.
-        if (color_index >= 0 && color_index < 8) {
+        if (is_name_col && color_index >= 0 && color_index < 8) {
             auto color = LAYER_PALETTE[color_index];
             if (!is_active) color.setAlpha(130);
-            const int cx = ex + kEyeWidth + kEyePad + kDotDiameter / 2;
+            const int cx = option.rect.left() + 2 + kDotDiameter / 2;
             painter->setPen(Qt::NoPen);
             painter->setBrush(color);
             painter->drawEllipse(QPoint(cx, cy), kDotDiameter / 2, kDotDiameter / 2);
@@ -109,8 +110,11 @@ public:
                    const QModelIndex& index) const override {
         QSize base = QStyledItemDelegate::sizeHint(option, index);
         base.setHeight(qMax(26, base.height()));
+        if (index.column() == SceneBrowserModel::ColVisibility) {
+            base.setWidth(kVisibilityColumnWidth);
+        }
         if (index.column() == SceneBrowserModel::ColName) {
-            base.setWidth(base.width() + kReserved);
+            base.setWidth(base.width() + kNameReserved);
         }
         return base;
     }
@@ -181,6 +185,7 @@ SceneBrowserWidget::SceneBrowserWidget(BifShellState* state, QWidget* parent)
     m_view->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_view->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_view->setItemDelegate(new PrimRowDelegate(m_view));
+    m_view->viewport()->installEventFilter(this);
     m_view->setStyleSheet(QStringLiteral(
         "QTreeView {"
         "  background-color: rgba(34, 38, 44, 255);"
@@ -204,7 +209,10 @@ SceneBrowserWidget::SceneBrowserWidget(BifShellState* state, QWidget* parent)
     m_filter->setFilterCaseSensitivity(Qt::CaseInsensitive);
     m_filter->setRecursiveFilteringEnabled(false);  // We do our own.
     m_view->setModel(m_filter);
+    m_view->setTreePosition(SceneBrowserModel::ColName);
     auto* header = m_view->header();
+    header->setSectionResizeMode(SceneBrowserModel::ColVisibility, QHeaderView::Fixed);
+    header->resizeSection(SceneBrowserModel::ColVisibility, PrimRowDelegate::kVisibilityColumnWidth);
     header->setSectionResizeMode(SceneBrowserModel::ColName, QHeaderView::Stretch);
     header->setSectionResizeMode(SceneBrowserModel::ColType, QHeaderView::ResizeToContents);
     header->setSectionResizeMode(SceneBrowserModel::ColChildren, QHeaderView::ResizeToContents);
@@ -215,6 +223,10 @@ SceneBrowserWidget::SceneBrowserWidget(BifShellState* state, QWidget* parent)
         this, &SceneBrowserWidget::on_filter_changed);
     QObject::connect(m_view->selectionModel(), &QItemSelectionModel::currentChanged,
         this, &SceneBrowserWidget::on_selection_changed);
+    if (m_state) {
+        QObject::connect(m_state, &BifShellState::selected_prim_pathChanged,
+            this, &SceneBrowserWidget::on_external_selection_changed);
+    }
     QObject::connect(m_view, &QTreeView::expanded, this,
         [this](const QModelIndex& proxy_index) {
             if (!m_model || !m_filter) return;
@@ -227,6 +239,79 @@ SceneBrowserWidget::SceneBrowserWidget(BifShellState* state, QWidget* parent)
 
 SceneBrowserWidget::~SceneBrowserWidget() = default;
 
+QModelIndex SceneBrowserWidget::find_source_index_for_path(const QString& path,
+                                                           const QModelIndex& parent) {
+    if (!m_model) return {};
+    const int rows = m_model->rowCount(parent);
+    for (int row = 0; row < rows; ++row) {
+        const QModelIndex idx = m_model->index(row, SceneBrowserModel::ColName, parent);
+        if (!idx.isValid()) continue;
+        if (idx.data(SceneBrowserModel::PathRole).toString() == path) {
+            return idx;
+        }
+        if (m_model->canFetchMore(idx)) {
+            m_model->fetchMore(idx);
+        }
+        const QModelIndex child = find_source_index_for_path(path, idx);
+        if (child.isValid()) return child;
+    }
+    return {};
+}
+
+void SceneBrowserWidget::select_path(const QString& path) {
+    if (!m_view || !m_model || !m_filter || path.isEmpty()) return;
+    const QModelIndex source_idx = find_source_index_for_path(path);
+    if (!source_idx.isValid()) return;
+    QModelIndex proxy_idx = m_filter->mapFromSource(source_idx);
+    if (!proxy_idx.isValid()) return;
+    if (m_view->currentIndex() == proxy_idx) return;
+
+    QModelIndex parent = proxy_idx.parent();
+    while (parent.isValid()) {
+        m_view->expand(parent);
+        parent = parent.parent();
+    }
+    m_syncing_external_selection = true;
+    m_view->selectionModel()->setCurrentIndex(
+        proxy_idx,
+        QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+    m_syncing_external_selection = false;
+    m_view->scrollTo(proxy_idx, QAbstractItemView::PositionAtCenter);
+}
+
+bool SceneBrowserWidget::eventFilter(QObject* watched, QEvent* event) {
+    if (watched != m_view->viewport()
+        || event->type() != QEvent::MouseButtonRelease
+        || !m_state) {
+        return QWidget::eventFilter(watched, event);
+    }
+
+    auto* mouse_event = static_cast<QMouseEvent*>(event);
+    if (mouse_event->button() != Qt::LeftButton) {
+        return QWidget::eventFilter(watched, event);
+    }
+
+    const QModelIndex index = m_view->indexAt(mouse_event->pos());
+    if (!index.isValid() || index.column() != SceneBrowserModel::ColVisibility) {
+        return QWidget::eventFilter(watched, event);
+    }
+
+    const QRect rect = m_view->visualRect(index);
+    const int cy = rect.center().y();
+    const int ex = rect.center().x() - PrimRowDelegate::kEyeWidth / 2;
+    const QRectF eye_rect(ex, cy - 4, PrimRowDelegate::kEyeWidth, 8);
+    if (!eye_rect.contains(mouse_event->pos())) {
+        return QWidget::eventFilter(watched, event);
+    }
+
+    const QString path = index.data(SceneBrowserModel::PathRole).toString();
+    if (!path.isEmpty()) {
+        const bool is_visible = index.data(SceneBrowserModel::IsVisibleRole).toBool();
+        m_state->on_set_visibility(path, !is_visible);
+    }
+    return true;
+}
+
 void SceneBrowserWidget::on_filter_changed(const QString& text) {
     m_filter->setFilterFixedString(text);
     if (!text.isEmpty()) {
@@ -234,8 +319,14 @@ void SceneBrowserWidget::on_filter_changed(const QString& text) {
     }
 }
 
+void SceneBrowserWidget::on_external_selection_changed() {
+    if (!m_state) return;
+    select_path(m_state->getSelected_prim_path());
+}
+
 void SceneBrowserWidget::on_selection_changed(const QModelIndex& current,
                                               const QModelIndex& /*previous*/) {
+    if (m_syncing_external_selection) return;
     if (!m_state || !current.isValid()) return;
     const auto path = current.data(SceneBrowserModel::PathRole).toString();
     const auto type = current.data(SceneBrowserModel::TypeNameRole).toString();

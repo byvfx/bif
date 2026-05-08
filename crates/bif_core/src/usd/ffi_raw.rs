@@ -1088,6 +1088,7 @@ extern "C" {
     pub(crate) fn usd_bridge_layer_save(
         stage: *const UsdBridgeStageRaw,
         layer_identifier: *const c_char,
+        out_error_message: *mut *const c_char,
     ) -> UsdBridgeErrorCode;
 
     pub(crate) fn usd_bridge_layer_permission_to_edit(

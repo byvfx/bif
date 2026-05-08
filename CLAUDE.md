@@ -14,7 +14,7 @@ BIF is a USD Orchestration Tool for VFX — layer-aware USD editing + procedural
 
 **BIF** - USD Orchestration Tool for VFX (layer-aware editing + procedural assembly + rendering).
 
-- **Status:** v0.16.0 shipped (Edit Operations + Save — EditHistory, working-layer Ctrl+S, USDA Source dock, Material Sheet, transform gizmo, shading-model swap).
+- **Status:** v0.16.1 post-launch fixes (branch: v0.16.1-followups); Qt is primary UI framework (egui removed v0.15.0)
 - **Current:** v0.16.5 — Qt Polish (Graphite styling pass)
 - **Next:** v0.17.0 (viewport perf, `cpp_bridge.rs` split, payload policies) → v0.18.0 (AI integration) — see [MILESTONES.md](MILESTONES.md)
 - **Goal:** Layer-aware USD editor + scene assembler — open stage, pick layer, edit, save clean USD
@@ -23,13 +23,17 @@ BIF is a USD Orchestration Tool for VFX — layer-aware USD editing + procedural
 
 ### Key Architecture
 
-- **6 crates:** bif_math, bif_core, bif_renderer, bif_viewport, bif_viewer, bif_maketx
-- **Node graph:** egui-snarl, 10 node types (UsdRead, Primitive, Scatter, PointInstancer, Xform, UsdExport, UsdPrim, GraftBranches, HdriEnvironment, IvarRender)
+- **8 crates:** bif_math, bif_core, bif_renderer, bif_viewport, bif_viewer, bif_qt, bif_maketx, benchmarks
+  - `bif_viewer` — thin entry point only (`main.rs`); no UI logic lives here
+  - `bif_qt` — all Qt UI (cxx-qt 0.7 Rust-C++ bridge; panels in `crates/bif_qt/cpp/`)
+- **Qt panels** (`bif_qt/cpp/`): scene_browser, layer_stack, property_inspector, node_graph, render_settings, render_widget, usda_panel, command_palette, first_launch
+- **Qt Rust** (`bif_qt/src/`): `main_window.rs`, `app.rs`, `viewport.rs`, `theme.rs`, `schema_labels.rs`
+- **Procedural node graph:** 10 node types in `bif_viewport` (UsdRead, Primitive, Scatter, PointInstancer, Xform, UsdExport, UsdPrim, GraftBranches, HdriEnvironment, IvarRender); `node_graph_widget` is the editor UI for these
 - **Scene browser:** CompositeProvider merges USD stage + procedural prims via CachedSceneGraph
 - **Export:** `export_scene()` in `bif_core/src/usd/export.rs`
+- **USD bridge:** `bif_core/src/usd/cpp_bridge.rs` (monolithic, split planned for v0.17.0)
 - **Materials:** OpenPBR Surface v1.1 (`OpenPbrSurface` in bif_renderer, IOR-based Fresnel)
 - **Renderer:** `Renderer` struct (~75 fields, God object — cleanup deferred)
-- **516 tests** across crates (353 without USD env, full suite needs `setup_usd_env.ps1`)
 
 ## Quick Commands
 
@@ -43,9 +47,9 @@ cargo build --features oidn    # With Intel OIDN denoising
 cargo test -p bif_math         # 74 tests (no deps)
 cargo test -p bif_renderer     # 111 tests (includes denoise, materials)
 cargo test -p bif_viewport     # 149 tests
-cargo test -p bif_viewer       # 19 tests
+cargo test -p bif_qt           # Qt UI crate tests
 . .\setup_usd_env.ps1          # Required before bif_core tests
-cargo test -p bif_core -- --test-threads=1  # 163 tests (needs USD DLLs)
+cargo test -p bif_core -- --test-threads=1  # needs USD DLLs
 
 # Run
 cargo run -p bif_viewer
@@ -61,6 +65,8 @@ cargo fmt --check
 - **USD env required:** `setup_usd_env.ps1` must be sourced before running bif_core tests or loading USD scenes
 - **bif_core tests are single-threaded:** USD C++ bridge is not thread-safe, use `--test-threads=1`
 - **C++ bridge builds via CMake:** `bif_core/build.rs` triggers CMake for `cpp/usd_bridge/` — needs Visual Studio 2022 C++ workload
+- **bif_qt requires Qt 6:** needs Qt 6 dev headers + `qmake`/`cmake` in PATH; cxx-qt 0.7 generates the Rust-C++ glue at build time
+- **UI logic lives in bif_qt, not bif_viewer:** bif_viewer is just `main.rs` — look in `crates/bif_qt/` for all panel/widget code
 - **OIDN DLLs must be in PATH:** Set `OIDN_DIR` and add its `bin/` to PATH for `--features oidn`
 - **Feature flags are optional:** `oiio` and `oidn` are off by default, UI gracefully degrades without them
 - **`test_should_restart_no_render`:** Known timing-sensitive flaky test

@@ -598,6 +598,13 @@ impl Renderer {
             .copied()
             .chain(display_hidden_proto_ids.iter().copied())
             .collect();
+        let is_instance_visible = |inst: &bif_core::Instance| {
+            inst.prim_path.is_empty()
+                || !self
+                    .scene
+                    .hidden_prim_paths
+                    .contains(inst.prim_path.as_ref())
+        };
         if !hidden_proto_ids.is_empty() {
             log::debug!(
                 "Hiding prototypes: {:?} (instanced: {:?}, scatter surface: {:?})",
@@ -612,6 +619,11 @@ impl Renderer {
         // IDs (not duplicated per instance), keeping the GPU buffer small.
         let mut compact_tri_mats: Vec<u32> = Vec::new();
         let mut prototype_gpu_data: Vec<PrototypeGpuData> = Vec::new();
+        // Synthetic flat-color materials for prims with primvars:displayColor but no binding.
+        // Appended after scene.materials + default slot in the GPU material table.
+        // +1 for the implicit default grey entry that sits between real and synthetic.
+        let synthetic_mat_start = scene.materials.len() as u32 + 1;
+        let mut synthetic_materials: Vec<bif_core::Material> = Vec::new();
 
         for (proto_id, proto) in scene.prototypes.iter().enumerate() {
             let md = MeshData::from_core_mesh(&proto.mesh);
@@ -649,6 +661,17 @@ impl Renderer {
             let tri_mat_offset = compact_tri_mats.len() as u32;
             if let Some(ref tri_mats) = md.triangle_material_ids {
                 compact_tri_mats.extend_from_slice(tri_mats);
+            } else if let Some(dc) = md.display_color {
+                // Synthesize a flat-color material from primvars:displayColor
+                let mat_idx = synthetic_mat_start + synthetic_materials.len() as u32;
+                synthetic_materials.push(bif_core::Material {
+                    name: std::sync::Arc::from(format!("__display_color_{}", proto_id)),
+                    base_color: bif_math::Vec3::new(dc[0], dc[1], dc[2]),
+                    specular_roughness: 0.8,
+                    base_metalness: 0.0,
+                    ..bif_core::Material::default()
+                });
+                compact_tri_mats.extend(std::iter::repeat_n(mat_idx, num_triangles as usize));
             } else {
                 // No per-face materials: fill with sentinel (0xFFFFFFFF)
                 compact_tri_mats.extend(std::iter::repeat_n(0xFFFFFFFFu32, num_triangles as usize));
@@ -702,6 +725,7 @@ impl Renderer {
                 .iter()
                 .enumerate()
                 .filter(|(_idx, inst)| !hidden_proto_ids.contains(&inst.prototype_id))
+                .filter(|(_idx, inst)| is_instance_visible(inst))
                 .filter(|(_idx, inst)| active_purpose.includes(inst.purpose))
                 .filter_map(|(mesh_idx, inst)| {
                     scene.prototypes.get(inst.prototype_id).map(|proto| {
@@ -816,6 +840,13 @@ impl Renderer {
             &bif_core::Material::default(),
             &self.textures.gpu_textures,
         ));
+        // Append synthetic display_color materials (indices synthetic_mat_start..)
+        for syn_mat in &synthetic_materials {
+            material_table.push(crate::gpu_types::MaterialGpu::from_material(
+                syn_mat,
+                &self.textures.gpu_textures,
+            ));
+        }
         self.materials.table_len = material_table.len() as u32;
         self.materials.table_buffer =
             self.gpu
@@ -978,6 +1009,7 @@ impl Renderer {
                 .instances()
                 .iter()
                 .filter(|inst| !hidden_proto_ids.contains(&inst.prototype_id))
+                .filter(|inst| is_instance_visible(inst))
                 .map(|inst| {
                     let model_matrix = inst.model_matrix();
                     instance_transforms.push(model_matrix);
@@ -1209,6 +1241,7 @@ impl Renderer {
             .iter()
             .enumerate()
             .filter(|(_idx, inst)| !hidden_proto_ids.contains(&inst.prototype_id))
+            .filter(|(_idx, inst)| is_instance_visible(inst))
             .map(|(idx, inst)| resolve_prim_path(inst, scene, idx))
             .collect();
         // Extend for instancer-expanded instances (parallel to instance_transforms)
@@ -1240,6 +1273,7 @@ impl Renderer {
             .iter()
             .zip(scene.instances().iter())
             .filter(|(_, inst)| !hidden_proto_ids.contains(&inst.prototype_id))
+            .filter(|(_, inst)| is_instance_visible(inst))
             .map(|(anim, _)| anim.clone())
             .collect();
         animations.extend(std::iter::repeat_n(None, instancer_count));
@@ -1542,6 +1576,7 @@ impl Renderer {
         payload_policy: PayloadPolicy,
     ) -> Result<()> {
         let viewport_load_start = Instant::now();
+        self.scene.hidden_prim_paths.clear();
 
         // v0.14.0 — empty scenes are legitimate when the user mutes the
         // layer that provides the `def` (so composition strips the prim).
