@@ -8,6 +8,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **`.pi/` skills directory** with bif-commit and vfx-reviewer skills
 - **Qt node graph dogfood bridge** (2026-05-06). Right-click node creation in the Qt graph now creates backend renderer nodes for the supported node set, updates status-bar feedback, refreshes authored graph-only prims into the scene browser, and mirrors node selection into the scene browser. Graft Branches remains visual-only while its design is on hold.
 - **Comprehensive USD test fixtures** (2026-05-03). Two new fixture sets: `test_assets/comprehensive.usda` (root + comp_overrides/comp_base sublayers — variants, full UsdPreviewSurface network, lights, camera, mesh primvars, PointInstancer, collections, mute demos) and `test_assets/scene/` (root/anim/shot_overrides/geo — timeSamples for camera, visibility, wave mesh, rigged arm).
 
@@ -24,6 +25,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- **Migrated agents/ → `_deprecated/`**, replaced with `.pi/` pi skills system
+- **Removed stale artifacts**: old codex agent configs, reviews, debug output, MCP config, install scripts
 - **USD bridge string conversion cleanup** (2026-04-30). Centralized Rust `CString` conversion through `cstr(...)` in `cpp_bridge.rs`.
 
 ### Fixed

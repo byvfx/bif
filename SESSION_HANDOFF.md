@@ -1,3 +1,13 @@
+# Session Handoff — 2026-05-07 (repo cleanup: agents/ → .pi/ + _deprecated/)
+
+**Last Updated:** 2026-05-07 on `v0.16.1-followups`.
+
+**Current work:** Repo housekeeping — removed old codex agent system (`agents/`, `reviews/`, `scripts/`, `debug_output.txt`, `.mcp.json`), migrated to `_deprecated/` archive, replaced with `.pi/` pi skills system. No code changes. [1mNext → continue v0.16.5 Qt Graphite styling pass[0m
+
+**Validation:** `cargo build`, `cargo clippy -- -D warnings`, `cargo fmt --check` — all clean. Bypassed bif_core tests (no code changes).
+
+---
+
 # Session Handoff — 2026-05-05 (dogfood viewport edit refresh)
 
 **Last Updated:** 2026-05-05 on `v0.16.1-followups`.
