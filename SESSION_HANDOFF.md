@@ -1,13 +1,21 @@
-# Session Handoff — 2026-05-08 (visibility toggle: prim_path, eye icon, tree collapse fixes)
+# Session Handoff — 2026-05-09 (visibility toggle perf: skip full GPU rebuild)
 
-**Last Updated:** 2026-05-08 on `v0.16.1-followups`.
+**Last Updated:** 2026-05-09 on `v0.16.2-bugfixes`.
 
-**Current work:** Fixed three visibility toggle bugs. Committed `443b7e5`.
+**Current work:** Visibility eye-icon toggles no longer trigger full `reload_working_scene()` (GPU buffer rebuilds, texture reload from disk, Embree BVH rebuild). Instead:
+- `reload_after_usd_edit()` dispatches per EditOperation variant
+- Visibility → `reload_instance_visibility()` (instance groups + culling only)
+- Transform commit → skip entirely (local fast path handles GPU write)
+- MaterialParamOverride → keep `reload_working_scene()` but skip `materials_dirty` (no texture I/O)
 
 **Changes:**
-- `scene_loader.rs`: preserve `inst.prim_path` during USD→working_scene merge via `add_instance_with_path` / `add_animated_instance_with_path`
-- `scene_browser.rs`: `CompositeProvider::get_prim_info` merges live visibility from USD stage for procedural prims shadowing USD mesh prims
-- `scene_browser_model.cpp`: recursive `refresh_child_visibility()` after model rebuild
+- `crates/bif_viewport/src/scene_loader.rs` — new `reload_instance_visibility()` (~170 lines), masks visible instances from ground-truth arrays, rebuilds only multi-draw instance groups + culling
+- `crates/bif_viewport/src/lib.rs` — dispatch in `reload_after_usd_edit()`, post-hit vis filter in `pick_instance_at`
+- `crates/bif_viewport/src/types.rs` — `full_material_ids`, `full_purposes`, `all_prim_paths` on `SceneInstances`
+
+**Validation:** `cargo build -p bif_viewport`, clippy, fmt clean. 162 bif_viewport tests pass. Manual smoke: visibility toggle is instant, hide→unhide works, no culling mismatch warnings.
+
+**Next:** More dogfood testing on texture-heavy scenes. Then merge to main or cut release.
 - `scene_browser_widget.cpp/h`: save/restore expanded state across model resets
 
 **Validation:** Rust `cargo build` + `cargo fmt` clean. Manual Qt smoke confirms eye icon updates + tree doesn't collapse.
