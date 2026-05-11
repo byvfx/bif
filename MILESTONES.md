@@ -131,7 +131,9 @@ M22 (Vulkan 1.3, lazy loading, GPU-driven rendering) + deferred loading from wor
 - `PrototypeState` enum (BoundingBox / Loaded / Deferred)
 - LRU cache for prototype eviction + Embree BVH integration
 - Camera depth of field and lens distortion
+- **Defer GPU upload for invisible prototypes.** After v0.16.2's visibility round-trip fix, invisible meshes are loaded as full prototypes (CPU vertex/index arrays) so the eye-icon toggle has something to un-hide. Memory regression on hidden-geo-heavy scenes (ALab). Plan: track `prototype_visible_mask` in `multi_draw.rs:55-85`, skip wgpu buffer creation for hidden protos, lazily upload on first visible instance. Stopgap in v0.16.2 is a `log::info!` at load time so users can see the cost.
 - **Tech debt — split `crates/bif_core/src/usd/cpp_bridge.rs`** (~4000 lines after v0.16 C4a). Target layout: `usd/ffi/{stage,layer,prim,xform,material,variant,instance}.rs`. Carry-over from v0.16 audit (ADR-008 follow-up).
+- **`cache_prim_data` thread-safety rework.** The C++ bridge's `cache_prim_data` at `cpp/usd_bridge/usd_bridge.cpp:529` mutates `all_prims`/`root_paths`/`root_path_ptrs` without a lock; currently safe only by convention that callers hold the stage Mutex. Add internal mutex or document the lock invariant as part of the bridge split. v0.16.2 added `// NOT THREAD-SAFE` annotations and a `TF_VERIFY` thread-id check.
 
 ### v0.19.0 — Scene Authoring + Layer Diff
 

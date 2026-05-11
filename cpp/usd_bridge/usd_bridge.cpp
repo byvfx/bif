@@ -525,7 +525,20 @@ static void matrix_to_float16(const GfMatrix4d& mat, float* out) {
 // Forward declaration - materials must be cached before meshes for GeomSubset support
 static void cache_material_data(UsdBridgeStage* bridge);
 
-/// Cache all prim info for scene browser
+/// Cache all prim info for scene browser.
+///
+/// NOT THREAD-SAFE — mutates `bridge->all_prims`, `root_paths`, and
+/// `root_path_ptrs` without an internal lock. Callers must hold the
+/// stage-level `Arc<Mutex<UsdStage>>` (bif_viewport `scene_manager.rs`)
+/// for the duration of the call. The same applies to every flag-gated
+/// `cache_prim_data(stage)` invocation in this file — the gate is the
+/// `prims_cached` bool, not a synchronization primitive.
+///
+/// A runtime `TF_VERIFY` thread-id guard is planned alongside the
+/// v0.17 `cpp_bridge.rs` split (see MILESTONES.md). Until then, the
+/// invariant is enforced by convention: every Rust caller goes through
+/// `UsdStage` which is held inside a `Mutex` at the `bif_viewport`
+/// layer, and the FFI is single-entry per call.
 static void cache_prim_data(UsdBridgeStage* bridge) {
     if (bridge->prims_cached) return;
 

@@ -214,6 +214,35 @@ pub fn load_usd_with_stage_policy_muted<P: AsRef<Path>>(
     // persisted `visibility = "invisible"` opinion.
     let mesh_start = Instant::now();
     let meshes = stage.meshes()?;
+    // Stopgap visibility-aware memory report — v0.16.2 stopped skipping
+    // invisible meshes at load, so hidden geometry now lives in CPU
+    // prototype arrays. Surface the cost so it's visible until v0.18
+    // lands deferred GPU upload.
+    {
+        let mut invisible_count = 0usize;
+        let mut invisible_bytes = 0usize;
+        for m in meshes.iter() {
+            if !m.visible {
+                invisible_count += 1;
+                invisible_bytes += m.vertices.len() * std::mem::size_of::<bif_math::Vec3>();
+                invisible_bytes += m.indices.len() * std::mem::size_of::<u32>();
+                if let Some(n) = &m.normals {
+                    invisible_bytes += n.len() * std::mem::size_of::<bif_math::Vec3>();
+                }
+                if let Some(uvs) = &m.uvs {
+                    invisible_bytes += uvs.len() * std::mem::size_of::<[f32; 2]>();
+                }
+            }
+        }
+        if invisible_count > 0 {
+            log::info!(
+                "Invisible prototypes loaded: {} meshes (~{:.1} MB CPU). \
+                 Deferred GPU upload is v0.18 work.",
+                invisible_count,
+                invisible_bytes as f64 / (1024.0 * 1024.0),
+            );
+        }
+    }
     for (mesh_idx, mesh_data) in meshes.iter().enumerate() {
         // Hash from references — no clone until we know it's unique
         let vertex_hash = {
