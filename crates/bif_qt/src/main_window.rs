@@ -2670,13 +2670,36 @@ impl qobject::BifShellState {
         let result =
             with_viewport_mut(|vp| vp.renderer_mut().dispatch_visibility(&path_str, visible));
         match result {
-            Some(Ok(_desc)) => {
+            Some(Ok((_desc, ancestors))) => {
+                let verb = if visible { "shown" } else { "hidden" };
+                let msg = if ancestors.is_empty() {
+                    format!("Visibility {verb} for {path_str}")
+                } else {
+                    // MakeVisible authored `inherited` on each invisible
+                    // ancestor as a side effect — surface it so the user
+                    // isn't surprised that sibling subtrees became visible
+                    // too. Truncate at 2; the full list goes to the log.
+                    log::info!(
+                        "MakeVisible({path_str}) also un-hid ancestors: {}",
+                        ancestors.join(", ")
+                    );
+                    let head = ancestors
+                        .iter()
+                        .take(2)
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    let extra = ancestors.len().saturating_sub(2);
+                    if extra == 0 {
+                        format!("Visibility {verb} for {path_str} — also un-hiding: {head}")
+                    } else {
+                        format!(
+                            "Visibility {verb} for {path_str} — also un-hiding: {head} (+{extra} more)"
+                        )
+                    }
+                };
                 self.as_mut()
-                    .set_status_message(cxx_qt_lib::QString::from(&format!(
-                        "Visibility {} for {}",
-                        if visible { "shown" } else { "hidden" },
-                        path_str
-                    )));
+                    .set_status_message(cxx_qt_lib::QString::from(&msg));
                 refresh_undo_redo_qprops(self.as_mut());
                 bump_revision(self.as_mut());
                 bump_scene_browser_revision(self.as_mut());
