@@ -6924,7 +6924,8 @@ UsdBridgeError usd_bridge_layer_write_visibility(
     UsdBridgeStage* stage,
     const char* layer_identifier,
     const char* prim_path,
-    int visible
+    int visible,
+    double time
 ) {
     if (!stage || !layer_identifier || !prim_path) {
         return USD_BRIDGE_ERROR_NULL_POINTER;
@@ -6947,10 +6948,17 @@ UsdBridgeError usd_bridge_layer_write_visibility(
         // on the prim directly. Setting Vt value directly cannot defeat
         // ancestor pruning (a parent's invisible opinion hides all
         // descendants regardless of their own visibility opinion).
+        //
+        // `time < 0.0` is the sentinel for "Default time sample" — matches
+        // the convention used by `usd_bridge_layer_write_xform` above. Once
+        // bif animates visibility (v0.20+ roadmap), EditOperation::Visibility
+        // will need to carry its own time field for undo round-trip.
+        const UsdTimeCode time_code =
+            time < 0.0 ? UsdTimeCode::Default() : UsdTimeCode(time);
         if (visible) {
-            imageable.MakeVisible();
+            imageable.MakeVisible(time_code);
         } else {
-            imageable.MakeInvisible();
+            imageable.MakeInvisible(time_code);
         }
         invalidate_all_caches(stage);
         return USD_BRIDGE_SUCCESS;

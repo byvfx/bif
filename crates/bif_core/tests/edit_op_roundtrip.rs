@@ -533,7 +533,7 @@ fn usda_apply_visibility_undo_state() {
 
     // Use the bridge writer to produce valid USDA text with visibility.
     stage
-        .write_layer_visibility(&working_id, "/World/Cube", false)
+        .write_layer_visibility(&working_id, "/World/Cube", false, None)
         .expect("write visibility");
     let usda_with_visibility = stage
         .export_layer_as_string(&working_id)
@@ -584,7 +584,7 @@ fn replace_layer_contents_roundtrips() {
         .expect("export before");
 
     stage
-        .write_layer_visibility(&working_id, "/World/Cube", false)
+        .write_layer_visibility(&working_id, "/World/Cube", false, None)
         .expect("seed visibility opinion");
     let after = stage
         .export_layer_as_string(&working_id)
@@ -627,7 +627,7 @@ fn replace_layer_double_apply_idempotent() {
         .export_layer_as_string(&working_id)
         .expect("export before");
     stage
-        .write_layer_visibility(&working_id, "/World/Cube", false)
+        .write_layer_visibility(&working_id, "/World/Cube", false, None)
         .expect("seed visibility opinion");
     let after = stage
         .export_layer_as_string(&working_id)

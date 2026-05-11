@@ -14,6 +14,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- **`write_layer_visibility` FFI accepts a time parameter** (2026-05-11). Adds `time: Option<f64>` to the Rust wrapper and a `double time` arg to the C++ FFI; `< 0.0` resolves to `UsdTimeCode::Default()`, matching `usd_bridge_layer_write_xform`'s convention. Internally routes through `imageable.MakeVisible(time_code)` / `MakeInvisible(time_code)`. All production callers (`EditOperation::Visibility` dispatch in `edit_history.rs`) pass `None` since `EditOperation::Visibility`'s schema is unchanged — animated-visibility undo round-trip is a v0.20+ followup. Future-proofs the FFI shape so the EditOp schema change can land without another bridge rebuild.
 - **Surface invisible-prototype memory cost at load** (2026-05-11). Stopgap for the v0.16.2 visibility-fix follow-up. `crates/bif_core/src/usd/loader.rs` now emits a `log::info!` summarizing `(invisible_proto_count, ~MB)` so users can see when they're paying CPU memory for hidden geometry. Deferred GPU upload for invisible prototypes is tracked under v0.18 (Viewport Performance) in `MILESTONES.md`.
 
 ### Tests

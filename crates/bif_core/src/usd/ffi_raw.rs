@@ -1132,6 +1132,7 @@ extern "C" {
         layer_identifier: *const c_char,
         prim_path: *const c_char,
         visible: i32,
+        time: f64,
     ) -> UsdBridgeErrorCode;
 
     pub(crate) fn usd_bridge_layer_bind_material(

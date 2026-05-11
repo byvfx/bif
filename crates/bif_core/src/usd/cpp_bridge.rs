@@ -2536,20 +2536,30 @@ impl UsdStage {
         Ok(())
     }
 
+    /// Author a visibility opinion on `identifier`. `time = None` uses
+    /// `UsdTimeCode::Default()` (the only path bif exercises in v0.16);
+    /// `time = Some(t)` writes at that time-sample. Visibility-animation
+    /// is on the v0.20+ roadmap — `EditOperation::Visibility` does not
+    /// yet plumb a time, so production callers pass `None`.
     pub fn write_layer_visibility(
         &self,
         identifier: &str,
         prim_path: &str,
         visible: bool,
+        time: Option<f64>,
     ) -> UsdBridgeResult<()> {
         let c_id = cstr(identifier)?;
         let c_path = cstr(prim_path)?;
+        // Sentinel < 0.0 → C++ side resolves to `UsdTimeCode::Default()`.
+        // Matches the convention in `usd_bridge_layer_write_xform`.
+        let time_value = time.unwrap_or(-1.0);
         let code = unsafe {
             usd_bridge_layer_write_visibility(
                 self.raw as *mut _,
                 c_id.as_ptr(),
                 c_path.as_ptr(),
                 if visible { 1 } else { 0 },
+                time_value,
             )
         };
         if code != UsdBridgeErrorCode::Success {
@@ -3526,7 +3536,7 @@ def Xform "World"
             .map(|l| l.identifier)
             .expect("working layer");
         stage
-            .write_layer_visibility(&working_id, "/World/Cube", false)
+            .write_layer_visibility(&working_id, "/World/Cube", false, None)
             .expect("write visibility");
         stage.save_layer(&working_id).expect("save working");
 

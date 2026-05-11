@@ -1850,12 +1850,17 @@ UsdBridgeError usd_bridge_layer_write_xform(
     const float* matrix_16
 );
 
-/// Author a visibility opinion on a specific layer.
+/// Author a visibility opinion on a specific layer at the given time.
+/// `time` follows the same convention as `usd_bridge_layer_write_xform`:
+/// values < 0.0 are treated as `UsdTimeCode::Default()`. Visibility
+/// animation is not yet plumbed through bif's EditOperation schema —
+/// production callers should pass -1.0 until v0.20+ animation work.
 UsdBridgeError usd_bridge_layer_write_visibility(
     UsdBridgeStage* stage,
     const char* layer_identifier,
     const char* prim_path,
-    int visible
+    int visible,
+    double time
 );
 
 /// Author a material binding relationship on a specific layer.
