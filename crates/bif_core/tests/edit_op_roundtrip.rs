@@ -673,3 +673,225 @@ fn import_layer_from_garbage_leaves_layer_intact() {
         "rejected import must leave layer unchanged"
     );
 }
+
+// ---------------------------------------------------------------------------
+// v0.16.2 visibility-fix regression coverage
+// ---------------------------------------------------------------------------
+
+/// Persisted `visibility="invisible"` is toggleable on reopen. Pre-fix, raw
+/// `Set("inherited")` did not defeat the prior opinion on the same prim
+/// (and certainly not an ancestor's). Post-fix uses `MakeVisible()` which
+/// re-authors the leaf opinion idempotently.
+#[test]
+fn visibility_persisted_invisible_unhides_on_reopen() {
+    let fixture = helpers::LayeredStageFixture::new("vis_unhide_reopen");
+
+    // Step 1: hide /World/Cube + save the working layer.
+    {
+        let stage = UsdStage::open(&fixture.root).expect("open stage");
+        let (mut state, working_id) = state_for_working_layer(&stage);
+        state
+            .apply_edit_operation(
+                &stage,
+                EditOperation::Visibility {
+                    key: bif_core::usd::OpinionKey::new("/World/Cube", AttrSlot::Visibility),
+                    before: Some(true),
+                    after: false,
+                },
+            )
+            .expect("hide cube");
+        stage.save_layer(&working_id).expect("save working");
+    }
+
+    // Step 2: reopen — composed visibility on /World/Cube is invisible.
+    let reopened = UsdStage::open(&fixture.root).expect("reopen");
+    let cube = reopened
+        .get_prim_info_by_path("/World/Cube")
+        .expect("cube info");
+    assert!(!cube.visible, "Cube should be invisible after save+reopen");
+
+    // Step 3: toggle visible again on the reopened stage.
+    let (mut state, working_id) = state_for_working_layer(&reopened);
+    state
+        .apply_edit_operation(
+            &reopened,
+            EditOperation::Visibility {
+                key: bif_core::usd::OpinionKey::new("/World/Cube", AttrSlot::Visibility),
+                before: Some(false),
+                after: true,
+            },
+        )
+        .expect("show cube");
+
+    let cube_after = reopened
+        .get_prim_info_by_path("/World/Cube")
+        .expect("cube info 2");
+    assert!(cube_after.visible, "Cube should be visible after un-hide");
+
+    // Step 4: save and reopen — visible persists.
+    reopened.save_layer(&working_id).expect("save 2");
+    let reopened2 = UsdStage::open(&fixture.root).expect("reopen 2");
+    let cube_final = reopened2
+        .get_prim_info_by_path("/World/Cube")
+        .expect("cube info 3");
+    assert!(
+        cube_final.visible,
+        "Cube should still be visible after second round-trip"
+    );
+}
+
+/// USD visibility is pruning: an ancestor `visibility="invisible"` hides
+/// the entire subtree, and a descendant `visibility="inherited"` cannot
+/// un-hide it. `MakeVisible()` walks ancestors and authors `inherited` on
+/// each invisible parent — un-hiding a leaf must also expose its hidden
+/// ancestor chain. Without this, ALab-style scenes with persisted
+/// ancestor hides become permanently invisible.
+#[test]
+fn visibility_unhide_defeats_ancestor_pruning() {
+    let fixture = helpers::LayeredStageFixture::new("vis_unhide_ancestor");
+
+    // Hide /World (the ancestor) and save.
+    {
+        let stage = UsdStage::open(&fixture.root).expect("open stage");
+        let (mut state, working_id) = state_for_working_layer(&stage);
+        state
+            .apply_edit_operation(
+                &stage,
+                EditOperation::Visibility {
+                    key: bif_core::usd::OpinionKey::new("/World", AttrSlot::Visibility),
+                    before: Some(true),
+                    after: false,
+                },
+            )
+            .expect("hide World");
+        stage.save_layer(&working_id).expect("save");
+    }
+
+    // Reopen — both World and Cube are invisible via pruning.
+    let reopened = UsdStage::open(&fixture.root).expect("reopen");
+    let world = reopened.get_prim_info_by_path("/World").expect("World");
+    let cube = reopened.get_prim_info_by_path("/World/Cube").expect("Cube");
+    assert!(!world.visible, "World should be invisible");
+    assert!(
+        !cube.visible,
+        "Cube should be invisible via ancestor pruning"
+    );
+
+    // Un-hide the descendant; MakeVisible walks up and authors `inherited`
+    // on /World as well, so both end up visible.
+    let (mut state, _) = state_for_working_layer(&reopened);
+    state
+        .apply_edit_operation(
+            &reopened,
+            EditOperation::Visibility {
+                key: bif_core::usd::OpinionKey::new("/World/Cube", AttrSlot::Visibility),
+                before: Some(false),
+                after: true,
+            },
+        )
+        .expect("show Cube");
+
+    let world_after = reopened.get_prim_info_by_path("/World").expect("World 2");
+    let cube_after = reopened
+        .get_prim_info_by_path("/World/Cube")
+        .expect("Cube 2");
+    assert!(cube_after.visible, "Cube visible after un-hide");
+    assert!(
+        world_after.visible,
+        "Ancestor World also un-hidden by MakeVisible walk"
+    );
+}
+
+/// `set_layer_muted(root_id, true)` must reject with an error and leave
+/// the stage state unchanged. Pre-fix, USD emitted a soft TF_CODING_ERROR
+/// that bif's `layer_state.muted` ignored — a phantom mute replayed on
+/// every reload, corrupting composition and leaving the scene browser
+/// empty until the user manually toggled the layer back.
+#[test]
+fn set_layer_muted_rejects_root_layer() {
+    let fixture = helpers::LayeredStageFixture::new("root_mute_reject");
+    let stage = UsdStage::open(&fixture.root).expect("open stage");
+    let stack = stage.get_layer_stack().expect("layer stack");
+    let root_id = stack
+        .layers
+        .iter()
+        .find(|l| l.identifier.ends_with("root.usda"))
+        .expect("root layer")
+        .identifier
+        .clone();
+
+    let result = stage.set_layer_muted(&root_id, true);
+    assert!(result.is_err(), "root-layer mute must be rejected (got Ok)");
+
+    let stack2 = stage.get_layer_stack().expect("layer stack 2");
+    let root_after = stack2
+        .layers
+        .iter()
+        .find(|l| l.identifier == root_id)
+        .expect("root layer 2");
+    assert!(
+        !root_after.is_muted,
+        "root layer must not be marked muted after rejection"
+    );
+}
+
+/// Payload-rooted asset (`def Xform (payload = @./payload.usda@)`) populates
+/// `all_prims` after `load_payloads`. Pre-fix, the bridge's `cache_prim_data`
+/// ran against the unloaded composition under `UsdStage::Open(LoadNone)` —
+/// `UsdPrimDefaultPredicate` excludes unloaded-payload prims so the cache
+/// was set with 0 entries and a `prims_cached=true` flag prevented the
+/// post-payload re-cache, leaving the scene browser empty.
+#[test]
+fn payload_root_scene_browser_populates_after_load() {
+    let id = std::process::id();
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let dir = std::env::temp_dir().join(format!("bif_payload_root_{id}_{nanos}"));
+    std::fs::create_dir_all(&dir).expect("create dir");
+
+    let payload_path = dir.join("payload.usda");
+    let entry_path = dir.join("entry.usda");
+    helpers::write(
+        &payload_path,
+        r#"#usda 1.0
+
+def Mesh "geo"
+{
+    point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+    int[] faceVertexCounts = [3]
+    int[] faceVertexIndices = [0, 1, 2]
+}
+"#,
+    );
+    helpers::write(
+        &entry_path,
+        r#"#usda 1.0
+(
+    defaultPrim = "asset"
+)
+
+def Xform "asset" (
+    prepend payload = @./payload.usda@
+)
+{
+}
+"#,
+    );
+
+    let stage = UsdStage::open(&entry_path).expect("open stage");
+    let _ = stage.load_payloads().expect("load payloads");
+    let prims = stage.all_prims().expect("all_prims");
+    assert!(
+        !prims.is_empty(),
+        "all_prims must include the payload-rooted prim hierarchy after load_payloads (got 0)"
+    );
+    assert!(
+        prims.iter().any(|p| p.path == "/asset"),
+        "expected /asset prim in all_prims after payload load; got {:?}",
+        prims.iter().map(|p| p.path.as_str()).collect::<Vec<_>>()
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

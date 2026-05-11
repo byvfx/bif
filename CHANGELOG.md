@@ -16,6 +16,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - **Surface invisible-prototype memory cost at load** (2026-05-11). Stopgap for the v0.16.2 visibility-fix follow-up. `crates/bif_core/src/usd/loader.rs` now emits a `log::info!` summarizing `(invisible_proto_count, ~MB)` so users can see when they're paying CPU memory for hidden geometry. Deferred GPU upload for invisible prototypes is tracked under v0.18 (Viewport Performance) in `MILESTONES.md`.
 
+### Tests
+
+- **v0.16.2 visibility-fix regression coverage** (2026-05-11). Four new tests in `crates/bif_core/tests/edit_op_roundtrip.rs`: (1) `visibility_persisted_invisible_unhides_on_reopen` — hide leaf, save, reopen, un-hide, save again, reopen — composed visibility round-trip. (2) `visibility_unhide_defeats_ancestor_pruning` — hide ancestor `/World`, reopen, un-hide descendant `/World/Cube`, assert both end up visible (MakeVisible walks the chain). (3) `set_layer_muted_rejects_root_layer` — FFI rejection contract for root-layer mute; asserts `is_muted` flag stays false. (4) `payload_root_scene_browser_populates_after_load` — payload-rooted asset opens with `LoadNone`, post-`load_payloads` `all_prims()` is non-empty and contains the root path. All pass under `--test-threads=1`.
+
 ### Fixed
 
 - **`cache_prim_data` thread-safety annotation** (2026-05-11). `cpp/usd_bridge/usd_bridge.cpp:529` now documents the "NOT THREAD-SAFE — caller holds the stage Mutex" invariant in a doc block. Audit of `bif_viewport`'s `std::thread::spawn` sites (texture_loader.rs:996, scene_loader.rs:1573, batch_render.rs:370) found no BIF-side race against `cache_prim_data` — the `BindingsAtPrim` secondary-thread warning observed in user logs traces to USD-internal parallel composition (UsdShade plugin). Runtime `TF_VERIFY` thread-id guard deferred to v0.17 alongside the `cpp_bridge.rs` split.
