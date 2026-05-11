@@ -2986,9 +2986,15 @@ UsdBridgeError usd_bridge_load_payloads(
     if (!stage->cached) {
         cache_stage_data(stage);
     }
-    if (!stage->prims_cached) {
-        cache_prim_data(stage);
-    }
+    // Force re-cache of the prim hierarchy. Open(LoadNone) ran cache_prim_data
+    // against the unloaded composition, where UsdPrimDefaultPredicate excludes
+    // unloaded-payload prims — so all_prims/root_paths ended up empty for any
+    // asset whose root is a `def` with a `payload = @...@`. Now that payloads
+    // are resolved, walk the tree again so the scene browser actually sees
+    // the prim hierarchy. Without this, a single-layer asset with a payload
+    // root opens with 0 root prims and the Scene Browser tree is empty.
+    stage->prims_cached = false;
+    cache_prim_data(stage);
     cache_animation_data(stage);
     cache_vertex_animation_data(stage);
     cache_light_data(stage);
@@ -4995,9 +5001,14 @@ UsdBridgeError usd_bridge_write_visibility(
 
         UsdGeomImageable imageable(prim);
         if (imageable) {
-            imageable.GetVisibilityAttr().Set(
-                visible ? UsdGeomTokens->inherited : UsdGeomTokens->invisible
-            );
+            // Use MakeVisible/MakeInvisible (not raw Set) so unhide also
+            // authors `inherited` on any invisible ancestors — otherwise
+            // pruning leaves descendant invisible despite `inherited` opinion.
+            if (visible) {
+                imageable.MakeVisible();
+            } else {
+                imageable.MakeInvisible();
+            }
         }
 
         return USD_BRIDGE_SUCCESS;
@@ -6570,7 +6581,26 @@ UsdBridgeError usd_bridge_stage_mute_layer(
         return USD_BRIDGE_ERROR_NULL_POINTER;
     }
     try {
+        // USD refuses to mute the cache's root layer and emits a
+        // TF_CODING_ERROR ("Cannot mute cache's root layer"). The error is
+        // soft (no C++ exception), so bif's layer_state.muted would
+        // otherwise record a phantom mute that gets replayed on every
+        // subsequent stage reload — corrupting composition and leaving
+        // the scene browser empty until the user toggles the layer back.
+        // Reject root-layer mute attempts at the FFI so the Rust side
+        // never thinks the call succeeded. Use SdfLayer::Find for the
+        // identity check — raw string compare on GetIdentifier() is
+        // fragile across UNC vs drive-letter / `file://` scheme / case
+        // mismatches on Windows, especially with SMB-mounted asset paths.
         if (muted) {
+            SdfLayerHandle target = SdfLayer::Find(layer_identifier);
+            if (target && target == stage->stage->GetRootLayer()) {
+                TF_WARN(
+                    "usd_bridge_stage_mute_layer: refusing to mute root layer @%s@",
+                    layer_identifier
+                );
+                return USD_BRIDGE_ERROR_INVALID_PRIM;
+            }
             stage->stage->MuteLayer(layer_identifier);
         } else {
             stage->stage->UnmuteLayer(layer_identifier);
@@ -6898,9 +6928,17 @@ UsdBridgeError usd_bridge_layer_write_visibility(
         if (!prim) return USD_BRIDGE_ERROR_UNKNOWN;
         UsdGeomImageable imageable(prim);
         if (!imageable) return USD_BRIDGE_ERROR_INVALID_PRIM;
-        imageable.CreateVisibilityAttr().Set(
-            visible ? UsdGeomTokens->inherited : UsdGeomTokens->invisible
-        );
+        // Use the canonical UsdGeomImageable helpers: MakeVisible walks
+        // ancestors and authors inherited on any invisible parent so the
+        // prim actually becomes visible. MakeInvisible authors invisible
+        // on the prim directly. Setting Vt value directly cannot defeat
+        // ancestor pruning (a parent's invisible opinion hides all
+        // descendants regardless of their own visibility opinion).
+        if (visible) {
+            imageable.MakeVisible();
+        } else {
+            imageable.MakeInvisible();
+        }
         invalidate_all_caches(stage);
         return USD_BRIDGE_SUCCESS;
     } catch (const std::exception& e) {

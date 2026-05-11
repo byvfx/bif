@@ -1,5 +1,7 @@
 #include "scene_browser_model.h"
 
+#include <QTimer>
+
 #include "bif_qt/src/main_window.cxxqt.h"
 
 namespace {
@@ -124,6 +126,18 @@ SceneBrowserModel::SceneBrowserModel(BifShellState* state, QObject* parent)
         QObject::connect(
             m_state.data(), &BifShellState::scene_browser_revisionChanged,
             this, &SceneBrowserModel::on_state_revision_changed);
+        // Deferred rebuild on next event-loop iteration. If the model is
+        // constructed after a stage-open revision bump has already been
+        // queued and the QML tree view isn't yet fully realized, the
+        // first revisionChanged delivery can fire before any view is
+        // connected. Guard with an emptiness check so we don't spuriously
+        // re-reset (and drop QTreeView expanded-row state) when the live
+        // signal already populated the tree before the timer fires.
+        QTimer::singleShot(0, this, [this]() {
+            if (m_root && m_root->children.empty()) {
+                on_state_revision_changed();
+            }
+        });
     }
 }
 

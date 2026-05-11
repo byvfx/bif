@@ -207,13 +207,14 @@ pub fn load_usd_with_stage_policy_muted<P: AsRef<Path>>(
 
     // Load all meshes as prototypes (with deduplication).
     // All purposes are loaded; filtering happens at viewport culling time.
+    // Visibility filtering ALSO happens later via hidden_prim_paths +
+    // reload_instance_visibility, NOT at load time — skipping invisible
+    // meshes here would mean the prototype is never created, so the
+    // eye-icon toggle has nothing to un-hide on reopen of a file with a
+    // persisted `visibility = "invisible"` opinion.
     let mesh_start = Instant::now();
     let meshes = stage.meshes()?;
     for (mesh_idx, mesh_data) in meshes.iter().enumerate() {
-        // Skip invisible meshes (inherited visibility = invisible)
-        if !mesh_data.visible {
-            continue;
-        }
         // Hash from references — no clone until we know it's unique
         let vertex_hash = {
             use std::collections::hash_map::DefaultHasher;

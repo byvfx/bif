@@ -1,3 +1,26 @@
+# Session Handoff — 2026-05-10 (visibility round-trip + payload-root scene browser)
+
+**Last Updated:** 2026-05-10 on `v0.16.2-bugfixes`.
+
+**Current work:** Three visibility / scene-browser bugs fixed:
+
+1. Persisted `visibility="invisible"` can now be toggled visible on reopen. `usd_bridge_write_visibility` + `usd_bridge_layer_write_visibility` use `UsdGeomImageable::MakeVisible()`/`MakeInvisible()` — walks ancestors, defeats USD pruning. Loader no longer skips invisible meshes (they're prototypes now; visibility filtered at instance level via `hidden_prim_paths` + `reload_instance_visibility`).
+2. Single-layer / payload-rooted USDs (test_balls.usd, ALab entry.usda) populate the scene browser on first open. `usd_bridge_load_payloads` resets `prims_cached=false` and unconditionally re-runs `cache_prim_data` after `stage->Load()`. The LoadNone open had populated `all_prims` against an unloaded composition (UsdPrimDefaultPredicate excludes unloaded-payload prims → 0 roots), and the cache flag-gated the post-payload recache into a no-op.
+3. Root-layer mute attempts no longer corrupt layer state. `usd_bridge_stage_mute_layer` rejects via `SdfLayer::Find` + `SdfLayerHandle` equality compare against `GetRootLayer()`. USD's soft `TF_CODING_ERROR` was previously ignored, letting `layer_state.muted` record a phantom mute that replayed on every reload.
+
+Plus `SceneBrowserModel` deferred-rebuild `QTimer::singleShot(0)` guarded on `m_root->children.empty()` for the "model constructed after revision bump" race.
+
+**Changes:**
+- `cpp/usd_bridge/usd_bridge.cpp` — visibility helpers, mute gate, cache recache
+- `crates/bif_core/src/usd/loader.rs:213` — removed invisible-mesh skip
+- `crates/bif_qt/cpp/scene_browser_model.cpp` — `<QTimer>` include + guarded deferred rebuild
+
+**Validation:** `cargo build`, `cargo clippy -- -D warnings`, `cargo fmt --check` clean. 4 visibility + 3 mute + 1 export-visibility tests pass under `--test-threads=1`. Manual repro on `test_balls.usd` and ALab `entry.usda` confirms all three bugs fixed. Code-reviewed via `vfx-code-reviewer` + `Code Reviewer` in parallel; both must-fix items applied.
+
+**Next:** File MILESTONES TODOs (ancestor unhide UX surface, visibility time samples, defer-GPU-upload for invisible prototypes, `cache_prim_data` thread-safety annotation). Add three missing tests.
+
+---
+
 # Session Handoff — 2026-05-09 (visibility toggle perf: skip full GPU rebuild)
 
 **Last Updated:** 2026-05-09 on `v0.16.2-bugfixes`.
