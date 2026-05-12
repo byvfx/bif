@@ -41,6 +41,9 @@
 #include <pxr/base/tf/diagnostic.h>
 #include <pxr/base/tf/errorMark.h>
 #include <pxr/usd/sdf/layer.h>
+#include <pxr/usd/sdf/listOp.h>
+#include <pxr/usd/sdf/relationshipSpec.h>
+#include <pxr/usd/usd/relationship.h>
 #include <pxr/usd/usd/references.h>
 #include <pxr/usd/usd/payloads.h>
 #include <pxr/usd/usd/variantSets.h>
@@ -6409,6 +6412,95 @@ void usd_bridge_free_prim_attributes(
     delete[] attributes;
 }
 
+UsdBridgeError usd_bridge_get_prim_relationships(
+    const UsdBridgeStage* stage,
+    const char* prim_path,
+    UsdBridgeRelationshipData** out_relationships,
+    size_t* out_count
+) {
+    if (!stage || !prim_path || !out_relationships || !out_count) {
+        return USD_BRIDGE_ERROR_NULL_POINTER;
+    }
+    *out_relationships = nullptr;
+    *out_count = 0;
+
+    try {
+        auto prim = stage->stage->GetPrimAtPath(SdfPath(prim_path));
+        if (!prim.IsValid()) {
+            return USD_BRIDGE_ERROR_INVALID_PRIM;
+        }
+
+        auto rels = prim.GetRelationships();
+        if (rels.empty()) {
+            return USD_BRIDGE_SUCCESS;
+        }
+
+        struct RelEntry {
+            std::string name;
+            std::vector<std::string> targets;
+            bool is_authored;
+        };
+        std::vector<RelEntry> entries;
+        entries.reserve(rels.size());
+
+        for (const auto& rel : rels) {
+            RelEntry entry;
+            entry.name = rel.GetName().GetString();
+            entry.is_authored = rel.HasAuthoredTargets();
+
+            SdfPathVector targets;
+            rel.GetTargets(&targets);
+            entry.targets.reserve(targets.size());
+            for (const auto& tp : targets) {
+                entry.targets.push_back(tp.GetString());
+            }
+            entries.push_back(std::move(entry));
+        }
+
+        size_t count = entries.size();
+        auto* data = new UsdBridgeRelationshipData[count];
+        for (size_t i = 0; i < count; ++i) {
+            data[i].name = strdup(entries[i].name.c_str());
+            data[i].is_authored = entries[i].is_authored ? 1 : 0;
+            size_t tc = entries[i].targets.size();
+            data[i].target_count = tc;
+            if (tc == 0) {
+                data[i].target_paths = nullptr;
+            } else {
+                auto** tps = new const char*[tc];
+                for (size_t j = 0; j < tc; ++j) {
+                    tps[j] = strdup(entries[i].targets[j].c_str());
+                }
+                data[i].target_paths = tps;
+            }
+        }
+
+        *out_relationships = data;
+        *out_count = count;
+        return USD_BRIDGE_SUCCESS;
+    } catch (const std::exception& e) {
+        TF_WARN("usd_bridge_get_prim_relationships: %s", e.what());
+        return USD_BRIDGE_ERROR_UNKNOWN;
+    }
+}
+
+void usd_bridge_free_prim_relationships(
+    UsdBridgeRelationshipData* relationships,
+    size_t count
+) {
+    if (!relationships) return;
+    for (size_t i = 0; i < count; ++i) {
+        free(const_cast<char*>(relationships[i].name));
+        if (relationships[i].target_paths) {
+            for (size_t j = 0; j < relationships[i].target_count; ++j) {
+                free(const_cast<char*>(relationships[i].target_paths[j]));
+            }
+            delete[] relationships[i].target_paths;
+        }
+    }
+    delete[] relationships;
+}
+
 // ============================================================================
 // Layer-Aware Stage (v0.14.0)
 // ============================================================================
@@ -7399,6 +7491,86 @@ void usd_bridge_opinions_free(UsdBridgeAttributeOpinions* opinions) {
     }
     delete[] opinions->sources;
     delete opinions;
+}
+
+UsdBridgeError usd_bridge_rel_get_opinion_sources(
+    const UsdBridgeStage* stage,
+    const char* prim_path,
+    const char* rel_name,
+    UsdBridgeAttributeOpinions** out_opinions
+) {
+    if (!stage || !prim_path || !rel_name || !out_opinions) {
+        return USD_BRIDGE_ERROR_NULL_POINTER;
+    }
+    *out_opinions = nullptr;
+
+    try {
+        SdfPath path(prim_path);
+        UsdPrim prim = stage->stage->GetPrimAtPath(path);
+        if (!prim) {
+            return USD_BRIDGE_ERROR_INVALID_PRIM;
+        }
+
+        UsdRelationship rel = prim.GetRelationship(TfToken(rel_name));
+        auto* out = new UsdBridgeAttributeOpinions;
+        out->sources = nullptr;
+        out->count = 0;
+        out->winning_index = 0;
+
+        if (!rel) {
+            *out_opinions = out;
+            return USD_BRIDGE_SUCCESS;
+        }
+
+        SdfPropertySpecHandleVector stack = rel.GetPropertyStack();
+        if (stack.empty()) {
+            *out_opinions = out;
+            return USD_BRIDGE_SUCCESS;
+        }
+
+        auto* sources = new UsdBridgeOpinionSource[stack.size()];
+        for (size_t i = 0; i < stack.size(); ++i) {
+            const SdfPropertySpecHandle& spec = stack[i];
+            sources[i].layer_identifier =
+                strdup(spec->GetLayer()->GetIdentifier().c_str());
+
+            std::string display = "<no opinion>";
+            VtValue v;
+            if (spec->HasField(SdfFieldKeys->TargetPaths, &v) &&
+                v.IsHolding<SdfPathListOp>()) {
+                const auto& listOp = v.UncheckedGet<SdfPathListOp>();
+                const SdfPathVector* items = nullptr;
+                if (listOp.IsExplicit()) {
+                    items = &listOp.GetExplicitItems();
+                } else if (!listOp.GetAddedItems().empty()) {
+                    items = &listOp.GetAddedItems();
+                } else if (!listOp.GetPrependedItems().empty()) {
+                    items = &listOp.GetPrependedItems();
+                }
+                if (items && !items->empty()) {
+                    std::ostringstream oss;
+                    for (size_t t = 0; t < items->size(); ++t) {
+                        if (t > 0) oss << ", ";
+                        oss << (*items)[t].GetString();
+                    }
+                    display = oss.str();
+                } else {
+                    display = "(empty)";
+                }
+            }
+            sources[i].value_display = strdup(display.c_str());
+            sources[i].value_type_token = strdup("relationship");
+        }
+
+        out->sources = sources;
+        out->count = stack.size();
+        out->winning_index = 0;
+        *out_opinions = out;
+        return USD_BRIDGE_SUCCESS;
+    } catch (const std::exception& e) {
+        TF_WARN("usd_bridge_rel_get_opinion_sources: %s", e.what());
+        return USD_BRIDGE_ERROR_UNKNOWN;
+    }
 }
 
 UsdBridgeError usd_bridge_open_stage_with_policy(

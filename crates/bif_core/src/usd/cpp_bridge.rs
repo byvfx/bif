@@ -233,6 +233,17 @@ pub struct UsdAttributeData {
     pub is_authored: bool,
 }
 
+/// A USD relationship with name and resolved (composed) target paths.
+#[derive(Clone, Debug)]
+pub struct UsdRelationshipData {
+    /// Relationship name (e.g., "material:binding", "proxyPrim")
+    pub name: String,
+    /// Resolved target prim/property paths (composed across layers)
+    pub targets: Vec<String>,
+    /// Whether the relationship has any authored targets on any layer
+    pub is_authored: bool,
+}
+
 /// Native instance data — references a prototype mesh with a unique transform.
 #[derive(Clone, Debug)]
 pub struct UsdNativeInstance {
@@ -2298,6 +2309,56 @@ impl UsdStage {
 
         Ok(attributes)
     }
+
+    /// Get all relationships for a prim by path. Targets are resolved
+    /// (composed) — the strongest opinion's targets list, after sublayers and
+    /// references. Use `get_relationship_opinions` for per-layer authoring.
+    pub fn get_prim_relationships(
+        &self,
+        prim_path: &str,
+    ) -> UsdBridgeResult<Vec<UsdRelationshipData>> {
+        let c_path = cstr(prim_path)?;
+
+        let mut raw_ptr: *mut UsdBridgeRelationshipDataRaw = std::ptr::null_mut();
+        let mut count: usize = 0;
+
+        let result = unsafe {
+            usd_bridge_get_prim_relationships(self.raw, c_path.as_ptr(), &mut raw_ptr, &mut count)
+        };
+
+        if result != UsdBridgeErrorCode::Success {
+            return Err(result.into());
+        }
+
+        if raw_ptr.is_null() || count == 0 {
+            return Ok(Vec::new());
+        }
+
+        let relationships = unsafe {
+            let raw_slice = std::slice::from_raw_parts(raw_ptr, count);
+            let rels: Vec<UsdRelationshipData> = raw_slice
+                .iter()
+                .map(|raw| {
+                    let mut targets = Vec::with_capacity(raw.target_count);
+                    if !raw.target_paths.is_null() && raw.target_count > 0 {
+                        let tps = std::slice::from_raw_parts(raw.target_paths, raw.target_count);
+                        for tp in tps {
+                            targets.push(super::ffi_convert::c_str_to_string(*tp));
+                        }
+                    }
+                    UsdRelationshipData {
+                        name: super::ffi_convert::c_str_to_string(raw.name),
+                        targets,
+                        is_authored: raw.is_authored != 0,
+                    }
+                })
+                .collect();
+            usd_bridge_free_prim_relationships(raw_ptr, count);
+            rels
+        };
+
+        Ok(relationships)
+    }
 }
 
 impl UsdStage {
@@ -2790,6 +2851,33 @@ impl UsdStage {
                 self.raw,
                 c_path.as_ptr(),
                 c_attr.as_ptr(),
+                &mut raw_opinions,
+            )
+        };
+        if code != UsdBridgeErrorCode::Success {
+            return Err(code.into());
+        }
+        let sources = unsafe { convert_attribute_opinions_ptr(raw_opinions) };
+        unsafe { usd_bridge_opinions_free(raw_opinions) };
+        Ok(sources)
+    }
+
+    /// Get the opinion stack for a single relationship — one entry per layer
+    /// authoring an opinion. Each source's `value_display` is the comma-joined
+    /// target path list authored at that layer (or "<no opinion>" / "(empty)").
+    pub fn get_relationship_opinions(
+        &self,
+        prim_path: &str,
+        rel_name: &str,
+    ) -> UsdBridgeResult<Vec<OpinionSource>> {
+        let c_path = cstr(prim_path)?;
+        let c_rel = cstr(rel_name)?;
+        let mut raw_opinions: *mut UsdBridgeAttributeOpinionsRaw = ptr::null_mut();
+        let code = unsafe {
+            usd_bridge_rel_get_opinion_sources(
+                self.raw,
+                c_path.as_ptr(),
+                c_rel.as_ptr(),
                 &mut raw_opinions,
             )
         };
@@ -4086,6 +4174,52 @@ def Xform "World"
         assert!(
             opinions[0].value_display.contains('3'),
             "winning value should reflect shot's (3, 0, 0), got {}",
+            opinions[0].value_display
+        );
+    }
+
+    const RELS_FIXTURE: &str = "../../test_assets/relationships.usda";
+
+    #[test]
+    fn test_get_prim_relationships_lists_authored() {
+        let stage = UsdStage::open(RELS_FIXTURE).expect("open relationships fixture");
+
+        let rels = stage
+            .get_prim_relationships("/World/Geo")
+            .expect("relationships query");
+
+        let binding = rels
+            .iter()
+            .find(|r| r.name == "material:binding")
+            .expect("material:binding present on /World/Geo");
+        assert!(binding.is_authored, "material:binding should be authored");
+        assert_eq!(binding.targets, vec!["/World/Mat".to_string()]);
+
+        let proxy = rels
+            .iter()
+            .find(|r| r.name == "proxyPrim")
+            .expect("proxyPrim present on /World/Geo");
+        assert_eq!(proxy.targets, vec!["/World/Proxy".to_string()]);
+    }
+
+    #[test]
+    fn test_get_relationship_opinions_returns_single_layer() {
+        let stage = UsdStage::open(RELS_FIXTURE).expect("open relationships fixture");
+
+        let opinions = stage
+            .get_relationship_opinions("/World/Geo", "material:binding")
+            .expect("relationship opinions query");
+
+        assert_eq!(opinions.len(), 1, "single authoring layer expected");
+        assert!(opinions[0].is_winning);
+        assert!(
+            opinions[0].layer_identifier.ends_with("relationships.usda"),
+            "opinion should come from relationships.usda, got {}",
+            opinions[0].layer_identifier
+        );
+        assert!(
+            opinions[0].value_display.contains("/World/Mat"),
+            "value_display should list /World/Mat target, got {}",
             opinions[0].value_display
         );
     }

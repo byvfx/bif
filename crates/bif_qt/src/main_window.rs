@@ -797,6 +797,38 @@ pub mod qobject {
         #[qinvokable]
         fn selected_prim_attr_tooltip_at(self: &BifShellState, attr_index: i32) -> QString;
 
+        // ---- Relationships surface (Phase C.4) ----
+
+        /// Number of relationships on the selected prim.
+        #[qinvokable]
+        fn selected_prim_relationship_count(self: &BifShellState) -> i32;
+
+        /// Relationship name at `index` (e.g. "material:binding").
+        #[qinvokable]
+        fn selected_prim_relationship_name_at(self: &BifShellState, index: i32) -> QString;
+
+        /// Number of resolved targets for relationship at `rel_index`.
+        #[qinvokable]
+        fn selected_prim_relationship_target_count_at(self: &BifShellState, rel_index: i32) -> i32;
+
+        /// Resolved target path at `(rel_index, target_index)`.
+        #[qinvokable]
+        fn selected_prim_relationship_target_at(
+            self: &BifShellState,
+            rel_index: i32,
+            target_index: i32,
+        ) -> QString;
+
+        /// Palette color index (mod 8) for the winning opinion on relationship
+        /// `rel_index`. -1 when unresolvable.
+        #[qinvokable]
+        fn selected_prim_rel_color_index_at(self: &BifShellState, rel_index: i32) -> i32;
+
+        /// Rich-HTML tooltip enumerating the full opinion stack for the
+        /// selected prim relationship at `rel_index`.
+        #[qinvokable]
+        fn selected_prim_rel_tooltip_at(self: &BifShellState, rel_index: i32) -> QString;
+
         // ---- Camera picker surface ----
 
         /// Number of UsdGeomCamera prims in the loaded stage. 0 when no stage.
@@ -2637,6 +2669,121 @@ impl qobject::BifShellState {
                 .get_attribute_opinions(&prim_path, &attr_name)
                 .unwrap_or_default();
             format_attr_opinion_tooltip(&attr_name, &opinions, self.rust())
+        })
+        .unwrap_or_default();
+        cxx_qt_lib::QString::from(&tooltip)
+    }
+
+    // -----------------------------------------------------------------
+    // Property Inspector — Relationships surface (Phase C.4)
+    // -----------------------------------------------------------------
+
+    fn selected_prim_relationship_count(&self) -> i32 {
+        let path: String = (&self.rust().selected_prim_path).into();
+        if path.is_empty() {
+            return 0;
+        }
+        with_stage(|stage| {
+            stage
+                .get_prim_relationships(&path)
+                .map(|v| v.len() as i32)
+                .unwrap_or(0)
+        })
+        .unwrap_or(0)
+    }
+
+    fn selected_prim_relationship_name_at(&self, index: i32) -> cxx_qt_lib::QString {
+        let path: String = (&self.rust().selected_prim_path).into();
+        let name = with_stage(|stage| {
+            stage
+                .get_prim_relationships(&path)
+                .ok()
+                .and_then(|v| v.get(index as usize).map(|r| r.name.clone()))
+                .unwrap_or_default()
+        })
+        .unwrap_or_default();
+        cxx_qt_lib::QString::from(&name)
+    }
+
+    fn selected_prim_relationship_target_count_at(&self, rel_index: i32) -> i32 {
+        let path: String = (&self.rust().selected_prim_path).into();
+        with_stage(|stage| {
+            stage
+                .get_prim_relationships(&path)
+                .ok()
+                .and_then(|v| v.get(rel_index as usize).map(|r| r.targets.len() as i32))
+                .unwrap_or(0)
+        })
+        .unwrap_or(0)
+    }
+
+    fn selected_prim_relationship_target_at(
+        &self,
+        rel_index: i32,
+        target_index: i32,
+    ) -> cxx_qt_lib::QString {
+        let path: String = (&self.rust().selected_prim_path).into();
+        let target = with_stage(|stage| {
+            stage
+                .get_prim_relationships(&path)
+                .ok()
+                .and_then(|v| {
+                    v.get(rel_index as usize)
+                        .and_then(|r| r.targets.get(target_index as usize).cloned())
+                })
+                .unwrap_or_default()
+        })
+        .unwrap_or_default();
+        cxx_qt_lib::QString::from(&target)
+    }
+
+    fn selected_prim_rel_color_index_at(&self, rel_index: i32) -> i32 {
+        let prim_path: String = (&self.rust().selected_prim_path).into();
+        if prim_path.is_empty() {
+            return -1;
+        }
+        let rel_name = with_stage(|stage| {
+            stage
+                .get_prim_relationships(&prim_path)
+                .ok()
+                .and_then(|v| v.get(rel_index as usize).map(|r| r.name.clone()))
+        })
+        .flatten();
+        let Some(name) = rel_name else { return -1 };
+        let winning_id = with_stage(|stage| {
+            stage
+                .get_relationship_opinions(&prim_path, &name)
+                .ok()
+                .and_then(|v| {
+                    v.into_iter()
+                        .find(|o| o.is_winning)
+                        .map(|o| o.layer_identifier)
+                })
+        })
+        .flatten();
+        match winning_id {
+            Some(id) => color_index_for_layer(self.rust(), &id),
+            None => -1,
+        }
+    }
+
+    fn selected_prim_rel_tooltip_at(&self, rel_index: i32) -> cxx_qt_lib::QString {
+        let prim_path: String = (&self.rust().selected_prim_path).into();
+        if prim_path.is_empty() {
+            return cxx_qt_lib::QString::from("");
+        }
+        let tooltip = with_stage(|stage| {
+            let Some(rel_name) = stage
+                .get_prim_relationships(&prim_path)
+                .ok()
+                .and_then(|v| v.get(rel_index as usize).map(|r| r.name.clone()))
+            else {
+                return String::new();
+            };
+            let opinions = stage
+                .get_relationship_opinions(&prim_path, &rel_name)
+                .unwrap_or_default();
+            format_attr_opinion_tooltip(&rel_name, &opinions, self.rust())
         })
         .unwrap_or_default();
         cxx_qt_lib::QString::from(&tooltip)

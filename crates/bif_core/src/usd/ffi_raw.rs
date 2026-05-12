@@ -95,6 +95,16 @@ pub(crate) struct UsdBridgeAttributeDataRaw {
     pub(crate) is_authored: i32,
 }
 
+/// Prim relationship data from C API
+/// (returned by usd_bridge_get_prim_relationships)
+#[repr(C)]
+pub(crate) struct UsdBridgeRelationshipDataRaw {
+    pub(crate) name: *const c_char,
+    pub(crate) target_paths: *const *const c_char,
+    pub(crate) target_count: usize,
+    pub(crate) is_authored: i32,
+}
+
 /// Native instance data from C API
 #[repr(C)]
 pub(crate) struct UsdNativeInstanceDataRaw {
@@ -1055,6 +1065,18 @@ extern "C" {
         count: usize,
     );
 
+    pub(crate) fn usd_bridge_get_prim_relationships(
+        stage: *const UsdBridgeStageRaw,
+        prim_path: *const c_char,
+        out_relationships: *mut *mut UsdBridgeRelationshipDataRaw,
+        out_count: *mut usize,
+    ) -> UsdBridgeErrorCode;
+
+    pub(crate) fn usd_bridge_free_prim_relationships(
+        relationships: *mut UsdBridgeRelationshipDataRaw,
+        count: usize,
+    );
+
     // ------------------------------------------------------------------------
     // Layer-Aware Stage (v0.14.0)
     // ------------------------------------------------------------------------
@@ -1193,6 +1215,13 @@ extern "C" {
     ) -> UsdBridgeErrorCode;
 
     pub(crate) fn usd_bridge_opinions_free(opinions: *mut UsdBridgeAttributeOpinionsRaw);
+
+    pub(crate) fn usd_bridge_rel_get_opinion_sources(
+        stage: *const UsdBridgeStageRaw,
+        prim_path: *const c_char,
+        rel_name: *const c_char,
+        out_opinions: *mut *mut UsdBridgeAttributeOpinionsRaw,
+    ) -> UsdBridgeErrorCode;
 
     pub(crate) fn usd_bridge_open_stage_with_policy(
         path: *const c_char,
