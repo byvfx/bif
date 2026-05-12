@@ -1,6 +1,6 @@
 # BUGLIST
 
-Last updated: 2026-05-10
+Last updated: 2026-05-12
 
 ## Active Bugs
 
@@ -15,6 +15,7 @@ Last updated: 2026-05-10
 
 ## Fixed (since last update)
 
+- Viewport pick → scene browser tree highlight (2026-05-12, `v0.16.2-bugfixes`, commit `837dfff`): clicking a prim in the 3D viewport now scrolls + highlights its row in the scene browser tree. Three stacked bugs: (a) `find_source_index_for_path` navigated via column `ColName` (=1) but `SceneBrowserModel::rowCount` returns 0 for `parent.column() > 0` — switched to column 0 (PathRole is column-agnostic); (b) `selected_prim_pathChanged` connect was guarded by `if (m_state)` even though the panel is always built with a state — drop guard, add `Q_ASSERT`; (c) initial rebuild can race with the scene provider returning 0 children, locking a node as a fake-leaf — added `SceneBrowserModel::refresh_node()` to force-repopulate on descent. Plus `/BIF/...` synthetic-prefix tolerant `path_matches` helper.
 - Visibility round-trip (2026-05-10, `v0.16.2-bugfixes`): persisted `visibility="invisible"` opinions are now toggleable on reopen. (a) `usd_bridge_write_visibility` + `usd_bridge_layer_write_visibility` use `UsdGeomImageable::MakeVisible/MakeInvisible` to defeat ancestor pruning; (b) `loader.rs` no longer skips invisible meshes at load — all become prototypes, visibility filtered uniformly at instance level via `hidden_prim_paths`; (c) `usd_bridge_load_payloads` resets `prims_cached` and re-runs `cache_prim_data` after `stage->Load()` so payload-rooted assets populate `all_prims`/`root_paths`; (d) `usd_bridge_stage_mute_layer` rejects root-layer mute via `SdfLayer::Find` + handle compare to stop phantom mute state corruption; (e) `SceneBrowserModel` queues a guarded `singleShot(0)` rebuild for the model-vs-bump race.
 - v0.16.1 code-review followups swept on `v0.16.1-followups` (2026-04-30): save failures now surface USD/TfError details, shader-swap rollback restores `info:id` after failed input writes, Property Inspector callbacks use `QPointer` guards, modal confirmations defer out of selection-change slots, poisoned stage mutex paths log errors, edit-op negative tests cover locked save / target-switch undo / replace-layer idempotence, `cpp_bridge.rs` uses a shared `cstr(...)` helper, and the export-buffer lifetime contract has regression coverage.
 - bif_qt View → Grid toggle added (2026-04-30): the Qt action now drives `DisplaySettings::grid_visible` and the viewport render path skips grid drawing when disabled.

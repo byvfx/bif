@@ -225,6 +225,30 @@ void SceneBrowserModel::fetchMore(const QModelIndex& parent) {
     endInsertRows();
 }
 
+void SceneBrowserModel::refresh_node(const QModelIndex& parent) {
+    if (!m_state) return;
+    auto* node = node_for_index(parent);
+    if (!node) return;
+    // Only handle the "fake-leaf" case: a node previously cached with
+    // 0 kids that the live state now reports children for. Mutating a
+    // populated subtree mid-walk has surprising lifecycle interactions
+    // with QTreeView selection state, so let the standard fetchMore
+    // path own non-empty refreshes.
+    if (!node->children.empty()) return;
+    const auto children = describe_children(m_state, node->path);
+    if (children.empty()) {
+        node->children_populated = true;
+        return;
+    }
+    beginInsertRows(parent, 0, static_cast<int>(children.size()) - 1);
+    for (const auto& child_data : children) {
+        node->children.push_back(make_node(node, child_data));
+    }
+    node->child_count = static_cast<int>(children.size());
+    node->children_populated = true;
+    endInsertRows();
+}
+
 QVariant SceneBrowserModel::data(const QModelIndex& index, int role) const {
     if (!index.isValid()) return {};
     auto* node = static_cast<PrimNode*>(index.internalPointer());

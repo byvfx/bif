@@ -1,3 +1,28 @@
+# Session Handoff — 2026-05-12 (viewport pick → scene browser tree sync)
+
+**Last Updated:** 2026-05-12 on `v0.16.2-bugfixes` (commit `837dfff`).
+
+**Current work:** Dogfood pass surfaced two bugs. Shipped Bug 1; Bug 2 deferred.
+
+**Bug 1 fixed — viewport→tree highlight sync.** Three stacked bugs in `crates/bif_qt/cpp/scene_browser_widget.cpp` + `scene_browser_model.{cpp,h}`:
+1. `find_source_index_for_path` walked via column `ColName` (=1); `SceneBrowserModel::rowCount` returns 0 for `parent.column() > 0` — recursion never descended. Switched to column 0 (PathRole is column-agnostic).
+2. `selected_prim_pathChanged` connect was guarded by `if (m_state)` even though the panel is always built with a state. Drop guard, add `Q_ASSERT`.
+3. Initial rebuild can race with scene_browser_provider returning 0 children, locking a node as a fake-leaf (`children_populated=true` permanently). Added `SceneBrowserModel::refresh_node()` to force-repopulate on descent through a stuck node. Defensive — only acts when `node->children.empty()`.
+
+Plus `path_matches()` helper strips `/BIF/...` synthetic prefix in either direction so loader-synthesized paths resolve against composed USD-form tree rows.
+
+**Changes:**
+- `crates/bif_qt/cpp/scene_browser_widget.cpp` — column-0 navigation, path_matches, refresh_node call, unconditional connect.
+- `crates/bif_qt/cpp/scene_browser_model.h/.cpp` — new `refresh_node(QModelIndex)`.
+
+**Validation:** `cargo build -p bif_qt`, `cargo clippy -p bif_qt -- -D warnings`, `cargo fmt --check`, `cargo test -p bif_qt` all clean. Manual repro on HumanFemale.walk.usd: viewport click on a deeply nested mesh now scrolls + highlights the tree row.
+
+**Bug 2 deferred — render regression.** HumanFemale.walk.usd: UVs scrambled (face/arms), shoes oversized. Basket.usd + "all props" lose textures entirely. Plus "viewport selection only lets me select a couple things" — pick BVH likely polluted. Hypothesis: commit `e55b3d6` (2026-05-10, invisible-mesh skip removed) is the root cause across all symptoms. Plan: `~/.claude/plans/implementation-passes-dogfood-tests-rippling-flurry.md`.
+
+**Next:** Bug 2 triage — bisect `e55b3d6` against HumanFemale + Basket, then chase the three hypotheses (mesh_dedup proto-id collision, faceVarying UV seam-split OOB, shoe rigid-skinning).
+
+---
+
 # Session Handoff — 2026-05-10 (visibility round-trip + payload-root scene browser)
 
 **Last Updated:** 2026-05-10 on `v0.16.2-bugfixes`.

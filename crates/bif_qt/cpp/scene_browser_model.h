@@ -66,6 +66,13 @@ public:
     /// prim-tree invokables. Called on `scene_browser_revisionChanged`.
     void rebuild_from_state();
 
+    /// Re-query state for `parent`'s children and rebuild its subtree,
+    /// ignoring the cached `children_populated` flag. Used by the
+    /// viewport-pick → tree-highlight path when the initial rebuild
+    /// happened before the scene provider had child data for a prim
+    /// (e.g. stage load race), leaving the node stuck as a fake leaf.
+    void refresh_node(const QModelIndex& parent);
+
     // PrimNode is public so the demo-tree builder in the .cpp file
     // (anonymous namespace) can construct one. Phase E swaps the
     // builder for a Rust-driven path; this stays public for the

@@ -2,6 +2,7 @@
 #include "scene_browser_model.h"
 
 #include <QColor>
+#include <QDebug>
 #include <QHeaderView>
 #include <QItemSelectionModel>
 #include <QLineEdit>
@@ -223,10 +224,11 @@ SceneBrowserWidget::SceneBrowserWidget(BifShellState* state, QWidget* parent)
         this, &SceneBrowserWidget::on_filter_changed);
     QObject::connect(m_view->selectionModel(), &QItemSelectionModel::currentChanged,
         this, &SceneBrowserWidget::on_selection_changed);
-    if (m_state) {
-        QObject::connect(m_state, &BifShellState::selected_prim_pathChanged,
-            this, &SceneBrowserWidget::on_external_selection_changed);
-    }
+    // m_state is required by the ctor signature — connect unconditionally
+    // so viewport-pick → tree-highlight always wires up.
+    Q_ASSERT(m_state != nullptr);
+    QObject::connect(m_state, &BifShellState::selected_prim_pathChanged,
+        this, &SceneBrowserWidget::on_external_selection_changed);
     QObject::connect(m_view, &QTreeView::expanded, this,
         [this](const QModelIndex& proxy_index) {
             if (!m_model || !m_filter) return;
@@ -250,18 +252,50 @@ SceneBrowserWidget::SceneBrowserWidget(BifShellState* state, QWidget* parent)
 
 SceneBrowserWidget::~SceneBrowserWidget() = default;
 
+// Match tree PathRole against an externally-supplied prim path. Returns true
+// for exact match OR the `/BIF/...` synthetic-prefix variants in either
+// direction — `on_prim_pick` denormalizes `/BIF/Foo` -> `/Foo` while the tree
+// may still store either form depending on whether the prim was loader-
+// synthesized or composed from the USD stage.
+static bool path_matches(const QString& tree_path, const QString& target) {
+    if (tree_path == target) return true;
+    if (target.isEmpty() || tree_path.isEmpty()) return false;
+    auto trim_bif = [](const QString& p) -> QString {
+        return p.startsWith(QStringLiteral("/BIF")) ? p.mid(4) : p;
+    };
+    return trim_bif(tree_path) == trim_bif(target);
+}
+
 QModelIndex SceneBrowserWidget::find_source_index_for_path(const QString& path,
                                                            const QModelIndex& parent) {
     if (!m_model) return {};
-    const int rows = m_model->rowCount(parent);
+    // CRITICAL: navigate via column 0 only. SceneBrowserModel::rowCount
+    // returns 0 when `parent.column() > 0`, so descending through a
+    // column-1 (ColName) parent makes the recursion appear childless and
+    // silently fails. PathRole is column-agnostic, so a column-0 index
+    // still answers the path query correctly.
+    if (m_model->canFetchMore(parent)) {
+        m_model->fetchMore(parent);
+    }
+    const QString parent_path =
+        parent.isValid() ? parent.data(SceneBrowserModel::PathRole).toString() : QStringLiteral("/");
+    const bool on_target_path =
+        path.startsWith(parent_path + QChar('/')) || parent_path == QStringLiteral("/");
+    int rows = m_model->rowCount(parent);
+    // Initial rebuild may have raced with the scene provider and left
+    // this node cached as a leaf (child_count=0, children_populated=true).
+    // canFetchMore then permanently rejects further loads. If our target
+    // descends through here, force a re-query.
+    if (rows == 0 && on_target_path && parent.isValid()) {
+        m_model->refresh_node(parent);
+        rows = m_model->rowCount(parent);
+    }
     for (int row = 0; row < rows; ++row) {
-        const QModelIndex idx = m_model->index(row, SceneBrowserModel::ColName, parent);
+        const QModelIndex idx = m_model->index(row, 0, parent);
         if (!idx.isValid()) continue;
-        if (idx.data(SceneBrowserModel::PathRole).toString() == path) {
+        const QString row_path = idx.data(SceneBrowserModel::PathRole).toString();
+        if (path_matches(row_path, path)) {
             return idx;
-        }
-        if (m_model->canFetchMore(idx)) {
-            m_model->fetchMore(idx);
         }
         const QModelIndex child = find_source_index_for_path(path, idx);
         if (child.isValid()) return child;
@@ -272,7 +306,10 @@ QModelIndex SceneBrowserWidget::find_source_index_for_path(const QString& path,
 void SceneBrowserWidget::select_path(const QString& path) {
     if (!m_view || !m_model || !m_filter || path.isEmpty()) return;
     const QModelIndex source_idx = find_source_index_for_path(path);
-    if (!source_idx.isValid()) return;
+    if (!source_idx.isValid()) {
+        qInfo() << "[scene_browser] select_path: no tree row for" << path;
+        return;
+    }
     QModelIndex proxy_idx = m_filter->mapFromSource(source_idx);
     if (!proxy_idx.isValid()) return;
     if (m_view->currentIndex() == proxy_idx) return;
