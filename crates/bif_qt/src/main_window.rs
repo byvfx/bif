@@ -1355,10 +1355,11 @@ impl qobject::BifShellState {
                 // `working_layer` to the root; re-pick so anonymous / muted
                 // roots skip to the next candidate instead of silently
                 // authoring into a non-persistent layer.
-                let (edit_target_name, loaded_policy, picked_idx) = {
+                let (edit_target_name, loaded_policy, picked_idx, prev_working_layer) = {
                     let mut r = self.as_mut().rust_mut();
                     if let Some(state) = r.scene_layer_state.as_mut() {
                         let picked_idx = pick_strongest_writable_sublayer(state);
+                        let prev = state.working_layer;
                         if let Some(idx) = picked_idx {
                             state.set_working_layer(idx);
                         }
@@ -1371,9 +1372,10 @@ impl qobject::BifShellState {
                                 .unwrap_or_default(),
                             Some(state.payload_policy),
                             picked_idx,
+                            prev,
                         )
                     } else {
-                        (String::new(), None, None)
+                        (String::new(), None, None, 0)
                     }
                 };
                 // Sync the renderer-side edit target. If this fails we
@@ -1411,6 +1413,16 @@ impl qobject::BifShellState {
                 } else {
                     None
                 };
+                // On sync failure, revert the Qt-side working_layer to keep
+                // it consistent with the renderer state and the C++ stage's
+                // edit target. Without this, the UI shows the picked layer
+                // but Save lands on the previous one — silent corruption.
+                if edit_target_sync_error.is_some() && picked_idx.is_some() {
+                    let mut r = self.as_mut().rust_mut();
+                    if let Some(state) = r.scene_layer_state.as_mut() {
+                        state.set_working_layer(prev_working_layer);
+                    }
+                }
                 if let Some(policy) = loaded_policy {
                     self.as_mut().rust_mut().payload_policy = policy;
                 }
@@ -2158,9 +2170,16 @@ impl qobject::BifShellState {
             return;
         }
         let idx = index as usize;
-        if let Some(state) = self.as_mut().rust_mut().scene_layer_state.as_mut() {
-            state.set_working_layer(idx);
-        }
+        let prev_working_layer: Option<usize> = {
+            let mut r = self.as_mut().rust_mut();
+            if let Some(state) = r.scene_layer_state.as_mut() {
+                let prev = state.working_layer;
+                state.set_working_layer(idx);
+                Some(prev)
+            } else {
+                None
+            }
+        };
         let sync_error: Option<String> = with_viewport_mut(|vp| {
             let renderer = vp.renderer_mut();
             let stage_arc = renderer.scene.usd_stage.clone();
@@ -2189,6 +2208,16 @@ impl qobject::BifShellState {
             result
         })
         .flatten();
+        // On sync failure, revert the Qt-side working_layer so the UI does
+        // not advertise an edit target that the C++ stage never actually
+        // adopted (renderer-side set_edit_target is no-op on failure).
+        if sync_error.is_some() {
+            if let Some(prev) = prev_working_layer {
+                if let Some(state) = self.as_mut().rust_mut().scene_layer_state.as_mut() {
+                    state.set_working_layer(prev);
+                }
+            }
+        }
         bump_revision(self.as_mut());
         if let Some(err) = sync_error {
             self.as_mut()
