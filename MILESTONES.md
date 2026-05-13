@@ -19,6 +19,7 @@ Roadmap organized by semantic version. Each release is testable, demoable, and g
 | v0.14.0 | Layer-Aware Stage | 2026-04-13 | `SdfLayer` + `GetPrimStack` + `GetPropertyStack` FFI, `SceneLayerState` on `SceneManager` (sublayer tree + mute set + `layer_for_prim` map), `LayerStackPanel` egui panel (mute checkbox + working-layer radio + isolation header + layer-color dots), composition-arc collapsing header + per-attribute winning-layer dot in property inspector, scene-browser layer color dots, `PayloadPolicy::{LoadAll, LoadNone}` stage open, 4 integration tests on a 3-layer fixture |
 | v0.15.0 | Qt Migration | 2026-04-22 | Qt 6 shell via `bif_qt`, docked panel port (layer stack, scene browser, property inspector, timeline, node graph, render settings), real USD stage load + selection sync, lazy scene-browser loading, egui bridge deletion |
 | v0.16.0 | Edit Operations + Save | 2026-04-28 | C4a foundation: `EditOperation`/`EditHistory`/`OpinionKey`, working-layer FFI writes (xform/visibility/material/shader-input/variant), Ctrl+S save through `UsdStage::save_layer`, ADR-008. C4b features: `Visible` checkbox, Material Sheet tab (OpenPBR/UsdPreviewSurface, sRGB→linear color), USDA Source dock with Apply-only validation, shading-model dropdown with atomic-undo + lossy-param warning, transform gizmo. Code-review hardening: USDA Apply rollback on TransferContent throw + `catch (...)` on all new C-ABI entries. |
+| v0.16.2 | Visibility + Foundation Polish | 2026-05-12 | Visibility round-trip via `UsdGeomImageable::MakeVisible/MakeInvisible` (defeats ancestor pruning), payload-rooted scene-browser populate fix, root-layer mute protection. Property Inspector Relationships tab, viewport pick → scene browser tree highlight sync, MakeVisible ancestor un-hides surfaced in status bar. Close-out polish: File → Save As wired to native dialog (filename pre-fill), Help → About modal, edit-target sync failures surfaced to status bar. Deferred to v0.17: `cache_prim_data` thread-safety annotation, defer-GPU-upload for invisible prototypes, `cpp_bridge.rs` split, binary `.usdc` Save As. |
 
 ---
 
@@ -54,7 +55,7 @@ Current active milestone after v0.16.0 shipped on 2026-04-27. Function-first edi
 
 ---
 
-Latest release: v0.16.0 shipped 2026-04-28. Full release notes in [CHANGELOG.md](CHANGELOG.md), archived details in [MILESTONES_HISTORY.md](MILESTONES_HISTORY.md).
+Latest release: v0.16.2 shipped 2026-05-12 (visibility + foundation polish bugfix release). v0.16.0 was the major editor tranche on 2026-04-28. Full release notes in [CHANGELOG.md](CHANGELOG.md), archived details in [MILESTONES_HISTORY.md](MILESTONES_HISTORY.md).
 
 ### v0.14.0 — Layer-Aware Stage
 
