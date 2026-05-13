@@ -1,5 +1,7 @@
 #include "scene_browser_model.h"
 
+#include <QTimer>
+
 #include "bif_qt/src/main_window.cxxqt.h"
 
 namespace {
@@ -76,6 +78,18 @@ std::unique_ptr<SceneBrowserModel::PrimNode> make_node(
     return node;
 }
 
+/// Recursively refresh `is_visible` for all populated child nodes.
+/// Called after a model reset so Qt re-queries `data()` with fresh values.
+static void refresh_child_visibility(SceneBrowserModel::PrimNode* parent, BifShellState* state) {
+    if (!parent || !state) return;
+    for (auto& child : parent->children) {
+        child->is_visible = state->prim_is_visible_at(child->path);
+        if (child->children_populated) {
+            refresh_child_visibility(child.get(), state);
+        }
+    }
+}
+
 }  // namespace
 
 SceneBrowserModel::PrimNode* SceneBrowserModel::PrimNode::child_at(int row) const {
@@ -112,6 +126,18 @@ SceneBrowserModel::SceneBrowserModel(BifShellState* state, QObject* parent)
         QObject::connect(
             m_state.data(), &BifShellState::scene_browser_revisionChanged,
             this, &SceneBrowserModel::on_state_revision_changed);
+        // Deferred rebuild on next event-loop iteration. If the model is
+        // constructed after a stage-open revision bump has already been
+        // queued and the QML tree view isn't yet fully realized, the
+        // first revisionChanged delivery can fire before any view is
+        // connected. Guard with an emptiness check so we don't spuriously
+        // re-reset (and drop QTreeView expanded-row state) when the live
+        // signal already populated the tree before the timer fires.
+        QTimer::singleShot(0, this, [this]() {
+            if (m_root && m_root->children.empty()) {
+                on_state_revision_changed();
+            }
+        });
     }
 }
 
@@ -134,6 +160,10 @@ void SceneBrowserModel::rebuild_from_state() {
         }
         m_root->child_count = static_cast<int>(m_root->children.size());
     }
+
+    // Refresh visibility for all previously-populated child nodes.
+    // Must run before endResetModel so Qt sees fresh is_visible values.
+    refresh_child_visibility(m_root.get(), m_state);
 
     endResetModel();
 }
@@ -192,6 +222,30 @@ void SceneBrowserModel::fetchMore(const QModelIndex& parent) {
     for (const auto& child_data : children) {
         parent_node->children.push_back(make_node(parent_node, child_data));
     }
+    endInsertRows();
+}
+
+void SceneBrowserModel::refresh_node(const QModelIndex& parent) {
+    if (!m_state) return;
+    auto* node = node_for_index(parent);
+    if (!node) return;
+    // Only handle the "fake-leaf" case: a node previously cached with
+    // 0 kids that the live state now reports children for. Mutating a
+    // populated subtree mid-walk has surprising lifecycle interactions
+    // with QTreeView selection state, so let the standard fetchMore
+    // path own non-empty refreshes.
+    if (!node->children.empty()) return;
+    const auto children = describe_children(m_state, node->path);
+    if (children.empty()) {
+        node->children_populated = true;
+        return;
+    }
+    beginInsertRows(parent, 0, static_cast<int>(children.size()) - 1);
+    for (const auto& child_data : children) {
+        node->children.push_back(make_node(node, child_data));
+    }
+    node->child_count = static_cast<int>(children.size());
+    node->children_populated = true;
     endInsertRows();
 }
 

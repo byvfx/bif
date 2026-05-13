@@ -231,6 +231,15 @@ pub struct SceneInstances {
     pub prototype_ids: Vec<usize>,
     /// Prim path per instance (for USD export).
     pub prim_paths: Vec<String>,
+    /// Snapshot of full prim_paths before visibility filtering — used by
+    /// pick_instance_at to post-hit-check hidden instances without
+    /// rebuilding the Embree BVH (which maps to old indices).
+    pub all_prim_paths: Vec<String>,
+    /// Snapshot of full material_ids before visibility filtering —
+    /// used by reload_instance_visibility to rebuild unfiltered views.
+    pub full_material_ids: Vec<u32>,
+    /// Snapshot of full purposes before visibility filtering.
+    pub full_purposes: Vec<bif_core::Purpose>,
     /// USD purpose per instance (for viewport purpose filtering).
     pub purposes: Vec<bif_core::Purpose>,
 }

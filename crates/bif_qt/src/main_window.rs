@@ -511,13 +511,32 @@ pub mod qobject {
         #[qinvokable]
         fn on_node_graph_select_node(self: Pin<&mut BifShellState>, node_id: i32) -> QString;
 
-        /// File/Save As (Ctrl+Shift+S). Phase B stub.
+        /// File/Save As — status-only fallback when invoked without a target
+        /// path (e.g. command palette). The menu action wires through
+        /// `on_save_as_to_path` after the C++ side runs the file dialog.
         #[qinvokable]
         fn on_save_as(self: Pin<&mut BifShellState>);
 
-        /// Help/About. Phase B stub.
+        /// File/Save As (Ctrl+Shift+S) — writes the current working layer
+        /// to `path`. C++ side handles the QFileDialog; Rust side handles
+        /// the actual export via `UsdStage::export_layer_as_string`. The
+        /// working layer's identity is unchanged after Save As (export-
+        /// only). `.usda` is appended to `path` when no extension is
+        /// supplied. Status bar surfaces success or failure.
+        #[qinvokable]
+        fn on_save_as_to_path(self: Pin<&mut BifShellState>, path: QString);
+
+        /// Help/About — sets a brief status-bar message. The menu action
+        /// also shows a `QMessageBox::about` dialog on the C++ side, using
+        /// the body from `about_dialog_body`.
         #[qinvokable]
         fn on_about(self: Pin<&mut BifShellState>);
+
+        /// Help/About — rich-text body shown in the QMessageBox dialog.
+        /// Includes version pulled from `CARGO_PKG_VERSION` at compile
+        /// time so it can't drift from `Cargo.toml`.
+        #[qinvokable]
+        fn about_dialog_body(self: &BifShellState) -> QString;
 
         // ---- Layer Stack state surface (Phase C.1) ----
         //
@@ -796,6 +815,38 @@ pub mod qobject {
         /// prim attribute at `attr_index`.
         #[qinvokable]
         fn selected_prim_attr_tooltip_at(self: &BifShellState, attr_index: i32) -> QString;
+
+        // ---- Relationships surface (Phase C.4) ----
+
+        /// Number of relationships on the selected prim.
+        #[qinvokable]
+        fn selected_prim_relationship_count(self: &BifShellState) -> i32;
+
+        /// Relationship name at `index` (e.g. "material:binding").
+        #[qinvokable]
+        fn selected_prim_relationship_name_at(self: &BifShellState, index: i32) -> QString;
+
+        /// Number of resolved targets for relationship at `rel_index`.
+        #[qinvokable]
+        fn selected_prim_relationship_target_count_at(self: &BifShellState, rel_index: i32) -> i32;
+
+        /// Resolved target path at `(rel_index, target_index)`.
+        #[qinvokable]
+        fn selected_prim_relationship_target_at(
+            self: &BifShellState,
+            rel_index: i32,
+            target_index: i32,
+        ) -> QString;
+
+        /// Palette color index (mod 8) for the winning opinion on relationship
+        /// `rel_index`. -1 when unresolvable.
+        #[qinvokable]
+        fn selected_prim_rel_color_index_at(self: &BifShellState, rel_index: i32) -> i32;
+
+        /// Rich-HTML tooltip enumerating the full opinion stack for the
+        /// selected prim relationship at `rel_index`.
+        #[qinvokable]
+        fn selected_prim_rel_tooltip_at(self: &BifShellState, rel_index: i32) -> QString;
 
         // ---- Camera picker surface ----
 
@@ -1094,14 +1145,65 @@ impl qobject::BifShellState {
     }
 
     fn on_save_as(mut self: Pin<&mut Self>) {
-        log::info!("action: File/Save As");
+        log::info!("action: File/Save As (no path)");
+        // The menu action runs the QFileDialog on the C++ side and calls
+        // `on_save_as_to_path` with the chosen path. This no-arg variant
+        // exists for the command palette / scripted entry points where no
+        // dialog has been shown; surface a hint rather than silently no-op.
         let msg = if !self.as_ref().active_edit_target_is_set() {
             "Save As: no stage loaded — open a stage first"
         } else {
-            "Save As: write path not yet wired (v0.16)"
+            "Save As: use File → Save As… (no target path supplied)"
         };
         self.as_mut()
             .set_status_message(cxx_qt_lib::QString::from(msg));
+    }
+
+    fn on_save_as_to_path(mut self: Pin<&mut Self>, path: cxx_qt_lib::QString) {
+        let raw_path: String = (&path).into();
+        log::info!("action: File/Save As → {raw_path}");
+
+        let working_id = self
+            .as_ref()
+            .rust()
+            .scene_layer_state
+            .as_ref()
+            .and_then(|s| s.stack.layers.get(s.working_layer))
+            .map(|l| l.identifier.clone());
+
+        let Some(working_id) = working_id else {
+            self.as_mut().set_status_message(cxx_qt_lib::QString::from(
+                "Save As: no stage loaded — open a stage first",
+            ));
+            return;
+        };
+
+        let trimmed = raw_path.trim();
+        if trimmed.is_empty() {
+            self.as_mut()
+                .set_status_message(cxx_qt_lib::QString::from("Save As: cancelled (no path)"));
+            return;
+        }
+
+        // Append `.usda` when the user typed a bare name. Save As is
+        // limited to text USDA in v0.16.2 — the bridge for SdfLayer::Export
+        // (binary `.usdc`) is deferred to v0.17 when the cpp_bridge.rs
+        // split lands.
+        let mut out_path = std::path::PathBuf::from(trimmed);
+        if out_path.extension().is_none() {
+            out_path.set_extension("usda");
+        }
+
+        let msg = match with_stage(|stage| stage.export_layer_as_string(&working_id)) {
+            Some(Ok(text)) => match std::fs::write(&out_path, text.as_bytes()) {
+                Ok(()) => format!("Saved as {}", out_path.display()),
+                Err(e) => format!("Save As failed: {e}"),
+            },
+            Some(Err(e)) => format!("Save As failed: {e}"),
+            None => "Save As failed: viewport not ready".to_string(),
+        };
+        self.as_mut()
+            .set_status_message(cxx_qt_lib::QString::from(&msg));
     }
 
     /// Tier 1 item #4: compose the window title from stage path +
@@ -1150,9 +1252,22 @@ impl qobject::BifShellState {
         log::info!("action: Help/About");
         self.as_mut()
             .set_status_message(cxx_qt_lib::QString::from(&format!(
-                "BIF — USD Orchestration Tool — bif_qt {}",
+                "BIF {} — USD Orchestration Tool",
                 crate::BIF_QT_VERSION,
             )));
+    }
+
+    fn about_dialog_body(&self) -> cxx_qt_lib::QString {
+        // Rich text — QMessageBox::about renders simple HTML.
+        let body = format!(
+            "<h3>BIF {}</h3>\
+             <p><b>USD Orchestration Tool for VFX</b></p>\
+             <p>Layer-aware USD editing, procedural scene assembly,\
+             and integrated rendering. Built in Rust with wgpu and Qt 6.</p>\
+             <p>Source: <a href=\"https://github.com/byvfx/bif\">github.com/byvfx/bif</a></p>",
+            crate::BIF_QT_VERSION,
+        );
+        cxx_qt_lib::QString::from(&body)
     }
 
     fn on_stage_path_opened(mut self: Pin<&mut Self>, path: cxx_qt_lib::QString) {
@@ -1261,30 +1376,41 @@ impl qobject::BifShellState {
                         (String::new(), None, None)
                     }
                 };
-                if let Some(idx) = picked_idx {
+                // Sync the renderer-side edit target. If this fails we
+                // still continue (the working layer is set, just not the
+                // C++ stage's edit target) — but surface the warning into
+                // the load status message so artists notice their edits
+                // would otherwise land on the wrong layer silently.
+                let edit_target_sync_error: Option<String> = if let Some(idx) = picked_idx {
                     with_viewport_mut(|vp| {
                         let renderer = vp.renderer_mut();
                         let stage_arc = renderer.scene.usd_stage.clone();
-                        if let Some(state) = renderer.scene.layer_state.as_mut() {
-                            if let Some(stage_arc) = stage_arc {
-                                match stage_arc.lock() {
-                                    Ok(stage) => {
-                                        if let Err(e) = state.set_edit_target(idx, &stage) {
-                                            log::warn!("edit target sync failed: {e}");
-                                        }
-                                    }
-                                    Err(e) => {
-                                        log::error!(
-                                            "edit target sync skipped: stage mutex poisoned: {e}"
-                                        );
-                                    }
+                        let state = renderer.scene.layer_state.as_mut()?;
+                        let Some(stage_arc) = stage_arc else {
+                            state.set_working_layer(idx);
+                            return None;
+                        };
+                        // Bind to a local so the MutexGuard temporary drops
+                        // before `stage_arc` at the end of the closure.
+                        let result: Option<String> = match stage_arc.lock() {
+                            Ok(stage) => match state.set_edit_target(idx, &stage) {
+                                Ok(()) => None,
+                                Err(e) => {
+                                    log::warn!("edit target sync failed: {e}");
+                                    Some(format!("edit target sync failed: {e}"))
                                 }
-                            } else {
-                                state.set_working_layer(idx);
+                            },
+                            Err(e) => {
+                                log::error!("edit target sync skipped: stage mutex poisoned: {e}");
+                                Some("edit target sync skipped: stage mutex poisoned".to_string())
                             }
-                        }
-                    });
-                }
+                        };
+                        result
+                    })
+                    .flatten()
+                } else {
+                    None
+                };
                 if let Some(policy) = loaded_policy {
                     self.as_mut().rust_mut().payload_policy = policy;
                 }
@@ -1306,11 +1432,15 @@ impl qobject::BifShellState {
                 refresh_ivar_status_qprop(self.as_mut());
 
                 log::info!("stage loaded: {path_str}");
-                let msg = if edit_target_name.is_empty() {
+                let mut msg = if edit_target_name.is_empty() {
                     format!("Loaded: {path_str}")
                 } else {
                     format!("Loaded: {path_str}  •  Edit target: {edit_target_name}")
                 };
+                if let Some(sync_err) = edit_target_sync_error {
+                    msg.push_str("  •  ⚠ ");
+                    msg.push_str(&sync_err);
+                }
                 self.as_mut()
                     .set_status_message(cxx_qt_lib::QString::from(&msg));
             }
@@ -2031,29 +2161,41 @@ impl qobject::BifShellState {
         if let Some(state) = self.as_mut().rust_mut().scene_layer_state.as_mut() {
             state.set_working_layer(idx);
         }
-        with_viewport_mut(|vp| {
+        let sync_error: Option<String> = with_viewport_mut(|vp| {
             let renderer = vp.renderer_mut();
             let stage_arc = renderer.scene.usd_stage.clone();
-            if let Some(state) = renderer.scene.layer_state.as_mut() {
-                if let Some(stage_arc) = stage_arc {
-                    match stage_arc.lock() {
-                        Ok(stage) => {
-                            if let Err(e) = state.set_edit_target(idx, &stage) {
-                                log::warn!("working layer edit-target sync failed: {e}");
-                            }
-                        }
-                        Err(e) => {
-                            log::error!(
-                                "working layer edit-target sync skipped: stage mutex poisoned: {e}"
-                            );
-                        }
+            let state = renderer.scene.layer_state.as_mut()?;
+            let Some(stage_arc) = stage_arc else {
+                state.set_working_layer(idx);
+                return None;
+            };
+            // Bind to a local so the MutexGuard temporary drops before
+            // `stage_arc` at the end of the closure.
+            let result: Option<String> = match stage_arc.lock() {
+                Ok(stage) => match state.set_edit_target(idx, &stage) {
+                    Ok(()) => None,
+                    Err(e) => {
+                        log::warn!("working layer edit-target sync failed: {e}");
+                        Some(format!("edit target sync failed: {e}"))
                     }
-                } else {
-                    state.set_working_layer(idx);
+                },
+                Err(e) => {
+                    log::error!(
+                        "working layer edit-target sync skipped: stage mutex poisoned: {e}"
+                    );
+                    Some("edit target sync skipped: stage mutex poisoned".to_string())
                 }
-            }
-        });
+            };
+            result
+        })
+        .flatten();
         bump_revision(self.as_mut());
+        if let Some(err) = sync_error {
+            self.as_mut()
+                .set_status_message(cxx_qt_lib::QString::from(&format!(
+                    "⚠ {err} — edits may land on the wrong layer"
+                )));
+        }
         log::info!("working layer → {index}");
     }
 
@@ -2643,6 +2785,121 @@ impl qobject::BifShellState {
     }
 
     // -----------------------------------------------------------------
+    // Property Inspector — Relationships surface (Phase C.4)
+    // -----------------------------------------------------------------
+
+    fn selected_prim_relationship_count(&self) -> i32 {
+        let path: String = (&self.rust().selected_prim_path).into();
+        if path.is_empty() {
+            return 0;
+        }
+        with_stage(|stage| {
+            stage
+                .get_prim_relationships(&path)
+                .map(|v| v.len() as i32)
+                .unwrap_or(0)
+        })
+        .unwrap_or(0)
+    }
+
+    fn selected_prim_relationship_name_at(&self, index: i32) -> cxx_qt_lib::QString {
+        let path: String = (&self.rust().selected_prim_path).into();
+        let name = with_stage(|stage| {
+            stage
+                .get_prim_relationships(&path)
+                .ok()
+                .and_then(|v| v.get(index as usize).map(|r| r.name.clone()))
+                .unwrap_or_default()
+        })
+        .unwrap_or_default();
+        cxx_qt_lib::QString::from(&name)
+    }
+
+    fn selected_prim_relationship_target_count_at(&self, rel_index: i32) -> i32 {
+        let path: String = (&self.rust().selected_prim_path).into();
+        with_stage(|stage| {
+            stage
+                .get_prim_relationships(&path)
+                .ok()
+                .and_then(|v| v.get(rel_index as usize).map(|r| r.targets.len() as i32))
+                .unwrap_or(0)
+        })
+        .unwrap_or(0)
+    }
+
+    fn selected_prim_relationship_target_at(
+        &self,
+        rel_index: i32,
+        target_index: i32,
+    ) -> cxx_qt_lib::QString {
+        let path: String = (&self.rust().selected_prim_path).into();
+        let target = with_stage(|stage| {
+            stage
+                .get_prim_relationships(&path)
+                .ok()
+                .and_then(|v| {
+                    v.get(rel_index as usize)
+                        .and_then(|r| r.targets.get(target_index as usize).cloned())
+                })
+                .unwrap_or_default()
+        })
+        .unwrap_or_default();
+        cxx_qt_lib::QString::from(&target)
+    }
+
+    fn selected_prim_rel_color_index_at(&self, rel_index: i32) -> i32 {
+        let prim_path: String = (&self.rust().selected_prim_path).into();
+        if prim_path.is_empty() {
+            return -1;
+        }
+        let rel_name = with_stage(|stage| {
+            stage
+                .get_prim_relationships(&prim_path)
+                .ok()
+                .and_then(|v| v.get(rel_index as usize).map(|r| r.name.clone()))
+        })
+        .flatten();
+        let Some(name) = rel_name else { return -1 };
+        let winning_id = with_stage(|stage| {
+            stage
+                .get_relationship_opinions(&prim_path, &name)
+                .ok()
+                .and_then(|v| {
+                    v.into_iter()
+                        .find(|o| o.is_winning)
+                        .map(|o| o.layer_identifier)
+                })
+        })
+        .flatten();
+        match winning_id {
+            Some(id) => color_index_for_layer(self.rust(), &id),
+            None => -1,
+        }
+    }
+
+    fn selected_prim_rel_tooltip_at(&self, rel_index: i32) -> cxx_qt_lib::QString {
+        let prim_path: String = (&self.rust().selected_prim_path).into();
+        if prim_path.is_empty() {
+            return cxx_qt_lib::QString::from("");
+        }
+        let tooltip = with_stage(|stage| {
+            let Some(rel_name) = stage
+                .get_prim_relationships(&prim_path)
+                .ok()
+                .and_then(|v| v.get(rel_index as usize).map(|r| r.name.clone()))
+            else {
+                return String::new();
+            };
+            let opinions = stage
+                .get_relationship_opinions(&prim_path, &rel_name)
+                .unwrap_or_default();
+            format_attr_opinion_tooltip(&rel_name, &opinions, self.rust())
+        })
+        .unwrap_or_default();
+        cxx_qt_lib::QString::from(&tooltip)
+    }
+
+    // -----------------------------------------------------------------
     // Camera picker surface
     // -----------------------------------------------------------------
 
@@ -2670,13 +2927,36 @@ impl qobject::BifShellState {
         let result =
             with_viewport_mut(|vp| vp.renderer_mut().dispatch_visibility(&path_str, visible));
         match result {
-            Some(Ok(_desc)) => {
+            Some(Ok((_desc, ancestors))) => {
+                let verb = if visible { "shown" } else { "hidden" };
+                let msg = if ancestors.is_empty() {
+                    format!("Visibility {verb} for {path_str}")
+                } else {
+                    // MakeVisible authored `inherited` on each invisible
+                    // ancestor as a side effect — surface it so the user
+                    // isn't surprised that sibling subtrees became visible
+                    // too. Truncate at 2; the full list goes to the log.
+                    log::info!(
+                        "MakeVisible({path_str}) also un-hid ancestors: {}",
+                        ancestors.join(", ")
+                    );
+                    let head = ancestors
+                        .iter()
+                        .take(2)
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    let extra = ancestors.len().saturating_sub(2);
+                    if extra == 0 {
+                        format!("Visibility {verb} for {path_str} — also un-hiding: {head}")
+                    } else {
+                        format!(
+                            "Visibility {verb} for {path_str} — also un-hiding: {head} (+{extra} more)"
+                        )
+                    }
+                };
                 self.as_mut()
-                    .set_status_message(cxx_qt_lib::QString::from(&format!(
-                        "Visibility {} for {}",
-                        if visible { "shown" } else { "hidden" },
-                        path_str
-                    )));
+                    .set_status_message(cxx_qt_lib::QString::from(&msg));
                 refresh_undo_redo_qprops(self.as_mut());
                 bump_revision(self.as_mut());
                 bump_scene_browser_revision(self.as_mut());

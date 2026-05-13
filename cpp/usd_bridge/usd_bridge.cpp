@@ -41,6 +41,9 @@
 #include <pxr/base/tf/diagnostic.h>
 #include <pxr/base/tf/errorMark.h>
 #include <pxr/usd/sdf/layer.h>
+#include <pxr/usd/sdf/listOp.h>
+#include <pxr/usd/sdf/relationshipSpec.h>
+#include <pxr/usd/usd/relationship.h>
 #include <pxr/usd/usd/references.h>
 #include <pxr/usd/usd/payloads.h>
 #include <pxr/usd/usd/variantSets.h>
@@ -525,7 +528,20 @@ static void matrix_to_float16(const GfMatrix4d& mat, float* out) {
 // Forward declaration - materials must be cached before meshes for GeomSubset support
 static void cache_material_data(UsdBridgeStage* bridge);
 
-/// Cache all prim info for scene browser
+/// Cache all prim info for scene browser.
+///
+/// NOT THREAD-SAFE — mutates `bridge->all_prims`, `root_paths`, and
+/// `root_path_ptrs` without an internal lock. Callers must hold the
+/// stage-level `Arc<Mutex<UsdStage>>` (bif_viewport `scene_manager.rs`)
+/// for the duration of the call. The same applies to every flag-gated
+/// `cache_prim_data(stage)` invocation in this file — the gate is the
+/// `prims_cached` bool, not a synchronization primitive.
+///
+/// A runtime `TF_VERIFY` thread-id guard is planned alongside the
+/// v0.17 `cpp_bridge.rs` split (see MILESTONES.md). Until then, the
+/// invariant is enforced by convention: every Rust caller goes through
+/// `UsdStage` which is held inside a `Mutex` at the `bif_viewport`
+/// layer, and the FFI is single-entry per call.
 static void cache_prim_data(UsdBridgeStage* bridge) {
     if (bridge->prims_cached) return;
 
@@ -2986,9 +3002,15 @@ UsdBridgeError usd_bridge_load_payloads(
     if (!stage->cached) {
         cache_stage_data(stage);
     }
-    if (!stage->prims_cached) {
-        cache_prim_data(stage);
-    }
+    // Force re-cache of the prim hierarchy. Open(LoadNone) ran cache_prim_data
+    // against the unloaded composition, where UsdPrimDefaultPredicate excludes
+    // unloaded-payload prims — so all_prims/root_paths ended up empty for any
+    // asset whose root is a `def` with a `payload = @...@`. Now that payloads
+    // are resolved, walk the tree again so the scene browser actually sees
+    // the prim hierarchy. Without this, a single-layer asset with a payload
+    // root opens with 0 root prims and the Scene Browser tree is empty.
+    stage->prims_cached = false;
+    cache_prim_data(stage);
     cache_animation_data(stage);
     cache_vertex_animation_data(stage);
     cache_light_data(stage);
@@ -4995,9 +5017,14 @@ UsdBridgeError usd_bridge_write_visibility(
 
         UsdGeomImageable imageable(prim);
         if (imageable) {
-            imageable.GetVisibilityAttr().Set(
-                visible ? UsdGeomTokens->inherited : UsdGeomTokens->invisible
-            );
+            // Use MakeVisible/MakeInvisible (not raw Set) so unhide also
+            // authors `inherited` on any invisible ancestors — otherwise
+            // pruning leaves descendant invisible despite `inherited` opinion.
+            if (visible) {
+                imageable.MakeVisible();
+            } else {
+                imageable.MakeInvisible();
+            }
         }
 
         return USD_BRIDGE_SUCCESS;
@@ -6385,6 +6412,95 @@ void usd_bridge_free_prim_attributes(
     delete[] attributes;
 }
 
+UsdBridgeError usd_bridge_get_prim_relationships(
+    const UsdBridgeStage* stage,
+    const char* prim_path,
+    UsdBridgeRelationshipData** out_relationships,
+    size_t* out_count
+) {
+    if (!stage || !prim_path || !out_relationships || !out_count) {
+        return USD_BRIDGE_ERROR_NULL_POINTER;
+    }
+    *out_relationships = nullptr;
+    *out_count = 0;
+
+    try {
+        auto prim = stage->stage->GetPrimAtPath(SdfPath(prim_path));
+        if (!prim.IsValid()) {
+            return USD_BRIDGE_ERROR_INVALID_PRIM;
+        }
+
+        auto rels = prim.GetRelationships();
+        if (rels.empty()) {
+            return USD_BRIDGE_SUCCESS;
+        }
+
+        struct RelEntry {
+            std::string name;
+            std::vector<std::string> targets;
+            bool is_authored;
+        };
+        std::vector<RelEntry> entries;
+        entries.reserve(rels.size());
+
+        for (const auto& rel : rels) {
+            RelEntry entry;
+            entry.name = rel.GetName().GetString();
+            entry.is_authored = rel.HasAuthoredTargets();
+
+            SdfPathVector targets;
+            rel.GetTargets(&targets);
+            entry.targets.reserve(targets.size());
+            for (const auto& tp : targets) {
+                entry.targets.push_back(tp.GetString());
+            }
+            entries.push_back(std::move(entry));
+        }
+
+        size_t count = entries.size();
+        auto* data = new UsdBridgeRelationshipData[count];
+        for (size_t i = 0; i < count; ++i) {
+            data[i].name = strdup(entries[i].name.c_str());
+            data[i].is_authored = entries[i].is_authored ? 1 : 0;
+            size_t tc = entries[i].targets.size();
+            data[i].target_count = tc;
+            if (tc == 0) {
+                data[i].target_paths = nullptr;
+            } else {
+                auto** tps = new const char*[tc];
+                for (size_t j = 0; j < tc; ++j) {
+                    tps[j] = strdup(entries[i].targets[j].c_str());
+                }
+                data[i].target_paths = tps;
+            }
+        }
+
+        *out_relationships = data;
+        *out_count = count;
+        return USD_BRIDGE_SUCCESS;
+    } catch (const std::exception& e) {
+        TF_WARN("usd_bridge_get_prim_relationships: %s", e.what());
+        return USD_BRIDGE_ERROR_UNKNOWN;
+    }
+}
+
+void usd_bridge_free_prim_relationships(
+    UsdBridgeRelationshipData* relationships,
+    size_t count
+) {
+    if (!relationships) return;
+    for (size_t i = 0; i < count; ++i) {
+        free(const_cast<char*>(relationships[i].name));
+        if (relationships[i].target_paths) {
+            for (size_t j = 0; j < relationships[i].target_count; ++j) {
+                free(const_cast<char*>(relationships[i].target_paths[j]));
+            }
+            delete[] relationships[i].target_paths;
+        }
+    }
+    delete[] relationships;
+}
+
 // ============================================================================
 // Layer-Aware Stage (v0.14.0)
 // ============================================================================
@@ -6570,7 +6686,26 @@ UsdBridgeError usd_bridge_stage_mute_layer(
         return USD_BRIDGE_ERROR_NULL_POINTER;
     }
     try {
+        // USD refuses to mute the cache's root layer and emits a
+        // TF_CODING_ERROR ("Cannot mute cache's root layer"). The error is
+        // soft (no C++ exception), so bif's layer_state.muted would
+        // otherwise record a phantom mute that gets replayed on every
+        // subsequent stage reload — corrupting composition and leaving
+        // the scene browser empty until the user toggles the layer back.
+        // Reject root-layer mute attempts at the FFI so the Rust side
+        // never thinks the call succeeded. Use SdfLayer::Find for the
+        // identity check — raw string compare on GetIdentifier() is
+        // fragile across UNC vs drive-letter / `file://` scheme / case
+        // mismatches on Windows, especially with SMB-mounted asset paths.
         if (muted) {
+            SdfLayerHandle target = SdfLayer::Find(layer_identifier);
+            if (target && target == stage->stage->GetRootLayer()) {
+                TF_WARN(
+                    "usd_bridge_stage_mute_layer: refusing to mute root layer @%s@",
+                    layer_identifier
+                );
+                return USD_BRIDGE_ERROR_INVALID_PRIM;
+            }
             stage->stage->MuteLayer(layer_identifier);
         } else {
             stage->stage->UnmuteLayer(layer_identifier);
@@ -6881,7 +7016,8 @@ UsdBridgeError usd_bridge_layer_write_visibility(
     UsdBridgeStage* stage,
     const char* layer_identifier,
     const char* prim_path,
-    int visible
+    int visible,
+    double time
 ) {
     if (!stage || !layer_identifier || !prim_path) {
         return USD_BRIDGE_ERROR_NULL_POINTER;
@@ -6898,9 +7034,24 @@ UsdBridgeError usd_bridge_layer_write_visibility(
         if (!prim) return USD_BRIDGE_ERROR_UNKNOWN;
         UsdGeomImageable imageable(prim);
         if (!imageable) return USD_BRIDGE_ERROR_INVALID_PRIM;
-        imageable.CreateVisibilityAttr().Set(
-            visible ? UsdGeomTokens->inherited : UsdGeomTokens->invisible
-        );
+        // Use the canonical UsdGeomImageable helpers: MakeVisible walks
+        // ancestors and authors inherited on any invisible parent so the
+        // prim actually becomes visible. MakeInvisible authors invisible
+        // on the prim directly. Setting Vt value directly cannot defeat
+        // ancestor pruning (a parent's invisible opinion hides all
+        // descendants regardless of their own visibility opinion).
+        //
+        // `time < 0.0` is the sentinel for "Default time sample" — matches
+        // the convention used by `usd_bridge_layer_write_xform` above. Once
+        // bif animates visibility (v0.20+ roadmap), EditOperation::Visibility
+        // will need to carry its own time field for undo round-trip.
+        const UsdTimeCode time_code =
+            time < 0.0 ? UsdTimeCode::Default() : UsdTimeCode(time);
+        if (visible) {
+            imageable.MakeVisible(time_code);
+        } else {
+            imageable.MakeInvisible(time_code);
+        }
         invalidate_all_caches(stage);
         return USD_BRIDGE_SUCCESS;
     } catch (const std::exception& e) {
@@ -7340,6 +7491,86 @@ void usd_bridge_opinions_free(UsdBridgeAttributeOpinions* opinions) {
     }
     delete[] opinions->sources;
     delete opinions;
+}
+
+UsdBridgeError usd_bridge_rel_get_opinion_sources(
+    const UsdBridgeStage* stage,
+    const char* prim_path,
+    const char* rel_name,
+    UsdBridgeAttributeOpinions** out_opinions
+) {
+    if (!stage || !prim_path || !rel_name || !out_opinions) {
+        return USD_BRIDGE_ERROR_NULL_POINTER;
+    }
+    *out_opinions = nullptr;
+
+    try {
+        SdfPath path(prim_path);
+        UsdPrim prim = stage->stage->GetPrimAtPath(path);
+        if (!prim) {
+            return USD_BRIDGE_ERROR_INVALID_PRIM;
+        }
+
+        UsdRelationship rel = prim.GetRelationship(TfToken(rel_name));
+        auto* out = new UsdBridgeAttributeOpinions;
+        out->sources = nullptr;
+        out->count = 0;
+        out->winning_index = 0;
+
+        if (!rel) {
+            *out_opinions = out;
+            return USD_BRIDGE_SUCCESS;
+        }
+
+        SdfPropertySpecHandleVector stack = rel.GetPropertyStack();
+        if (stack.empty()) {
+            *out_opinions = out;
+            return USD_BRIDGE_SUCCESS;
+        }
+
+        auto* sources = new UsdBridgeOpinionSource[stack.size()];
+        for (size_t i = 0; i < stack.size(); ++i) {
+            const SdfPropertySpecHandle& spec = stack[i];
+            sources[i].layer_identifier =
+                strdup(spec->GetLayer()->GetIdentifier().c_str());
+
+            std::string display = "<no opinion>";
+            VtValue v;
+            if (spec->HasField(SdfFieldKeys->TargetPaths, &v) &&
+                v.IsHolding<SdfPathListOp>()) {
+                const auto& listOp = v.UncheckedGet<SdfPathListOp>();
+                const SdfPathVector* items = nullptr;
+                if (listOp.IsExplicit()) {
+                    items = &listOp.GetExplicitItems();
+                } else if (!listOp.GetAddedItems().empty()) {
+                    items = &listOp.GetAddedItems();
+                } else if (!listOp.GetPrependedItems().empty()) {
+                    items = &listOp.GetPrependedItems();
+                }
+                if (items && !items->empty()) {
+                    std::ostringstream oss;
+                    for (size_t t = 0; t < items->size(); ++t) {
+                        if (t > 0) oss << ", ";
+                        oss << (*items)[t].GetString();
+                    }
+                    display = oss.str();
+                } else {
+                    display = "(empty)";
+                }
+            }
+            sources[i].value_display = strdup(display.c_str());
+            sources[i].value_type_token = strdup("relationship");
+        }
+
+        out->sources = sources;
+        out->count = stack.size();
+        out->winning_index = 0;
+        *out_opinions = out;
+        return USD_BRIDGE_SUCCESS;
+    } catch (const std::exception& e) {
+        TF_WARN("usd_bridge_rel_get_opinion_sources: %s", e.what());
+        return USD_BRIDGE_ERROR_UNKNOWN;
+    }
 }
 
 UsdBridgeError usd_bridge_open_stage_with_policy(

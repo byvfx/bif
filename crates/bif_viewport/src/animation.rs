@@ -305,14 +305,25 @@ impl Renderer {
     }
 
     /// Evaluate all animated transforms at the given frame and update GPU buffer.
+    /// Respects visibility filtering — hidden instances are skipped so animation
+    /// evaluation doesn't undo `reload_instance_visibility()` filtering.
     fn evaluate_animation_frame(&mut self, frame: f64) {
         let num = self.scene.instances.transforms.len();
+        let hidden = &self.scene.hidden_prim_paths;
 
         // Reuse per-frame buffers to avoid allocation every frame
         self.scene.anim_instances_buf.clear();
         self.scene.anim_instances_buf.reserve(num);
         self.scene.anim_transforms_buf.clear();
         self.scene.anim_transforms_buf.reserve(num);
+
+        // Collect filtered arrays so post-evaluation state (current,
+        // material_ids, purposes, culling, instance groups) only contains
+        // visible instances — visibility filtering survives animation eval.
+        let mut vis_transforms: Vec<Mat4> = Vec::with_capacity(num);
+        let mut vis_material_ids: Vec<u32> = Vec::with_capacity(num);
+        let mut vis_purposes: Vec<bif_core::Purpose> = Vec::with_capacity(num);
+        let mut vis_prototype_ids: Vec<usize> = Vec::with_capacity(num);
 
         for (i, (base_transform, anim)) in self
             .scene
@@ -322,6 +333,17 @@ impl Renderer {
             .zip(self.scene.instance_animations.iter())
             .enumerate()
         {
+            // Skip instances hidden by visibility toggle
+            if self
+                .scene
+                .instances
+                .prim_paths
+                .get(i)
+                .is_some_and(|p| !p.is_empty() && hidden.contains(p.as_str()))
+            {
+                continue;
+            }
+
             let model_matrix = if let Some(anim) = anim {
                 // Evaluate animated transform
                 let evaluated = anim.evaluate(frame);
@@ -345,6 +367,18 @@ impl Renderer {
 
             self.scene.anim_transforms_buf.push(model_matrix);
 
+            // Track filtered arrays for post-evaluation state
+            vis_transforms.push(model_matrix);
+            if let Some(&mat_id) = self.scene.instances.full_material_ids.get(i) {
+                vis_material_ids.push(mat_id);
+            }
+            if let Some(&purpose) = self.scene.instances.full_purposes.get(i) {
+                vis_purposes.push(purpose);
+            }
+            if let Some(&proto_id) = self.scene.instances.prototype_ids.get(i) {
+                vis_prototype_ids.push(proto_id);
+            }
+
             let material_id = self
                 .scene
                 .instances
@@ -359,30 +393,34 @@ impl Renderer {
             });
         }
 
-        // Store evaluated transforms for use by update_visible_instances
-        // base transforms stay in instance_transforms for re-evaluation
+        // Rebuild instance_groups with animated transforms for multi-draw rendering.
+        // Must run before the moves below (borrows vis_* arrays).
+        if self.multi_draw.enabled {
+            self.multi_draw.rebuild_instance_groups(
+                &vis_transforms,
+                &vis_prototype_ids,
+                &vis_material_ids,
+                &vis_purposes,
+                self.display_settings.purpose_mode,
+            );
+        }
+
+        // Store evaluated transforms for use by update_visible_instances.
+        // Overwrite material_ids/purposes with filtered versions so
+        // parallel array assertions in culling pass.
         std::mem::swap(
             &mut self.scene.instances.current,
             &mut self.scene.anim_transforms_buf,
         );
+        self.scene.instances.material_ids = vis_material_ids;
+        self.scene.instances.purposes = vis_purposes;
 
-        // Recompute instance AABBs for frustum culling
-        self.culling
-            .update_instance_aabbs(&self.scene.instances.current);
+        // Recompute instance AABBs for frustum culling (filtered set)
+        self.culling.update_instance_aabbs(&vis_transforms);
+        self.culling.mark_dirty();
 
         // Invalidate frustum cache
         self.culling.invalidate_frustum();
-
-        // Rebuild instance_groups with animated transforms for multi-draw rendering
-        if self.multi_draw.enabled {
-            self.multi_draw.rebuild_instance_groups(
-                &self.scene.instances.current,
-                &self.scene.instances.prototype_ids,
-                &self.scene.instances.material_ids,
-                &self.scene.instances.purposes,
-                self.display_settings.purpose_mode,
-            );
-        }
     }
 
     /// Update vertex buffer for meshes with vertex animation (deformation).

@@ -666,7 +666,21 @@ impl Renderer {
     /// Mirrors `handle_transform_edit` but for the Visibility slot —
     /// `before` is read from the live composed stage, `after` is the
     /// caller-supplied target. No-op when no USD stage / layer state.
-    pub fn dispatch_visibility(&mut self, prim_path: &str, after: bool) -> anyhow::Result<String> {
+    ///
+    /// Returns `(description, unhidden_ancestors)`. When un-hiding a
+    /// descendant of an invisible ancestor, `MakeVisible` walks the
+    /// chain and authors `inherited` on every invisible parent —
+    /// `unhidden_ancestors` reports those paths so callers can surface
+    /// the side-effect (USD-correct but easily surprising). Always
+    /// empty when `after == false`. NOTE: lookup uses composed
+    /// visibility (cheap) which over-reports vs `MakeVisible`'s
+    /// authored-only walk — full accuracy would require an FFI
+    /// extension; not worth it for UX feedback.
+    pub fn dispatch_visibility(
+        &mut self,
+        prim_path: &str,
+        after: bool,
+    ) -> anyhow::Result<(String, Vec<String>)> {
         let stage_arc = self
             .scene
             .usd_stage
@@ -676,17 +690,31 @@ impl Renderer {
             return Err(anyhow::anyhow!("no scene layer state"));
         }
         let normalized = normalize_prim_path(prim_path);
-        let before = stage_arc
-            .lock()
-            .ok()
-            .and_then(|stage| stage.get_prim_info_by_path(&normalized).ok())
-            .map(|info| info.visible);
+
+        let (before, ancestors) = {
+            let stage = stage_arc.lock().ok();
+            let before = stage
+                .as_ref()
+                .and_then(|s| s.get_prim_info_by_path(&normalized).ok())
+                .map(|info| info.visible);
+            let ancestors = if after {
+                stage
+                    .as_ref()
+                    .map(|s| collect_invisible_ancestors(s, &normalized))
+                    .unwrap_or_default()
+            } else {
+                Vec::new()
+            };
+            (before, ancestors)
+        };
+
         let op = bif_core::usd::EditOperation::Visibility {
             key: bif_core::usd::OpinionKey::new(normalized, bif_core::usd::AttrSlot::Visibility),
             before,
             after,
         };
-        self.apply_usd_edit(op)
+        let desc = self.apply_usd_edit(op)?;
+        Ok((desc, ancestors))
     }
 
     pub(crate) fn handle_stage_corrections_changed(&mut self) {
@@ -826,6 +854,30 @@ fn immediate_parent(path: &str) -> Option<String> {
         return None;
     }
     Some(path[..slash].to_string())
+}
+
+/// Walk ancestors of `prim_path` and collect any whose composed
+/// visibility resolves to invisible. Used by `dispatch_visibility` to
+/// report which ancestor `MakeVisible` will (or might) un-hide as a
+/// side effect.
+///
+/// Composed visibility is a slight over-report — `MakeVisible` only
+/// re-authors ancestors that have an explicit `visibility = invisible`
+/// opinion, not those that compose to invisible via pruning from a
+/// higher ancestor. For UX status-bar feedback that's acceptable; the
+/// authored-only walk would require an FFI extension.
+fn collect_invisible_ancestors(stage: &bif_core::usd::UsdStage, prim_path: &str) -> Vec<String> {
+    let mut ancestors = Vec::new();
+    let mut current = immediate_parent(prim_path);
+    while let Some(p) = current {
+        if let Ok(info) = stage.get_prim_info_by_path(&p) {
+            if !info.visible {
+                ancestors.push(p.clone());
+            }
+        }
+        current = immediate_parent(&p);
+    }
+    ancestors
 }
 
 /// Mirror of `bif_qt::parse_shader_value`. Used by the shading-model

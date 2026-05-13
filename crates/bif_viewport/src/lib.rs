@@ -1726,7 +1726,18 @@ impl Renderer {
 
         let direction = (far_pos - near_pos).normalize();
 
-        pick_scene.pick(near_pos, direction).map(|result| {
+        pick_scene.pick(near_pos, direction).and_then(|result| {
+            // Post-hit visibility filter: the pick scene (Embree BVH) is
+            // only rebuilt on full reload_working_scene(). After a visibility
+            // toggle, hidden geometry still exists in the BVH at the old
+            // instance index. Check against the pre-filtered prim_paths
+            // snapshot to skip hits on hidden prims.
+            if result.instance_index < self.scene.instances.all_prim_paths.len() {
+                let path = &self.scene.instances.all_prim_paths[result.instance_index];
+                if !path.is_empty() && self.scene.hidden_prim_paths.contains(path.as_str()) {
+                    return None;
+                }
+            }
             log::info!(
                 "Picked instance {} (tri={}, t={:.2}, pos=({:.2},{:.2},{:.2}))",
                 result.instance_index,
@@ -1736,7 +1747,7 @@ impl Renderer {
                 result.hit_point.y,
                 result.hit_point.z
             );
-            result.instance_index
+            Some(result.instance_index)
         })
     }
 
@@ -1861,16 +1872,48 @@ impl Renderer {
         action: &str,
         op: Option<&bif_core::usd::EditOperation>,
     ) {
-        if let Some(bif_core::usd::EditOperation::MaterialParamOverride { key, after, .. }) = op {
-            if let bif_core::usd::AttrSlot::ShaderInput { name, .. } = &key.attr {
-                self.update_working_material_param(&key.prim_path, name, after);
+        use bif_core::usd::EditOperation;
+        match op {
+            // Visibility toggle — only instance arrays change, geometry/materials/textures
+            // stay the same. Use the lightweight instance-level reload to avoid the
+            // multi-second stall from full reload_working_scene (texture reload from disk).
+            Some(EditOperation::Visibility { .. }) => {
+                self.refresh_usd_visibility_state();
+                if let Err(e) = self.reload_instance_visibility() {
+                    log::warn!("instance visibility reload after {action} failed: {e}");
+                }
             }
-        }
-        self.refresh_usd_visibility_state();
-        self.sync_working_materials_from_stage();
-        self.nodes.materials_dirty = true;
-        if let Err(e) = self.reload_working_scene() {
-            log::warn!("scene reload after {action} failed: {e}");
+            // Transform commit — the local fast path in handle_transform_edit already
+            // wrote the new matrix to GPU buffers. reload_working_scene() here would be
+            // dead work immediately overwritten by the local write. Just refresh
+            // visibility state for correctness (future-proofing).
+            Some(EditOperation::Transform { .. }) => {
+                self.refresh_usd_visibility_state();
+            }
+            // MaterialParamOverride — material uniform values changed, need material
+            // table rebuild, but textures are unchanged. Keep reload_working_scene()
+            // (rebuilds material table) but skip materials_dirty (avoids texture reload).
+            Some(EditOperation::MaterialParamOverride { key, after, .. }) => {
+                if let bif_core::usd::AttrSlot::ShaderInput { name, .. } = &key.attr {
+                    self.update_working_material_param(&key.prim_path, name, after);
+                }
+                self.refresh_usd_visibility_state();
+                self.sync_working_materials_from_stage();
+                if let Err(e) = self.reload_working_scene() {
+                    log::warn!("scene reload after {action} failed: {e}");
+                }
+            }
+            // Default: full rebuild — covers SetShaderId, ReplaceLayerContents,
+            // VariantSelect, MaterialAssign, and any future variants that may
+            // change geometry, shader structure, or material bindings.
+            _ => {
+                self.refresh_usd_visibility_state();
+                self.sync_working_materials_from_stage();
+                self.nodes.materials_dirty = true;
+                if let Err(e) = self.reload_working_scene() {
+                    log::warn!("scene reload after {action} failed: {e}");
+                }
+            }
         }
     }
 

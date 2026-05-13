@@ -20,6 +20,7 @@
 #include <QSignalBlocker>
 #include <QSpinBox>
 #include <QStandardItemModel>
+#include <QStringList>
 #include <QStyledItemDelegate>
 #include <QTabWidget>
 #include <QTableView>
@@ -161,7 +162,8 @@ PropertyInspectorWidget::PropertyInspectorWidget(BifShellState* state, QWidget* 
       m_tabs(nullptr),
       m_attrs_view(nullptr),
       m_attrs_model(nullptr),
-      m_relationships_tab(nullptr),
+      m_relationships_view(nullptr),
+      m_relationships_model(nullptr),
       m_material_tab(nullptr),
       m_material_scroll(nullptr),
       m_material_content(nullptr),
@@ -300,18 +302,37 @@ PropertyInspectorWidget::PropertyInspectorWidget(BifShellState* state, QWidget* 
 
     m_tabs->addTab(m_material_tab, QStringLiteral("Material Sheet"));
 
-    // Relationships tab — placeholder
-    m_relationships_tab = new QWidget(m_tabs);
-    auto* rel_layout = new QVBoxLayout(m_relationships_tab);
-    auto* rel_note = new QLabel(
-        QStringLiteral("(Relationships panel — Phase C.4)"),
-        m_relationships_tab);
-    rel_note->setAlignment(Qt::AlignCenter);
-    rel_note->setStyleSheet(QStringLiteral(
-        "color: rgba(140, 145, 155, 255); padding: 24px;"));
-    rel_layout->addWidget(rel_note);
-    rel_layout->addStretch();
-    m_tabs->addTab(m_relationships_tab, QStringLiteral("Relationships"));
+    // Relationships tab — read-only list of authored relationships with
+    // resolved targets and an opinion-color dot per row.
+    m_relationships_model = new QStandardItemModel(this);
+    m_relationships_model->setHorizontalHeaderLabels(
+        {QStringLiteral("Name"), QStringLiteral("Targets")});
+    m_relationships_view = new QTableView(m_tabs);
+    m_relationships_view->setModel(m_relationships_model);
+    m_relationships_view->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    m_relationships_view->setSelectionBehavior(QAbstractItemView::SelectRows);
+    m_relationships_view->setSelectionMode(QAbstractItemView::SingleSelection);
+    m_relationships_view->setAlternatingRowColors(false);
+    m_relationships_view->setWordWrap(true);
+    m_relationships_view->verticalHeader()->setVisible(false);
+    m_relationships_view->horizontalHeader()->setStretchLastSection(true);
+    m_relationships_view->horizontalHeader()->setSectionResizeMode(
+        0, QHeaderView::ResizeToContents);
+    m_relationships_view->setItemDelegate(new OpinionDotDelegate(m_relationships_view));
+    m_relationships_view->setStyleSheet(QStringLiteral(
+        "QTableView {"
+        "  background-color: rgba(34, 38, 44, 255);"
+        "  color: rgba(220, 222, 226, 255);"
+        "  gridline-color: rgba(50, 55, 62, 255);"
+        "  border: none; outline: none;"
+        "}"
+        "QTableView::item { padding: 2px 4px; }"
+        "QHeaderView::section {"
+        "  background-color: rgba(42, 47, 54, 255);"
+        "  color: rgba(140, 145, 155, 255);"
+        "  border: none; padding: 4px 6px; font-size: 11px;"
+        "}"));
+    m_tabs->addTab(m_relationships_view, QStringLiteral("Relationships"));
 
     if (m_state) {
         QObject::connect(m_state, &BifShellState::selected_prim_pathChanged,
@@ -330,9 +351,12 @@ void PropertyInspectorWidget::on_selection_changed() {
 }
 
 void PropertyInspectorWidget::on_layer_state_changed() {
-    // Composition arcs depend on layer stack; refresh them.
+    // Composition arcs and relationship opinion colors depend on the layer
+    // stack; refresh both.
     if (!m_state) return;
-    populate_composition_arcs(m_state->getSelected_prim_path());
+    const auto path = m_state->getSelected_prim_path();
+    populate_composition_arcs(path);
+    populate_relationships(path);
 }
 
 void PropertyInspectorWidget::rebuild() {
@@ -345,6 +369,7 @@ void PropertyInspectorWidget::rebuild() {
         m_header_type->setText(QString());
         m_arcs_list->clear();
         m_attrs_model->removeRows(0, m_attrs_model->rowCount());
+        m_relationships_model->removeRows(0, m_relationships_model->rowCount());
         return;
     }
 
@@ -362,6 +387,7 @@ void PropertyInspectorWidget::rebuild() {
 
     populate_composition_arcs(path);
     populate_attributes(path, type);
+    populate_relationships(path);
     populate_material_sheet();
 }
 
@@ -739,4 +765,46 @@ void PropertyInspectorWidget::populate_attributes(const QString& prim_path,
         type_item->setForeground(QColor(140, 145, 155));
         m_attrs_model->appendRow({name_item, value_item, type_item});
     }
+}
+
+void PropertyInspectorWidget::populate_relationships(const QString& prim_path) {
+    m_relationships_model->removeRows(0, m_relationships_model->rowCount());
+    if (!m_state || prim_path.isEmpty()) return;
+
+    const int n = m_state->selected_prim_relationship_count();
+    for (int i = 0; i < n; ++i) {
+        const auto name = m_state->selected_prim_relationship_name_at(i);
+        const int target_count =
+            m_state->selected_prim_relationship_target_count_at(i);
+
+        QStringList targets;
+        targets.reserve(target_count);
+        for (int t = 0; t < target_count; ++t) {
+            targets << m_state->selected_prim_relationship_target_at(i, t);
+        }
+        const QString targets_str = targets.isEmpty()
+            ? QStringLiteral("(no targets)")
+            : targets.join(QStringLiteral("\n"));
+
+        const auto opinions = m_state->selected_prim_rel_tooltip_at(i);
+        QString tooltip = QStringLiteral("<b>USD name:</b> <code>%1</code>")
+            .arg(name.toHtmlEscaped());
+        if (!opinions.isEmpty()) {
+            tooltip += QStringLiteral("<br/><br/>") + opinions;
+        }
+
+        auto* name_item = new QStandardItem(name);
+        name_item->setToolTip(tooltip);
+        name_item->setData(m_state->selected_prim_rel_color_index_at(i),
+                           ColorIndexRole);
+
+        auto* targets_item = new QStandardItem(targets_str);
+        targets_item->setToolTip(tooltip);
+        if (targets.isEmpty()) {
+            targets_item->setForeground(QColor(140, 145, 155));
+        }
+
+        m_relationships_model->appendRow({name_item, targets_item});
+    }
+    m_relationships_view->resizeRowsToContents();
 }

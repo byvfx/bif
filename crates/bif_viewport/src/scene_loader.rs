@@ -287,6 +287,8 @@ impl Renderer {
         self.scene.mesh_data = mesh_data;
         self.scene.instances.current = instance_transforms.clone();
         self.scene.instances.transforms = instance_transforms;
+        self.scene.instances.full_material_ids = instance_material_ids.clone();
+        self.scene.instances.full_purposes = instance_purposes.clone();
         self.scene.instances.material_ids = instance_material_ids;
         self.scene.instances.prototype_ids = instance_prototype_ids;
         self.scene.instances.purposes = instance_purposes;
@@ -297,6 +299,7 @@ impl Renderer {
             .enumerate()
             .map(|(idx, inst)| resolve_prim_path(inst, scene, idx))
             .collect();
+        self.scene.instances.all_prim_paths = self.scene.instances.prim_paths.clone();
         self.scene.instance_animations = scene.instance_animations().to_vec();
         self.scene.last_evaluated_frame = 0.0;
         self.scene.scene_material = scene_material.clone();
@@ -539,7 +542,10 @@ impl Renderer {
             self.scene.instances.material_ids.clear();
             self.scene.instances.prototype_ids.clear();
             self.scene.instances.prim_paths.clear();
+            self.scene.instances.all_prim_paths.clear();
             self.scene.instances.purposes.clear();
+            self.scene.instances.full_material_ids.clear();
+            self.scene.instances.full_purposes.clear();
             self.scene.instance_animations = scene.instance_animations().to_vec();
             self.scene.scene_cameras = scene.cameras.clone();
             self.culling.instance_aabbs.clear();
@@ -1231,6 +1237,8 @@ impl Renderer {
         self.scene.mesh_data = mesh_data;
         self.scene.instances.current = instance_transforms.clone();
         self.scene.instances.transforms = instance_transforms;
+        self.scene.instances.full_material_ids = instance_material_ids.clone();
+        self.scene.instances.full_purposes = instance_purposes.clone();
         self.scene.instances.material_ids = instance_material_ids;
         self.scene.instances.prototype_ids = instance_prototype_ids;
         self.scene.instances.purposes = instance_purposes;
@@ -1265,6 +1273,7 @@ impl Renderer {
                 scene_inst_count + i
             ));
         }
+        self.scene.instances.all_prim_paths = prim_paths.clone();
         self.scene.instances.prim_paths = prim_paths;
 
         // Animations: filtered scene instances + None entries for instancer instances
@@ -1332,6 +1341,211 @@ impl Renderer {
             self.scene.working_scene.prototype_count(),
             self.num_instances,
             self.num_triangles
+        );
+
+        Ok(())
+    }
+
+    /// Rebuild multi-draw instance groups and culling after a visibility
+    /// toggle. Does NOT mutate ground-truth arrays (`transforms`,
+    /// `prototype_ids`, `prim_paths`) — visibility can be toggled back
+    /// on because full arrays are preserved.
+    ///
+    /// For multi-draw (prototypes > 1): just rebuild instance groups
+    /// from filtered views. The render loop self-uploads instances to
+    /// GPU each frame — no GPU buffer write needed here.
+    ///
+    /// For single-draw (prototypes == 1): the combined mesh bakes
+    /// instance transforms into vertices, so a full mesh bake is
+    /// unavoidable. But it's a single prototype — fast.
+    ///
+    /// The pick scene (Embree BVH) is NOT rebuilt — hidden geometry
+    /// still exists in the BVH at stale indices. `pick_instance_at`
+    /// filters hidden instances post-hit via `all_prim_paths`.
+    pub fn reload_instance_visibility(&mut self) -> Result<()> {
+        let hidden = &self.scene.hidden_prim_paths;
+
+        // full_material_ids / full_purposes are populated once by
+        // reload_working_scene() and never change — they're the ground
+        // truth copies we filter from on every visibility toggle.
+
+        let total = self.scene.instances.transforms.len();
+        if total == 0 {
+            return Ok(());
+        }
+
+        // Build visibility mask from the full (unfiltered) prim_paths.
+        // Don't mutate transforms/prototype_ids/prim_paths — these are
+        // ground truth. Filter material_ids/purposes/current from full
+        // copies so culling sees consistent parallel arrays.
+        let visible_mask: Vec<bool> = (0..total)
+            .map(|i| {
+                self.scene
+                    .instances
+                    .prim_paths
+                    .get(i)
+                    .is_none_or(|p| p.is_empty() || !hidden.contains(p.as_str()))
+            })
+            .collect();
+
+        // Build filtered slices referencing the full arrays
+        let ft = &self.scene.instances.transforms;
+        let fp = &self.scene.instances.prototype_ids;
+        let fm = &self.scene.instances.full_material_ids;
+        let fpurp = &self.scene.instances.full_purposes;
+
+        let filtered_transforms: Vec<Mat4> = ft
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| visible_mask[*i])
+            .map(|(_, t)| *t)
+            .collect();
+        let filtered_protos: Vec<usize> = fp
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| visible_mask[*i])
+            .map(|(_, p)| *p)
+            .collect();
+        let filtered_mats: Vec<u32> = fm
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| visible_mask[*i])
+            .map(|(_, m)| *m)
+            .collect();
+        let filtered_purps: Vec<bif_core::Purpose> = fpurp
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| visible_mask[*i])
+            .map(|(_, p)| *p)
+            .collect();
+
+        let visible_count = filtered_transforms.len();
+        let use_multi_draw = self.scene.working_scene.prototypes.len() > 1;
+
+        // Rebuild multi-draw instance groups. The render loop (render.rs:566)
+        // iterates these and self-uploads instances to GPU each frame — no
+        // need to write the instance buffer here.
+        self.multi_draw.rebuild_instance_groups(
+            &filtered_transforms,
+            &filtered_protos,
+            &filtered_mats,
+            &filtered_purps,
+            self.display_settings.purpose_mode,
+        );
+
+        // Rebuild culling AABBs for only visible instances
+        let prototype_aabb = Aabb::from_points(
+            self.scene.mesh_data.bounds_min,
+            self.scene.mesh_data.bounds_max,
+        );
+        let instance_aabbs: Vec<Aabb> = filtered_transforms
+            .iter()
+            .map(|t| t.transform_aabb(&prototype_aabb))
+            .collect();
+        let tri_per = if self.scene.mesh_data.indices.is_empty() {
+            0
+        } else {
+            self.scene.mesh_data.indices.len() as u32 / 3
+        };
+        self.culling
+            .set_prototype_aabb(&self.gpu.device, prototype_aabb, tri_per);
+        self.culling.instance_aabbs = instance_aabbs;
+        self.culling.visible_count = visible_count as u32;
+        self.culling.mark_dirty();
+
+        // Filter the live render-time arrays so culling (which reads
+        // current/materials/purposes as parallel arrays) doesn't see
+        // length mismatches vs. filtered AABBs. Keep transforms,
+        // prototype_ids, prim_paths full for toggling back.
+        self.scene.instances.current = filtered_transforms.clone();
+        self.scene.instances.material_ids = filtered_mats.clone();
+        self.scene.instances.purposes = filtered_purps.clone();
+
+        if !use_multi_draw {
+            // Single-draw path: combined mesh bakes instance transforms into
+            // vertices. Rebuild it for the filtered instances. Only one
+            // prototype — the mesh combine is cheap.
+            self.scene.instances.current = filtered_transforms.clone();
+
+            let scene = &self.scene.working_scene;
+            let material_index_by_name: HashMap<Arc<str>, u32> = scene
+                .materials
+                .iter()
+                .enumerate()
+                .map(|(idx, mat)| (mat.name.clone(), idx as u32))
+                .collect();
+            let default_mat_index = scene.materials.len() as u32;
+
+            let meshes_with_transforms: Vec<(&bif_core::Mesh, Mat4, usize, u32)> =
+                filtered_transforms
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, transform)| {
+                        scene.prototypes.get(filtered_protos[i]).map(|proto| {
+                            let mat_id = proto
+                                .material
+                                .as_ref()
+                                .and_then(|mat| material_index_by_name.get(&mat.name).copied())
+                                .unwrap_or(default_mat_index);
+                            (proto.mesh.as_ref(), *transform, i, mat_id)
+                        })
+                    })
+                    .collect();
+
+            if !meshes_with_transforms.is_empty() {
+                let combined = MeshData::combine_with_transforms(&meshes_with_transforms);
+                self.scene.mesh_data = combined.clone();
+                self.num_indices = combined.indices.len() as u32;
+                self.mesh_bounds_min = combined.bounds_min;
+                self.mesh_bounds_max = combined.bounds_max;
+
+                let vb_size = std::mem::size_of_val(combined.vertices.as_slice());
+                let ib_size = std::mem::size_of_val(combined.indices.as_slice());
+                let max_buf = self.gpu.device.limits().max_buffer_size as usize;
+                if vb_size <= max_buf && ib_size <= max_buf {
+                    self.vertex_buffer =
+                        self.gpu
+                            .device
+                            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                                label: Some("WS Vertex Buffer"),
+                                contents: bytemuck::cast_slice(&combined.vertices),
+                                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                            });
+                    self.index_buffer =
+                        self.gpu
+                            .device
+                            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                                label: Some("WS Index Buffer"),
+                                contents: bytemuck::cast_slice(&combined.indices),
+                                usage: wgpu::BufferUsages::INDEX,
+                            });
+                }
+            }
+
+            // Upload instance buffer — single-draw path reads from it directly
+            let instances: Vec<InstanceData> = visible_mask
+                .iter()
+                .enumerate()
+                .filter(|(_, &v)| v)
+                .map(|(i, _)| InstanceData {
+                    model_matrix: ft[i].to_cols_array_2d(),
+                    material_id: fm[i],
+                    tri_mat_offset: 0,
+                })
+                .collect();
+            self.gpu
+                .queue
+                .write_buffer(&self.instance_buffer, 0, bytemuck::cast_slice(&instances));
+        }
+
+        self.num_instances = visible_count as u32;
+        self.num_triangles = tri_per as u64 * visible_count as u64;
+
+        log::info!(
+            "Visibility reloaded: {} visible / {} total ({} hidden) — no full rebuild",
+            visible_count,
+            total,
+            hidden.len()
         );
 
         Ok(())
@@ -2077,6 +2291,7 @@ impl Renderer {
             .enumerate()
             .map(|(idx, inst)| resolve_prim_path(inst, &scene, idx))
             .collect();
+        self.scene.instances.all_prim_paths = self.scene.instances.prim_paths.clone();
 
         // Store animation data for viewport playback
         self.scene.instance_animations = scene.instance_animations().to_vec();
@@ -2451,16 +2666,20 @@ impl Renderer {
         }
         for (inst, anim) in scene.instances_with_animations() {
             let remapped_proto_id = inst.prototype_id + proto_offset;
+            let prim_path = inst.prim_path.clone();
             let inst_idx = if let Some(anim) = anim {
-                self.scene.working_scene.add_animated_instance(
+                self.scene.working_scene.add_animated_instance_with_path(
                     remapped_proto_id,
                     inst.transform,
                     anim.clone(),
+                    prim_path,
                 )
             } else {
-                self.scene
-                    .working_scene
-                    .add_instance(remapped_proto_id, inst.transform)
+                self.scene.working_scene.add_instance_with_path(
+                    remapped_proto_id,
+                    inst.transform,
+                    prim_path,
+                )
             };
             // Preserve purpose from loaded scene
             self.scene
@@ -2540,6 +2759,18 @@ impl Renderer {
         // Rebuild GPU state from accumulated working_scene so multi-USD materials resolve
         if let Err(e) = self.reload_working_scene() {
             log::error!("Failed to reload working scene after USD merge: {}", e);
+        }
+
+        // Populate hidden_prim_paths from the stage's composed visibility
+        // so viewport and scene browser agree on which prims are invisible
+        // after a fresh load (e.g., reloading a scene with saved visibility edits).
+        // Must be followed by reload_instance_visibility to filter the just-built
+        // instance arrays.
+        self.refresh_usd_visibility_state();
+        if !self.scene.hidden_prim_paths.is_empty() {
+            if let Err(e) = self.reload_instance_visibility() {
+                log::warn!("Failed to apply initial visibility filter: {e}");
+            }
         }
 
         // Log viewport timing breakdown

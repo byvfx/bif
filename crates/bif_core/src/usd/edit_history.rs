@@ -178,7 +178,10 @@ impl EditOperation {
                 stage.write_layer_xform(working_layer_id, &key.prim_path, -1.0, after)?;
             }
             EditOperation::Visibility { key, after, .. } => {
-                stage.write_layer_visibility(working_layer_id, &key.prim_path, *after)?;
+                // Time = None → UsdTimeCode::Default(). Visibility-animation
+                // is on the v0.20+ roadmap; this op's schema doesn't yet
+                // carry a time field, so dispatch always writes at default.
+                stage.write_layer_visibility(working_layer_id, &key.prim_path, *after, None)?;
             }
             EditOperation::MaterialAssign { key, after, .. } => {
                 stage.bind_layer_material(working_layer_id, &key.prim_path, after)?;

@@ -1731,6 +1731,39 @@ void usd_bridge_free_prim_attributes(
 );
 
 // ============================================================================
+// Prim Relationship Inspection
+// ============================================================================
+
+/// A single USD relationship with name and resolved (composed) target paths.
+typedef struct UsdBridgeRelationshipData {
+    const char* name;            // Relationship name (e.g., "material:binding")
+    const char** target_paths;   // Array of strdup'd target path strings
+    size_t target_count;         // Number of resolved targets
+    int is_authored;             // 1 if HasAuthoredTargets(), 0 otherwise
+} UsdBridgeRelationshipData;
+
+/// Get all relationships for a prim by path. Targets are resolved (composed).
+/// Caller must call usd_bridge_free_prim_relationships() to free the result.
+///
+/// @param stage Stage handle
+/// @param prim_path USD prim path (e.g., "/World/Mesh")
+/// @param out_relationships Pointer to receive relationship array
+/// @param out_count Pointer to receive relationship count
+/// @return USD_BRIDGE_SUCCESS on success
+UsdBridgeError usd_bridge_get_prim_relationships(
+    const UsdBridgeStage* stage,
+    const char* prim_path,
+    UsdBridgeRelationshipData** out_relationships,
+    size_t* out_count
+);
+
+/// Free relationship data returned by usd_bridge_get_prim_relationships.
+void usd_bridge_free_prim_relationships(
+    UsdBridgeRelationshipData* relationships,
+    size_t count
+);
+
+// ============================================================================
 // Layer-Aware Stage (v0.14.0)
 // ============================================================================
 
@@ -1850,12 +1883,17 @@ UsdBridgeError usd_bridge_layer_write_xform(
     const float* matrix_16
 );
 
-/// Author a visibility opinion on a specific layer.
+/// Author a visibility opinion on a specific layer at the given time.
+/// `time` follows the same convention as `usd_bridge_layer_write_xform`:
+/// values < 0.0 are treated as `UsdTimeCode::Default()`. Visibility
+/// animation is not yet plumbed through bif's EditOperation schema —
+/// production callers should pass -1.0 until v0.20+ animation work.
 UsdBridgeError usd_bridge_layer_write_visibility(
     UsdBridgeStage* stage,
     const char* layer_identifier,
     const char* prim_path,
-    int visible
+    int visible,
+    double time
 );
 
 /// Author a material binding relationship on a specific layer.
@@ -1965,6 +2003,17 @@ UsdBridgeError usd_bridge_attr_get_opinion_sources(
 );
 
 void usd_bridge_opinions_free(UsdBridgeAttributeOpinions* opinions);
+
+/// Per-layer opinion sources for a relationship. Reuses
+/// UsdBridgeAttributeOpinions; each source's value_display is the target
+/// path list (comma-joined) authored at that layer, or "<no opinion>" /
+/// "(empty)". Free with usd_bridge_opinions_free.
+UsdBridgeError usd_bridge_rel_get_opinion_sources(
+    const UsdBridgeStage* stage,
+    const char* prim_path,
+    const char* rel_name,
+    UsdBridgeAttributeOpinions** out_opinions
+);
 
 /// Open a stage with explicit payload policy (LoadAll vs LoadNone).
 /// Same semantics as usd_bridge_open_stage, but caller controls initial load.

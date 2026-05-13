@@ -7,7 +7,9 @@
 //     strongest-first order).
 //   - Attributes tab (QTableView): Name / Value / Type columns.
 //     Name column has an opinion-color dot delegate.
-//   - Relationships tab: placeholder for Phase C.4.
+//   - Relationships tab (QTableView): Name / Targets columns. Same
+//     opinion-color dot delegate; one row per relationship with multiple
+//     targets joined by newlines.
 //
 // Listens to `BifShellState::selected_prim_pathChanged` and rebuilds
 // content. Fake attributes are derived from the prim type for Phase C.3;
@@ -45,6 +47,7 @@ private:
     void rebuild();
     void populate_composition_arcs(const QString& prim_path);
     void populate_attributes(const QString& prim_path, const QString& prim_type);
+    void populate_relationships(const QString& prim_path);
     void populate_material_sheet();
 
     BifShellState* m_state;
@@ -56,7 +59,8 @@ private:
     QTabWidget* m_tabs;
     QTableView* m_attrs_view;
     QStandardItemModel* m_attrs_model;
-    QWidget* m_relationships_tab;
+    QTableView* m_relationships_view;
+    QStandardItemModel* m_relationships_model;
     // C4b-1 Material Sheet tab — scrollable container with grouped
     // OpenPBR / UsdPreviewSurface input editors per bound shader.
     QWidget* m_material_tab;

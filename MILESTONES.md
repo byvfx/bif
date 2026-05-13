@@ -19,6 +19,7 @@ Roadmap organized by semantic version. Each release is testable, demoable, and g
 | v0.14.0 | Layer-Aware Stage | 2026-04-13 | `SdfLayer` + `GetPrimStack` + `GetPropertyStack` FFI, `SceneLayerState` on `SceneManager` (sublayer tree + mute set + `layer_for_prim` map), `LayerStackPanel` egui panel (mute checkbox + working-layer radio + isolation header + layer-color dots), composition-arc collapsing header + per-attribute winning-layer dot in property inspector, scene-browser layer color dots, `PayloadPolicy::{LoadAll, LoadNone}` stage open, 4 integration tests on a 3-layer fixture |
 | v0.15.0 | Qt Migration | 2026-04-22 | Qt 6 shell via `bif_qt`, docked panel port (layer stack, scene browser, property inspector, timeline, node graph, render settings), real USD stage load + selection sync, lazy scene-browser loading, egui bridge deletion |
 | v0.16.0 | Edit Operations + Save | 2026-04-28 | C4a foundation: `EditOperation`/`EditHistory`/`OpinionKey`, working-layer FFI writes (xform/visibility/material/shader-input/variant), Ctrl+S save through `UsdStage::save_layer`, ADR-008. C4b features: `Visible` checkbox, Material Sheet tab (OpenPBR/UsdPreviewSurface, sRGB→linear color), USDA Source dock with Apply-only validation, shading-model dropdown with atomic-undo + lossy-param warning, transform gizmo. Code-review hardening: USDA Apply rollback on TransferContent throw + `catch (...)` on all new C-ABI entries. |
+| v0.16.2 | Visibility + Foundation Polish | 2026-05-12 | Visibility round-trip via `UsdGeomImageable::MakeVisible/MakeInvisible` (defeats ancestor pruning), payload-rooted scene-browser populate fix, root-layer mute protection. Property Inspector Relationships tab, viewport pick → scene browser tree highlight sync, MakeVisible ancestor un-hides surfaced in status bar. Close-out polish: File → Save As wired to native dialog (filename pre-fill), Help → About modal, edit-target sync failures surfaced to status bar. Deferred to v0.17: `cache_prim_data` thread-safety annotation, defer-GPU-upload for invisible prototypes, `cpp_bridge.rs` split, binary `.usdc` Save As. |
 
 ---
 
@@ -31,6 +32,10 @@ Current active milestone after v0.16.0 shipped on 2026-04-27. Function-first edi
 - Obsidian Graphite / "Quiet Confidence" styling pass
 - Workspace chrome polish
 - Design-token cleanup
+- **Collection viewer/editor** — USD collection inspection and editing panel. Browse `Usd.CollectionAPI` prims, inspect includes/excludes, membership rules, expansion paths, and live resolved member list. Edit collection memberships and rules.
+- **Ivar↔Vulkan toggle** — switch between Ivar renderer (batch) and Vulkan viewport (interactive) from the render view. Needs clear UI affordance + state preservation on switch.
+- **AOV viewer in render view** — display render AOVs (beauty, albedo, normal, depth, etc.) as selectable layers in the render view widget. Required before 16.5 ships.
+- **Design note: Material editor → node-based** — long-term material authoring lives in the node graph (MaterialX nodes), not parameter sheets. Material Sheet is a viewer only; editing will be node-graph-driven.
 
 ---
 
@@ -38,19 +43,19 @@ Current active milestone after v0.16.0 shipped on 2026-04-27. Function-first edi
 
 | Version | Theme | Est. Hours | Key Milestones |
 |---------|-------|-----------|----------------|
-| v0.17.0 | Viewport Performance | 25-35h | M22 + payload policies + texture nodes in material editor + `cpp_bridge.rs` split |
-| v0.18.0 | AI Integration | 38-59h | Material creator, scene builder, ComfyUI |
-| v0.19.0 | Context System | 30-40h | M39 |
-| v0.20.0 | Scene Authoring + Layer Diff | 35-45h | M37, M38 + workflow Phase 7 |
-| v0.21.0 | MaterialX Authoring | 25-30h | M40 |
+| v0.17.0 | Context System | 30-40h | M39 — Assembly/Materials/Animation contexts, multi-graph architecture. Each context is a sandboxed node graph + viewport + property sheet. Materials context = MaterialX graph editor. Assembly context = scene layout + USD ops. Animation context = curve editor + clip sequencing. Highest architectural risk — touches scene_loader, render, property_inspector. |
+| v0.18.0 | Viewport Performance | 25-35h | M22 + payload policies + `cpp_bridge.rs` split |
+| v0.19.0 | Scene Authoring + Layer Diff | 35-45h | M37, M38 + workflow Phase 7 |
+| v0.20.0 | MaterialX Authoring | 25-30h | M40 — full node-based material editor, `standard_surface` graph, XML round-trip, node previews. Built on context system. |
+| v0.21.0 | Volumes & OpenVDB | 20-30h | M25 — volume prim loading, OpenVDB grid sampling, density→shader binding, volume rendering path |
 | v0.22.0 | GPU Path Tracing | 30-40h | M27 |
-| v0.23.0 | Volumes & OpenVDB | 20-30h | M25 |
+| v0.23.0 | AI Integration | 38-59h | Material creator, scene builder, ComfyUI |
 | v0.24.0 | API & Integration | 40-55h | M35, M34 |
 | v0.25.0+ | Framework Extraction | 40+h | M36+ |
 
 ---
 
-Latest release: v0.16.0 shipped 2026-04-28. Full release notes in [CHANGELOG.md](CHANGELOG.md), archived details in [MILESTONES_HISTORY.md](MILESTONES_HISTORY.md).
+Latest release: v0.16.2 shipped 2026-05-12 (visibility + foundation polish bugfix release). v0.16.0 was the major editor tranche on 2026-04-28. Full release notes in [CHANGELOG.md](CHANGELOG.md), archived details in [MILESTONES_HISTORY.md](MILESTONES_HISTORY.md).
 
 ### v0.14.0 — Layer-Aware Stage
 
@@ -108,7 +113,17 @@ Dedicated styling/polish pass after the v0.16.0 functional editor work lands. Ke
 - Validation: visual pass against `docs/ux/UI_DESIGN.md` plus the Graphite design doc, with no regressions to v0.16.0 editing flows
 - `primvars:displayColor` Vulkan fallback: synthesize flat-color material when mesh has no `material:binding`
 
-### v0.17.0 — Viewport Performance
+### v0.17.0 — Context System
+
+M39 — Assembly/Materials/Animation contexts, multi-graph architecture. Each context is a sandboxed environment with its own node graph, viewport, and property sheet, all sharing a single USD stage.
+
+- **Assembly context:** scene layout operations — arrange, compose, override, instance. Primary editing space.
+- **Materials context:** MaterialX graph editor (powers v0.20.0 MaterialX Authoring). Shader networks, preview renders.
+- **Animation context:** curve editor + clip sequencing. Keyframe operations, animation layers.
+- **Multi-graph:** independent node graphs per context, connected via shared stage + event bus.
+- Built in Qt. Highest architectural risk — touches `scene_loader`, render, `property_inspector`.
+
+### v0.18.0 — Viewport Performance
 
 M22 (Vulkan 1.3, lazy loading, GPU-driven rendering) + deferred loading from workflow doc.
 
@@ -117,25 +132,11 @@ M22 (Vulkan 1.3, lazy loading, GPU-driven rendering) + deferred loading from wor
 - `PrototypeState` enum (BoundingBox / Loaded / Deferred)
 - LRU cache for prototype eviction + Embree BVH integration
 - Camera depth of field and lens distortion
-- **Material editor texture nodes:** UsdUVTexture, PrimvarReader, Transform2d nodes in material graph
+- **Defer GPU upload for invisible prototypes.** After v0.16.2's visibility round-trip fix, invisible meshes are loaded as full prototypes (CPU vertex/index arrays) so the eye-icon toggle has something to un-hide. Memory regression on hidden-geo-heavy scenes (ALab). Plan: track `prototype_visible_mask` in `multi_draw.rs:55-85`, skip wgpu buffer creation for hidden protos, lazily upload on first visible instance. Stopgap in v0.16.2 is a `log::info!` at load time so users can see the cost.
 - **Tech debt — split `crates/bif_core/src/usd/cpp_bridge.rs`** (~4000 lines after v0.16 C4a). Target layout: `usd/ffi/{stage,layer,prim,xform,material,variant,instance}.rs`. Carry-over from v0.16 audit (ADR-008 follow-up).
+- **`cache_prim_data` thread-safety rework.** The C++ bridge's `cache_prim_data` at `cpp/usd_bridge/usd_bridge.cpp:529` mutates `all_prims`/`root_paths`/`root_path_ptrs` without a lock; currently safe only by convention that callers hold the stage Mutex. Add internal mutex or document the lock invariant as part of the bridge split. v0.16.2 added `// NOT THREAD-SAFE` annotations and a `TF_VERIFY` thread-id check.
 
-### v0.18.0 — AI Integration
-
-New `bif_ai` crate (feature-gated `--features ai`). Three AI-assisted workflows: material creation from text, scene building from natural language, ComfyUI render post-processing. Provider-agnostic (Ollama default, OpenAI, Anthropic). Async bridge via channels — zero async contagion. AI produces inert data, viewport executes. Ships independently across 5 phases.
-
-- Phase 1: Material creator (text → OpenPBR params, validated)
-- Phase 2: Provider breadth (OpenAI + Anthropic + config UI)
-- Phase 3: Scene builder (text → SceneAction plan → preview/confirm → node graph)
-- Phase 4: ComfyUI integration (render → workflow template → post-processed result)
-- Phase 5: Polish (error UX, caching, multi-turn refinement)
-- **Validation**: "brushed steel" → valid Material; "red cube next to blue sphere" → node graph; render → ComfyUI upscale
-
-### v0.19.0 — Context System
-
-M39 (Assembly/Materials/Animation contexts, multi-graph). Built in Qt. Highest architectural risk — touches scene_loader, render, property_inspector.
-
-### v0.20.0 — Scene Authoring + Layer Diff
+### v0.19.0 — Scene Authoring + Layer Diff
 
 M37 (lights) + M38 (materials) + workflow Phase 7. "Create content + see what you changed."
 
@@ -151,7 +152,7 @@ M37 (lights) + M38 (materials) + workflow Phase 7. "Create content + see what yo
 - Shadow control per-light (UsdLuxShadowAPI — enable, color, distance, falloff)
 - Portal lights (DomeLight portals for interior scenes)
 
-### v0.21.0 — MaterialX Authoring
+### v0.20.0 — MaterialX Authoring
 
 M40 (standard_surface graph, XML round-trip, node previews). Built on context system in Materials context. Full node-based material editor. See [Material Editor Design](docs/ux/MATERIAL_EDITOR_DESIGN.md).
 
@@ -163,13 +164,24 @@ M40 (standard_surface graph, XML round-trip, node previews). Built on context sy
 - Node color coding: blue=OpenPBR, green=UsdPreview, gold=MaterialX, light blue=textures, gray=utility
 - Two-mode sync: param sheet edits update graph nodes and vice versa
 
+### v0.21.0 — Volumes & OpenVDB
+
+M25 (fog, smoke, clouds, VDB support). Fills the biggest production content gap.
+
 ### v0.22.0 — GPU Path Tracing
 
 M27 (wgpu compute, BVH on GPU, ReSTIR). Fast material preview for authoring workflows.
 
-### v0.23.0 — Volumes & OpenVDB
+### v0.23.0 — AI Integration
 
-M25 (fog, smoke, clouds, VDB support). Fills the biggest production content gap.
+New `bif_ai` crate (feature-gated `--features ai`). Three AI-assisted workflows: material creation from text, scene building from natural language, ComfyUI render post-processing. Provider-agnostic (Ollama default, OpenAI, Anthropic). Async bridge via channels — zero async contagion. AI produces inert data, viewport executes. Ships independently across 5 phases.
+
+- Phase 1: Material creator (text → OpenPBR params, validated)
+- Phase 2: Provider breadth (OpenAI + Anthropic + config UI)
+- Phase 3: Scene builder (text → SceneAction plan → preview/confirm → node graph)
+- Phase 4: ComfyUI integration (render → workflow template → post-processed result)
+- Phase 5: Polish (error UX, caching, multi-turn refinement)
+- **Validation**: "brushed steel" → valid Material; "red cube next to blue sphere" → node graph; render → ComfyUI upscale
 
 ### v0.24.0 — API & Integration
 

@@ -970,8 +970,35 @@ void wire_shell_actions(
             update_status();
         });
     QObject::connect(actions.save_as, &QAction::triggered, window,
-        [shell_state, update_status]() {
-            shell_state->on_save_as();
+        [shell_state, window, viewport, update_status]() {
+            // No stage / no edit target → status-only fallback. Avoids
+            // showing a useless dialog the user can only cancel out of.
+            if (!shell_state->active_edit_target_is_set()) {
+                shell_state->on_save_as();
+                update_status();
+                return;
+            }
+
+            // Pre-fill with the current working-layer identifier so the
+            // native dialog opens to the right directory + filename. User
+            // can rename in place.
+            QString initial = shell_state->active_edit_target_identifier();
+
+            // Pause the viewport render tick around the native dialog —
+            // same fix as trigger_open_stage() (wgpu paint loop vs. z-order).
+            if (viewport) viewport->pausePainting();
+            QString path = QFileDialog::getSaveFileName(
+                window,
+                QStringLiteral("Save USD Stage As"),
+                initial,
+                QStringLiteral("USD ASCII (*.usda);;All files (*)"));
+            if (viewport) viewport->resumePainting();
+
+            if (path.isEmpty()) {
+                // User cancelled — leave status bar untouched.
+                return;
+            }
+            shell_state->on_save_as_to_path(path);
             update_status();
         });
     QObject::connect(actions.undo, &QAction::triggered, window,
@@ -1073,8 +1100,14 @@ void wire_shell_actions(
         });
 
     QObject::connect(actions.about, &QAction::triggered, window,
-        [shell_state, update_status]() {
+        [shell_state, window, update_status]() {
+            // Status bar gets the short "BIF x.y.z — ..." line; the modal
+            // QMessageBox carries the richer body with version + repo link.
             shell_state->on_about();
+            QMessageBox::about(
+                window,
+                QStringLiteral("About BIF"),
+                shell_state->about_dialog_body());
             update_status();
         });
 }

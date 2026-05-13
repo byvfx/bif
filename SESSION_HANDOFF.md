@@ -1,10 +1,117 @@
-# Session Handoff — 2026-05-07 (repo cleanup: agents/ → .pi/ + _deprecated/)
+# Session Handoff — 2026-05-12 (v0.16.2 close-out: GUI foundation polish)
+
+**Last Updated:** 2026-05-12 on `v0.16.2-bugfixes`.
+
+**Current work:** Pre-merge foundation review for v0.16.2 → main. Audited the Qt UI surface (panel inventory, TODO/stub punch list, golden-path tracing, regression risks) and landed the three foundation-polish items that were blocking a clean close-out:
+
+1. **File → Save As wired to a real dialog.** `actions.save_as` now opens `QFileDialog::getSaveFileName` pre-filled with the active edit-target identifier (full path + filename — opens to the right directory, user can rename in place). New `on_save_as_to_path` invokable calls `UsdStage::export_layer_as_string` + `std::fs::write`; `.usda` appended when no extension. Working-layer identity unchanged. Binary `.usdc` path deferred to v0.17 with `cpp_bridge.rs` split.
+2. **Help → About modal dialog.** Replaces status-bar stub with `QMessageBox::about` showing `CARGO_PKG_VERSION` + repo link. New `about_dialog_body` invokable so version can't drift from `Cargo.toml`. Status bar still gets the short line.
+3. **Edit-target sync failures surfaced to status bar.** Both `on_stage_path_opened` and `set_working_layer` were `log::warn!`-and-continue on `state.set_edit_target` failure — user would see "Loaded ✓" while edits would silently land on the wrong layer. Failure now appends `⚠ edit target sync failed: …` to the load message and replaces the layer-stack double-click OK with a warning.
+
+**Changes:**
+- `crates/bif_qt/src/main_window.rs` — new `on_save_as_to_path` and `about_dialog_body` invokables; edit-target-sync sites refactored to return `Option<String>` and surface to status bar.
+- `crates/bif_qt/cpp/window_builder.cpp` — Save As action rewired to open `QFileDialog` with pre-fill; Help/About action shows `QMessageBox::about`.
+- `crates/bif_core/tests/save_as_roundtrip.rs` — new file. Two tests cover the open → edit → export → write → reopen contract.
+- `CHANGELOG.md` — three new entries under `[Unreleased]` (Save As, Help/About, edit-target-sync).
+- `MILESTONES.md` — v0.16.2 row added to Released table with deferred-to-v0.17 list.
+
+**Validation:** `cargo build -p bif_qt`, `cargo clippy --workspace -- -D warnings`, `cargo fmt --check` all clean. `cargo test -p bif_core` 239 passed (incl. 2 new save_as_roundtrip tests under `--test-threads=1`). `cargo test -p bif_qt` 12 passed.
+
+**Next:** Commit punch list, merge `v0.16.2-bugfixes` → main (no-ff), post-merge smoke on `test_balls.usd`, tag `v0.16.2` after smoke. Then v0.17.0 (Context System) — first tasks: `cpp_bridge.rs` split, `cache_prim_data` thread-safety, defer-GPU-upload for invisible prototypes.
+
+**Foundation review notes (audit findings, no action this branch):**
+- Golden path (launch → open → pick → inspect → edit → save) is solid end-to-end.
+- File/New Stage, Recent Stages list, edge routing in node graph → all intentional Phase B stubs, deferred to v0.17.
+- Viewport-not-ready silent fallbacks at three sites in `main_window.rs` — defensive; consider status-bar messaging in a future polish pass.
+- Stage-mutex poison paths return silent `None` — current code is single-threaded so unreachable; no action.
+
+---
+
+# Session Handoff — 2026-05-12 (viewport pick → scene browser tree sync)
+
+**Last Updated:** 2026-05-12 on `v0.16.2-bugfixes` (commit `837dfff`).
+
+**Current work:** Dogfood pass surfaced two bugs. Shipped Bug 1; Bug 2 deferred.
+
+**Bug 1 fixed — viewport→tree highlight sync.** Three stacked bugs in `crates/bif_qt/cpp/scene_browser_widget.cpp` + `scene_browser_model.{cpp,h}`:
+1. `find_source_index_for_path` walked via column `ColName` (=1); `SceneBrowserModel::rowCount` returns 0 for `parent.column() > 0` — recursion never descended. Switched to column 0 (PathRole is column-agnostic).
+2. `selected_prim_pathChanged` connect was guarded by `if (m_state)` even though the panel is always built with a state. Drop guard, add `Q_ASSERT`.
+3. Initial rebuild can race with scene_browser_provider returning 0 children, locking a node as a fake-leaf (`children_populated=true` permanently). Added `SceneBrowserModel::refresh_node()` to force-repopulate on descent through a stuck node. Defensive — only acts when `node->children.empty()`.
+
+Plus `path_matches()` helper strips `/BIF/...` synthetic prefix in either direction so loader-synthesized paths resolve against composed USD-form tree rows.
+
+**Changes:**
+- `crates/bif_qt/cpp/scene_browser_widget.cpp` — column-0 navigation, path_matches, refresh_node call, unconditional connect.
+- `crates/bif_qt/cpp/scene_browser_model.h/.cpp` — new `refresh_node(QModelIndex)`.
+
+**Validation:** `cargo build -p bif_qt`, `cargo clippy -p bif_qt -- -D warnings`, `cargo fmt --check`, `cargo test -p bif_qt` all clean. Manual repro on HumanFemale.walk.usd: viewport click on a deeply nested mesh now scrolls + highlights the tree row.
+
+**Bug 2 deferred — render regression.** HumanFemale.walk.usd: UVs scrambled (face/arms), shoes oversized. Basket.usd + "all props" lose textures entirely. Plus "viewport selection only lets me select a couple things" — pick BVH likely polluted. Hypothesis: commit `e55b3d6` (2026-05-10, invisible-mesh skip removed) is the root cause across all symptoms. Plan: `~/.claude/plans/implementation-passes-dogfood-tests-rippling-flurry.md`.
+
+**Next:** Bug 2 triage — bisect `e55b3d6` against HumanFemale + Basket, then chase the three hypotheses (mesh_dedup proto-id collision, faceVarying UV seam-split OOB, shoe rigid-skinning).
+
+---
+
+# Session Handoff — 2026-05-10 (visibility round-trip + payload-root scene browser)
+
+**Last Updated:** 2026-05-10 on `v0.16.2-bugfixes`.
+
+**Current work:** Three visibility / scene-browser bugs fixed:
+
+1. Persisted `visibility="invisible"` can now be toggled visible on reopen. `usd_bridge_write_visibility` + `usd_bridge_layer_write_visibility` use `UsdGeomImageable::MakeVisible()`/`MakeInvisible()` — walks ancestors, defeats USD pruning. Loader no longer skips invisible meshes (they're prototypes now; visibility filtered at instance level via `hidden_prim_paths` + `reload_instance_visibility`).
+2. Single-layer / payload-rooted USDs (test_balls.usd, ALab entry.usda) populate the scene browser on first open. `usd_bridge_load_payloads` resets `prims_cached=false` and unconditionally re-runs `cache_prim_data` after `stage->Load()`. The LoadNone open had populated `all_prims` against an unloaded composition (UsdPrimDefaultPredicate excludes unloaded-payload prims → 0 roots), and the cache flag-gated the post-payload recache into a no-op.
+3. Root-layer mute attempts no longer corrupt layer state. `usd_bridge_stage_mute_layer` rejects via `SdfLayer::Find` + `SdfLayerHandle` equality compare against `GetRootLayer()`. USD's soft `TF_CODING_ERROR` was previously ignored, letting `layer_state.muted` record a phantom mute that replayed on every reload.
+
+Plus `SceneBrowserModel` deferred-rebuild `QTimer::singleShot(0)` guarded on `m_root->children.empty()` for the "model constructed after revision bump" race.
+
+**Changes:**
+- `cpp/usd_bridge/usd_bridge.cpp` — visibility helpers, mute gate, cache recache
+- `crates/bif_core/src/usd/loader.rs:213` — removed invisible-mesh skip
+- `crates/bif_qt/cpp/scene_browser_model.cpp` — `<QTimer>` include + guarded deferred rebuild
+
+**Validation:** `cargo build`, `cargo clippy -- -D warnings`, `cargo fmt --check` clean. 4 visibility + 3 mute + 1 export-visibility tests pass under `--test-threads=1`. Manual repro on `test_balls.usd` and ALab `entry.usda` confirms all three bugs fixed. Code-reviewed via `vfx-code-reviewer` + `Code Reviewer` in parallel; both must-fix items applied.
+
+**Next:** File MILESTONES TODOs (ancestor unhide UX surface, visibility time samples, defer-GPU-upload for invisible prototypes, `cache_prim_data` thread-safety annotation). Add three missing tests.
+
+---
+
+# Session Handoff — 2026-05-09 (visibility toggle perf: skip full GPU rebuild)
+
+**Last Updated:** 2026-05-09 on `v0.16.2-bugfixes`.
+
+**Current work:** Visibility eye-icon toggles no longer trigger full `reload_working_scene()` (GPU buffer rebuilds, texture reload from disk, Embree BVH rebuild). Instead:
+- `reload_after_usd_edit()` dispatches per EditOperation variant
+- Visibility → `reload_instance_visibility()` (instance groups + culling only)
+- Transform commit → skip entirely (local fast path handles GPU write)
+- MaterialParamOverride → keep `reload_working_scene()` but skip `materials_dirty` (no texture I/O)
+
+**Changes:**
+- `crates/bif_viewport/src/scene_loader.rs` — new `reload_instance_visibility()` (~170 lines), masks visible instances from ground-truth arrays, rebuilds only multi-draw instance groups + culling
+- `crates/bif_viewport/src/lib.rs` — dispatch in `reload_after_usd_edit()`, post-hit vis filter in `pick_instance_at`
+- `crates/bif_viewport/src/types.rs` — `full_material_ids`, `full_purposes`, `all_prim_paths` on `SceneInstances`
+
+**Validation:** `cargo build -p bif_viewport`, clippy, fmt clean. 162 bif_viewport tests pass. Manual smoke: visibility toggle is instant, hide→unhide works, no culling mismatch warnings.
+
+**Next:** More dogfood testing on texture-heavy scenes. Then merge to main or cut release.
+- `scene_browser_widget.cpp/h`: save/restore expanded state across model resets
+
+**Validation:** Rust `cargo build` + `cargo fmt` clean. Manual Qt smoke confirms eye icon updates + tree doesn't collapse.
+
+**Next:** Merge to main or cut release.
+
+---
+
+# Session Handoff — 2026-05-07 (visibility toggle + USDA Apply: tests + docs)
 
 **Last Updated:** 2026-05-07 on `v0.16.1-followups`.
 
-**Current work:** Repo housekeeping — removed old codex agent system (`agents/`, `reviews/`, `scripts/`, `debug_output.txt`, `.mcp.json`), migrated to `_deprecated/` archive, replaced with `.pi/` pi skills system. No code changes. [1mNext → continue v0.16.5 Qt Graphite styling pass[0m
+**Current work:** Added regression tests for visibility toggle and USDA Apply undo/redo state verification, updated BUGLIST / CHANGELOG / SESSION_HANDOFF docs to reflect the dogfood fixes committed on 2026-05-05 (`b69f5e5`). The viewport refresh pipeline (`reload_after_usd_edit`, `refresh_usd_visibility_state`, eye glyph in scene browser, removed Property Inspector checkbox, Qt undo/redo revision bumps) is already committed and verified.
 
-**Validation:** `cargo build`, `cargo clippy -- -D warnings`, `cargo fmt --check` — all clean. Bypassed bif_core tests (no code changes).
+**Validation:** `cargo build`, `cargo clippy -- -D warnings`, `cargo fmt --check`. New tests: `visibility_toggle_undo_redo_state`, `usda_apply_visibility_undo_state` in `edit_op_roundtrip.rs`. Manual Qt smoke pending.
+
+**Known limitation:** Geometry-changing USDA Apply (new prims, different meshes) requires a new `extract_scene_from_stage` function to re-extract geometry from the in-memory USD stage — deferred to v0.17.0. Currently USDA Apply only refreshes visibility/material state; structural changes to prims are invisible until a full stage reload.
+
+**Next action:** Manual Qt smoke on dogfood scene (eye toggle, USDA Apply, undo, redo). Then merge to main or cut release.
 
 ---
 
