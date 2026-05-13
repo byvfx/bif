@@ -13,7 +13,7 @@ use bif_renderer::{
 };
 
 use crate::batch_render::{self, BatchSceneData, SceneBuilderData};
-use crate::ivar_state::{BatchRenderStatus, BuildStatus, IvarMessage};
+use crate::ivar_state::{self, BatchRenderStatus, BuildStatus, IvarMessage};
 use crate::Renderer;
 
 impl Renderer {
@@ -25,121 +25,11 @@ impl Renderer {
         let width = image.width;
         let height = image.height;
 
-        // Generate RGBA bytes based on selected AOV channel
-        let rgba = match self.ivar.ivar_state.preview_aov {
-            crate::ivar_state::AovChannel::Beauty => image.to_rgba(),
-            crate::ivar_state::AovChannel::Alpha => {
-                // Alpha as grayscale
-                if let Some(ref alpha) = self.ivar.ivar_state.alpha_buffer {
-                    alpha
-                        .iter()
-                        .flat_map(|&a| {
-                            let v = (a.clamp(0.0, 1.0) * 255.0) as u8;
-                            [v, v, v, 255]
-                        })
-                        .collect()
-                } else {
-                    image.to_rgba()
-                }
-            }
-            crate::ivar_state::AovChannel::Depth => {
-                // Depth normalized to [0, 1] as grayscale
-                if let Some(ref depth) = self.ivar.ivar_state.depth_buffer {
-                    let depth_near = self.ivar.ivar_state.batch_settings.aov_settings.depth_near;
-                    let depth_far = self.ivar.ivar_state.batch_settings.aov_settings.depth_far;
-                    let range = depth_far - depth_near;
-                    depth
-                        .iter()
-                        .flat_map(|&d| {
-                            let normalized = if d >= f32::INFINITY || range <= 0.0 {
-                                0.0
-                            } else {
-                                ((d - depth_near) / range).clamp(0.0, 1.0)
-                            };
-                            let v = (normalized * 255.0) as u8;
-                            [v, v, v, 255]
-                        })
-                        .collect()
-                } else {
-                    image.to_rgba()
-                }
-            }
-            crate::ivar_state::AovChannel::Normal => {
-                // Geometric normal mapped from [-1,1] to [0,1] as RGB
-                if let Some(ref normal) = self.ivar.ivar_state.normal_buffer {
-                    normal
-                        .iter()
-                        .flat_map(|n| {
-                            let r = ((n[0] * 0.5 + 0.5).clamp(0.0, 1.0) * 255.0) as u8;
-                            let g = ((n[1] * 0.5 + 0.5).clamp(0.0, 1.0) * 255.0) as u8;
-                            let b = ((n[2] * 0.5 + 0.5).clamp(0.0, 1.0) * 255.0) as u8;
-                            [r, g, b, 255]
-                        })
-                        .collect()
-                } else {
-                    image.to_rgba()
-                }
-            }
-            crate::ivar_state::AovChannel::ShadingNormal => {
-                // Shading normal (after normal map) mapped from [-1,1] to [0,1] as RGB
-                if let Some(ref sn) = self.ivar.ivar_state.shading_normal_buffer {
-                    sn.iter()
-                        .flat_map(|n| {
-                            let r = ((n[0] * 0.5 + 0.5).clamp(0.0, 1.0) * 255.0) as u8;
-                            let g = ((n[1] * 0.5 + 0.5).clamp(0.0, 1.0) * 255.0) as u8;
-                            let b = ((n[2] * 0.5 + 0.5).clamp(0.0, 1.0) * 255.0) as u8;
-                            [r, g, b, 255]
-                        })
-                        .collect()
-                } else {
-                    image.to_rgba()
-                }
-            }
-            crate::ivar_state::AovChannel::Albedo => {
-                // Albedo as RGB (linear, gamma-corrected for display)
-                if let Some(ref albedo) = self.ivar.ivar_state.albedo_buffer {
-                    albedo
-                        .iter()
-                        .flat_map(|a| {
-                            let r = (a[0].sqrt().clamp(0.0, 1.0) * 255.0) as u8;
-                            let g = (a[1].sqrt().clamp(0.0, 1.0) * 255.0) as u8;
-                            let b = (a[2].sqrt().clamp(0.0, 1.0) * 255.0) as u8;
-                            [r, g, b, 255]
-                        })
-                        .collect()
-                } else {
-                    image.to_rgba()
-                }
-            }
-            crate::ivar_state::AovChannel::CacheHeatmap => {
-                // Cache heatmap: black → red → yellow → green
-                if let Some(ref heatmap) = self.ivar.ivar_state.cache_heatmap_buffer {
-                    heatmap
-                        .iter()
-                        .flat_map(|&count| {
-                            // Normalize: 0 = black, 16+ = green (saturated)
-                            let t = (count as f32 / 16.0).clamp(0.0, 1.0);
-                            let (r, g, b) = if t < 0.5 {
-                                // black → red (0..0.5)
-                                let s = t * 2.0;
-                                (s, 0.0, 0.0)
-                            } else if t < 0.75 {
-                                // red → yellow (0.5..0.75)
-                                let s = (t - 0.5) * 4.0;
-                                (1.0, s, 0.0)
-                            } else {
-                                // yellow → green (0.75..1.0)
-                                let s = (t - 0.75) * 4.0;
-                                (1.0 - s, 1.0, 0.0)
-                            };
-                            [(r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8, 255]
-                        })
-                        .collect()
-                } else {
-                    image.to_rgba()
-                }
-            }
-        };
+        let rgba = ivar_state::encode_aov_rgba(
+            self.ivar.ivar_state.preview_aov,
+            &self.ivar.ivar_state,
+            image,
+        );
 
         self.gpu.queue.write_texture(
             wgpu::ImageCopyTexture {

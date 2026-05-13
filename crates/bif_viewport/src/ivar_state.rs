@@ -72,6 +72,116 @@ impl AovChannel {
     }
 }
 
+/// Encode a selected AOV channel from `state` to RGBA8 bytes for display.
+///
+/// `image` is the beauty image — used as fallback when an AOV buffer is `None`
+/// (e.g. selecting Depth before any render has populated `depth_buffer`).
+///
+/// Output layout: `width * height * 4` bytes, row-major, RGBA8.
+pub fn encode_aov_rgba(aov: AovChannel, state: &IvarState, image: &ImageBuffer) -> Vec<u8> {
+    match aov {
+        AovChannel::Beauty => image.to_rgba(),
+        AovChannel::Alpha => state
+            .alpha_buffer
+            .as_ref()
+            .map(|alpha| {
+                alpha
+                    .iter()
+                    .flat_map(|&a| {
+                        let v = (a.clamp(0.0, 1.0) * 255.0) as u8;
+                        [v, v, v, 255]
+                    })
+                    .collect()
+            })
+            .unwrap_or_else(|| image.to_rgba()),
+        AovChannel::Depth => state
+            .depth_buffer
+            .as_ref()
+            .map(|depth| {
+                let near = state.batch_settings.aov_settings.depth_near;
+                let far = state.batch_settings.aov_settings.depth_far;
+                let range = far - near;
+                depth
+                    .iter()
+                    .flat_map(|&d| {
+                        let n = if d >= f32::INFINITY || range <= 0.0 {
+                            0.0
+                        } else {
+                            ((d - near) / range).clamp(0.0, 1.0)
+                        };
+                        let v = (n * 255.0) as u8;
+                        [v, v, v, 255]
+                    })
+                    .collect()
+            })
+            .unwrap_or_else(|| image.to_rgba()),
+        AovChannel::Normal => encode_normal_buffer(state.normal_buffer.as_deref(), image),
+        AovChannel::ShadingNormal => {
+            encode_normal_buffer(state.shading_normal_buffer.as_deref(), image)
+        }
+        AovChannel::Albedo => state
+            .albedo_buffer
+            .as_ref()
+            .map(|alb| {
+                alb.iter()
+                    .flat_map(|c| {
+                        let r = (c[0].sqrt().clamp(0.0, 1.0) * 255.0) as u8;
+                        let g = (c[1].sqrt().clamp(0.0, 1.0) * 255.0) as u8;
+                        let b = (c[2].sqrt().clamp(0.0, 1.0) * 255.0) as u8;
+                        [r, g, b, 255]
+                    })
+                    .collect()
+            })
+            .unwrap_or_else(|| image.to_rgba()),
+        AovChannel::CacheHeatmap => state
+            .cache_heatmap_buffer
+            .as_ref()
+            .map(|hm| {
+                let max = hm.iter().copied().max().unwrap_or(0).max(1) as f32;
+                hm.iter()
+                    .flat_map(|&count| {
+                        let t = (count as f32 / max).clamp(0.0, 1.0);
+                        let [r, g, b] = turbo_colormap(t);
+                        [r, g, b, 255]
+                    })
+                    .collect()
+            })
+            .unwrap_or_else(|| image.to_rgba()),
+    }
+}
+
+fn encode_normal_buffer(buf: Option<&[[f32; 3]]>, image: &ImageBuffer) -> Vec<u8> {
+    match buf {
+        Some(n) => n
+            .iter()
+            .flat_map(|v| {
+                let r = ((v[0] * 0.5 + 0.5).clamp(0.0, 1.0) * 255.0) as u8;
+                let g = ((v[1] * 0.5 + 0.5).clamp(0.0, 1.0) * 255.0) as u8;
+                let b = ((v[2] * 0.5 + 0.5).clamp(0.0, 1.0) * 255.0) as u8;
+                [r, g, b, 255]
+            })
+            .collect(),
+        None => image.to_rgba(),
+    }
+}
+
+/// Turbo colormap (Google Research, 2019) — polynomial approximation.
+/// Input `t` in [0, 1], output RGB8. Coefficients truncated to f32 precision.
+fn turbo_colormap(t: f32) -> [u8; 3] {
+    let t = t.clamp(0.0, 1.0) as f64;
+    let r = 0.13572138
+        + t * (4.6153926 + t * (-42.660324 + t * (132.13108 + t * (-152.9424 + t * 59.28638))));
+    let g = 0.09140261
+        + t * (2.1941884 + t * (4.8429666 + t * (-14.185033 + t * (4.2772985 + t * 2.829566))));
+    let b = 0.1066733
+        + t * (12.641946 + t * (-60.58205 + t * (110.36277 + t * (-89.90311 + t * 27.34825))));
+    [
+        (r.clamp(0.0, 1.0) * 255.0) as u8,
+        (g.clamp(0.0, 1.0) * 255.0) as u8,
+        (b.clamp(0.0, 1.0) * 255.0) as u8,
+    ]
+}
+
 impl RenderMode {
     /// Get display name for UI.
     pub fn display_name(&self) -> &'static str {
@@ -1066,5 +1176,97 @@ mod tests {
 
         assert!(!state.denoise.is_denoised);
         assert!(state.denoise.denoised_buffer.is_none());
+    }
+
+    // ----- encode_aov_rgba tests -------------------------------------------
+
+    fn fixture_image(w: u32, h: u32) -> ImageBuffer {
+        let mut img = ImageBuffer::new(w, h);
+        for y in 0..h {
+            for x in 0..w {
+                img.set(x, y, Color::new(0.5, 0.5, 0.5));
+            }
+        }
+        img
+    }
+
+    #[test]
+    fn encode_beauty_falls_through_to_image() {
+        let state = IvarState::default();
+        let img = fixture_image(2, 1);
+        let out = encode_aov_rgba(AovChannel::Beauty, &state, &img);
+        assert_eq!(out.len(), 2 * 1 * 4);
+        assert_eq!(out, img.to_rgba());
+    }
+
+    #[test]
+    fn encode_alpha_replicates_to_rgb() {
+        let mut state = IvarState::default();
+        state.alpha_buffer = Some(vec![0.0, 1.0, 0.5]);
+        let img = fixture_image(3, 1);
+        let out = encode_aov_rgba(AovChannel::Alpha, &state, &img);
+        assert_eq!(out[0..4], [0, 0, 0, 255]);
+        assert_eq!(out[4..8], [255, 255, 255, 255]);
+        // 0.5 * 255 = 127 (truncated by `as u8`)
+        assert_eq!(out[8..12], [127, 127, 127, 255]);
+    }
+
+    #[test]
+    fn encode_depth_normalizes_against_near_far() {
+        let mut state = IvarState::default();
+        state.batch_settings.aov_settings.depth_near = 0.0;
+        state.batch_settings.aov_settings.depth_far = 10.0;
+        state.depth_buffer = Some(vec![0.0, 10.0, 5.0, f32::INFINITY]);
+        let img = fixture_image(4, 1);
+        let out = encode_aov_rgba(AovChannel::Depth, &state, &img);
+        assert_eq!(out[0..4], [0, 0, 0, 255]); // near
+        assert_eq!(out[4..8], [255, 255, 255, 255]); // far
+        assert_eq!(out[8..12], [127, 127, 127, 255]); // mid (0.5 truncated)
+        assert_eq!(out[12..16], [0, 0, 0, 255]); // infinity → 0
+    }
+
+    #[test]
+    fn encode_normal_remaps_signed_to_unsigned() {
+        let mut state = IvarState::default();
+        state.normal_buffer = Some(vec![[-1.0, 0.0, 1.0], [0.0, 1.0, -1.0]]);
+        let img = fixture_image(2, 1);
+        let out = encode_aov_rgba(AovChannel::Normal, &state, &img);
+        // [-1,0,1] → [0, 127, 255]
+        assert_eq!(out[0..4], [0, 127, 255, 255]);
+        // [0,1,-1] → [127, 255, 0]
+        assert_eq!(out[4..8], [127, 255, 0, 255]);
+    }
+
+    #[test]
+    fn encode_missing_aov_buffer_falls_back_to_beauty() {
+        let state = IvarState::default(); // no AOV buffers allocated
+        let img = fixture_image(2, 1);
+        let out = encode_aov_rgba(AovChannel::Depth, &state, &img);
+        assert_eq!(out, img.to_rgba());
+    }
+
+    #[test]
+    fn encode_cache_heatmap_auto_normalizes_and_uses_turbo() {
+        let mut state = IvarState::default();
+        // max = 100, so 0 → t=0, 50 → t=0.5, 100 → t=1.0
+        state.cache_heatmap_buffer = Some(vec![0, 50, 100]);
+        let img = fixture_image(3, 1);
+        let out = encode_aov_rgba(AovChannel::CacheHeatmap, &state, &img);
+        assert_eq!(out.len(), 3 * 4);
+        // Sanity: t=0 and t=1 produce different colors; not constant grey
+        assert_ne!(&out[0..3], &out[8..11]);
+        // All alphas 255
+        assert_eq!(out[3], 255);
+        assert_eq!(out[7], 255);
+        assert_eq!(out[11], 255);
+    }
+
+    #[test]
+    fn encode_cache_heatmap_all_zero_does_not_panic() {
+        let mut state = IvarState::default();
+        state.cache_heatmap_buffer = Some(vec![0, 0, 0, 0]);
+        let img = fixture_image(4, 1);
+        let out = encode_aov_rgba(AovChannel::CacheHeatmap, &state, &img);
+        assert_eq!(out.len(), 4 * 4);
     }
 }

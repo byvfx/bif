@@ -1554,6 +1554,44 @@ impl Renderer {
         self.update_camera();
     }
 
+    /// AOV channel currently displayed by the Ivar preview overlay.
+    pub fn preview_aov(&self) -> ivar_state::AovChannel {
+        self.ivar.ivar_state.preview_aov
+    }
+
+    /// Change the AOV channel shown by the Ivar preview overlay. Picked up
+    /// on the next 16ms viewport tick via `upload_ivar_pixels`.
+    pub fn set_preview_aov(&mut self, aov: ivar_state::AovChannel) {
+        self.ivar.ivar_state.preview_aov = aov;
+    }
+
+    /// Active render mode (Vulkan rasterizer vs Ivar CPU path tracer overlay).
+    pub fn render_mode(&self) -> ivar_state::RenderMode {
+        self.ivar.ivar_state.mode
+    }
+
+    /// Switch the render mode. Vulkan flips back to the wgpu rasterizer
+    /// immediately; Ivar shows whatever the path tracer has accumulated so far
+    /// (use `trigger_ivar_render` to start a fresh pass).
+    pub fn set_render_mode(&mut self, mode: ivar_state::RenderMode) {
+        self.ivar.ivar_state.mode = mode;
+    }
+
+    /// Whether the Ivar path tracer's blue sky gradient background is enabled.
+    /// When off, escaped rays return solid black (or the configured background)
+    /// instead of the white→blue gradient at `bif_renderer::sky_gradient`.
+    pub fn sky_gradient_enabled(&self) -> bool {
+        self.ivar.ivar_state.use_sky_gradient
+    }
+
+    /// Toggle the Ivar path tracer's blue sky gradient background. Takes effect
+    /// on the next bucket dispatched by `trigger_ivar_render`. Set
+    /// `IvarState::use_sky_gradient`, which is read into `RenderConfig` at
+    /// pass start.
+    pub fn set_sky_gradient_enabled(&mut self, enabled: bool) {
+        self.ivar.ivar_state.use_sky_gradient = enabled;
+    }
+
     /// Sync viewport camera to a scene camera (from Camera primitive).
     ///
     /// Reads the instance transform and applies the camera's FOV.

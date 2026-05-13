@@ -15,6 +15,7 @@
 #include <QApplication>
 #include <QComboBox>
 #include <QByteArray>
+#include <QCheckBox>
 #include <QColor>
 #include <QDockWidget>
 #include <QDragEnterEvent>
@@ -691,6 +692,112 @@ CentralArea build_central_area(QMainWindow* window, BifShellState* state) {
                      });
 
     row_layout->addWidget(camera_picker, 0);
+
+    // AOV preview picker — QComboBox listing AovChannel::all() entries.
+    // Drives `BifShellState::preview_aov` via `on_select_preview_aov`.
+    // Output appears on the next 16ms viewport tick — no repaint signal needed.
+    auto* aov_picker = new QComboBox(breadcrumb_row);
+    aov_picker->setObjectName(QStringLiteral("aov_picker"));
+    aov_picker->setMinimumWidth(130);
+    aov_picker->setMaximumWidth(180);
+    aov_picker->setToolTip(QStringLiteral("AOV channel shown in the render view"));
+    aov_picker->setStyleSheet(QStringLiteral(
+        "QComboBox#aov_picker {"
+        "  background-color: rgba(34, 38, 44, 200);"
+        "  color: rgba(180, 185, 195, 255);"
+        "  border: 1px solid rgba(55, 60, 70, 255);"
+        "  border-radius: 3px;"
+        "  padding: 2px 6px;"
+        "  font-size: 11px;"
+        "}"
+        "QComboBox#aov_picker::drop-down { border: none; }"
+        "QComboBox#aov_picker:hover { border-color: rgba(90, 100, 120, 255); }"));
+
+    {
+        aov_picker->blockSignals(true);
+        const int count = state->preview_aov_count();
+        for (int i = 0; i < count; ++i) {
+            aov_picker->addItem(state->preview_aov_name_at(i));
+        }
+        aov_picker->setCurrentIndex(state->active_preview_aov_index());
+        aov_picker->blockSignals(false);
+    }
+
+    QObject::connect(aov_picker,
+                     QOverload<int>::of(&QComboBox::currentIndexChanged),
+                     state, [=](int index) {
+                         state->on_select_preview_aov(index);
+                     });
+
+    row_layout->addWidget(aov_picker, 0);
+
+    // Render-mode picker — flips IvarState::mode between Vulkan rasterizer and
+    // Ivar overlay. The "Ivar Render" button in render_settings still triggers
+    // a fresh batch; this combo just controls which path is on screen.
+    auto* mode_picker = new QComboBox(breadcrumb_row);
+    mode_picker->setObjectName(QStringLiteral("mode_picker"));
+    mode_picker->setMinimumWidth(120);
+    mode_picker->setMaximumWidth(160);
+    mode_picker->setToolTip(QStringLiteral("Render mode shown in the viewport"));
+    mode_picker->setStyleSheet(QStringLiteral(
+        "QComboBox#mode_picker {"
+        "  background-color: rgba(34, 38, 44, 200);"
+        "  color: rgba(180, 185, 195, 255);"
+        "  border: 1px solid rgba(55, 60, 70, 255);"
+        "  border-radius: 3px;"
+        "  padding: 2px 6px;"
+        "  font-size: 11px;"
+        "}"
+        "QComboBox#mode_picker::drop-down { border: none; }"
+        "QComboBox#mode_picker:hover { border-color: rgba(90, 100, 120, 255); }"));
+
+    {
+        mode_picker->blockSignals(true);
+        const int count = state->render_mode_count();
+        for (int i = 0; i < count; ++i) {
+            mode_picker->addItem(state->render_mode_name_at(i));
+        }
+        mode_picker->setCurrentIndex(state->active_render_mode_index());
+        mode_picker->blockSignals(false);
+    }
+
+    QObject::connect(mode_picker,
+                     QOverload<int>::of(&QComboBox::currentIndexChanged),
+                     state, [=](int index) {
+                         state->on_select_render_mode(index);
+                     });
+
+    row_layout->addWidget(mode_picker, 0);
+
+    // Sky-gradient toggle — flips IvarState::use_sky_gradient. When off, the
+    // Ivar path tracer returns solid background instead of the white→blue
+    // gradient (bif_renderer::sky_gradient).
+    auto* sky_toggle = new QCheckBox(QStringLiteral("Sky Gradient"), breadcrumb_row);
+    sky_toggle->setObjectName(QStringLiteral("sky_toggle"));
+    sky_toggle->setToolTip(QStringLiteral(
+        "Blue sky-gradient background for the Ivar path tracer (when no HDRI)"));
+    sky_toggle->setStyleSheet(QStringLiteral(
+        "QCheckBox#sky_toggle {"
+        "  color: rgba(180, 185, 195, 255);"
+        "  font-size: 11px;"
+        "  padding: 2px 6px;"
+        "}"
+        "QCheckBox#sky_toggle::indicator {"
+        "  width: 12px; height: 12px;"
+        "  border: 1px solid rgba(85, 92, 105, 255);"
+        "  border-radius: 2px;"
+        "  background-color: rgba(34, 38, 44, 200);"
+        "}"
+        "QCheckBox#sky_toggle::indicator:checked {"
+        "  background-color: rgba(120, 165, 220, 220);"
+        "  border-color: rgba(150, 190, 230, 255);"
+        "}"));
+    sky_toggle->setChecked(state->sky_gradient_enabled());
+
+    QObject::connect(sky_toggle, &QCheckBox::toggled, state,
+                     [=](bool checked) { state->on_set_sky_gradient_enabled(checked); });
+
+    row_layout->addWidget(sky_toggle, 0);
 
     ca.edit_target_pill = build_edit_target_chip(breadcrumb_row, state, /*compact=*/false);
     row_layout->addWidget(ca.edit_target_pill, 0);

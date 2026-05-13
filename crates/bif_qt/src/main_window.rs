@@ -866,6 +866,48 @@ pub mod qobject {
         #[qinvokable]
         fn on_select_camera(self: Pin<&mut BifShellState>, source: QString);
 
+        /// Count of AOV preview channels (drives the render-view combo).
+        #[qinvokable]
+        fn preview_aov_count(self: &BifShellState) -> i32;
+
+        /// Display name of AOV preview channel at `index` ("Beauty", "Depth", …).
+        /// Returns empty QString on OOB.
+        #[qinvokable]
+        fn preview_aov_name_at(self: &BifShellState, index: i32) -> QString;
+
+        /// Index of the currently active AOV preview channel.
+        #[qinvokable]
+        fn active_preview_aov_index(self: &BifShellState) -> i32;
+
+        /// Switch the AOV preview channel by combo index. No-op if OOB.
+        #[qinvokable]
+        fn on_select_preview_aov(self: Pin<&mut BifShellState>, index: i32);
+
+        /// Count of render modes ("Live (Vulkan)", "Ivar").
+        #[qinvokable]
+        fn render_mode_count(self: &BifShellState) -> i32;
+
+        /// Display name of render mode at `index`. Empty QString on OOB.
+        #[qinvokable]
+        fn render_mode_name_at(self: &BifShellState, index: i32) -> QString;
+
+        /// Index of the currently active render mode.
+        #[qinvokable]
+        fn active_render_mode_index(self: &BifShellState) -> i32;
+
+        /// Switch the render mode by combo index. No-op if OOB.
+        #[qinvokable]
+        fn on_select_render_mode(self: Pin<&mut BifShellState>, index: i32);
+
+        /// Whether the Ivar blue sky-gradient background is enabled.
+        #[qinvokable]
+        fn sky_gradient_enabled(self: &BifShellState) -> bool;
+
+        /// Toggle the Ivar blue sky-gradient background. When off, escaped
+        /// camera rays return solid background instead of the white→blue ramp.
+        #[qinvokable]
+        fn on_set_sky_gradient_enabled(self: Pin<&mut BifShellState>, enabled: bool);
+
         /// Author a working-layer visibility opinion for `path`.
         /// Routes through `Renderer::dispatch_visibility` → C4a
         /// `EditOperation::Visibility` so the toggle is one undo step
@@ -3219,6 +3261,97 @@ impl qobject::BifShellState {
             let path = path.to_string();
             with_viewport_mut(|vp| vp.renderer_mut().apply_usd_camera(&path));
         }
+    }
+
+    fn preview_aov_count(&self) -> i32 {
+        bif_viewport::ivar_state::AovChannel::all().len() as i32
+    }
+
+    fn preview_aov_name_at(&self, index: i32) -> cxx_qt_lib::QString {
+        let all = bif_viewport::ivar_state::AovChannel::all();
+        if index < 0 || (index as usize) >= all.len() {
+            return cxx_qt_lib::QString::from("");
+        }
+        cxx_qt_lib::QString::from(all[index as usize].display_name())
+    }
+
+    fn active_preview_aov_index(&self) -> i32 {
+        let active = with_viewport_mut(|vp| vp.renderer_mut().preview_aov())
+            .unwrap_or(bif_viewport::ivar_state::AovChannel::Beauty);
+        bif_viewport::ivar_state::AovChannel::all()
+            .iter()
+            .position(|a| *a == active)
+            .map(|i| i as i32)
+            .unwrap_or(0)
+    }
+
+    fn on_select_preview_aov(self: Pin<&mut Self>, index: i32) {
+        let all = bif_viewport::ivar_state::AovChannel::all();
+        if index < 0 || (index as usize) >= all.len() {
+            return;
+        }
+        let aov = all[index as usize];
+        with_viewport_mut(|vp| {
+            vp.renderer_mut().set_preview_aov(aov);
+        });
+    }
+
+    fn render_mode_count(&self) -> i32 {
+        render_mode_list().len() as i32
+    }
+
+    fn render_mode_name_at(&self, index: i32) -> cxx_qt_lib::QString {
+        let modes = render_mode_list();
+        if index < 0 || (index as usize) >= modes.len() {
+            return cxx_qt_lib::QString::from("");
+        }
+        cxx_qt_lib::QString::from(render_mode_display_name(modes[index as usize]))
+    }
+
+    fn active_render_mode_index(&self) -> i32 {
+        let active = with_viewport_mut(|vp| vp.renderer_mut().render_mode())
+            .unwrap_or(bif_viewport::ivar_state::RenderMode::Vulkan);
+        render_mode_list()
+            .iter()
+            .position(|m| *m == active)
+            .map(|i| i as i32)
+            .unwrap_or(0)
+    }
+
+    fn on_select_render_mode(self: Pin<&mut Self>, index: i32) {
+        let modes = render_mode_list();
+        if index < 0 || (index as usize) >= modes.len() {
+            return;
+        }
+        let mode = modes[index as usize];
+        with_viewport_mut(|vp| {
+            vp.renderer_mut().set_render_mode(mode);
+        });
+    }
+
+    fn sky_gradient_enabled(&self) -> bool {
+        with_viewport_mut(|vp| vp.renderer_mut().sky_gradient_enabled()).unwrap_or(true)
+    }
+
+    fn on_set_sky_gradient_enabled(self: Pin<&mut Self>, enabled: bool) {
+        with_viewport_mut(|vp| {
+            vp.renderer_mut().set_sky_gradient_enabled(enabled);
+        });
+    }
+}
+
+/// Render modes exposed to the breadcrumb mode picker. Order is the canonical
+/// "Live first, batch second" UX order.
+fn render_mode_list() -> &'static [bif_viewport::ivar_state::RenderMode] {
+    use bif_viewport::ivar_state::RenderMode;
+    &[RenderMode::Vulkan, RenderMode::Ivar]
+}
+
+fn render_mode_display_name(mode: bif_viewport::ivar_state::RenderMode) -> &'static str {
+    use bif_viewport::ivar_state::RenderMode;
+    match mode {
+        RenderMode::Vulkan => "Live (Vulkan)",
+        RenderMode::Ivar => "Ivar",
     }
 }
 
