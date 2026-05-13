@@ -6457,6 +6457,14 @@ UsdBridgeError usd_bridge_get_prim_relationships(
             entries.push_back(std::move(entry));
         }
 
+        // Defensive: even if the rels.empty() guard above is ever removed,
+        // never allocate a zero-sized array. `new T[0]` returns a unique
+        // non-null pointer per the standard; if a Rust caller short-circuits
+        // on count==0 before invoking the matching free, that pointer leaks.
+        if (entries.empty()) {
+            return USD_BRIDGE_SUCCESS;  // out_relationships=null, out_count=0 already set
+        }
+
         size_t count = entries.size();
         auto* data = new UsdBridgeRelationshipData[count];
         for (size_t i = 0; i < count; ++i) {

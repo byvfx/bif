@@ -234,7 +234,15 @@ void SceneBrowserModel::refresh_node(const QModelIndex& parent) {
     // populated subtree mid-walk has surprising lifecycle interactions
     // with QTreeView selection state, so let the standard fetchMore
     // path own non-empty refreshes.
+    //
+    // SAFETY (callers): begin/endInsertRows on `parent` only invalidates
+    // persistent indices into `parent`'s rows; it does NOT affect the
+    // ancestor's iteration (different model node). Safe to call from
+    // find_source_index_for_path's recursion provided this guard holds.
+    // TODO(v0.17): convert callers to a two-pass pre-populate so this
+    //   function never has to fire signals during a sibling walk.
     if (!node->children.empty()) return;
+    Q_ASSERT(!node->children_populated || node->child_count == 0);
     const auto children = describe_children(m_state, node->path);
     if (children.empty()) {
         node->children_populated = true;
