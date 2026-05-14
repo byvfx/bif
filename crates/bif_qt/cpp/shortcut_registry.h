@@ -60,6 +60,16 @@ inline constexpr const char* kWorkspaceZenMode = "workspace.zen_mode";
 // ---- Command Palette ----------------------------------------------
 inline constexpr const char* kPaletteOpen = "palette.open";
 
+// ---- Panels (View > Panels submenu) -------------------------------
+inline constexpr const char* kPanelSceneBrowser = "panels.scene_browser";
+inline constexpr const char* kPanelLayerStack = "panels.layer_stack";
+inline constexpr const char* kPanelPropertyInspector = "panels.property_inspector";
+inline constexpr const char* kPanelRenderSettings = "panels.render_settings";
+inline constexpr const char* kPanelCollectionEditor = "panels.collection_editor";
+inline constexpr const char* kPanelNodeGraph = "panels.node_graph";
+inline constexpr const char* kPanelTimeline = "panels.timeline";
+inline constexpr const char* kPanelUsdaSource = "panels.usda_source";
+
 /// Returns the QKeySequence for `action_id`. Consults QSettings
 /// (`shortcuts/<action_id>`) first; falls back to `default_sequence`.
 /// A non-empty QSettings value that fails to parse also falls back.

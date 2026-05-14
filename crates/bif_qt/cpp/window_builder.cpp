@@ -46,6 +46,7 @@
 #include <QString>
 #include <QStringList>
 #include <QTimer>
+#include <vector>
 #include <QToolBar>
 #include <QUrl>
 #include <QVBoxLayout>
@@ -350,6 +351,15 @@ struct MenuActions {
     QAction* toggle_node_graph_experimental;
     QAction* toggle_usda_source;
 
+    // View > Panels submenu (v0.16.6)
+    QAction* panel_scene_browser;
+    QAction* panel_layer_stack;
+    QAction* panel_property_inspector;
+    QAction* panel_render_settings;
+    QAction* panel_collection_editor;
+    QAction* panel_timeline;
+    QAction* reset_workspace_layout;
+
     QAction* about;
 };
 
@@ -434,12 +444,55 @@ MenuActions build_menu_bar(QMainWindow* window) {
     a.toggle_lod->setShortcut(QKeySequence(QStringLiteral("Ctrl+L")));
     a.toggle_lod->setCheckable(true);
     a.toggle_lod->setChecked(true);  // DisplaySettings::default = true
-    a.toggle_node_graph_experimental =
-        view->addAction(QStringLiteral("&Node Graph (Experimental)"));
-    a.toggle_node_graph_experimental->setCheckable(true);
-    a.toggle_usda_source = view->addAction(QStringLiteral("&USDA Source"));
-    a.toggle_usda_source->setCheckable(true);
+
+    view->addSeparator();
+    auto* panels = view->addMenu(QStringLiteral("&Panels"));
+    auto add_panel = [panels](const QString& label,
+                              const char* sc_id,
+                              const QKeySequence& def) -> QAction* {
+        auto* act = panels->addAction(label);
+        act->setCheckable(true);
+        act->setShortcut(sc::lookup(sc_id, def));
+        act->setShortcutContext(Qt::ApplicationShortcut);
+        return act;
+    };
+    a.panel_scene_browser = add_panel(
+        QStringLiteral("Scene &Browser"),
+        sc::kPanelSceneBrowser,
+        QKeySequence(QStringLiteral("Ctrl+Shift+1")));
+    a.panel_layer_stack = add_panel(
+        QStringLiteral("&Layer Stack"),
+        sc::kPanelLayerStack,
+        QKeySequence(QStringLiteral("Ctrl+Shift+2")));
+    a.panel_property_inspector = add_panel(
+        QStringLiteral("&Property Inspector"),
+        sc::kPanelPropertyInspector,
+        QKeySequence(QStringLiteral("Ctrl+Shift+3")));
+    a.panel_render_settings = add_panel(
+        QStringLiteral("&Render Settings"),
+        sc::kPanelRenderSettings,
+        QKeySequence(QStringLiteral("Ctrl+Shift+4")));
+    a.panel_collection_editor = add_panel(
+        QStringLiteral("&Collection Editor"),
+        sc::kPanelCollectionEditor,
+        QKeySequence(QStringLiteral("Ctrl+Shift+5")));
+    a.toggle_node_graph_experimental = add_panel(
+        QStringLiteral("&Node Graph (Experimental)"),
+        sc::kPanelNodeGraph,
+        QKeySequence(QStringLiteral("Ctrl+Shift+6")));
+    a.panel_timeline = add_panel(
+        QStringLiteral("&Timeline"),
+        sc::kPanelTimeline,
+        QKeySequence(QStringLiteral("Ctrl+Shift+7")));
+    a.toggle_usda_source = add_panel(
+        QStringLiteral("&USDA Source"),
+        sc::kPanelUsdaSource,
+        QKeySequence(QStringLiteral("Ctrl+Shift+8")));
     a.toggle_usda_source->setChecked(false);
+
+    view->addSeparator();
+    a.reset_workspace_layout =
+        view->addAction(QStringLiteral("&Reset Workspace Layout"));
 
     auto* render = menu->addMenu(QStringLiteral("&Render"));
     a.ivar_render = render->addAction(QStringLiteral("Ivar &Render"));
@@ -1159,21 +1212,94 @@ void wire_shell_actions(
             update_status();
         });
 
-    QObject::connect(actions.toggle_usda_source, &QAction::toggled, window,
-        [window, shell_state, update_status](bool enabled) {
-            auto* dock = window->findChild<QDockWidget*>(
-                QStringLiteral("dock_usda_source"));
-            if (dock) {
-                if (enabled) {
-                    dock->show();
-                    dock->raise();
-                } else {
-                    dock->hide();
+    // ── View ▸ Panels: bidirectional action ↔ dock visibility sync ──
+    // Each entry binds a checkable QAction to a QDockWidget so that:
+    //   - toggling the action shows/hides + raises the dock
+    //   - closing the dock via its X uncheck the action (visibilityChanged)
+    //   - workspace switches that call apply_default_layout propagate to the
+    //     menu state automatically (also through visibilityChanged).
+    struct PanelBinding {
+        QAction* action;
+        const char* dock_name;
+        const char* label;
+    };
+    const PanelBinding panel_bindings[] = {
+        {actions.panel_scene_browser,       "dock_scene_browser",       "Scene Browser"},
+        {actions.panel_layer_stack,         "dock_layer_stack",         "Layer Stack"},
+        {actions.panel_property_inspector,  "dock_property_inspector",  "Property Inspector"},
+        {actions.panel_render_settings,     "dock_render_settings",     "Render Settings"},
+        {actions.panel_collection_editor,   "dock_collection_editor",   "Collection Editor"},
+        {actions.panel_timeline,            "dock_timeline",            "Timeline"},
+        {actions.toggle_usda_source,        "dock_usda_source",         "USDA Source"},
+    };
+    // action → dock (lazy findChild inside lambda — survives ordering)
+    for (const auto& b : panel_bindings) {
+        QObject::connect(b.action, &QAction::toggled, window,
+            [window, shell_state, update_status, dn = b.dock_name, lbl = b.label](bool on) {
+                auto* dock = window->findChild<QDockWidget*>(QString::fromLatin1(dn));
+                if (dock) {
+                    if (on) { dock->show(); dock->raise(); }
+                    else    { dock->hide(); }
                 }
+                shell_state->setStatus_message(
+                    QStringLiteral("%1: %2").arg(QString::fromLatin1(lbl),
+                                                 on ? QStringLiteral("ON") : QStringLiteral("OFF")));
+                update_status();
+            });
+    }
+
+    // dock → action wiring + initial-state seeding. Deferred to the next
+    // event-loop tick because the docks are created later in build_shell
+    // (line ~1388+). At this point in the call site, findChild() would
+    // return nullptr.
+    QTimer::singleShot(0, window,
+        [window, panel_bindings = std::vector(std::begin(panel_bindings), std::end(panel_bindings)),
+         ng_action = actions.toggle_node_graph_experimental]() {
+            for (const auto& b : panel_bindings) {
+                auto* dock = window->findChild<QDockWidget*>(QString::fromLatin1(b.dock_name));
+                if (!dock) continue;
+                QObject::connect(dock, &QDockWidget::visibilityChanged, b.action,
+                    [act = b.action](bool visible) {
+                        if (act->isChecked() != visible) {
+                            QSignalBlocker block(act);
+                            act->setChecked(visible);
+                        }
+                    });
+                QSignalBlocker block(b.action);
+                b.action->setChecked(dock->isVisible());
             }
-            shell_state->setStatus_message(enabled
-                ? QStringLiteral("USDA Source: ON")
-                : QStringLiteral("USDA Source: OFF"));
+            // Node Graph (Experimental) keeps its own toggled-handler (sets the
+            // preview gate) — only add the back-direction sync here.
+            if (auto* ng_dock = window->findChild<QDockWidget*>(QStringLiteral("dock_node_graph"))) {
+                QObject::connect(ng_dock, &QDockWidget::visibilityChanged, ng_action,
+                    [ng_action](bool visible) {
+                        if (ng_action->isChecked() != visible) {
+                            QSignalBlocker block(ng_action);
+                            ng_action->setChecked(visible);
+                        }
+                    });
+            }
+        });
+
+    // View ▸ Reset Workspace Layout — restore default dock arrangement.
+    QObject::connect(actions.reset_workspace_layout, &QAction::triggered, window,
+        [window, shell_state, update_status]() {
+            const QString ws = shell_state->getCurrent_workspace();
+            const QString display = ws::display_name(ws);
+            const auto answer = QMessageBox::question(
+                window,
+                QStringLiteral("Reset Workspace Layout"),
+                QStringLiteral(
+                    "Reset the %1 workspace to its default dock layout? "
+                    "Your saved layout for this workspace will be lost.").arg(display),
+                QMessageBox::Yes | QMessageBox::No,
+                QMessageBox::No);
+            if (answer != QMessageBox::Yes) return;
+            QSettings settings;
+            settings.remove(ws::state_key(ws::canonical_name(ws)));
+            ws::apply_default_layout(window, ws);
+            shell_state->setStatus_message(
+                QStringLiteral("Reset %1 layout.").arg(display));
             update_status();
         });
 
@@ -1560,11 +1686,32 @@ int bif_qt_run_shell(ViewportCallbacks* viewport_cb, ::rust::Str stylesheet) {
         commands.insert(QStringLiteral("View: Toggle Grid"), menu_actions.toggle_grid);
         commands.insert(QStringLiteral("View: Toggle Viewport LOD"), menu_actions.toggle_lod);
         commands.insert(
+            QStringLiteral("View: Toggle Scene Browser"),
+            menu_actions.panel_scene_browser);
+        commands.insert(
+            QStringLiteral("View: Toggle Layer Stack"),
+            menu_actions.panel_layer_stack);
+        commands.insert(
+            QStringLiteral("View: Toggle Property Inspector"),
+            menu_actions.panel_property_inspector);
+        commands.insert(
+            QStringLiteral("View: Toggle Render Settings"),
+            menu_actions.panel_render_settings);
+        commands.insert(
+            QStringLiteral("View: Toggle Collection Editor"),
+            menu_actions.panel_collection_editor);
+        commands.insert(
             QStringLiteral("View: Toggle Node Graph (Experimental)"),
             menu_actions.toggle_node_graph_experimental);
         commands.insert(
+            QStringLiteral("View: Toggle Timeline"),
+            menu_actions.panel_timeline);
+        commands.insert(
             QStringLiteral("View: Toggle USDA Source"),
             menu_actions.toggle_usda_source);
+        commands.insert(
+            QStringLiteral("View: Reset Workspace Layout"),
+            menu_actions.reset_workspace_layout);
         commands.insert(QStringLiteral("Render: Ivar Render"), menu_actions.ivar_render);
         commands.insert(QStringLiteral("Help: About BIF"), menu_actions.about);
 
