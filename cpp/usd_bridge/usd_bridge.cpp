@@ -7687,6 +7687,9 @@ UsdBridgeError usd_bridge_list_collections(
     } catch (const std::exception& e) {
         TF_WARN("usd_bridge_list_collections: %s", e.what());
         return USD_BRIDGE_ERROR_UNKNOWN;
+    } catch (...) {
+        TF_WARN("usd_bridge_list_collections: unknown exception");
+        return USD_BRIDGE_ERROR_UNKNOWN;
     }
 }
 
@@ -7733,6 +7736,9 @@ UsdBridgeError usd_bridge_get_collection_info(
         return USD_BRIDGE_SUCCESS;
     } catch (const std::exception& e) {
         TF_WARN("usd_bridge_get_collection_info: %s", e.what());
+        return USD_BRIDGE_ERROR_UNKNOWN;
+    } catch (...) {
+        TF_WARN("usd_bridge_get_collection_info: unknown exception");
         return USD_BRIDGE_ERROR_UNKNOWN;
     }
 }
@@ -7787,6 +7793,9 @@ UsdBridgeError usd_bridge_compute_collection_members(
     } catch (const std::exception& e) {
         TF_WARN("usd_bridge_compute_collection_members: %s", e.what());
         return USD_BRIDGE_ERROR_UNKNOWN;
+    } catch (...) {
+        TF_WARN("usd_bridge_compute_collection_members: unknown exception");
+        return USD_BRIDGE_ERROR_UNKNOWN;
     }
 }
 
@@ -7797,12 +7806,19 @@ UsdBridgeError usd_bridge_collection_apply(
 ) {
     if (!stage || !prim_path || !coll_name) return USD_BRIDGE_ERROR_NULL_POINTER;
     try {
+        auto target_layer = stage->stage->GetEditTarget().GetLayer();
+        if (!target_layer || !target_layer->PermissionToEdit()) {
+            return USD_BRIDGE_ERROR_UNKNOWN;
+        }
         auto prim = stage->stage->GetPrimAtPath(SdfPath(prim_path));
         if (!prim.IsValid()) return USD_BRIDGE_ERROR_INVALID_PRIM;
         auto coll = UsdCollectionAPI::Apply(prim, TfToken(coll_name));
         return coll ? USD_BRIDGE_SUCCESS : USD_BRIDGE_ERROR_UNKNOWN;
     } catch (const std::exception& e) {
         TF_WARN("usd_bridge_collection_apply: %s", e.what());
+        return USD_BRIDGE_ERROR_UNKNOWN;
+    } catch (...) {
+        TF_WARN("usd_bridge_collection_apply: unknown exception");
         return USD_BRIDGE_ERROR_UNKNOWN;
     }
 }
@@ -7818,6 +7834,10 @@ UsdBridgeError usd_bridge_collection_add_target(
         return USD_BRIDGE_ERROR_NULL_POINTER;
     }
     try {
+        auto target_layer = stage->stage->GetEditTarget().GetLayer();
+        if (!target_layer || !target_layer->PermissionToEdit()) {
+            return USD_BRIDGE_ERROR_UNKNOWN;
+        }
         auto coll = GetCollectionOrNull(stage->stage, prim_path, coll_name);
         if (!coll) return USD_BRIDGE_ERROR_INVALID_PRIM;
         auto rel = is_include ? coll.CreateIncludesRel() : coll.CreateExcludesRel();
@@ -7827,6 +7847,9 @@ UsdBridgeError usd_bridge_collection_add_target(
             : USD_BRIDGE_ERROR_UNKNOWN;
     } catch (const std::exception& e) {
         TF_WARN("usd_bridge_collection_add_target: %s", e.what());
+        return USD_BRIDGE_ERROR_UNKNOWN;
+    } catch (...) {
+        TF_WARN("usd_bridge_collection_add_target: unknown exception");
         return USD_BRIDGE_ERROR_UNKNOWN;
     }
 }
@@ -7842,6 +7865,10 @@ UsdBridgeError usd_bridge_collection_remove_target(
         return USD_BRIDGE_ERROR_NULL_POINTER;
     }
     try {
+        auto target_layer = stage->stage->GetEditTarget().GetLayer();
+        if (!target_layer || !target_layer->PermissionToEdit()) {
+            return USD_BRIDGE_ERROR_UNKNOWN;
+        }
         auto coll = GetCollectionOrNull(stage->stage, prim_path, coll_name);
         if (!coll) return USD_BRIDGE_ERROR_INVALID_PRIM;
         auto rel = is_include ? coll.GetIncludesRel() : coll.GetExcludesRel();
@@ -7851,6 +7878,9 @@ UsdBridgeError usd_bridge_collection_remove_target(
             : USD_BRIDGE_ERROR_UNKNOWN;
     } catch (const std::exception& e) {
         TF_WARN("usd_bridge_collection_remove_target: %s", e.what());
+        return USD_BRIDGE_ERROR_UNKNOWN;
+    } catch (...) {
+        TF_WARN("usd_bridge_collection_remove_target: unknown exception");
         return USD_BRIDGE_ERROR_UNKNOWN;
     }
 }
@@ -7865,6 +7895,10 @@ UsdBridgeError usd_bridge_collection_set_expansion_rule(
         return USD_BRIDGE_ERROR_NULL_POINTER;
     }
     try {
+        auto target_layer = stage->stage->GetEditTarget().GetLayer();
+        if (!target_layer || !target_layer->PermissionToEdit()) {
+            return USD_BRIDGE_ERROR_UNKNOWN;
+        }
         auto coll = GetCollectionOrNull(stage->stage, prim_path, coll_name);
         if (!coll) return USD_BRIDGE_ERROR_INVALID_PRIM;
         // Validate against allowed tokens
@@ -7879,6 +7913,9 @@ UsdBridgeError usd_bridge_collection_set_expansion_rule(
         return attr.Set(rule_token) ? USD_BRIDGE_SUCCESS : USD_BRIDGE_ERROR_UNKNOWN;
     } catch (const std::exception& e) {
         TF_WARN("usd_bridge_collection_set_expansion_rule: %s", e.what());
+        return USD_BRIDGE_ERROR_UNKNOWN;
+    } catch (...) {
+        TF_WARN("usd_bridge_collection_set_expansion_rule: unknown exception");
         return USD_BRIDGE_ERROR_UNKNOWN;
     }
 }

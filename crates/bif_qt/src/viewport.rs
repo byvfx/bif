@@ -22,12 +22,12 @@ use raw_window_handle::{
 };
 use std::num::NonZeroIsize;
 
-/// Matches theme::BG_BASE (26,29,33) in linear sRGB. Used when the viewport
-/// has nothing scene-ful to render.
+/// Matches theme::SURFACE (#131313 → 19,19,19) in linear sRGB. Used when the
+/// viewport has nothing scene-ful to render. Linear sRGB of 19/255 ≈ 0.00518.
 const CLEAR_COLOR: wgpu::Color = wgpu::Color {
-    r: 0.010,
-    g: 0.013,
-    b: 0.017,
+    r: 0.00518,
+    g: 0.00518,
+    b: 0.00518,
     a: 1.0,
 };
 
