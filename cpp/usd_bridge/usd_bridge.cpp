@@ -16,6 +16,7 @@
 #include <pxr/usd/usdShade/material.h>
 #include <pxr/usd/usdShade/materialBindingAPI.h>
 #include <pxr/usd/usdShade/shader.h>
+#include <pxr/usd/usd/collectionAPI.h>
 #include <pxr/usd/usdLux/distantLight.h>
 #include <pxr/usd/usdLux/sphereLight.h>
 #include <pxr/usd/usdLux/rectLight.h>
@@ -7619,6 +7620,265 @@ UsdBridgeError usd_bridge_open_stage_with_policy(
         return USD_BRIDGE_SUCCESS;
     } catch (const std::exception& e) {
         TF_WARN("usd_bridge_open_stage_with_policy: %s", e.what());
+        return USD_BRIDGE_ERROR_UNKNOWN;
+    }
+}
+
+// ============================================================================
+// CollectionAPI (v0.16.5)
+// ============================================================================
+
+namespace {
+
+// Returns the expansion-rule token authored on `coll`, falling back to the
+// schema default ("expandPrims") if no opinion exists.
+std::string ResolveExpansionRule(const UsdCollectionAPI& coll) {
+    TfToken rule;
+    if (coll.GetExpansionRuleAttr().Get(&rule)) {
+        return rule.GetString();
+    }
+    return "expandPrims";
+}
+
+UsdCollectionAPI GetCollectionOrNull(const UsdStageRefPtr& stage,
+                                     const char* prim_path,
+                                     const char* coll_name) {
+    auto prim = stage->GetPrimAtPath(SdfPath(prim_path));
+    if (!prim.IsValid()) return UsdCollectionAPI();
+    auto coll = UsdCollectionAPI::Get(prim, TfToken(coll_name));
+    return coll;
+}
+
+} // namespace
+
+void usd_bridge_free_string_list(char** strings, size_t count) {
+    if (!strings) return;
+    for (size_t i = 0; i < count; ++i) {
+        free(strings[i]);
+    }
+    delete[] strings;
+}
+
+UsdBridgeError usd_bridge_list_collections(
+    const UsdBridgeStage* stage,
+    const char* prim_path,
+    char*** out_names,
+    size_t* out_count
+) {
+    if (!stage || !prim_path || !out_names || !out_count) {
+        return USD_BRIDGE_ERROR_NULL_POINTER;
+    }
+    *out_names = nullptr;
+    *out_count = 0;
+    try {
+        auto prim = stage->stage->GetPrimAtPath(SdfPath(prim_path));
+        if (!prim.IsValid()) return USD_BRIDGE_ERROR_INVALID_PRIM;
+
+        auto colls = UsdCollectionAPI::GetAllCollections(prim);
+        if (colls.empty()) return USD_BRIDGE_SUCCESS;
+
+        auto** names = new char*[colls.size()];
+        for (size_t i = 0; i < colls.size(); ++i) {
+            names[i] = strdup(colls[i].GetName().GetString().c_str());
+        }
+        *out_names = names;
+        *out_count = colls.size();
+        return USD_BRIDGE_SUCCESS;
+    } catch (const std::exception& e) {
+        TF_WARN("usd_bridge_list_collections: %s", e.what());
+        return USD_BRIDGE_ERROR_UNKNOWN;
+    }
+}
+
+UsdBridgeError usd_bridge_get_collection_info(
+    const UsdBridgeStage* stage,
+    const char* prim_path,
+    const char* coll_name,
+    UsdBridgeCollectionInfo** out_info
+) {
+    if (!stage || !prim_path || !coll_name || !out_info) {
+        return USD_BRIDGE_ERROR_NULL_POINTER;
+    }
+    *out_info = nullptr;
+    try {
+        auto coll = GetCollectionOrNull(stage->stage, prim_path, coll_name);
+        if (!coll) return USD_BRIDGE_ERROR_INVALID_PRIM;
+
+        SdfPathVector includes_paths;
+        SdfPathVector excludes_paths;
+        if (auto rel = coll.GetIncludesRel()) rel.GetTargets(&includes_paths);
+        if (auto rel = coll.GetExcludesRel()) rel.GetTargets(&excludes_paths);
+
+        auto* info = new UsdBridgeCollectionInfo();
+        info->name = strdup(coll_name);
+        info->includes_count = includes_paths.size();
+        info->excludes_count = excludes_paths.size();
+        info->includes = includes_paths.empty() ? nullptr : new const char*[includes_paths.size()];
+        info->excludes = excludes_paths.empty() ? nullptr : new const char*[excludes_paths.size()];
+        for (size_t i = 0; i < includes_paths.size(); ++i) {
+            info->includes[i] = strdup(includes_paths[i].GetString().c_str());
+        }
+        for (size_t i = 0; i < excludes_paths.size(); ++i) {
+            info->excludes[i] = strdup(excludes_paths[i].GetString().c_str());
+        }
+        info->expansion_rule = strdup(ResolveExpansionRule(coll).c_str());
+
+        bool include_root = false;
+        if (auto attr = coll.GetIncludeRootAttr()) {
+            attr.Get(&include_root);
+        }
+        info->include_root = include_root ? 1 : 0;
+
+        *out_info = info;
+        return USD_BRIDGE_SUCCESS;
+    } catch (const std::exception& e) {
+        TF_WARN("usd_bridge_get_collection_info: %s", e.what());
+        return USD_BRIDGE_ERROR_UNKNOWN;
+    }
+}
+
+void usd_bridge_collection_info_free(UsdBridgeCollectionInfo* info) {
+    if (!info) return;
+    free(const_cast<char*>(info->name));
+    free(const_cast<char*>(info->expansion_rule));
+    if (info->includes) {
+        for (size_t i = 0; i < info->includes_count; ++i) {
+            free(const_cast<char*>(info->includes[i]));
+        }
+        delete[] info->includes;
+    }
+    if (info->excludes) {
+        for (size_t i = 0; i < info->excludes_count; ++i) {
+            free(const_cast<char*>(info->excludes[i]));
+        }
+        delete[] info->excludes;
+    }
+    delete info;
+}
+
+UsdBridgeError usd_bridge_compute_collection_members(
+    const UsdBridgeStage* stage,
+    const char* prim_path,
+    const char* coll_name,
+    char*** out_paths,
+    size_t* out_count
+) {
+    if (!stage || !prim_path || !coll_name || !out_paths || !out_count) {
+        return USD_BRIDGE_ERROR_NULL_POINTER;
+    }
+    *out_paths = nullptr;
+    *out_count = 0;
+    try {
+        auto coll = GetCollectionOrNull(stage->stage, prim_path, coll_name);
+        if (!coll) return USD_BRIDGE_ERROR_INVALID_PRIM;
+
+        auto query = coll.ComputeMembershipQuery();
+        auto resolved = UsdCollectionAPI::ComputeIncludedPaths(query, stage->stage);
+        if (resolved.empty()) return USD_BRIDGE_SUCCESS;
+
+        auto** paths = new char*[resolved.size()];
+        size_t i = 0;
+        for (const auto& p : resolved) {
+            paths[i++] = strdup(p.GetString().c_str());
+        }
+        *out_paths = paths;
+        *out_count = resolved.size();
+        return USD_BRIDGE_SUCCESS;
+    } catch (const std::exception& e) {
+        TF_WARN("usd_bridge_compute_collection_members: %s", e.what());
+        return USD_BRIDGE_ERROR_UNKNOWN;
+    }
+}
+
+UsdBridgeError usd_bridge_collection_apply(
+    UsdBridgeStage* stage,
+    const char* prim_path,
+    const char* coll_name
+) {
+    if (!stage || !prim_path || !coll_name) return USD_BRIDGE_ERROR_NULL_POINTER;
+    try {
+        auto prim = stage->stage->GetPrimAtPath(SdfPath(prim_path));
+        if (!prim.IsValid()) return USD_BRIDGE_ERROR_INVALID_PRIM;
+        auto coll = UsdCollectionAPI::Apply(prim, TfToken(coll_name));
+        return coll ? USD_BRIDGE_SUCCESS : USD_BRIDGE_ERROR_UNKNOWN;
+    } catch (const std::exception& e) {
+        TF_WARN("usd_bridge_collection_apply: %s", e.what());
+        return USD_BRIDGE_ERROR_UNKNOWN;
+    }
+}
+
+UsdBridgeError usd_bridge_collection_add_target(
+    UsdBridgeStage* stage,
+    const char* prim_path,
+    const char* coll_name,
+    const char* target_path,
+    int is_include
+) {
+    if (!stage || !prim_path || !coll_name || !target_path) {
+        return USD_BRIDGE_ERROR_NULL_POINTER;
+    }
+    try {
+        auto coll = GetCollectionOrNull(stage->stage, prim_path, coll_name);
+        if (!coll) return USD_BRIDGE_ERROR_INVALID_PRIM;
+        auto rel = is_include ? coll.CreateIncludesRel() : coll.CreateExcludesRel();
+        if (!rel) return USD_BRIDGE_ERROR_UNKNOWN;
+        return rel.AddTarget(SdfPath(target_path))
+            ? USD_BRIDGE_SUCCESS
+            : USD_BRIDGE_ERROR_UNKNOWN;
+    } catch (const std::exception& e) {
+        TF_WARN("usd_bridge_collection_add_target: %s", e.what());
+        return USD_BRIDGE_ERROR_UNKNOWN;
+    }
+}
+
+UsdBridgeError usd_bridge_collection_remove_target(
+    UsdBridgeStage* stage,
+    const char* prim_path,
+    const char* coll_name,
+    const char* target_path,
+    int is_include
+) {
+    if (!stage || !prim_path || !coll_name || !target_path) {
+        return USD_BRIDGE_ERROR_NULL_POINTER;
+    }
+    try {
+        auto coll = GetCollectionOrNull(stage->stage, prim_path, coll_name);
+        if (!coll) return USD_BRIDGE_ERROR_INVALID_PRIM;
+        auto rel = is_include ? coll.GetIncludesRel() : coll.GetExcludesRel();
+        if (!rel) return USD_BRIDGE_ERROR_UNKNOWN;
+        return rel.RemoveTarget(SdfPath(target_path))
+            ? USD_BRIDGE_SUCCESS
+            : USD_BRIDGE_ERROR_UNKNOWN;
+    } catch (const std::exception& e) {
+        TF_WARN("usd_bridge_collection_remove_target: %s", e.what());
+        return USD_BRIDGE_ERROR_UNKNOWN;
+    }
+}
+
+UsdBridgeError usd_bridge_collection_set_expansion_rule(
+    UsdBridgeStage* stage,
+    const char* prim_path,
+    const char* coll_name,
+    const char* rule
+) {
+    if (!stage || !prim_path || !coll_name || !rule) {
+        return USD_BRIDGE_ERROR_NULL_POINTER;
+    }
+    try {
+        auto coll = GetCollectionOrNull(stage->stage, prim_path, coll_name);
+        if (!coll) return USD_BRIDGE_ERROR_INVALID_PRIM;
+        // Validate against allowed tokens
+        TfToken rule_token(rule);
+        if (rule_token != TfToken("expandPrims") &&
+            rule_token != TfToken("expandPrimsAndProperties") &&
+            rule_token != TfToken("explicitOnly")) {
+            return USD_BRIDGE_ERROR_UNKNOWN;
+        }
+        auto attr = coll.CreateExpansionRuleAttr();
+        if (!attr) return USD_BRIDGE_ERROR_UNKNOWN;
+        return attr.Set(rule_token) ? USD_BRIDGE_SUCCESS : USD_BRIDGE_ERROR_UNKNOWN;
+    } catch (const std::exception& e) {
+        TF_WARN("usd_bridge_collection_set_expansion_rule: %s", e.what());
         return USD_BRIDGE_ERROR_UNKNOWN;
     }
 }

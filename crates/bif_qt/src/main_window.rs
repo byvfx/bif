@@ -347,6 +347,10 @@ pub mod qobject {
         // beginResetModel/endResetModel and rebuild from the live
         // UsdStage via prim-tree invokables.
         #[qproperty(i32, scene_browser_revision)]
+        // Bumped on stage load + every CollectionAPI mutation.
+        // CollectionEditorModel listens to `collection_revisionChanged`
+        // to refresh its lists. v0.16.5.
+        #[qproperty(i32, collection_revision)]
         // Currently-selected prim path (driven by scene browser
         // click). Empty = no selection. Property inspector listens
         // to the auto-generated `selected_prim_pathChanged` signal.
@@ -993,6 +997,115 @@ pub mod qobject {
         /// C4b-2.
         #[qinvokable]
         fn on_apply_usda(self: Pin<&mut BifShellState>, text: QString) -> QString;
+
+        // ---- Collection Editor surface (v0.16.5) ----
+        //
+        // The Collection Editor C++ panel queries collections + their
+        // includes/excludes/resolved-members via indexed accessors.
+        // Mutations bump `collection_revision`, which the model resets on.
+
+        /// Number of CollectionAPI instances applied to `prim_path`.
+        #[qinvokable]
+        fn collection_count(self: &BifShellState, prim_path: QString) -> i32;
+
+        /// Name of the collection at `index` on `prim_path`.
+        #[qinvokable]
+        fn collection_name_at(self: &BifShellState, prim_path: QString, index: i32) -> QString;
+
+        /// "expandPrims" | "expandPrimsAndProperties" | "explicitOnly".
+        /// Empty string when collection not found.
+        #[qinvokable]
+        fn collection_expansion_rule(
+            self: &BifShellState,
+            prim_path: QString,
+            coll_name: QString,
+        ) -> QString;
+
+        /// Number of authored include targets.
+        #[qinvokable]
+        fn collection_includes_count(
+            self: &BifShellState,
+            prim_path: QString,
+            coll_name: QString,
+        ) -> i32;
+
+        #[qinvokable]
+        fn collection_include_at(
+            self: &BifShellState,
+            prim_path: QString,
+            coll_name: QString,
+            index: i32,
+        ) -> QString;
+
+        /// Number of authored exclude targets.
+        #[qinvokable]
+        fn collection_excludes_count(
+            self: &BifShellState,
+            prim_path: QString,
+            coll_name: QString,
+        ) -> i32;
+
+        #[qinvokable]
+        fn collection_exclude_at(
+            self: &BifShellState,
+            prim_path: QString,
+            coll_name: QString,
+            index: i32,
+        ) -> QString;
+
+        /// Count of resolved (computed) members.
+        #[qinvokable]
+        fn collection_members_count(
+            self: &BifShellState,
+            prim_path: QString,
+            coll_name: QString,
+        ) -> i32;
+
+        #[qinvokable]
+        fn collection_member_at(
+            self: &BifShellState,
+            prim_path: QString,
+            coll_name: QString,
+            index: i32,
+        ) -> QString;
+
+        /// Apply CollectionAPI(coll_name) to a prim. Idempotent.
+        /// Returns true on success.
+        #[qinvokable]
+        fn collection_apply(
+            self: Pin<&mut BifShellState>,
+            prim_path: QString,
+            coll_name: QString,
+        ) -> bool;
+
+        /// Add a target to includes (is_include=true) or excludes.
+        #[qinvokable]
+        fn collection_add_target(
+            self: Pin<&mut BifShellState>,
+            prim_path: QString,
+            coll_name: QString,
+            target_path: QString,
+            is_include: bool,
+        ) -> bool;
+
+        /// Remove a target from includes/excludes.
+        #[qinvokable]
+        fn collection_remove_target(
+            self: Pin<&mut BifShellState>,
+            prim_path: QString,
+            coll_name: QString,
+            target_path: QString,
+            is_include: bool,
+        ) -> bool;
+
+        /// Set expansion rule: "expandPrims" | "expandPrimsAndProperties" | "explicitOnly".
+        #[qinvokable]
+        fn collection_set_expansion_rule(
+            self: Pin<&mut BifShellState>,
+            prim_path: QString,
+            coll_name: QString,
+            rule: QString,
+        ) -> bool;
     }
 }
 
@@ -1023,6 +1136,9 @@ pub struct BifShellStateRust {
     /// Monotonic counter bumped on stage load / close. Auto-emits
     /// `scene_browser_revisionChanged` for the Scene Browser panel.
     pub scene_browser_revision: i32,
+    /// Monotonic counter bumped on stage load / collection mutation.
+    /// CollectionEditorModel listens to `collection_revisionChanged`.
+    pub collection_revision: i32,
     /// Layer stack + mute set + working layer + isolation flag.
     /// None until a stage is loaded (Phase E) or demo data seeded.
     pub scene_layer_state: Option<SceneLayerState>,
@@ -1099,6 +1215,7 @@ impl Default for BifShellStateRust {
             ivar_status: cxx_qt_lib::QString::from(""),
             layer_state_revision: 0,
             scene_browser_revision: 0,
+            collection_revision: 0,
             scene_layer_state: None,
             payload_policy: PayloadPolicy::LoadAll,
             selected_prim_path: cxx_qt_lib::QString::from(""),
@@ -3267,6 +3384,269 @@ impl qobject::BifShellState {
         }
     }
 
+    // ---- Collection Editor surface (v0.16.5) ----
+
+    fn collection_count(&self, prim_path: cxx_qt_lib::QString) -> i32 {
+        let path: String = (&prim_path).into();
+        if path.is_empty() {
+            return 0;
+        }
+        with_stage(|stage| {
+            stage
+                .list_collections(&path)
+                .map(|v| v.len() as i32)
+                .unwrap_or(0)
+        })
+        .unwrap_or(0)
+    }
+
+    fn collection_name_at(
+        &self,
+        prim_path: cxx_qt_lib::QString,
+        index: i32,
+    ) -> cxx_qt_lib::QString {
+        let path: String = (&prim_path).into();
+        if path.is_empty() || index < 0 {
+            return cxx_qt_lib::QString::default();
+        }
+        with_stage(|stage| match stage.list_collections(&path) {
+            Ok(names) => names
+                .get(index as usize)
+                .map(|s| cxx_qt_lib::QString::from(s.as_str()))
+                .unwrap_or_default(),
+            Err(_) => cxx_qt_lib::QString::default(),
+        })
+        .unwrap_or_default()
+    }
+
+    fn collection_expansion_rule(
+        &self,
+        prim_path: cxx_qt_lib::QString,
+        coll_name: cxx_qt_lib::QString,
+    ) -> cxx_qt_lib::QString {
+        let path: String = (&prim_path).into();
+        let name: String = (&coll_name).into();
+        if path.is_empty() || name.is_empty() {
+            return cxx_qt_lib::QString::default();
+        }
+        with_stage(|stage| match stage.get_collection_info(&path, &name) {
+            Ok(info) => cxx_qt_lib::QString::from(info.expansion_rule.as_str()),
+            Err(_) => cxx_qt_lib::QString::default(),
+        })
+        .unwrap_or_default()
+    }
+
+    fn collection_includes_count(
+        &self,
+        prim_path: cxx_qt_lib::QString,
+        coll_name: cxx_qt_lib::QString,
+    ) -> i32 {
+        let path: String = (&prim_path).into();
+        let name: String = (&coll_name).into();
+        if path.is_empty() || name.is_empty() {
+            return 0;
+        }
+        with_stage(|stage| match stage.get_collection_info(&path, &name) {
+            Ok(info) => info.includes.len() as i32,
+            Err(_) => 0,
+        })
+        .unwrap_or(0)
+    }
+
+    fn collection_include_at(
+        &self,
+        prim_path: cxx_qt_lib::QString,
+        coll_name: cxx_qt_lib::QString,
+        index: i32,
+    ) -> cxx_qt_lib::QString {
+        let path: String = (&prim_path).into();
+        let name: String = (&coll_name).into();
+        if path.is_empty() || name.is_empty() || index < 0 {
+            return cxx_qt_lib::QString::default();
+        }
+        with_stage(|stage| match stage.get_collection_info(&path, &name) {
+            Ok(info) => info
+                .includes
+                .get(index as usize)
+                .map(|s| cxx_qt_lib::QString::from(s.as_str()))
+                .unwrap_or_default(),
+            Err(_) => cxx_qt_lib::QString::default(),
+        })
+        .unwrap_or_default()
+    }
+
+    fn collection_excludes_count(
+        &self,
+        prim_path: cxx_qt_lib::QString,
+        coll_name: cxx_qt_lib::QString,
+    ) -> i32 {
+        let path: String = (&prim_path).into();
+        let name: String = (&coll_name).into();
+        if path.is_empty() || name.is_empty() {
+            return 0;
+        }
+        with_stage(|stage| match stage.get_collection_info(&path, &name) {
+            Ok(info) => info.excludes.len() as i32,
+            Err(_) => 0,
+        })
+        .unwrap_or(0)
+    }
+
+    fn collection_exclude_at(
+        &self,
+        prim_path: cxx_qt_lib::QString,
+        coll_name: cxx_qt_lib::QString,
+        index: i32,
+    ) -> cxx_qt_lib::QString {
+        let path: String = (&prim_path).into();
+        let name: String = (&coll_name).into();
+        if path.is_empty() || name.is_empty() || index < 0 {
+            return cxx_qt_lib::QString::default();
+        }
+        with_stage(|stage| match stage.get_collection_info(&path, &name) {
+            Ok(info) => info
+                .excludes
+                .get(index as usize)
+                .map(|s| cxx_qt_lib::QString::from(s.as_str()))
+                .unwrap_or_default(),
+            Err(_) => cxx_qt_lib::QString::default(),
+        })
+        .unwrap_or_default()
+    }
+
+    fn collection_members_count(
+        &self,
+        prim_path: cxx_qt_lib::QString,
+        coll_name: cxx_qt_lib::QString,
+    ) -> i32 {
+        let path: String = (&prim_path).into();
+        let name: String = (&coll_name).into();
+        if path.is_empty() || name.is_empty() {
+            return 0;
+        }
+        with_stage(|stage| {
+            stage
+                .compute_collection_members(&path, &name)
+                .map(|v| v.len() as i32)
+                .unwrap_or(0)
+        })
+        .unwrap_or(0)
+    }
+
+    fn collection_member_at(
+        &self,
+        prim_path: cxx_qt_lib::QString,
+        coll_name: cxx_qt_lib::QString,
+        index: i32,
+    ) -> cxx_qt_lib::QString {
+        let path: String = (&prim_path).into();
+        let name: String = (&coll_name).into();
+        if path.is_empty() || name.is_empty() || index < 0 {
+            return cxx_qt_lib::QString::default();
+        }
+        with_stage(
+            |stage| match stage.compute_collection_members(&path, &name) {
+                Ok(members) => members
+                    .get(index as usize)
+                    .map(|s| cxx_qt_lib::QString::from(s.as_str()))
+                    .unwrap_or_default(),
+                Err(_) => cxx_qt_lib::QString::default(),
+            },
+        )
+        .unwrap_or_default()
+    }
+
+    fn collection_apply(
+        mut self: Pin<&mut Self>,
+        prim_path: cxx_qt_lib::QString,
+        coll_name: cxx_qt_lib::QString,
+    ) -> bool {
+        let path: String = (&prim_path).into();
+        let name: String = (&coll_name).into();
+        if path.is_empty() || name.is_empty() {
+            return false;
+        }
+        let ok = with_stage(|stage| stage.apply_collection(&path, &name).is_ok()).unwrap_or(false);
+        if ok {
+            bump_collection_revision(self.as_mut());
+        }
+        ok
+    }
+
+    fn collection_add_target(
+        mut self: Pin<&mut Self>,
+        prim_path: cxx_qt_lib::QString,
+        coll_name: cxx_qt_lib::QString,
+        target_path: cxx_qt_lib::QString,
+        is_include: bool,
+    ) -> bool {
+        let path: String = (&prim_path).into();
+        let name: String = (&coll_name).into();
+        let target: String = (&target_path).into();
+        if path.is_empty() || name.is_empty() || target.is_empty() {
+            return false;
+        }
+        let ok = with_stage(|stage| {
+            stage
+                .collection_add_target(&path, &name, &target, is_include)
+                .is_ok()
+        })
+        .unwrap_or(false);
+        if ok {
+            bump_collection_revision(self.as_mut());
+        }
+        ok
+    }
+
+    fn collection_remove_target(
+        mut self: Pin<&mut Self>,
+        prim_path: cxx_qt_lib::QString,
+        coll_name: cxx_qt_lib::QString,
+        target_path: cxx_qt_lib::QString,
+        is_include: bool,
+    ) -> bool {
+        let path: String = (&prim_path).into();
+        let name: String = (&coll_name).into();
+        let target: String = (&target_path).into();
+        if path.is_empty() || name.is_empty() || target.is_empty() {
+            return false;
+        }
+        let ok = with_stage(|stage| {
+            stage
+                .collection_remove_target(&path, &name, &target, is_include)
+                .is_ok()
+        })
+        .unwrap_or(false);
+        if ok {
+            bump_collection_revision(self.as_mut());
+        }
+        ok
+    }
+
+    fn collection_set_expansion_rule(
+        mut self: Pin<&mut Self>,
+        prim_path: cxx_qt_lib::QString,
+        coll_name: cxx_qt_lib::QString,
+        rule: cxx_qt_lib::QString,
+    ) -> bool {
+        let path: String = (&prim_path).into();
+        let name: String = (&coll_name).into();
+        let rule_str: String = (&rule).into();
+        if path.is_empty() || name.is_empty() || rule_str.is_empty() {
+            return false;
+        }
+        let ok = with_stage(|stage| {
+            stage
+                .collection_set_expansion_rule(&path, &name, &rule_str)
+                .is_ok()
+        })
+        .unwrap_or(false);
+        if ok {
+            bump_collection_revision(self.as_mut());
+        }
+        ok
+    }
+
     fn on_select_camera(mut self: Pin<&mut Self>, source: cxx_qt_lib::QString) {
         let source_str: String = (&source).into();
         self.as_mut().rust_mut().active_camera_source = source_str.clone();
@@ -3502,10 +3882,20 @@ fn refresh_ivar_status_qprop(mut state: Pin<&mut qobject::BifShellState>) {
 
 /// Increment `scene_browser_revision` to trigger
 /// `scene_browser_revisionChanged`. SceneBrowserModel listens for
-/// this and calls `beginResetModel/endResetModel`.
+/// this and calls `beginResetModel/endResetModel`. Stage-shape
+/// changes also invalidate collection caches, so we chain the
+/// collection revision bump here.
 fn bump_scene_browser_revision(mut state: Pin<&mut qobject::BifShellState>) {
     let next = state.as_ref().rust().scene_browser_revision.wrapping_add(1);
     state.as_mut().set_scene_browser_revision(next);
+    bump_collection_revision(state);
+}
+
+/// Increment `collection_revision` to notify the Collection Editor panel
+/// that authored collection state may have changed.
+fn bump_collection_revision(mut state: Pin<&mut qobject::BifShellState>) {
+    let next = state.as_ref().rust().collection_revision.wrapping_add(1);
+    state.as_mut().set_collection_revision(next);
 }
 
 /// Increment `camera_list_revision` to trigger `camera_list_revisionChanged`.

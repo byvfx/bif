@@ -181,17 +181,16 @@ TimelineWidget::TimelineWidget(BifShellState* state, QWidget* parent)
     m_toolbar->setMovable(false);
     m_toolbar->setFloatable(false);
     m_toolbar->setIconSize(QSize(0, 0));
+    // QToolBar chrome comes from theme.rs (Graphite). Per-button overrides
+    // for the play/loop toggles stay local.
     m_toolbar->setStyleSheet(QStringLiteral(
-        "QToolBar { background-color: rgba(42, 47, 54, 255); border: none;"
-        "           border-bottom: 1px solid rgba(20, 22, 26, 255);"
-        "           padding: 4px 6px; spacing: 4px; }"
         "QToolButton { background-color: transparent;"
-        "              color: rgba(220, 222, 226, 255);"
-        "              border: 1px solid rgba(60, 65, 75, 180);"
-        "              border-radius: 3px; padding: 3px 8px; font-size: 11px; }"
-        "QToolButton:hover { background-color: rgba(51, 56, 64, 255); }"
-        "QToolButton:checked { background-color: rgba(74, 144, 217, 120);"
-        "                      border-color: rgba(74, 144, 217, 240); }"));
+        "              color: rgba(229, 226, 225, 255);"
+        "              border: 1px solid rgba(65, 71, 82, 180);"
+        "              border-radius: 6px; padding: 3px 8px; font-size: 11px; }"
+        "QToolButton:hover { background-color: rgba(53, 53, 53, 255); }"
+        "QToolButton:checked { background-color: rgba(74, 158, 255, 120);"
+        "                      border-color: rgba(74, 158, 255, 240); }"));
 
     // Nuke-style three-zone layout:
     //   LEFT  — playback config (fps, real-time, loop)

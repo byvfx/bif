@@ -2,7 +2,7 @@
 
 #![allow(dead_code)]
 
-use std::ffi::c_char;
+use std::ffi::{c_char, c_int};
 
 /// Opaque stage handle (matches C struct)
 #[repr(C)]
@@ -1228,4 +1228,75 @@ extern "C" {
         policy: UsdBridgePayloadPolicyRaw,
         out_stage: *mut *mut UsdBridgeStageRaw,
     ) -> UsdBridgeErrorCode;
+
+    // ------------------------------------------------------------------------
+    // CollectionAPI (v0.16.5)
+    // ------------------------------------------------------------------------
+
+    pub(crate) fn usd_bridge_list_collections(
+        stage: *const UsdBridgeStageRaw,
+        prim_path: *const c_char,
+        out_names: *mut *mut *mut c_char,
+        out_count: *mut usize,
+    ) -> UsdBridgeErrorCode;
+
+    pub(crate) fn usd_bridge_free_string_list(strings: *mut *mut c_char, count: usize);
+
+    pub(crate) fn usd_bridge_get_collection_info(
+        stage: *const UsdBridgeStageRaw,
+        prim_path: *const c_char,
+        coll_name: *const c_char,
+        out_info: *mut *mut UsdBridgeCollectionInfoRaw,
+    ) -> UsdBridgeErrorCode;
+
+    pub(crate) fn usd_bridge_collection_info_free(info: *mut UsdBridgeCollectionInfoRaw);
+
+    pub(crate) fn usd_bridge_compute_collection_members(
+        stage: *const UsdBridgeStageRaw,
+        prim_path: *const c_char,
+        coll_name: *const c_char,
+        out_paths: *mut *mut *mut c_char,
+        out_count: *mut usize,
+    ) -> UsdBridgeErrorCode;
+
+    pub(crate) fn usd_bridge_collection_apply(
+        stage: *mut UsdBridgeStageRaw,
+        prim_path: *const c_char,
+        coll_name: *const c_char,
+    ) -> UsdBridgeErrorCode;
+
+    pub(crate) fn usd_bridge_collection_add_target(
+        stage: *mut UsdBridgeStageRaw,
+        prim_path: *const c_char,
+        coll_name: *const c_char,
+        target_path: *const c_char,
+        is_include: c_int,
+    ) -> UsdBridgeErrorCode;
+
+    pub(crate) fn usd_bridge_collection_remove_target(
+        stage: *mut UsdBridgeStageRaw,
+        prim_path: *const c_char,
+        coll_name: *const c_char,
+        target_path: *const c_char,
+        is_include: c_int,
+    ) -> UsdBridgeErrorCode;
+
+    pub(crate) fn usd_bridge_collection_set_expansion_rule(
+        stage: *mut UsdBridgeStageRaw,
+        prim_path: *const c_char,
+        coll_name: *const c_char,
+        rule: *const c_char,
+    ) -> UsdBridgeErrorCode;
+}
+
+/// CollectionAPI info from C API (returned by usd_bridge_get_collection_info)
+#[repr(C)]
+pub(crate) struct UsdBridgeCollectionInfoRaw {
+    pub(crate) name: *const c_char,
+    pub(crate) includes: *const *const c_char,
+    pub(crate) includes_count: usize,
+    pub(crate) excludes: *const *const c_char,
+    pub(crate) excludes_count: usize,
+    pub(crate) expansion_rule: *const c_char,
+    pub(crate) include_root: c_int,
 }

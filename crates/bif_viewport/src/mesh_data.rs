@@ -768,4 +768,38 @@ mod tests {
         // size = diagonal of 2x2x2 cube = sqrt(12) ≈ 3.46
         assert!((mesh.size() - 3.464).abs() < 0.01);
     }
+
+    #[test]
+    fn test_display_color_propagates_to_mesh_data() {
+        // Regression: primvars:displayColor → bif_core::Mesh.display_color →
+        // MeshData.display_color (first color). Drives the Vulkan synthetic-material
+        // fallback at scene_loader.rs.
+        let mut mesh = bif_core::Mesh::new(
+            vec![
+                Vec3::new(0.0, 0.0, 0.0),
+                Vec3::new(1.0, 0.0, 0.0),
+                Vec3::new(0.0, 1.0, 0.0),
+            ],
+            vec![0, 1, 2],
+            None,
+        );
+        mesh.display_color = Some(vec![Vec3::new(0.9, 0.1, 0.2)]);
+        let md = MeshData::from_core_mesh(&mesh);
+        assert_eq!(md.display_color, Some([0.9, 0.1, 0.2]));
+    }
+
+    #[test]
+    fn test_no_display_color_yields_none() {
+        let mesh = bif_core::Mesh::new(
+            vec![
+                Vec3::new(0.0, 0.0, 0.0),
+                Vec3::new(1.0, 0.0, 0.0),
+                Vec3::new(0.0, 1.0, 0.0),
+            ],
+            vec![0, 1, 2],
+            None,
+        );
+        let md = MeshData::from_core_mesh(&mesh);
+        assert_eq!(md.display_color, None);
+    }
 }

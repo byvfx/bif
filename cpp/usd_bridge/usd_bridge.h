@@ -2023,6 +2023,89 @@ UsdBridgeError usd_bridge_open_stage_with_policy(
     UsdBridgeStage** out_stage
 );
 
+// ============================================================================
+// CollectionAPI Inspection & Editing (v0.16.5)
+// ============================================================================
+
+/// Static (authored) info for a single UsdCollectionAPI instance.
+/// Strings are strdup'd; free with usd_bridge_collection_info_free.
+typedef struct UsdBridgeCollectionInfo {
+    const char* name;             // Collection name (the API instance name)
+    const char** includes;        // Authored includes targets
+    size_t includes_count;
+    const char** excludes;        // Authored excludes targets
+    size_t excludes_count;
+    const char* expansion_rule;   // "expandPrims" | "expandPrimsAndProperties" | "explicitOnly"
+    int include_root;             // 1 if includeRoot is set true, 0 otherwise
+} UsdBridgeCollectionInfo;
+
+/// List all CollectionAPI instance names applied to `prim_path`.
+/// `out_names` is a strdup'd char* array; free with usd_bridge_free_string_list.
+UsdBridgeError usd_bridge_list_collections(
+    const UsdBridgeStage* stage,
+    const char* prim_path,
+    char*** out_names,
+    size_t* out_count
+);
+
+/// Free a strdup'd string array (used by list_collections + compute_collection_members).
+void usd_bridge_free_string_list(char** strings, size_t count);
+
+/// Read authored includes/excludes/expansion-rule for one collection.
+UsdBridgeError usd_bridge_get_collection_info(
+    const UsdBridgeStage* stage,
+    const char* prim_path,
+    const char* coll_name,
+    UsdBridgeCollectionInfo** out_info
+);
+
+void usd_bridge_collection_info_free(UsdBridgeCollectionInfo* info);
+
+/// Compute the fully-expanded resolved member set
+/// (UsdCollectionAPI::ComputeIncludedPaths).
+UsdBridgeError usd_bridge_compute_collection_members(
+    const UsdBridgeStage* stage,
+    const char* prim_path,
+    const char* coll_name,
+    char*** out_paths,
+    size_t* out_count
+);
+
+/// Apply a new UsdCollectionAPI(coll_name) to a prim. Idempotent —
+/// returns SUCCESS if the collection already exists.
+UsdBridgeError usd_bridge_collection_apply(
+    UsdBridgeStage* stage,
+    const char* prim_path,
+    const char* coll_name
+);
+
+/// Add a target to the includes (is_include=1) or excludes (is_include=0)
+/// relationship. Authored at the stage's current edit target.
+UsdBridgeError usd_bridge_collection_add_target(
+    UsdBridgeStage* stage,
+    const char* prim_path,
+    const char* coll_name,
+    const char* target_path,
+    int is_include
+);
+
+/// Remove a target from includes/excludes at the current edit target.
+UsdBridgeError usd_bridge_collection_remove_target(
+    UsdBridgeStage* stage,
+    const char* prim_path,
+    const char* coll_name,
+    const char* target_path,
+    int is_include
+);
+
+/// Set expansion rule: "expandPrims" | "expandPrimsAndProperties" | "explicitOnly".
+UsdBridgeError usd_bridge_collection_set_expansion_rule(
+    UsdBridgeStage* stage,
+    const char* prim_path,
+    const char* coll_name,
+    const char* rule
+);
+
 #ifdef __cplusplus
 }
 #endif

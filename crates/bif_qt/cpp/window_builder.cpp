@@ -1,4 +1,5 @@
 #include "window_builder.h"
+#include "collection_editor_widget.h"
 #include "command_palette.h"
 #include "first_launch_widget.h"
 #include "layer_stack_widget.h"
@@ -651,17 +652,7 @@ CentralArea build_central_area(QMainWindow* window, BifShellState* state) {
     camera_picker->setObjectName(QStringLiteral("camera_picker"));
     camera_picker->setMinimumWidth(130);
     camera_picker->setMaximumWidth(180);
-    camera_picker->setStyleSheet(QStringLiteral(
-        "QComboBox#camera_picker {"
-        "  background-color: rgba(34, 38, 44, 200);"
-        "  color: rgba(180, 185, 195, 255);"
-        "  border: 1px solid rgba(55, 60, 70, 255);"
-        "  border-radius: 3px;"
-        "  padding: 2px 6px;"
-        "  font-size: 11px;"
-        "}"
-        "QComboBox#camera_picker::drop-down { border: none; }"
-        "QComboBox#camera_picker:hover { border-color: rgba(90, 100, 120, 255); }"));
+    // Styling inherited from theme.rs `QComboBox` rule (Graphite §2).
 
     auto populate_camera_picker = [=]() {
         camera_picker->blockSignals(true);
@@ -701,17 +692,7 @@ CentralArea build_central_area(QMainWindow* window, BifShellState* state) {
     aov_picker->setMinimumWidth(130);
     aov_picker->setMaximumWidth(180);
     aov_picker->setToolTip(QStringLiteral("AOV channel shown in the render view"));
-    aov_picker->setStyleSheet(QStringLiteral(
-        "QComboBox#aov_picker {"
-        "  background-color: rgba(34, 38, 44, 200);"
-        "  color: rgba(180, 185, 195, 255);"
-        "  border: 1px solid rgba(55, 60, 70, 255);"
-        "  border-radius: 3px;"
-        "  padding: 2px 6px;"
-        "  font-size: 11px;"
-        "}"
-        "QComboBox#aov_picker::drop-down { border: none; }"
-        "QComboBox#aov_picker:hover { border-color: rgba(90, 100, 120, 255); }"));
+    // Styling inherited from theme.rs `QComboBox` rule (Graphite §2).
 
     {
         aov_picker->blockSignals(true);
@@ -739,17 +720,7 @@ CentralArea build_central_area(QMainWindow* window, BifShellState* state) {
     mode_picker->setMinimumWidth(120);
     mode_picker->setMaximumWidth(160);
     mode_picker->setToolTip(QStringLiteral("Render mode shown in the viewport"));
-    mode_picker->setStyleSheet(QStringLiteral(
-        "QComboBox#mode_picker {"
-        "  background-color: rgba(34, 38, 44, 200);"
-        "  color: rgba(180, 185, 195, 255);"
-        "  border: 1px solid rgba(55, 60, 70, 255);"
-        "  border-radius: 3px;"
-        "  padding: 2px 6px;"
-        "  font-size: 11px;"
-        "}"
-        "QComboBox#mode_picker::drop-down { border: none; }"
-        "QComboBox#mode_picker:hover { border-color: rgba(90, 100, 120, 255); }"));
+    // Styling inherited from theme.rs `QComboBox` rule (Graphite §2).
 
     {
         mode_picker->blockSignals(true);
@@ -1518,6 +1489,27 @@ int bif_qt_run_shell(ViewportCallbacks* viewport_cb, ::rust::Str stylesheet) {
             window.tabifyDockWidget(node_graph_dock, dock);
         }
         dock->hide();
+    }
+
+    // Collection Editor dock (v0.16.5) — tabified with Property
+    // Inspector on the right.
+    {
+        auto* prop_dock = window.findChild<QDockWidget*>(
+            QStringLiteral("dock_property_inspector"));
+        auto* dock = new QDockWidget(QStringLiteral("Collection Editor"), &window);
+        dock->setObjectName(QStringLiteral("dock_collection_editor"));
+        dock->setAllowedAreas(Qt::AllDockWidgetAreas);
+        dock->setFeatures(
+            QDockWidget::DockWidgetMovable |
+            QDockWidget::DockWidgetFloatable |
+            QDockWidget::DockWidgetClosable);
+        auto* panel = new CollectionEditorWidget(shell_state, dock);
+        dock->setWidget(panel);
+        window.addDockWidget(Qt::RightDockWidgetArea, dock);
+        if (prop_dock) {
+            window.tabifyDockWidget(prop_dock, dock);
+            prop_dock->raise();
+        }
     }
 
     {

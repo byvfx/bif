@@ -2361,6 +2361,218 @@ impl UsdStage {
     }
 }
 
+// ============================================================================
+// CollectionAPI (v0.16.5)
+// ============================================================================
+
+/// Authored info for one UsdCollectionAPI instance applied to a prim.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UsdCollectionInfo {
+    pub name: String,
+    pub includes: Vec<String>,
+    pub excludes: Vec<String>,
+    /// "expandPrims" | "expandPrimsAndProperties" | "explicitOnly"
+    pub expansion_rule: String,
+    pub include_root: bool,
+}
+
+impl UsdStage {
+    /// List the CollectionAPI instance names applied to a prim.
+    pub fn list_collections(&self, prim_path: &str) -> UsdBridgeResult<Vec<String>> {
+        let c_path = cstr(prim_path)?;
+        let mut raw_ptr: *mut *mut std::ffi::c_char = std::ptr::null_mut();
+        let mut count: usize = 0;
+        let code = unsafe {
+            usd_bridge_list_collections(self.raw, c_path.as_ptr(), &mut raw_ptr, &mut count)
+        };
+        if code != UsdBridgeErrorCode::Success {
+            return Err(code.into());
+        }
+        if raw_ptr.is_null() || count == 0 {
+            return Ok(Vec::new());
+        }
+        let names = unsafe {
+            let slice = std::slice::from_raw_parts(raw_ptr, count);
+            let names: Vec<String> = slice
+                .iter()
+                .map(|&p| super::ffi_convert::c_str_to_string(p as *const _))
+                .collect();
+            usd_bridge_free_string_list(raw_ptr, count);
+            names
+        };
+        Ok(names)
+    }
+
+    /// Read authored includes/excludes/expansion rule for a single collection.
+    pub fn get_collection_info(
+        &self,
+        prim_path: &str,
+        coll_name: &str,
+    ) -> UsdBridgeResult<UsdCollectionInfo> {
+        let c_path = cstr(prim_path)?;
+        let c_name = cstr(coll_name)?;
+        let mut raw_ptr: *mut UsdBridgeCollectionInfoRaw = std::ptr::null_mut();
+        let code = unsafe {
+            usd_bridge_get_collection_info(self.raw, c_path.as_ptr(), c_name.as_ptr(), &mut raw_ptr)
+        };
+        if code != UsdBridgeErrorCode::Success {
+            return Err(code.into());
+        }
+        if raw_ptr.is_null() {
+            return Err(UsdBridgeError::InvalidPrim(prim_path.to_string()));
+        }
+        let info = unsafe {
+            let r = &*raw_ptr;
+            let read_array = |arr: *const *const std::ffi::c_char, n: usize| -> Vec<String> {
+                if arr.is_null() || n == 0 {
+                    return Vec::new();
+                }
+                std::slice::from_raw_parts(arr, n)
+                    .iter()
+                    .map(|&p| super::ffi_convert::c_str_to_string(p))
+                    .collect()
+            };
+            let result = UsdCollectionInfo {
+                name: super::ffi_convert::c_str_to_string(r.name),
+                includes: read_array(r.includes, r.includes_count),
+                excludes: read_array(r.excludes, r.excludes_count),
+                expansion_rule: super::ffi_convert::c_str_to_string(r.expansion_rule),
+                include_root: r.include_root != 0,
+            };
+            usd_bridge_collection_info_free(raw_ptr);
+            result
+        };
+        Ok(info)
+    }
+
+    /// Compute the fully-resolved member set (UsdCollectionAPI::ComputeIncludedPaths).
+    pub fn compute_collection_members(
+        &self,
+        prim_path: &str,
+        coll_name: &str,
+    ) -> UsdBridgeResult<Vec<String>> {
+        let c_path = cstr(prim_path)?;
+        let c_name = cstr(coll_name)?;
+        let mut raw_ptr: *mut *mut std::ffi::c_char = std::ptr::null_mut();
+        let mut count: usize = 0;
+        let code = unsafe {
+            usd_bridge_compute_collection_members(
+                self.raw,
+                c_path.as_ptr(),
+                c_name.as_ptr(),
+                &mut raw_ptr,
+                &mut count,
+            )
+        };
+        if code != UsdBridgeErrorCode::Success {
+            return Err(code.into());
+        }
+        if raw_ptr.is_null() || count == 0 {
+            return Ok(Vec::new());
+        }
+        let paths = unsafe {
+            let slice = std::slice::from_raw_parts(raw_ptr, count);
+            let paths: Vec<String> = slice
+                .iter()
+                .map(|&p| super::ffi_convert::c_str_to_string(p as *const _))
+                .collect();
+            usd_bridge_free_string_list(raw_ptr, count);
+            paths
+        };
+        Ok(paths)
+    }
+
+    /// Apply a new CollectionAPI(coll_name) to a prim. Idempotent.
+    pub fn apply_collection(&self, prim_path: &str, coll_name: &str) -> UsdBridgeResult<()> {
+        let c_path = cstr(prim_path)?;
+        let c_name = cstr(coll_name)?;
+        let code = unsafe {
+            usd_bridge_collection_apply(self.raw as *mut _, c_path.as_ptr(), c_name.as_ptr())
+        };
+        if code != UsdBridgeErrorCode::Success {
+            return Err(code.into());
+        }
+        Ok(())
+    }
+
+    /// Add a target to the includes (is_include=true) or excludes (false) of
+    /// a collection. Authored at the stage's current edit target.
+    pub fn collection_add_target(
+        &self,
+        prim_path: &str,
+        coll_name: &str,
+        target_path: &str,
+        is_include: bool,
+    ) -> UsdBridgeResult<()> {
+        let c_path = cstr(prim_path)?;
+        let c_name = cstr(coll_name)?;
+        let c_target = cstr(target_path)?;
+        let code = unsafe {
+            usd_bridge_collection_add_target(
+                self.raw as *mut _,
+                c_path.as_ptr(),
+                c_name.as_ptr(),
+                c_target.as_ptr(),
+                if is_include { 1 } else { 0 },
+            )
+        };
+        if code != UsdBridgeErrorCode::Success {
+            return Err(code.into());
+        }
+        Ok(())
+    }
+
+    /// Remove a target from a collection's includes/excludes.
+    pub fn collection_remove_target(
+        &self,
+        prim_path: &str,
+        coll_name: &str,
+        target_path: &str,
+        is_include: bool,
+    ) -> UsdBridgeResult<()> {
+        let c_path = cstr(prim_path)?;
+        let c_name = cstr(coll_name)?;
+        let c_target = cstr(target_path)?;
+        let code = unsafe {
+            usd_bridge_collection_remove_target(
+                self.raw as *mut _,
+                c_path.as_ptr(),
+                c_name.as_ptr(),
+                c_target.as_ptr(),
+                if is_include { 1 } else { 0 },
+            )
+        };
+        if code != UsdBridgeErrorCode::Success {
+            return Err(code.into());
+        }
+        Ok(())
+    }
+
+    /// Set the expansion rule. Valid: "expandPrims", "expandPrimsAndProperties", "explicitOnly".
+    pub fn collection_set_expansion_rule(
+        &self,
+        prim_path: &str,
+        coll_name: &str,
+        rule: &str,
+    ) -> UsdBridgeResult<()> {
+        let c_path = cstr(prim_path)?;
+        let c_name = cstr(coll_name)?;
+        let c_rule = cstr(rule)?;
+        let code = unsafe {
+            usd_bridge_collection_set_expansion_rule(
+                self.raw as *mut _,
+                c_path.as_ptr(),
+                c_name.as_ptr(),
+                c_rule.as_ptr(),
+            )
+        };
+        if code != UsdBridgeErrorCode::Success {
+            return Err(code.into());
+        }
+        Ok(())
+    }
+}
+
 impl UsdStage {
     /// Free bulk mesh geometry cache (normals, UVs, subdivision data) after Rust
     /// has copied it. Keeps vertices/indices/paths for animation queries.
@@ -4303,5 +4515,74 @@ def Xform "World"
             crate::usd::layer::PrimSpecifier::Def,
             "anim.usda defines {LAYERS_DEMO_ATTR_PATH} as Cube; specifier must be Def"
         );
+    }
+
+    const COLLECTIONS_FIXTURE: &str = "../../test_assets/collections.usda";
+
+    #[test]
+    fn test_list_collections_returns_applied_names() {
+        let stage = UsdStage::open(COLLECTIONS_FIXTURE).expect("open collections fixture");
+        let mut names = stage.list_collections("/World").expect("list collections");
+        names.sort();
+        assert_eq!(names, vec!["lights".to_string(), "skinMeshes".to_string()]);
+    }
+
+    #[test]
+    fn test_get_collection_info_reads_authored_targets() {
+        let stage = UsdStage::open(COLLECTIONS_FIXTURE).expect("open collections fixture");
+        let info = stage
+            .get_collection_info("/World", "skinMeshes")
+            .expect("collection info");
+        assert_eq!(info.name, "skinMeshes");
+        assert_eq!(info.includes, vec!["/World/Hero/Body".to_string()]);
+        assert_eq!(info.excludes, vec!["/World/Hero/Body/Eyes".to_string()]);
+        assert_eq!(info.expansion_rule, "expandPrims");
+    }
+
+    #[test]
+    fn test_compute_collection_members_expands_includes() {
+        let stage = UsdStage::open(COLLECTIONS_FIXTURE).expect("open collections fixture");
+        let members = stage
+            .compute_collection_members("/World", "skinMeshes")
+            .expect("compute members");
+        // /World/Hero/Body is included, but /World/Hero/Body/Eyes is excluded
+        assert!(members.contains(&"/World/Hero/Body".to_string()));
+        assert!(!members.contains(&"/World/Hero/Body/Eyes".to_string()));
+    }
+
+    #[test]
+    fn test_collection_add_and_remove_target_roundtrip() {
+        let stage = UsdStage::open(COLLECTIONS_FIXTURE).expect("open collections fixture");
+        stage
+            .collection_add_target("/World", "skinMeshes", "/World/Hero", true)
+            .expect("add include");
+        let info = stage.get_collection_info("/World", "skinMeshes").unwrap();
+        assert!(info.includes.contains(&"/World/Hero".to_string()));
+
+        stage
+            .collection_remove_target("/World", "skinMeshes", "/World/Hero", true)
+            .expect("remove include");
+        let info = stage.get_collection_info("/World", "skinMeshes").unwrap();
+        assert!(!info.includes.contains(&"/World/Hero".to_string()));
+    }
+
+    #[test]
+    fn test_collection_set_expansion_rule() {
+        let stage = UsdStage::open(COLLECTIONS_FIXTURE).expect("open collections fixture");
+        stage
+            .collection_set_expansion_rule("/World", "skinMeshes", "explicitOnly")
+            .expect("set rule");
+        let info = stage.get_collection_info("/World", "skinMeshes").unwrap();
+        assert_eq!(info.expansion_rule, "explicitOnly");
+    }
+
+    #[test]
+    fn test_apply_collection_creates_new() {
+        let stage = UsdStage::open(COLLECTIONS_FIXTURE).expect("open collections fixture");
+        stage
+            .apply_collection("/World", "extras")
+            .expect("apply new collection");
+        let names = stage.list_collections("/World").unwrap();
+        assert!(names.contains(&"extras".to_string()));
     }
 }
