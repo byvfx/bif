@@ -269,6 +269,26 @@ void CollectionEditorWidget::refresh_collection_list() {
 
 void CollectionEditorWidget::refresh_details() {
     if (!m_state) return;
+    // Defense: if any external code path reaches refresh_details() while
+    // an inline-add row is live, `clear()` would destroy the embedded
+    // QLineEdit and leave m_pending_* dangling. The trailing-item
+    // assumption in cancel_inline_add() would then mis-delete a real row.
+    // Drop pending state silently — the user's typing is lost but the
+    // structure stays consistent. Callers that want to preserve the
+    // edit row must call cancel_inline_add() explicitly first.
+    if (m_pending_target != PendingTarget::None &&
+        (m_pending_list == m_includes_list ||
+         m_pending_list == m_excludes_list ||
+         m_pending_target == PendingTarget::NewCollection)) {
+        if (m_pending_target == PendingTarget::NewCollection) {
+            if (m_pending_edit) m_pending_edit->removeEventFilter(this);
+            m_collection_picker->setEditable(false);
+        }
+        m_pending_list = nullptr;
+        m_pending_item = nullptr;
+        m_pending_edit = nullptr;
+        m_pending_target = PendingTarget::None;
+    }
     m_suppress_signals = true;
     m_includes_list->clear();
     m_excludes_list->clear();
@@ -335,19 +355,31 @@ void CollectionEditorWidget::begin_inline_add(PendingTarget which) {
     cancel_inline_add();  // only one pending edit at a time
     m_pending_target = which;
 
-    QString placeholder;
+    if (which == PendingTarget::NewCollection) {
+        // New-collection: reroute commit through the picker's own lineEdit.
+        // No heap allocation — the QComboBox owns its line edit.
+        m_collection_picker->setEditable(true);
+        auto* le = m_collection_picker->lineEdit();
+        le->clear();
+        le->setPlaceholderText(QStringLiteral("collection_name"));
+        le->installEventFilter(this);
+        le->setFocus(Qt::ShortcutFocusReason);
+        m_pending_edit = le;
+        return;
+    }
+
     QListWidget* list = nullptr;
+    QString placeholder;
     switch (which) {
         case PendingTarget::Includes:
             list = m_includes_list;
             placeholder = QStringLiteral("/World/Hero/Body");
+            if (m_includes_empty->isVisible()) m_includes_empty->hide();
             break;
         case PendingTarget::Excludes:
             list = m_excludes_list;
             placeholder = QStringLiteral("/World/Hero/Eyes");
-            break;
-        case PendingTarget::NewCollection:
-            placeholder = QStringLiteral("collection_name");
+            if (m_excludes_empty->isVisible()) m_excludes_empty->hide();
             break;
         default:
             return;
@@ -358,31 +390,12 @@ void CollectionEditorWidget::begin_inline_add(PendingTarget which) {
     m_pending_edit->setFrame(false);
     m_pending_edit->installEventFilter(this);
 
-    if (list) {
-        // List-bound: embed as a transient row at the bottom.
-        m_pending_list = list;
-        if (which == PendingTarget::Includes && m_includes_empty->isVisible()) {
-            m_includes_empty->hide();
-        }
-        if (which == PendingTarget::Excludes && m_excludes_empty->isVisible()) {
-            m_excludes_empty->hide();
-        }
-        auto* item = new QListWidgetItem(list);
-        item->setSizeHint(QSize(0, 28));
-        list->setItemWidget(item, m_pending_edit);
-        m_pending_edit->setFocus(Qt::ShortcutFocusReason);
-    } else {
-        // New-collection: float the edit beneath the picker row by replacing
-        // the picker's text temporarily.
-        m_collection_picker->setEditable(true);
-        m_collection_picker->setEditText(QString());
-        m_collection_picker->lineEdit()->setPlaceholderText(placeholder);
-        m_collection_picker->lineEdit()->installEventFilter(this);
-        m_collection_picker->lineEdit()->setFocus(Qt::ShortcutFocusReason);
-        // For new-collection mode we reroute commit through the combo's lineEdit.
-        delete m_pending_edit;
-        m_pending_edit = m_collection_picker->lineEdit();
-    }
+    m_pending_list = list;
+    m_pending_item = new QListWidgetItem(list);
+    m_pending_item->setSizeHint(QSize(0, 28));
+    // setItemWidget takes ownership of m_pending_edit (reparents to the view).
+    list->setItemWidget(m_pending_item, m_pending_edit);
+    m_pending_edit->setFocus(Qt::ShortcutFocusReason);
 }
 
 void CollectionEditorWidget::commit_inline_add() {
@@ -433,18 +446,26 @@ void CollectionEditorWidget::cancel_inline_add() {
         if (m_pending_edit) m_pending_edit->removeEventFilter(this);
         m_collection_picker->setEditable(false);
         m_pending_edit = nullptr;
-    } else if (m_pending_list && m_pending_edit) {
-        m_pending_edit->removeEventFilter(this);
-        // The QLineEdit is owned by the list-item widget map; clearing the
-        // setItemWidget association deletes it. We delete the trailing item
-        // (which is always the inline-add row when active).
-        const int last = m_pending_list->count() - 1;
-        if (last >= 0) {
-            delete m_pending_list->takeItem(last);
-        }
-        m_pending_edit = nullptr;
+        m_pending_item = nullptr;
         m_pending_list = nullptr;
+        m_pending_target = PendingTarget::None;
+        return;
     }
+    if (m_pending_list && m_pending_item) {
+        if (m_pending_edit) m_pending_edit->removeEventFilter(this);
+        // Detach the embedded widget BEFORE removing the item — Qt would
+        // otherwise destroy it as part of takeItem and `m_pending_edit` would
+        // dangle. deleteLater handles in-flight focus/mouse dispatch safely.
+        m_pending_list->removeItemWidget(m_pending_item);
+        const int row = m_pending_list->row(m_pending_item);
+        if (row >= 0) {
+            delete m_pending_list->takeItem(row);
+        }
+        if (m_pending_edit) m_pending_edit->deleteLater();
+    }
+    m_pending_edit = nullptr;
+    m_pending_item = nullptr;
+    m_pending_list = nullptr;
     m_pending_target = PendingTarget::None;
 }
 

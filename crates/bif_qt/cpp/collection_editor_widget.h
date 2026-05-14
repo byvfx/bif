@@ -24,6 +24,7 @@ class QFrame;
 class QLabel;
 class QLineEdit;
 class QListWidget;
+class QListWidgetItem;
 class QToolButton;
 class QVBoxLayout;
 
@@ -100,8 +101,11 @@ private:
     QLabel* m_excludes_empty;
     QLabel* m_members_empty;
 
-    // Inline-add row state. Lives on m_includes_list / m_excludes_list / outside.
+    // Inline-add row state. Lives on m_includes_list / m_excludes_list (or
+    // m_collection_picker for NewCollection). `m_pending_item` is owned by the
+    // host QListWidget; null for NewCollection (picker mode).
     QListWidget* m_pending_list = nullptr;
+    QListWidgetItem* m_pending_item = nullptr;
     QLineEdit* m_pending_edit = nullptr;
     PendingTarget m_pending_target = PendingTarget::None;
 
