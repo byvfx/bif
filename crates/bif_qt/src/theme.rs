@@ -375,6 +375,101 @@ pub fn qt_stylesheet() -> String {
         QSplitter::handle {{ background-color: {surface_container_lowest}; }}
         QSplitter::handle:horizontal {{ width: 1px; }}
         QSplitter::handle:vertical   {{ height: 1px; }}
+
+        /* ── Section blocks (Collection Editor, future inspectors) ── */
+        QFrame#sectionBlock {{
+            background-color: {surface_container};
+            border: none;
+            border-radius: 6px;
+        }}
+        QFrame#sectionHeaderRow {{
+            background-color: {surface_container_low};
+            border: none;
+            border-radius: 6px;
+        }}
+        QFrame#sectionHeaderRow:hover {{
+            background-color: {surface_container_high};
+        }}
+        QToolButton#sectionIcon {{
+            background-color: transparent;
+            color: {on_surface_variant};
+            border: none;
+            border-radius: 4px;
+            padding: 2px 6px;
+            font-size: 14px;
+            font-weight: 600;
+        }}
+        QToolButton#sectionIcon:hover {{
+            background-color: {surface_container_highest};
+            color: {on_surface};
+        }}
+        QLabel#sectionEmptyHint {{
+            color: {outline};
+            font-style: italic;
+            font-size: 12px;
+            padding: 8px 12px;
+        }}
+        QLabel#sectionChevron {{
+            color: {outline};
+            font-size: 11px;
+            padding: 0px 6px 0px 4px;
+        }}
+
+        /* Collection Editor lists — left accent stripe per role */
+        QListWidget#includesList {{
+            background-color: transparent;
+            border: none;
+            outline: none;
+        }}
+        QListWidget#includesList::item {{
+            background-color: transparent;
+            border-left: 4px solid {primary_container};
+            padding: 6px 8px 6px 10px;
+            min-height: 22px;
+        }}
+        QListWidget#includesList::item:hover {{
+            background-color: {surface_container_high};
+        }}
+        QListWidget#includesList::item:selected {{
+            background-color: {selection_bg};
+        }}
+
+        QListWidget#excludesList {{
+            background-color: transparent;
+            border: none;
+            outline: none;
+        }}
+        QListWidget#excludesList::item {{
+            background-color: transparent;
+            border-left: 4px solid {outline};
+            padding: 6px 8px 6px 10px;
+            min-height: 22px;
+        }}
+        QListWidget#excludesList::item:hover {{
+            background-color: {surface_container_high};
+        }}
+        QListWidget#excludesList::item:selected {{
+            background-color: {selection_bg};
+        }}
+
+        QListWidget#membersList {{
+            background-color: transparent;
+            border: none;
+            outline: none;
+        }}
+        QListWidget#membersList::item {{
+            background-color: transparent;
+            border-left: 4px solid transparent;
+            padding: 6px 8px 6px 10px;
+            min-height: 22px;
+            color: {outline};
+            font-family: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace;
+            font-size: 12px;
+        }}
+        QListWidget#membersList::item:hover {{
+            background-color: {surface_container_high};
+            color: {on_surface};
+        }}
         ",
         surface = SURFACE.to_qt_rgba_string(),
         surface_container_lowest = SURFACE_CONTAINER_LOWEST.to_qt_rgba_string(),
@@ -383,6 +478,7 @@ pub fn qt_stylesheet() -> String {
         surface_container_high = SURFACE_CONTAINER_HIGH.to_qt_rgba_string(),
         surface_container_highest = SURFACE_CONTAINER_HIGHEST.to_qt_rgba_string(),
         on_surface = ON_SURFACE.to_qt_rgba_string(),
+        on_surface_variant = ON_SURFACE_VARIANT.to_qt_rgba_string(),
         on_primary = ON_PRIMARY.to_qt_rgba_string(),
         outline = OUTLINE.to_qt_rgba_string(),
         text_disabled = TEXT_DISABLED.to_qt_rgba_string(),
@@ -444,5 +540,20 @@ mod tests {
         assert!(s.contains("QLabel#sectionHeader"));
         assert!(s.contains("letter-spacing"));
         assert!(s.contains("QComboBox {"));
+    }
+
+    #[test]
+    fn stylesheet_exposes_collection_editor_selectors() {
+        let s = qt_stylesheet();
+        // Section-block primitives reused across inspectors
+        assert!(s.contains("QFrame#sectionBlock"));
+        assert!(s.contains("QFrame#sectionHeaderRow"));
+        assert!(s.contains("QToolButton#sectionIcon"));
+        assert!(s.contains("QLabel#sectionEmptyHint"));
+        // Collection Editor list variants — left accent stripe per role
+        assert!(s.contains("QListWidget#includesList"));
+        assert!(s.contains("QListWidget#excludesList"));
+        assert!(s.contains("QListWidget#membersList"));
+        assert!(s.contains("border-left: 4px solid"));
     }
 }
