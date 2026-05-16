@@ -447,6 +447,13 @@ impl MeshData {
             bounds_max = bounds_max.max(pos);
         }
 
+        // Empty point set → sentinel survives. Collapse so downstream
+        // transform_aabb doesn't hit `0 * INF = NaN`.
+        if !bounds_min.is_finite() || !bounds_max.is_finite() {
+            bounds_min = Vec3::ZERO;
+            bounds_max = Vec3::ZERO;
+        }
+
         Ok(Self {
             vertices,
             indices: mesh.indices.clone(),
@@ -682,6 +689,13 @@ impl MeshData {
                 all_triangle_material_ids
                     .extend(std::iter::repeat_n(*instance_mat_id, triangle_count));
             }
+        }
+
+        // Empty / no-vertex prototypes leave the sentinel — collapse before
+        // returning so transform_aabb doesn't produce NaN.
+        if !bounds_min.is_finite() || !bounds_max.is_finite() {
+            bounds_min = Vec3::ZERO;
+            bounds_max = Vec3::ZERO;
         }
 
         let triangle_material_ids = if all_triangle_material_ids.is_empty() {

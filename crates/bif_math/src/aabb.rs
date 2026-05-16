@@ -19,7 +19,23 @@ impl Aabb {
     }
 
     /// Create an AABB from two corner points.
+    ///
+    /// Non-finite inputs (NaN, +/-INF) collapse to a zero AABB and emit a
+    /// `log::warn!`. This guards downstream `Interval::new(NaN, NaN)` panics
+    /// when a caller passes sentinel-init bounds for an empty point set, or
+    /// when a transform produces `0 * INF = NaN` (see `Mat4Ext::transform_aabb`).
     pub fn from_points(a: Vec3, b: Vec3) -> Self {
+        let (a, b) = if a.is_finite() && b.is_finite() {
+            (a, b)
+        } else {
+            log::warn!(
+                "Aabb::from_points received non-finite input (a={:?}, b={:?}); collapsing to zero AABB",
+                a,
+                b
+            );
+            (Vec3::ZERO, Vec3::ZERO)
+        };
+
         let x = Interval::new(a.x.min(b.x), a.x.max(b.x));
         let y = Interval::new(a.y.min(b.y), a.y.max(b.y));
         let z = Interval::new(a.z.min(b.z), a.z.max(b.z));
@@ -233,6 +249,24 @@ mod tests {
 
         let aabb_z = Aabb::from_points(Vec3::ZERO, Vec3::new(1.0, 1.0, 10.0));
         assert_eq!(aabb_z.longest_axis(), 2);
+    }
+
+    #[test]
+    fn test_aabb_from_points_collapses_infinity_sentinels() {
+        // Mimics empty point-set bounds (mesh_data.rs:441,604 init values).
+        let aabb = Aabb::from_points(Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY));
+        // Collapses to zero AABB then pads to minimums — must be finite.
+        assert!(aabb.x.min.is_finite() && aabb.x.max.is_finite());
+        assert!(aabb.y.min.is_finite() && aabb.y.max.is_finite());
+        assert!(aabb.z.min.is_finite() && aabb.z.max.is_finite());
+    }
+
+    #[test]
+    fn test_aabb_from_points_collapses_nan() {
+        let aabb = Aabb::from_points(Vec3::splat(f32::NAN), Vec3::splat(f32::NAN));
+        assert!(aabb.x.min.is_finite() && aabb.x.max.is_finite());
+        assert!(aabb.y.min.is_finite() && aabb.y.max.is_finite());
+        assert!(aabb.z.min.is_finite() && aabb.z.max.is_finite());
     }
 
     #[test]

@@ -388,6 +388,7 @@ version = "0.16.0"
 dependencies = [
  "bytemuck",
  "glam",
+ "log",
  "serde",
  "serde_json",
 ]
