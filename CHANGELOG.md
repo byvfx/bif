@@ -6,6 +6,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.16.6] - 2026-05-16
+
 ### Added
 
 - **View ▸ Panels submenu — every dock reachable from the menu bar** (v0.16.6, 2026-05-13). Previously the only dock toggles in the View menu were USDA Source and Node Graph (Experimental); closing any of the other six docks via the `X` button left users with no way to bring them back without restarting. The View menu now has a **Panels submenu** with one checkable entry per dock (Scene Browser, Layer Stack, Property Inspector, Render Settings, Collection Editor, Node Graph, Timeline, USDA Source). Each action is bound bidirectionally to its `QDockWidget::visibilityChanged` — closing the dock via the `X` unchecks the menu entry, workspace switches that hide/show docks propagate to the checked state automatically. Default shortcuts `Ctrl+Shift+1` through `Ctrl+Shift+8` are routed through the existing `bif_qt::shortcuts::lookup()` registry (`panels.scene_browser` / `panels.layer_stack` / `panels.property_inspector` / `panels.render_settings` / `panels.collection_editor` / `panels.node_graph` / `panels.timeline` / `panels.usda_source`) so a future Preferences dialog can remap them per-user. All 8 actions and Reset Workspace Layout also exposed in the command palette (Ctrl+P).
