@@ -6,8 +6,8 @@
 
 - **Branch:** `refactor/deepen-modules` (off `v0.16.8-dogfood-polish` tip; not yet pushed)
 - **Version:** v0.16.8 base (commit `0d9f4c7`)
-- **Status:** RFC #5 (deepen path-trace core) implemented — `PathTracer` deep module extracted, 2 commits, all green. RFC #6 (node-type) not started.
-- **Next:** Implement RFC #6 (`behavior.rs` + `NodeOutputs` + `SceneCmd` in bif_viewport). Optional #5 polish: NEE/MIS boundary tests. Push branch + open PR when ready.
+- **Status:** RFC #5 (deepen path-trace core) **complete** — `PathTracer` deep module + NEE/MIS boundary tests, 3 commits, 119 tests green. RFC #6 **paused** — implementation surfaced that `SceneCmd` over-fits the imperative dispatch arms (see [issue #6 comment](https://github.com/byvfx/bif/issues/6)); needs re-scope to `NodeOutputs` + node-routing consolidation before any code.
+- **Next:** Re-scope #6 per the issue comment (NodeOutputs merge + CookNode routing; drop global SceneCmd). Push `refactor/deepen-modules` + open PR when ready.
 
 ---
 
@@ -21,9 +21,13 @@
 1. `3196226` — pure helpers `should_skip_cache` / `roulette_survival` extracted from `ray_color_with_aovs`; RR start named `DEFAULT_RR_START_BOUNCE`.
 2. `546e6d4` — `PathTracer<'a>` deep module: owns scene+config, resolves HDRI/cache once in `new()`, single `trace()` entry, `sample_pixel`/`sample_pixel_color` hold SPP+filter loop. `ray_color_with_aovs`/`render_pixel`/`render_pixel_with_aovs` → thin wrappers (API unchanged). `bucket.rs` builds one tracer per bucket (per-frame construction). `rr_start_bounce` exposed via `with_rr_start_bounce`.
 
-**Validation:** `bif_renderer` 116 + `bif_viewport` 177 tests pass; clippy clean; workspace builds; fmt clean.
+3. `cbdeda7` — NEE/MIS boundary tests via `PathTracer`: NEE illuminates a diffuse surface, shadow rays respect occlusion, area light exercises the MIS-weighted branch. (Caught two real semantics while writing: `DistantLight` angle>0 → cone pdf; `RectLight` one-sided emission.)
 
-**Next:** RFC #6 in bif_viewport. Optional: dedicated NEE/MIS-correctness boundary tests (now possible via `PathTracer`). Push `refactor/deepen-modules` + open PR.
+**Validation:** `bif_renderer` 119 + `bif_viewport` 177 tests pass; clippy clean; workspace builds; fmt clean.
+
+**RFC #6 — paused.** Reading `node_dispatch.rs` showed the ~26 dispatch arms are imperative orchestrations (e.g. `CreatePrimitive` calls `load_primitive` which mutates + returns the id the "command" would need), so a global `SceneCmd` surface over-fits — it'd need `Custom(Box<dyn FnOnce>)`, defeating testability. Re-scope recorded on [issue #6](https://github.com/byvfx/bif/issues/6): do `NodeOutputs` (merge `node_proto_map` + `node_cloud_map`) + `CookNode`/node-routing consolidation; drop global `SceneCmd`. No #6 code written.
+
+**Next:** Re-scoped #6 (NodeOutputs + routing). Push `refactor/deepen-modules` + open PR.
 
 ---
 
