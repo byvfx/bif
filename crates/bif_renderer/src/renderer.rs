@@ -22,6 +22,33 @@ use rand::RngCore;
 /// too narrow for spatial hashing to resolve without visible blur.
 pub const SHARC_ROUGHNESS_THRESHOLD: f32 = 0.1;
 
+/// Bounce depth at which Russian Roulette path termination begins.
+pub const DEFAULT_RR_START_BOUNCE: u32 = 3;
+
+/// True if a surface should skip SHARC cache reads/writes.
+///
+/// Delta (perfectly specular) surfaces and near-mirror glossy surfaces below
+/// [`SHARC_ROUGHNESS_THRESHOLD`] produce specular lobes too narrow for the
+/// cache's spatial hashing to resolve without visible blur.
+#[inline]
+pub fn should_skip_cache(is_delta: bool, roughness: f32) -> bool {
+    is_delta || roughness < SHARC_ROUGHNESS_THRESHOLD
+}
+
+/// Russian Roulette survival probability for a path throughput.
+///
+/// Returns the maximum RGB component clamped to `[0, 0.95]`. Paths that
+/// survive are boosted by `1/p` to keep the Monte Carlo estimator unbiased;
+/// the 0.95 cap prevents zero-variance infinite paths.
+#[inline]
+pub fn roulette_survival(throughput: Color) -> f32 {
+    throughput
+        .x
+        .max(throughput.y)
+        .max(throughput.z)
+        .clamp(0.0, 0.95)
+}
+
 /// Render configuration.
 #[derive(Debug, Clone, Default)]
 pub struct RenderConfig {
@@ -192,7 +219,7 @@ pub fn ray_color_with_aovs(
 
         // --- SHARC cache READ ---
         let is_delta = rec.material.is_delta();
-        let skip_cache = is_delta || rec.material.roughness() < SHARC_ROUGHNESS_THRESHOLD;
+        let skip_cache = should_skip_cache(is_delta, rec.material.roughness());
         if !skip_cache && bounce_count >= cache_min_depth {
             if let Some(c) = cache {
                 if let Some(cached) = c.lookup(rec.p, rec.normal) {
@@ -306,10 +333,9 @@ pub fn ray_color_with_aovs(
             }
         }
 
-        // --- Russian Roulette (after bounce >= 3) ---
-        if bounce_count >= 3 {
-            let max_component = throughput.x.max(throughput.y).max(throughput.z);
-            let survival_prob = max_component.clamp(0.0, 0.95);
+        // --- Russian Roulette (after bounce >= DEFAULT_RR_START_BOUNCE) ---
+        if bounce_count >= DEFAULT_RR_START_BOUNCE {
+            let survival_prob = roulette_survival(throughput);
             if survival_prob < 1e-6 || gen_f32(rng) > survival_prob {
                 break;
             }
@@ -579,6 +605,34 @@ mod tests {
             up_color.x,
             down_color.x
         );
+    }
+
+    #[test]
+    fn skip_cache_for_delta_surfaces() {
+        // Delta (mirror/glass) surfaces always skip the cache, regardless of roughness.
+        assert!(should_skip_cache(true, 1.0));
+        assert!(should_skip_cache(true, 0.0));
+    }
+
+    #[test]
+    fn skip_cache_below_roughness_threshold() {
+        // Near-mirror glossy below threshold skips; rougher diffuse-ish does not.
+        assert!(should_skip_cache(false, SHARC_ROUGHNESS_THRESHOLD - 0.01));
+        assert!(!should_skip_cache(false, SHARC_ROUGHNESS_THRESHOLD + 0.01));
+    }
+
+    #[test]
+    fn roulette_survival_is_max_rgb_component() {
+        // Survival probability tracks the brightest channel.
+        let p = roulette_survival(Color::new(0.2, 0.8, 0.4));
+        assert!((p - 0.8).abs() < 1e-6, "expected 0.8, got {p}");
+    }
+
+    #[test]
+    fn roulette_survival_clamped_to_0_95() {
+        // Boosted throughput can exceed 1.0; cap keeps paths terminating.
+        let p = roulette_survival(Color::new(2.0, 1.5, 3.0));
+        assert!((p - 0.95).abs() < 1e-6, "expected 0.95, got {p}");
     }
 
     #[test]

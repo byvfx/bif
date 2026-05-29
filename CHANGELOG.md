@@ -16,6 +16,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - **Keybinding editor — File ▸ Preferences…** (v0.16.7, 2026-05-16). New modal `KeybindingEditorDialog` listing every shortcut routed through `bif_qt::shortcuts::lookup()` grouped by dot-namespaced category (Camera / Edit / Panels / Palette / Timeline / Workspace). Per-row `QKeySequenceEdit` with clear button; OK persists overrides via `set_override()`, Cancel discards, Restore Defaults clears every override after a confirmation prompt. Linear conflict scan on Apply raises a `QMessageBox` and aborts the write so users can retype before retrying. Rows whose final sequence matches the compiled-in default emit `clear_override` so future default changes propagate. New files: `crates/bif_qt/cpp/keybinding_editor_dialog.{h,cpp}`. New menu action `File ▸ Preferences…` (placed between Save As and Exit, separator-bracketed, `QAction::PreferencesRole` for macOS habit). Known v0.16.7 limitation: some shortcuts require a restart to take effect — full hot-reload across widget-owned QActions follows in a later pass.
 
+### Changed
+
+- **Path-trace core deepening — step 1 ([#5](https://github.com/byvfx/bif/issues/5))**. Extracted two pure, unit-tested helpers out of `ray_color_with_aovs`'s inline loop in `bif_renderer::renderer`: `should_skip_cache(is_delta, roughness) -> bool` (SHARC roughness gate) and `roulette_survival(throughput) -> f32` (max-RGB-component clamped to `[0, 0.95]`). Russian Roulette's start depth is now the named constant `DEFAULT_RR_START_BOUNCE` instead of a hardcoded `3`. Behavior identical; testability groundwork for the planned `PathTracer` struct extraction. 4 new tests.
+
 ## [0.16.6] - 2026-05-16
 
 ### Added
