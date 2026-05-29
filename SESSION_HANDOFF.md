@@ -7,7 +7,7 @@
 - **Branch:** `refactor/deepen-modules` (off `v0.16.8-dogfood-polish` tip; not yet pushed)
 - **Version:** v0.16.8 base (commit `0d9f4c7`)
 - **Status:** RFC #5 (deepen path-trace core) **complete** — `PathTracer` deep module + NEE/MIS boundary tests, 3 commits, 119 tests green. RFC #6 **paused** — implementation surfaced that `SceneCmd` over-fits the imperative dispatch arms (see [issue #6 comment](https://github.com/byvfx/bif/issues/6)); needs re-scope to `NodeOutputs` + node-routing consolidation before any code.
-- **Next:** Re-scope #6 per the issue comment (NodeOutputs merge + CookNode routing; drop global SceneCmd). Push `refactor/deepen-modules` + open PR when ready.
+- **Next:** **Branch consolidation first** — `main` is stale (~v0.16.6 tag) while v0.16.7/v0.16.8 + #5 sit unmerged on stacked branches. Execution checklist: [`docs/agent-handoffs/2026-05-29-branch-consolidation.md`](docs/agent-handoffs/2026-05-29-branch-consolidation.md). Then re-scoped #6 (NodeOutputs) or v0.17.0.
 
 ---
 
