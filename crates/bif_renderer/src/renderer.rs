@@ -659,7 +659,7 @@ pub fn render(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{BvhNode, Lambertian, Sphere, Vec3};
+    use crate::{BvhNode, DistantLight, Lambertian, RectLight, Sphere, Vec3};
     use rand::rngs::StdRng;
     use rand::SeedableRng;
 
@@ -759,6 +759,174 @@ mod tests {
         assert_eq!(
             aov.alpha, 1.0,
             "primary hit must register regardless of RR start"
+        );
+    }
+
+    /// One diffuse sphere, black background, no lights, `max_depth: 1` — the unlit
+    /// baseline: nothing emits, so a trace resolves to black.
+    fn sphere_world_and_config_black() -> (BvhNode, RenderConfig) {
+        let sphere = Sphere::new(
+            Vec3::new(0.0, 0.0, -1.0),
+            0.5,
+            Lambertian::new(Color::new(0.8, 0.8, 0.8)),
+        );
+        let objects: Vec<Box<dyn Hittable + Send + Sync>> = vec![Box::new(sphere)];
+        let world = BvhNode::new(objects);
+        let config = RenderConfig {
+            samples_per_pixel: 1,
+            max_depth: 1,
+            background: Color::ZERO,
+            use_sky_gradient: false,
+            lights: Arc::new(LightList::new()),
+            hdri_show_background: true,
+            ..Default::default()
+        };
+        (world, config)
+    }
+
+    /// A diffuse sphere lit head-on by a distant (delta) light, black background,
+    /// `max_depth: 1` so only direct lighting (NEE) contributes — no indirect noise.
+    /// `blocker` inserts a sphere between the surface and the light to occlude it.
+    fn distant_lit_scene(blocker: bool) -> (BvhNode, RenderConfig) {
+        let mut objects: Vec<Box<dyn Hittable + Send + Sync>> = vec![Box::new(Sphere::new(
+            Vec3::new(0.0, 0.0, -1.0),
+            0.5,
+            Lambertian::new(Color::new(0.8, 0.8, 0.8)),
+        ))];
+        if blocker {
+            // Between the front-of-sphere hit (z ≈ -0.5) and the +z light.
+            objects.push(Box::new(Sphere::new(
+                Vec3::new(0.0, 0.0, 0.5),
+                0.3,
+                Lambertian::new(Color::new(0.5, 0.5, 0.5)),
+            )));
+        }
+        let world = BvhNode::new(objects);
+
+        let mut lights = LightList::new();
+        // Shines toward -z, i.e. from the +z side — straight onto the camera-facing
+        // hemisphere whose normal is +z, so cos(theta) ≈ 1.
+        lights.add(Box::new(DistantLight::new(
+            Vec3::new(0.0, 0.0, -1.0),
+            Color::ONE,
+            3.0,
+            0.0, // angle 0 → true delta light (pdf 1, is_delta) so NEE is unattenuated
+        )));
+
+        let config = RenderConfig {
+            samples_per_pixel: 1,
+            max_depth: 1,
+            background: Color::ZERO,
+            use_sky_gradient: false,
+            lights: Arc::new(lights),
+            hdri_show_background: true,
+            ..Default::default()
+        };
+        (world, config)
+    }
+
+    #[test]
+    fn nee_adds_direct_light_contribution() {
+        // With a light, NEE directly illuminates the diffuse surface. Without one,
+        // a black-background scene with no emission resolves to black.
+        let (lit_world, lit_cfg) = distant_lit_scene(false);
+        let (unlit_world, unlit_cfg) = sphere_world_and_config_black();
+        let ray = Ray::new(Vec3::ZERO, Vec3::new(0.0, 0.0, -1.0), 0.0);
+
+        let mut rng = StdRng::seed_from_u64(3);
+        let lit = PathTracer::new(&lit_world, &lit_cfg)
+            .trace(&ray, lit_cfg.max_depth, &mut rng)
+            .0;
+        let mut rng = StdRng::seed_from_u64(3);
+        let unlit = PathTracer::new(&unlit_world, &unlit_cfg)
+            .trace(&ray, unlit_cfg.max_depth, &mut rng)
+            .0;
+
+        assert!(
+            lit.length() > 0.05,
+            "lit surface should be bright, got {}",
+            lit.length()
+        );
+        assert!(
+            unlit.length() < 1e-4,
+            "unlit black scene should be ~black, got {}",
+            unlit.length()
+        );
+    }
+
+    #[test]
+    fn nee_respects_occlusion() {
+        // A blocker between surface and light casts a shadow: the NEE shadow ray is
+        // occluded, so direct lighting vanishes (max_depth: 1 → no indirect fill-in).
+        let (open_world, open_cfg) = distant_lit_scene(false);
+        let (shadowed_world, shadowed_cfg) = distant_lit_scene(true);
+        let ray = Ray::new(Vec3::ZERO, Vec3::new(0.0, 0.0, -1.0), 0.0);
+
+        let mut rng = StdRng::seed_from_u64(5);
+        let open = PathTracer::new(&open_world, &open_cfg)
+            .trace(&ray, open_cfg.max_depth, &mut rng)
+            .0;
+        let mut rng = StdRng::seed_from_u64(5);
+        let shadowed = PathTracer::new(&shadowed_world, &shadowed_cfg)
+            .trace(&ray, shadowed_cfg.max_depth, &mut rng)
+            .0;
+
+        assert!(
+            open.length() > 0.05,
+            "unoccluded surface should be lit, got {}",
+            open.length()
+        );
+        assert!(
+            shadowed.length() < 1e-4,
+            "occluded surface should be in shadow, got {}",
+            shadowed.length()
+        );
+    }
+
+    #[test]
+    fn area_light_applies_mis_weighted_nee() {
+        // A non-delta area light exercises the MIS-weighted NEE branch (power
+        // heuristic over light vs BSDF pdf) — distinct from the delta-light path.
+        // Assert it still produces direct illumination on the facing surface.
+        let world = BvhNode::new(vec![Box::new(Sphere::new(
+            Vec3::new(0.0, 0.0, -1.0),
+            0.5,
+            Lambertian::new(Color::new(0.8, 0.8, 0.8)),
+        )) as Box<dyn Hittable + Send + Sync>]);
+
+        let mut lights = LightList::new();
+        // Large quad on the +z side facing -z, well above the surface — broad solid
+        // angle so a seeded sample reliably lands with positive contribution.
+        // u×v gives the emitting normal; order axes so it points -z, toward the
+        // surface below (RectLight only emits on its normal side).
+        lights.add(Box::new(RectLight::new(
+            Vec3::new(0.0, 0.0, 2.0),
+            Vec3::new(0.0, 2.0, 0.0),
+            Vec3::new(2.0, 0.0, 0.0),
+            Color::ONE,
+            5.0,
+        )));
+
+        let config = RenderConfig {
+            samples_per_pixel: 1,
+            max_depth: 1,
+            background: Color::ZERO,
+            use_sky_gradient: false,
+            lights: Arc::new(lights),
+            hdri_show_background: true,
+            ..Default::default()
+        };
+        let ray = Ray::new(Vec3::ZERO, Vec3::new(0.0, 0.0, -1.0), 0.0);
+        let mut rng = StdRng::seed_from_u64(11);
+
+        let color = PathTracer::new(&world, &config)
+            .trace(&ray, config.max_depth, &mut rng)
+            .0;
+
+        assert!(
+            color.length() > 0.0,
+            "area light should contribute MIS-weighted direct lighting, got {}",
+            color.length()
         );
     }
 
