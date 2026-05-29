@@ -3,7 +3,7 @@
 //! Divides the image into tiles (buckets) that can be rendered
 //! independently and in parallel using rayon.
 
-use crate::renderer::{render_pixel, render_pixel_with_aovs};
+use crate::renderer::PathTracer;
 use crate::{Camera, Color, Hittable, RenderConfig};
 use rand::rngs::StdRng;
 use rand::SeedableRng;
@@ -125,11 +125,14 @@ pub fn render_bucket(
 
     let mut pixels = Vec::with_capacity((bucket.width * bucket.height) as usize);
 
+    // Resolve HDRI/cache once per bucket, then reuse across every pixel + sample.
+    let tracer = PathTracer::new(world, config);
+
     for local_y in 0..bucket.height {
         for local_x in 0..bucket.width {
             let global_x = bucket.x + local_x;
             let global_y = bucket.y + local_y;
-            let color = render_pixel(camera, world, global_x, global_y, config, &mut rng);
+            let color = tracer.sample_pixel_color(camera, global_x, global_y, &mut rng);
             pixels.push(color);
         }
     }
@@ -205,12 +208,14 @@ pub fn render_bucket_with_aovs(
     let mut albedos = Vec::with_capacity(capacity);
     let mut weights = Vec::with_capacity(capacity);
 
+    // Resolve HDRI/cache once per bucket, then reuse across every pixel + sample.
+    let tracer = PathTracer::new(world, config);
+
     for local_y in 0..bucket.height {
         for local_x in 0..bucket.width {
             let global_x = bucket.x + local_x;
             let global_y = bucket.y + local_y;
-            let (color, aov, weight) =
-                render_pixel_with_aovs(camera, world, global_x, global_y, config, &mut rng);
+            let (color, aov, weight) = tracer.sample_pixel(camera, global_x, global_y, &mut rng);
             pixels.push(color);
             depths.push(aov.depth);
             normals.push([aov.normal.x, aov.normal.y, aov.normal.z]);

@@ -59,7 +59,8 @@ pub use pick_scene::{EmbreePickScene, PickError, PickResult};
 pub use radiance_cache::{RadianceCache, RadianceCacheConfig};
 pub use renderer::{
     color_to_rgba, ray_color, ray_color_with_aovs, render, render_pixel, render_pixel_with_aovs,
-    AovData, ImageBuffer, RenderConfig,
+    roulette_survival, should_skip_cache, AovData, ImageBuffer, PathTracer, RenderConfig,
+    DEFAULT_RR_START_BOUNCE,
 };
 pub use sphere::Sphere;
 pub use triangle::Triangle;
