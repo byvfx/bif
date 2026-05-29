@@ -4,10 +4,26 @@
 
 ## Current State
 
-- **Branch:** `v0.16.8-dogfood-polish`
-- **Version:** v0.16.8 (commit `0d9f4c7`)
-- **Status:** Production-shot crash chain fixed (OOM + device-lost). App loads `rt_010_base.usda` partially — VRAM exhausted at ~192/1650 textures.
-- **Next:** Dynamic VRAM budget detection deferred to v0.17. Candidates: dogfood polish on this branch, or begin v0.17.0 (`cpp_bridge.rs` split, payload policies).
+- **Branch:** `refactor/deepen-modules` (off `v0.16.8-dogfood-polish` tip; not yet pushed)
+- **Version:** v0.16.8 base (commit `0d9f4c7`)
+- **Status:** RFC #5 (deepen path-trace core) implemented — `PathTracer` deep module extracted, 2 commits, all green. RFC #6 (node-type) not started.
+- **Next:** Implement RFC #6 (`behavior.rs` + `NodeOutputs` + `SceneCmd` in bif_viewport). Optional #5 polish: NEE/MIS boundary tests. Push branch + open PR when ready.
+
+---
+
+# Session Handoff — 2026-05-28 (RFC #5 path-trace core deepening)
+
+**Last Updated:** 2026-05-28 on `refactor/deepen-modules` (commit `546e6d4`).
+
+**Context:** Whole-codebase architecture review (Ousterhout deep-module lens) → 6 deepening candidates → filed 2 RFCs ([#5](https://github.com/byvfx/bif/issues/5) path-trace core, [#6](https://github.com/byvfx/bif/issues/6) node-type). Both chose the pragmatic "common-caller" Design C.
+
+**Done — RFC #5 (TDD, 2 commits):**
+1. `3196226` — pure helpers `should_skip_cache` / `roulette_survival` extracted from `ray_color_with_aovs`; RR start named `DEFAULT_RR_START_BOUNCE`.
+2. `546e6d4` — `PathTracer<'a>` deep module: owns scene+config, resolves HDRI/cache once in `new()`, single `trace()` entry, `sample_pixel`/`sample_pixel_color` hold SPP+filter loop. `ray_color_with_aovs`/`render_pixel`/`render_pixel_with_aovs` → thin wrappers (API unchanged). `bucket.rs` builds one tracer per bucket (per-frame construction). `rr_start_bounce` exposed via `with_rr_start_bounce`.
+
+**Validation:** `bif_renderer` 116 + `bif_viewport` 177 tests pass; clippy clean; workspace builds; fmt clean.
+
+**Next:** RFC #6 in bif_viewport. Optional: dedicated NEE/MIS-correctness boundary tests (now possible via `PathTracer`). Push `refactor/deepen-modules` + open PR.
 
 ---
 
@@ -89,35 +105,6 @@
 - `crates/bif_qt/cpp/shortcut_registry.h` (panels.* keys)
 - `crates/bif_qt/cpp/window_builder.cpp` (Panels submenu, dock sync, Reset action, palette entries)
 - `CHANGELOG.md`, `devlog/2026-05/DEVLOG_2026-05-13.md`
-
----
-
-# Session Handoff — 2026-05-12 (v0.16.2 close-out: GUI foundation polish)
-
-**Last Updated:** 2026-05-12 on `v0.16.2-bugfixes`.
-
-**Current work:** Pre-merge foundation review for v0.16.2 → main. Audited the Qt UI surface (panel inventory, TODO/stub punch list, golden-path tracing, regression risks) and landed the three foundation-polish items that were blocking a clean close-out:
-
-1. **File → Save As wired to a real dialog.** `actions.save_as` now opens `QFileDialog::getSaveFileName` pre-filled with the active edit-target identifier (full path + filename — opens to the right directory, user can rename in place). New `on_save_as_to_path` invokable calls `UsdStage::export_layer_as_string` + `std::fs::write`; `.usda` appended when no extension. Working-layer identity unchanged. Binary `.usdc` path deferred to v0.17 with `cpp_bridge.rs` split.
-2. **Help → About modal dialog.** Replaces status-bar stub with `QMessageBox::about` showing `CARGO_PKG_VERSION` + repo link. New `about_dialog_body` invokable so version can't drift from `Cargo.toml`. Status bar still gets the short line.
-3. **Edit-target sync failures surfaced to status bar.** Both `on_stage_path_opened` and `set_working_layer` were `log::warn!`-and-continue on `state.set_edit_target` failure — user would see "Loaded ✓" while edits would silently land on the wrong layer. Failure now appends `⚠ edit target sync failed: …` to the load message and replaces the layer-stack double-click OK with a warning.
-
-**Changes:**
-- `crates/bif_qt/src/main_window.rs` — new `on_save_as_to_path` and `about_dialog_body` invokables; edit-target-sync sites refactored to return `Option<String>` and surface to status bar.
-- `crates/bif_qt/cpp/window_builder.cpp` — Save As action rewired to open `QFileDialog` with pre-fill; Help/About action shows `QMessageBox::about`.
-- `crates/bif_core/tests/save_as_roundtrip.rs` — new file. Two tests cover the open → edit → export → write → reopen contract.
-- `CHANGELOG.md` — three new entries under `[Unreleased]` (Save As, Help/About, edit-target-sync).
-- `MILESTONES.md` — v0.16.2 row added to Released table with deferred-to-v0.17 list.
-
-**Validation:** `cargo build -p bif_qt`, `cargo clippy --workspace -- -D warnings`, `cargo fmt --check` all clean. `cargo test -p bif_core` 239 passed (incl. 2 new save_as_roundtrip tests under `--test-threads=1`). `cargo test -p bif_qt` 12 passed.
-
-**Next:** Commit punch list, merge `v0.16.2-bugfixes` → main (no-ff), post-merge smoke on `test_balls.usd`, tag `v0.16.2` after smoke. Then v0.17.0 (Context System) — first tasks: `cpp_bridge.rs` split, `cache_prim_data` thread-safety, defer-GPU-upload for invisible prototypes.
-
-**Foundation review notes (audit findings, no action this branch):**
-- Golden path (launch → open → pick → inspect → edit → save) is solid end-to-end.
-- File/New Stage, Recent Stages list, edge routing in node graph → all intentional Phase B stubs, deferred to v0.17.
-- Viewport-not-ready silent fallbacks at three sites in `main_window.rs` — defensive; consider status-bar messaging in a future polish pass.
-- Stage-mutex poison paths return silent `None` — current code is single-threaded so unreachable; no action.
 
 ---
 

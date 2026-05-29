@@ -4,6 +4,35 @@
 
 ---
 
+# Session Handoff — 2026-05-12 (v0.16.2 close-out: GUI foundation polish)
+
+**Last Updated:** 2026-05-12 on `v0.16.2-bugfixes`.
+
+**Current work:** Pre-merge foundation review for v0.16.2 → main. Audited the Qt UI surface (panel inventory, TODO/stub punch list, golden-path tracing, regression risks) and landed the three foundation-polish items that were blocking a clean close-out:
+
+1. **File → Save As wired to a real dialog.** `actions.save_as` now opens `QFileDialog::getSaveFileName` pre-filled with the active edit-target identifier (full path + filename — opens to the right directory, user can rename in place). New `on_save_as_to_path` invokable calls `UsdStage::export_layer_as_string` + `std::fs::write`; `.usda` appended when no extension. Working-layer identity unchanged. Binary `.usdc` path deferred to v0.17 with `cpp_bridge.rs` split.
+2. **Help → About modal dialog.** Replaces status-bar stub with `QMessageBox::about` showing `CARGO_PKG_VERSION` + repo link. New `about_dialog_body` invokable so version can't drift from `Cargo.toml`. Status bar still gets the short line.
+3. **Edit-target sync failures surfaced to status bar.** Both `on_stage_path_opened` and `set_working_layer` were `log::warn!`-and-continue on `state.set_edit_target` failure — user would see "Loaded ✓" while edits would silently land on the wrong layer. Failure now appends `⚠ edit target sync failed: …` to the load message and replaces the layer-stack double-click OK with a warning.
+
+**Changes:**
+- `crates/bif_qt/src/main_window.rs` — new `on_save_as_to_path` and `about_dialog_body` invokables; edit-target-sync sites refactored to return `Option<String>` and surface to status bar.
+- `crates/bif_qt/cpp/window_builder.cpp` — Save As action rewired to open `QFileDialog` with pre-fill; Help/About action shows `QMessageBox::about`.
+- `crates/bif_core/tests/save_as_roundtrip.rs` — new file. Two tests cover the open → edit → export → write → reopen contract.
+- `CHANGELOG.md` — three new entries under `[Unreleased]` (Save As, Help/About, edit-target-sync).
+- `MILESTONES.md` — v0.16.2 row added to Released table with deferred-to-v0.17 list.
+
+**Validation:** `cargo build -p bif_qt`, `cargo clippy --workspace -- -D warnings`, `cargo fmt --check` all clean. `cargo test -p bif_core` 239 passed (incl. 2 new save_as_roundtrip tests under `--test-threads=1`). `cargo test -p bif_qt` 12 passed.
+
+**Next:** Commit punch list, merge `v0.16.2-bugfixes` → main (no-ff), post-merge smoke on `test_balls.usd`, tag `v0.16.2` after smoke. Then v0.17.0 (Context System) — first tasks: `cpp_bridge.rs` split, `cache_prim_data` thread-safety, defer-GPU-upload for invisible prototypes.
+
+**Foundation review notes (audit findings, no action this branch):**
+- Golden path (launch → open → pick → inspect → edit → save) is solid end-to-end.
+- File/New Stage, Recent Stages list, edge routing in node graph → all intentional Phase B stubs, deferred to v0.17.
+- Viewport-not-ready silent fallbacks at three sites in `main_window.rs` — defensive; consider status-bar messaging in a future polish pass.
+- Stage-mutex poison paths return silent `None` — current code is single-threaded so unreachable; no action.
+
+---
+
 # Session Handoff — 2026-05-12 (viewport pick → scene browser tree sync)
 
 **Last Updated:** 2026-05-12 on `v0.16.2-bugfixes` (commit `837dfff`).
