@@ -63,6 +63,15 @@ pub enum UsdBridgeError {
 
     #[error("Path contains invalid UTF-8")]
     InvalidPath,
+
+    #[error(
+        "Refused {requested_bytes}-byte allocation ({context}) exceeds {max_bytes}-byte safety cap"
+    )]
+    AllocTooLarge {
+        context: String,
+        requested_bytes: usize,
+        max_bytes: usize,
+    },
 }
 
 impl From<UsdBridgeErrorCode> for UsdBridgeError {
@@ -1897,7 +1906,7 @@ impl UsdStage {
         }
 
         // SAFETY: raw_data populated by FFI call above; pointers valid while stage is open
-        Ok(unsafe { super::ffi_convert::convert_instancer_animation(&raw_data) })
+        unsafe { super::ffi_convert::convert_instancer_animation(&raw_data) }
     }
 
     /// Get animated transform samples for a camera by path.
@@ -2088,8 +2097,9 @@ impl UsdStage {
         }
 
         // Copy the vertices (C++ uses a temporary buffer that may be reused)
-        let vertices =
-            unsafe { std::slice::from_raw_parts(vertices_ptr, vertex_count * 3).to_vec() };
+        let n = super::ffi_guard::checked_mul_count(vertex_count, 3, "mesh.vertices_at_time")?;
+        let _ = super::ffi_guard::checked_alloc_count::<f32>(n, "mesh.vertices_at_time")?;
+        let vertices = unsafe { std::slice::from_raw_parts(vertices_ptr, n).to_vec() };
 
         Ok(vertices)
     }

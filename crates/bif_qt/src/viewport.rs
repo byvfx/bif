@@ -78,6 +78,20 @@ impl Viewport {
             None,
         ))?;
 
+        // Install error sinks BEFORE any submit happens. Without these, a
+        // device-lost (e.g. VRAM exhaustion on a 1000+ texture scene) makes
+        // `Queue::submit` panic the main thread, aborting the process via
+        // `__fastfail`. Routing the error to a flag lets the texture poll
+        // loop bail gracefully and keep the rest of the scene rendering.
+        device.on_uncaptured_error(Box::new(|err| {
+            log::error!("wgpu uncaptured error: {err}");
+            bif_viewport::texture_loader::mark_gpu_unhealthy();
+        }));
+        device.set_device_lost_callback(|reason, message| {
+            log::error!("wgpu device lost ({reason:?}): {message}");
+            bif_viewport::texture_loader::mark_gpu_unhealthy();
+        });
+
         let caps = surface.get_capabilities(&adapter);
         let format = caps
             .formats
@@ -232,6 +246,13 @@ pub fn viewport_on_resize(cb: &mut ViewportCallbacks, width: i32, height: i32, s
 }
 
 pub fn viewport_on_frame(cb: &mut ViewportCallbacks) {
+    // Once the wgpu device is lost (e.g. VRAM exhausted by a 1000+ texture
+    // scene), every subsequent `Queue::submit` panics the main thread. Bail
+    // out before issuing any more GPU work so the window stays responsive
+    // and the user sees whatever rendered up to that point.
+    if !bif_viewport::texture_loader::gpu_is_healthy() {
+        return;
+    }
     if let Some(v) = cb.viewport.as_mut() {
         if let Err(e) = v.render() {
             log::error!("bif_qt viewport render error: {e:#}");
@@ -244,5 +265,13 @@ pub fn viewport_on_shutdown(cb: &mut ViewportCallbacks) {
     if let Some(v) = cb.viewport.as_mut() {
         v.renderer_mut().wait_for_gpu();
     }
-    cb.viewport = None;
+
+    // wgpu's `Device::drop` asserts the submission queue is empty. On a
+    // healthy shutdown `wait_for_gpu` drains it. On a dead device the
+    // queue can't drain, so the drop assertion panics. Catch it so the
+    // window-close path doesn't abort the process.
+    let viewport = cb.viewport.take();
+    if let Some(v) = viewport {
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || drop(v)));
+    }
 }

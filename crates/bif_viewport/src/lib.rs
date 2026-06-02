@@ -1228,8 +1228,19 @@ impl Renderer {
     /// Block until all submitted GPU work completes. Call before dropping
     /// the Renderer to avoid `OBJECT_DELETED_WHILE_STILL_IN_USE` errors
     /// on D3D12/Vulkan.
+    ///
+    /// If the device has already been lost (cumulative VRAM exhaustion on
+    /// production scenes), `Device::poll` panics fatally via wgpu's
+    /// `handle_error_fatal!`. Short-circuit + catch the panic so window
+    /// close doesn't abort the process.
     pub fn wait_for_gpu(&self) {
-        self.gpu.device.poll(wgpu::Maintain::Wait);
+        if !crate::texture_loader::gpu_is_healthy() {
+            return;
+        }
+        let device = &self.gpu.device;
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            device.poll(wgpu::Maintain::Wait);
+        }));
     }
 
     /// Reset the renderer to "no scene loaded" state. Drains GPU,

@@ -579,6 +579,10 @@ pub struct GpuTextureSet {
     pub index_map: HashMap<String, u32>,
     /// UDIM pattern → per-tile GPU mapping (used by MaterialGpu)
     pub udim_map: HashMap<String, UdimGpuMapping>,
+    /// Running VRAM tally — once exhausted, further streamed uploads fall
+    /// back to placeholders rather than risking a device-lost crash on
+    /// scenes that author thousands of large textures.
+    pub texture_budget: crate::texture_loader::TextureBudget,
 }
 
 /// Per-prototype GPU buffers for multi-draw rendering.

@@ -4,11 +4,108 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 
 use wgpu::{Device, Queue};
 
 use crate::gpu_types::{GpuTextureSet, MAX_VIEWPORT_TEXTURES};
+
+/// Process-global "GPU is no longer usable" flag.
+///
+/// Flipped by the wgpu uncaptured-error / device-lost callbacks installed at
+/// device creation (see `bif_qt::Viewport::new`). Once set, the texture poll
+/// loop drops further uploads instead of pushing more work at a dead device.
+static GPU_UNHEALTHY: AtomicBool = AtomicBool::new(false);
+
+pub fn gpu_is_healthy() -> bool {
+    !GPU_UNHEALTHY.load(Ordering::Acquire)
+}
+
+pub fn mark_gpu_unhealthy() {
+    if !GPU_UNHEALTHY.swap(true, Ordering::AcqRel) {
+        log::warn!("viewport: GPU device lost — stopping further texture uploads");
+    }
+}
+
+/// Default per-scene VRAM cap for viewport textures: 1.5 GiB.
+///
+/// Picked to leave headroom on 4-6 GiB consumer GPUs after Qt compositor,
+/// swapchain, geometry buffers, IBL, etc. Production shots with 1000+
+/// textures will hit this and fall back to placeholders for the overflow.
+pub const DEFAULT_VRAM_BUDGET_BYTES: u64 = 1_500 * 1024 * 1024;
+
+/// Running tally of bytes uploaded to GPU texture slots.
+///
+/// `try_charge` returns false once the budget is consumed, so the caller
+/// can skip the upload and use a placeholder instead. Logs exactly once on
+/// the first overflow so production shots don't spam the terminal.
+#[derive(Debug)]
+pub struct TextureBudget {
+    used_bytes: u64,
+    max_bytes: u64,
+    warned: bool,
+}
+
+impl TextureBudget {
+    pub fn new(max_bytes: u64) -> Self {
+        Self {
+            used_bytes: 0,
+            max_bytes,
+            warned: false,
+        }
+    }
+
+    pub fn used_bytes(&self) -> u64 {
+        self.used_bytes
+    }
+
+    pub fn max_bytes(&self) -> u64 {
+        self.max_bytes
+    }
+
+    /// Try to reserve VRAM for a texture of the given size (RGBA8 + optional
+    /// mip chain). Returns true on success and commits the charge. Returns
+    /// false once the budget would be exceeded; the caller should skip the
+    /// upload.
+    pub fn try_charge(&mut self, width: u32, height: u32, mip_count: u32) -> bool {
+        let bytes = estimate_texture_bytes(width, height, mip_count);
+        if self.used_bytes.saturating_add(bytes) > self.max_bytes {
+            if !self.warned {
+                self.warned = true;
+                log::warn!(
+                    "viewport: VRAM budget {} MiB exhausted ({} MiB used, refused {}x{} ~{} KiB) — remaining textures render as placeholders",
+                    self.max_bytes / (1024 * 1024),
+                    self.used_bytes / (1024 * 1024),
+                    width,
+                    height,
+                    bytes / 1024,
+                );
+            }
+            return false;
+        }
+        self.used_bytes += bytes;
+        true
+    }
+}
+
+impl Default for TextureBudget {
+    fn default() -> Self {
+        Self::new(DEFAULT_VRAM_BUDGET_BYTES)
+    }
+}
+
+/// Approximate VRAM cost of a 2D RGBA8 texture with `mip_count` levels.
+/// 4 bytes per pixel; full mip chain converges on ~4/3 of base level bytes.
+fn estimate_texture_bytes(width: u32, height: u32, mip_count: u32) -> u64 {
+    let base = u64::from(width) * u64::from(height) * 4;
+    if mip_count <= 1 {
+        base
+    } else {
+        // Sum of geometric series 1 + 1/4 + 1/16 + ... bounded by 4/3.
+        base * 4 / 3
+    }
+}
 
 /// Message sent from background texture loading thread.
 pub struct TextureLoadMessage {
@@ -112,6 +209,11 @@ impl MipmapGenerator {
     /// - `STORAGE_BINDING` usage
     /// - `mip_level_count > 1`
     /// - Base level (mip 0) already uploaded
+    ///
+    /// Wraps the submit in a wgpu error scope so a device-lost (e.g. VRAM
+    /// exhausted by a 1000+ texture scene) is captured and flipped into the
+    /// process-global `mark_gpu_unhealthy` flag instead of fatal-panicking
+    /// the main thread via `__fastfail`.
     pub fn generate(
         &self,
         device: &Device,
@@ -122,6 +224,9 @@ impl MipmapGenerator {
         mip_count: u32,
     ) {
         if mip_count <= 1 {
+            return;
+        }
+        if !gpu_is_healthy() {
             return;
         }
 
@@ -172,7 +277,22 @@ impl MipmapGenerator {
             pass.dispatch_workgroups(mip_width.div_ceil(8), mip_height.div_ceil(8), 1);
         }
 
-        queue.submit(std::iter::once(encoder.finish()));
+        // wgpu's `Queue::submit` routes errors through `handle_error_fatal!`
+        // which panics unconditionally — `push_error_scope` does NOT catch
+        // it. The only reliable way to survive a device-lost (e.g. VRAM
+        // exhausted by a 1000+ texture production shot) is to catch the
+        // unwinding panic itself. `panic = "unwind"` is the default for
+        // dev/release in this workspace, so `catch_unwind` works.
+        let _ = device;
+        let submitted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            queue.submit(std::iter::once(encoder.finish()));
+        }));
+        if submitted.is_err() {
+            log::error!(
+                "mipmap submit panicked ({width}x{height}, {mip_count} mips) — GPU is dead, marking unhealthy"
+            );
+            mark_gpu_unhealthy();
+        }
     }
 }
 
@@ -759,6 +879,7 @@ pub fn create_default_gpu_textures(device: &Device, queue: &Queue) -> GpuTexture
         views,
         index_map: HashMap::new(),
         udim_map: HashMap::new(),
+        texture_budget: TextureBudget::default(),
     }
 }
 
@@ -1056,6 +1177,10 @@ pub fn upload_streamed_texture(
     max_dimension: u32,
     mipmap_gen: Option<&MipmapGenerator>,
 ) -> bool {
+    if !gpu_is_healthy() {
+        return false;
+    }
+
     let Some(&index) = texture_set.index_map.get(&msg.path) else {
         log::warn!("Streamed texture {} has no pre-allocated index", msg.path);
         return false;
@@ -1071,6 +1196,25 @@ pub fn upload_streamed_texture(
             texture_set.views.len(),
             texture_set.textures.len()
         );
+        return false;
+    }
+
+    // Predict the effective on-GPU size (after `upload_raw_texture`'s
+    // viewport-size clamp) and reserve VRAM before doing any GPU work.
+    // Once the budget is exhausted, leave the placeholder in place.
+    let effective_limit = max_dimension.min(DEFAULT_MAX_VIEWPORT_TEXTURE_SIZE);
+    let eff_width = msg.width.min(effective_limit);
+    let eff_height = msg.height.min(effective_limit);
+    let predicted_mip_count =
+        if eff_width >= GPU_MIPMAP_MIN_SIZE && eff_height >= GPU_MIPMAP_MIN_SIZE {
+            calculate_mip_count(eff_width, eff_height)
+        } else {
+            1
+        };
+    if !texture_set
+        .texture_budget
+        .try_charge(eff_width, eff_height, predicted_mip_count)
+    {
         return false;
     }
 
@@ -1179,5 +1323,49 @@ mod tests {
     #[test]
     fn test_default_viewport_texture_size() {
         assert_eq!(DEFAULT_MAX_VIEWPORT_TEXTURE_SIZE, 2048);
+    }
+
+    #[test]
+    fn test_estimate_texture_bytes_base() {
+        assert_eq!(estimate_texture_bytes(1024, 1024, 1), 1024 * 1024 * 4);
+    }
+
+    #[test]
+    fn test_estimate_texture_bytes_with_mips() {
+        // 4/3 of base level
+        let base = 1024u64 * 1024 * 4;
+        assert_eq!(estimate_texture_bytes(1024, 1024, 11), base * 4 / 3);
+    }
+
+    #[test]
+    fn test_budget_happy_path() {
+        let mut b = TextureBudget::new(64 * 1024 * 1024);
+        assert!(b.try_charge(1024, 1024, 1));
+        assert!(b.try_charge(1024, 1024, 1));
+        assert!(b.try_charge(1024, 1024, 1));
+        assert_eq!(b.used_bytes(), 3 * 1024 * 1024 * 4);
+    }
+
+    #[test]
+    fn test_budget_rejects_over_cap() {
+        let mut b = TextureBudget::new(1024 * 1024 * 4 + 1); // 4 MiB + 1
+        assert!(b.try_charge(1024, 1024, 1)); // exactly 4 MiB consumed
+        assert!(!b.try_charge(1024, 1024, 1)); // would push over cap
+        assert_eq!(b.used_bytes(), 1024 * 1024 * 4);
+    }
+
+    #[test]
+    fn test_budget_warns_only_once() {
+        let mut b = TextureBudget::new(1);
+        assert!(!b.try_charge(1, 1, 1));
+        assert!(b.warned);
+        // Second rejection doesn't re-arm the warning flag — still true, no panic.
+        assert!(!b.try_charge(1, 1, 1));
+        assert!(b.warned);
+    }
+
+    #[test]
+    fn test_default_vram_budget_is_one_and_a_half_gib() {
+        assert_eq!(DEFAULT_VRAM_BUDGET_BYTES, 1_500 * 1024 * 1024);
     }
 }

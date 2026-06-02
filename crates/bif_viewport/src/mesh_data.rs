@@ -604,8 +604,42 @@ impl MeshData {
         let default_normal = Vec3::Y;
         let default_uv = [0.0f32, 0.0f32];
 
-        let mut all_vertices = Vec::new();
-        let mut all_indices = Vec::new();
+        // Pre-allocation guard. Vec::push grows by doubling, so a scene that
+        // wants 16 GiB of combined vertices triggers a transient 24 GiB
+        // allocation request that aborts the process via
+        // `alloc::handle_alloc_error` → fastfail. The existing post-build
+        // size check in scene_loader (`Combined mesh too large for GPU`)
+        // catches the result but happens too late — the Vec was already
+        // built. Cap at 1 GiB up front and return an empty combined buffer
+        // when over budget; the renderer's multi-draw fallback takes over.
+        const MAX_COMBINED_BYTES: usize = 1 << 30; // 1 GiB
+        let total_verts: usize = meshes.iter().map(|(m, ..)| m.positions.len()).sum();
+        let total_indices: usize = meshes.iter().map(|(m, ..)| m.indices.len()).sum();
+        let vert_bytes = total_verts.saturating_mul(std::mem::size_of::<Vertex>());
+        let idx_bytes = total_indices.saturating_mul(std::mem::size_of::<u32>());
+        if vert_bytes > MAX_COMBINED_BYTES || idx_bytes > MAX_COMBINED_BYTES {
+            log::warn!(
+                "Combined mesh skipped pre-build: {} verts ~{} MiB, {} indices ~{} MiB (cap {} MiB) — multi-draw only",
+                total_verts,
+                vert_bytes / (1024 * 1024),
+                total_indices,
+                idx_bytes / (1024 * 1024),
+                MAX_COMBINED_BYTES / (1024 * 1024),
+            );
+            return Self {
+                vertices: Vec::new(),
+                indices: Vec::new(),
+                bounds_min: Vec3::ZERO,
+                bounds_max: Vec3::ZERO,
+                triangle_material_ids: None,
+                mesh_ranges: Some(Vec::new()),
+                subdiv_info: None,
+                display_color: None,
+            };
+        }
+
+        let mut all_vertices = Vec::with_capacity(total_verts);
+        let mut all_indices = Vec::with_capacity(total_indices);
         let mut all_triangle_material_ids = Vec::new();
         let mut mesh_ranges = Vec::new();
         let mut bounds_min = Vec3::splat(f32::INFINITY);

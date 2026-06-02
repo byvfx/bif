@@ -9,6 +9,7 @@
 #include "render_settings_widget.h"
 #include "render_widget.h"
 #include "scene_browser_widget.h"
+#include "keybinding_editor_dialog.h"
 #include "shortcut_registry.h"
 #include "timeline_widget.h"
 
@@ -334,6 +335,7 @@ struct MenuActions {
     QAction* close_stage;
     QAction* save;
     QAction* save_as;
+    QAction* preferences;
     QAction* exit_app;
     QAction* undo;
     QAction* redo;
@@ -406,6 +408,14 @@ MenuActions build_menu_bar(QMainWindow* window) {
     a.save->setShortcut(QKeySequence::Save);
     a.save_as = file->addAction(QStringLiteral("Save &As..."));
     a.save_as->setShortcut(QKeySequence::SaveAs);
+    file->addSeparator();
+    a.preferences = file->addAction(QStringLiteral("&Preferences..."));
+    a.preferences->setMenuRole(QAction::PreferencesRole);
+    QObject::connect(a.preferences, &QAction::triggered, window, [window]() {
+        auto* dialog = new bif_qt::shortcuts::KeybindingEditorDialog(window);
+        dialog->setAttribute(Qt::WA_DeleteOnClose);
+        dialog->exec();
+    });
     file->addSeparator();
     a.exit_app = file->addAction(QStringLiteral("E&xit"));
     a.exit_app->setShortcut(QKeySequence(QStringLiteral("Ctrl+Q")));

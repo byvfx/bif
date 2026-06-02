@@ -45,7 +45,7 @@ Check the touched scope against:
 - `CHANGELOG.md`
 - `MILESTONES.md`
 - `ROADMAP_DETAIL.md`
-- `SESSION_HANDOFF.md`
+- `SESSION_HANDOFF.md` — add a new session entry at the top; keep only the 5 most recent sessions. When adding a 6th, move the oldest entry to `docs/archive/SESSION_HANDOFF_ARCHIVE.md` (prepend after the archive header).
 - `devlog/`
 
 Update only the docs that are genuinely affected by the change.

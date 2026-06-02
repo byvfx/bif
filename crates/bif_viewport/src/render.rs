@@ -23,6 +23,12 @@ impl Renderer {
         self.poll_async_work();
         self.poll_environment();
         self.dispatch_events();
+        // If a texture upload during `poll_async_work` lost the wgpu device,
+        // skip the per-frame draw submit — pushing more work at a dead
+        // device panics the main thread via `__fastfail`.
+        if !crate::texture_loader::gpu_is_healthy() {
+            return Ok(());
+        }
         self.submit_gpu_frame(clear_color)
     }
 
@@ -907,8 +913,28 @@ impl Renderer {
             }
         }
 
-        self.gpu.queue.submit(std::iter::once(encoder.finish()));
-        output.present();
+        // Same fast-fail defense as `MipmapGenerator::generate`: wgpu's
+        // `Queue::submit` panics unconditionally on a lost device — VRAM
+        // can be exhausted by cumulative geometry + texture pressure on
+        // production shots. Catch the panic, mark the GPU unhealthy so
+        // future frames bail at `render()`'s early-out, and skip present.
+        let queue = &self.gpu.queue;
+        let submitted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            queue.submit(std::iter::once(encoder.finish()));
+        }));
+        if submitted.is_err() {
+            log::error!("per-frame submit panicked — GPU is dead, marking unhealthy");
+            crate::texture_loader::mark_gpu_unhealthy();
+            return Ok(());
+        }
+
+        let presented = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            output.present();
+        }));
+        if presented.is_err() {
+            log::error!("surface present panicked — GPU is dead, marking unhealthy");
+            crate::texture_loader::mark_gpu_unhealthy();
+        }
 
         Ok(())
     }

@@ -958,9 +958,18 @@ pub fn load_usd_with_stage_policy_muted<P: AsRef<Path>>(
         // Expand immediately so instances appear (animation handled below)
         let expanded = cloud.expand();
 
-        // Get animation data for instancer if timeline exists
+        // Get animation data for instancer if timeline exists. We swallow the
+        // error so the rest of the stage still loads — but log it so the user
+        // can see when AllocTooLarge skipped a giant instancer animation
+        // (see ffi_guard::MAX_ALLOC_BYTES).
         let instancer_anim = if scene.timeline.is_some() {
-            stage.get_instancer_animation(instancer_idx).ok()
+            match stage.get_instancer_animation(instancer_idx) {
+                Ok(anim) => Some(anim),
+                Err(err) => {
+                    log::warn!("skipping animation for instancer {instancer_idx}: {err}");
+                    None
+                }
+            }
         } else {
             None
         };

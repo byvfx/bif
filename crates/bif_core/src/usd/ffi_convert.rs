@@ -21,10 +21,11 @@ use super::cpp_bridge::{
     CameraProperties, CurveBasis, CurveType, CurveWrap, MeshPurpose, NormalsInterpolation,
     PrimvarInterpolation, PrimvarType, SubdivisionScheme, TransformSample, UpAxis,
     UsdAnimatedInstancerData, UsdAnimatedMeshData, UsdBlendShapeBinding, UsdBlendShapeTarget,
-    UsdCurvesData, UsdInstancerData, UsdLightData, UsdLightShaping, UsdMaterialData, UsdMeshData,
-    UsdNativeInstance, UsdPointsData, UsdPrimInfo, UsdPrimvarData, UsdSkeletonData,
-    UsdSkinBindingData, UsdStageMetadata, UsdTimelineData, UsdVolumeData,
+    UsdBridgeResult, UsdCurvesData, UsdInstancerData, UsdLightData, UsdLightShaping,
+    UsdMaterialData, UsdMeshData, UsdNativeInstance, UsdPointsData, UsdPrimInfo, UsdPrimvarData,
+    UsdSkeletonData, UsdSkinBindingData, UsdStageMetadata, UsdTimelineData, UsdVolumeData,
 };
+use super::ffi_guard::{checked_alloc_count, checked_mul_count};
 
 use super::ffi_raw::{
     UsdBridgeAnimatedInstancerDataRaw, UsdBridgeAnimatedMeshDataRaw, UsdBridgeAttributeOpinionsRaw,
@@ -94,7 +95,10 @@ pub(crate) unsafe fn f32_ptr_to_vec3s(ptr: *const f32, count: usize) -> Vec<Vec3
     if ptr.is_null() || count == 0 {
         Vec::new()
     } else {
-        let slice = std::slice::from_raw_parts(ptr, count * 3);
+        let Some(n) = super::ffi_guard::safe_mul_count::<f32>(count, 3, "f32_ptr_to_vec3s") else {
+            return Vec::new();
+        };
+        let slice = std::slice::from_raw_parts(ptr, n);
         slice
             .chunks_exact(3)
             .map(|c| Vec3::new(c[0], c[1], c[2]))
@@ -133,7 +137,10 @@ pub(crate) unsafe fn f32_ptr_to_mat4s(ptr: *const f32, count: usize) -> Vec<Mat4
     if ptr.is_null() || count == 0 {
         Vec::new()
     } else {
-        let slice = std::slice::from_raw_parts(ptr, count * 16);
+        let Some(n) = super::ffi_guard::safe_mul_count::<f32>(count, 16, "f32_ptr_to_mat4s") else {
+            return Vec::new();
+        };
+        let slice = std::slice::from_raw_parts(ptr, n);
         slice
             .chunks_exact(16)
             .map(|chunk| {
@@ -236,14 +243,16 @@ pub(crate) unsafe fn convert_mesh(raw: &UsdBridgeMeshDataRaw) -> UsdMeshData {
 
     let uvs = if raw.uvs.is_null() || raw.uv_count == 0 {
         None
-    } else {
-        let slice = std::slice::from_raw_parts(raw.uvs, raw.uv_count * 2);
+    } else if let Some(n) = super::ffi_guard::safe_mul_count::<f32>(raw.uv_count, 2, "mesh.uvs") {
+        let slice = std::slice::from_raw_parts(raw.uvs, n);
         Some(
             slice
                 .chunks_exact(2)
                 .map(|chunk| [chunk[0], chunk[1]])
                 .collect(),
         )
+    } else {
+        None
     };
 
     let face_material_ids = if raw.face_material_ids.is_null() || raw.triangle_count == 0 {
@@ -279,14 +288,18 @@ pub(crate) unsafe fn convert_mesh(raw: &UsdBridgeMeshDataRaw) -> UsdMeshData {
 
     let display_color = if raw.display_color.is_null() || raw.display_color_count == 0 {
         None
-    } else {
-        let slice = std::slice::from_raw_parts(raw.display_color, raw.display_color_count * 3);
+    } else if let Some(n) =
+        super::ffi_guard::safe_mul_count::<f32>(raw.display_color_count, 3, "mesh.display_color")
+    {
+        let slice = std::slice::from_raw_parts(raw.display_color, n);
         Some(
             slice
                 .chunks_exact(3)
                 .map(|c| Vec3::new(c[0], c[1], c[2]))
                 .collect(),
         )
+    } else {
+        None
     };
 
     let face_vertex_counts = if raw.face_vertex_counts.is_null() || raw.face_count == 0 {
@@ -704,23 +717,35 @@ pub(crate) unsafe fn convert_blend_shape_binding(
 
             let offsets = if rt.offsets_xyz.is_null() || vert_count == 0 {
                 Vec::new()
-            } else {
-                let floats = std::slice::from_raw_parts(rt.offsets_xyz, vert_count * 3);
+            } else if let Some(n) =
+                super::ffi_guard::safe_mul_count::<f32>(vert_count, 3, "blendshape.offsets")
+            {
+                let floats = std::slice::from_raw_parts(rt.offsets_xyz, n);
                 floats
                     .chunks_exact(3)
                     .map(|c| Vec3::new(c[0], c[1], c[2]))
                     .collect()
+            } else {
+                Vec::new()
             };
 
             let normal_offsets =
                 if rt.has_normals != 0 && !rt.normal_offsets_xyz.is_null() && vert_count > 0 {
-                    let floats = std::slice::from_raw_parts(rt.normal_offsets_xyz, vert_count * 3);
-                    Some(
-                        floats
-                            .chunks_exact(3)
-                            .map(|c| Vec3::new(c[0], c[1], c[2]))
-                            .collect(),
-                    )
+                    if let Some(n) = super::ffi_guard::safe_mul_count::<f32>(
+                        vert_count,
+                        3,
+                        "blendshape.normal_offsets",
+                    ) {
+                        let floats = std::slice::from_raw_parts(rt.normal_offsets_xyz, n);
+                        Some(
+                            floats
+                                .chunks_exact(3)
+                                .map(|c| Vec3::new(c[0], c[1], c[2]))
+                                .collect(),
+                        )
+                    } else {
+                        None
+                    }
                 } else {
                     None
                 };
@@ -813,19 +838,36 @@ pub(crate) unsafe fn convert_mesh_animation(
 /// `time_sample_count * instance_count * 16` valid f32 values.
 pub(crate) unsafe fn convert_instancer_animation(
     raw: &UsdBridgeAnimatedInstancerDataRaw,
-) -> UsdAnimatedInstancerData {
+) -> UsdBridgeResult<UsdAnimatedInstancerData> {
+    let ctx = format!(
+        "instancer_animation[idx={}] time_samples={} instances={}",
+        raw.instancer_index, raw.time_sample_count, raw.instance_count
+    );
+
     let time_samples = if raw.time_samples.is_null() || raw.time_sample_count == 0 {
         Vec::new()
     } else {
-        std::slice::from_raw_parts(raw.time_samples, raw.time_sample_count).to_vec()
+        let n = checked_alloc_count::<f64>(raw.time_sample_count, &ctx)?;
+        std::slice::from_raw_parts(raw.time_samples, n).to_vec()
     };
 
     let transforms =
         if raw.transforms.is_null() || raw.time_sample_count == 0 || raw.instance_count == 0 {
             Vec::new()
         } else {
-            let total_matrices = raw.time_sample_count * raw.instance_count;
-            let flat_data = std::slice::from_raw_parts(raw.transforms, total_matrices * 16);
+            // Guard before touching the raw pointer — bad counts here would
+            // otherwise feed `Vec::with_capacity` (and the global allocator)
+            // and abort the process with STATUS_STACK_BUFFER_OVERRUN.
+            let total_matrices =
+                checked_mul_count(raw.time_sample_count, raw.instance_count, &ctx)?;
+            let _ = checked_alloc_count::<Mat4>(total_matrices, &ctx)?;
+            let flat_floats = checked_mul_count(total_matrices, 16, &ctx)?;
+            let _ = checked_alloc_count::<f32>(flat_floats, &ctx)?;
+            // Allocating the nested `Vec<Vec<Mat4>>` shell costs `time_sample_count`
+            // `Vec<Mat4>` headers in the outer + `instance_count` Mat4 each row.
+            let _ = checked_alloc_count::<Vec<Mat4>>(raw.time_sample_count, &ctx)?;
+
+            let flat_data = std::slice::from_raw_parts(raw.transforms, flat_floats);
 
             let mut result = Vec::with_capacity(raw.time_sample_count);
             for time_idx in 0..raw.time_sample_count {
@@ -841,12 +883,12 @@ pub(crate) unsafe fn convert_instancer_animation(
             result
         };
 
-    UsdAnimatedInstancerData {
+    Ok(UsdAnimatedInstancerData {
         instancer_index: raw.instancer_index,
         time_samples,
         instance_count: raw.instance_count,
         transforms,
-    }
+    })
 }
 
 /// Convert raw primvar data from FFI to safe `UsdPrimvarData`.
@@ -872,11 +914,17 @@ pub(crate) unsafe fn convert_primvar(raw: &UsdBridgePrimvarDataRaw) -> UsdPrimva
         UsdBridgePrimvarInterpolationRaw::FaceVarying => PrimvarInterpolation::FaceVarying,
     };
 
-    let float_count = match primvar_type {
-        PrimvarType::Float => raw.element_count,
-        PrimvarType::Float2 => raw.element_count * 2,
-        PrimvarType::Float3 => raw.element_count * 3,
+    let stride = match primvar_type {
+        PrimvarType::Float => 1,
+        PrimvarType::Float2 => 2,
+        PrimvarType::Float3 => 3,
         PrimvarType::Int => 0,
+    };
+    let float_count = if stride == 0 {
+        0
+    } else {
+        super::ffi_guard::safe_mul_count::<f32>(raw.element_count, stride, "primvar.float_data")
+            .unwrap_or(0)
     };
 
     let float_data = if raw.float_data.is_null() || float_count == 0 {
@@ -2232,7 +2280,7 @@ mod tests {
             transforms: transforms.as_ptr(),
         };
 
-        let result = unsafe { convert_instancer_animation(&raw) };
+        let result = unsafe { convert_instancer_animation(&raw) }.unwrap();
 
         assert_eq!(result.instancer_index, 3);
         assert_eq!(result.time_samples, vec![1.0, 24.0]);
@@ -2251,9 +2299,38 @@ mod tests {
             transforms: ptr::null(),
         };
 
-        let result = unsafe { convert_instancer_animation(&raw) };
+        let result = unsafe { convert_instancer_animation(&raw) }.unwrap();
         assert!(result.time_samples.is_empty());
         assert!(result.transforms.is_empty());
+    }
+
+    // ---- Regression: rt_010_base.usda 24 GiB OOM ----
+
+    #[test]
+    fn test_convert_instancer_animation_rejects_oversized() {
+        // Replicates the production shot that OOM-aborted bif_viewer:
+        // 16_000 timecodes × 25_000 instances × sizeof(Mat4) ≈ 25 GiB.
+        // Should return AllocTooLarge instead of panicking on Vec::with_capacity.
+        let raw = UsdBridgeAnimatedInstancerDataRaw {
+            instancer_index: 7,
+            // Non-null pointer is fine — the guard fires before we deref it.
+            time_samples: ptr::null(),
+            time_sample_count: 16_000,
+            instance_count: 25_000,
+            transforms: 0x1 as *const f32, // sentinel; guard runs first
+        };
+
+        let result = unsafe { convert_instancer_animation(&raw) };
+        match result {
+            Err(super::super::cpp_bridge::UsdBridgeError::AllocTooLarge {
+                requested_bytes,
+                max_bytes,
+                ..
+            }) => {
+                assert!(requested_bytes > max_bytes);
+            }
+            other => panic!("expected AllocTooLarge, got {other:?}"),
+        }
     }
 
     // ---- Helper function tests ----

@@ -36,6 +36,7 @@ fn main() {
             cc.file("cpp/render_settings_widget.cpp");
             cc.file("cpp/node_graph_widget.cpp");
             cc.file("cpp/shortcut_registry.cpp");
+            cc.file("cpp/keybinding_editor_dialog.cpp");
             cc.file("cpp/usda_panel_widget.cpp");
             cc.file("cpp/collection_editor_widget.cpp");
             cc.include("cpp");
@@ -63,6 +64,7 @@ fn main() {
         .qobject_header("cpp/node_graph_widget.h")
         .qobject_header("cpp/usda_panel_widget.h")
         .qobject_header("cpp/collection_editor_widget.h")
+        .qobject_header("cpp/keybinding_editor_dialog.h")
         .build();
 
     println!("cargo:rerun-if-changed=src/main_window.rs");
@@ -94,6 +96,8 @@ fn main() {
     println!("cargo:rerun-if-changed=cpp/node_graph_widget.h");
     println!("cargo:rerun-if-changed=cpp/shortcut_registry.cpp");
     println!("cargo:rerun-if-changed=cpp/shortcut_registry.h");
+    println!("cargo:rerun-if-changed=cpp/keybinding_editor_dialog.cpp");
+    println!("cargo:rerun-if-changed=cpp/keybinding_editor_dialog.h");
     println!("cargo:rerun-if-changed=cpp/collection_editor_widget.cpp");
     println!("cargo:rerun-if-changed=cpp/collection_editor_widget.h");
 }

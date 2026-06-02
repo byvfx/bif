@@ -1646,6 +1646,14 @@ impl Renderer {
             return;
         };
 
+        // If the wgpu device has died (or the VRAM budget is already known
+        // to be exhausted), stop draining new textures — pushing more work
+        // at a dead device crashes the process.
+        if !texture_loader::gpu_is_healthy() {
+            self.async_channels.texture_load_receiver = None;
+            return;
+        }
+
         let max_dimension = self.gpu.device.limits().max_texture_dimension_2d;
         let mut uploaded = 0u32;
 

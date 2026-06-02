@@ -37,6 +37,7 @@ pub mod displacement;
 pub mod edit_history;
 pub mod export;
 pub(crate) mod ffi_convert;
+pub(crate) mod ffi_guard;
 pub(crate) mod ffi_raw;
 pub mod layer;
 mod loader;
