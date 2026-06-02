@@ -6,6 +6,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Path-trace core deepening — `PathTracer` struct ([#5](https://github.com/byvfx/bif/issues/5))**. Replaced the free-function path-tracing core in `bif_renderer::renderer` with a `PathTracer<'a>` deep module that owns the per-trace context (scene + config, with HDRI overrides and SHARC cache gating resolved once in `new()` instead of per ray). Single hot entry point `trace(ray, max_depth, rng)`; pixel-level `sample_pixel` / `sample_pixel_color` carry the multi-sample + filter loop. `ray_color_with_aovs`, `render_pixel`, and `render_pixel_with_aovs` are now thin wrappers, so the existing public API is unchanged. `bucket.rs` constructs one `PathTracer` per bucket and reuses it across every pixel/sample (per-frame construction). Russian Roulette start depth is exposed via `with_rr_start_bounce` (default `DEFAULT_RR_START_BOUNCE = 3`). Two pure helpers extracted en route — `should_skip_cache(is_delta, roughness)` and `roulette_survival(throughput)`. Behavior identical; first unit tests at the tracer boundary — structural (miss-returns-background, primary-hit AOV capture, RR-knob override) plus direct-lighting characterization (NEE illuminates a diffuse surface, NEE shadow rays respect occlusion, area lights exercise the MIS-weighted branch). 10 new tests.
+
 ## [0.16.8] - 2026-05-29
 
 ### Fixed
@@ -15,10 +19,6 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 
 - **Keybinding editor — File ▸ Preferences…** (v0.16.7, 2026-05-16). New modal `KeybindingEditorDialog` listing every shortcut routed through `bif_qt::shortcuts::lookup()` grouped by dot-namespaced category (Camera / Edit / Panels / Palette / Timeline / Workspace). Per-row `QKeySequenceEdit` with clear button; OK persists overrides via `set_override()`, Cancel discards, Restore Defaults clears every override after a confirmation prompt. Linear conflict scan on Apply raises a `QMessageBox` and aborts the write so users can retype before retrying. Rows whose final sequence matches the compiled-in default emit `clear_override` so future default changes propagate. New files: `crates/bif_qt/cpp/keybinding_editor_dialog.{h,cpp}`. New menu action `File ▸ Preferences…` (placed between Save As and Exit, separator-bracketed, `QAction::PreferencesRole` for macOS habit). Known v0.16.7 limitation: some shortcuts require a restart to take effect — full hot-reload across widget-owned QActions follows in a later pass.
-
-### Changed
-
-- **Path-trace core deepening — `PathTracer` struct ([#5](https://github.com/byvfx/bif/issues/5))**. Replaced the free-function path-tracing core in `bif_renderer::renderer` with a `PathTracer<'a>` deep module that owns the per-trace context (scene + config, with HDRI overrides and SHARC cache gating resolved once in `new()` instead of per ray). Single hot entry point `trace(ray, max_depth, rng)`; pixel-level `sample_pixel` / `sample_pixel_color` carry the multi-sample + filter loop. `ray_color_with_aovs`, `render_pixel`, and `render_pixel_with_aovs` are now thin wrappers, so the existing public API is unchanged. `bucket.rs` constructs one `PathTracer` per bucket and reuses it across every pixel/sample (per-frame construction). Russian Roulette start depth is exposed via `with_rr_start_bounce` (default `DEFAULT_RR_START_BOUNCE = 3`). Two pure helpers extracted en route — `should_skip_cache(is_delta, roughness)` and `roulette_survival(throughput)`. Behavior identical; first unit tests at the tracer boundary — structural (miss-returns-background, primary-hit AOV capture, RR-knob override) plus direct-lighting characterization (NEE illuminates a diffuse surface, NEE shadow rays respect occlusion, area lights exercise the MIS-weighted branch). 10 new tests.
 
 ## [0.16.6] - 2026-05-16
 
