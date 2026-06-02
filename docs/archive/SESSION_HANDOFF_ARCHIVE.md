@@ -4,6 +4,33 @@
 
 ---
 
+# Session Handoff — 2026-05-13 (v0.16.6 UI polish + v0.16.5 hotfix)
+
+**Last Updated:** 2026-05-13 on `v0.16.6-ui-polish`.
+
+**Current work:** Three commits closing out v0.16.5 and starting v0.16.6.
+
+1. **v0.16.5 hotfix (`a38eaba`)** — post-`vfx-code-reviewer` follow-up on `611a136`. Added outer `catch(...)` to all 7 new CollectionAPI bridge fns (Tf/boost throws no longer unwind across `extern "C"` → UB). 4 collection mutators (`_apply` / `_add_target` / `_remove_target` / `_set_expansion_rule`) now gate on `stage->GetEditTarget().GetLayer()->PermissionToEdit()`, mirroring `usd_bridge_layer_write_*`. Also re-derived `viewport.rs` `CLEAR_COLOR` from `theme::SURFACE` (#131313 → 0.00518 linear) after the Graphite palette swap left it pointing at a stale value. Fast-forwarded to `main`.
+
+2. **v0.16.6 — Collection Editor reskin (`dbbf5bc`)** — replaced QGroupBox + QInputDialog with three collapsible `SectionBlock` widgets (Includes / Excludes / Resolved Members). Inline `QLineEdit` edit row replaces the modal: Return commits, Esc cancels, focus-out commits non-empty / cancels empty. 4px left accent stripe per role via `QSS ::item { border-left: ... }`. Delete/Backspace removes selection. Empty-state italic hints. All styling driven from `theme.rs` (new `#sectionBlock` / `#sectionHeaderRow` / `#sectionIcon` / `#sectionEmptyHint` / `#includesList` / `#excludesList` / `#membersList` selectors + test).
+
+3. **v0.16.6 — View ▸ Panels submenu + Reset Workspace Layout (`22a4a5f`)** — new submenu with 8 checkable QActions, one per dock. Defaults `Ctrl+Shift+1..8` routed through `bif_qt::shortcuts::lookup()` registry (added `panels.*` keys to `shortcut_registry.h`) so a future Preferences dialog can remap them. Bidirectional `QAction::toggled` ↔ `QDockWidget::visibilityChanged` sync via `QSignalBlocker` — closing a dock via X unchecks the menu entry, workspace switches propagate to checked state. Initial seeding deferred via `QTimer::singleShot(0, ...)` because docks are created later than the menu-action wiring. New `View ▸ Reset Workspace Layout` action: `QMessageBox::question` confirm → `QSettings.remove(state_key)` → `ws::apply_default_layout()`. All 8 panel toggles + reset added to command palette.
+
+**Validation:** `cargo build -p bif_qt` clean on each commit. `cargo test -p bif_qt --lib` 15/15. `cargo test -p bif_core --lib collection -- --test-threads=1` 7/7. Clippy + fmt clean. User-confirmed manual dogfood: inline-add UX, panels submenu sync, Reset confirm dialog all behave correctly.
+
+**Next:** Merge `v0.16.6-ui-polish` → `main` (likely fast-forward, since branched off `a38eaba` and no concurrent main commits). Run `vfx-code-reviewer` on the v0.16.6 work. Then candidates: keybinding-editor UI (registry exists, no front-end), material-icon TTF bundle, custom-workspaces save/load. v0.17.0 (Context System) still pending — highest-risk roadmap item.
+
+**Files touched this session:**
+- `cpp/usd_bridge/usd_bridge.cpp` (hotfix)
+- `crates/bif_qt/src/viewport.rs` (hotfix)
+- `crates/bif_qt/src/theme.rs` (Collection Editor selectors)
+- `crates/bif_qt/cpp/collection_editor_widget.{h,cpp}` (full rewrite)
+- `crates/bif_qt/cpp/shortcut_registry.h` (panels.* keys)
+- `crates/bif_qt/cpp/window_builder.cpp` (Panels submenu, dock sync, Reset action, palette entries)
+- `CHANGELOG.md`, `devlog/2026-05/DEVLOG_2026-05-13.md`
+
+---
+
 # Session Handoff — 2026-05-12 (v0.16.2 close-out: GUI foundation polish)
 
 **Last Updated:** 2026-05-12 on `v0.16.2-bugfixes`.
