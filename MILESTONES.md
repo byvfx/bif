@@ -20,22 +20,23 @@ Roadmap organized by semantic version. Each release is testable, demoable, and g
 | v0.15.0 | Qt Migration | 2026-04-22 | Qt 6 shell via `bif_qt`, docked panel port (layer stack, scene browser, property inspector, timeline, node graph, render settings), real USD stage load + selection sync, lazy scene-browser loading, egui bridge deletion |
 | v0.16.0 | Edit Operations + Save | 2026-04-28 | C4a foundation: `EditOperation`/`EditHistory`/`OpinionKey`, working-layer FFI writes (xform/visibility/material/shader-input/variant), Ctrl+S save through `UsdStage::save_layer`, ADR-008. C4b features: `Visible` checkbox, Material Sheet tab (OpenPBR/UsdPreviewSurface, sRGB→linear color), USDA Source dock with Apply-only validation, shading-model dropdown with atomic-undo + lossy-param warning, transform gizmo. Code-review hardening: USDA Apply rollback on TransferContent throw + `catch (...)` on all new C-ABI entries. |
 | v0.16.2 | Visibility + Foundation Polish | 2026-05-12 | Visibility round-trip via `UsdGeomImageable::MakeVisible/MakeInvisible` (defeats ancestor pruning), payload-rooted scene-browser populate fix, root-layer mute protection. Property Inspector Relationships tab, viewport pick → scene browser tree highlight sync, MakeVisible ancestor un-hides surfaced in status bar. Close-out polish: File → Save As wired to native dialog (filename pre-fill), Help → About modal, edit-target sync failures surfaced to status bar. Deferred to v0.17: `cache_prim_data` thread-safety annotation, defer-GPU-upload for invisible prototypes, `cpp_bridge.rs` split, binary `.usdc` Save As. |
+| v0.16.3 | Code-Review Follow-ups | 2026-05-12 | vfx-code-reviewer hardening pass on the v0.16.2 close-out |
+| v0.16.5 | Qt Polish (Graphite) | 2026-05-13 | Collection Editor (`CollectionAPI` inspect/edit), breadcrumb render controls (AOV picker, mode picker, sky toggle), displayColor regression fix, Obsidian Graphite "Quiet Confidence" styling pass |
+| v0.16.6 | Qt Polish — Panels | 2026-05-16 | View ▸ Panels submenu (all 8 docks toggleable, `Ctrl+Shift+1`–`8`, bidirectional `visibilityChanged` binding), Reset Workspace Layout, collection editor inline-add UAF + dangling-row fixes |
+| v0.16.7 | Keybinding Editor | 2026-05-16 | File ▸ Preferences keybinding editor — per-shortcut `QKeySequenceEdit`, conflict scan on Apply, restore-defaults, override persistence via `set_override()` |
+| v0.16.8 | Crash-Chain Hardening | 2026-05-29 | rt_010 production-shot OOM + wgpu device-lost hardening: `ffi_guard` (4 GiB alloc caps across ~10 sites), `combine_with_transforms` pre-sum, `TextureBudget` (1.5 GiB), `catch_unwind` around GPU submit/poll/drop, process-global `GPU_UNHEALTHY` short-circuit |
 
 ---
 
 ## In Progress
 
-### v0.16.5 — Qt Polish (Graphite)
+Trunk is current through **v0.16.8** + the RFC #5 `PathTracer` deepening. No release milestone is mid-flight; next work is the pick below (re-scoped #6 or v0.17.0 Context System).
 
-Current active milestone after v0.16.0 shipped on 2026-04-27. Function-first edit work is complete; this docket is the styling polish pass that intentionally stayed off the v0.16.0 critical path. See archive details below.
+**Carried forward from the v0.16.5 docket (not yet shipped):**
 
-- Obsidian Graphite / "Quiet Confidence" styling pass
-- Workspace chrome polish
-- Design-token cleanup
-- **Collection viewer/editor** — USD collection inspection and editing panel. Browse `Usd.CollectionAPI` prims, inspect includes/excludes, membership rules, expansion paths, and live resolved member list. Edit collection memberships and rules.
 - **Ivar↔Vulkan toggle** — switch between Ivar renderer (batch) and Vulkan viewport (interactive) from the render view. Needs clear UI affordance + state preservation on switch.
-- **AOV viewer in render view** — display render AOVs (beauty, albedo, normal, depth, etc.) as selectable layers in the render view widget. Required before 16.5 ships.
-- **Design note: Material editor → node-based** — long-term material authoring lives in the node graph (MaterialX nodes), not parameter sheets. Material Sheet is a viewer only; editing will be node-graph-driven.
+- **AOV viewer in render view** — display render AOVs (beauty, albedo, normal, depth, etc.) as selectable layers in the render view widget.
+- **Design note: Material editor → node-based** — long-term material authoring lives in the node graph (MaterialX nodes), not parameter sheets. Material Sheet is a viewer only; editing will be node-graph-driven (lands with v0.20.0 MaterialX Authoring).
 
 ---
 
@@ -55,7 +56,7 @@ Current active milestone after v0.16.0 shipped on 2026-04-27. Function-first edi
 
 ---
 
-Latest release: v0.16.2 shipped 2026-05-12 (visibility + foundation polish bugfix release). v0.16.0 was the major editor tranche on 2026-04-28. Full release notes in [CHANGELOG.md](CHANGELOG.md), archived details in [MILESTONES_HISTORY.md](MILESTONES_HISTORY.md).
+Latest release: v0.16.8 shipped 2026-05-29 (production-shot crash-chain hardening). The v0.16.5–v0.16.8 line was a single in-progress Qt-polish + hardening tranche consolidated into one release. v0.16.0 was the major editor tranche on 2026-04-28. Full release notes in [CHANGELOG.md](CHANGELOG.md), archived details in [MILESTONES_HISTORY.md](MILESTONES_HISTORY.md).
 
 ### v0.14.0 — Layer-Aware Stage
 
