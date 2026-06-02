@@ -127,12 +127,13 @@ cargo run -p bif_perf -- download                      # show missing official U
 
 See **[MILESTONES.md](MILESTONES.md)** for the full version-organized roadmap.
 
-| Next | Theme |
+| Version | Theme |
 |------|-------|
-| v0.16.0 | Edit operations + save *(shipped 2026-04-28)* |
-| v0.17.0 | Viewport performance *(next)* |
-| v0.18.0 | AI integration |
-| v0.19.0 | Context system |
+| v0.16.8 | Crash-chain hardening + keybinding editor *(latest, 2026-05-28)* |
+| v0.17.0 | Context system *(next)* |
+| v0.18.0 | Viewport performance |
+| v0.19.0 | Scene authoring + layer diff |
+| v0.20.0 | MaterialX authoring |
 | ... | [Full roadmap](MILESTONES.md) |
 
 ---
@@ -184,4 +185,4 @@ MIT — See [LICENSE](LICENSE)
 
 ## Acknowledgments
 
-Inspired by **Isotropix Clarisse**, **Foundry Katana**, and **Image Engine Gaffer**. Built with Rust, wgpu, egui, USD, and Embree.
+Inspired by **Isotropix Clarisse**, **Foundry Katana**, and **Image Engine Gaffer**. Built with Rust, Qt 6, wgpu, USD, and Embree.

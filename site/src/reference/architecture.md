@@ -8,9 +8,10 @@ bif/
 │   ├── bif_math/       # Vec3, Ray, AABB, Camera, Transform
 │   ├── bif_core/       # Scene graph, USD bridge, materials, textures
 │   ├── bif_renderer/   # "Ivar" CPU path tracer (Embree, OpenPBR)
-│   ├── bif_viewport/   # GPU viewport (wgpu/Vulkan, egui)
-│   ├── bif_viewer/     # Application shell
-│   └── bif_maketx/     # Standalone .tx converter
+│   ├── bif_viewport/   # GPU viewport + interaction engine
+│   ├── bif_viewer/     # Thin runner that boots bif_qt
+│   ├── bif_maketx/     # Standalone .tx converter
+│   └── bif_qt/         # Qt 6 shell (cxx-qt, docks, panels)
 ├── cpp/usd_bridge/     # C++ FFI to Pixar USD
 └── benchmarks/         # bif_perf performance harness
 ```
@@ -31,11 +32,15 @@ The C++ bridge builds via CMake (`build.rs` triggers it) and requires Visual Stu
 
 ### bif_viewport
 
-Real-time GPU viewport using wgpu (Vulkan/DX12/Metal). 60+ FPS with GPU LOD culling for massive instancing (1M+ instances). egui integration for UI panels.
+Real-time GPU viewport + interaction engine using wgpu (Vulkan/DX12/Metal). 60+ FPS with GPU LOD culling for massive instancing (1M+ instances). Owns the `Renderer`, the procedural node-graph data model, and the scene-browser providers. UI rendering lives in `bif_qt`, not here.
 
 ### bif_viewer
 
-Application shell. Wires together viewport, renderer, node graph (egui-snarl), scene browser, and property inspector.
+Thin entry point (`main.rs` only) — boots the `bif_qt` shell. No UI logic lives here.
+
+### bif_qt
+
+Qt 6 shell via cxx-qt. All panels (scene browser, layer stack, property inspector, node graph, render settings, USDA source, command palette) live in `crates/bif_qt/cpp/`; the Rust–C++ bridge and main window in `crates/bif_qt/src/`. (Replaced the egui UI in the v0.15.0 Qt migration.)
 
 ### bif_maketx
 
@@ -43,7 +48,7 @@ Standalone texture converter. Converts images to tiled, mipmapped .tx format for
 
 ## Node Graph
 
-10 node types built on egui-snarl:
+10 node types. The graph data model uses `egui-snarl`; the editor itself is the Qt node-graph widget (`bif_qt/cpp/node_graph_widget`):
 
 | Node | Purpose |
 |------|---------|
@@ -68,9 +73,11 @@ Standalone texture converter. Converts images to tiled, mipmapped .tx format for
 
 | Version | Theme | Status |
 |---------|-------|--------|
-| v0.12.0 | USD Export | Released |
-| v0.13.0 | Pipeline Foundation | In progress |
-| v0.14.0 | Layer-Aware Stage | Planned |
-| v0.15.0 | Qt Migration | Planned |
+| v0.14.0 | Layer-Aware Stage | Released |
+| v0.15.0 | Qt Migration | Released |
+| v0.16.0 | Edit Operations + Save | Released |
+| v0.16.8 | Crash hardening + keybinding editor | Latest |
+| v0.17.0 | Context System | Next |
+| v0.18.0 | Viewport Performance | Planned |
 
 See [MILESTONES.md](https://github.com/byvfx/bif/blob/main/MILESTONES.md) for the full roadmap.

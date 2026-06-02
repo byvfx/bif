@@ -30,14 +30,14 @@ Built from scratch in Rust with a USD-native pipeline. Inspired by Katana's laye
 | Metric | Value |
 |--------|-------|
 | Rust LOC | ~50,000 |
-| Tests | 400+ |
+| Tests | 500+ |
 | Node types | 10 |
 | Viewport FPS | 60+ (VSync) |
 | Max instances | 1M+ with LOD |
 
 ## Tech Stack
 
-**Rust** · wgpu 22 (Vulkan/DX12/Metal) · egui 0.29 · Intel Embree 4 · Pixar USD 25.11 (C++) · glam (SIMD) · OpenImageIO (optional) · Intel OIDN (optional)
+**Rust** · Qt 6.8 + cxx-qt · wgpu 22 (Vulkan/DX12/Metal) · Intel Embree 4 · Pixar USD 25.11 (C++) · glam (SIMD) · OpenImageIO (optional) · Intel OIDN (optional)
 
 ## Site Navigation
 
