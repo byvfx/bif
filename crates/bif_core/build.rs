@@ -407,9 +407,21 @@ fn build_oiio_bridge() {
 /// produce `z.lib` (link name `z`).
 #[cfg(feature = "oiio")]
 fn zlib_link_name(lib_dir: &Path) -> &'static str {
+    // Non-Windows always links `-lz` (libz.a/.so); the .lib probe is Windows-only.
+    if !cfg!(windows) {
+        return "z";
+    }
     if lib_dir.join("zlib.lib").exists() {
         "zlib"
+    } else if lib_dir.join("z.lib").exists() {
+        "z"
     } else {
+        // Neither present — likely a stale VCPKG_ROOT. Warn so the misconfig is
+        // visible instead of failing later with a confusing "cannot find z.lib".
+        println!(
+            "cargo:warning=zlib import lib not found in {} (expected zlib.lib or z.lib); defaulting to 'z'",
+            lib_dir.display()
+        );
         "z"
     }
 }
