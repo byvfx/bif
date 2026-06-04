@@ -4,10 +4,31 @@
 
 ## Current State
 
-- **Branch:** `main` (only local branch; in sync with `origin/main`)
-- **Version:** **v0.16.8** tagged + pushed (tag at `0f6f66f`, pre-#5)
-- **Status:** Branch consolidation **complete**. `main` is current through v0.16.8 (keybinding editor + crash-chain hardening) **+ RFC #5** (`PathTracer` deep module) in `[Unreleased]`. All green: build/clippy/fmt clean, bif_renderer 119 + bif_viewport 177. Branch list pruned to `main` + `convoy/*`/`gt/*` bot branches (intentionally left).
-- **Next:** **Re-scoped #6** ([issue #6](https://github.com/byvfx/bif/issues/6)) — `NodeOutputs` merge (collapse `node_proto_map` + `node_cloud_map`, ~5 files), then `CookNode`/node-routing consolidation; drop global `SceneCmd`. ~1 session. **Or** v0.17.0 Context System (30–40h, highest arch risk).
+- **Branch:** `main` (only local branch)
+- **Version:** **v0.16.8** tagged; `[Unreleased]` = RFC #5 (`PathTracer`) + **release-CI bring-up** (2026-06-03).
+- **Status:** **Windows release CI now works end-to-end** (had been broken since v0.15.0 Qt migration — see below). A real `vX.Y.Z` tag will now produce a launchable Windows zip (exe + Qt + USD + OIIO + OIDN + Embree DLLs). All green; release job verified via throwaway tag + artifact inspection.
+- **Next:** **Re-scoped #6** ([issue #6](https://github.com/byvfx/bif/issues/6)) — `NodeOutputs` merge (collapse `node_proto_map` + `node_cloud_map`, ~5 files), then `CookNode`/node-routing consolidation; drop global `SceneCmd`. ~1 session. **Or** v0.17.0 Context System (30–40h, highest arch risk). Optional hygiene: squash the 6 CI commits (kept separate for the wall-by-wall record).
+
+---
+
+# Session Handoff — 2026-06-03 (release CI bring-up)
+
+**Last Updated:** 2026-06-03 on `main` (commit `73337c1`).
+
+**Context:** Started as a quick check on `oiio`/`oidn` feature defaults (left off — intentional) + a vcpkg 404 from Copilot. Turned into a full release-pipeline bring-up: the tagged-release job had **never** built end-to-end since the v0.15.0 Qt migration; it always died at vcpkg first, masking five downstream walls.
+
+**Done (each verified via throwaway `v0.0.0-ci-test` tag, then cleaned up):**
+1. vcpkg baseline `a42af01` → `d015e31` (2026.05.25) + `builtin-baseline` in `vcpkg.json` — fixes zlib 404.
+2. Qt 6.8 via `jurplel/install-qt-action` — cxx-qt was `QtMissing`.
+3. Added `usd` + `embree` to `vcpkg.json`/install.
+4. Classic-mode vcpkg install into `$VCPKG_ROOT/installed` + `-DVCPKG_MANIFEST_MODE=OFF` on both bridge CMake configures (manifest mode landed pkgs in a GUID dir + hijacked sub-builds via repo `vcpkg.json`).
+5. `build.rs` probes zlib import-lib name (`z.lib` new vcpkg vs `zlib.lib` old).
+6. `windeployqt` + bulk-copy all vcpkg DLLs (hand-picked list dropped `embree4.dll`).
+7. vcpkg binary caching (`x-gha`): one-time USD/OIIO source build reused.
+
+**Validation:** release job green; artifact = 96-file / 207 MB zip, all runtime DLLs present (confirmed by download + inspect). fmt clean (pre-commit). Files: `.github/workflows/ci.yml`, `vcpkg.json`, `crates/bif_core/build.rs`.
+
+**Gotcha for next time:** CI Release now depends on Qt 6.8 (`win64_msvc2022_64`) + vcpkg `usd`/`embree` + the `x-gha` cache. If a future release fails on a missing lib, first `Get-ChildItem $VCPKG_ROOT\installed\x64-windows\lib\*.lib` (the diagnostic listing in the install step) — vcpkg renames import libs across baselines.
 
 ---
 
