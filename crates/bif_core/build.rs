@@ -273,6 +273,10 @@ fn build_usd_bridge(cpp_dir: &Path, build_dir: &Path, toolchain: &str) {
     configure_args.extend(cmake_generator_args());
     configure_args.push(format!("-DCMAKE_TOOLCHAIN_FILE={}", toolchain));
     configure_args.push("-DCMAKE_BUILD_TYPE=Release".to_string());
+    // Bridges consume pre-installed vcpkg packages. Force classic mode so the
+    // toolchain doesn't flip to manifest mode on discovering the repo-root
+    // vcpkg.json (which redirects find_package to an empty build-dir prefix).
+    configure_args.push("-DVCPKG_MANIFEST_MODE=OFF".to_string());
 
     let configure_status = Command::new(&cmake)
         .current_dir(build_dir)
@@ -344,21 +348,26 @@ fn build_oiio_bridge() {
     );
     println!("cargo:rustc-link-lib=static=oiio_bridge");
 
-    // Link OIIO libraries from vcpkg
-    if let Ok(vcpkg_root) = env::var("VCPKG_ROOT") {
+    // Link OIIO libraries from vcpkg. Capture the resolved lib dir so we can
+    // probe for version-dependent import-lib names below.
+    let vcpkg_lib_dir = if let Ok(vcpkg_root) = env::var("VCPKG_ROOT") {
         let (lib_path, bin_path) = vcpkg_lib_bin_paths(&vcpkg_root);
         println!("cargo:rustc-link-search=native={}", lib_path.display());
         println!("cargo:rustc-link-search=native={}", bin_path.display());
+        Some(lib_path)
     } else {
+        let mut found = None;
         for root in vcpkg_fallback_paths() {
             let (lib_path, bin_path) = vcpkg_lib_bin_paths(&root);
             if lib_path.exists() {
                 println!("cargo:rustc-link-search=native={}", lib_path.display());
                 println!("cargo:rustc-link-search=native={}", bin_path.display());
+                found = Some(lib_path);
                 break;
             }
         }
-    }
+        found
+    };
 
     // Link OpenImageIO and its dependencies
     // NOTE: Version numbers must match vcpkg installed versions
@@ -374,18 +383,34 @@ fn build_oiio_bridge() {
         "tiff",
         "jpeg",
         "libpng16",
-        "zlib",
     ];
 
     for lib in oiio_libs {
         println!("cargo:rustc-link-lib={}", lib);
     }
 
+    // zlib's import-lib name varies by vcpkg baseline: older ports ship
+    // `zlib.lib`, newer ones ship `z.lib`. Link whichever is present.
+    let zlib = vcpkg_lib_dir.as_deref().map(zlib_link_name).unwrap_or("z");
+    println!("cargo:rustc-link-lib={}", zlib);
+
     // C++ standard library
     if cfg!(windows) {
         // MSVC links automatically
     } else {
         println!("cargo:rustc-link-lib=stdc++");
+    }
+}
+
+/// Returns the cargo link name for zlib based on which import lib vcpkg
+/// installed: older ports produce `zlib.lib` (link name `zlib`), newer ports
+/// produce `z.lib` (link name `z`).
+#[cfg(feature = "oiio")]
+fn zlib_link_name(lib_dir: &Path) -> &'static str {
+    if lib_dir.join("zlib.lib").exists() {
+        "zlib"
+    } else {
+        "z"
     }
 }
 
@@ -420,6 +445,10 @@ fn build_oiio_bridge_cmake(cpp_dir: &Path, build_dir: &Path) {
     configure_args.extend(cmake_generator_args());
     configure_args.push(format!("-DCMAKE_TOOLCHAIN_FILE={}", toolchain));
     configure_args.push("-DCMAKE_BUILD_TYPE=Release".to_string());
+    // Bridges consume pre-installed vcpkg packages. Force classic mode so the
+    // toolchain doesn't flip to manifest mode on discovering the repo-root
+    // vcpkg.json (which redirects find_package to an empty build-dir prefix).
+    configure_args.push("-DVCPKG_MANIFEST_MODE=OFF".to_string());
 
     let configure_status = Command::new(&cmake)
         .current_dir(build_dir)
