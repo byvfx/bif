@@ -5,7 +5,7 @@
 ## Current State
 
 - **Branch:** `main` (only local branch)
-- **Version:** **v0.16.8** tagged; `[Unreleased]` = RFC #5 (`PathTracer`) + **release-CI bring-up** (2026-06-03).
+- **Version:** **v0.16.9** tagged (2026-06-04) — release-CI bring-up + RFC #5 (`PathTracer`); workspace ver bumped 0.16.0 → 0.16.9.
 - **Status:** **Windows release CI now works end-to-end** (had been broken since v0.15.0 Qt migration — see below). A real `vX.Y.Z` tag will now produce a launchable Windows zip (exe + Qt + USD + OIIO + OIDN + Embree DLLs). All green; release job verified via throwaway tag + artifact inspection.
 - **Next:** **Re-scoped #6** ([issue #6](https://github.com/byvfx/bif/issues/6)) — `NodeOutputs` merge (collapse `node_proto_map` + `node_cloud_map`, ~5 files), then `CookNode`/node-routing consolidation; drop global `SceneCmd`. ~1 session. **Or** v0.17.0 Context System (30–40h, highest arch risk). Optional hygiene: squash the 6 CI commits (kept separate for the wall-by-wall record).
 

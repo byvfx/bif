@@ -6,6 +6,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.16.9] - 2026-06-04
+
 ### Changed
 
 - **Path-trace core deepening — `PathTracer` struct ([#5](https://github.com/byvfx/bif/issues/5))**. Replaced the free-function path-tracing core in `bif_renderer::renderer` with a `PathTracer<'a>` deep module that owns the per-trace context (scene + config, with HDRI overrides and SHARC cache gating resolved once in `new()` instead of per ray). Single hot entry point `trace(ray, max_depth, rng)`; pixel-level `sample_pixel` / `sample_pixel_color` carry the multi-sample + filter loop. `ray_color_with_aovs`, `render_pixel`, and `render_pixel_with_aovs` are now thin wrappers, so the existing public API is unchanged. `bucket.rs` constructs one `PathTracer` per bucket and reuses it across every pixel/sample (per-frame construction). Russian Roulette start depth is exposed via `with_rr_start_bounce` (default `DEFAULT_RR_START_BOUNCE = 3`). Two pure helpers extracted en route — `should_skip_cache(is_delta, roughness)` and `roulette_survival(throughput)`. Behavior identical; first unit tests at the tracer boundary — structural (miss-returns-background, primary-hit AOV capture, RR-knob override) plus direct-lighting characterization (NEE illuminates a diffuse surface, NEE shadow rays respect occlusion, area lights exercise the MIS-weighted branch). 10 new tests.

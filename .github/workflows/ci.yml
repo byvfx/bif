@@ -213,7 +213,7 @@ jobs:
           $version = $tag -replace '^v', ''
           $changelog = Get-Content CHANGELOG.md -Raw
           # Extract section for this version, or Unreleased if not found
-          if ($changelog -match "(?s)## \[$version\]\s*\n(.*?)(?=\n## \[|$)") {
+          if ($changelog -match "(?s)## \[$version\][^\n]*\n(.*?)(?=\n## \[|$)") {
             $body = $Matches[1].Trim()
           } elseif ($changelog -match "(?s)## \[Unreleased\]\s*\n(.*?)(?=\n## \[|$)") {
             $body = $Matches[1].Trim()
