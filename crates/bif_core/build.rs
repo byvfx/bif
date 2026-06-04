@@ -369,24 +369,31 @@ fn build_oiio_bridge() {
         found
     };
 
-    // Link OpenImageIO and its dependencies
-    // NOTE: Version numbers must match vcpkg installed versions
+    // Link OpenImageIO and its dependencies. Names are given as version-less
+    // bases; `resolve_lib_name` tolerates the `-<major>_<minor>` suffixes that
+    // OpenEXR/Imath/etc. carry and that change across vcpkg baselines (e.g.
+    // `OpenEXR` -> `OpenEXR-3_4`). Exact match wins, so today's names are
+    // emitted unchanged — this only kicks in when the baseline moves.
     let oiio_libs = [
         "OpenImageIO",
         "OpenImageIO_Util",
-        "OpenEXR-3_4",
-        "OpenEXRCore-3_4",
-        "OpenEXRUtil-3_4",
-        "Imath-3_2",
-        "IlmThread-3_4",
-        "Iex-3_4",
+        "OpenEXR",
+        "OpenEXRCore",
+        "OpenEXRUtil",
+        "Imath",
+        "IlmThread",
+        "Iex",
         "tiff",
         "jpeg",
         "libpng16",
     ];
 
-    for lib in oiio_libs {
-        println!("cargo:rustc-link-lib={}", lib);
+    for base in oiio_libs {
+        let name = vcpkg_lib_dir
+            .as_deref()
+            .map(|dir| resolve_lib_name(dir, base))
+            .unwrap_or_else(|| base.to_string());
+        println!("cargo:rustc-link-lib={}", name);
     }
 
     // zlib's import-lib name varies by vcpkg baseline: older ports ship
@@ -424,6 +431,53 @@ fn zlib_link_name(lib_dir: &Path) -> &'static str {
         );
         "z"
     }
+}
+
+/// Resolve a vcpkg lib's cargo link name from a version-less base, tolerating
+/// the `-<major>_<minor>` suffixes that OpenEXR/Imath/etc. carry and that change
+/// across vcpkg baselines (e.g. `OpenEXR` -> `OpenEXR-3_4`). Exact (unversioned)
+/// match wins, so today's installed names are emitted unchanged; the glob only
+/// kicks in when the baseline moves. Falls back to `base` if nothing matches.
+#[cfg(feature = "oiio")]
+fn resolve_lib_name(lib_dir: &Path, base: &str) -> String {
+    // Per-platform file shape: Windows `Foo.lib` / `Foo-3_4.lib`; unix
+    // `libFoo.{a,so,dylib}` / `libFoo-3_4.{...}`. The cargo link name is the
+    // stem minus the unix `lib` prefix and the extension.
+    let (lead, exts): (&str, &[&str]) = if cfg!(windows) {
+        ("", &["lib"][..])
+    } else {
+        ("lib", &["a", "so", "dylib"][..])
+    };
+
+    // Fast path: exact unversioned name present -> preserve current behavior.
+    for ext in exts {
+        if lib_dir.join(format!("{lead}{base}.{ext}")).exists() {
+            return base.to_string();
+        }
+    }
+
+    // Versioned: `<lead><base>-<digits/underscores>.<ext>`. The all-digits guard
+    // means `OpenEXR` matches `OpenEXR-3_4` but NOT `OpenEXRCore-3_4`.
+    if let Ok(entries) = fs::read_dir(lib_dir) {
+        let vprefix = format!("{lead}{base}-");
+        for entry in entries.flatten() {
+            let fname = entry.file_name();
+            let fname = fname.to_string_lossy();
+            let Some(stem) = exts
+                .iter()
+                .find_map(|e| fname.strip_suffix(&format!(".{e}")))
+            else {
+                continue;
+            };
+            if let Some(version) = stem.strip_prefix(&vprefix) {
+                if !version.is_empty() && version.chars().all(|c| c.is_ascii_digit() || c == '_') {
+                    return stem.strip_prefix(lead).unwrap_or(stem).to_string();
+                }
+            }
+        }
+    }
+
+    base.to_string()
 }
 
 #[cfg(feature = "oiio")]
