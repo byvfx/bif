@@ -271,6 +271,22 @@ Use Github CLI (`gh`) for all Github operations.
 
 Remind me to create devlog at end of each session.
 
+### Releases
+
+**GitHub Release notes come from `CHANGELOG.md` automatically — never hand-write them.** The `Release` job in `.github/workflows/ci.yml` (tag-only, `refs/tags/v*`) builds the Windows artifact and extracts the changelog section matching the tag version as the release body.
+
+Ship `vX.Y.Z`:
+
+1. **During dev:** add entries under `## [Unreleased]` in `CHANGELOG.md`.
+2. **Release prep (one commit):**
+   - bump `[workspace.package] version` in `Cargo.toml`, then `cargo update --workspace` (refresh `Cargo.lock`)
+   - stamp CHANGELOG: `## [Unreleased]` → `## [X.Y.Z] - YYYY-MM-DD`, leave a fresh empty `## [Unreleased]` above it
+   - commit `release: vX.Y.Z`, push `main`
+3. **Tag:** annotated `git tag -a vX.Y.Z -m ...`, then `git push origin vX.Y.Z` → triggers the Release job.
+4. CI matches `## [X.Y.Z]` (the header may carry a ` - DATE` suffix) and publishes those notes + `bif-windows-x64.zip`.
+
+CI can't launch the exe (headless) — smoke-run the published zip locally before announcing.
+
 ---
 
 Prioritize clarity and maintainability over cleverness.
