@@ -6,6 +6,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Node output bookkeeping — `NodeOutputs` merge ([#6](https://github.com/byvfx/bif/issues/6) phase 1)**. Collapsed the two desync-prone parallel per-node maps (`node_proto_map: HashMap<GraphNodeId, Vec<usize>>` + `node_cloud_map: HashMap<GraphNodeId, usize>`) in `NodeGraphContext` into one keyed `NodeOutputs { proto_ids, cloud_id }` (`bif_viewport/src/node_graph/node_outputs.rs`). ~23 access sites across `lib.rs`, `node_dispatch.rs`, `scene_loader.rs`, `render.rs`, `scene_browser.rs` migrated to the merged map; `build_scene_graph_cache` now takes one map and builds both reverse lookups in a single pass. Behavior-preserving (179 `bif_viewport` tests green, incl. updated source-node-tagging tests) + 2 new `NodeOutputs` unit tests. First step of the issue #6 node-deepening RFC — `SceneCmd` + `behavior.rs` extraction follow in phases 2–3. Merged via PR #8.
+
 ## [0.16.9] - 2026-06-04
 
 ### Changed

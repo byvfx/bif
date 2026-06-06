@@ -5,9 +5,10 @@
 ## Current State
 
 - **Branch:** `main` (only local branch)
-- **Version:** **v0.16.9** tagged (2026-06-04) — release-CI bring-up + RFC #5 (`PathTracer`); workspace ver bumped 0.16.0 → 0.16.9.
-- **Status:** **Windows release CI now works end-to-end** (had been broken since v0.15.0 Qt migration — see below). A real `vX.Y.Z` tag will now produce a launchable Windows zip (exe + Qt + USD + OIIO + OIDN + Embree DLLs). All green; release job verified via throwaway tag + artifact inspection.
-- **Next:** **Re-scoped #6** ([issue #6](https://github.com/byvfx/bif/issues/6)) — `NodeOutputs` merge (collapse `node_proto_map` + `node_cloud_map`, ~5 files), then `CookNode`/node-routing consolidation; drop global `SceneCmd`. ~1 session. **Or** v0.17.0 Context System (30–40h, highest arch risk). Optional hygiene: squash the 6 CI commits (kept separate for the wall-by-wall record).
+- **Version:** **v0.16.9** tagged (2026-06-04). `[Unreleased]` = issue #6 Phase 1 (`NodeOutputs` merge).
+- **Status:** Release CI works end-to-end (v0.16.9 shipped a launchable Windows zip). **Issue #6 Phase 1 landed** (PR #8, `e765d37`) — `node_proto_map` + `node_cloud_map` merged into one `NodeOutputs` map, behavior-preserving, 179 bif_viewport tests green. PR-based review workflow now live (auto `claude-review` + manual `/vfx-code-reviewer` → squash-merge); Kilo bot removed.
+- **Next:** **Issue #6 Phase 2** — add `SceneCmd` enum + `Renderer::execute()`, route the 21 `handle_node_graph_event` dispatch arms through it one at a time (multi-step LoadUsd/Export via `SceneCmd::Custom`). Then Phase 3 (`behavior.rs` — move per-node `evaluate`/`register_prims`/`apply` + add the trait-boundary tests). Plan for Phase 1: [`docs/agent-plans/2026-06-05-issue6-phase1-node-outputs.md`](docs/agent-plans/2026-06-05-issue6-phase1-node-outputs.md). **Or** v0.17.0 Context System (30–40h, highest arch risk).
+- **Gotcha:** `cargo test -p bif_viewport` needs `. .\setup_usd_env.ps1` sourced first (transitively links USD DLLs via bif_core → `STATUS_DLL_NOT_FOUND` otherwise).
 
 ---
 
