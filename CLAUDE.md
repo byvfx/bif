@@ -75,6 +75,7 @@ cargo fmt --check
 ## Related Docs
 
 - [README.md](README.md) - setup, commands
+- [docs/WORKFLOW.md](docs/WORKFLOW.md) - branch → PR → review → squash-merge + release quick reference
 - [MILESTONES.md](MILESTONES.md) - architecture, roadmap
 - [SESSION_HANDOFF.md](SESSION_HANDOFF.md) - current state
 
@@ -211,18 +212,14 @@ Before diving into code:
 - No compiler warnings (`cargo build`)
 - Clippy passes (`cargo clippy -- -D warnings`)
 - Code formatted (`cargo fmt --check`)
-- Update CHANGELOG.md `## [Unreleased]` section
-- Make new devlog entry
+- Update CHANGELOG.md `## [Unreleased]` section (per-PR when on a branch)
+- Make new devlog entry (per-PR when on a branch)
 - Update SESSION_HANDOFF.md if needed
 - Update MILESTONES.md if needed
 - update README.md if needed
 - update CLAUDE.md if needed
 - Public items have doc comments
 - No commented-out code or debug statements
-
-## After Committing
-
-- Clear context and run `/vfx-code-reviewer` skill on the commit (reviews for VFX production patterns)
 
 ## Don'ts
 
@@ -270,6 +267,22 @@ Also update `SESSION_HANDOFF.md` with summary, next steps, blockers.
 Use Github CLI (`gh`) for all Github operations.
 
 Remind me to create devlog at end of each session.
+
+### Branching & Review
+
+Real work happens on **feature branches → PR → squash-merge to `main`**. Review is done on the PR diff, NOT per commit.
+
+- **Branch for features/bugfixes:** `git switch -c <type>/<short-desc>` (e.g. `feat/node-outputs-merge`, `fix/payload-policy`). Trivial commits (typo, version bump, docs/CHANGELOG/devlog-only) may go straight to `main`.
+- **Cadence:**
+  - *Per commit* (on the branch): the `Before Committing` gate — fmt + clippy + tests green, no warnings.
+  - *Per PR* (once for the branch): CHANGELOG `[Unreleased]`, devlog, SESSION_HANDOFF / MILESTONES / README updates.
+- **Open the PR:** `gh pr create`. CI `check` runs and `claude-code-review.yml` auto-reviews the diff.
+- **Run `/vfx-code-reviewer` on the PR diff** for VFX-production-pattern review before merging. Reserve `/code-review ultra` for large/risky PRs (e.g. `cpp_bridge` split, renderer changes).
+- **Address review**, push fixes (auto-review re-runs on each push).
+- **Squash-merge** when green + reviewed: `gh pr merge --squash --delete-branch`. Keeps `main` history linear.
+- Release tags are cut from `main` after merge — see `Releases` below.
+
+The PR is the review unit — don't review per commit.
 
 ### Releases
 
