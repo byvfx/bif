@@ -14,11 +14,13 @@
 //! - Variant: Switch USD variant sets
 
 pub(crate) mod eval;
+mod node_outputs;
 mod viewer;
 
 pub mod node_id;
 pub mod ops;
 pub use node_id::GraphNodeId;
+pub use node_outputs::NodeOutputs;
 pub(crate) use ops::{collect_upstream_nodes, propagate_dirty};
 
 use std::collections::HashSet;

@@ -166,8 +166,7 @@ pub(crate) struct IvarContext {
 /// Node graph evaluation state — graph, mappings, caches.
 pub(crate) struct NodeGraphContext {
     pub node_graph_state: NodeGraphState,
-    pub node_proto_map: std::collections::HashMap<node_graph::GraphNodeId, Vec<usize>>,
-    pub node_cloud_map: std::collections::HashMap<node_graph::GraphNodeId, usize>,
+    pub node_outputs: std::collections::HashMap<node_graph::GraphNodeId, node_graph::NodeOutputs>,
     pub next_cloud_id: usize,
     pub node_scatter_surface_map: std::collections::HashMap<node_graph::GraphNodeId, usize>,
     pub instancer_results:
@@ -1148,8 +1147,7 @@ impl Renderer {
             layer_stack_panel: crate::layer_stack_panel::LayerStackPanel::new(),
             nodes: NodeGraphContext {
                 node_graph_state: NodeGraphState::new(),
-                node_proto_map: std::collections::HashMap::new(),
-                node_cloud_map: std::collections::HashMap::new(),
+                node_outputs: std::collections::HashMap::new(),
                 next_cloud_id: 0,
                 node_scatter_surface_map: std::collections::HashMap::new(),
                 instancer_results: std::collections::BTreeMap::new(),
@@ -1258,8 +1256,7 @@ impl Renderer {
         self.last_action_stack.clear();
         self.redo_action_stack.clear();
         self.nodes.cached_scene_graph = scene_browser::CachedSceneGraph::default();
-        self.nodes.node_proto_map.clear();
-        self.nodes.node_cloud_map.clear();
+        self.nodes.node_outputs.clear();
         self.nodes.instancer_results.clear();
         self.nodes.node_prim_counts.clear();
         self.nodes.scene_graph_dirty = true;
@@ -2407,8 +2404,7 @@ impl Renderer {
         self.display_settings = project.display_settings;
 
         // Clear runtime caches — will be rebuilt on next evaluation
-        self.nodes.node_proto_map.clear();
-        self.nodes.node_cloud_map.clear();
+        self.nodes.node_outputs.clear();
         self.nodes.instancer_results.clear();
         self.nodes.scene_graph_dirty = true;
         self.nodes.materials_dirty = true;
@@ -2471,8 +2467,7 @@ impl Renderer {
         self.nodes.node_graph_state.display_node = None;
         self.nodes.node_graph_state.selected_node = None;
         self.nodes.node_graph_state.dirty_nodes.clear();
-        self.nodes.node_proto_map.clear();
-        self.nodes.node_cloud_map.clear();
+        self.nodes.node_outputs.clear();
         self.nodes.instancer_results.clear();
         self.nodes.scene_graph_dirty = true;
         self.nodes.materials_dirty = true;
