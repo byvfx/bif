@@ -401,8 +401,13 @@ impl Renderer {
             log::error!("Prototype {} not found for removal", proto_id);
             return false;
         }
-        // Re-index node_proto_map (unified: single + multi-proto nodes)
-        for ids in self.nodes.node_proto_map.values_mut() {
+        // Re-index node_outputs proto_ids (unified: single + multi-proto nodes)
+        for ids in self
+            .nodes
+            .node_outputs
+            .values_mut()
+            .map(|o| &mut o.proto_ids)
+        {
             ids.retain(|id| *id != proto_id);
             for id in ids.iter_mut() {
                 if *id > proto_id {
@@ -594,10 +599,10 @@ impl Renderer {
         // Also hide prototypes from inactive nodes (display flag gating)
         let display_hidden_proto_ids: std::collections::HashSet<usize> = self
             .nodes
-            .node_proto_map
+            .node_outputs
             .iter()
             .filter(|(nid, _)| !is_node_active(nid))
-            .flat_map(|(_, pids)| pids.iter().copied())
+            .flat_map(|(_, o)| o.proto_ids.iter().copied())
             .collect();
         let hidden_proto_ids: std::collections::HashSet<usize> = instanced_proto_ids
             .union(&scatter_surface_ids)
@@ -1174,13 +1179,13 @@ impl Renderer {
                 // Resolve which prototype IDs come from those upstream nodes
                 let affected_proto_ids: std::collections::HashSet<usize> = self
                     .nodes
-                    .node_proto_map
+                    .node_outputs
                     .iter()
                     .filter(|(nid, _)| {
                         let snarl_nid: egui_snarl::NodeId = (**nid).into();
                         upstream.contains(&snarl_nid)
                     })
-                    .flat_map(|(_, pids)| pids.iter().copied())
+                    .flat_map(|(_, o)| o.proto_ids.iter().copied())
                     .collect();
 
                 if affected_proto_ids.is_empty() {

@@ -132,8 +132,7 @@ impl Renderer {
         self.nodes.cached_scene_graph = scene_browser::build_scene_graph_cache(
             &self.scene.working_scene,
             &self.nodes.node_graph_state.snarl,
-            &self.nodes.node_proto_map,
-            &self.nodes.node_cloud_map,
+            &self.nodes.node_outputs,
         );
         self.nodes.node_prim_counts = self.nodes.cached_scene_graph.prim_count_by_node();
         self.nodes.scene_graph_dirty = false;
@@ -282,7 +281,7 @@ impl Renderer {
                             // the node graph; if zero we fall back to a bare
                             // reload (e.g., someone opened the file outside
                             // the node-graph path).
-                            let owning_node = self.nodes.node_proto_map.keys().next().copied();
+                            let owning_node = self.nodes.node_outputs.keys().next().copied();
                             if let Some(node_id) = owning_node {
                                 self.handle_node_graph_event(NodeGraphEvent::LoadUsdFile {
                                     path: path.clone(),

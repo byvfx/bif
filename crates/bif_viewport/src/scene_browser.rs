@@ -17,7 +17,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::node_graph::{GraphNodeId, SceneNode};
+use crate::node_graph::{GraphNodeId, NodeOutputs, SceneNode};
 use crate::theme;
 
 /// Which view mode the scene browser is in.
@@ -709,19 +709,18 @@ impl CachedSceneGraph {
 pub fn build_scene_graph_cache(
     scene: &dyn bif_core::SceneQuery,
     graph: &egui_snarl::Snarl<SceneNode>,
-    node_proto_map: &HashMap<GraphNodeId, Vec<usize>>,
-    node_cloud_map: &HashMap<GraphNodeId, usize>,
+    node_outputs: &HashMap<GraphNodeId, NodeOutputs>,
 ) -> CachedSceneGraph {
     // Build reverse maps: proto_index -> node, cloud_id -> node
     let mut proto_to_node: HashMap<usize, GraphNodeId> = HashMap::new();
-    for (&node_id, proto_ids) in node_proto_map {
-        for &pid in proto_ids {
+    let mut cloud_to_node: HashMap<usize, GraphNodeId> = HashMap::new();
+    for (&node_id, outputs) in node_outputs {
+        for &pid in &outputs.proto_ids {
             proto_to_node.insert(pid, node_id);
         }
-    }
-    let mut cloud_to_node: HashMap<usize, GraphNodeId> = HashMap::new();
-    for (&node_id, &cloud_id) in node_cloud_map {
-        cloud_to_node.insert(cloud_id, node_id);
+        if let Some(cid) = outputs.cloud_id {
+            cloud_to_node.insert(cid, node_id);
+        }
     }
 
     let mut procedural_prims = HashMap::new();
@@ -1175,10 +1174,9 @@ mod tests {
     #[test]
     fn test_build_scene_graph_cache_children_index() {
         let scene = bif_core::Scene::new("test");
-        let empty_proto = HashMap::new();
-        let empty_cloud = HashMap::new();
+        let empty_outputs = HashMap::new();
         let graph = egui_snarl::Snarl::<SceneNode>::new();
-        let cache = build_scene_graph_cache(&scene, &graph, &empty_proto, &empty_cloud);
+        let cache = build_scene_graph_cache(&scene, &graph, &empty_outputs);
         // Empty scene should produce empty cache
         assert!(cache.procedural_prims.is_empty());
         assert!(cache.children_index.is_empty());
@@ -1198,12 +1196,17 @@ mod tests {
         }));
 
         let node_a = GraphNodeId(42);
-        let mut proto_map = HashMap::new();
-        proto_map.insert(node_a, vec![0]);
-        let empty_cloud = HashMap::new();
+        let mut node_outputs = HashMap::new();
+        node_outputs.insert(
+            node_a,
+            NodeOutputs {
+                proto_ids: vec![0],
+                cloud_id: None,
+            },
+        );
 
         let graph = egui_snarl::Snarl::<SceneNode>::new();
-        let cache = build_scene_graph_cache(&scene, &graph, &proto_map, &empty_cloud);
+        let cache = build_scene_graph_cache(&scene, &graph, &node_outputs);
 
         // Mesh prim should be tagged with node_a
         let prim = cache.procedural_prims.get("/World/Cube").unwrap();
@@ -1235,13 +1238,24 @@ mod tests {
 
         let node_a = GraphNodeId(1);
         let node_b = GraphNodeId(2);
-        let mut proto_map = HashMap::new();
-        proto_map.insert(node_a, vec![0]);
-        proto_map.insert(node_b, vec![1]);
-        let empty_cloud = HashMap::new();
+        let mut node_outputs = HashMap::new();
+        node_outputs.insert(
+            node_a,
+            NodeOutputs {
+                proto_ids: vec![0],
+                cloud_id: None,
+            },
+        );
+        node_outputs.insert(
+            node_b,
+            NodeOutputs {
+                proto_ids: vec![1],
+                cloud_id: None,
+            },
+        );
 
         let graph = egui_snarl::Snarl::<SceneNode>::new();
-        let cache = build_scene_graph_cache(&scene, &graph, &proto_map, &empty_cloud);
+        let cache = build_scene_graph_cache(&scene, &graph, &node_outputs);
         let counts = cache.prim_count_by_node();
 
         assert_eq!(counts.get(&node_a), Some(&1));
@@ -1263,7 +1277,7 @@ mod tests {
             *prim_type = bif_core::usd::UsdPrimType::Xform;
         }
 
-        let cache = build_scene_graph_cache(&scene, &graph, &HashMap::new(), &HashMap::new());
+        let cache = build_scene_graph_cache(&scene, &graph, &HashMap::new());
         let prim = cache.procedural_prims.get("/World/MyPrim").unwrap();
 
         assert_eq!(prim.kind.type_name(), "Xform");
@@ -1292,13 +1306,24 @@ mod tests {
 
         let node_a = GraphNodeId(1);
         let node_b = GraphNodeId(2);
-        let mut proto_map = HashMap::new();
-        proto_map.insert(node_a, vec![0]);
-        proto_map.insert(node_b, vec![1]);
-        let empty_cloud = HashMap::new();
+        let mut node_outputs = HashMap::new();
+        node_outputs.insert(
+            node_a,
+            NodeOutputs {
+                proto_ids: vec![0],
+                cloud_id: None,
+            },
+        );
+        node_outputs.insert(
+            node_b,
+            NodeOutputs {
+                proto_ids: vec![1],
+                cloud_id: None,
+            },
+        );
 
         let graph = egui_snarl::Snarl::<SceneNode>::new();
-        let cache = build_scene_graph_cache(&scene, &graph, &proto_map, &empty_cloud);
+        let cache = build_scene_graph_cache(&scene, &graph, &node_outputs);
         let composite = CompositeProvider::new(None, &cache);
 
         // Filter to only node_a (upstream set = {node_a})

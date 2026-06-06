@@ -14,7 +14,20 @@ impl Renderer {
                 log::info!("Node graph: Loading USD file: {}", path);
 
                 // Remove old prototypes from this node (reload case)
-                if let Some(old_ids) = self.nodes.node_proto_map.remove(&node_id) {
+                let old_ids = self
+                    .nodes
+                    .node_outputs
+                    .get_mut(&node_id)
+                    .map(|o| std::mem::take(&mut o.proto_ids));
+                if self
+                    .nodes
+                    .node_outputs
+                    .get(&node_id)
+                    .is_some_and(|o| o.is_empty())
+                {
+                    self.nodes.node_outputs.remove(&node_id);
+                }
+                if let Some(old_ids) = old_ids {
                     for &pid in old_ids.iter().rev() {
                         self.remove_and_reindex_prototype(pid);
                     }
@@ -31,7 +44,11 @@ impl Renderer {
                         let proto_ids: Vec<usize> = (proto_offset..new_proto_count).collect();
                         if !proto_ids.is_empty() {
                             log::info!("UsdRead {:?} owns protos {:?}", node_id, proto_ids);
-                            self.nodes.node_proto_map.insert(node_id, proto_ids);
+                            self.nodes
+                                .node_outputs
+                                .entry(node_id)
+                                .or_default()
+                                .proto_ids = proto_ids;
                         }
                         self.nodes.node_graph_state.mark_node_loaded(&path);
                         log::info!("USD file loaded successfully: {}", path);
@@ -144,7 +161,20 @@ impl Renderer {
                     };
 
                 // Remove old prototype if re-creating (e.g. size change)
-                if let Some(old_ids) = self.nodes.node_proto_map.remove(&node_id) {
+                let old_ids = self
+                    .nodes
+                    .node_outputs
+                    .get_mut(&node_id)
+                    .map(|o| std::mem::take(&mut o.proto_ids));
+                if self
+                    .nodes
+                    .node_outputs
+                    .get(&node_id)
+                    .is_some_and(|o| o.is_empty())
+                {
+                    self.nodes.node_outputs.remove(&node_id);
+                }
+                if let Some(old_ids) = old_ids {
                     for &pid in old_ids.iter().rev() {
                         self.remove_and_reindex_prototype(pid);
                     }
@@ -160,7 +190,11 @@ impl Renderer {
                                 std::sync::Arc::make_mut(proto).name = pp.as_str().into();
                             }
                         }
-                        self.nodes.node_proto_map.insert(node_id, vec![proto_id]);
+                        self.nodes
+                            .node_outputs
+                            .entry(node_id)
+                            .or_default()
+                            .proto_ids = vec![proto_id];
 
                         // Recursively dirty all downstream nodes
                         crate::node_graph::propagate_dirty(
@@ -187,7 +221,20 @@ impl Renderer {
                 let snarl_id: egui_snarl::NodeId = node_id.into();
 
                 // Remove previous cloud for this node (if regenerating)
-                if let Some(old_cloud_id) = self.nodes.node_cloud_map.remove(&node_id) {
+                let old_cloud_id = self
+                    .nodes
+                    .node_outputs
+                    .get_mut(&node_id)
+                    .and_then(|o| o.cloud_id.take());
+                if self
+                    .nodes
+                    .node_outputs
+                    .get(&node_id)
+                    .is_some_and(|o| o.is_empty())
+                {
+                    self.nodes.node_outputs.remove(&node_id);
+                }
+                if let Some(old_cloud_id) = old_cloud_id {
                     self.scene.working_scene.remove_point_cloud(old_cloud_id);
                 }
                 // Clear old surface mapping (rebuilt in reload_working_scene)
@@ -305,7 +352,7 @@ impl Renderer {
                     let cloud_id = self.nodes.next_cloud_id;
                     self.nodes.next_cloud_id += 1;
                     cloud.id = cloud_id;
-                    self.nodes.node_cloud_map.insert(node_id, cloud_id);
+                    self.nodes.node_outputs.entry(node_id).or_default().cloud_id = Some(cloud_id);
 
                     let pt_count = cloud.positions.len();
                     self.scene.working_scene.add_point_cloud(cloud);
@@ -359,12 +406,17 @@ impl Renderer {
             } => {
                 let snarl_id: egui_snarl::NodeId = node_id.into();
                 // Resolve cloud ID from scatter node
-                let cloud_id = self.nodes.node_cloud_map.get(&points_source_node).copied();
+                let cloud_id = self
+                    .nodes
+                    .node_outputs
+                    .get(&points_source_node)
+                    .and_then(|o| o.cloud_id);
                 // Resolve first prototype ID from primitive/USD node
                 let proto_id = self
                     .nodes
-                    .node_proto_map
+                    .node_outputs
                     .get(&proto_source_node)
+                    .map(|o| &o.proto_ids)
                     .and_then(|ids| ids.first().copied());
 
                 // Helper: mark compute failed on the node (prevents infinite retry)
@@ -405,7 +457,7 @@ impl Renderer {
                             {
                                 cloud.name = prim_path.clone();
                                 // TODO: multi-prototype instancing not yet supported,
-                                // using first proto only. See node_proto_map .first().
+                                // using first proto only. See node_outputs proto_ids .first().
                                 cloud.prototype_ids = vec![pid];
                                 self.nodes.scene_graph_dirty = true;
                             }
@@ -510,7 +562,7 @@ impl Renderer {
                 let node_xform_overrides = collect_node_xform_overrides(
                     snarl_id,
                     &self.nodes.node_graph_state.snarl,
-                    &self.nodes.node_proto_map,
+                    &self.nodes.node_outputs,
                     self.scene.working_scene.instances(),
                 );
                 // Auto-enable sublayer when upstream UsdRead exists
@@ -621,8 +673,11 @@ impl Renderer {
                 // Selection handled in render_node_graph
             }
             NodeGraphEvent::DeleteNode(node_id) => {
+                // Remove this node's outputs (cloud + protos) in one shot
+                let removed_outputs = self.nodes.node_outputs.remove(&node_id);
+
                 // Clean up scatter cloud
-                if let Some(cloud_id) = self.nodes.node_cloud_map.remove(&node_id) {
+                if let Some(cloud_id) = removed_outputs.as_ref().and_then(|o| o.cloud_id) {
                     self.scene.working_scene.remove_point_cloud(cloud_id);
                     let all_positions: Vec<bif_math::Vec3> = self
                         .scene
@@ -649,7 +704,10 @@ impl Renderer {
                 }
 
                 // Clean up prototypes owned by this node
-                if let Some(proto_ids) = self.nodes.node_proto_map.remove(&node_id) {
+                let proto_ids = removed_outputs
+                    .map(|o| o.proto_ids)
+                    .filter(|ids| !ids.is_empty());
+                if let Some(proto_ids) = proto_ids {
                     log::info!("Deleting node {:?} → protos {:?}", node_id, proto_ids);
                     // Remove in reverse order so indices stay valid;
                     // remove_and_reindex_prototype handles re-indexing all maps
@@ -817,7 +875,7 @@ struct NodeXformOverride {
 fn collect_node_xform_overrides(
     export_node: egui_snarl::NodeId,
     snarl: &egui_snarl::Snarl<SceneNode>,
-    node_proto_map: &HashMap<GraphNodeId, Vec<usize>>,
+    node_outputs: &HashMap<GraphNodeId, crate::node_graph::NodeOutputs>,
     instances: &[bif_core::Instance],
 ) -> HashMap<usize, NodeXformOverride> {
     let active_nodes = crate::node_graph::collect_upstream_nodes(export_node, snarl);
@@ -852,13 +910,13 @@ fn collect_node_xform_overrides(
             continue;
         }
 
-        let affected_proto_ids: HashSet<usize> = node_proto_map
+        let affected_proto_ids: HashSet<usize> = node_outputs
             .iter()
             .filter(|(node_id, _)| {
                 let snarl_id: egui_snarl::NodeId = (**node_id).into();
                 upstream.contains(&snarl_id)
             })
-            .flat_map(|(_, proto_ids)| proto_ids.iter().copied())
+            .flat_map(|(_, o)| o.proto_ids.iter().copied())
             .collect();
 
         for (instance_index, instance) in instances.iter().enumerate() {
