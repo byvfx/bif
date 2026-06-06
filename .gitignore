@@ -13,3 +13,6 @@ wiki/.obsidian/workspace.json
 wiki/.obsidian/workspace-mobile.json
 # Added by code-review-graph
 .code-review-graph/
+
+# Runtime crash logs
+crash.log
