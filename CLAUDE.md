@@ -46,7 +46,7 @@ cargo build --features oidn    # With Intel OIDN denoising
 # Test
 cargo test -p bif_math         # 74 tests (no deps)
 cargo test -p bif_renderer     # 111 tests (includes denoise, materials)
-cargo test -p bif_viewport     # 149 tests
+cargo test -p bif_viewport     # 179 tests (needs USD env sourced — see Gotchas)
 cargo test -p bif_qt           # Qt UI crate tests
 . .\setup_usd_env.ps1          # Required before bif_core tests
 cargo test -p bif_core -- --test-threads=1  # needs USD DLLs
@@ -62,7 +62,7 @@ cargo fmt --check
 
 ## Gotchas
 
-- **USD env required:** `setup_usd_env.ps1` must be sourced before running bif_core tests or loading USD scenes
+- **USD env required:** `setup_usd_env.ps1` must be sourced before running bif_core **or bif_viewport** tests, or loading USD scenes. bif_viewport transitively links USD DLLs via bif_core, so its test binary fails with `STATUS_DLL_NOT_FOUND` without it (run via PowerShell: `. .\setup_usd_env.ps1; cargo test -p bif_viewport`)
 - **bif_core tests are single-threaded:** USD C++ bridge is not thread-safe, use `--test-threads=1`
 - **C++ bridge builds via CMake:** `bif_core/build.rs` triggers CMake for `cpp/usd_bridge/` — needs Visual Studio 2022 C++ workload
 - **bif_qt requires Qt 6:** needs Qt 6 dev headers + `qmake`/`cmake` in PATH; cxx-qt 0.7 generates the Rust-C++ glue at build time
