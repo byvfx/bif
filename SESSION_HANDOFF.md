@@ -4,11 +4,29 @@
 
 ## Current State
 
-- **Branch:** `refactor/issue6-phase2-scenecmd` (Phase 2 done, PR pending) — branched from `main`.
-- **Version:** **v0.16.9** tagged (2026-06-04). `[Unreleased]` = issue #6 Phase 1 (`NodeOutputs` merge) + Phase 2 (`SceneCmd`).
-- **Status:** Release CI works end-to-end (v0.16.9 shipped a launchable Windows zip). **Issue #6 Phase 1 landed** (PR #8, `e765d37`). **Phase 2 done on branch** (commits `6c5d740` + `6d7deca`) — `SceneCmd` 6-verb enum + `Renderer::execute()` (`scene_cmd.rs`); 7 dispatch arms routed through it; `node_dispatch.rs` net −74 lines; behavior-preserving, 181 bif_viewport tests green; verified (diff review + build/clippy/fmt/tests). Coupling-scoped (no `Custom` needed). PR-based review workflow live (auto `claude-review` + manual `/vfx-code-reviewer` → squash-merge).
-- **Next:** Open Phase 2 PR → `/vfx-code-reviewer` → squash-merge. Then **Issue #6 Phase 3** — `node_graph/behavior.rs`: move per-node `evaluate`/`register_prims`/`apply` (apply *constructs* `SceneCmd`s, unlocking unit tests for the CPU verbs) + trait-boundary tests. Plans: Phase 2 [`docs/agent-plans/2026-06-08-issue6-phase2-scenecmd.md`](docs/agent-plans/2026-06-08-issue6-phase2-scenecmd.md), Phase 1 [`docs/agent-plans/2026-06-05-issue6-phase1-node-outputs.md`](docs/agent-plans/2026-06-05-issue6-phase1-node-outputs.md). **Or** v0.17.0 Context System (30–40h, highest arch risk).
+- **Branch:** `refactor/issue6-phase3a-evaluate` (Phase 3a done, PR pending) — stacked on `refactor/issue6-phase2-scenecmd` (PR #9).
+- **Version:** **v0.16.9** tagged (2026-06-04). `[Unreleased]` = issue #6 Phase 1 (`NodeOutputs`) + Phase 2 (`SceneCmd`) + Phase 3a (`SceneNode::evaluate`).
+- **Status:** Release CI works end-to-end (v0.16.9 shipped a launchable Windows zip). **Phase 1 landed** (PR #8, `e765d37`). **Phase 2 = PR #9** (green: claude-review + CI all pass) — `SceneCmd` 6-verb enum + `Renderer::execute()`; 7 dispatch arms routed; net −74 lines. **Phase 3a done on branch** (commit `0220991`) — `eval.rs::evaluate_node` match → `SceneNode::evaluate` in new `node_graph/behavior.rs` + generic delegator; `EvalCtx` precomputed data makes `evaluate` Snarl-free / unit-testable; `extract_scatter_params` deleted; 187 bif_viewport tests green; verified (diff review + build/clippy/tests).
+- **Next:** Merge PR #9 (Phase 2), then open the Phase 3a PR → `/vfx-code-reviewer` → squash-merge. Then **Phase 3b** (`register_prims`: `scene_browser` per-variant prim registration → `behavior.rs` + `ProcPrimSink`) → **3c** (`apply` — the deferred `Vec<SceneCmd>` slice with the loader/flag/GPU tension). Plans: 3a [`docs/agent-plans/2026-06-09-issue6-phase3a-evaluate.md`](docs/agent-plans/2026-06-09-issue6-phase3a-evaluate.md), Phase 2 [`docs/agent-plans/2026-06-08-issue6-phase2-scenecmd.md`](docs/agent-plans/2026-06-08-issue6-phase2-scenecmd.md). **Or** v0.17.0 Context System (30–40h, highest arch risk).
 - **Gotcha:** `cargo test -p bif_viewport` needs `. .\setup_usd_env.ps1` sourced first (transitively links USD DLLs via bif_core → `STATUS_DLL_NOT_FOUND` otherwise).
+
+---
+
+# Session Handoff — 2026-06-09 (issue #6 Phase 3a — `SceneNode::evaluate`)
+
+**Last Updated:** 2026-06-09 on `refactor/issue6-phase3a-evaluate` (commit `0220991`, stacked on PR #9).
+
+**Context:** Phase 3 of the RFC, decomposed into 3a/3b/3c. Did 3a (`evaluate`). Plan: [`docs/agent-plans/2026-06-09-issue6-phase3a-evaluate.md`](docs/agent-plans/2026-06-09-issue6-phase3a-evaluate.md).
+
+**Done:** `eval.rs::evaluate_node`'s per-variant `match` → `SceneNode::evaluate(&mut self, id, &EvalCtx, EvalMode) -> EvalOutcome` in new `node_graph/behavior.rs`; `evaluate_node` now a generic read/mutate-phase delegator. `extract_scatter_params` inlined + deleted. +6 pure `evaluate` tests.
+
+**Design:** `EvalCtx` is precomputed snarl-free connection data (not a `&snarl` borrow) — required so `evaluate(&mut self)` can borrow the node out of the snarl while connection facts arrive via `ctx`. Payoff: `evaluate` is graph-pure + Snarl/GPU/USD-free testable. `&mut self` (node flips own flags) keeps ONE per-variant match.
+
+**Validation:** build 0, clippy 0 (`-D warnings`), **187 bif_viewport tests** (181+6). Diff reviewed vs original = 1:1 behavior-preserving. Grep: no `extract_scatter_params`; one `fn evaluate_node` (the delegator).
+
+**Gotcha for next time:** implementer subagents can't source the PowerShell USD env (`. .\setup_usd_env.ps1`) from their Bash tool, so they can't run `cargo test -p bif_viewport`. Tell them to stop at `cargo build`+`cargo clippy` (no env needed) and let the controller run the USD test suite.
+
+**Next:** merge PR #9 → open 3a PR → `/vfx-code-reviewer`. Then 3b (`register_prims`).
 
 ---
 
