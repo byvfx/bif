@@ -14,23 +14,13 @@ impl Renderer {
                 log::info!("Node graph: Loading USD file: {}", path);
 
                 // Remove old prototypes from this node (reload case)
-                let old_ids = self
-                    .nodes
-                    .node_outputs
-                    .get_mut(&node_id)
-                    .map(|o| std::mem::take(&mut o.proto_ids));
-                if self
+                let had_protos = self
                     .nodes
                     .node_outputs
                     .get(&node_id)
-                    .is_some_and(|o| o.is_empty())
-                {
-                    self.nodes.node_outputs.remove(&node_id);
-                }
-                if let Some(old_ids) = old_ids {
-                    for &pid in old_ids.iter().rev() {
-                        self.remove_and_reindex_prototype(pid);
-                    }
+                    .is_some_and(|o| !o.proto_ids.is_empty());
+                self.execute(crate::SceneCmd::RemoveNodeProtos { node: node_id });
+                if had_protos {
                     // GC orphaned materials so new load starts with clean offsets
                     self.scene.working_scene.compact_materials();
                 }
@@ -44,11 +34,10 @@ impl Renderer {
                         let proto_ids: Vec<usize> = (proto_offset..new_proto_count).collect();
                         if !proto_ids.is_empty() {
                             log::info!("UsdRead {:?} owns protos {:?}", node_id, proto_ids);
-                            self.nodes
-                                .node_outputs
-                                .entry(node_id)
-                                .or_default()
-                                .proto_ids = proto_ids;
+                            self.execute(crate::SceneCmd::RecordProtos {
+                                node: node_id,
+                                proto_ids,
+                            });
                         }
                         self.nodes.node_graph_state.mark_node_loaded(&path);
                         log::info!("USD file loaded successfully: {}", path);
@@ -161,24 +150,7 @@ impl Renderer {
                     };
 
                 // Remove old prototype if re-creating (e.g. size change)
-                let old_ids = self
-                    .nodes
-                    .node_outputs
-                    .get_mut(&node_id)
-                    .map(|o| std::mem::take(&mut o.proto_ids));
-                if self
-                    .nodes
-                    .node_outputs
-                    .get(&node_id)
-                    .is_some_and(|o| o.is_empty())
-                {
-                    self.nodes.node_outputs.remove(&node_id);
-                }
-                if let Some(old_ids) = old_ids {
-                    for &pid in old_ids.iter().rev() {
-                        self.remove_and_reindex_prototype(pid);
-                    }
-                }
+                self.execute(crate::SceneCmd::RemoveNodeProtos { node: node_id });
 
                 match self.load_primitive(kind, size) {
                     Ok(proto_id) => {
@@ -190,11 +162,10 @@ impl Renderer {
                                 std::sync::Arc::make_mut(proto).name = pp.as_str().into();
                             }
                         }
-                        self.nodes
-                            .node_outputs
-                            .entry(node_id)
-                            .or_default()
-                            .proto_ids = vec![proto_id];
+                        self.execute(crate::SceneCmd::RecordProtos {
+                            node: node_id,
+                            proto_ids: vec![proto_id],
+                        });
 
                         // Recursively dirty all downstream nodes
                         crate::node_graph::propagate_dirty(
@@ -220,25 +191,9 @@ impl Renderer {
                 );
                 let snarl_id: egui_snarl::NodeId = node_id.into();
 
-                // Remove previous cloud for this node (if regenerating)
-                let old_cloud_id = self
-                    .nodes
-                    .node_outputs
-                    .get_mut(&node_id)
-                    .and_then(|o| o.cloud_id.take());
-                if self
-                    .nodes
-                    .node_outputs
-                    .get(&node_id)
-                    .is_some_and(|o| o.is_empty())
-                {
-                    self.nodes.node_outputs.remove(&node_id);
-                }
-                if let Some(old_cloud_id) = old_cloud_id {
-                    self.scene.working_scene.remove_point_cloud(old_cloud_id);
-                }
-                // Clear old surface mapping (rebuilt in reload_working_scene)
-                self.nodes.node_scatter_surface_map.remove(&node_id);
+                // Remove previous cloud for this node (if regenerating).
+                // Also clears the scatter-surface mapping (rebuilt in reload).
+                self.execute(crate::SceneCmd::RemoveNodeCloud { node: node_id });
 
                 let cloud = match params.source {
                     bif_core::PointSource::Surface => {
@@ -348,29 +303,13 @@ impl Renderer {
                     }
                 };
 
-                if let Some(mut cloud) = cloud {
-                    let cloud_id = self.nodes.next_cloud_id;
-                    self.nodes.next_cloud_id += 1;
-                    cloud.id = cloud_id;
-                    self.nodes.node_outputs.entry(node_id).or_default().cloud_id = Some(cloud_id);
-
+                if let Some(cloud) = cloud {
                     let pt_count = cloud.positions.len();
-                    self.scene.working_scene.add_point_cloud(cloud);
-
-                    // Upload point positions for preview
-                    let all_positions: Vec<bif_math::Vec3> = self
-                        .scene
-                        .working_scene
-                        .point_clouds
-                        .iter()
-                        .flat_map(|c| c.positions.iter().copied())
-                        .collect();
-                    self.point_preview.upload_points(
-                        &self.gpu.device,
-                        &self.gpu.queue,
-                        &all_positions,
-                    );
-                    self.point_preview_params_dirty = true;
+                    self.execute(crate::SceneCmd::AddCloud {
+                        node: node_id,
+                        cloud: Box::new(cloud),
+                    });
+                    self.execute(crate::SceneCmd::UploadPointPreview);
 
                     // Auto-enable point preview and sync color/size from node
                     self.point_preview.visible = true;
@@ -459,7 +398,7 @@ impl Renderer {
                                 // TODO: multi-prototype instancing not yet supported,
                                 // using first proto only. See node_outputs proto_ids .first().
                                 cloud.prototype_ids = vec![pid];
-                                self.nodes.scene_graph_dirty = true;
+                                self.execute(crate::SceneCmd::MarkSceneGraphDirty);
                             }
                         }
 
@@ -647,7 +586,7 @@ impl Renderer {
                 {
                     *is_created = true;
                 }
-                self.nodes.scene_graph_dirty = true;
+                self.execute(crate::SceneCmd::MarkSceneGraphDirty);
             }
             NodeGraphEvent::GraftBranchesCompute { node_id } => {
                 let snarl_id: egui_snarl::NodeId = node_id.into();
@@ -656,7 +595,7 @@ impl Renderer {
                 {
                     *is_computed = true;
                 }
-                self.nodes.scene_graph_dirty = true;
+                self.execute(crate::SceneCmd::MarkSceneGraphDirty);
             }
             NodeGraphEvent::SetDisplayNode(id) => {
                 // Toggle: clicking the same node clears display
@@ -673,30 +612,27 @@ impl Renderer {
                 // Selection handled in render_node_graph
             }
             NodeGraphEvent::DeleteNode(node_id) => {
-                // Remove this node's outputs (cloud + protos) in one shot
-                let removed_outputs = self.nodes.node_outputs.remove(&node_id);
+                // Snapshot what this node owns before tearing it down, so we
+                // preserve the "only re-upload preview if a cloud existed" and
+                // "only compact if protos existed" behavior.
+                let had_cloud = self
+                    .nodes
+                    .node_outputs
+                    .get(&node_id)
+                    .and_then(|o| o.cloud_id)
+                    .is_some();
+                let had_protos = self
+                    .nodes
+                    .node_outputs
+                    .get(&node_id)
+                    .is_some_and(|o| !o.proto_ids.is_empty());
 
-                // Clean up scatter cloud
-                if let Some(cloud_id) = removed_outputs.as_ref().and_then(|o| o.cloud_id) {
-                    self.scene.working_scene.remove_point_cloud(cloud_id);
-                    let all_positions: Vec<bif_math::Vec3> = self
-                        .scene
-                        .working_scene
-                        .point_clouds
-                        .iter()
-                        .flat_map(|c| c.positions.iter().copied())
-                        .collect();
-                    self.point_preview.upload_points(
-                        &self.gpu.device,
-                        &self.gpu.queue,
-                        &all_positions,
-                    );
-                    self.point_preview_params_dirty = true;
-                    log::info!("Deleted scatter node {:?} → cloud {}", node_id, cloud_id);
+                // Clean up scatter cloud (+ surface mapping) and refresh preview.
+                self.execute(crate::SceneCmd::RemoveNodeCloud { node: node_id });
+                if had_cloud {
+                    self.execute(crate::SceneCmd::UploadPointPreview);
+                    log::info!("Deleted scatter node {:?} → cloud removed", node_id);
                 }
-
-                // Clean up scatter surface mapping (rebuilt in reload_working_scene)
-                self.nodes.node_scatter_surface_map.remove(&node_id);
 
                 // Clean up instancer results
                 if self.nodes.instancer_results.remove(&node_id).is_some() {
@@ -704,16 +640,8 @@ impl Renderer {
                 }
 
                 // Clean up prototypes owned by this node
-                let proto_ids = removed_outputs
-                    .map(|o| o.proto_ids)
-                    .filter(|ids| !ids.is_empty());
-                if let Some(proto_ids) = proto_ids {
-                    log::info!("Deleting node {:?} → protos {:?}", node_id, proto_ids);
-                    // Remove in reverse order so indices stay valid;
-                    // remove_and_reindex_prototype handles re-indexing all maps
-                    for &pid in proto_ids.iter().rev() {
-                        self.remove_and_reindex_prototype(pid);
-                    }
+                self.execute(crate::SceneCmd::RemoveNodeProtos { node: node_id });
+                if had_protos {
                     // GC orphaned materials left behind by removed prototypes
                     self.scene.working_scene.compact_materials();
                     self.nodes.materials_dirty = true;

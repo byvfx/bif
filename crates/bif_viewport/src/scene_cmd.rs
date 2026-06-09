@@ -47,8 +47,6 @@ impl Renderer {
     /// Apply one [`SceneCmd`]. The single site that mutates the
     /// `node_outputs ↔ working_scene` proto/cloud coupling. Infallible: any
     /// fallible follow-up (e.g. `reload_working_scene`) stays at the call site.
-    // Task 2 wires callers in node_dispatch.rs — allow until then.
-    #[allow(dead_code)]
     pub(crate) fn execute(&mut self, cmd: SceneCmd) {
         match cmd {
             SceneCmd::RemoveNodeProtos { node } => {
