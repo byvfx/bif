@@ -298,7 +298,9 @@ git commit -m "feat(nodes): add SceneCmd + Renderer::execute (issue #6 phase 2)"
 
 One behavior-preserving pass over `node_dispatch.rs`. Each arm below shows the **exact** edit. Build green after each arm (or batch, then build once). The non-`SceneCmd` lines (loaders, `reload`, flags, node-UI) stay exactly as they are.
 
-**Files:** `crates/bif_viewport/src/node_dispatch.rs`
+> **Task 1 deviations to account for:** (a) `SceneCmd::AddCloud.cloud` is `Box<bif_core::PointCloud>`, so Step 3 boxes the cloud (`cloud: Box::new(cloud)`). (b) `scene_cmd.rs` `execute()` carries a temporary `#[allow(dead_code)]` (+ its `// Task 2 wires callers …` comment) — **remove it** in Step 7 once callers exist, then confirm clippy is clean.
+
+**Files:** `crates/bif_viewport/src/node_dispatch.rs`, `crates/bif_viewport/src/scene_cmd.rs` (remove the `#[allow(dead_code)]`)
 
 - [ ] **Step 1: `LoadUsdFile` (arm ~13)**
 
@@ -395,7 +397,7 @@ with:
                     let pt_count = cloud.positions.len();
                     self.execute(crate::SceneCmd::AddCloud {
                         node: node_id,
-                        cloud,
+                        cloud: Box::new(cloud),
                     });
                     self.execute(crate::SceneCmd::UploadPointPreview);
 ```
