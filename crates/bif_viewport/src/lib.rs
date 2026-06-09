@@ -41,6 +41,7 @@ pub mod property_inspector;
 mod render;
 mod render_dispatch;
 pub mod scene_browser;
+mod scene_cmd;
 mod scene_loader;
 pub mod scene_manager;
 mod scene_pipeline;
@@ -75,6 +76,7 @@ pub use ivar_state::{
 pub use lights::LightsManager;
 pub use mesh_data::MeshData;
 pub use multi_draw::MultiDrawState;
+pub use scene_cmd::SceneCmd;
 pub use scene_manager::SceneManager;
 pub use selection::SelectionManager;
 pub use texture_loader::{
