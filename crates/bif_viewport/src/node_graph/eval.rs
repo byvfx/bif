@@ -7,7 +7,8 @@ use std::collections::HashSet;
 
 use egui_snarl::{InPinId, NodeId, Snarl};
 
-use super::{GraphNodeId, NodeGraphEvent, ScatterPointsParams, SceneNode};
+use super::behavior::EvalCtx;
+use super::{GraphNodeId, NodeGraphEvent, SceneNode};
 use crate::persistence::EvalMode;
 
 /// Check whether a node's input at `input_index` is connected.
@@ -50,6 +51,10 @@ pub(crate) fn collect_auto_compute_events(
 }
 
 /// Evaluate a single node for auto-compute readiness.
+///
+/// Read-phase: snapshot input connections into an [`EvalCtx`]. Mutate-phase:
+/// borrow the node mutably and run its `evaluate`, fanning the outcome into
+/// `events` / `dirty_nodes`. Per-variant logic lives in `behavior.rs`.
 fn evaluate_node(
     node_id: NodeId,
     snarl: &mut Snarl<SceneNode>,
@@ -57,208 +62,17 @@ fn evaluate_node(
     dirty_nodes: &mut HashSet<GraphNodeId>,
     events: &mut Vec<NodeGraphEvent>,
 ) {
-    match &snarl[node_id] {
-        // --- Primitive: auto-create geometry when not yet created --------
-        SceneNode::Primitive {
-            is_created: false,
-            kind,
-            size,
-            ..
-        } => {
-            let kind = *kind;
-            let size = *size;
-            let graph_id = GraphNodeId::from(node_id);
+    let input_count = snarl[node_id].input_count();
+    let input_sources: Vec<Option<GraphNodeId>> = (0..input_count)
+        .map(|i| is_input_connected(node_id, i, snarl).map(GraphNodeId::from))
+        .collect();
+    let ctx = EvalCtx::new(input_sources);
 
-            if eval_mode == EvalMode::Auto {
-                events.push(NodeGraphEvent::CreatePrimitive {
-                    kind,
-                    size,
-                    node_id: graph_id,
-                });
-                // Mutate flag — mark created so we don't re-emit.
-                if let SceneNode::Primitive { is_created, .. } = &mut snarl[node_id] {
-                    *is_created = true;
-                }
-            } else {
-                dirty_nodes.insert(graph_id);
-            }
-        }
-
-        // --- ScatterPoints: auto-compute when inputs satisfied ----------
-        SceneNode::ScatterPoints {
-            is_computed: false,
-            source,
-            ..
-        } => {
-            let source = *source;
-            let inputs_satisfied = match source {
-                bif_core::PointSource::Surface => is_input_connected(node_id, 0, snarl).is_some(),
-                bif_core::PointSource::Grid | bif_core::PointSource::Sphere => true,
-            };
-
-            if !inputs_satisfied {
-                return;
-            }
-
-            let graph_node_id = GraphNodeId::from(node_id);
-
-            if eval_mode == EvalMode::Auto {
-                // Read all params before mutating.
-                let params = extract_scatter_params(snarl, node_id);
-                events.push(NodeGraphEvent::ScatterPointsCompute {
-                    node_id: graph_node_id,
-                    params,
-                });
-                if let SceneNode::ScatterPoints { is_computed, .. } = &mut snarl[node_id] {
-                    *is_computed = true;
-                }
-            } else {
-                dirty_nodes.insert(graph_node_id);
-            }
-        }
-
-        // --- PointInstancer: auto-compute when both inputs connected ----
-        SceneNode::PointInstancer {
-            is_instanced,
-            is_computing,
-            compute_failed,
-            ..
-        } => {
-            let is_instanced = *is_instanced;
-            let is_computing = *is_computing;
-            let compute_failed = *compute_failed;
-
-            let points_node = is_input_connected(node_id, 0, snarl);
-            let proto_node = is_input_connected(node_id, 1, snarl);
-            let both_connected = points_node.is_some() && proto_node.is_some();
-
-            // Auto-invalidate: inputs disconnected but still marked instanced.
-            if !both_connected && is_instanced {
-                events.push(NodeGraphEvent::InstancerInvalidate {
-                    node_id: GraphNodeId::from(node_id),
-                });
-                if let SceneNode::PointInstancer {
-                    is_instanced,
-                    is_computing,
-                    compute_failed,
-                    instance_count,
-                    ..
-                } = &mut snarl[node_id]
-                {
-                    *is_instanced = false;
-                    *is_computing = false;
-                    *compute_failed = false;
-                    *instance_count = 0;
-                }
-                return;
-            }
-
-            // Auto-compute: both inputs connected, not yet instanced, not failed.
-            let inst_graph_id = GraphNodeId::from(node_id);
-            if both_connected && !is_instanced && !is_computing && !compute_failed {
-                if eval_mode == EvalMode::Auto {
-                    let (Some(points_source), Some(proto_source)) = (points_node, proto_node)
-                    else {
-                        return;
-                    };
-                    events.push(NodeGraphEvent::PointInstancerCompute {
-                        node_id: inst_graph_id,
-                        points_source_node: GraphNodeId::from(points_source),
-                        proto_source_node: GraphNodeId::from(proto_source),
-                    });
-                    if let SceneNode::PointInstancer { is_computing, .. } = &mut snarl[node_id] {
-                        *is_computing = true;
-                    }
-                } else {
-                    dirty_nodes.insert(inst_graph_id);
-                }
-            }
-        }
-
-        // --- Xform: rebuild scene once input is connected ---------------
-        SceneNode::Xform {
-            is_applied: false, ..
-        } => {
-            if is_input_connected(node_id, 0, snarl).is_none() {
-                return;
-            }
-
-            let graph_id = GraphNodeId::from(node_id);
-            if eval_mode == EvalMode::Auto {
-                events.push(NodeGraphEvent::XformChanged { node_id: graph_id });
-                if let SceneNode::Xform { is_applied, .. } = &mut snarl[node_id] {
-                    *is_applied = true;
-                }
-            } else {
-                dirty_nodes.insert(graph_id);
-            }
-        }
-
-        // --- UsdPrim: register authored prim metadata -------------------
-        SceneNode::UsdPrim {
-            is_created: false, ..
-        } => {
-            let graph_id = GraphNodeId::from(node_id);
-            if eval_mode == EvalMode::Auto {
-                events.push(NodeGraphEvent::UsdPrimCreate { node_id: graph_id });
-                if let SceneNode::UsdPrim { is_created, .. } = &mut snarl[node_id] {
-                    *is_created = true;
-                }
-            } else {
-                dirty_nodes.insert(graph_id);
-            }
-        }
-
-        // All other node types have no auto-compute logic.
-        _ => {}
-    }
-}
-
-/// Extract `ScatterPointsParams` from a `ScatterPoints` node.
-///
-/// Panics if `node_id` does not point at a `ScatterPoints` variant.
-fn extract_scatter_params(snarl: &Snarl<SceneNode>, node_id: NodeId) -> ScatterPointsParams {
-    match &snarl[node_id] {
-        SceneNode::ScatterPoints {
-            source,
-            count,
-            max_point_limit,
-            seed,
-            scatter_mode,
-            min_distance,
-            align_to_normal,
-            grid_size,
-            grid_spacing,
-            sphere_radius,
-            sphere_on_surface,
-            relax_iterations,
-            scale_radii,
-            max_relax_radius,
-            scale_min,
-            scale_max,
-            rotation_range,
-            ..
-        } => ScatterPointsParams {
-            source: *source,
-            count: *count,
-            max_point_limit: *max_point_limit,
-            seed: *seed,
-            scatter_mode: *scatter_mode,
-            min_distance: *min_distance,
-            align_to_normal: *align_to_normal,
-            grid_size: *grid_size,
-            grid_spacing: *grid_spacing,
-            sphere_radius: *sphere_radius,
-            sphere_on_surface: *sphere_on_surface,
-            relax_iterations: *relax_iterations,
-            scale_radii: *scale_radii,
-            max_relax_radius: *max_relax_radius,
-            scale_min: *scale_min,
-            scale_max: *scale_max,
-            rotation_range: *rotation_range,
-            target_proto_id: None,
-        },
-        _ => unreachable!("evaluate_node guarantees ScatterPoints variant"),
+    let graph_id = GraphNodeId::from(node_id);
+    let outcome = snarl[node_id].evaluate(graph_id, &ctx, eval_mode);
+    events.extend(outcome.events);
+    if outcome.dirty {
+        dirty_nodes.insert(graph_id);
     }
 }
 
