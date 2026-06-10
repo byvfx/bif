@@ -13,6 +13,7 @@
 //! - Sublayer: USD layer composition
 //! - Variant: Switch USD variant sets
 
+mod behavior;
 pub(crate) mod eval;
 mod node_outputs;
 mod viewer;
