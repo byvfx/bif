@@ -701,6 +701,38 @@ impl CachedSceneGraph {
     }
 }
 
+/// Sink for procedural prims contributed by graph nodes, via
+/// [`SceneNode::register_prims`]. Wraps the cache's prim map so node behavior
+/// stays decoupled from the cache representation (issue #6 Phase 3b).
+pub(crate) struct ProcPrimSink<'a> {
+    prims: &'a mut HashMap<String, ProceduralPrim>,
+}
+
+impl<'a> ProcPrimSink<'a> {
+    /// Wrap a prim map for the duration of registration.
+    pub(crate) fn new(prims: &'a mut HashMap<String, ProceduralPrim>) -> Self {
+        Self { prims }
+    }
+
+    /// Register an authored USD prim (from a `UsdPrim` node). Keyed by path.
+    pub(crate) fn add_authored(
+        &mut self,
+        path: String,
+        prim_type: bif_core::usd::UsdPrimType,
+        source_node: GraphNodeId,
+    ) {
+        let kind = prim_type_to_procedural_kind(prim_type);
+        self.prims.insert(
+            path.clone(),
+            ProceduralPrim {
+                path,
+                kind,
+                source_node: Some(source_node),
+            },
+        );
+    }
+}
+
 /// Build a cached scene graph from the working scene.
 ///
 /// Iterates prototypes and point clouds once, builds the prim HashMap
@@ -784,23 +816,11 @@ pub fn build_scene_graph_cache(
 
     // Add authored graph-only prims. These do not own geometry yet, but they
     // must be visible for node-assembly dogfooding and export context.
-    for (node_id, node) in graph.node_ids() {
-        match node {
-            SceneNode::UsdPrim {
-                prim_path,
-                prim_type,
-                ..
-            } if !prim_path.is_empty() => {
-                procedural_prims.insert(
-                    prim_path.clone(),
-                    ProceduralPrim {
-                        path: prim_path.clone(),
-                        kind: prim_type_to_procedural_kind(*prim_type),
-                        source_node: Some(GraphNodeId::from(node_id)),
-                    },
-                );
-            }
-            _ => {}
+    // Per-node registration logic lives in `SceneNode::register_prims`.
+    {
+        let mut sink = ProcPrimSink::new(&mut procedural_prims);
+        for (node_id, node) in graph.node_ids() {
+            node.register_prims(GraphNodeId::from(node_id), &mut sink);
         }
     }
 

@@ -7,6 +7,7 @@
 
 use super::{GraphNodeId, NodeGraphEvent, ScatterPointsParams, SceneNode};
 use crate::persistence::EvalMode;
+use crate::scene_browser::ProcPrimSink;
 
 /// Read-only, snarl-free view of a node's input connections, precomputed by
 /// the caller so `evaluate` can take `&mut self` without also borrowing the
@@ -198,6 +199,24 @@ impl SceneNode {
         }
         out
     }
+
+    /// Register this node's authored procedural prims into the scene-graph
+    /// cache. Most nodes contribute nothing — their geometry is registered
+    /// from `working_scene` by `build_scene_graph_cache`. Authored-prim nodes
+    /// (`UsdPrim`) add an entry. This is the per-node extension point for the
+    /// prim cache (issue #6 Phase 3b).
+    pub(crate) fn register_prims(&self, id: GraphNodeId, sink: &mut ProcPrimSink) {
+        match self {
+            SceneNode::UsdPrim {
+                prim_path,
+                prim_type,
+                ..
+            } if !prim_path.is_empty() => {
+                sink.add_authored(prim_path.clone(), *prim_type, id);
+            }
+            _ => {}
+        }
+    }
 }
 
 #[cfg(test)]
@@ -311,5 +330,36 @@ mod tests {
             out.events.first(),
             Some(NodeGraphEvent::XformChanged { .. })
         ));
+    }
+
+    #[test]
+    fn usd_prim_registers_authored_prim() {
+        use crate::scene_browser::{ProcPrimSink, ProceduralPrim};
+        use std::collections::HashMap;
+
+        let mut prims: HashMap<String, ProceduralPrim> = HashMap::new();
+        let mut sink = ProcPrimSink::new(&mut prims);
+
+        // UsdPrim with a path registers an authored prim tagged to its node.
+        let mut node = SceneNode::usd_prim();
+        if let SceneNode::UsdPrim { prim_path, .. } = &mut node {
+            *prim_path = "/World/Foo".to_string();
+        }
+        node.register_prims(id(7), &mut sink);
+
+        // Empty-path UsdPrim registers nothing (usd_prim() defaults to a
+        // non-empty path, so clear it explicitly to exercise the guard).
+        let mut empty = SceneNode::usd_prim();
+        if let SceneNode::UsdPrim { prim_path, .. } = &mut empty {
+            prim_path.clear();
+        }
+        empty.register_prims(id(8), &mut sink);
+
+        // A non-authored node (Primitive) registers nothing.
+        SceneNode::primitive(bif_core::PrimitiveKind::Cube).register_prims(id(9), &mut sink);
+
+        assert_eq!(prims.len(), 1);
+        let entry = prims.get("/World/Foo").expect("authored prim registered");
+        assert_eq!(entry.source_node, Some(id(7)));
     }
 }

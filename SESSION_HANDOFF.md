@@ -4,11 +4,29 @@
 
 ## Current State
 
-- **Branch:** `refactor/issue6-phase3a-evaluate` (Phase 3a done, PR pending) — stacked on `refactor/issue6-phase2-scenecmd` (PR #9).
-- **Version:** **v0.16.9** tagged (2026-06-04). `[Unreleased]` = issue #6 Phase 1 (`NodeOutputs`) + Phase 2 (`SceneCmd`) + Phase 3a (`SceneNode::evaluate`).
-- **Status:** Release CI works end-to-end (v0.16.9 shipped a launchable Windows zip). **Phase 1 landed** (PR #8, `e765d37`). **Phase 2 = PR #9** (green: claude-review + CI all pass) — `SceneCmd` 6-verb enum + `Renderer::execute()`; 7 dispatch arms routed; net −74 lines. **Phase 3a done on branch** (commit `0220991`) — `eval.rs::evaluate_node` match → `SceneNode::evaluate` in new `node_graph/behavior.rs` + generic delegator; `EvalCtx` precomputed data makes `evaluate` Snarl-free / unit-testable; `extract_scatter_params` deleted; 187 bif_viewport tests green; verified (diff review + build/clippy/tests).
-- **Next:** Merge PR #9 (Phase 2), then open the Phase 3a PR → `/vfx-code-reviewer` → squash-merge. Then **Phase 3b** (`register_prims`: `scene_browser` per-variant prim registration → `behavior.rs` + `ProcPrimSink`) → **3c** (`apply` — the deferred `Vec<SceneCmd>` slice with the loader/flag/GPU tension). Plans: 3a [`docs/agent-plans/2026-06-09-issue6-phase3a-evaluate.md`](docs/agent-plans/2026-06-09-issue6-phase3a-evaluate.md), Phase 2 [`docs/agent-plans/2026-06-08-issue6-phase2-scenecmd.md`](docs/agent-plans/2026-06-08-issue6-phase2-scenecmd.md). **Or** v0.17.0 Context System (30–40h, highest arch risk).
+- **Branch:** `refactor/issue6-phase3b-register-prims` (Phase 3b done, PR pending) — off `main`.
+- **Version:** **v0.16.9** tagged (2026-06-04). `[Unreleased]` = issue #6 Phase 1 (`NodeOutputs`) + Phase 2 (`SceneCmd`) + Phase 3a (`evaluate`) + Phase 3b (`register_prims`).
+- **Status:** **Issue #6 node-deepening RFC complete** (pending 3b merge). Landed on `main`: Phase 1 (PR #8), Phase 2 `SceneCmd`+`execute` (PR #9, `bff590b`), Phase 3a `SceneNode::evaluate` (PR #11, `1ae32bc`). **Phase 3b done on branch** (commit `1e3752b`) — `UsdPrim` registration → `SceneNode::register_prims` via `ProcPrimSink`; 188 bif_viewport tests green; verified inline (build/clippy/fmt/tests). **3c (`apply`) intentionally skipped** — post-Phase-2 the `node_dispatch` arms are irreducible `Renderer` orchestration (loaders/IO/`reload`/GPU/flags) a `Vec<SceneCmd>` can't capture.
+- **Next:** open Phase 3b PR → `/vfx-code-reviewer` → squash-merge → **close issue #6** with the closeout note. Then **v0.17.0** (viewport perf, `cpp_bridge.rs` split, payload policies — see MILESTONES). Plans: 3b [`docs/agent-plans/2026-06-09-issue6-phase3b-register-prims.md`](docs/agent-plans/2026-06-09-issue6-phase3b-register-prims.md), 3a [`docs/agent-plans/2026-06-09-issue6-phase3a-evaluate.md`](docs/agent-plans/2026-06-09-issue6-phase3a-evaluate.md).
 - **Gotcha:** `cargo test -p bif_viewport` needs `. .\setup_usd_env.ps1` sourced first (transitively links USD DLLs via bif_core → `STATUS_DLL_NOT_FOUND` otherwise).
+
+---
+
+# Session Handoff — 2026-06-09 (issue #6 Phase 3b — `register_prims` + RFC close)
+
+**Last Updated:** 2026-06-09 on `refactor/issue6-phase3b-register-prims` (commit `1e3752b`, off `main`).
+
+**Context:** Final slice of the issue #6 RFC. Decomposed Phase 3 into 3a/3b/3c; did 3a + 3b; assessed 3c as not-fitting and skipped it. Plan: [`docs/agent-plans/2026-06-09-issue6-phase3b-register-prims.md`](docs/agent-plans/2026-06-09-issue6-phase3b-register-prims.md).
+
+**Done:** `scene_browser::build_scene_graph_cache`'s lone per-variant arm (`UsdPrim` authored-prim registration) → `SceneNode::register_prims(&self, id, &mut ProcPrimSink)` in `behavior.rs`. `ProcPrimSink` (in `scene_browser`) wraps the prim-cache map. +1 pure test. Implemented inline.
+
+**Key finding:** `build_scene_graph_cache` is scene-driven (proto/cloud prims from `working_scene`, tagged via `node_outputs` reverse maps) — only `UsdPrim` was per-variant. So 3b was deliberately tiny.
+
+**3c skipped (RFC done):** all 21 `node_dispatch` arms traced — after Phase 2's `SceneCmd`, the residual is irreducible `Renderer` orchestration (loaders/file-IO/`reload`/GPU/flags). `apply() -> Vec<SceneCmd>` captures ~nothing new. Issue #6 substantively complete with 1/2/3a/3b.
+
+**Validation:** build 0, clippy 0 (`-D warnings`), fmt 0, **188 bif_viewport tests** (187+1). Grep: no `match node` left in `scene_browser`. A verify-step caught that `usd_prim()` defaults `prim_path` non-empty (fixed the empty-case test).
+
+**Next:** PR → `/vfx-code-reviewer` → squash-merge → close issue #6. Then v0.17.0.
 
 ---
 
