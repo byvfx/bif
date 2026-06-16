@@ -25,12 +25,13 @@ Roadmap organized by semantic version. Each release is testable, demoable, and g
 | v0.16.6 | Qt Polish — Panels | 2026-05-16 | View ▸ Panels submenu (all 8 docks toggleable, `Ctrl+Shift+1`–`8`, bidirectional `visibilityChanged` binding), Reset Workspace Layout, collection editor inline-add UAF + dangling-row fixes |
 | v0.16.7 | Keybinding Editor | 2026-05-16 | File ▸ Preferences keybinding editor — per-shortcut `QKeySequenceEdit`, conflict scan on Apply, restore-defaults, override persistence via `set_override()` |
 | v0.16.8 | Crash-Chain Hardening | 2026-05-29 | rt_010 production-shot OOM + wgpu device-lost hardening: `ffi_guard` (4 GiB alloc caps across ~10 sites), `combine_with_transforms` pre-sum, `TextureBudget` (1.5 GiB), `catch_unwind` around GPU submit/poll/drop, process-global `GPU_UNHEALTHY` short-circuit |
+| v0.16.9 | Windows Release CI | 2026-06-04 | First working Windows release CI — Qt + USD + OIIO + OIDN + Embree bundled into `bif-windows-x64.zip` |
 
 ---
 
 ## In Progress
 
-Trunk is current through **v0.16.8** + the RFC #5 `PathTracer` deepening. No release milestone is mid-flight; next work is the pick below (re-scoped #6 or v0.17.0 Context System).
+Trunk is current through **v0.16.9**. No release milestone is mid-flight; next work = **v0.17.0** (issues #13–#15: cpp_bridge split, viewport perf, payload policies). PathTracer deepening (#5) parked under v0.21.0.
 
 **Carried forward from the v0.16.5 docket (not yet shipped):**
 
@@ -42,21 +43,13 @@ Trunk is current through **v0.16.8** + the RFC #5 `PathTracer` deepening. No rel
 
 ## Next Releases
 
-| Version | Theme | Est. Hours | Key Milestones |
-|---------|-------|-----------|----------------|
-| v0.17.0 | Context System | 30-40h | M39 — Assembly/Materials/Animation contexts, multi-graph architecture. Each context is a sandboxed node graph + viewport + property sheet. Materials context = MaterialX graph editor. Assembly context = scene layout + USD ops. Animation context = curve editor + clip sequencing. Highest architectural risk — touches scene_loader, render, property_inspector. |
-| v0.18.0 | Viewport Performance | 25-35h | M22 + payload policies + `cpp_bridge.rs` split |
-| v0.19.0 | Scene Authoring + Layer Diff | 35-45h | M37, M38 + workflow Phase 7 |
-| v0.20.0 | MaterialX Authoring | 25-30h | M40 — full node-based material editor, `standard_surface` graph, XML round-trip, node previews. Built on context system. |
-| v0.21.0 | Volumes & OpenVDB | 20-30h | M25 — volume prim loading, OpenVDB grid sampling, density→shader binding, volume rendering path |
-| v0.22.0 | GPU Path Tracing | 30-40h | M27 |
-| v0.23.0 | AI Integration | 38-59h | Material creator, scene builder, ComfyUI |
-| v0.24.0 | API & Integration | 40-55h | M35, M34 |
-| v0.25.0+ | Framework Extraction | 40+h | M36+ |
+Roadmap tracked via **GitHub Milestones + Issues** → https://github.com/byvfx/bif/milestones
+
+v0.17.0 Viewport perf · v0.18.0 Scene Authoring · v0.19.0 MaterialX · v0.20.0 Volumes/VDB · v0.21.0 GPU Path Tracing · v0.22.0 API & Integration / Framework Extraction. AI integration = `backlog` label until the app is solid.
 
 ---
 
-Latest release: v0.16.8 shipped 2026-05-29 (production-shot crash-chain hardening). The v0.16.5–v0.16.8 line was a single in-progress Qt-polish + hardening tranche consolidated into one release. v0.16.0 was the major editor tranche on 2026-04-28. Full release notes in [CHANGELOG.md](CHANGELOG.md), archived details in [MILESTONES_HISTORY.md](MILESTONES_HISTORY.md).
+Latest release: v0.16.9 shipped 2026-06-04 (first working Windows release CI). The v0.16.5–v0.16.8 line was a single in-progress Qt-polish + hardening tranche consolidated into one release. v0.16.0 was the major editor tranche on 2026-04-28. Full release notes in [CHANGELOG.md](CHANGELOG.md), archived details in [MILESTONES_HISTORY.md](MILESTONES_HISTORY.md).
 
 ### v0.14.0 — Layer-Aware Stage
 
@@ -114,83 +107,11 @@ Dedicated styling/polish pass after the v0.16.0 functional editor work lands. Ke
 - Validation: visual pass against `docs/ux/UI_DESIGN.md` plus the Graphite design doc, with no regressions to v0.16.0 editing flows
 - `primvars:displayColor` Vulkan fallback: synthesize flat-color material when mesh has no `material:binding`
 
-### v0.17.0 — Context System
+### Roadmap detail → ROADMAP_DETAIL.md
 
-M39 — Assembly/Materials/Animation contexts, multi-graph architecture. Each context is a sandboxed environment with its own node graph, viewport, and property sheet, all sharing a single USD stage.
-
-- **Assembly context:** scene layout operations — arrange, compose, override, instance. Primary editing space.
-- **Materials context:** MaterialX graph editor (powers v0.20.0 MaterialX Authoring). Shader networks, preview renders.
-- **Animation context:** curve editor + clip sequencing. Keyframe operations, animation layers.
-- **Multi-graph:** independent node graphs per context, connected via shared stage + event bus.
-- Built in Qt. Highest architectural risk — touches `scene_loader`, render, `property_inspector`.
-
-### v0.18.0 — Viewport Performance
-
-M22 (Vulkan 1.3, lazy loading, GPU-driven rendering) + deferred loading from workflow doc.
-
-- `future camera-based payload policy` and `PayloadPolicy::Manual`
-- `RenderContext` with on-demand prototype loading
-- `PrototypeState` enum (BoundingBox / Loaded / Deferred)
-- LRU cache for prototype eviction + Embree BVH integration
-- Camera depth of field and lens distortion
-- **Defer GPU upload for invisible prototypes.** After v0.16.2's visibility round-trip fix, invisible meshes are loaded as full prototypes (CPU vertex/index arrays) so the eye-icon toggle has something to un-hide. Memory regression on hidden-geo-heavy scenes (ALab). Plan: track `prototype_visible_mask` in `multi_draw.rs:55-85`, skip wgpu buffer creation for hidden protos, lazily upload on first visible instance. Stopgap in v0.16.2 is a `log::info!` at load time so users can see the cost.
-- **Tech debt — split `crates/bif_core/src/usd/cpp_bridge.rs`** (~4000 lines after v0.16 C4a). Target layout: `usd/ffi/{stage,layer,prim,xform,material,variant,instance}.rs`. Carry-over from v0.16 audit (ADR-008 follow-up).
-- **`cache_prim_data` thread-safety rework.** The C++ bridge's `cache_prim_data` at `cpp/usd_bridge/usd_bridge.cpp:529` mutates `all_prims`/`root_paths`/`root_path_ptrs` without a lock; currently safe only by convention that callers hold the stage Mutex. Add internal mutex or document the lock invariant as part of the bridge split. v0.16.2 added `// NOT THREAD-SAFE` annotations and a `TF_VERIFY` thread-id check.
-
-### v0.19.0 — Scene Authoring + Layer Diff
-
-M37 (lights) + M38 (materials) + workflow Phase 7. "Create content + see what you changed."
-
-- Layer diff panel: semantic diff of edit layer vs composed base
-- Point edit mode with soft-select (vertex nudging, `points` override)
-- `AnimKey` operation for simple keyframe overrides (`timeSamples` output)
-- `ScatterInstances` operation integrated into edit layer authoring
-- Ground-clamp placement: raycast down → snap to surface, orient to surface normal, jitter/randomize rotation
-- Scatter density painting + exclusion zones
-- New operation nodes: Material Override, Anim Key, Point Edit
-- Light linking (UsdLuxLightListAPI — control which geometry a light affects)
-- Color temperature (Kelvin → RGB conversion for lights)
-- Shadow control per-light (UsdLuxShadowAPI — enable, color, distance, falloff)
-- Portal lights (DomeLight portals for interior scenes)
-
-### v0.20.0 — MaterialX Authoring
-
-M40 (standard_surface graph, XML round-trip, node previews). Built on context system in Materials context. Full node-based material editor. See [Material Editor Design](docs/ux/MATERIAL_EDITOR_DESIGN.md).
-
-- **Full material node graph** in bottom dock tab (separate from scene graph, same framework)
-- MtlX Standard Surface node + MaterialX pattern nodes (Image, Noise, Mix, Ramp, NormalMap, Math ops)
-- MaterialX XML round-trip (import/export .mtlx files)
-- MaterialOut node with embedded 128px preview thumbnail
-- 8 material pin types (Surface, Color3f, Float, Normal3f, Float2, Token, Asset, Displacement) with industry-standard colors
-- Node color coding: blue=OpenPBR, green=UsdPreview, gold=MaterialX, light blue=textures, gray=utility
-- Two-mode sync: param sheet edits update graph nodes and vice versa
-
-### v0.21.0 — Volumes & OpenVDB
-
-M25 (fog, smoke, clouds, VDB support). Fills the biggest production content gap.
-
-### v0.22.0 — GPU Path Tracing
-
-M27 (wgpu compute, BVH on GPU, ReSTIR). Fast material preview for authoring workflows.
-
-### v0.23.0 — AI Integration
-
-New `bif_ai` crate (feature-gated `--features ai`). Three AI-assisted workflows: material creation from text, scene building from natural language, ComfyUI render post-processing. Provider-agnostic (Ollama default, OpenAI, Anthropic). Async bridge via channels — zero async contagion. AI produces inert data, viewport executes. Ships independently across 5 phases.
-
-- Phase 1: Material creator (text → OpenPBR params, validated)
-- Phase 2: Provider breadth (OpenAI + Anthropic + config UI)
-- Phase 3: Scene builder (text → SceneAction plan → preview/confirm → node graph)
-- Phase 4: ComfyUI integration (render → workflow template → post-processed result)
-- Phase 5: Polish (error UX, caching, multi-turn refinement)
-- **Validation**: "brushed steel" → valid Material; "red cube next to blue sphere" → node graph; render → ComfyUI upscale
-
-### v0.24.0 — API & Integration
-
-M35 (API cleanup) then M34 (PyO3 pipeline integration). "Embed BIF in studio pipelines."
-
-### v0.25.0+ — Framework Extraction
-
-M36+ (widget crates, plugin system, DCC connectors). "Reusable VFX framework crates."
+Per-release design notes for v0.17.0+ live in [ROADMAP_DETAIL.md](ROADMAP_DETAIL.md) under
+"Future Design Notes" (Context System deferred; AI Integration = `backlog`). Active
+version→theme mapping + live work items: [GitHub Milestones](https://github.com/byvfx/bif/milestones).
 
 ---
 

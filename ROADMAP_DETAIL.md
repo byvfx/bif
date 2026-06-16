@@ -673,3 +673,94 @@ Core architecture for rendering scenes that don't fit in memory. Exploits BIF's 
 8. Qt-based professional UI
 9. User-facing error messages (not log spam)
 10. User documentation
+
+---
+
+## Future Design Notes (pre-rescope detail)
+
+> **GitHub Milestones are authoritative for the active roadmap** → https://github.com/byvfx/bif/milestones
+> Version numbers in this section reflect the pre-2026-06 roadmap (before the v0.17.0=Viewport-perf
+> re-scope). Themes are preserved here for their design detail. Current mapping:
+> v0.17.0 Viewport perf · v0.18.0 Scene Authoring · v0.19.0 MaterialX · v0.20.0 Volumes/VDB ·
+> v0.21.0 GPU Path Tracing · v0.22.0 API/Framework. **Context System is deferred (unscheduled);
+> AI Integration is `backlog` until the app is solid.** Migrated from MILESTONES.md on 2026-06-12.
+
+### Context System (deferred — unscheduled)
+
+Assembly/Materials/Animation contexts, multi-graph architecture. Each context is a sandboxed
+environment with its own node graph, viewport, and property sheet, all sharing a single USD stage.
+
+- **Assembly context:** scene layout operations — arrange, compose, override, instance. Primary editing space.
+- **Materials context:** MaterialX graph editor. Shader networks, preview renders.
+- **Animation context:** curve editor + clip sequencing. Keyframe operations, animation layers.
+- **Multi-graph:** independent node graphs per context, connected via shared stage + event bus.
+- Built in Qt. Highest architectural risk — touches `scene_loader`, render, `property_inspector`.
+
+### Viewport Performance (→ v0.17.0; tracked in issues #13–#15)
+
+M22 (Vulkan 1.3, lazy loading, GPU-driven rendering) + deferred loading from workflow doc.
+
+- `future camera-based payload policy` and `PayloadPolicy::Manual`
+- `RenderContext` with on-demand prototype loading
+- `PrototypeState` enum (BoundingBox / Loaded / Deferred)
+- LRU cache for prototype eviction + Embree BVH integration
+- Camera depth of field and lens distortion
+- **Defer GPU upload for invisible prototypes.** After v0.16.2's visibility round-trip fix, invisible meshes are loaded as full prototypes (CPU vertex/index arrays) so the eye-icon toggle has something to un-hide. Memory regression on hidden-geo-heavy scenes (ALab). Plan: track `prototype_visible_mask` in `multi_draw.rs:55-85`, skip wgpu buffer creation for hidden protos, lazily upload on first visible instance. Stopgap in v0.16.2 is a `log::info!` at load time so users can see the cost.
+- **Tech debt — split `crates/bif_core/src/usd/cpp_bridge.rs`** (~4000 lines after v0.16 C4a). Target layout: `usd/ffi/{stage,layer,prim,xform,material,variant,instance}.rs`. Carry-over from v0.16 audit (ADR-008 follow-up).
+- **`cache_prim_data` thread-safety rework.** The C++ bridge's `cache_prim_data` at `cpp/usd_bridge/usd_bridge.cpp:529` mutates `all_prims`/`root_paths`/`root_path_ptrs` without a lock; currently safe only by convention that callers hold the stage Mutex. Add internal mutex or document the lock invariant as part of the bridge split. v0.16.2 added `// NOT THREAD-SAFE` annotations and a `TF_VERIFY` thread-id check.
+
+### Scene Authoring + Layer Diff (→ v0.18.0)
+
+M37 (lights) + M38 (materials) + workflow Phase 7. "Create content + see what you changed."
+
+- Layer diff panel: semantic diff of edit layer vs composed base
+- Point edit mode with soft-select (vertex nudging, `points` override)
+- `AnimKey` operation for simple keyframe overrides (`timeSamples` output)
+- `ScatterInstances` operation integrated into edit layer authoring
+- Ground-clamp placement: raycast down → snap to surface, orient to surface normal, jitter/randomize rotation
+- Scatter density painting + exclusion zones
+- New operation nodes: Material Override, Anim Key, Point Edit
+- Light linking (UsdLuxLightListAPI — control which geometry a light affects)
+- Color temperature (Kelvin → RGB conversion for lights)
+- Shadow control per-light (UsdLuxShadowAPI — enable, color, distance, falloff)
+- Portal lights (DomeLight portals for interior scenes)
+
+### MaterialX Authoring (→ v0.19.0)
+
+M40 (standard_surface graph, XML round-trip, node previews). Full node-based material editor.
+See [Material Editor Design](docs/ux/MATERIAL_EDITOR_DESIGN.md).
+
+- **Full material node graph** in bottom dock tab (separate from scene graph, same framework)
+- MtlX Standard Surface node + MaterialX pattern nodes (Image, Noise, Mix, Ramp, NormalMap, Math ops)
+- MaterialX XML round-trip (import/export .mtlx files)
+- MaterialOut node with embedded 128px preview thumbnail
+- 8 material pin types (Surface, Color3f, Float, Normal3f, Float2, Token, Asset, Displacement) with industry-standard colors
+- Node color coding: blue=OpenPBR, green=UsdPreview, gold=MaterialX, light blue=textures, gray=utility
+- Two-mode sync: param sheet edits update graph nodes and vice versa
+
+### Volumes & OpenVDB (→ v0.20.0)
+
+M25 (fog, smoke, clouds, VDB support). Fills the biggest production content gap.
+
+### GPU Path Tracing (→ v0.21.0; PathTracer extraction tracked in #5)
+
+M27 (wgpu compute, BVH on GPU, ReSTIR). Fast material preview for authoring workflows.
+
+### API & Integration / Framework Extraction (→ v0.22.0)
+
+M35 (API cleanup) → M34 (PyO3 pipeline integration) → M36+ (widget crates, plugin system, DCC
+connectors). "Embed BIF in studio pipelines" + "Reusable VFX framework crates."
+
+### AI Integration (`backlog` — until the app is solid)
+
+New `bif_ai` crate (feature-gated `--features ai`). Three AI-assisted workflows: material creation
+from text, scene building from natural language, ComfyUI render post-processing. Provider-agnostic
+(Ollama default, OpenAI, Anthropic). Async bridge via channels — zero async contagion. AI produces
+inert data, viewport executes. Ships independently across 5 phases.
+
+- Phase 1: Material creator (text → OpenPBR params, validated)
+- Phase 2: Provider breadth (OpenAI + Anthropic + config UI)
+- Phase 3: Scene builder (text → SceneAction plan → preview/confirm → node graph)
+- Phase 4: ComfyUI integration (render → workflow template → post-processed result)
+- Phase 5: Polish (error UX, caching, multi-turn refinement)
+- **Validation**: "brushed steel" → valid Material; "red cube next to blue sphere" → node graph; render → ComfyUI upscale
