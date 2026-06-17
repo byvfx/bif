@@ -153,6 +153,7 @@ NodeParamPanel::NodeParamPanel(BifShellState* state, QWidget* parent)
         m_spp = new QSpinBox;
         m_spp->setRange(1, 65536);
         m_spp->setValue(64);
+        m_spp->setEnabled(false);
         lay->addRow("SPP:", m_spp);
         auto* btn = new QPushButton("Render");
         lay->addRow(btn);
