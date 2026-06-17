@@ -688,6 +688,7 @@ impl Renderer {
                 input: to_pin as usize,
             },
         );
+        self.nodes.scene_graph_dirty = true;
         true
     }
 
@@ -2862,6 +2863,7 @@ mod tests {
             true
         }
 
+        #[allow(dead_code)]
         fn node_graph_set_xform_params(
             &mut self,
             node_id: GraphNodeId,
@@ -2904,7 +2906,6 @@ mod tests {
             to_id: GraphNodeId,
             to_pin: i32,
         ) -> bool {
-            use crate::node_graph::SceneNode;
             use egui_snarl::{InPinId, OutPinId};
             let from_snarl: egui_snarl::NodeId = from_id.into();
             let to_snarl: egui_snarl::NodeId = to_id.into();
