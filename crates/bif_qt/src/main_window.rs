@@ -2172,7 +2172,6 @@ impl qobject::BifShellState {
         .unwrap_or(false)
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn on_node_graph_set_xform_params(
         self: Pin<&mut Self>,
         node_id: i32,
