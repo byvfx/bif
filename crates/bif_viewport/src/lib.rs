@@ -550,6 +550,147 @@ impl Renderer {
         prim_path
     }
 
+    /// Set the USD file path on a UsdRead node, resetting its load state.
+    /// Returns `false` if `node_id` doesn't exist or isn't a UsdRead node.
+    pub fn node_graph_set_usd_read_path(
+        &mut self,
+        node_id: node_graph::GraphNodeId,
+        path: String,
+    ) -> bool {
+        let snarl_id: egui_snarl::NodeId = node_id.into();
+        let snarl = &mut self.nodes.node_graph_state.snarl;
+        if !snarl.node_ids().any(|(id, _)| id == snarl_id) {
+            return false;
+        }
+        let node_graph::SceneNode::UsdRead {
+            file_path,
+            is_loaded,
+            error,
+        } = &mut snarl[snarl_id]
+        else {
+            return false;
+        };
+        *file_path = path.clone();
+        *is_loaded = false;
+        *error = None;
+        self.handle_node_graph_event(node_graph::NodeGraphEvent::LoadUsdFile { path, node_id });
+        true
+    }
+
+    /// Update an HdriEnvironment node's path, rotation, and intensity.
+    /// Returns `false` if `node_id` doesn't exist or isn't an HdriEnvironment node.
+    pub fn node_graph_load_hdri(
+        &mut self,
+        node_id: node_graph::GraphNodeId,
+        path: String,
+        rotation: f32,
+        intensity: f32,
+    ) -> bool {
+        let snarl_id: egui_snarl::NodeId = node_id.into();
+        let snarl = &mut self.nodes.node_graph_state.snarl;
+        if !snarl.node_ids().any(|(id, _)| id == snarl_id) {
+            return false;
+        }
+        let node_graph::SceneNode::HdriEnvironment {
+            file_path,
+            rotation: r,
+            intensity: i,
+            show_background,
+            ..
+        } = &mut snarl[snarl_id]
+        else {
+            return false;
+        };
+        *file_path = path.clone();
+        *r = rotation;
+        *i = intensity;
+        let show_bg = *show_background;
+        self.handle_node_graph_event(node_graph::NodeGraphEvent::LoadHdri {
+            path,
+            rotation,
+            intensity,
+            show_background: show_bg,
+        });
+        true
+    }
+
+    /// Set T/R/S parameters on an Xform node and mark it unapplied.
+    /// Returns `false` if `node_id` doesn't exist or isn't an Xform node.
+    #[allow(clippy::too_many_arguments)]
+    pub fn node_graph_set_xform_params(
+        &mut self,
+        node_id: node_graph::GraphNodeId,
+        tx: f32,
+        ty: f32,
+        tz: f32,
+        rx: f32,
+        ry: f32,
+        rz: f32,
+        sx: f32,
+        sy: f32,
+        sz: f32,
+    ) -> bool {
+        let snarl_id: egui_snarl::NodeId = node_id.into();
+        let snarl = &mut self.nodes.node_graph_state.snarl;
+        if !snarl.node_ids().any(|(id, _)| id == snarl_id) {
+            return false;
+        }
+        let node_graph::SceneNode::Xform {
+            translate,
+            rotate,
+            scale,
+            is_applied,
+            ..
+        } = &mut snarl[snarl_id]
+        else {
+            return false;
+        };
+        *translate = [tx, ty, tz];
+        *rotate = [rx, ry, rz];
+        *scale = [sx, sy, sz];
+        *is_applied = false;
+        self.handle_node_graph_event(node_graph::NodeGraphEvent::XformChanged { node_id });
+        true
+    }
+
+    /// Connect an output pin of one node to an input pin of another.
+    /// Returns `false` if either node doesn't exist, either pin index is
+    /// out of range, or the pin types are incompatible.
+    pub fn node_graph_connect_pins(
+        &mut self,
+        from_id: node_graph::GraphNodeId,
+        from_pin: i32,
+        to_id: node_graph::GraphNodeId,
+        to_pin: i32,
+    ) -> bool {
+        use egui_snarl::{InPinId, OutPinId};
+        let from_snarl: egui_snarl::NodeId = from_id.into();
+        let to_snarl: egui_snarl::NodeId = to_id.into();
+        let snarl = &mut self.nodes.node_graph_state.snarl;
+        let ids: Vec<egui_snarl::NodeId> = snarl.node_ids().map(|(id, _)| id).collect();
+        if !ids.contains(&from_snarl) || !ids.contains(&to_snarl) {
+            return false;
+        }
+        let from_type = snarl[from_snarl]
+            .output_pin(from_pin as usize)
+            .map(|(_, t)| t);
+        let to_type = snarl[to_snarl].input_pin(to_pin as usize).map(|(_, t)| t);
+        if from_type.is_none() || to_type.is_none() || from_type != to_type {
+            return false;
+        }
+        snarl.connect(
+            OutPinId {
+                node: from_snarl,
+                output: from_pin as usize,
+            },
+            InPinId {
+                node: to_snarl,
+                input: to_pin as usize,
+            },
+        );
+        true
+    }
+
     /// Create a new renderer from caller-provided wgpu primitives.
     ///
     /// `bif_viewer` (winit) and `bif_qt` (Qt / raw HWND) each build their own
@@ -2701,6 +2842,97 @@ mod tests {
             Some(GraphNodeId::from(node_id))
         }
 
+        fn node_graph_set_usd_read_path(&mut self, node_id: GraphNodeId, path: String) -> bool {
+            let snarl_id: egui_snarl::NodeId = node_id.into();
+            let snarl = &mut self.state.snarl;
+            if !snarl.node_ids().any(|(id, _)| id == snarl_id) {
+                return false;
+            }
+            let SceneNode::UsdRead {
+                file_path,
+                is_loaded,
+                error,
+            } = &mut snarl[snarl_id]
+            else {
+                return false;
+            };
+            *file_path = path;
+            *is_loaded = false;
+            *error = None;
+            true
+        }
+
+        fn node_graph_set_xform_params(
+            &mut self,
+            node_id: GraphNodeId,
+            tx: f32,
+            ty: f32,
+            tz: f32,
+            rx: f32,
+            ry: f32,
+            rz: f32,
+            sx: f32,
+            sy: f32,
+            sz: f32,
+        ) -> bool {
+            let snarl_id: egui_snarl::NodeId = node_id.into();
+            let snarl = &mut self.state.snarl;
+            if !snarl.node_ids().any(|(id, _)| id == snarl_id) {
+                return false;
+            }
+            let SceneNode::Xform {
+                translate,
+                rotate,
+                scale,
+                is_applied,
+                ..
+            } = &mut snarl[snarl_id]
+            else {
+                return false;
+            };
+            *translate = [tx, ty, tz];
+            *rotate = [rx, ry, rz];
+            *scale = [sx, sy, sz];
+            *is_applied = false;
+            true
+        }
+
+        fn node_graph_connect_pins(
+            &mut self,
+            from_id: GraphNodeId,
+            from_pin: i32,
+            to_id: GraphNodeId,
+            to_pin: i32,
+        ) -> bool {
+            use crate::node_graph::SceneNode;
+            use egui_snarl::{InPinId, OutPinId};
+            let from_snarl: egui_snarl::NodeId = from_id.into();
+            let to_snarl: egui_snarl::NodeId = to_id.into();
+            let snarl = &mut self.state.snarl;
+            let ids: Vec<egui_snarl::NodeId> = snarl.node_ids().map(|(id, _)| id).collect();
+            if !ids.contains(&from_snarl) || !ids.contains(&to_snarl) {
+                return false;
+            }
+            let from_type = snarl[from_snarl]
+                .output_pin(from_pin as usize)
+                .map(|(_, t)| t);
+            let to_type = snarl[to_snarl].input_pin(to_pin as usize).map(|(_, t)| t);
+            if from_type.is_none() || to_type.is_none() || from_type != to_type {
+                return false;
+            }
+            snarl.connect(
+                OutPinId {
+                    node: from_snarl,
+                    output: from_pin as usize,
+                },
+                InPinId {
+                    node: to_snarl,
+                    input: to_pin as usize,
+                },
+            );
+            true
+        }
+
         fn node_graph_get_node_info(&self, node_id: GraphNodeId) -> Option<String> {
             let snarl_id: egui_snarl::NodeId = node_id.into();
             let snarl = &self.state.snarl;
@@ -2770,5 +3002,31 @@ mod tests {
     fn node_graph_get_node_info_unknown_id_returns_none() {
         let state = make_test_state();
         assert!(state.node_graph_get_node_info(GraphNodeId(9999)).is_none());
+    }
+
+    #[test]
+    fn node_graph_set_usd_read_path_updates_node() {
+        let mut state = make_test_state();
+        let id = state.node_graph_add_node("UsdRead", 0.0, 0.0).unwrap();
+        let ok = state.node_graph_set_usd_read_path(id, "/tmp/test.usda".to_string());
+        assert!(ok);
+        let info = state.node_graph_get_node_info(id).unwrap();
+        assert!(info.contains("/tmp/test.usda"));
+        assert!(info.contains("\"is_loaded\":false"));
+    }
+
+    #[test]
+    fn node_graph_connect_pins_compatible() {
+        let mut state = make_test_state();
+        let usd = state.node_graph_add_node("UsdRead", 0.0, 0.0).unwrap();
+        let xform = state.node_graph_add_node("Xform", 200.0, 0.0).unwrap();
+        // UsdRead output[0] → Xform input[0]: both PinType::Scene
+        assert!(state.node_graph_connect_pins(usd, 0, xform, 0));
+    }
+
+    #[test]
+    fn node_graph_connect_pins_bad_id_returns_false() {
+        let mut state = make_test_state();
+        assert!(!state.node_graph_connect_pins(GraphNodeId(9999), 0, GraphNodeId(9998), 0));
     }
 }
