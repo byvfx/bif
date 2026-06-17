@@ -2575,6 +2575,66 @@ impl Renderer {
         }
     }
 
+    /// Return a JSON string summarising the node's key fields, or `None` if the
+    /// node doesn't exist or its type isn't covered.
+    pub fn node_graph_get_node_info(&self, node_id: node_graph::GraphNodeId) -> Option<String> {
+        let snarl_id: egui_snarl::NodeId = node_id.into();
+        let snarl = &self.nodes.node_graph_state.snarl;
+        if !snarl.node_ids().any(|(id, _)| id == snarl_id) {
+            return None;
+        }
+        let json = match &snarl[snarl_id] {
+            node_graph::SceneNode::UsdRead {
+                file_path,
+                is_loaded,
+                ..
+            } => format!(
+                r#"{{"type":"UsdRead","file_path":{},"is_loaded":{}}}"#,
+                Self::json_str(file_path),
+                is_loaded
+            ),
+            node_graph::SceneNode::HdriEnvironment {
+                file_path,
+                rotation,
+                intensity,
+                show_background,
+                ..
+            } => format!(
+                r#"{{"type":"HdriEnvironment","file_path":{},"rotation":{},"intensity":{},"show_background":{}}}"#,
+                Self::json_str(file_path),
+                rotation,
+                intensity,
+                show_background
+            ),
+            node_graph::SceneNode::Xform {
+                translate,
+                rotate,
+                scale,
+                ..
+            } => format!(
+                r#"{{"type":"Xform","tx":{},"ty":{},"tz":{},"rx":{},"ry":{},"rz":{},"sx":{},"sy":{},"sz":{}}}"#,
+                translate[0],
+                translate[1],
+                translate[2],
+                rotate[0],
+                rotate[1],
+                rotate[2],
+                scale[0],
+                scale[1],
+                scale[2]
+            ),
+            node_graph::SceneNode::IvarRender { spp, .. } => {
+                format!(r#"{{"type":"IvarRender","spp":{}}}"#, spp)
+            }
+            _ => return None,
+        };
+        Some(json)
+    }
+
+    fn json_str(s: &str) -> String {
+        format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
+    }
+
     /// Show "Save changes?" dialog if dirty. Returns action to take.
     pub fn prompt_unsaved_changes(&self, action: &str) -> persistence::SavePromptResult {
         if !self.project.dirty {
@@ -2609,5 +2669,106 @@ impl Renderer {
             persistence::SavePromptResult::Discard => true,
             persistence::SavePromptResult::Cancel => false,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::node_graph::{GraphNodeId, NodeGraphState, SceneNode};
+
+    /// Lightweight headless harness — no GPU required.
+    struct TestHarness {
+        state: NodeGraphState,
+    }
+
+    fn make_test_state() -> TestHarness {
+        TestHarness {
+            state: NodeGraphState::new(),
+        }
+    }
+
+    impl TestHarness {
+        fn node_graph_add_node(&mut self, type_name: &str, x: f32, y: f32) -> Option<GraphNodeId> {
+            let pos = egui::pos2(x, y);
+            let node_id = match type_name {
+                "UsdRead" => self.state.add_usd_read(pos),
+                "HdriEnvironment" => self.state.add_hdri_environment(pos),
+                "IvarRender" => self.state.add_ivar_render(pos),
+                "Xform" => self.state.add_xform(pos),
+                _ => return None,
+            };
+            Some(GraphNodeId::from(node_id))
+        }
+
+        fn node_graph_get_node_info(&self, node_id: GraphNodeId) -> Option<String> {
+            let snarl_id: egui_snarl::NodeId = node_id.into();
+            let snarl = &self.state.snarl;
+            if !snarl.node_ids().any(|(id, _)| id == snarl_id) {
+                return None;
+            }
+            let json = match &snarl[snarl_id] {
+                SceneNode::UsdRead {
+                    file_path,
+                    is_loaded,
+                    ..
+                } => format!(
+                    r#"{{"type":"UsdRead","file_path":{},"is_loaded":{}}}"#,
+                    Renderer::json_str(file_path),
+                    is_loaded
+                ),
+                SceneNode::HdriEnvironment {
+                    file_path,
+                    rotation,
+                    intensity,
+                    show_background,
+                    ..
+                } => format!(
+                    r#"{{"type":"HdriEnvironment","file_path":{},"rotation":{},"intensity":{},"show_background":{}}}"#,
+                    Renderer::json_str(file_path),
+                    rotation,
+                    intensity,
+                    show_background
+                ),
+                SceneNode::Xform {
+                    translate,
+                    rotate,
+                    scale,
+                    ..
+                } => format!(
+                    r#"{{"type":"Xform","tx":{},"ty":{},"tz":{},"rx":{},"ry":{},"rz":{},"sx":{},"sy":{},"sz":{}}}"#,
+                    translate[0],
+                    translate[1],
+                    translate[2],
+                    rotate[0],
+                    rotate[1],
+                    rotate[2],
+                    scale[0],
+                    scale[1],
+                    scale[2]
+                ),
+                SceneNode::IvarRender { spp, .. } => {
+                    format!(r#"{{"type":"IvarRender","spp":{}}}"#, spp)
+                }
+                _ => return None,
+            };
+            Some(json)
+        }
+    }
+
+    #[test]
+    fn node_graph_get_node_info_usd_read() {
+        let mut state = make_test_state();
+        let id = state.node_graph_add_node("UsdRead", 0.0, 0.0).unwrap();
+        let info = state.node_graph_get_node_info(id).unwrap();
+        assert!(info.contains("\"type\":\"UsdRead\""));
+        assert!(info.contains("\"file_path\":\"\""));
+        assert!(info.contains("\"is_loaded\":false"));
+    }
+
+    #[test]
+    fn node_graph_get_node_info_unknown_id_returns_none() {
+        let state = make_test_state();
+        assert!(state.node_graph_get_node_info(GraphNodeId(9999)).is_none());
     }
 }
