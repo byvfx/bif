@@ -97,6 +97,9 @@ public:
                const QStyleOptionGraphicsItem* option,
                QWidget* widget = nullptr) override;
 
+    int input_count() const { return m_inputs.size(); }
+    int output_count() const { return m_outputs.size(); }
+
     /// Scene-coords of pin `pin_index`. If `is_input` is true, resolves
     /// against `m_inputs`; otherwise `m_outputs`.
     QPointF scene_pin_pos(int pin_index, bool is_input) const;
@@ -152,17 +155,35 @@ class NodeGraphView : public QGraphicsView {
     Q_OBJECT
 public:
     explicit NodeGraphView(QGraphicsScene* scene, QWidget* parent = nullptr);
+    void set_nodes(QVector<BifNodeGraphicsItem*>* nodes);
 
 signals:
     void addNodeRequested(const QString& type_name, QPointF scene_pos);
     void deleteSelectedNodesRequested();
+    void pinsConnected(int from_backend_id, int from_pin, int to_backend_id, int to_pin);
 
 protected:
     void wheelEvent(QWheelEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;
+    void mouseMoveEvent(QMouseEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
     void keyPressEvent(QKeyEvent* event) override;
     void contextMenuEvent(QContextMenuEvent* event) override;
+
+private:
+    struct PinRef {
+        BifNodeGraphicsItem* node{nullptr};
+        int pin_index{-1};
+        bool is_input{false};
+        bool valid() const { return node != nullptr; }
+    };
+    PinRef pin_at(QPointF scene_pos) const;
+    static constexpr qreal kPinHitRadius = 8.0;
+
+    QVector<BifNodeGraphicsItem*>* m_nodes{nullptr};
+    bool m_dragging{false};
+    PinRef m_drag_from;
+    QGraphicsPathItem* m_drag_wire{nullptr};
 };
 
 class NodeGraphWidget : public QWidget {
@@ -184,6 +205,7 @@ private:
                                   QPointF scene_pos);
     BifNodeWire* connect_pins(BifNodeGraphicsItem* from, int from_pin,
                               BifNodeGraphicsItem* to, int to_pin);
+    BifNodeGraphicsItem* node_by_backend_id(int id) const;
 
     BifShellState* m_state;
     QGraphicsScene* m_scene;

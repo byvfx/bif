@@ -435,6 +435,25 @@ NodeGraphView::NodeGraphView(QGraphicsScene* scene, QWidget* parent)
         "QGraphicsView { background-color: rgba(26, 29, 33, 255); border: none; }"));
 }
 
+void NodeGraphView::set_nodes(QVector<BifNodeGraphicsItem*>* nodes) {
+    m_nodes = nodes;
+}
+
+NodeGraphView::PinRef NodeGraphView::pin_at(QPointF scene_pos) const {
+    if (!m_nodes) return {};
+    for (auto* node : *m_nodes) {
+        for (int i = 0; i < node->output_count(); ++i) {
+            if (QLineF(node->scene_pin_pos(i, false), scene_pos).length() <= kPinHitRadius)
+                return {node, i, false};
+        }
+        for (int i = 0; i < node->input_count(); ++i) {
+            if (QLineF(node->scene_pin_pos(i, true), scene_pos).length() <= kPinHitRadius)
+                return {node, i, true};
+        }
+    }
+    return {};
+}
+
 void NodeGraphView::wheelEvent(QWheelEvent* event) {
     const double factor = event->angleDelta().y() > 0 ? 1.15 : 1.0 / 1.15;
     scale(factor, factor);
@@ -455,10 +474,63 @@ void NodeGraphView::mousePressEvent(QMouseEvent* event) {
         event->accept();
         return;
     }
+    if (event->button() == Qt::LeftButton) {
+        PinRef hit = pin_at(mapToScene(event->pos()));
+        if (hit.valid() && !hit.is_input) {
+            // Clicked an output pin — start wire drag.
+            m_dragging = true;
+            m_drag_from = hit;
+            QPointF from = hit.node->scene_pin_pos(hit.pin_index, false);
+            auto* wire = new QGraphicsPathItem;
+            wire->setPen(QPen(QColor(120, 135, 155), 2.0, Qt::DashLine, Qt::RoundCap));
+            wire->setZValue(10.0);
+            QPainterPath path;
+            path.moveTo(from);
+            path.lineTo(from);
+            wire->setPath(path);
+            scene()->addItem(wire);
+            m_drag_wire = wire;
+            event->accept();
+            return;
+        }
+    }
     QGraphicsView::mousePressEvent(event);
 }
 
+void NodeGraphView::mouseMoveEvent(QMouseEvent* event) {
+    if (m_dragging && m_drag_wire) {
+        QPointF from = m_drag_from.node->scene_pin_pos(m_drag_from.pin_index, false);
+        QPointF to = mapToScene(event->pos());
+        qreal dx = (to.x() - from.x()) * 0.5;
+        QPainterPath path;
+        path.moveTo(from);
+        path.cubicTo(from + QPointF(dx, 0), to - QPointF(dx, 0), to);
+        m_drag_wire->setPath(path);
+        event->accept();
+        return;
+    }
+    QGraphicsView::mouseMoveEvent(event);
+}
+
 void NodeGraphView::mouseReleaseEvent(QMouseEvent* event) {
+    if (m_dragging) {
+        m_dragging = false;
+        if (m_drag_wire) {
+            scene()->removeItem(m_drag_wire);
+            delete m_drag_wire;
+            m_drag_wire = nullptr;
+        }
+        if (event->button() == Qt::LeftButton) {
+            PinRef hit = pin_at(mapToScene(event->pos()));
+            if (hit.valid() && hit.is_input && hit.node != m_drag_from.node) {
+                emit pinsConnected(
+                    m_drag_from.node->backend_id(), m_drag_from.pin_index,
+                    hit.node->backend_id(), hit.pin_index);
+            }
+        }
+        event->accept();
+        return;
+    }
     if (event->button() == Qt::MiddleButton) {
         QMouseEvent fake(event->type(), event->position(), event->scenePosition(),
                          event->globalPosition(), Qt::LeftButton,
@@ -538,9 +610,29 @@ NodeGraphWidget::NodeGraphWidget(BifShellState* state, QWidget* parent)
             this, &NodeGraphWidget::add_node_for_type);
     connect(m_view, &NodeGraphView::deleteSelectedNodesRequested,
             this, &NodeGraphWidget::delete_selected_nodes);
+
+    m_view->set_nodes(&m_nodes);
+    connect(m_view, &NodeGraphView::pinsConnected,
+        this, [this](int from_id, int from_pin, int to_id, int to_pin) {
+            if (!m_state) return;
+            bool ok = m_state->on_node_graph_connect_pins(
+                from_id, from_pin, to_id, to_pin);
+            if (ok) {
+                BifNodeGraphicsItem* from_node = node_by_backend_id(from_id);
+                BifNodeGraphicsItem* to_node   = node_by_backend_id(to_id);
+                if (from_node && to_node)
+                    connect_pins(from_node, from_pin, to_node, to_pin);
+            }
+        });
 }
 
 NodeGraphWidget::~NodeGraphWidget() = default;
+
+BifNodeGraphicsItem* NodeGraphWidget::node_by_backend_id(int id) const {
+    for (auto* n : m_nodes)
+        if (n->backend_id() == id) return n;
+    return nullptr;
+}
 
 int NodeGraphWidget::create_backend_node(const QString& type_name, QPointF scene_pos) {
     if (!m_state) return -1;
