@@ -186,8 +186,6 @@ impl<'a> PathTracer<'a> {
     /// Trace one ray; return accumulated radiance and first-hit AOV data.
     pub fn trace(&self, ray: &Ray, max_depth: u32, rng: &mut dyn RngCore) -> (Color, AovData) {
         let world = self.world;
-        let cache = self.cache;
-        let cache_min_depth = self.cache_min_depth;
         let rr_start_bounce = self.rr_start_bounce;
 
         let mut current_ray = *ray;
@@ -224,33 +222,15 @@ impl<'a> PathTracer<'a> {
                 break;
             }
 
-            // Capture AOV data from first hit
             if first_hit {
-                aov.depth = rec.t;
-                aov.normal = rec.normal;
-                aov.shading_normal = rec.material.shading_normal(&rec);
-                aov.alpha = 1.0;
-                aov.albedo = rec.material.albedo(rec.u, rec.v);
-                // Cache heatmap: sample count at primary hit
-                if let Some(c) = cache {
-                    aov.cache_samples = c.sample_count_at(rec.p, rec.normal);
-                }
+                aov = self.capture_primary_aov(&rec);
                 first_hit = false;
             }
 
-            // --- SHARC cache READ ---
             let is_delta = rec.material.is_delta();
-            let skip_cache = should_skip_cache(is_delta, rec.material.roughness());
-            if !skip_cache && bounce_count >= cache_min_depth {
-                if let Some(c) = cache {
-                    if let Some(cached) = c.lookup(rec.p, rec.normal) {
-                        // Guard against NaN/inf from torn reads in lock-free cache
-                        if cached.x.is_finite() && cached.y.is_finite() && cached.z.is_finite() {
-                            accumulated += throughput * cached;
-                        }
-                        break;
-                    }
-                }
+            if let Some(cached) = self.cache_read(&rec, bounce_count) {
+                accumulated += throughput * cached;
+                break;
             }
 
             // Accumulate emission from hit surfaces
@@ -266,15 +246,10 @@ impl<'a> PathTracer<'a> {
                 local_radiance += nee;
             }
 
-            // --- SHARC cache WRITE ---
             // NOTE: Stores emission + NEE only (not indirect). Biases cached values
             // low but converges over passes via EMA blending. Acceptable for IPR
             // preview; deferred write-back needed for final quality.
-            if !skip_cache && bounce_count >= cache_min_depth {
-                if let Some(c) = cache {
-                    c.write(rec.p, rec.normal, local_radiance);
-                }
-            }
+            self.cache_write(&rec, bounce_count, local_radiance);
 
             match rec.material.scatter(&current_ray, &rec, rng) {
                 Some(result) => {
@@ -408,6 +383,61 @@ impl<'a> PathTracer<'a> {
         }
 
         nee
+    }
+
+    /// Capture AOV data from the first (primary) ray hit.
+    #[inline]
+    pub(crate) fn capture_primary_aov(&self, rec: &HitRecord) -> AovData {
+        let mut aov = AovData {
+            depth: rec.t,
+            normal: rec.normal,
+            shading_normal: rec.material.shading_normal(rec),
+            alpha: 1.0,
+            albedo: rec.material.albedo(rec.u, rec.v),
+            cache_samples: 0,
+        };
+        if let Some(c) = self.cache {
+            aov.cache_samples = c.sample_count_at(rec.p, rec.normal);
+        }
+        aov
+    }
+
+    /// Look up a cached radiance value. Returns `Some(v)` if the path should
+    /// terminate early: `v` is the cached radiance (or `Color::ZERO` for a
+    /// corrupt/NaN entry, which terminates without contributing — matching the
+    /// original lock-free cache guard behavior).
+    #[inline]
+    pub(crate) fn cache_read(&self, rec: &HitRecord, bounce_count: u32) -> Option<Color> {
+        if should_skip_cache(rec.material.is_delta(), rec.material.roughness())
+            || bounce_count < self.cache_min_depth
+        {
+            return None;
+        }
+        if let Some(c) = self.cache {
+            if let Some(cached) = c.lookup(rec.p, rec.normal) {
+                return Some(
+                    if cached.x.is_finite() && cached.y.is_finite() && cached.z.is_finite() {
+                        cached
+                    } else {
+                        Color::ZERO
+                    },
+                );
+            }
+        }
+        None
+    }
+
+    /// Write surface-local radiance into the cache if applicable.
+    #[inline]
+    pub(crate) fn cache_write(&self, rec: &HitRecord, bounce_count: u32, local_radiance: Color) {
+        if should_skip_cache(rec.material.is_delta(), rec.material.roughness())
+            || bounce_count < self.cache_min_depth
+        {
+            return;
+        }
+        if let Some(c) = self.cache {
+            c.write(rec.p, rec.normal, local_radiance);
+        }
     }
 
     /// Multi-sample one pixel: filtered color, AOV data, and total filter weight.
@@ -1035,5 +1065,51 @@ mod tests {
         // Color should not be the background (we hit the sphere)
         // Can't test exact color due to random sampling
         assert!(color.length() > 0.0);
+    }
+
+    #[test]
+    fn capture_primary_aov_sets_hit_fields() {
+        let (world, config) = sphere_world_and_config();
+        let ray = Ray::new(Vec3::ZERO, Vec3::new(0.0, 0.0, -1.0), 0.0);
+        let mut rec = HitRecord::default();
+        let hit = world.hit(&ray, Interval::new(0.001, f32::INFINITY), &mut rec);
+        assert!(hit, "ray should intersect sphere");
+
+        let tracer = PathTracer::new(&world, &config);
+        let aov = tracer.capture_primary_aov(&rec);
+
+        assert_eq!(aov.alpha, 1.0);
+        assert!((aov.depth - rec.t).abs() < 1e-6, "depth must match rec.t");
+        assert_ne!(aov.normal, Color::ZERO, "normal must be non-zero on hit");
+        assert_eq!(aov.cache_samples, 0, "no cache → cache_samples must be 0");
+    }
+
+    #[test]
+    fn cache_read_returns_none_without_cache() {
+        let (world, config) = sphere_world_and_config();
+        let ray = Ray::new(Vec3::ZERO, Vec3::new(0.0, 0.0, -1.0), 0.0);
+        let mut rec = HitRecord::default();
+        world.hit(&ray, Interval::new(0.001, f32::INFINITY), &mut rec);
+
+        let tracer = PathTracer::new(&world, &config);
+        assert!(
+            tracer.cache_read(&rec, 0).is_none(),
+            "no cache → None at bounce 0"
+        );
+        assert!(
+            tracer.cache_read(&rec, 99).is_none(),
+            "no cache → None at any depth"
+        );
+    }
+
+    #[test]
+    fn cache_write_noop_without_cache() {
+        let (world, config) = sphere_world_and_config();
+        let ray = Ray::new(Vec3::ZERO, Vec3::new(0.0, 0.0, -1.0), 0.0);
+        let mut rec = HitRecord::default();
+        world.hit(&ray, Interval::new(0.001, f32::INFINITY), &mut rec);
+
+        let tracer = PathTracer::new(&world, &config);
+        tracer.cache_write(&rec, 0, Color::ONE); // must not panic
     }
 }
