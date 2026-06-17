@@ -186,10 +186,6 @@ impl<'a> PathTracer<'a> {
     /// Trace one ray; return accumulated radiance and first-hit AOV data.
     pub fn trace(&self, ray: &Ray, max_depth: u32, rng: &mut dyn RngCore) -> (Color, AovData) {
         let world = self.world;
-        let config = self.config;
-        let env_params = self.env_params;
-        let cache = self.cache;
-        let cache_min_depth = self.cache_min_depth;
         let rr_start_bounce = self.rr_start_bounce;
 
         let mut current_ray = *ray;
@@ -214,56 +210,27 @@ impl<'a> PathTracer<'a> {
             let mut rec = HitRecord::default();
 
             if !world.hit(&current_ray, Interval::new(0.001, f32::INFINITY), &mut rec) {
-                // Ray escaped - sample environment/background
-                // Camera rays respect hdri_show_background; bounced rays always sample HDRI for lighting
-                let use_hdri = env_params.is_some() && (config.hdri_show_background || !first_hit);
-                let bg = if use_hdri {
-                    let (env, rotation, intensity) = env_params.as_ref().unwrap();
-                    let dir = current_ray.direction().normalize();
-                    let emission = env.sample_with_params(dir, *rotation, *intensity);
-                    if last_was_delta {
-                        emission
-                    } else {
-                        let env_pdf = env.pdf_for_direction_with_params(dir, *rotation);
-                        let mis_w = power_heuristic(last_scatter_pdf, env_pdf);
-                        emission * mis_w
-                    }
-                } else if config.use_sky_gradient {
-                    sky_gradient(&current_ray)
-                } else {
-                    config.background
-                };
+                // Ray escaped - sample environment/background (MIS-weighted HDRI,
+                // sky gradient, or flat background).
+                let bg = self.environment_escape(
+                    &current_ray,
+                    first_hit,
+                    last_was_delta,
+                    last_scatter_pdf,
+                );
                 accumulated += throughput * bg;
                 break;
             }
 
-            // Capture AOV data from first hit
             if first_hit {
-                aov.depth = rec.t;
-                aov.normal = rec.normal;
-                aov.shading_normal = rec.material.shading_normal(&rec);
-                aov.alpha = 1.0;
-                aov.albedo = rec.material.albedo(rec.u, rec.v);
-                // Cache heatmap: sample count at primary hit
-                if let Some(c) = cache {
-                    aov.cache_samples = c.sample_count_at(rec.p, rec.normal);
-                }
+                aov = self.capture_primary_aov(&rec);
                 first_hit = false;
             }
 
-            // --- SHARC cache READ ---
             let is_delta = rec.material.is_delta();
-            let skip_cache = should_skip_cache(is_delta, rec.material.roughness());
-            if !skip_cache && bounce_count >= cache_min_depth {
-                if let Some(c) = cache {
-                    if let Some(cached) = c.lookup(rec.p, rec.normal) {
-                        // Guard against NaN/inf from torn reads in lock-free cache
-                        if cached.x.is_finite() && cached.y.is_finite() && cached.z.is_finite() {
-                            accumulated += throughput * cached;
-                        }
-                        break;
-                    }
-                }
+            if let Some(cached) = self.cache_read(&rec, bounce_count) {
+                accumulated += throughput * cached;
+                break;
             }
 
             // Accumulate emission from hit surfaces
@@ -274,72 +241,15 @@ impl<'a> PathTracer<'a> {
 
             // NEE: sample lights directly (non-delta materials only)
             if !is_delta {
-                // Offset shadow ray origin along shading normal to avoid
-                // self-intersection and shadow terminator artifacts with normal maps
-                let shading_n = rec.material.shading_normal(&rec);
-                let shadow_origin = rec.p + shading_n * 0.001;
-
-                // Sample HDRI environment
-                if let Some((env, rotation, intensity)) = env_params.as_ref() {
-                    let (light_dir, light_emission, light_pdf) =
-                        env.sample_direction_with_params(rng, *rotation, *intensity);
-                    let shadow_ray = Ray::new(shadow_origin, light_dir, current_ray.time());
-                    let mut shadow_rec = HitRecord::default();
-                    if !world.hit(
-                        &shadow_ray,
-                        Interval::new(0.001, f32::INFINITY),
-                        &mut shadow_rec,
-                    ) {
-                        let bsdf_val = rec.material.bsdf(&current_ray, &rec, &shadow_ray);
-                        let bsdf_pdf = rec.material.pdf(&current_ray, &rec, &shadow_ray);
-                        let mis_w = power_heuristic(light_pdf, bsdf_pdf);
-                        let cos_theta = rec.normal.dot(light_dir).max(0.0);
-                        let nee_contrib =
-                            bsdf_val * light_emission * cos_theta * mis_w / light_pdf.max(1e-10);
-                        accumulated += throughput * nee_contrib;
-                        local_radiance += nee_contrib;
-                    }
-                }
-
-                // Sample explicit lights (USD lights)
-                if let Some((light_sample, _idx)) = config.lights.sample_one(rec.p, rng) {
-                    if light_sample.pdf > 0.0 {
-                        let shadow_ray =
-                            Ray::new(shadow_origin, light_sample.direction, current_ray.time());
-                        let mut shadow_rec = HitRecord::default();
-                        let max_t = if light_sample.distance < f32::INFINITY {
-                            light_sample.distance - 0.001
-                        } else {
-                            f32::INFINITY
-                        };
-                        if !world.hit(&shadow_ray, Interval::new(0.001, max_t), &mut shadow_rec) {
-                            let bsdf_val = rec.material.bsdf(&current_ray, &rec, &shadow_ray);
-                            let cos_theta = rec.normal.dot(light_sample.direction).max(0.0);
-                            // Delta lights can only be hit via NEE — skip MIS
-                            let mis_w = if light_sample.is_delta {
-                                1.0
-                            } else {
-                                let bsdf_pdf = rec.material.pdf(&current_ray, &rec, &shadow_ray);
-                                power_heuristic(light_sample.pdf, bsdf_pdf)
-                            };
-                            let nee_contrib = bsdf_val * light_sample.emission * cos_theta * mis_w
-                                / light_sample.pdf.max(1e-10);
-                            accumulated += throughput * nee_contrib;
-                            local_radiance += nee_contrib;
-                        }
-                    }
-                }
+                let nee = self.nee_radiance(&current_ray, &rec, rng);
+                accumulated += throughput * nee;
+                local_radiance += nee;
             }
 
-            // --- SHARC cache WRITE ---
             // NOTE: Stores emission + NEE only (not indirect). Biases cached values
             // low but converges over passes via EMA blending. Acceptable for IPR
             // preview; deferred write-back needed for final quality.
-            if !skip_cache && bounce_count >= cache_min_depth {
-                if let Some(c) = cache {
-                    c.write(rec.p, rec.normal, local_radiance);
-                }
-            }
+            self.cache_write(&rec, bounce_count, local_radiance);
 
             match rec.material.scatter(&current_ray, &rec, rng) {
                 Some(result) => {
@@ -378,6 +288,156 @@ impl<'a> PathTracer<'a> {
         }
 
         (accumulated, aov)
+    }
+
+    /// Radiance for a ray that escaped the scene: MIS-weighted HDRI (for
+    /// non-delta scatters), sky gradient, or flat background. Camera rays
+    /// respect `hdri_show_background`; bounced rays always sample the HDRI.
+    /// Returned value is pre-throughput — the caller scales by path throughput.
+    #[inline]
+    pub(crate) fn environment_escape(
+        &self,
+        ray: &Ray,
+        first_hit: bool,
+        last_was_delta: bool,
+        last_scatter_pdf: f32,
+    ) -> Color {
+        let use_hdri =
+            self.env_params.is_some() && (self.config.hdri_show_background || !first_hit);
+        if use_hdri {
+            let (env, rotation, intensity) = self.env_params.as_ref().unwrap();
+            let dir = ray.direction().normalize();
+            let emission = env.sample_with_params(dir, *rotation, *intensity);
+            if last_was_delta {
+                emission
+            } else {
+                let env_pdf = env.pdf_for_direction_with_params(dir, *rotation);
+                let mis_w = power_heuristic(last_scatter_pdf, env_pdf);
+                emission * mis_w
+            }
+        } else if self.config.use_sky_gradient {
+            sky_gradient(ray)
+        } else {
+            self.config.background
+        }
+    }
+
+    /// Next Event Estimation: MIS-weighted direct-light radiance at a surface
+    /// hit, summed over the HDRI environment and the explicit (USD) lights.
+    /// Caller must gate on a non-delta material. Returned value is
+    /// pre-throughput — the caller scales by path throughput.
+    #[inline]
+    pub(crate) fn nee_radiance(&self, ray: &Ray, rec: &HitRecord, rng: &mut dyn RngCore) -> Color {
+        // Offset shadow ray origin along the shading normal to avoid
+        // self-intersection and shadow-terminator artifacts with normal maps.
+        let shading_n = rec.material.shading_normal(rec);
+        let shadow_origin = rec.p + shading_n * 0.001;
+        let mut nee = Color::ZERO;
+
+        // Sample HDRI environment.
+        if let Some((env, rotation, intensity)) = self.env_params.as_ref() {
+            let (light_dir, light_emission, light_pdf) =
+                env.sample_direction_with_params(rng, *rotation, *intensity);
+            let shadow_ray = Ray::new(shadow_origin, light_dir, ray.time());
+            let mut shadow_rec = HitRecord::default();
+            if !self.world.hit(
+                &shadow_ray,
+                Interval::new(0.001, f32::INFINITY),
+                &mut shadow_rec,
+            ) {
+                let bsdf_val = rec.material.bsdf(ray, rec, &shadow_ray);
+                let bsdf_pdf = rec.material.pdf(ray, rec, &shadow_ray);
+                let mis_w = power_heuristic(light_pdf, bsdf_pdf);
+                let cos_theta = rec.normal.dot(light_dir).max(0.0);
+                nee += bsdf_val * light_emission * cos_theta * mis_w / light_pdf.max(1e-10);
+            }
+        }
+
+        // Sample explicit lights (USD lights).
+        if let Some((light_sample, _idx)) = self.config.lights.sample_one(rec.p, rng) {
+            if light_sample.pdf > 0.0 {
+                let shadow_ray = Ray::new(shadow_origin, light_sample.direction, ray.time());
+                let mut shadow_rec = HitRecord::default();
+                let max_t = if light_sample.distance < f32::INFINITY {
+                    light_sample.distance - 0.001
+                } else {
+                    f32::INFINITY
+                };
+                if !self
+                    .world
+                    .hit(&shadow_ray, Interval::new(0.001, max_t), &mut shadow_rec)
+                {
+                    let bsdf_val = rec.material.bsdf(ray, rec, &shadow_ray);
+                    let cos_theta = rec.normal.dot(light_sample.direction).max(0.0);
+                    // Delta lights can only be hit via NEE — skip MIS.
+                    let mis_w = if light_sample.is_delta {
+                        1.0
+                    } else {
+                        let bsdf_pdf = rec.material.pdf(ray, rec, &shadow_ray);
+                        power_heuristic(light_sample.pdf, bsdf_pdf)
+                    };
+                    nee += bsdf_val * light_sample.emission * cos_theta * mis_w
+                        / light_sample.pdf.max(1e-10);
+                }
+            }
+        }
+
+        nee
+    }
+
+    /// Capture AOV data from the first (primary) ray hit.
+    #[inline]
+    pub(crate) fn capture_primary_aov(&self, rec: &HitRecord) -> AovData {
+        let mut aov = AovData {
+            depth: rec.t,
+            normal: rec.normal,
+            shading_normal: rec.material.shading_normal(rec),
+            alpha: 1.0,
+            albedo: rec.material.albedo(rec.u, rec.v),
+            cache_samples: 0,
+        };
+        if let Some(c) = self.cache {
+            aov.cache_samples = c.sample_count_at(rec.p, rec.normal);
+        }
+        aov
+    }
+
+    /// Look up a cached radiance value. Returns `Some(v)` if the path should
+    /// terminate early: `v` is the cached radiance (or `Color::ZERO` for a
+    /// corrupt/NaN entry, which terminates without contributing — matching the
+    /// original lock-free cache guard behavior).
+    #[inline]
+    pub(crate) fn cache_read(&self, rec: &HitRecord, bounce_count: u32) -> Option<Color> {
+        if should_skip_cache(rec.material.is_delta(), rec.material.roughness())
+            || bounce_count < self.cache_min_depth
+        {
+            return None;
+        }
+        if let Some(c) = self.cache {
+            if let Some(cached) = c.lookup(rec.p, rec.normal) {
+                return Some(
+                    if cached.x.is_finite() && cached.y.is_finite() && cached.z.is_finite() {
+                        cached
+                    } else {
+                        Color::ZERO
+                    },
+                );
+            }
+        }
+        None
+    }
+
+    /// Write surface-local radiance into the cache if applicable.
+    #[inline]
+    pub(crate) fn cache_write(&self, rec: &HitRecord, bounce_count: u32, local_radiance: Color) {
+        if should_skip_cache(rec.material.is_delta(), rec.material.roughness())
+            || bounce_count < self.cache_min_depth
+        {
+            return;
+        }
+        if let Some(c) = self.cache {
+            c.write(rec.p, rec.normal, local_radiance);
+        }
     }
 
     /// Multi-sample one pixel: filtered color, AOV data, and total filter weight.
@@ -1005,5 +1065,51 @@ mod tests {
         // Color should not be the background (we hit the sphere)
         // Can't test exact color due to random sampling
         assert!(color.length() > 0.0);
+    }
+
+    #[test]
+    fn capture_primary_aov_sets_hit_fields() {
+        let (world, config) = sphere_world_and_config();
+        let ray = Ray::new(Vec3::ZERO, Vec3::new(0.0, 0.0, -1.0), 0.0);
+        let mut rec = HitRecord::default();
+        let hit = world.hit(&ray, Interval::new(0.001, f32::INFINITY), &mut rec);
+        assert!(hit, "ray should intersect sphere");
+
+        let tracer = PathTracer::new(&world, &config);
+        let aov = tracer.capture_primary_aov(&rec);
+
+        assert_eq!(aov.alpha, 1.0);
+        assert!((aov.depth - rec.t).abs() < 1e-6, "depth must match rec.t");
+        assert_ne!(aov.normal, Color::ZERO, "normal must be non-zero on hit");
+        assert_eq!(aov.cache_samples, 0, "no cache → cache_samples must be 0");
+    }
+
+    #[test]
+    fn cache_read_returns_none_without_cache() {
+        let (world, config) = sphere_world_and_config();
+        let ray = Ray::new(Vec3::ZERO, Vec3::new(0.0, 0.0, -1.0), 0.0);
+        let mut rec = HitRecord::default();
+        world.hit(&ray, Interval::new(0.001, f32::INFINITY), &mut rec);
+
+        let tracer = PathTracer::new(&world, &config);
+        assert!(
+            tracer.cache_read(&rec, 0).is_none(),
+            "no cache → None at bounce 0"
+        );
+        assert!(
+            tracer.cache_read(&rec, 99).is_none(),
+            "no cache → None at any depth"
+        );
+    }
+
+    #[test]
+    fn cache_write_noop_without_cache() {
+        let (world, config) = sphere_world_and_config();
+        let ray = Ray::new(Vec3::ZERO, Vec3::new(0.0, 0.0, -1.0), 0.0);
+        let mut rec = HitRecord::default();
+        world.hit(&ray, Interval::new(0.001, f32::INFINITY), &mut rec);
+
+        let tracer = PathTracer::new(&world, &config);
+        tracer.cache_write(&rec, 0, Color::ONE); // must not panic
     }
 }
