@@ -16,8 +16,12 @@
 
 #pragma once
 
+#include <QDoubleSpinBox>
 #include <QGraphicsObject>
 #include <QGraphicsPathItem>
+#include <QLineEdit>
+#include <QSpinBox>
+#include <QStackedWidget>
 #include <QVector>
 #include <QWidget>
 
@@ -25,6 +29,38 @@
 
 class QGraphicsScene;
 class BifShellState;
+
+/// Sidebar param panel — one QStackedWidget page per node type.
+class NodeParamPanel : public QWidget {
+    Q_OBJECT
+public:
+    explicit NodeParamPanel(BifShellState* state, QWidget* parent = nullptr);
+    void show_params_for(int backend_id);
+    void clear();
+
+private slots:
+    void on_usd_browse();
+    void on_usd_path_changed();
+    void on_hdri_browse();
+    void on_hdri_apply();
+    void on_xform_apply();
+    void on_ivar_render_clicked();
+
+private:
+    BifShellState* m_state;
+    int m_current_id{-1};
+    QStackedWidget* m_stack;
+    // UsdRead page widgets
+    QLineEdit* m_usd_path;
+    // HdriEnvironment page widgets
+    QLineEdit* m_hdri_path;
+    QDoubleSpinBox* m_hdri_rotation;
+    QDoubleSpinBox* m_hdri_intensity;
+    // Xform page: [row][col] where row 0=T,1=R,2=S and col 0=X,1=Y,2=Z
+    QDoubleSpinBox* m_xform[3][3];
+    // IvarRender page widgets
+    QSpinBox* m_spp;
+};
 
 /// Category colors — composition nodes (USD ingest/export) get a
 /// blue accent, operations (scatter/xform/instance) get orange.
@@ -152,6 +188,7 @@ private:
     BifShellState* m_state;
     QGraphicsScene* m_scene;
     NodeGraphView* m_view;
+    NodeParamPanel* m_param_panel;
     QVector<BifNodeGraphicsItem*> m_nodes;
     QVector<BifNodeWire*> m_wires;
 };
