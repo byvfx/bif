@@ -2,13 +2,13 @@
 
 > Active sessions: last 5. Older entries → [SESSION_HANDOFF_ARCHIVE.md](docs/archive/SESSION_HANDOFF_ARCHIVE.md)
 
-## Current State
+## Current State (2026-06-24)
 
-- **Branch:** `refactor/issue6-phase3b-register-prims` (Phase 3b done, PR pending) — off `main`.
-- **Version:** **v0.16.9** tagged (2026-06-04). `[Unreleased]` = issue #6 Phase 1 (`NodeOutputs`) + Phase 2 (`SceneCmd`) + Phase 3a (`evaluate`) + Phase 3b (`register_prims`).
-- **Status:** **Issue #6 node-deepening RFC complete** (pending 3b merge). Landed on `main`: Phase 1 (PR #8), Phase 2 `SceneCmd`+`execute` (PR #9, `bff590b`), Phase 3a `SceneNode::evaluate` (PR #11, `1ae32bc`). **Phase 3b done on branch** (commit `1e3752b`) — `UsdPrim` registration → `SceneNode::register_prims` via `ProcPrimSink`; 188 bif_viewport tests green; verified inline (build/clippy/fmt/tests). **3c (`apply`) intentionally skipped** — post-Phase-2 the `node_dispatch` arms are irreducible `Renderer` orchestration (loaders/IO/`reload`/GPU/flags) a `Vec<SceneCmd>` can't capture.
-- **Next:** open Phase 3b PR → `/vfx-code-reviewer` → squash-merge → **close issue #6** with the closeout note. Then **v0.17.0** (viewport perf, `cpp_bridge.rs` split, payload policies — see MILESTONES). Plans: 3b [`docs/agent-plans/2026-06-09-issue6-phase3b-register-prims.md`](docs/agent-plans/2026-06-09-issue6-phase3b-register-prims.md), 3a [`docs/agent-plans/2026-06-09-issue6-phase3a-evaluate.md`](docs/agent-plans/2026-06-09-issue6-phase3a-evaluate.md).
-- **Gotcha:** `cargo test -p bif_viewport` needs `. .\setup_usd_env.ps1` sourced first (transitively links USD DLLs via bif_core → `STATUS_DLL_NOT_FOUND` otherwise).
+- **Branch:** `audit/node-graph-22` — PR open, awaiting review + merge.
+- **Version:** **v0.16.9** tagged (2026-06-04). `[Unreleased]` = issue #6 phases 1–3b + Qt node graph basic usability.
+- **Status:** Qt node graph basic usability complete (193 bif_viewport tests green, clippy/fmt clean). Added `node_graph_get_node_info` + 4 setter/connect fns (`bif_viewport/src/lib.rs`), cxx-qt bridge (`main_window.rs`), `NodeParamPanel` sidebar + bezier wire drag-connect (`node_graph_widget.h/.cpp`).
+- **Next:** merge PR → v0.17.0 work (issues #13–#15, Viewport perf). Plan: [`docs/superpowers/plans/2026-06-17-node-graph-usability.md`](docs/superpowers/plans/2026-06-17-node-graph-usability.md).
+- **Gotcha:** `cargo clippy` on full workspace needs both `. .\setup_usd_env.ps1` AND `. .\setup_qt_env.ps1` sourced (bif_qt fails with `QtMissing` otherwise).
 
 ---
 
