@@ -620,8 +620,20 @@ NodeGraphWidget::NodeGraphWidget(BifShellState* state, QWidget* parent)
             if (ok) {
                 BifNodeGraphicsItem* from_node = node_by_backend_id(from_id);
                 BifNodeGraphicsItem* to_node   = node_by_backend_id(to_id);
-                if (from_node && to_node)
+                if (from_node && to_node) {
+                    // Remove any existing wire into (to_node, to_pin) — snarl
+                    // replaces the backend edge on reconnect but the visual wire
+                    // must be removed manually before drawing the new one.
+                    m_wires.removeIf([&](BifNodeWire* w) {
+                        if (w->to_node() == to_node && w->to_pin_index() == to_pin) {
+                            m_scene->removeItem(w);
+                            delete w;
+                            return true;
+                        }
+                        return false;
+                    });
                     connect_pins(from_node, from_pin, to_node, to_pin);
+                }
             }
         });
 }

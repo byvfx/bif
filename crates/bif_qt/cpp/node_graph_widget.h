@@ -141,6 +141,9 @@ public:
     /// widget when either endpoint node emits `moved()`.
     void refresh();
 
+    BifNodeGraphicsItem* to_node() const { return m_to_node; }
+    int to_pin_index() const { return m_to_pin_index; }
+
 private:
     BifNodeGraphicsItem* m_from_node;
     int m_from_pin_index;

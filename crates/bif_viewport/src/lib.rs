@@ -573,6 +573,8 @@ impl Renderer {
         *file_path = path.clone();
         *is_loaded = false;
         *error = None;
+        self.nodes.scene_graph_dirty = true;
+        self.project.mark_dirty();
         self.handle_node_graph_event(node_graph::NodeGraphEvent::LoadUsdFile { path, node_id });
         true
     }
@@ -605,6 +607,8 @@ impl Renderer {
         *r = rotation;
         *i = intensity;
         let show_bg = *show_background;
+        self.nodes.scene_graph_dirty = true;
+        self.project.mark_dirty();
         self.handle_node_graph_event(node_graph::NodeGraphEvent::LoadHdri {
             path,
             rotation,
@@ -649,6 +653,8 @@ impl Renderer {
         *rotate = [rx, ry, rz];
         *scale = [sx, sy, sz];
         *is_applied = false;
+        self.nodes.scene_graph_dirty = true;
+        self.project.mark_dirty();
         self.handle_node_graph_event(node_graph::NodeGraphEvent::XformChanged { node_id });
         true
     }
@@ -667,8 +673,9 @@ impl Renderer {
         let from_snarl: egui_snarl::NodeId = from_id.into();
         let to_snarl: egui_snarl::NodeId = to_id.into();
         let snarl = &mut self.nodes.node_graph_state.snarl;
-        let ids: Vec<egui_snarl::NodeId> = snarl.node_ids().map(|(id, _)| id).collect();
-        if !ids.contains(&from_snarl) || !ids.contains(&to_snarl) {
+        if !snarl.node_ids().any(|(id, _)| id == from_snarl)
+            || !snarl.node_ids().any(|(id, _)| id == to_snarl)
+        {
             return false;
         }
         let from_type = snarl[from_snarl]
@@ -689,6 +696,7 @@ impl Renderer {
             },
         );
         self.nodes.scene_graph_dirty = true;
+        self.project.mark_dirty();
         true
     }
 
@@ -2774,7 +2782,7 @@ impl Renderer {
     }
 
     fn json_str(s: &str) -> String {
-        format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
+        serde_json::to_string(s).unwrap_or_else(|_| "\"\"".to_string())
     }
 
     /// Show "Save changes?" dialog if dirty. Returns action to take.
@@ -2910,8 +2918,9 @@ mod tests {
             let from_snarl: egui_snarl::NodeId = from_id.into();
             let to_snarl: egui_snarl::NodeId = to_id.into();
             let snarl = &mut self.state.snarl;
-            let ids: Vec<egui_snarl::NodeId> = snarl.node_ids().map(|(id, _)| id).collect();
-            if !ids.contains(&from_snarl) || !ids.contains(&to_snarl) {
+            if !snarl.node_ids().any(|(id, _)| id == from_snarl)
+                || !snarl.node_ids().any(|(id, _)| id == to_snarl)
+            {
                 return false;
             }
             let from_type = snarl[from_snarl]
@@ -3029,5 +3038,15 @@ mod tests {
     fn node_graph_connect_pins_bad_id_returns_false() {
         let mut state = make_test_state();
         assert!(!state.node_graph_connect_pins(GraphNodeId(9999), 0, GraphNodeId(9998), 0));
+    }
+
+    #[test]
+    fn json_str_escapes_control_chars() {
+        // A raw newline in a file path must be JSON-escaped, not embedded verbatim.
+        let s = Renderer::json_str("path/with\nnewline");
+        assert!(
+            !s.chars().any(|c| c == '\n'),
+            "raw newline must not appear in JSON string"
+        );
     }
 }

@@ -2197,22 +2197,30 @@ impl qobject::BifShellState {
     }
 
     fn on_node_graph_connect_pins(
-        self: Pin<&mut Self>,
+        mut self: Pin<&mut Self>,
         from_id: i32,
         from_pin: i32,
         to_id: i32,
         to_pin: i32,
     ) -> bool {
-        if from_id < 0 || to_id < 0 {
+        if from_id < 0 || to_id < 0 || from_pin < 0 || to_pin < 0 {
             return false;
         }
         let from_gid = bif_viewport::GraphNodeId(from_id as u64);
         let to_gid = bif_viewport::GraphNodeId(to_id as u64);
-        with_viewport_mut(|vp| {
-            vp.renderer_mut()
-                .node_graph_connect_pins(from_gid, from_pin, to_gid, to_pin)
+        let connected = with_viewport_mut(|vp| {
+            let renderer = vp.renderer_mut();
+            let ok = renderer.node_graph_connect_pins(from_gid, from_pin, to_gid, to_pin);
+            if ok {
+                renderer.flush_node_graph();
+            }
+            ok
         })
-        .unwrap_or(false)
+        .unwrap_or(false);
+        if connected {
+            bump_scene_browser_revision(self.as_mut());
+        }
+        connected
     }
 
     fn on_node_graph_select_node(mut self: Pin<&mut Self>, node_id: i32) -> cxx_qt_lib::QString {
