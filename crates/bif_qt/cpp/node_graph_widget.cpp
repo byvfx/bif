@@ -3,14 +3,21 @@
 #include <QBrush>
 #include <QColor>
 #include <QContextMenuEvent>
+#include <QFileDialog>
 #include <QFont>
+#include <QFormLayout>
 #include <QGraphicsScene>
 #include <QGraphicsView>
+#include <QHBoxLayout>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QKeyEvent>
+#include <QLabel>
 #include <QMenu>
 #include <QPainter>
 #include <QPainterPath>
 #include <QPen>
+#include <QPushButton>
 #include <QVBoxLayout>
 #include <QWheelEvent>
 
@@ -51,6 +58,195 @@ QColor pin_color_for(const QString& pin_name) {
 }
 
 }  // namespace
+
+// ---------------------------------------------------------------------------
+// NodeParamPanel
+// ---------------------------------------------------------------------------
+
+NodeParamPanel::NodeParamPanel(BifShellState* state, QWidget* parent)
+    : QWidget(parent), m_state(state)
+{
+    setFixedWidth(220);
+    auto* root = new QVBoxLayout(this);
+    root->setContentsMargins(4, 4, 4, 4);
+    m_stack = new QStackedWidget;
+    root->addWidget(m_stack);
+    root->addStretch();
+
+    // Page 0: nothing selected
+    m_stack->addWidget(new QLabel("No node selected"));
+
+    // Page 1: UsdRead
+    {
+        auto* page = new QWidget;
+        auto* lay = new QFormLayout(page);
+        m_usd_path = new QLineEdit;
+        auto* browse = new QPushButton("...");
+        browse->setFixedWidth(28);
+        auto* row = new QHBoxLayout;
+        row->addWidget(m_usd_path);
+        row->addWidget(browse);
+        lay->addRow("USD File:", row);
+        m_stack->addWidget(page);
+        connect(browse, &QPushButton::clicked, this, &NodeParamPanel::on_usd_browse);
+        connect(m_usd_path, &QLineEdit::editingFinished, this, &NodeParamPanel::on_usd_path_changed);
+    }
+
+    // Page 2: HdriEnvironment
+    {
+        auto* page = new QWidget;
+        auto* lay = new QFormLayout(page);
+        m_hdri_path = new QLineEdit;
+        auto* browse = new QPushButton("...");
+        browse->setFixedWidth(28);
+        auto* row = new QHBoxLayout;
+        row->addWidget(m_hdri_path);
+        row->addWidget(browse);
+        lay->addRow("HDR File:", row);
+        m_hdri_rotation = new QDoubleSpinBox;
+        m_hdri_rotation->setRange(-360.0, 360.0);
+        m_hdri_rotation->setSingleStep(1.0);
+        lay->addRow("Rotation:", m_hdri_rotation);
+        m_hdri_intensity = new QDoubleSpinBox;
+        m_hdri_intensity->setRange(0.0, 100.0);
+        m_hdri_intensity->setSingleStep(0.1);
+        m_hdri_intensity->setValue(1.0);
+        lay->addRow("Intensity:", m_hdri_intensity);
+        auto* apply = new QPushButton("Apply");
+        lay->addRow(apply);
+        m_stack->addWidget(page);
+        connect(browse, &QPushButton::clicked, this, &NodeParamPanel::on_hdri_browse);
+        connect(apply, &QPushButton::clicked, this, &NodeParamPanel::on_hdri_apply);
+    }
+
+    // Page 3: Xform
+    {
+        auto* page = new QWidget;
+        auto* lay = new QFormLayout(page);
+        const char* row_labels[] = {"T", "R", "S"};
+        const char* axes[] = {"X", "Y", "Z"};
+        for (int r = 0; r < 3; ++r) {
+            auto* hlay = new QHBoxLayout;
+            for (int c = 0; c < 3; ++c) {
+                m_xform[r][c] = new QDoubleSpinBox;
+                m_xform[r][c]->setRange(-9999.0, 9999.0);
+                m_xform[r][c]->setSingleStep(0.1);
+                m_xform[r][c]->setDecimals(3);
+                if (r == 2) m_xform[r][c]->setValue(1.0); // scale default
+                m_xform[r][c]->setPrefix(QString(axes[c]) + ":");
+                hlay->addWidget(m_xform[r][c]);
+            }
+            auto* rowWidget = new QWidget;
+            rowWidget->setLayout(hlay);
+            lay->addRow(QString(row_labels[r]) + ":", rowWidget);
+        }
+        auto* apply = new QPushButton("Apply");
+        lay->addRow(apply);
+        m_stack->addWidget(page);
+        connect(apply, &QPushButton::clicked, this, &NodeParamPanel::on_xform_apply);
+    }
+
+    // Page 4: IvarRender
+    {
+        auto* page = new QWidget;
+        auto* lay = new QFormLayout(page);
+        m_spp = new QSpinBox;
+        m_spp->setRange(1, 65536);
+        m_spp->setValue(64);
+        m_spp->setEnabled(false);
+        lay->addRow("SPP:", m_spp);
+        auto* btn = new QPushButton("Render");
+        lay->addRow(btn);
+        m_stack->addWidget(page);
+        connect(btn, &QPushButton::clicked, this, &NodeParamPanel::on_ivar_render_clicked);
+    }
+}
+
+void NodeParamPanel::clear() {
+    m_current_id = -1;
+    m_stack->setCurrentIndex(0);
+}
+
+void NodeParamPanel::show_params_for(int backend_id) {
+    m_current_id = backend_id;
+    QString json = m_state->on_node_graph_get_node_info(backend_id);
+    if (json.isEmpty()) { clear(); return; }
+    QJsonObject obj = QJsonDocument::fromJson(json.toUtf8()).object();
+    QString type = obj.value("type").toString();
+    if (type == "UsdRead") {
+        m_usd_path->setText(obj.value("file_path").toString());
+        m_stack->setCurrentIndex(1);
+    } else if (type == "HdriEnvironment") {
+        m_hdri_path->setText(obj.value("file_path").toString());
+        m_hdri_rotation->setValue(obj.value("rotation").toDouble());
+        m_hdri_intensity->setValue(obj.value("intensity").toDouble());
+        m_stack->setCurrentIndex(2);
+    } else if (type == "Xform") {
+        m_xform[0][0]->setValue(obj.value("tx").toDouble());
+        m_xform[0][1]->setValue(obj.value("ty").toDouble());
+        m_xform[0][2]->setValue(obj.value("tz").toDouble());
+        m_xform[1][0]->setValue(obj.value("rx").toDouble());
+        m_xform[1][1]->setValue(obj.value("ry").toDouble());
+        m_xform[1][2]->setValue(obj.value("rz").toDouble());
+        m_xform[2][0]->setValue(obj.value("sx").toDouble());
+        m_xform[2][1]->setValue(obj.value("sy").toDouble());
+        m_xform[2][2]->setValue(obj.value("sz").toDouble());
+        m_stack->setCurrentIndex(3);
+    } else if (type == "IvarRender") {
+        m_spp->setValue(obj.value("spp").toInt());
+        m_stack->setCurrentIndex(4);
+    } else {
+        clear();
+    }
+}
+
+void NodeParamPanel::on_usd_browse() {
+    QString path = QFileDialog::getOpenFileName(this, "Open USD", QString(),
+        "USD Files (*.usda *.usdc *.usd)");
+    if (path.isEmpty()) return;
+    m_usd_path->setText(path);
+    on_usd_path_changed();
+}
+
+void NodeParamPanel::on_usd_path_changed() {
+    if (m_current_id < 0) return;
+    m_state->on_node_graph_set_usd_read_path(m_current_id, m_usd_path->text());
+}
+
+void NodeParamPanel::on_hdri_browse() {
+    QString path = QFileDialog::getOpenFileName(this, "Open HDRI", QString(),
+        "HDR Images (*.hdr *.exr)");
+    if (path.isEmpty()) return;
+    m_hdri_path->setText(path);
+}
+
+void NodeParamPanel::on_hdri_apply() {
+    if (m_current_id < 0) return;
+    m_state->on_node_graph_load_hdri(
+        m_current_id, m_hdri_path->text(),
+        static_cast<float>(m_hdri_rotation->value()),
+        static_cast<float>(m_hdri_intensity->value()));
+}
+
+void NodeParamPanel::on_xform_apply() {
+    if (m_current_id < 0) return;
+    m_state->on_node_graph_set_xform_params(
+        m_current_id,
+        static_cast<float>(m_xform[0][0]->value()),
+        static_cast<float>(m_xform[0][1]->value()),
+        static_cast<float>(m_xform[0][2]->value()),
+        static_cast<float>(m_xform[1][0]->value()),
+        static_cast<float>(m_xform[1][1]->value()),
+        static_cast<float>(m_xform[1][2]->value()),
+        static_cast<float>(m_xform[2][0]->value()),
+        static_cast<float>(m_xform[2][1]->value()),
+        static_cast<float>(m_xform[2][2]->value()));
+}
+
+void NodeParamPanel::on_ivar_render_clicked() {
+    if (m_current_id < 0) return;
+    m_state->on_start_ivar_render();
+}
 
 // ---------------------------------------------------------------------------
 // BifNodeGraphicsItem
@@ -239,6 +435,25 @@ NodeGraphView::NodeGraphView(QGraphicsScene* scene, QWidget* parent)
         "QGraphicsView { background-color: rgba(26, 29, 33, 255); border: none; }"));
 }
 
+void NodeGraphView::set_nodes(QVector<BifNodeGraphicsItem*>* nodes) {
+    m_nodes = nodes;
+}
+
+NodeGraphView::PinRef NodeGraphView::pin_at(QPointF scene_pos) const {
+    if (!m_nodes) return {};
+    for (auto* node : *m_nodes) {
+        for (int i = 0; i < node->output_count(); ++i) {
+            if (QLineF(node->scene_pin_pos(i, false), scene_pos).length() <= kPinHitRadius)
+                return {node, i, false};
+        }
+        for (int i = 0; i < node->input_count(); ++i) {
+            if (QLineF(node->scene_pin_pos(i, true), scene_pos).length() <= kPinHitRadius)
+                return {node, i, true};
+        }
+    }
+    return {};
+}
+
 void NodeGraphView::wheelEvent(QWheelEvent* event) {
     const double factor = event->angleDelta().y() > 0 ? 1.15 : 1.0 / 1.15;
     scale(factor, factor);
@@ -259,10 +474,63 @@ void NodeGraphView::mousePressEvent(QMouseEvent* event) {
         event->accept();
         return;
     }
+    if (event->button() == Qt::LeftButton) {
+        PinRef hit = pin_at(mapToScene(event->pos()));
+        if (hit.valid() && !hit.is_input) {
+            // Clicked an output pin — start wire drag.
+            m_dragging = true;
+            m_drag_from = hit;
+            QPointF from = hit.node->scene_pin_pos(hit.pin_index, false);
+            auto* wire = new QGraphicsPathItem;
+            wire->setPen(QPen(QColor(120, 135, 155), 2.0, Qt::DashLine, Qt::RoundCap));
+            wire->setZValue(10.0);
+            QPainterPath path;
+            path.moveTo(from);
+            path.lineTo(from);
+            wire->setPath(path);
+            scene()->addItem(wire);
+            m_drag_wire = wire;
+            event->accept();
+            return;
+        }
+    }
     QGraphicsView::mousePressEvent(event);
 }
 
+void NodeGraphView::mouseMoveEvent(QMouseEvent* event) {
+    if (m_dragging && m_drag_wire) {
+        QPointF from = m_drag_from.node->scene_pin_pos(m_drag_from.pin_index, false);
+        QPointF to = mapToScene(event->pos());
+        qreal dx = (to.x() - from.x()) * 0.5;
+        QPainterPath path;
+        path.moveTo(from);
+        path.cubicTo(from + QPointF(dx, 0), to - QPointF(dx, 0), to);
+        m_drag_wire->setPath(path);
+        event->accept();
+        return;
+    }
+    QGraphicsView::mouseMoveEvent(event);
+}
+
 void NodeGraphView::mouseReleaseEvent(QMouseEvent* event) {
+    if (m_dragging) {
+        m_dragging = false;
+        if (m_drag_wire) {
+            scene()->removeItem(m_drag_wire);
+            delete m_drag_wire;
+            m_drag_wire = nullptr;
+        }
+        if (event->button() == Qt::LeftButton) {
+            PinRef hit = pin_at(mapToScene(event->pos()));
+            if (hit.valid() && hit.is_input && hit.node != m_drag_from.node) {
+                emit pinsConnected(
+                    m_drag_from.node->backend_id(), m_drag_from.pin_index,
+                    hit.node->backend_id(), hit.pin_index);
+            }
+        }
+        event->accept();
+        return;
+    }
     if (event->button() == Qt::MiddleButton) {
         QMouseEvent fake(event->type(), event->position(), event->scenePosition(),
                          event->globalPosition(), Qt::LeftButton,
@@ -318,12 +586,8 @@ void NodeGraphView::contextMenuEvent(QContextMenuEvent* event) {
 // ---------------------------------------------------------------------------
 
 NodeGraphWidget::NodeGraphWidget(BifShellState* state, QWidget* parent)
-    : QWidget(parent), m_state(state), m_scene(nullptr), m_view(nullptr) {
+    : QWidget(parent), m_state(state), m_scene(nullptr), m_view(nullptr), m_param_panel(nullptr) {
     setObjectName(QStringLiteral("node_graph_widget"));
-
-    auto* layout = new QVBoxLayout(this);
-    layout->setContentsMargins(0, 0, 0, 0);
-    layout->setSpacing(0);
 
     m_scene = new QGraphicsScene(this);
     m_scene->setSceneRect(-2000, -1200, 4000, 2400);
@@ -334,14 +598,53 @@ NodeGraphWidget::NodeGraphWidget(BifShellState* state, QWidget* parent)
     // overridden on the view itself (wheel doesn't propagate to the
     // wrapping QWidget's wheelEvent).
     m_view = new NodeGraphView(m_scene, this);
-    layout->addWidget(m_view, 1);
+    m_param_panel = new NodeParamPanel(m_state, this);
+
+    auto* hlay = new QHBoxLayout(this);
+    hlay->setContentsMargins(0, 0, 0, 0);
+    hlay->setSpacing(0);
+    hlay->addWidget(m_view, 1);
+    hlay->addWidget(m_param_panel, 0);
+
     connect(m_view, &NodeGraphView::addNodeRequested,
             this, &NodeGraphWidget::add_node_for_type);
     connect(m_view, &NodeGraphView::deleteSelectedNodesRequested,
             this, &NodeGraphWidget::delete_selected_nodes);
+
+    m_view->set_nodes(&m_nodes);
+    connect(m_view, &NodeGraphView::pinsConnected,
+        this, [this](int from_id, int from_pin, int to_id, int to_pin) {
+            if (!m_state) return;
+            bool ok = m_state->on_node_graph_connect_pins(
+                from_id, from_pin, to_id, to_pin);
+            if (ok) {
+                BifNodeGraphicsItem* from_node = node_by_backend_id(from_id);
+                BifNodeGraphicsItem* to_node   = node_by_backend_id(to_id);
+                if (from_node && to_node) {
+                    // Remove any existing wire into (to_node, to_pin) — snarl
+                    // replaces the backend edge on reconnect but the visual wire
+                    // must be removed manually before drawing the new one.
+                    m_wires.removeIf([&](BifNodeWire* w) {
+                        if (w->to_node() == to_node && w->to_pin_index() == to_pin) {
+                            m_scene->removeItem(w);
+                            delete w;
+                            return true;
+                        }
+                        return false;
+                    });
+                    connect_pins(from_node, from_pin, to_node, to_pin);
+                }
+            }
+        });
 }
 
 NodeGraphWidget::~NodeGraphWidget() = default;
+
+BifNodeGraphicsItem* NodeGraphWidget::node_by_backend_id(int id) const {
+    for (auto* n : m_nodes)
+        if (n->backend_id() == id) return n;
+    return nullptr;
+}
 
 int NodeGraphWidget::create_backend_node(const QString& type_name, QPointF scene_pos) {
     if (!m_state) return -1;
@@ -373,6 +676,9 @@ void NodeGraphWidget::on_node_selected(int backend_id) {
     const auto prim_path = m_state->on_node_graph_select_node(backend_id);
     if (!prim_path.isEmpty()) {
         m_state->setStatus_message(QStringLiteral("Node Graph: selected %1").arg(prim_path));
+    }
+    if (m_param_panel) {
+        m_param_panel->show_params_for(backend_id);
     }
 }
 

@@ -16,8 +16,12 @@
 
 #pragma once
 
+#include <QDoubleSpinBox>
 #include <QGraphicsObject>
 #include <QGraphicsPathItem>
+#include <QLineEdit>
+#include <QSpinBox>
+#include <QStackedWidget>
 #include <QVector>
 #include <QWidget>
 
@@ -25,6 +29,38 @@
 
 class QGraphicsScene;
 class BifShellState;
+
+/// Sidebar param panel — one QStackedWidget page per node type.
+class NodeParamPanel : public QWidget {
+    Q_OBJECT
+public:
+    explicit NodeParamPanel(BifShellState* state, QWidget* parent = nullptr);
+    void show_params_for(int backend_id);
+    void clear();
+
+private slots:
+    void on_usd_browse();
+    void on_usd_path_changed();
+    void on_hdri_browse();
+    void on_hdri_apply();
+    void on_xform_apply();
+    void on_ivar_render_clicked();
+
+private:
+    BifShellState* m_state;
+    int m_current_id{-1};
+    QStackedWidget* m_stack;
+    // UsdRead page widgets
+    QLineEdit* m_usd_path;
+    // HdriEnvironment page widgets
+    QLineEdit* m_hdri_path;
+    QDoubleSpinBox* m_hdri_rotation;
+    QDoubleSpinBox* m_hdri_intensity;
+    // Xform page: [row][col] where row 0=T,1=R,2=S and col 0=X,1=Y,2=Z
+    QDoubleSpinBox* m_xform[3][3];
+    // IvarRender page widgets
+    QSpinBox* m_spp;
+};
 
 /// Category colors — composition nodes (USD ingest/export) get a
 /// blue accent, operations (scatter/xform/instance) get orange.
@@ -60,6 +96,9 @@ public:
     void paint(QPainter* painter,
                const QStyleOptionGraphicsItem* option,
                QWidget* widget = nullptr) override;
+
+    int input_count() const { return m_inputs.size(); }
+    int output_count() const { return m_outputs.size(); }
 
     /// Scene-coords of pin `pin_index`. If `is_input` is true, resolves
     /// against `m_inputs`; otherwise `m_outputs`.
@@ -102,6 +141,9 @@ public:
     /// widget when either endpoint node emits `moved()`.
     void refresh();
 
+    BifNodeGraphicsItem* to_node() const { return m_to_node; }
+    int to_pin_index() const { return m_to_pin_index; }
+
 private:
     BifNodeGraphicsItem* m_from_node;
     int m_from_pin_index;
@@ -116,17 +158,35 @@ class NodeGraphView : public QGraphicsView {
     Q_OBJECT
 public:
     explicit NodeGraphView(QGraphicsScene* scene, QWidget* parent = nullptr);
+    void set_nodes(QVector<BifNodeGraphicsItem*>* nodes);
 
 signals:
     void addNodeRequested(const QString& type_name, QPointF scene_pos);
     void deleteSelectedNodesRequested();
+    void pinsConnected(int from_backend_id, int from_pin, int to_backend_id, int to_pin);
 
 protected:
     void wheelEvent(QWheelEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;
+    void mouseMoveEvent(QMouseEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
     void keyPressEvent(QKeyEvent* event) override;
     void contextMenuEvent(QContextMenuEvent* event) override;
+
+private:
+    struct PinRef {
+        BifNodeGraphicsItem* node{nullptr};
+        int pin_index{-1};
+        bool is_input{false};
+        bool valid() const { return node != nullptr; }
+    };
+    PinRef pin_at(QPointF scene_pos) const;
+    static constexpr qreal kPinHitRadius = 8.0;
+
+    QVector<BifNodeGraphicsItem*>* m_nodes{nullptr};
+    bool m_dragging{false};
+    PinRef m_drag_from;
+    QGraphicsPathItem* m_drag_wire{nullptr};
 };
 
 class NodeGraphWidget : public QWidget {
@@ -148,10 +208,12 @@ private:
                                   QPointF scene_pos);
     BifNodeWire* connect_pins(BifNodeGraphicsItem* from, int from_pin,
                               BifNodeGraphicsItem* to, int to_pin);
+    BifNodeGraphicsItem* node_by_backend_id(int id) const;
 
     BifShellState* m_state;
     QGraphicsScene* m_scene;
     NodeGraphView* m_view;
+    NodeParamPanel* m_param_panel;
     QVector<BifNodeGraphicsItem*> m_nodes;
     QVector<BifNodeWire*> m_wires;
 };

@@ -6,6 +6,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **Qt node graph basic usability** (`audit/node-graph-22`). Added param panel sidebar + wire drag-connect making UsdRead, HdriEnvironment, Xform, and IvarRender nodes functionally usable. Rust layer: `node_graph_get_node_info()` (JSON node state), `node_graph_set_usd_read_path`, `node_graph_load_hdri`, `node_graph_set_xform_params`, `node_graph_connect_pins` (pin-type-compatible wires only) in `bif_viewport/src/lib.rs`. cxx-qt bridge: 5 `on_node_graph_*` fns in `main_window.rs`. C++ layer: `NodeParamPanel` (`QStackedWidget` with 4 node-type pages) + bezier wire drag-connect in `NodeGraphView` (`node_graph_widget.h/.cpp`). SPP spinbox disabled (no bridge yet). `scene_graph_dirty` set on `connect_pins`.
+
 ### Changed
 
 - **Node output bookkeeping — `NodeOutputs` merge ([#6](https://github.com/byvfx/bif/issues/6) phase 1)**. Collapsed the two desync-prone parallel per-node maps (`node_proto_map: HashMap<GraphNodeId, Vec<usize>>` + `node_cloud_map: HashMap<GraphNodeId, usize>`) in `NodeGraphContext` into one keyed `NodeOutputs { proto_ids, cloud_id }` (`bif_viewport/src/node_graph/node_outputs.rs`). ~23 access sites across `lib.rs`, `node_dispatch.rs`, `scene_loader.rs`, `render.rs`, `scene_browser.rs` migrated to the merged map; `build_scene_graph_cache` now takes one map and builds both reverse lookups in a single pass. Behavior-preserving (179 `bif_viewport` tests green, incl. updated source-node-tagging tests) + 2 new `NodeOutputs` unit tests. First step of the issue #6 node-deepening RFC — `SceneCmd` + `behavior.rs` extraction follow in phases 2–3. Merged via PR #8.

@@ -1,3 +1,6 @@
+// cxx-qt extern blocks forbid #[allow] attributes; suppress the
+// too_many_arguments lint for the whole file (set_xform_params has 9 floats).
+#![allow(clippy::too_many_arguments)]
 // First real #[cxx_qt::bridge] in BIF.
 //
 // Phase A scope: minimal cxx-qt bridge that compiles against Qt 6.8.3
@@ -511,6 +514,49 @@ pub mod qobject {
 
         #[qinvokable]
         fn on_node_graph_delete_node(self: Pin<&mut BifShellState>, node_id: i32) -> bool;
+
+        #[qinvokable]
+        fn on_node_graph_get_node_info(self: Pin<&mut BifShellState>, node_id: i32) -> QString;
+
+        #[qinvokable]
+        fn on_node_graph_set_usd_read_path(
+            self: Pin<&mut BifShellState>,
+            node_id: i32,
+            path: QString,
+        ) -> bool;
+
+        #[qinvokable]
+        fn on_node_graph_load_hdri(
+            self: Pin<&mut BifShellState>,
+            node_id: i32,
+            path: QString,
+            rotation: f32,
+            intensity: f32,
+        ) -> bool;
+
+        #[qinvokable]
+        fn on_node_graph_set_xform_params(
+            self: Pin<&mut BifShellState>,
+            node_id: i32,
+            tx: f32,
+            ty: f32,
+            tz: f32,
+            rx: f32,
+            ry: f32,
+            rz: f32,
+            sx: f32,
+            sy: f32,
+            sz: f32,
+        ) -> bool;
+
+        #[qinvokable]
+        fn on_node_graph_connect_pins(
+            self: Pin<&mut BifShellState>,
+            from_id: i32,
+            from_pin: i32,
+            to_id: i32,
+            to_pin: i32,
+        ) -> bool;
 
         #[qinvokable]
         fn on_node_graph_select_node(self: Pin<&mut BifShellState>, node_id: i32) -> QString;
@@ -2079,6 +2125,102 @@ impl qobject::BifShellState {
                 )));
         }
         deleted
+    }
+
+    fn on_node_graph_get_node_info(self: Pin<&mut Self>, node_id: i32) -> cxx_qt_lib::QString {
+        if node_id < 0 {
+            return cxx_qt_lib::QString::default();
+        }
+        let graph_id = bif_viewport::GraphNodeId(node_id as u64);
+        let result = with_viewport_mut(|vp| vp.renderer_mut().node_graph_get_node_info(graph_id))
+            .flatten()
+            .unwrap_or_default();
+        cxx_qt_lib::QString::from(&result)
+    }
+
+    fn on_node_graph_set_usd_read_path(
+        self: Pin<&mut Self>,
+        node_id: i32,
+        path: cxx_qt_lib::QString,
+    ) -> bool {
+        if node_id < 0 {
+            return false;
+        }
+        let graph_id = bif_viewport::GraphNodeId(node_id as u64);
+        with_viewport_mut(|vp| {
+            vp.renderer_mut()
+                .node_graph_set_usd_read_path(graph_id, path.to_string())
+        })
+        .unwrap_or(false)
+    }
+
+    fn on_node_graph_load_hdri(
+        self: Pin<&mut Self>,
+        node_id: i32,
+        path: cxx_qt_lib::QString,
+        rotation: f32,
+        intensity: f32,
+    ) -> bool {
+        if node_id < 0 {
+            return false;
+        }
+        let graph_id = bif_viewport::GraphNodeId(node_id as u64);
+        with_viewport_mut(|vp| {
+            vp.renderer_mut()
+                .node_graph_load_hdri(graph_id, path.to_string(), rotation, intensity)
+        })
+        .unwrap_or(false)
+    }
+
+    fn on_node_graph_set_xform_params(
+        self: Pin<&mut Self>,
+        node_id: i32,
+        tx: f32,
+        ty: f32,
+        tz: f32,
+        rx: f32,
+        ry: f32,
+        rz: f32,
+        sx: f32,
+        sy: f32,
+        sz: f32,
+    ) -> bool {
+        if node_id < 0 {
+            return false;
+        }
+        let graph_id = bif_viewport::GraphNodeId(node_id as u64);
+        with_viewport_mut(|vp| {
+            vp.renderer_mut()
+                .node_graph_set_xform_params(graph_id, tx, ty, tz, rx, ry, rz, sx, sy, sz)
+        })
+        .unwrap_or(false)
+    }
+
+    fn on_node_graph_connect_pins(
+        mut self: Pin<&mut Self>,
+        from_id: i32,
+        from_pin: i32,
+        to_id: i32,
+        to_pin: i32,
+    ) -> bool {
+        if from_id < 0 || to_id < 0 || from_pin < 0 || to_pin < 0 {
+            return false;
+        }
+        let from_gid = bif_viewport::GraphNodeId(from_id as u64);
+        let to_gid = bif_viewport::GraphNodeId(to_id as u64);
+        let connected = with_viewport_mut(|vp| {
+            let renderer = vp.renderer_mut();
+            let ok = renderer.node_graph_connect_pins(from_gid, from_pin, to_gid, to_pin);
+            if ok {
+                renderer.flush_node_graph();
+            }
+            ok
+        })
+        .unwrap_or(false);
+        if connected {
+            bump_scene_browser_revision(self.as_mut());
+        }
+        connected
     }
 
     fn on_node_graph_select_node(mut self: Pin<&mut Self>, node_id: i32) -> cxx_qt_lib::QString {

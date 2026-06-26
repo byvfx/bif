@@ -550,6 +550,116 @@ impl Renderer {
         prim_path
     }
 
+    /// Set the USD file path on a UsdRead node, resetting its load state.
+    /// Returns `false` if `node_id` doesn't exist or isn't a UsdRead node.
+    pub fn node_graph_set_usd_read_path(
+        &mut self,
+        node_id: node_graph::GraphNodeId,
+        path: String,
+    ) -> bool {
+        if snarl_set_usd_read_path(&mut self.nodes.node_graph_state.snarl, node_id, &path) {
+            self.nodes.scene_graph_dirty = true;
+            self.project.mark_dirty();
+            self.handle_node_graph_event(node_graph::NodeGraphEvent::LoadUsdFile { path, node_id });
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Update an HdriEnvironment node's path, rotation, and intensity.
+    /// Returns `false` if `node_id` doesn't exist or isn't an HdriEnvironment node.
+    pub fn node_graph_load_hdri(
+        &mut self,
+        node_id: node_graph::GraphNodeId,
+        path: String,
+        rotation: f32,
+        intensity: f32,
+    ) -> bool {
+        if let Some(show_bg) = snarl_load_hdri(
+            &mut self.nodes.node_graph_state.snarl,
+            node_id,
+            &path,
+            rotation,
+            intensity,
+        ) {
+            self.nodes.scene_graph_dirty = true;
+            self.project.mark_dirty();
+            self.handle_node_graph_event(node_graph::NodeGraphEvent::LoadHdri {
+                path,
+                rotation,
+                intensity,
+                show_background: show_bg,
+            });
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Set T/R/S parameters on an Xform node and mark it unapplied.
+    /// Returns `false` if `node_id` doesn't exist or isn't an Xform node.
+    #[allow(clippy::too_many_arguments)]
+    pub fn node_graph_set_xform_params(
+        &mut self,
+        node_id: node_graph::GraphNodeId,
+        tx: f32,
+        ty: f32,
+        tz: f32,
+        rx: f32,
+        ry: f32,
+        rz: f32,
+        sx: f32,
+        sy: f32,
+        sz: f32,
+    ) -> bool {
+        if snarl_set_xform_params(
+            &mut self.nodes.node_graph_state.snarl,
+            node_id,
+            tx,
+            ty,
+            tz,
+            rx,
+            ry,
+            rz,
+            sx,
+            sy,
+            sz,
+        ) {
+            self.nodes.scene_graph_dirty = true;
+            self.project.mark_dirty();
+            self.handle_node_graph_event(node_graph::NodeGraphEvent::XformChanged { node_id });
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Connect an output pin of one node to an input pin of another.
+    /// Returns `false` if either node doesn't exist, either pin index is
+    /// out of range, or the pin types are incompatible.
+    pub fn node_graph_connect_pins(
+        &mut self,
+        from_id: node_graph::GraphNodeId,
+        from_pin: i32,
+        to_id: node_graph::GraphNodeId,
+        to_pin: i32,
+    ) -> bool {
+        if snarl_connect_pins(
+            &mut self.nodes.node_graph_state.snarl,
+            from_id,
+            from_pin,
+            to_id,
+            to_pin,
+        ) {
+            self.nodes.scene_graph_dirty = true;
+            self.project.mark_dirty();
+            true
+        } else {
+            false
+        }
+    }
+
     /// Create a new renderer from caller-provided wgpu primitives.
     ///
     /// `bif_viewer` (winit) and `bif_qt` (Qt / raw HWND) each build their own
@@ -2575,6 +2685,16 @@ impl Renderer {
         }
     }
 
+    /// Return a JSON string summarising the node's key fields, or `None` if the
+    /// node doesn't exist or its type isn't covered.
+    pub fn node_graph_get_node_info(&self, node_id: node_graph::GraphNodeId) -> Option<String> {
+        snarl_get_node_info(&self.nodes.node_graph_state.snarl, node_id)
+    }
+
+    fn json_str(s: &str) -> String {
+        serde_json::to_string(s).unwrap_or_else(|_| "\"\"".to_string())
+    }
+
     /// Show "Save changes?" dialog if dirty. Returns action to take.
     pub fn prompt_unsaved_changes(&self, action: &str) -> persistence::SavePromptResult {
         if !self.project.dirty {
@@ -2609,5 +2729,403 @@ impl Renderer {
             persistence::SavePromptResult::Discard => true,
             persistence::SavePromptResult::Cancel => false,
         }
+    }
+}
+
+// ── node-graph snarl helpers ─────────────────────────────────────────────────
+// Shared by `Renderer::node_graph_*` and the headless `TestHarness` so the
+// core snarl mutation logic has exactly one implementation; callers add dirty
+// flags and event dispatch on top.
+
+fn snarl_get_node_info(
+    snarl: &egui_snarl::Snarl<node_graph::SceneNode>,
+    node_id: node_graph::GraphNodeId,
+) -> Option<String> {
+    let snarl_id: egui_snarl::NodeId = node_id.into();
+    if !snarl.node_ids().any(|(id, _)| id == snarl_id) {
+        return None;
+    }
+    let json = match &snarl[snarl_id] {
+        node_graph::SceneNode::UsdRead {
+            file_path,
+            is_loaded,
+            ..
+        } => format!(
+            r#"{{"type":"UsdRead","file_path":{},"is_loaded":{}}}"#,
+            Renderer::json_str(file_path),
+            is_loaded
+        ),
+        node_graph::SceneNode::HdriEnvironment {
+            file_path,
+            rotation,
+            intensity,
+            show_background,
+            ..
+        } => format!(
+            r#"{{"type":"HdriEnvironment","file_path":{},"rotation":{},"intensity":{},"show_background":{}}}"#,
+            Renderer::json_str(file_path),
+            rotation,
+            intensity,
+            show_background
+        ),
+        node_graph::SceneNode::Xform {
+            translate,
+            rotate,
+            scale,
+            ..
+        } => format!(
+            r#"{{"type":"Xform","tx":{},"ty":{},"tz":{},"rx":{},"ry":{},"rz":{},"sx":{},"sy":{},"sz":{}}}"#,
+            translate[0],
+            translate[1],
+            translate[2],
+            rotate[0],
+            rotate[1],
+            rotate[2],
+            scale[0],
+            scale[1],
+            scale[2]
+        ),
+        node_graph::SceneNode::IvarRender { spp, .. } => {
+            format!(r#"{{"type":"IvarRender","spp":{}}}"#, spp)
+        }
+        _ => return None,
+    };
+    Some(json)
+}
+
+fn snarl_set_usd_read_path(
+    snarl: &mut egui_snarl::Snarl<node_graph::SceneNode>,
+    node_id: node_graph::GraphNodeId,
+    path: &str,
+) -> bool {
+    let snarl_id: egui_snarl::NodeId = node_id.into();
+    if !snarl.node_ids().any(|(id, _)| id == snarl_id) {
+        return false;
+    }
+    let node_graph::SceneNode::UsdRead {
+        file_path,
+        is_loaded,
+        error,
+    } = &mut snarl[snarl_id]
+    else {
+        return false;
+    };
+    *file_path = path.to_owned();
+    *is_loaded = false;
+    *error = None;
+    true
+}
+
+fn snarl_load_hdri(
+    snarl: &mut egui_snarl::Snarl<node_graph::SceneNode>,
+    node_id: node_graph::GraphNodeId,
+    path: &str,
+    rotation: f32,
+    intensity: f32,
+) -> Option<bool> {
+    let snarl_id: egui_snarl::NodeId = node_id.into();
+    if !snarl.node_ids().any(|(id, _)| id == snarl_id) {
+        return None;
+    }
+    let node_graph::SceneNode::HdriEnvironment {
+        file_path,
+        rotation: r,
+        intensity: i,
+        show_background,
+        ..
+    } = &mut snarl[snarl_id]
+    else {
+        return None;
+    };
+    *file_path = path.to_owned();
+    *r = rotation;
+    *i = intensity;
+    Some(*show_background)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn snarl_set_xform_params(
+    snarl: &mut egui_snarl::Snarl<node_graph::SceneNode>,
+    node_id: node_graph::GraphNodeId,
+    tx: f32,
+    ty: f32,
+    tz: f32,
+    rx: f32,
+    ry: f32,
+    rz: f32,
+    sx: f32,
+    sy: f32,
+    sz: f32,
+) -> bool {
+    let snarl_id: egui_snarl::NodeId = node_id.into();
+    if !snarl.node_ids().any(|(id, _)| id == snarl_id) {
+        return false;
+    }
+    let node_graph::SceneNode::Xform {
+        translate,
+        rotate,
+        scale,
+        is_applied,
+        ..
+    } = &mut snarl[snarl_id]
+    else {
+        return false;
+    };
+    *translate = [tx, ty, tz];
+    *rotate = [rx, ry, rz];
+    *scale = [sx, sy, sz];
+    *is_applied = false;
+    true
+}
+
+fn snarl_connect_pins(
+    snarl: &mut egui_snarl::Snarl<node_graph::SceneNode>,
+    from_id: node_graph::GraphNodeId,
+    from_pin: i32,
+    to_id: node_graph::GraphNodeId,
+    to_pin: i32,
+) -> bool {
+    use egui_snarl::{InPinId, OutPinId};
+    if from_pin < 0 || to_pin < 0 {
+        return false;
+    }
+    let from_snarl: egui_snarl::NodeId = from_id.into();
+    let to_snarl: egui_snarl::NodeId = to_id.into();
+    if !snarl.node_ids().any(|(id, _)| id == from_snarl)
+        || !snarl.node_ids().any(|(id, _)| id == to_snarl)
+    {
+        return false;
+    }
+    let from_type = snarl[from_snarl]
+        .output_pin(from_pin as usize)
+        .map(|(_, t)| t);
+    let to_type = snarl[to_snarl].input_pin(to_pin as usize).map(|(_, t)| t);
+    if from_type.is_none() || to_type.is_none() || from_type != to_type {
+        return false;
+    }
+    snarl.connect(
+        OutPinId {
+            node: from_snarl,
+            output: from_pin as usize,
+        },
+        InPinId {
+            node: to_snarl,
+            input: to_pin as usize,
+        },
+    );
+    true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::node_graph::{GraphNodeId, NodeGraphState};
+
+    /// Lightweight headless harness — no GPU required.
+    /// Delegates snarl mutations to the same module-level helpers as
+    /// `Renderer::node_graph_*`, so tests exercise the shared implementation.
+    /// Dirty flags mirror what the real Renderer sets; event dispatch is omitted
+    /// (it requires a full Renderer).
+    struct TestHarness {
+        state: NodeGraphState,
+        scene_graph_dirty: bool,
+        project_dirty: bool,
+    }
+
+    fn make_test_state() -> TestHarness {
+        TestHarness {
+            state: NodeGraphState::new(),
+            scene_graph_dirty: false,
+            project_dirty: false,
+        }
+    }
+
+    impl TestHarness {
+        fn node_graph_add_node(&mut self, type_name: &str, x: f32, y: f32) -> Option<GraphNodeId> {
+            let pos = egui::pos2(x, y);
+            let node_id = match type_name {
+                "UsdRead" => self.state.add_usd_read(pos),
+                "HdriEnvironment" => self.state.add_hdri_environment(pos),
+                "IvarRender" => self.state.add_ivar_render(pos),
+                "Xform" => self.state.add_xform(pos),
+                _ => return None,
+            };
+            Some(GraphNodeId::from(node_id))
+        }
+
+        fn node_graph_get_node_info(&self, node_id: GraphNodeId) -> Option<String> {
+            snarl_get_node_info(&self.state.snarl, node_id)
+        }
+
+        fn node_graph_set_usd_read_path(&mut self, node_id: GraphNodeId, path: String) -> bool {
+            let ok = snarl_set_usd_read_path(&mut self.state.snarl, node_id, &path);
+            if ok {
+                self.scene_graph_dirty = true;
+                self.project_dirty = true;
+            }
+            ok
+        }
+
+        fn node_graph_set_xform_params(
+            &mut self,
+            node_id: GraphNodeId,
+            tx: f32,
+            ty: f32,
+            tz: f32,
+            rx: f32,
+            ry: f32,
+            rz: f32,
+            sx: f32,
+            sy: f32,
+            sz: f32,
+        ) -> bool {
+            let ok = snarl_set_xform_params(
+                &mut self.state.snarl,
+                node_id,
+                tx,
+                ty,
+                tz,
+                rx,
+                ry,
+                rz,
+                sx,
+                sy,
+                sz,
+            );
+            if ok {
+                self.scene_graph_dirty = true;
+                self.project_dirty = true;
+            }
+            ok
+        }
+
+        fn node_graph_connect_pins(
+            &mut self,
+            from_id: GraphNodeId,
+            from_pin: i32,
+            to_id: GraphNodeId,
+            to_pin: i32,
+        ) -> bool {
+            let ok = snarl_connect_pins(&mut self.state.snarl, from_id, from_pin, to_id, to_pin);
+            if ok {
+                self.scene_graph_dirty = true;
+                self.project_dirty = true;
+            }
+            ok
+        }
+    }
+
+    #[test]
+    fn node_graph_get_node_info_usd_read() {
+        let mut state = make_test_state();
+        let id = state.node_graph_add_node("UsdRead", 0.0, 0.0).unwrap();
+        let info = state.node_graph_get_node_info(id).unwrap();
+        assert!(info.contains("\"type\":\"UsdRead\""));
+        assert!(info.contains("\"file_path\":\"\""));
+        assert!(info.contains("\"is_loaded\":false"));
+    }
+
+    #[test]
+    fn node_graph_get_node_info_unknown_id_returns_none() {
+        let state = make_test_state();
+        assert!(state.node_graph_get_node_info(GraphNodeId(9999)).is_none());
+    }
+
+    #[test]
+    fn node_graph_set_usd_read_path_updates_node() {
+        let mut state = make_test_state();
+        let id = state.node_graph_add_node("UsdRead", 0.0, 0.0).unwrap();
+        let ok = state.node_graph_set_usd_read_path(id, "/tmp/test.usda".to_string());
+        assert!(ok);
+        let info = state.node_graph_get_node_info(id).unwrap();
+        assert!(info.contains("/tmp/test.usda"));
+        assert!(info.contains("\"is_loaded\":false"));
+    }
+
+    #[test]
+    fn node_graph_connect_pins_compatible() {
+        let mut state = make_test_state();
+        let usd = state.node_graph_add_node("UsdRead", 0.0, 0.0).unwrap();
+        let xform = state.node_graph_add_node("Xform", 200.0, 0.0).unwrap();
+        // UsdRead output[0] → Xform input[0]: both PinType::Scene
+        assert!(state.node_graph_connect_pins(usd, 0, xform, 0));
+    }
+
+    #[test]
+    fn node_graph_connect_pins_bad_id_returns_false() {
+        let mut state = make_test_state();
+        assert!(!state.node_graph_connect_pins(GraphNodeId(9999), 0, GraphNodeId(9998), 0));
+    }
+
+    #[test]
+    fn node_graph_set_usd_read_path_marks_dirty() {
+        let mut state = make_test_state();
+        let id = state.node_graph_add_node("UsdRead", 0.0, 0.0).unwrap();
+        assert!(!state.scene_graph_dirty && !state.project_dirty);
+        state.node_graph_set_usd_read_path(id, "/scene.usda".to_string());
+        assert!(
+            state.scene_graph_dirty,
+            "scene_graph_dirty must be set after path change"
+        );
+        assert!(
+            state.project_dirty,
+            "project_dirty must be set after path change"
+        );
+    }
+
+    #[test]
+    fn node_graph_set_xform_params_marks_dirty() {
+        let mut state = make_test_state();
+        let id = state.node_graph_add_node("Xform", 0.0, 0.0).unwrap();
+        assert!(!state.scene_graph_dirty);
+        state.node_graph_set_xform_params(id, 1.0, 2.0, 3.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0);
+        assert!(
+            state.scene_graph_dirty,
+            "scene_graph_dirty must be set after xform change"
+        );
+        assert!(
+            state.project_dirty,
+            "project_dirty must be set after xform change"
+        );
+    }
+
+    #[test]
+    fn node_graph_connect_pins_marks_dirty() {
+        let mut state = make_test_state();
+        let usd = state.node_graph_add_node("UsdRead", 0.0, 0.0).unwrap();
+        let xform = state.node_graph_add_node("Xform", 200.0, 0.0).unwrap();
+        assert!(!state.scene_graph_dirty);
+        assert!(state.node_graph_connect_pins(usd, 0, xform, 0));
+        assert!(
+            state.scene_graph_dirty,
+            "scene_graph_dirty must be set after connect"
+        );
+        assert!(
+            state.project_dirty,
+            "project_dirty must be set after connect"
+        );
+    }
+
+    #[test]
+    fn node_graph_connect_pins_negative_pin_returns_false() {
+        let mut state = make_test_state();
+        let usd = state.node_graph_add_node("UsdRead", 0.0, 0.0).unwrap();
+        let xform = state.node_graph_add_node("Xform", 200.0, 0.0).unwrap();
+        assert!(!state.node_graph_connect_pins(usd, -1, xform, 0));
+        assert!(!state.node_graph_connect_pins(usd, 0, xform, -1));
+        assert!(
+            !state.scene_graph_dirty,
+            "dirty must not be set on rejected connect"
+        );
+    }
+
+    #[test]
+    fn json_str_escapes_control_chars() {
+        // A raw newline in a file path must be JSON-escaped, not embedded verbatim.
+        let s = Renderer::json_str("path/with\nnewline");
+        assert!(
+            !s.chars().any(|c| c == '\n'),
+            "raw newline must not appear in JSON string"
+        );
     }
 }
