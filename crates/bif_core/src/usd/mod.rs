@@ -36,6 +36,7 @@ pub mod cpp_bridge;
 pub mod displacement;
 pub mod edit_history;
 pub mod export;
+pub mod ffi;
 pub(crate) mod ffi_convert;
 pub(crate) mod ffi_guard;
 pub(crate) mod ffi_raw;
