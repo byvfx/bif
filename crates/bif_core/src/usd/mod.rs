@@ -36,7 +36,7 @@ pub mod cpp_bridge;
 pub mod displacement;
 pub mod edit_history;
 pub mod export;
-pub mod ffi;
+pub(crate) mod ffi;
 pub(crate) mod ffi_convert;
 pub(crate) mod ffi_guard;
 pub(crate) mod ffi_raw;
@@ -48,10 +48,12 @@ pub mod validate;
 pub use cpp_bridge::{
     BoundMaterialInput, CameraProperties, CurveBasis, CurveType, CurveWrap, MeshPurpose,
     NormalsInterpolation, PrimvarInterpolation, PrimvarType, SubdivisionScheme, TransformSample,
-    UsdAnimatedInstancerData, UsdAnimatedMeshData, UsdAttributeData, UsdBridgeError, UsdCurvesData,
-    UsdEditLayer, UsdInstancerData, UsdKind, UsdLightData, UsdLightShaping, UsdLightType,
-    UsdMeshData, UsdNativeInstance, UsdPointsData, UsdPrimType, UsdPrimvarData, UsdSkeletonData,
-    UsdSkinBindingData, UsdSpecifier, UsdStage, UsdTimelineData, UsdVolumeData,
+    UpAxis, UsdAnimatedInstancerData, UsdAnimatedMeshData, UsdAttributeData, UsdBlendShapeBinding,
+    UsdBlendShapeTarget, UsdBridgeError, UsdCollectionInfo, UsdCurvesData, UsdEditLayer,
+    UsdInstancerData, UsdKind, UsdLightData, UsdLightShaping, UsdLightType, UsdMeshData,
+    UsdNativeInstance, UsdPointsData, UsdPrimInfo, UsdPrimType, UsdPrimvarData,
+    UsdRelationshipData, UsdSkeletonData, UsdSkinBindingData, UsdSpecifier, UsdStage,
+    UsdStageMetadata, UsdTimelineData, UsdVolumeData,
 };
 pub use edit_history::{AttrSlot, EditHistory, EditOperation, OpinionKey, ShaderValue, UndoFrame};
 pub use export::{AuthoredPrim, ExportConfig, ExportResult};

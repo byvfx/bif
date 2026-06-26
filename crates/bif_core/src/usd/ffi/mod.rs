@@ -27,6 +27,9 @@ pub(super) use super::ffi_convert::{
     convert_layer_stack_ptr, convert_prim_stack_ptr, payload_policy_to_raw,
 };
 pub(super) use super::ffi_raw::*;
+// Keep in sync with usd/mod.rs `pub use layer::` — these layer types are needed by ffi
+// sub-files via `use super::*`. Three locations must agree when layer.rs types change:
+// layer.rs definitions, here, and usd/mod.rs `pub use layer::{...}`.
 pub(super) use super::layer::{
     EditTarget, LayerOffset, LayerStack, OpinionSource, PayloadPolicy, PrimStackEntry,
 };

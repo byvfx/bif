@@ -6,7 +6,7 @@
 //! the process via the global allocator. These helpers bound-check counts at
 //! the FFI boundary and return `UsdBridgeError::AllocTooLarge` instead.
 
-use super::cpp_bridge::{UsdBridgeError, UsdBridgeResult};
+use super::ffi::{UsdBridgeError, UsdBridgeResult};
 
 /// Maximum bytes a single FFI-driven allocation may request. 4 GiB is generous
 /// for any single attribute we currently surface (largest realistic case is

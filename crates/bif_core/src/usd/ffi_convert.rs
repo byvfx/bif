@@ -17,7 +17,7 @@ use std::path::PathBuf;
 
 use bif_math::{Mat4, Vec3};
 
-use super::cpp_bridge::{
+use super::ffi::{
     CameraProperties, CurveBasis, CurveType, CurveWrap, MeshPurpose, NormalsInterpolation,
     PrimvarInterpolation, PrimvarType, SubdivisionScheme, TransformSample, UpAxis,
     UsdAnimatedInstancerData, UsdAnimatedMeshData, UsdBlendShapeBinding, UsdBlendShapeTarget,

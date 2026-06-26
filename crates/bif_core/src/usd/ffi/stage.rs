@@ -125,6 +125,8 @@ impl UsdStage {
     /// Unload a prim's payload to free memory.
     pub fn unload_payload(&self, prim_path: &str) -> UsdBridgeResult<()> {
         let c_path = cstr(prim_path)?;
+        // SAFETY: same as load_payload — mutates C++ state through a const pointer; caller must
+        // hold the Arc<Mutex<UsdStage>> guard to ensure exclusive access.
         let code = unsafe { usd_bridge_unload_payload(self.raw as *mut _, c_path.as_ptr()) };
         if code != UsdBridgeErrorCode::Success {
             return Err(code.into());
