@@ -3,7 +3,7 @@ title: cxx-qt bridge patterns
 type: article
 tags: [architecture, qt, cxx-qt, ffi, v0.15]
 created: 2026-04-16
-updated: 2026-04-16
+updated: 2026-06-25
 ---
 
 # cxx-qt bridge patterns
@@ -58,6 +58,25 @@ When implementing a trait on an FFI type that already has an inherent method of 
 ## Pixel coords
 
 `RenderWidget` emits physical pixels in `resized(pixelWidth(), pixelHeight())` and `primPickRequested(x * dpr, y * dpr)` — DPR conversion happens at the event source, Rust invokables stay DPR-agnostic. See [[../concepts/hidpi-dpr-threading|HiDPI DPR threading]].
+
+## Flush pattern after structural graph changes
+
+After any invokable that mutates the node graph topology (connect, delete, param change), call `flush_node_graph()` + `bump_scene_browser_revision()` so the viewport and scene browser both update:
+
+```rust
+fn on_node_graph_connect_pins(mut self: Pin<&mut Self>, ...) -> bool {
+    let connected = with_viewport_mut(|vp| {
+        let renderer = vp.renderer_mut();
+        let ok = renderer.node_graph_connect_pins(from_gid, from_pin, to_gid, to_pin);
+        if ok { renderer.flush_node_graph(); }
+        ok
+    }).unwrap_or(false);
+    if connected { bump_scene_browser_revision(self.as_mut()); }
+    connected
+}
+```
+
+`flush_node_graph()` is a `Renderer` method that triggers scene re-evaluation; `bump_scene_browser_revision` bumps the monotonic revision qproperty so the scene browser tree repopulates. Both must run or the UI goes stale silently.
 
 ## See also
 

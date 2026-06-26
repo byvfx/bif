@@ -3,7 +3,7 @@ title: "Node Graph System"
 type: article
 tags: [architecture]
 created: "2026-04-05"
-updated: "2026-05-01"
+updated: "2026-06-25"
 sources: [ARCHITECTURE.md, ARCHITECTURE_REVIEW.md, ARCHITECTURE_REFACTORS.md]
 ---
 
@@ -13,7 +13,10 @@ BIF uses a node-based workflow built on **egui-snarl**, an immediate-mode node g
 
 ## Overview
 
-The node graph lives in `crates/bif_viewport/src/node_graph/`. It uses a `SceneNode` enum with 10 variants (one per node type), evaluated via dirty propagation. The `SceneNodeViewer` struct implements snarl's `SnarlViewer<SceneNode>` trait to render nodes in the egui UI.
+The node graph has two layers:
+
+- **Backend (data model):** `crates/bif_viewport/src/node_graph/` — `SceneNode` enum with 10 variants, stored in an `egui_snarl::Snarl<SceneNode>`. The snarl is now purely a data structure; egui renders nothing in production.
+- **Frontend (UI):** `crates/bif_qt/cpp/node_graph_widget.h/.cpp` — a `QGraphicsView`-based widget that draws nodes and bezier wires. It calls into the Rust backend via 5 cxx-qt bridge invokables on `BifShellState`.
 
 ## Node Types
 
@@ -107,6 +110,41 @@ Per the [[003-hybrid-usd-workflow|ADR 003: Hybrid USD Workflow]], nodes will be 
 
 This classification matters for layer-aware evaluation ordering: composition nodes must evaluate before operation nodes.
 
+## Qt Node Graph Widget (landed v0.17, PR #23)
+
+### NodeParamPanel sidebar
+
+A `QStackedWidget` next to the graph view with one page per node type. Clicking a node calls `on_node_graph_select_node` → `node_graph_get_node_info` (returns JSON) → the C++ panel parses the JSON and switches to the matching page. Four node types have live pages: UsdRead (file path + browse), HdriEnvironment (path + rotation + intensity spinboxes), Xform (3×3 T/R/S spinboxes), IvarRender (Render button). SPP spinbox is present but disabled — no bridge yet.
+
+### Wire drag-connect
+
+`NodeGraphView` tracks a `PinRef m_drag_from` during mouse drag. On `mouseReleaseEvent`, if the cursor lands within `kPinHitRadius` (8px) of a compatible pin on another node, it emits `pinsConnected(from_backend_id, from_pin, to_backend_id, to_pin)`. The `NodeGraphWidget` lambda calls `on_node_graph_connect_pins` which calls `snarl_connect_pins` (pin-type check), sets `scene_graph_dirty`, marks the project dirty, calls `flush_node_graph()`, and bumps the scene browser revision. Duplicate wires on the same input pin are removed before connecting (stale-wire cleanup in C++).
+
+### Bridge invokables (bif_viewport/src/lib.rs)
+
+All five are thin wrappers: call a shared `snarl_*` helper → if success, set dirty flags + dispatch event.
+
+| Invokable | snarl helper | Event dispatched |
+|-----------|-------------|-----------------|
+| `node_graph_get_node_info` | `snarl_get_node_info` | — (read-only) |
+| `node_graph_set_usd_read_path` | `snarl_set_usd_read_path` | `LoadUsdFile` |
+| `node_graph_load_hdri` | `snarl_load_hdri` | `LoadHdri` |
+| `node_graph_set_xform_params` | `snarl_set_xform_params` | `XformChanged` |
+| `node_graph_connect_pins` | `snarl_connect_pins` | — |
+
+### Snarl helper pattern (testability)
+
+The 5 `snarl_*` helpers are private module-level functions in `lib.rs` that operate only on `&mut Snarl<SceneNode>` (no GPU, no project state). The headless `TestHarness` in tests delegates to the same helpers and tracks `scene_graph_dirty`/`project_dirty` flags. This ensures tests exercise the shared mutation logic rather than a separate re-implementation, while keeping the test binary GPU-free. Event dispatch (`handle_node_graph_event`) is not covered by unit tests — it requires a full `Renderer`.
+
+### Adding a new node type — Qt bridge checklist
+
+After the standard backend checklist (see above), also:
+
+1. Add a `node_graph_set_<node>_params` bridge fn in `lib.rs` delegating to a new `snarl_set_<node>_params` helper.
+2. Add the bridge fn to `cxx-qt extern "RustQt"` in `main_window.rs` + implement via `with_viewport_mut` + `flush_node_graph` + `bump_scene_browser_revision`.
+3. Add a `NodeParamPanel` page (new slot + `QWidget*` page in the `QStackedWidget`).
+4. Add a case to `show_params_for(id)` to switch the stacked widget to the new page.
+
 ## Refactor History
 
 ### Node Graph Eval Engine (Phase 3 of ARCHITECTURE_REFACTORS) — ✅ Shipped
@@ -123,5 +161,5 @@ Tests construct `Snarl<SceneNode>` directly without an egui context. See `ARCHIT
 
 - [[crate-structure|Crate Structure]] — Where the node graph lives in the crate hierarchy
 - [[scene-browser|Scene Browser]] — How node output feeds the scene browser
-- [[002-egui-temporary-ui|ADR 002: egui Temporary UI]] — Node graph will be re-implemented in Qt
+- [[002-egui-temporary-ui|ADR 002: egui Temporary UI]] — Qt node graph widget shipped (v0.17 PR #23); egui-snarl is now backend-only data model
 - [[003-hybrid-usd-workflow|ADR 003: Hybrid USD Workflow]] — Blue/orange node classification
