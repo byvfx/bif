@@ -6,6 +6,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Refactored
+
+- **Split `cpp_bridge.rs` into `usd/ffi/` submodules ([#13](https://github.com/byvfx/bif/issues/13))**. Broke the 4,600-line monolith into 9 focused files under `crates/bif_core/src/usd/ffi/`: `mod.rs` (types/structs/errors), `stage.rs` (open/export/payload/timeline), `prim.rs` (hierarchy/attributes), `mesh.rs` (mesh/curves/volumes/skeleton), `material.rs` (materials/lights), `variant.rs` (variant sets), `instance.rs` (instancers/native instances), `xform.rs` (camera/transforms), `layer.rs` (`UsdEditLayer`). `cpp_bridge.rs` is now a thin `pub use ffi::*` shim. No behavior changes; 279 `bif_core` tests green.
+
 ### Added
 
 - **Qt node graph basic usability** (`audit/node-graph-22`). Added param panel sidebar + wire drag-connect making UsdRead, HdriEnvironment, Xform, and IvarRender nodes functionally usable. Rust layer: `node_graph_get_node_info()` (JSON node state), `node_graph_set_usd_read_path`, `node_graph_load_hdri`, `node_graph_set_xform_params`, `node_graph_connect_pins` (pin-type-compatible wires only) in `bif_viewport/src/lib.rs`. cxx-qt bridge: 5 `on_node_graph_*` fns in `main_window.rs`. C++ layer: `NodeParamPanel` (`QStackedWidget` with 4 node-type pages) + bezier wire drag-connect in `NodeGraphView` (`node_graph_widget.h/.cpp`). SPP spinbox disabled (no bridge yet). `scene_graph_dirty` set on `connect_pins`.
