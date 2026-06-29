@@ -2,12 +2,12 @@
 
 > Active sessions: last 5. Older entries → [SESSION_HANDOFF_ARCHIVE.md](docs/archive/SESSION_HANDOFF_ARCHIVE.md)
 
-## Current State (2026-06-24)
+## Current State (2026-06-29)
 
-- **Branch:** `audit/node-graph-22` — PR open, awaiting review + merge.
-- **Version:** **v0.16.9** tagged (2026-06-04). `[Unreleased]` = issue #6 phases 1–3b + Qt node graph basic usability.
-- **Status:** Qt node graph basic usability complete (193 bif_viewport tests green, clippy/fmt clean). Added `node_graph_get_node_info` + 4 setter/connect fns (`bif_viewport/src/lib.rs`), cxx-qt bridge (`main_window.rs`), `NodeParamPanel` sidebar + bezier wire drag-connect (`node_graph_widget.h/.cpp`).
-- **Next:** merge PR → v0.17.0 work (issues #13–#15, Viewport perf). Plan: [`docs/superpowers/plans/2026-06-17-node-graph-usability.md`](docs/superpowers/plans/2026-06-17-node-graph-usability.md).
+- **Branch:** `main` — PRs #23 and #24 merged. Local working tree is 1 commit behind `origin/main` due to Windows file lock on `crates/bif_core/src/usd/ffi/` during branch switch. Run `git reset --hard origin/main` after closing Rust Analyzer.
+- **Version:** **v0.16.9** tagged (2026-06-04). `[Unreleased]` = issue #6 phases 1–3b + Qt node graph usability + cpp_bridge split (#13).
+- **Status:** Two PRs landed this sprint — #23 (Qt node graph basic usability, 198 bif_viewport tests) and #24 (cpp_bridge split into usd/ffi/ submodules, 254 bif_core tests, closes #13). Code review on #24 surfaced 6 findings; all fixed before merge.
+- **Next:** v0.17.0 issues #14 (viewport perf — defer GPU upload for invisible prototypes, LRU cache, `PrototypeState` enum) and #15 (payload policy — `PayloadPolicy::Manual`).
 - **Gotcha:** `cargo clippy` on full workspace needs both `. .\setup_usd_env.ps1` AND `. .\setup_qt_env.ps1` sourced (bif_qt fails with `QtMissing` otherwise).
 
 ---
