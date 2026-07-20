@@ -25,7 +25,7 @@ cargo build
 cargo run -p bif_viewer
 ```
 
-- **HDRI file needed** — no `.hdr`/`.exr` ships in the repo. Have a local path ready before the HDRI step (see Open Questions).
+- **HDRI file:** `E:\_HDRIs\HDRI_Haven\sunset_forest_1k.hdr` (repo ships none). Confirm it exists on the box before the HDRI step.
 - **UsdRead asset:** `test_assets/comprehensive.usda` (also `test_assets/scene/`, `collections.usda`).
 - Audit is human-in-the-loop: a person clicks the GUI; Claude guides each step and records the verdict.
 
@@ -42,7 +42,7 @@ cargo run -p bif_viewer
 
 ### Out of scope
 - Building the param panels / bridges themselves (that's the fix round after this audit).
-- GraftBranches redesign (known-disabled; just confirm the disabled state).
+- GraftBranches redesign — **decided: confirm-disabled only this round, no redesign in v0.17.0** (likely v0.18). Just verify it adds a visual-only node and returns `None`.
 - v0.17.5 perf work (#14/#15).
 
 ---
@@ -71,7 +71,7 @@ Right-click canvas → add. Wire output→input pin. Watch scene browser + viewp
 
 ### Workflow smoke (the actual goal — run this first)
 1. Add **Cube** (Primitive) → geometry auto-appears in viewport.
-2. Add **HdriEnvironment** → set path → **Apply** → scene lights up.
+2. Add **HdriEnvironment** → set path `E:\_HDRIs\HDRI_Haven\sunset_forest_1k.hdr` → **Apply** → scene lights up.
 3. Add **IvarRender** → **Render** → path-trace result appears live in Qt viewport.
 4. Add **ScatterPoints** + **PointInstancer**, wire Cube→Scatter→Instancer → instanced cloud appears.
 
@@ -124,6 +124,7 @@ Scope the fix PRs from the results. Expected priority order (from exploration): 
 
 ## Open Questions
 
-1. HDRI file for the audit — which local `.hdr`/`.exr` path on the Windows box? (repo ships none)
-2. GraftBranches — confirm-disabled only this round, or start the redesign inside v0.17.0?
+_(1 & 2 resolved 2026-07-20)_
+1. ✅ HDRI file → `E:\_HDRIs\HDRI_Haven\sunset_forest_1k.hdr`.
+2. ✅ GraftBranches → confirm-disabled only this round; no redesign in v0.17.0.
 3. Headless test depth — how much of eval is assertable without a live GPU surface (Ivar trace needs one)? Graph-population asserts on `working_scene` are the safe floor.
