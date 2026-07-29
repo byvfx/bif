@@ -2,7 +2,20 @@
 
 > Active sessions: last 5. Older entries → [SESSION_HANDOFF_ARCHIVE.md](docs/archive/SESSION_HANDOFF_ARCHIVE.md)
 
-## Current State (2026-06-29)
+## Current State (2026-07-28)
+
+- **Branch:** `main`. Local WIP in `crates/bif_qt/src/main_window.rs` (`node_graph_add_node` 3-way result: renderer-not-ready / unsupported / success) → moving to a fix branch. `.claude/settings.local.json` local-only.
+- **Version:** **v0.16.9** tagged; `CHANGELOG [Unreleased]` unchanged.
+- **Focus:** v0.17.0 — Node Graph Parity. Ran the #22 node-graph audit on the Windows box (human-in-the-loop).
+- **Audit result — dogfood loop RESTORED ✅:** `Cube → ScatterPoints (1000 pts) → PointInstancer (1000 instances) → HdriEnvironment (8k RADIANCE HDRI + importance sampling) → IvarRender (16 SPP / 1.34s)`, end-to-end. Backend intact; parity gaps are Qt param coverage (as the 2026-07-20 exploration predicted).
+- **Findings filed (all v0.17.0):** #26 framing broken (`on_frame_selected` stub, no Frame All) · #27 HDRI decoder rejects valid `#?RGBE` signature (`bif_core/src/hdr.rs:65`; fix documented) · #28 crash (`STATUS_ACCESS_VIOLATION`) on empty/mis-wired PointInstancer.
+- **#22 still OPEN** — 5 node types untested: UsdRead, Xform, UsdExport, UsdPrim, GraftBranches. Results table posted as a #22 comment.
+- **Next:** walk the remaining 5 nodes → close #22; then fix PRs (priority **#27** → **#28** → **#26**); add headless `bif_viewport` node-graph population tests (`working_scene` asserts).
+- **Gotcha:** handoff's HDRI path `E:\...` is the *other* machine's drive — this box uses `Z:\_HDRIs\HDRI_Haven\`. Gate needs BOTH `setup_usd_env.ps1` + `setup_qt_env.ps1` (bif_qt `QtMissing` otherwise).
+
+---
+
+# Session Handoff — 2026-06-29 (PRs #23/#24 merged)
 
 - **Branch:** `main` — PRs #23 and #24 merged. Local working tree is 1 commit behind `origin/main` due to Windows file lock on `crates/bif_core/src/usd/ffi/` during branch switch. Run `git reset --hard origin/main` after closing Rust Analyzer.
 - **Version:** **v0.16.9** tagged (2026-06-04). `[Unreleased]` = issue #6 phases 1–3b + Qt node graph usability + cpp_bridge split (#13).
