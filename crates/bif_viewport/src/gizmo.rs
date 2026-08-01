@@ -220,7 +220,7 @@ pub fn draw_gizmo(
         // Determine line thickness
         let is_hovered = gizmo_state.hovered_axis == *axis;
         let is_active = gizmo_state.active_axis == *axis && gizmo_state.is_dragging;
-        let thickness = if is_active {
+        let thickness: f32 = if is_active {
             3.5
         } else if is_hovered {
             2.5
