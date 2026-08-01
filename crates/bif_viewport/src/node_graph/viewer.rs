@@ -121,7 +121,7 @@ impl SnarlViewer<SceneNode> for SceneNodeViewer<'_> {
             painter.rect_stroke(
                 highlight_rect,
                 4.0,
-                egui::Stroke::new(2.0, theme::ACCENT_PRIMARY),
+                egui::Stroke::new(2.0_f32, theme::ACCENT_PRIMARY),
             );
         }
 

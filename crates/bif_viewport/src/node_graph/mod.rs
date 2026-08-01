@@ -765,7 +765,7 @@ impl NodeGraphState {
         Self {
             snarl,
             style: SnarlStyle {
-                select_stoke: Some(egui::Stroke::new(2.0, theme::ACCENT_PRIMARY)),
+                select_stoke: Some(egui::Stroke::new(2.0_f32, theme::ACCENT_PRIMARY)),
                 select_fill: Some(theme::SELECTION_BG),
                 ..SnarlStyle::default()
             },
@@ -799,7 +799,7 @@ impl NodeGraphState {
         Self {
             snarl,
             style: SnarlStyle {
-                select_stoke: Some(egui::Stroke::new(2.0, theme::ACCENT_PRIMARY)),
+                select_stoke: Some(egui::Stroke::new(2.0_f32, theme::ACCENT_PRIMARY)),
                 select_fill: Some(theme::SELECTION_BG),
                 ..SnarlStyle::default()
             },

@@ -151,23 +151,23 @@ pub fn apply_theme(ctx: &egui::Context) {
 
     // Widgets — inactive
     vis.widgets.inactive.bg_fill = BG_SURFACE;
-    vis.widgets.inactive.fg_stroke = Stroke::new(1.0, TEXT_SECONDARY);
+    vis.widgets.inactive.fg_stroke = Stroke::new(1.0_f32, TEXT_SECONDARY);
 
     // Widgets — hovered
     vis.widgets.hovered.bg_fill = BG_OVERLAY;
-    vis.widgets.hovered.fg_stroke = Stroke::new(1.0, TEXT_PRIMARY);
+    vis.widgets.hovered.fg_stroke = Stroke::new(1.0_f32, TEXT_PRIMARY);
 
     // Widgets — active (pressed)
     vis.widgets.active.bg_fill = ACCENT_DIM;
-    vis.widgets.active.fg_stroke = Stroke::new(1.0, TEXT_PRIMARY);
+    vis.widgets.active.fg_stroke = Stroke::new(1.0_f32, TEXT_PRIMARY);
 
     // Widgets — non-interactive (labels, separators)
-    vis.widgets.noninteractive.fg_stroke = Stroke::new(1.0, TEXT_SECONDARY);
+    vis.widgets.noninteractive.fg_stroke = Stroke::new(1.0_f32, TEXT_SECONDARY);
     vis.widgets.noninteractive.bg_fill = BG_PANEL;
 
     // Selection
     vis.selection.bg_fill = SELECTION_BG;
-    vis.selection.stroke = Stroke::new(1.0, ACCENT_PRIMARY);
+    vis.selection.stroke = Stroke::new(1.0_f32, ACCENT_PRIMARY);
 
     // -- Spacing --------------------------------------------------------
     style.spacing.item_spacing = Vec2::new(6.0, 3.0);
