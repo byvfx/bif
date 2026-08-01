@@ -25,6 +25,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **HDR loader accepts `#?RGBE` (and other valid Radiance signatures), not just `#?RADIANCE` ([#27](https://github.com/byvfx/bif/issues/27))**. Radiance `.hdr` allows any `#?<program>` identifier on line 1, but `image`'s `HdrDecoder` compares the first 10 bytes against the literal `#?RADIANCE` and errors "Radiance HDR signature not found" on anything else — so common real-world HDRIs (many Poly Haven files ship `#?RGBE`) failed to load as environment lights in the default (non-`oiio`) build, blocking the HDRI-lighting step of the dogfood loop. `HdrImage::load_hdr` (`crates/bif_core/src/hdr.rs`) now reads the file and normalizes the line-1 token to `#?RADIANCE` (keeping the newline + RGBE payload verbatim; `#?RADIANCE` files pass through zero-copy) before decoding. Found during the #22 node-graph audit. +3 tests (pure normalizer rewrite/passthrough + `#?RGBE`-fixture load).
 - **Windows CI clippy unblocked — explicit `f32` typing at 11 numeric-literal sites in `bif_viewport`**. A newer stable `rustc` promotes the type-inference fallback future-incompatibility lint (message: "falling back to f32 as the trait bound f32: From<f64> is not satisfied") to a hard error under `-D warnings`, reddening the Windows `Check`. Annotated the ambiguous float literals — `Stroke::new(1.0/2.0, …)` → `…_f32`, and the gizmo `thickness` binding → `: f32` — across `theme.rs`, `gizmo.rs`, and `node_graph/{viewer,mod}.rs`. Behavior-neutral; no user-facing change.
 
 ## [0.16.9] - 2026-06-04

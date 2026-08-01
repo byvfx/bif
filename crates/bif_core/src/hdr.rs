@@ -4,7 +4,7 @@
 //! via equirectangular projection for environment mapping.
 
 use std::f32::consts::PI;
-use std::io::BufReader;
+use std::io::Cursor;
 use std::path::Path;
 
 use image::codecs::hdr::HdrDecoder;
@@ -60,9 +60,9 @@ impl HdrImage {
     }
 
     fn load_hdr(path: &Path) -> HdrResult<Self> {
-        let file = std::fs::File::open(path)?;
-        let reader = BufReader::new(file);
-        let decoder = HdrDecoder::new(reader).map_err(HdrError::Decode)?;
+        let bytes = std::fs::read(path)?;
+        let bytes = normalize_radiance_signature(bytes);
+        let decoder = HdrDecoder::new(Cursor::new(bytes)).map_err(HdrError::Decode)?;
 
         let meta = decoder.metadata();
         let width = meta.width;
@@ -248,13 +248,32 @@ impl HdrImage {
     }
 }
 
+/// Normalize the line-1 program-type token of a Radiance `.hdr` stream.
+///
+/// The Radiance format allows any `#?<program>` identifier on line 1 (e.g. `#?RGBE`),
+/// but `image`'s `HdrDecoder` only accepts the literal `#?RADIANCE` and rejects the
+/// rest. The RGBE payload after line 1 is identical, so rewrite line 1 to `#?RADIANCE`
+/// (preserving the newline and everything after it) to let valid variants decode.
+fn normalize_radiance_signature(bytes: Vec<u8>) -> Vec<u8> {
+    if bytes.starts_with(b"#?RADIANCE") {
+        return bytes; // zero-copy common case
+    }
+    if bytes.starts_with(b"#?") {
+        if let Some(nl) = bytes.iter().position(|&b| b == b'\n') {
+            let mut out = b"#?RADIANCE".to_vec();
+            out.extend_from_slice(&bytes[nl..]); // keep newline + rest verbatim
+            return out;
+        }
+    }
+    bytes
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use image::{codecs::hdr::HdrEncoder, Rgb};
     use std::{
-        fs::{remove_file, File},
-        io::BufWriter,
+        fs::remove_file,
         path::{Path, PathBuf},
         sync::atomic::{AtomicUsize, Ordering as AtomicOrdering},
     };
@@ -288,20 +307,37 @@ mod tests {
 
     impl TestHdrFile {
         fn new() -> Self {
+            Self::with_signature(b"#?RADIANCE")
+        }
+
+        /// Build a temp `.hdr` fixture whose line-1 program-type token is `signature`
+        /// (e.g. `b"#?RGBE"`). Everything after line 1 is a standard image-rs-encoded
+        /// Radiance RGBE stream.
+        fn with_signature(signature: &[u8]) -> Self {
             let (width, height, pixels) = test_hdr_pixels();
             let rgb_pixels: Vec<Rgb<f32>> = pixels.into_iter().map(Rgb).collect();
+
+            let mut encoded: Vec<u8> = Vec::new();
+            HdrEncoder::new(&mut encoded)
+                .encode(&rgb_pixels, width as usize, height as usize)
+                .expect("encode temp HDR fixture");
+
+            // image-rs writes "#?RADIANCE\n" as line 1; swap the token for `signature`,
+            // keeping the newline and RGBE payload verbatim.
+            let nl = encoded
+                .iter()
+                .position(|&b| b == b'\n')
+                .expect("encoded HDR has a line-1 newline");
+            let mut bytes = signature.to_vec();
+            bytes.extend_from_slice(&encoded[nl..]);
+
             let unique_id = HDR_FIXTURE_COUNTER.fetch_add(1, AtomicOrdering::Relaxed);
             let path = std::env::temp_dir().join(format!(
                 "bif_test_hdr_{}_{}.hdr",
                 std::process::id(),
                 unique_id
             ));
-
-            let file = File::create(&path).expect("create temp HDR fixture");
-            let writer = BufWriter::new(file);
-            HdrEncoder::new(writer)
-                .encode(&rgb_pixels, width as usize, height as usize)
-                .expect("encode temp HDR fixture");
+            std::fs::write(&path, bytes).expect("write temp HDR fixture");
 
             Self { path }
         }
@@ -341,6 +377,56 @@ mod tests {
             max_val > 1.0,
             "HDR image should contain values > 1.0, got max {}",
             max_val
+        );
+    }
+
+    #[test]
+    fn normalize_signature_rewrites_rgbe() {
+        let input = b"#?RGBE\nFORMAT=32-bit_rle_rgbe\n\n-Y 8 +X 16\n".to_vec();
+        let out = normalize_radiance_signature(input.clone());
+        assert!(
+            out.starts_with(b"#?RADIANCE"),
+            "signature not normalized: {:?}",
+            &out[..out.len().min(10)]
+        );
+        // Everything from the first newline on must be byte-identical.
+        let in_nl = input.iter().position(|&b| b == b'\n').unwrap();
+        let out_nl = out.iter().position(|&b| b == b'\n').unwrap();
+        assert_eq!(&out[out_nl..], &input[in_nl..]);
+    }
+
+    #[test]
+    fn normalize_signature_passthrough_radiance() {
+        let input = b"#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n".to_vec();
+        let out = normalize_radiance_signature(input.clone());
+        assert_eq!(
+            out, input,
+            "valid #?RADIANCE stream must pass through unchanged"
+        );
+    }
+
+    #[test]
+    fn load_hdr_with_rgbe_signature() {
+        // Regression for #27: a valid Radiance file signed "#?RGBE" must decode,
+        // identically to the same payload signed "#?RADIANCE".
+        //
+        // NOTE: this only exercises `normalize_radiance_signature` in the default
+        // build. Under `--features oiio`, `HdrImage::load` routes `.hdr` through
+        // OIIO (which decodes `#?RGBE` natively), bypassing the normalizer — so this
+        // test still passes but no longer validates the fix. The two pure normalizer
+        // unit tests above pin the fix regardless of build features.
+        let rgbe = TestHdrFile::with_signature(b"#?RGBE");
+        let radiance = TestHdrFile::with_signature(b"#?RADIANCE");
+        let img = HdrImage::load(rgbe.path()).expect("Failed to load #?RGBE HDR");
+        let reference = HdrImage::load(radiance.path()).expect("Failed to load #?RADIANCE HDR");
+
+        assert_eq!(img.width, 16);
+        assert_eq!(img.height, 8);
+        assert_eq!(img.pixels.len(), 16 * 8);
+        // The line-1 signature rewrite must not perturb the RGBE payload.
+        assert_eq!(
+            img.pixels, reference.pixels,
+            "#?RGBE and #?RADIANCE payloads must decode identically"
         );
     }
 
