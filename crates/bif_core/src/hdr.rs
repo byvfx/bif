@@ -407,12 +407,27 @@ mod tests {
 
     #[test]
     fn load_hdr_with_rgbe_signature() {
-        // Regression for #27: a valid Radiance file signed "#?RGBE" must decode.
-        let hdr_file = TestHdrFile::with_signature(b"#?RGBE");
-        let img = HdrImage::load(hdr_file.path()).expect("Failed to load #?RGBE HDR");
+        // Regression for #27: a valid Radiance file signed "#?RGBE" must decode,
+        // identically to the same payload signed "#?RADIANCE".
+        //
+        // NOTE: this only exercises `normalize_radiance_signature` in the default
+        // build. Under `--features oiio`, `HdrImage::load` routes `.hdr` through
+        // OIIO (which decodes `#?RGBE` natively), bypassing the normalizer — so this
+        // test still passes but no longer validates the fix. The two pure normalizer
+        // unit tests above pin the fix regardless of build features.
+        let rgbe = TestHdrFile::with_signature(b"#?RGBE");
+        let radiance = TestHdrFile::with_signature(b"#?RADIANCE");
+        let img = HdrImage::load(rgbe.path()).expect("Failed to load #?RGBE HDR");
+        let reference = HdrImage::load(radiance.path()).expect("Failed to load #?RADIANCE HDR");
+
         assert_eq!(img.width, 16);
         assert_eq!(img.height, 8);
         assert_eq!(img.pixels.len(), 16 * 8);
+        // The line-1 signature rewrite must not perturb the RGBE payload.
+        assert_eq!(
+            img.pixels, reference.pixels,
+            "#?RGBE and #?RADIANCE payloads must decode identically"
+        );
     }
 
     #[test]
