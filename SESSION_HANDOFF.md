@@ -2,15 +2,15 @@
 
 > Active sessions: last 5. Older entries → [SESSION_HANDOFF_ARCHIVE.md](docs/archive/SESSION_HANDOFF_ARCHIVE.md)
 
-## Current State (2026-07-28)
+## Current State (2026-07-31)
 
-- **Branch:** `main`. Local WIP in `crates/bif_qt/src/main_window.rs` (`node_graph_add_node` 3-way result: renderer-not-ready / unsupported / success) → moving to a fix branch. `.claude/settings.local.json` local-only.
-- **Version:** **v0.16.9** tagged; `CHANGELOG [Unreleased]` unchanged.
+- **Branch:** `fix/hdr-rgbe-signature` — **#27 fixed** (HDR loader now normalizes any valid `#?<program>` Radiance signature to `#?RADIANCE` before decode; `crates/bif_core/src/hdr.rs`). Build/clippy/fmt clean; +3 tests green. PR pending.
+- **Version:** **v0.16.9** tagged; `CHANGELOG [Unreleased]` now carries the #27 `### Fixed` entry.
 - **Focus:** v0.17.0 — Node Graph Parity. Ran the #22 node-graph audit on the Windows box (human-in-the-loop).
 - **Audit result — dogfood loop RESTORED ✅:** `Cube → ScatterPoints (1000 pts) → PointInstancer (1000 instances) → HdriEnvironment (8k RADIANCE HDRI + importance sampling) → IvarRender (16 SPP / 1.34s)`, end-to-end. Backend intact; parity gaps are Qt param coverage (as the 2026-07-20 exploration predicted).
 - **Findings filed (all v0.17.0):** #26 framing broken (`on_frame_selected` stub, no Frame All) · #27 HDRI decoder rejects valid `#?RGBE` signature (`bif_core/src/hdr.rs:65`; fix documented) · #28 crash (`STATUS_ACCESS_VIOLATION`) on empty/mis-wired PointInstancer.
 - **#22 still OPEN** — 5 node types untested: UsdRead, Xform, UsdExport, UsdPrim, GraftBranches. Results table posted as a #22 comment.
-- **Next:** walk the remaining 5 nodes → close #22; then fix PRs (priority **#27** → **#28** → **#26**); add headless `bif_viewport` node-graph population tests (`working_scene` asserts).
+- **Next:** open #27 PR → `/vfx-code-reviewer` → squash-merge → close #27 (smoke against `Z:\_HDRIs\HDRI_Haven\kiara_1_dawn_8k_v2_0000.hdr` first). Then fix PRs **#28** (PointInstancer crash) → **#26** (framing); walk remaining 5 nodes → close #22; add headless `bif_viewport` node-graph population tests (`working_scene` asserts).
 - **Gotcha:** handoff's HDRI path `E:\...` is the *other* machine's drive — this box uses `Z:\_HDRIs\HDRI_Haven\`. Gate needs BOTH `setup_usd_env.ps1` + `setup_qt_env.ps1` (bif_qt `QtMissing` otherwise).
 
 ---
