@@ -43,6 +43,8 @@ private slots:
     void on_usd_path_changed();
     void on_hdri_browse();
     void on_hdri_apply();
+    /// Live rotation/intensity push — no file reload. Fires on every spinbox step.
+    void on_hdri_params_changed();
     void on_xform_apply();
     void on_ivar_render_clicked();
 
