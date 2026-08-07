@@ -120,9 +120,9 @@ NodeParamPanel::NodeParamPanel(BifShellState* state, QWidget* parent)
         connect(apply, &QPushButton::clicked, this, &NodeParamPanel::on_hdri_apply);
         // Live update: rotation/intensity apply as you scrub, no file reload.
         // Apply stays for (re)loading the path.
-        connect(m_hdri_rotation, &QDoubleSpinBox::valueChanged,
+        connect(m_hdri_rotation, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
                 this, &NodeParamPanel::on_hdri_params_changed);
-        connect(m_hdri_intensity, &QDoubleSpinBox::valueChanged,
+        connect(m_hdri_intensity, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
                 this, &NodeParamPanel::on_hdri_params_changed);
     }
 

@@ -2164,7 +2164,7 @@ impl qobject::BifShellState {
             vp.renderer_mut()
                 .node_graph_set_usd_read_path(graph_id, path_str.clone())
         });
-        if !report_node_bridge_failure(self, result, "set USD path", graph_id) {
+        if !report_node_bridge_failure(self, result, "set USD path", graph_id, "UsdRead") {
             return false;
         }
         log::info!("node graph: set USD path on {graph_id} (path={path_str})");
@@ -2187,7 +2187,13 @@ impl qobject::BifShellState {
             vp.renderer_mut()
                 .node_graph_load_hdri(graph_id, path_str.clone(), rotation, intensity)
         });
-        if !report_node_bridge_failure(self.as_mut(), result, "apply HDRI", graph_id) {
+        if !report_node_bridge_failure(
+            self.as_mut(),
+            result,
+            "apply HDRI",
+            graph_id,
+            "HdriEnvironment",
+        ) {
             return false;
         }
         // Values logged so a "nothing changed" report can be traced to what the
@@ -2218,7 +2224,13 @@ impl qobject::BifShellState {
         });
         // Failures still report; success stays silent because this fires on
         // every spinbox step.
-        report_node_bridge_failure(self, result, "update HDRI params", graph_id)
+        report_node_bridge_failure(
+            self,
+            result,
+            "update HDRI params",
+            graph_id,
+            "HdriEnvironment",
+        )
     }
 
     fn on_node_graph_set_xform_params(
@@ -2242,7 +2254,7 @@ impl qobject::BifShellState {
             vp.renderer_mut()
                 .node_graph_set_xform_params(graph_id, tx, ty, tz, rx, ry, rz, sx, sy, sz)
         });
-        if !report_node_bridge_failure(self.as_mut(), result, "apply Xform", graph_id) {
+        if !report_node_bridge_failure(self.as_mut(), result, "apply Xform", graph_id, "Xform") {
             return false;
         }
         log::info!(
@@ -4109,11 +4121,17 @@ fn bump_collection_revision(mut state: Pin<&mut qobject::BifShellState>) {
 ///
 /// Returns `true` only on success; the caller owns the success log/status so
 /// live-update paths can stay quiet while explicit Apply actions confirm.
+///
+/// `expected` names the node type the setter requires, so the rejection message
+/// can say what was wanted. The `Renderer::node_graph_*` setters collapse
+/// "no such node" and "wrong node type" into one `false`, so the message
+/// deliberately covers both rather than claiming a specific cause.
 fn report_node_bridge_failure(
     state: Pin<&mut qobject::BifShellState>,
     result: Option<bool>,
     action: &str,
     node: bif_viewport::GraphNodeId,
+    expected: &str,
 ) -> bool {
     match result {
         None => {
@@ -4124,9 +4142,12 @@ fn report_node_bridge_failure(
             false
         }
         Some(false) => {
-            log::warn!("node graph: {action} rejected for {node} (unknown id or wrong node type)");
+            log::warn!(
+                "node graph: {action} rejected for {node} \
+                 (no such node, or not a {expected} node)"
+            );
             state.set_status_message(cxx_qt_lib::QString::from(&format!(
-                "Node Graph: {action} failed — {node} is not a matching node"
+                "Node Graph: {action} failed — {node} no longer exists or is not a {expected} node"
             )));
             false
         }
