@@ -597,6 +597,42 @@ impl Renderer {
         }
     }
 
+    /// Update an HdriEnvironment node's rotation/intensity in place, without
+    /// re-decoding the HDR file.
+    ///
+    /// This is the live-update path behind the panel's rotation/intensity
+    /// spinboxes — [`Self::node_graph_load_hdri`] re-reads and re-prefilters the
+    /// image, which is far too heavy to run per spinbox step.
+    ///
+    /// `rotation` is in **degrees**; `UpdateHdriParams` owns the conversion to
+    /// radians, so this must dispatch the event rather than reach for
+    /// [`Self::update_environment_params`] (which takes radians) directly.
+    ///
+    /// Returns `false` if `node_id` doesn't exist or isn't an HdriEnvironment node.
+    pub fn node_graph_set_hdri_params(
+        &mut self,
+        node_id: node_graph::GraphNodeId,
+        rotation: f32,
+        intensity: f32,
+    ) -> bool {
+        if let Some(show_bg) = snarl_set_hdri_params(
+            &mut self.nodes.node_graph_state.snarl,
+            node_id,
+            rotation,
+            intensity,
+        ) {
+            self.project.mark_dirty();
+            self.handle_node_graph_event(node_graph::NodeGraphEvent::UpdateHdriParams {
+                rotation,
+                intensity,
+                show_background: show_bg,
+            });
+            true
+        } else {
+            false
+        }
+    }
+
     /// Set T/R/S parameters on an Xform node and mark it unapplied.
     /// Returns `false` if `node_id` doesn't exist or isn't an Xform node.
     #[allow(clippy::too_many_arguments)]
@@ -2843,6 +2879,37 @@ fn snarl_load_hdri(
     Some(*show_background)
 }
 
+/// Update an HdriEnvironment node's rotation/intensity without touching its path.
+///
+/// `rotation` is in **degrees**, matching the node field and the Qt panel; the
+/// conversion to radians happens once, in the `UpdateHdriParams` handler.
+///
+/// Returns the node's `show_background` flag, or `None` if `node_id` is unknown
+/// or isn't an HdriEnvironment node.
+fn snarl_set_hdri_params(
+    snarl: &mut egui_snarl::Snarl<node_graph::SceneNode>,
+    node_id: node_graph::GraphNodeId,
+    rotation: f32,
+    intensity: f32,
+) -> Option<bool> {
+    let snarl_id: egui_snarl::NodeId = node_id.into();
+    if !snarl.node_ids().any(|(id, _)| id == snarl_id) {
+        return None;
+    }
+    let node_graph::SceneNode::HdriEnvironment {
+        rotation: r,
+        intensity: i,
+        show_background,
+        ..
+    } = &mut snarl[snarl_id]
+    else {
+        return None;
+    };
+    *r = rotation;
+    *i = intensity;
+    Some(*show_background)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn snarl_set_xform_params(
     snarl: &mut egui_snarl::Snarl<node_graph::SceneNode>,
@@ -2966,6 +3033,23 @@ mod tests {
             ok
         }
 
+        /// Mirrors `Renderer::node_graph_set_hdri_params`: params-only, so
+        /// unlike the path setters it does NOT dirty the scene graph — env
+        /// params change lighting, not scene topology.
+        fn node_graph_set_hdri_params(
+            &mut self,
+            node_id: GraphNodeId,
+            rotation: f32,
+            intensity: f32,
+        ) -> bool {
+            let ok = snarl_set_hdri_params(&mut self.state.snarl, node_id, rotation, intensity)
+                .is_some();
+            if ok {
+                self.project_dirty = true;
+            }
+            ok
+        }
+
         fn node_graph_set_xform_params(
             &mut self,
             node_id: GraphNodeId,
@@ -3040,6 +3124,71 @@ mod tests {
         let info = state.node_graph_get_node_info(id).unwrap();
         assert!(info.contains("/tmp/test.usda"));
         assert!(info.contains("\"is_loaded\":false"));
+    }
+
+    #[test]
+    fn node_graph_set_hdri_params_round_trips_through_node_info() {
+        let mut state = make_test_state();
+        let id = state
+            .node_graph_add_node("HdriEnvironment", 0.0, 0.0)
+            .unwrap();
+        // Defaults come from SceneNode::hdri_environment().
+        let info = state.node_graph_get_node_info(id).unwrap();
+        assert!(info.contains("\"rotation\":0"));
+        assert!(info.contains("\"intensity\":1"));
+
+        assert!(state.node_graph_set_hdri_params(id, 90.0, 2.5));
+
+        let info = state.node_graph_get_node_info(id).unwrap();
+        assert!(info.contains("\"type\":\"HdriEnvironment\""));
+        assert!(info.contains("\"rotation\":90"), "got {info}");
+        assert!(info.contains("\"intensity\":2.5"), "got {info}");
+    }
+
+    #[test]
+    fn node_graph_set_hdri_params_preserves_file_path() {
+        // Params-only update must not clear the loaded path — that's what
+        // separates it from the reload path (`node_graph_load_hdri`).
+        let mut state = make_test_state();
+        let id = state
+            .node_graph_add_node("HdriEnvironment", 0.0, 0.0)
+            .unwrap();
+        assert!(
+            snarl_load_hdri(&mut state.state.snarl, id, "/tmp/sky.hdr", 10.0, 1.0).is_some(),
+            "seeding the path should succeed"
+        );
+
+        assert!(state.node_graph_set_hdri_params(id, 45.0, 3.0));
+
+        let info = state.node_graph_get_node_info(id).unwrap();
+        assert!(info.contains("/tmp/sky.hdr"), "got {info}");
+        assert!(info.contains("\"rotation\":45"), "got {info}");
+    }
+
+    #[test]
+    fn node_graph_set_hdri_params_marks_project_dirty_only() {
+        // Env params change lighting, not scene topology — dirtying the scene
+        // graph here would force a full working-scene rebuild per spinbox step.
+        let mut state = make_test_state();
+        let id = state
+            .node_graph_add_node("HdriEnvironment", 0.0, 0.0)
+            .unwrap();
+        assert!(state.node_graph_set_hdri_params(id, 30.0, 1.5));
+        assert!(state.project_dirty);
+        assert!(!state.scene_graph_dirty);
+    }
+
+    #[test]
+    fn node_graph_set_hdri_params_unknown_id_returns_false() {
+        let mut state = make_test_state();
+        assert!(!state.node_graph_set_hdri_params(GraphNodeId(9999), 90.0, 2.0));
+    }
+
+    #[test]
+    fn node_graph_set_hdri_params_wrong_node_type_returns_false() {
+        let mut state = make_test_state();
+        let id = state.node_graph_add_node("UsdRead", 0.0, 0.0).unwrap();
+        assert!(!state.node_graph_set_hdri_params(id, 90.0, 2.0));
     }
 
     #[test]

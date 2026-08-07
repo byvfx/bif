@@ -534,6 +534,18 @@ pub mod qobject {
             intensity: f32,
         ) -> bool;
 
+        /// Live rotation/intensity update for an HdriEnvironment node — no
+        /// file reload. Backs the panel's spinbox `valueChanged` signals, so
+        /// it stays quiet on success (no status message) to avoid churn while
+        /// the user scrubs a value. `rotation` is in degrees.
+        #[qinvokable]
+        fn on_node_graph_update_hdri_params(
+            self: Pin<&mut BifShellState>,
+            node_id: i32,
+            rotation: f32,
+            intensity: f32,
+        ) -> bool;
+
         #[qinvokable]
         fn on_node_graph_set_xform_params(
             self: Pin<&mut BifShellState>,
@@ -2155,15 +2167,20 @@ impl qobject::BifShellState {
             return false;
         }
         let graph_id = bif_viewport::GraphNodeId(node_id as u64);
-        with_viewport_mut(|vp| {
+        let path_str = path.to_string();
+        let result = with_viewport_mut(|vp| {
             vp.renderer_mut()
-                .node_graph_set_usd_read_path(graph_id, path.to_string())
-        })
-        .unwrap_or(false)
+                .node_graph_set_usd_read_path(graph_id, path_str.clone())
+        });
+        if !report_node_bridge_failure(self, result, "set USD path", graph_id, "UsdRead") {
+            return false;
+        }
+        log::info!("node graph: set USD path on {graph_id} (path={path_str})");
+        true
     }
 
     fn on_node_graph_load_hdri(
-        self: Pin<&mut Self>,
+        mut self: Pin<&mut Self>,
         node_id: i32,
         path: cxx_qt_lib::QString,
         rotation: f32,
@@ -2173,15 +2190,59 @@ impl qobject::BifShellState {
             return false;
         }
         let graph_id = bif_viewport::GraphNodeId(node_id as u64);
-        with_viewport_mut(|vp| {
+        let path_str = path.to_string();
+        let result = with_viewport_mut(|vp| {
             vp.renderer_mut()
-                .node_graph_load_hdri(graph_id, path.to_string(), rotation, intensity)
-        })
-        .unwrap_or(false)
+                .node_graph_load_hdri(graph_id, path_str.clone(), rotation, intensity)
+        });
+        if !report_node_bridge_failure(
+            self.as_mut(),
+            result,
+            "apply HDRI",
+            graph_id,
+            "HdriEnvironment",
+        ) {
+            return false;
+        }
+        // Values logged so a "nothing changed" report can be traced to what the
+        // panel actually sent, not just to whether the call was made.
+        log::info!(
+            "node graph: applied HDRI on {graph_id} (rotation={rotation}°, \
+             intensity={intensity}, path={path_str})"
+        );
+        self.set_status_message(cxx_qt_lib::QString::from(&format!(
+            "Node Graph: HDRI applied — rotation {rotation}°, intensity {intensity}"
+        )));
+        true
+    }
+
+    fn on_node_graph_update_hdri_params(
+        self: Pin<&mut Self>,
+        node_id: i32,
+        rotation: f32,
+        intensity: f32,
+    ) -> bool {
+        if node_id < 0 {
+            return false;
+        }
+        let graph_id = bif_viewport::GraphNodeId(node_id as u64);
+        let result = with_viewport_mut(|vp| {
+            vp.renderer_mut()
+                .node_graph_set_hdri_params(graph_id, rotation, intensity)
+        });
+        // Failures still report; success stays silent because this fires on
+        // every spinbox step.
+        report_node_bridge_failure(
+            self,
+            result,
+            "update HDRI params",
+            graph_id,
+            "HdriEnvironment",
+        )
     }
 
     fn on_node_graph_set_xform_params(
-        self: Pin<&mut Self>,
+        mut self: Pin<&mut Self>,
         node_id: i32,
         tx: f32,
         ty: f32,
@@ -2197,11 +2258,21 @@ impl qobject::BifShellState {
             return false;
         }
         let graph_id = bif_viewport::GraphNodeId(node_id as u64);
-        with_viewport_mut(|vp| {
+        let result = with_viewport_mut(|vp| {
             vp.renderer_mut()
                 .node_graph_set_xform_params(graph_id, tx, ty, tz, rx, ry, rz, sx, sy, sz)
-        })
-        .unwrap_or(false)
+        });
+        if !report_node_bridge_failure(self.as_mut(), result, "apply Xform", graph_id, "Xform") {
+            return false;
+        }
+        log::info!(
+            "node graph: applied Xform on {graph_id} \
+             (t=[{tx}, {ty}, {tz}] r=[{rx}, {ry}, {rz}] s=[{sx}, {sy}, {sz}])"
+        );
+        self.set_status_message(cxx_qt_lib::QString::from(&format!(
+            "Node Graph: Xform applied to {graph_id}"
+        )));
+        true
     }
 
     fn on_node_graph_connect_pins(
@@ -4046,6 +4117,50 @@ fn bump_scene_browser_revision(mut state: Pin<&mut qobject::BifShellState>) {
 fn bump_collection_revision(mut state: Pin<&mut qobject::BifShellState>) {
     let next = state.as_ref().rust().collection_revision.wrapping_add(1);
     state.as_mut().set_collection_revision(next);
+}
+
+/// Surface the failure modes of a node-graph bridge call so they stop being
+/// silent `false` returns.
+///
+/// [`with_viewport_mut`] yields `None` when the viewport surface isn't up yet,
+/// and the `Renderer::node_graph_*` setters yield `false` when `node_id` is
+/// unknown or names the wrong node type. Collapsing both into a bare `false`
+/// left the user with a dead button and no explanation.
+///
+/// Returns `true` only on success; the caller owns the success log/status so
+/// live-update paths can stay quiet while explicit Apply actions confirm.
+///
+/// `expected` names the node type the setter requires, so the rejection message
+/// can say what was wanted. The `Renderer::node_graph_*` setters collapse
+/// "no such node" and "wrong node type" into one `false`, so the message
+/// deliberately covers both rather than claiming a specific cause.
+fn report_node_bridge_failure(
+    state: Pin<&mut qobject::BifShellState>,
+    result: Option<bool>,
+    action: &str,
+    node: bif_viewport::GraphNodeId,
+    expected: &str,
+) -> bool {
+    match result {
+        None => {
+            log::warn!("node graph: renderer not ready for {action} on {node}");
+            state.set_status_message(cxx_qt_lib::QString::from(
+                "Node Graph: renderer not ready — open the render viewport first",
+            ));
+            false
+        }
+        Some(false) => {
+            log::warn!(
+                "node graph: {action} rejected for {node} \
+                 (no such node, or not a {expected} node)"
+            );
+            state.set_status_message(cxx_qt_lib::QString::from(&format!(
+                "Node Graph: {action} failed — {node} no longer exists or is not a {expected} node"
+            )));
+            false
+        }
+        Some(true) => true,
+    }
 }
 
 /// Increment `camera_list_revision` to trigger `camera_list_revisionChanged`.

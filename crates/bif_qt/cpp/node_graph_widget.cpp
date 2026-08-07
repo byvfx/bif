@@ -18,6 +18,7 @@
 #include <QPainterPath>
 #include <QPen>
 #include <QPushButton>
+#include <QSignalBlocker>
 #include <QVBoxLayout>
 #include <QWheelEvent>
 
@@ -117,6 +118,12 @@ NodeParamPanel::NodeParamPanel(BifShellState* state, QWidget* parent)
         m_stack->addWidget(page);
         connect(browse, &QPushButton::clicked, this, &NodeParamPanel::on_hdri_browse);
         connect(apply, &QPushButton::clicked, this, &NodeParamPanel::on_hdri_apply);
+        // Live update: rotation/intensity apply as you scrub, no file reload.
+        // Apply stays for (re)loading the path.
+        connect(m_hdri_rotation, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+                this, &NodeParamPanel::on_hdri_params_changed);
+        connect(m_hdri_intensity, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+                this, &NodeParamPanel::on_hdri_params_changed);
     }
 
     // Page 3: Xform
@@ -177,6 +184,10 @@ void NodeParamPanel::show_params_for(int backend_id) {
         m_usd_path->setText(obj.value("file_path").toString());
         m_stack->setCurrentIndex(1);
     } else if (type == "HdriEnvironment") {
+        // Block signals: setValue() would otherwise emit valueChanged and push
+        // the node's own values straight back at the backend on every select.
+        const QSignalBlocker block_rot(m_hdri_rotation);
+        const QSignalBlocker block_int(m_hdri_intensity);
         m_hdri_path->setText(obj.value("file_path").toString());
         m_hdri_rotation->setValue(obj.value("rotation").toDouble());
         m_hdri_intensity->setValue(obj.value("intensity").toDouble());
@@ -224,6 +235,14 @@ void NodeParamPanel::on_hdri_apply() {
     if (m_current_id < 0) return;
     m_state->on_node_graph_load_hdri(
         m_current_id, m_hdri_path->text(),
+        static_cast<float>(m_hdri_rotation->value()),
+        static_cast<float>(m_hdri_intensity->value()));
+}
+
+void NodeParamPanel::on_hdri_params_changed() {
+    if (m_current_id < 0) return;
+    m_state->on_node_graph_update_hdri_params(
+        m_current_id,
         static_cast<float>(m_hdri_rotation->value()),
         static_cast<float>(m_hdri_intensity->value()));
 }
