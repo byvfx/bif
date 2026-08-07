@@ -2066,16 +2066,31 @@ impl qobject::BifShellState {
             return -1;
         }
 
-        let node_id = with_viewport_mut(|vp| {
+        let result = with_viewport_mut(|vp| {
             let renderer = vp.renderer_mut();
             let node_id = renderer.node_graph_add_node(&type_name_str, x as f32, y as f32);
             renderer.flush_node_graph();
             node_id
-        })
-        .flatten();
+        });
 
-        match node_id {
-            Some(id) if id.0 <= i32::MAX as u64 => {
+        match result {
+            None => {
+                // Renderer not ready: viewport surface hasn't initialized yet.
+                // This is expected if the render panel isn't visible at launch.
+                log::warn!("node graph: renderer not ready when adding {type_name_str}");
+                self.as_mut().set_status_message(cxx_qt_lib::QString::from(
+                    "Node Graph: renderer not ready — open the render viewport first",
+                ));
+                -1
+            }
+            Some(None) => {
+                self.as_mut()
+                    .set_status_message(cxx_qt_lib::QString::from(&format!(
+                        "Node Graph: unsupported node type {type_name_str}"
+                    )));
+                -1
+            }
+            Some(Some(id)) if id.0 <= i32::MAX as u64 => {
                 let label = type_name_str.replace("Usd", "USD ");
                 bump_scene_browser_revision(self.as_mut());
                 log::info!("node graph: added {type_name_str} as {id}");
@@ -2085,18 +2100,11 @@ impl qobject::BifShellState {
                     )));
                 id.0 as i32
             }
-            Some(id) => {
+            Some(Some(id)) => {
                 log::warn!("node graph id {id} does not fit Qt i32 bridge");
                 self.as_mut().set_status_message(cxx_qt_lib::QString::from(
                     "Node Graph: node created, but Qt id bridge overflowed.",
                 ));
-                -1
-            }
-            None => {
-                self.as_mut()
-                    .set_status_message(cxx_qt_lib::QString::from(&format!(
-                        "Node Graph: unsupported node type {type_name_str}"
-                    )));
                 -1
             }
         }
