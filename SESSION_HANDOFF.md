@@ -4,7 +4,12 @@
 
 ## Current State (2026-08-06)
 
-- **Branch:** `fix/hdri-params` (off `5e92c9b`), uncommitted → commit + PR pending. **`main` untouched.**
+- **⚠ REPO MOVED — work in `C:\__projects\_programming\rust\bif`.** Local-disk clone of GitHub; `origin` = GitHub, the share is **not** a remote. The old checkout at `G:\__projects\_programming\rust\bif` (SMB `\\freya\D_rename`) corrupted itself three times in one session — `git switch` silently *deleted* two tracked files, a `git rebase` reverted five files mid-flight, and `.git/refs/heads/fix/hdri-params` became an undeletable broken ref that made every `git fetch` fatal. **That checkout is abandoned; do not use it.** Failure mode is *working-tree writes* (checkout/reset/rebase); reads were fine. If you must touch it, trust `git status` over `Test-Path` — the FS layer reports deleted files as present.
+- **Gotcha the move exposed:** CMakeCache bakes the source path and lives in the *shared* cargo target dir, so the new checkout failed `bif_core`'s build script until the stale `usd_bridge_build` dirs were deleted (two were from an old `.claude/worktrees/agent-…` path). Documented in CLAUDE.md gotchas with the one-liner fix.
+- **Still on `G:`:** `setup_usd_env.ps1` hardcodes `G:\__projects\_programming\vcpkg` (USD) + the OIDN root, so builds still *read* from the share. Moving those to local disk would sever the last dependency.
+- **New clone verified:** full workspace builds (1m23s incl. USD bridge); tests green — bif_core 257, bif_viewport 203, bif_renderer 122, bif_math 76, bif_qt 15; fmt + CI clippy clean.
+- **Branch:** `main` at `5769bc8`. **#29 + #32 both MERGED**; `claude-code-review.yml` deleted (no `ANTHROPIC_API_KEY` secret — it failed 5/5 PRs since 08-01; Copilot reviews PRs now).
+- **CI note:** a force-push to an open PR does **not** reliably fire `pull_request: synchronize` — #29 sat with zero Actions runs until a close/reopen. Not a billing/minutes problem (that was a wrong theory); Actions works fine.
 - **Focus:** v0.17.0 — the parked HDRI intensity/rotation bug (#22 parity family).
 - **RESOLVED — it was ONE bug, not two. Smoke test passed; nothing to file.**
   1. **Live update never existed in the Qt port.** Spinboxes (`node_graph_widget.cpp:106-114`) had **no `valueChanged` connects** and there was **no bridge fn** for a param-only update. egui emitted `NodeGraphEvent::UpdateHdriParams` (`property_inspector.rs:1818`); the Qt port never got a counterpart. Backend handler (`node_dispatch.rs:118-133`) was correct all along. **This was the whole defect. FIXED.**

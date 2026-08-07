@@ -65,6 +65,11 @@ cargo fmt --check
 - **USD env required:** `setup_usd_env.ps1` must be sourced before running bif_core **or bif_viewport** tests, or loading USD scenes. bif_viewport transitively links USD DLLs via bif_core, so its test binary fails with `STATUS_DLL_NOT_FOUND` without it (run via PowerShell: `. .\setup_usd_env.ps1; cargo test -p bif_viewport`)
 - **bif_core tests are single-threaded:** USD C++ bridge is not thread-safe, use `--test-threads=1`
 - **C++ bridge builds via CMake:** `bif_core/build.rs` triggers CMake for `cpp/usd_bridge/` — needs Visual Studio 2022 C++ workload
+- **CMakeCache bakes the source path — breaks if the repo moves or an agent worktree is used.** The cache lives in the *shared* cargo target dir (`$OUT_DIR/usd_bridge_build`), so a checkout at a new path hits `CMake Error: The source "…" does not match the source "…" used to generate cache`. Fix — delete the stale build dirs and rebuild:
+  ```powershell
+  Get-ChildItem $env:CARGO_TARGET_DIR -Recurse -Directory -Filter usd_bridge_build | Remove-Item -Recurse -Force
+  ```
+  (target dir defaults to `C:/Users/brandon/.cargo-target` via `~/.cargo/config.toml`)
 - **bif_qt requires Qt 6:** needs Qt 6 dev headers + `qmake`/`cmake` in PATH; cxx-qt 0.7 generates the Rust-C++ glue at build time
 - **UI logic lives in bif_qt, not bif_viewer:** bif_viewer is just `main.rs` — look in `crates/bif_qt/` for all panel/widget code
 - **OIDN DLLs must be in PATH:** Set `OIDN_DIR` and add its `bin/` to PATH for `--features oidn`
