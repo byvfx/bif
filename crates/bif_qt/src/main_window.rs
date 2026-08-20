@@ -2287,19 +2287,39 @@ impl qobject::BifShellState {
         }
         let from_gid = bif_viewport::GraphNodeId(from_id as u64);
         let to_gid = bif_viewport::GraphNodeId(to_id as u64);
-        let connected = with_viewport_mut(|vp| {
+        let result = with_viewport_mut(|vp| {
             let renderer = vp.renderer_mut();
             let ok = renderer.node_graph_connect_pins(from_gid, from_pin, to_gid, to_pin);
             if ok {
                 renderer.flush_node_graph();
             }
             ok
-        })
-        .unwrap_or(false);
-        if connected {
-            bump_scene_browser_revision(self.as_mut());
+        });
+        // Wiring is a user-visible graph edit and the C++ side draws a
+        // persistent wire off the result, so log all three outcomes. Silence
+        // here previously made it impossible to tell from a log whether a
+        // wire existed at all — which matters when reading a crash trace.
+        match result {
+            None => {
+                log::warn!(
+                    "node graph: connect {from_gid}:{from_pin} -> {to_gid}:{to_pin} \
+                     ignored — renderer not ready"
+                );
+                false
+            }
+            Some(false) => {
+                log::info!(
+                    "node graph: connect {from_gid}:{from_pin} -> {to_gid}:{to_pin} \
+                     rejected — incompatible pins or unknown node"
+                );
+                false
+            }
+            Some(true) => {
+                log::info!("node graph: connected {from_gid}:{from_pin} -> {to_gid}:{to_pin}");
+                bump_scene_browser_revision(self.as_mut());
+                true
+            }
         }
-        connected
     }
 
     fn on_node_graph_select_node(mut self: Pin<&mut Self>, node_id: i32) -> cxx_qt_lib::QString {
