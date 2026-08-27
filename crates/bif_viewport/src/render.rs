@@ -47,7 +47,7 @@ impl Renderer {
 
         // Process pending scene operations from undo/redo
         if !self.scene.edit_state.pending_scene_ops.is_empty() {
-            let ops: Vec<_> = self.scene.edit_state.pending_scene_ops.drain(..).collect();
+            let ops = std::mem::take(&mut self.scene.edit_state.pending_scene_ops);
             let mut needs_reload = false;
             for op in ops {
                 match op {
