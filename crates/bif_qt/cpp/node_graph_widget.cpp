@@ -421,6 +421,20 @@ BifNodeWire::BifNodeWire(BifNodeGraphicsItem* from_node, int from_pin_index,
     refresh();
 }
 
+BifNodeWire::~BifNodeWire() {
+    // The `moved()` lambdas capture `this`. Without this disconnect a wire
+    // deleted while its endpoint nodes live on (reconnect, single-node
+    // delete) would still be refreshed through a dangling capture.
+    QObject::disconnect(m_from_conn);
+    QObject::disconnect(m_to_conn);
+}
+
+void BifNodeWire::own_connections(QMetaObject::Connection from_conn,
+                                  QMetaObject::Connection to_conn) {
+    m_from_conn = from_conn;
+    m_to_conn = to_conn;
+}
+
 void BifNodeWire::refresh() {
     if (!m_from_node || !m_to_node) return;
     const QPointF p0 = m_from_node->scene_pin_pos(m_from_pin_index, /*is_input=*/false);
@@ -645,8 +659,7 @@ NodeGraphWidget::NodeGraphWidget(BifShellState* state, QWidget* parent)
                     // must be removed manually before drawing the new one.
                     m_wires.removeIf([&](BifNodeWire* w) {
                         if (w->to_node() == to_node && w->to_pin_index() == to_pin) {
-                            m_scene->removeItem(w);
-                            delete w;
+                            remove_wire(w);
                             return true;
                         }
                         return false;
@@ -684,10 +697,30 @@ void NodeGraphWidget::delete_selected_nodes() {
         if (m_state && backend_id >= 0) {
             m_state->on_node_graph_delete_node(backend_id);
         }
+        // Wires first — each holds raw pointers to both endpoint nodes, so any
+        // wire touching `node` must die before `node` does. Skipping this was
+        // a use-after-free: the surviving endpoint's next `moved()` refreshed
+        // a wire whose other end had already been freed (issue #28).
+        remove_wires_for_node(node);
         m_nodes.removeAll(node);
         m_scene->removeItem(node);
         delete node;
     }
+}
+
+void NodeGraphWidget::remove_wire(BifNodeWire* wire) {
+    m_scene->removeItem(wire);
+    delete wire;  // dtor disconnects the `moved()` lambdas that captured it
+}
+
+void NodeGraphWidget::remove_wires_for_node(BifNodeGraphicsItem* node) {
+    m_wires.removeIf([&](BifNodeWire* w) {
+        if (w->from_node() == node || w->to_node() == node) {
+            remove_wire(w);
+            return true;
+        }
+        return false;
+    });
 }
 
 void NodeGraphWidget::on_node_selected(int backend_id) {
@@ -730,16 +763,17 @@ BifNodeWire* NodeGraphWidget::connect_pins(BifNodeGraphicsItem* from, int from_p
     auto* wire = new BifNodeWire(from, from_pin, to, to_pin);
     m_scene->addItem(wire);
     m_wires.append(wire);
-    // BifNodeWire isn't a QObject (QGraphicsPathItem has no QObject
-    // base), so it can't be a connect context. Tie connection lifetime
-    // to the sender node — when `from`/`to` is destroyed the scene is
-    // tearing down so `wire` will be gone shortly after.
-    QObject::connect(from, &BifNodeGraphicsItem::moved, from, [wire]() {
-        wire->refresh();
-    });
-    QObject::connect(to, &BifNodeGraphicsItem::moved, to, [wire]() {
-        wire->refresh();
-    });
+    // BifNodeWire isn't a QObject (QGraphicsPathItem has no QObject base), so
+    // it can't be a connect context and these lambdas can't auto-disconnect
+    // when the wire dies. The sender context only covers node destruction; the
+    // wire outliving a connection (reconnect) and a connection outliving the
+    // wire are both real, so the wire adopts the handles and disconnects them
+    // in its destructor.
+    wire->own_connections(
+        QObject::connect(from, &BifNodeGraphicsItem::moved, from,
+                         [wire]() { wire->refresh(); }),
+        QObject::connect(to, &BifNodeGraphicsItem::moved, to,
+                         [wire]() { wire->refresh(); }));
     return wire;
 }
 

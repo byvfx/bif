@@ -138,11 +138,25 @@ public:
     BifNodeWire(BifNodeGraphicsItem* from_node, int from_pin_index,
                 BifNodeGraphicsItem* to_node, int to_pin_index,
                 QGraphicsItem* parent = nullptr);
+    ~BifNodeWire() override;
 
     /// Recompute path from current pin positions. Called by the
     /// widget when either endpoint node emits `moved()`.
+    ///
+    /// Only safe while BOTH endpoint nodes are alive. The endpoints are raw
+    /// pointers and a pointer to a deleted node is not null, so the wire must
+    /// be destroyed with its endpoints rather than relying on a null check —
+    /// see `NodeGraphWidget::remove_wires_for_node`.
     void refresh();
 
+    /// Adopt the two `moved()` connections that drive `refresh()`. The
+    /// destructor disconnects them, so a deleted wire can never be refreshed
+    /// by a lambda that captured it and outlived it.
+    void own_connections(QMetaObject::Connection from_conn,
+                         QMetaObject::Connection to_conn);
+
+    BifNodeGraphicsItem* from_node() const { return m_from_node; }
+    int from_pin_index() const { return m_from_pin_index; }
     BifNodeGraphicsItem* to_node() const { return m_to_node; }
     int to_pin_index() const { return m_to_pin_index; }
 
@@ -151,6 +165,8 @@ private:
     int m_from_pin_index;
     BifNodeGraphicsItem* m_to_node;
     int m_to_pin_index;
+    QMetaObject::Connection m_from_conn;
+    QMetaObject::Connection m_to_conn;
 };
 
 /// Zooming + middle-mouse panning QGraphicsView subclass. Wheel
@@ -210,6 +226,14 @@ private:
                                   QPointF scene_pos);
     BifNodeWire* connect_pins(BifNodeGraphicsItem* from, int from_pin,
                               BifNodeGraphicsItem* to, int to_pin);
+    /// Single choke point for wire destruction: drops it from the scene,
+    /// then deletes it (which disconnects its `moved()` lambdas). Callers are
+    /// responsible for removing it from `m_wires`.
+    void remove_wire(BifNodeWire* wire);
+    /// Destroy every wire touching `node`. MUST be called before deleting a
+    /// node — a surviving wire would hold a dangling endpoint pointer and
+    /// fault on the next `refresh()`.
+    void remove_wires_for_node(BifNodeGraphicsItem* node);
     BifNodeGraphicsItem* node_by_backend_id(int id) const;
 
     BifShellState* m_state;

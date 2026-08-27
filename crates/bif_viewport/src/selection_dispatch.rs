@@ -946,4 +946,48 @@ mod selection_resolver_tests {
     fn normalization_restores_leading_slash() {
         assert_eq!(normalize_prim_path("cube/mesh_0"), "/cube/mesh_0");
     }
+
+    // ── instancer instance paths resolve from the instancer prim (issue #28) ──
+
+    #[test]
+    fn instancer_instance_path_resolves_from_instancer_prim() {
+        // Instancer-expanded instances are namespaced under the PointInstancer's
+        // own prim path, so selecting that prim resolves via the descendant layer.
+        let instance = "/BIF/World/instancer1/instancer_0";
+        let query = normalize_prim_path("/World/instancer1");
+        assert!(path_is_descendant_of(
+            &normalize_instance_display_path(instance),
+            &query
+        ));
+    }
+
+    #[test]
+    fn instancer_suffix_survives_denormalization() {
+        // `instancer_0` must NOT be mistaken for a trailing instance index and
+        // stripped — only a purely numeric last segment is dropped. If this
+        // regressed, the display path would collapse to the instancer prim
+        // itself and the descendant match below would fail.
+        assert_eq!(
+            normalize_instance_display_path("/BIF/World/instancer1/instancer_0"),
+            "/World/instancer1/instancer_0"
+        );
+        // Contrast: a regular instance path does drop its numeric suffix.
+        assert_eq!(
+            normalize_instance_display_path("/BIF/World/Sphere1/42"),
+            "/World/Sphere1"
+        );
+    }
+
+    #[test]
+    fn prototype_namespaced_instancer_path_does_not_resolve() {
+        // Regression guard for the actual #28 defect: keying instancer instances
+        // off the *prototype* name made them unreachable from the instancer prim
+        // (and doubled the slash, since prototype names are already absolute).
+        let broken = "/BIF//World/Sphere1/instancer_0";
+        let query = normalize_prim_path("/World/instancer1");
+        assert!(!path_is_descendant_of(
+            &normalize_instance_display_path(broken),
+            &query
+        ));
+    }
 }

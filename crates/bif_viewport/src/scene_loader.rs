@@ -15,6 +15,30 @@ use crate::{texture_loader, Renderer, MAX_INSTANCES};
 
 use crate::scene_pipeline::resolve_prim_path;
 
+/// Prim path of a PointInstancer node, used to namespace its expanded instances.
+///
+/// Lives here rather than in `scene_pipeline` because it needs the node graph,
+/// which that module deliberately knows nothing about.
+///
+/// Returns `None` when the node is missing, isn't a PointInstancer, or has no
+/// authored path — callers fall back to the prototype name rather than emit a
+/// path that would resolve to the wrong prim.
+fn instancer_node_prim_path(
+    snarl: &egui_snarl::Snarl<crate::node_graph::SceneNode>,
+    node_id: crate::node_graph::GraphNodeId,
+) -> Option<String> {
+    let snarl_id: egui_snarl::NodeId = node_id.into();
+    if !snarl.node_ids().any(|(id, _)| id == snarl_id) {
+        return None;
+    }
+    match &snarl[snarl_id] {
+        crate::node_graph::SceneNode::PointInstancer { prim_path, .. } if !prim_path.is_empty() => {
+            Some(prim_path.clone())
+        }
+        _ => None,
+    }
+}
+
 impl Renderer {
     /// Load scene data from a pre-parsed Scene (pure Rust USDA parser fallback).
     ///
@@ -1258,23 +1282,39 @@ impl Renderer {
             .map(|(idx, inst)| resolve_prim_path(inst, scene, idx))
             .collect();
         // Extend for instancer-expanded instances (parallel to instance_transforms)
+        //
+        // Namespace these under the *instancer's* prim path, not the prototype's.
+        // Keying off the prototype made these instances unreachable from the prim
+        // the user actually selects: a PointInstancer registers as e.g.
+        // `/World/instancer1`, so `/BIF/{proto}/instancer_N` could never match it —
+        // the transform gizmo never resolved for any instancer. It also produced a
+        // doubled slash, since prototype names are already absolute.
+        //
+        // `resolve_instance_index` matches descendants (layer 3), so
+        // `/BIF/World/instancer1/instancer_N` resolves for a `/World/instancer1`
+        // query once `denormalize_synthetic_instance_path` strips the `/BIF/` prefix.
         let scene_inst_count = prim_paths.len();
-        for (i, inst) in self
+        for (i, (node_id, inst)) in self
             .nodes
             .instancer_results
             .iter()
             .filter(|(nid, _)| is_node_active(nid))
-            .flat_map(|(_, insts)| insts.iter())
+            .flat_map(|(nid, insts)| insts.iter().map(move |inst| (*nid, inst)))
             .enumerate()
         {
-            let proto_name = scene
-                .prototypes
-                .get(inst.prototype_id)
-                .map(|p| &*p.name)
-                .unwrap_or("unknown");
+            // Fall back to the prototype name only if the node is gone or isn't a
+            // PointInstancer — keeps a stable path rather than dropping the entry.
+            let namespace = instancer_node_prim_path(&self.nodes.node_graph_state.snarl, node_id)
+                .unwrap_or_else(|| {
+                    scene
+                        .prototypes
+                        .get(inst.prototype_id)
+                        .map(|p| p.name.to_string())
+                        .unwrap_or_else(|| "unknown".to_string())
+                });
             prim_paths.push(format!(
                 "/BIF/{}/instancer_{}",
-                proto_name,
+                namespace.trim_start_matches('/'),
                 scene_inst_count + i
             ));
         }
