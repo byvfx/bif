@@ -4,7 +4,15 @@
 
 ## Current State (2026-08-26)
 
-- **Branch:** `fix/node-graph-wire-lifetime` → **PR #34 open**, CI running. 4 commits: `a879ae8` instancer namespacing · `76ffc7d` wire lifetime fix · `99689f4` connect logging · docs.
+- **Branch:** `main` at `82448d6`. **PR #34 MERGED → #28 CLOSED.** (instancer namespacing · wire lifetime fix · connect logging · docs). **PR #35 MERGED** first as the CI unblocker — see below.
+- **⚠ `main` was latently red before this session — clippy 1.98 broke it, and PR #35 fixed it.** Two new lints, both hard errors under `-D warnings`, were failing `Check (Windows)` on **every** PR: `chunks_exact_to_as_chunks` (7 sites, `bif_core/src/usd/ffi_convert.rs`) and `drain_collect` (1 site, `bif_viewport/src/render.rs`). Same shape as #31 and handled the same way — clippy PR lands first, feature PR rebases onto it. **The lints masked each other**: compilation stops at the first erroring crate, so fixing `chunks_exact` merely revealed `drain_collect`.
+- **✅ LOCAL TOOLCHAIN NOW MATCHES CI — `rustup update stable` took 1.92.0 → 1.98.0.** This closes the gap the 07-31 entry flagged as deferred: local clippy previously *could not* reproduce CI failures, which is why both #31 and #35 were only discoverable by pushing. CI's exact gate now runs locally:
+  ```powershell
+  cargo clippy -p bif_math -p bif_renderer -p bif_viewport -- -D warnings
+  cargo clippy -p bif_math -p bif_renderer --no-default-features -- -D warnings
+  ```
+  **Run these before pushing** — they caught #34's rebase clean pre-push instead of after a 3-minute round trip. Consider a `rust-toolchain.toml` to stop the drift recurring.
+- **CI note supersedes the 08-06 entry:** the force-push after #34's rebase **did** fire `pull_request: synchronize` normally. The "#29 needed close/reopen" behavior did not reproduce; don't treat it as a standing rule.
 - **✅ #28 ROOT-CAUSED AND FIXED — the issue title is wrong; no instancer is involved.** Repro: **add two nodes, wire them, delete one, drag the other.** `BifNodeWire` holds raw `BifNodeGraphicsItem*` endpoints; `delete_selected_nodes()` deleted the node without pruning `m_wires`, so a wire kept a dangling endpoint and faulted on the survivor's next `moved()` → `refresh()` → `scene_pin_pos()` → `scenePos()`. Second leak, same shape: the reconnect path deleted a wire but left its two `moved()` lambdas connected, holding a dangling capture. Fixed at the choke point — the wire adopts its `QMetaObject::Connection`s and disconnects in a destructor; `remove_wire()` / `remove_wires_for_node()` centralize teardown.
   - **`if (!m_from_node || !m_to_node)` was never a guard** — a pointer to a deleted object is not null. The connect-site comment stated the false assumption outright ("the scene is tearing down so `wire` will be gone shortly after" — true at shutdown, false for a single delete).
 - **🔧 TECHNIQUE WORTH KEEPING — symbolize crashes from the OS log, no debugger.** Windows Error Reporting already records faulting module + fault offset for every unhandled exception, and `dbghelp.dll` ships with Windows. With the PDB on disk that resolves straight to file:line. Script at `C:\Users\brandon\.cargo-target\symbolize-crash.ps1` (auto-pulls the newest crash). **The `cdb` / Windows SDK install was never needed** — SDK 10.0.22621 is installed but without the Debuggers feature, and it doesn't matter.
@@ -14,7 +22,7 @@
 - **Verified by controlled A/B**, not assumption: pre-fix and fixed binaries, identical armed sequence (`connected node:0:0 -> node:1:0` then `deleted node:0`) — pre-fix log ends dead, fixed exits `rc=0`. The first attempt was **void** (no wire connected) and only the newly-added `connect_pins` logging revealed that. Pre-fix binary kept at `C:\Users\brandon\.cargo-target\bif_viewer_PREFIX.exe`.
 - **Also fixed:** instancer instances were namespaced under the **prototype** name, not the instancer prim, so the transform gizmo never resolved for any instancer even with 1000 healthy instances. Separate confirmed defect, not the crash trigger.
 - **Untracked, deliberate:** `docs/bif_ivar_goals.txt` (Ivar identity/roadmap notes) — left alone, not committed.
-- **Next:** (1) merge #34 when green → closes #28. (2) **#33** pin labels are generic `in1`/`out1`. (3) **#26** framing stub. (4) walk the 5 remaining #22 node types → close #22; add headless `bif_viewport` node-graph population tests. (5) consider promoting `symbolize-crash.ps1` into `scripts/`.
+- **Next:** (1) **#33** pin labels are generic `in1`/`out1`. (2) **#26** framing stub (`on_frame_selected` is a status-message stub, `main_window.rs`). (3) walk the 5 remaining #22 node types → close #22; add headless `bif_viewport` node-graph population tests. (4) consider promoting `symbolize-crash.ps1` into `scripts/` and pinning `rust-toolchain.toml`.
 
 ## Current State (2026-08-06)
 
