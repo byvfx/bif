@@ -100,7 +100,9 @@ pub(crate) unsafe fn f32_ptr_to_vec3s(ptr: *const f32, count: usize) -> Vec<Vec3
         };
         let slice = std::slice::from_raw_parts(ptr, n);
         slice
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .map(|c| Vec3::new(c[0], c[1], c[2]))
             .collect()
     }
@@ -141,13 +143,13 @@ pub(crate) unsafe fn f32_ptr_to_mat4s(ptr: *const f32, count: usize) -> Vec<Mat4
             return Vec::new();
         };
         let slice = std::slice::from_raw_parts(ptr, n);
+        // `as_chunks` hands back `&[f32; 16]` directly, so the intermediate
+        // copy `chunks_exact` needed to produce a fixed-size array is gone.
         slice
-            .chunks_exact(16)
-            .map(|chunk| {
-                let mut arr = [0.0f32; 16];
-                arr.copy_from_slice(chunk);
-                Mat4::from_cols_array(&arr)
-            })
+            .as_chunks::<16>()
+            .0
+            .iter()
+            .map(Mat4::from_cols_array)
             .collect()
     }
 }
@@ -245,12 +247,9 @@ pub(crate) unsafe fn convert_mesh(raw: &UsdBridgeMeshDataRaw) -> UsdMeshData {
         None
     } else if let Some(n) = super::ffi_guard::safe_mul_count::<f32>(raw.uv_count, 2, "mesh.uvs") {
         let slice = std::slice::from_raw_parts(raw.uvs, n);
-        Some(
-            slice
-                .chunks_exact(2)
-                .map(|chunk| [chunk[0], chunk[1]])
-                .collect(),
-        )
+        // `as_chunks::<2>().0` is already `&[[f32; 2]]` — the element type we
+        // want — so the per-chunk rebuild collapses into a copy.
+        Some(slice.as_chunks::<2>().0.to_vec())
     } else {
         None
     };
@@ -294,7 +293,9 @@ pub(crate) unsafe fn convert_mesh(raw: &UsdBridgeMeshDataRaw) -> UsdMeshData {
         let slice = std::slice::from_raw_parts(raw.display_color, n);
         Some(
             slice
-                .chunks_exact(3)
+                .as_chunks::<3>()
+                .0
+                .iter()
                 .map(|c| Vec3::new(c[0], c[1], c[2]))
                 .collect(),
         )
@@ -348,12 +349,7 @@ pub(crate) unsafe fn convert_mesh(raw: &UsdBridgeMeshDataRaw) -> UsdMeshData {
             .checked_mul(2)
             .expect("facevarying_uv_count overflow");
         let slice = unsafe { std::slice::from_raw_parts(raw.facevarying_uvs, float_count) };
-        Some(
-            slice
-                .chunks_exact(2)
-                .map(|c| [c[0], c[1]])
-                .collect::<Vec<_>>(),
-        )
+        Some(slice.as_chunks::<2>().0.to_vec())
     } else {
         None
     };
@@ -722,7 +718,9 @@ pub(crate) unsafe fn convert_blend_shape_binding(
             {
                 let floats = std::slice::from_raw_parts(rt.offsets_xyz, n);
                 floats
-                    .chunks_exact(3)
+                    .as_chunks::<3>()
+                    .0
+                    .iter()
                     .map(|c| Vec3::new(c[0], c[1], c[2]))
                     .collect()
             } else {
@@ -739,7 +737,9 @@ pub(crate) unsafe fn convert_blend_shape_binding(
                         let floats = std::slice::from_raw_parts(rt.normal_offsets_xyz, n);
                         Some(
                             floats
-                                .chunks_exact(3)
+                                .as_chunks::<3>()
+                                .0
+                                .iter()
                                 .map(|c| Vec3::new(c[0], c[1], c[2]))
                                 .collect(),
                         )
