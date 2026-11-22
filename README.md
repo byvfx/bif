@@ -1,5 +1,7 @@
 # BIF
 
+[![CI/CD](https://github.com/byvfx/bif/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/byvfx/bif/actions/workflows/ci.yml)
+
 > USD Orchestration Tool for VFX. Compose layers. Instance massively. Render.
 
 <!-- TODO: add hero render image -->
