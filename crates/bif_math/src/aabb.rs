@@ -162,6 +162,18 @@ impl Aabb {
         self.centroid()
     }
 
+    /// Returns half the size of each interval as a `Vec3`.
+    ///
+    /// Each component is half the corresponding interval's size
+    /// (`(max - min) / 2.0`).
+    pub fn half_extents(&self) -> Vec3 {
+        Vec3::new(
+            self.x.size() * 0.5,
+            self.y.size() * 0.5,
+            self.z.size() * 0.5,
+        )
+    }
+
     /// Returns the minimum corner point of the bounding box.
     pub fn min_point(&self) -> Vec3 {
         Vec3::new(self.x.min, self.y.min, self.z.min)
@@ -237,6 +249,22 @@ mod tests {
         let centroid = aabb.centroid();
 
         assert_eq!(centroid, Vec3::new(5.0, 5.0, 5.0));
+    }
+
+    #[test]
+    fn test_aabb_center() {
+        let aabb = Aabb::from_points(Vec3::new(0.0, 0.0, 0.0), Vec3::new(10.0, 10.0, 10.0));
+        let center = aabb.center();
+
+        assert_eq!(center, Vec3::new(5.0, 5.0, 5.0));
+    }
+
+    #[test]
+    fn test_aabb_half_extents() {
+        let aabb = Aabb::from_points(Vec3::new(0.0, 0.0, 0.0), Vec3::new(10.0, 20.0, 30.0));
+        let half_extents = aabb.half_extents();
+
+        assert_eq!(half_extents, Vec3::new(5.0, 10.0, 15.0));
     }
 
     #[test]
