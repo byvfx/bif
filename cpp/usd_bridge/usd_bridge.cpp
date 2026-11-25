@@ -539,7 +539,7 @@ static void cache_material_data(UsdBridgeStage* bridge);
 /// `prims_cached` bool, not a synchronization primitive.
 ///
 /// A runtime `TF_VERIFY` thread-id guard is planned alongside the
-/// v0.17 `cpp_bridge.rs` split (see MILESTONES.md). Until then, the
+/// v0.17 `cpp_bridge.rs` split (see the v0.17.0 GitHub milestone). Until then, the
 /// invariant is enforced by convention: every Rust caller goes through
 /// `UsdStage` which is held inside a `Mutex` at the `bif_viewport`
 /// layer, and the FFI is single-entry per call.

@@ -127,7 +127,7 @@ cargo run -p bif_perf -- download                      # show missing official U
 
 ## Roadmap
 
-See **[MILESTONES.md](MILESTONES.md)** for the full version-organized roadmap.
+See **[GitHub Milestones](https://github.com/byvfx/bif/milestones)** for the full roadmap.
 
 | Version | Theme |
 |------|-------|
@@ -136,7 +136,7 @@ See **[MILESTONES.md](MILESTONES.md)** for the full version-organized roadmap.
 | v0.18.0 | Viewport performance |
 | v0.19.0 | Scene authoring + layer diff |
 | v0.20.0 | MaterialX authoring |
-| ... | [Full roadmap](MILESTONES.md) |
+| ... | [Full roadmap](https://github.com/byvfx/bif/milestones) |
 
 ---
 
@@ -163,11 +163,7 @@ See **[CLAUDE.md](CLAUDE.md)** for detailed build instructions and feature flags
 
 | Doc | Description |
 |-----|-------------|
-| [MILESTONES.md](MILESTONES.md) | Version roadmap |
-| [ROADMAP_DETAIL.md](ROADMAP_DETAIL.md) | Detailed task breakdowns per version |
-| [MILESTONES_HISTORY.md](MILESTONES_HISTORY.md) | Completed milestone history |
 | [CHANGELOG.md](CHANGELOG.md) | Release notes |
-| [ARCHITECTURE.md](ARCHITECTURE.md) | Design decisions |
 | [HOUDINI_EXPORT.md](HOUDINI_EXPORT.md) | USD export best practices |
 | [devlog/](devlog/) | Session-by-session development logs |
 

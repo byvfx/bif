@@ -16,7 +16,7 @@ BIF is a USD Orchestration Tool for VFX — layer-aware USD editing + procedural
 
 - **Status:** v0.16.9 shipped (2026-06-04) — first working Windows release CI (Qt + USD + OIIO + OIDN + Embree bundled); Qt is primary UI framework (egui removed v0.15.0)
 - **Current:** between releases — `CHANGELOG.md [Unreleased]` empty; next work = v0.17.0 (issues #13–#15)
-- **Roadmap:** GitHub Milestones + Issues → https://github.com/byvfx/bif/milestones (v0.17.0 Viewport perf → v0.18.0 Scene Authoring → v0.19.0 MaterialX → v0.20.0 Volumes → v0.21.0 GPU PT → v0.22.0 API/Framework; AI = `backlog` label until app is solid). GitHub is the roadmap source of truth; [MILESTONES.md](MILESTONES.md) keeps architecture + 1.0 criteria only.
+- **Roadmap:** GitHub Milestones + Issues → https://github.com/byvfx/bif/milestones (v0.17.0 Viewport perf → v0.18.0 Scene Authoring → v0.19.0 MaterialX → v0.20.0 Volumes → v0.21.0 GPU PT → v0.22.0 API/Framework; AI = `backlog` label until app is solid). GitHub is the roadmap source of truth.
 - **Goal:** Layer-aware USD editor + scene assembler — open stage, pick layer, edit, save clean USD
 - **Design:** [BIF_USD_WORKFLOW.md](BIF_USD_WORKFLOW.md) — hybrid approach (procedural nodes + layer awareness)
 - **Timeline:** Side project, 10-20 hrs/week
@@ -81,8 +81,7 @@ cargo fmt --check
 
 - [README.md](README.md) - setup, commands
 - [docs/WORKFLOW.md](docs/WORKFLOW.md) - branch → PR → review → squash-merge + release quick reference
-- [MILESTONES.md](MILESTONES.md) - architecture, roadmap
-- [SESSION_HANDOFF.md](SESSION_HANDOFF.md) - current state
+- [HANDOFF.md](HANDOFF.md) - current state
 
 ## Knowledge Base (Obsidian Wiki)
 
@@ -219,8 +218,7 @@ Before diving into code:
 - Code formatted (`cargo fmt --check`)
 - Update CHANGELOG.md `## [Unreleased]` section (per-PR when on a branch)
 - Make new devlog entry (per-PR when on a branch)
-- Update SESSION_HANDOFF.md if needed
-- Update MILESTONES.md if needed
+- Update HANDOFF.md if needed
 - update README.md if needed
 - update CLAUDE.md if needed
 - Public items have doc comments
@@ -265,7 +263,7 @@ At end of each session, create/update `devlog/YYYY-MM/DEVLOG_YYYY-MM-DD.md`:
 - Blockers/questions
 ```
 
-Also update `SESSION_HANDOFF.md` with summary, next steps, blockers.
+Also update `HANDOFF.md` with summary, next steps, blockers.
 
 ### Github
 
@@ -280,7 +278,7 @@ Real work happens on **feature branches → PR → squash-merge to `main`**. Rev
 - **Branch for features/bugfixes:** `git switch -c <type>/<short-desc>` (e.g. `feat/node-outputs-merge`, `fix/payload-policy`). Trivial commits (typo, version bump, docs/CHANGELOG/devlog-only) may go straight to `main`.
 - **Cadence:**
   - *Per commit* (on the branch): the `Before Committing` gate — fmt + clippy + tests green, no warnings.
-  - *Per PR* (once for the branch): CHANGELOG `[Unreleased]`, devlog, SESSION_HANDOFF / MILESTONES / README updates.
+  - *Per PR* (once for the branch): CHANGELOG `[Unreleased]`, devlog, HANDOFF / README updates.
 - **Open the PR:** `gh pr create`. CI `check` runs and `claude-code-review.yml` auto-reviews the diff.
 - **Run `/vfx-code-reviewer` on the PR diff** for VFX-production-pattern review before merging. Reserve `/code-review ultra` for large/risky PRs (e.g. `cpp_bridge` split, renderer changes).
 - **Address review**, push fixes (auto-review re-runs on each push).

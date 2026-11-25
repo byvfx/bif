@@ -44,11 +44,9 @@ Gotchas:
 
 Check touched scope against:
 - `CHANGELOG.md` — add `## [Unreleased]` entry
-- `SESSION_HANDOFF.md` — update summary, next steps, blockers
-- `MILESTONES.md` — if scope changed
+- `HANDOFF.md` — update summary, next steps, blockers
 - `README.md` — if setup or commands changed
 - `CLAUDE.md` — if conventions changed
-- `BUGLIST.md` — if bugs fixed or found
 
 ## 6. Create Devlog Entry
 
