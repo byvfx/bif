@@ -13,7 +13,6 @@ on:
       - 'assets/stitch_bif_ui_01/**'
       - 'README.md'
       - 'CHANGELOG.md'
-      - 'MILESTONES.md'
 
 permissions:
   contents: read

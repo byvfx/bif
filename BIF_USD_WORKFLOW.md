@@ -12,7 +12,7 @@
 
 **v0.16 C4a + C4b shipped (v0.16.0, 2026-04-28):** `EditOperation` + `EditHistory`, stage-layer FFI writes, variant selections authored through `UsdEditContext` on the working layer, Ctrl+S saving the active working layer, ADR-008 for the edit architecture, plus the C4b editor surface (Apply-only USDA panel, Material Sheet, shading-model dropdown, transform gizmo). `EditOperation` now also covers `ReplaceLayerContents` (USDA round-trip) and `SetShaderId` (shading-model swap).
 
-**Milestone threading:** This spec is implemented incrementally across v0.14-v0.19 — see [MILESTONES.md](MILESTONES.md) for the release schedule.
+**Milestone threading:** This spec is implemented incrementally across v0.14-v0.19 — see [GitHub Milestones](https://github.com/byvfx/bif/milestones) for the schedule.
 
 ## Overview
 
