@@ -518,6 +518,16 @@ pub mod qobject {
         #[qinvokable]
         fn on_node_graph_get_node_info(self: Pin<&mut BifShellState>, node_id: i32) -> QString;
 
+        /// Node Graph: pin names + types for a node type, as JSON
+        /// (`{"inputs":[{"name":"points","type":"scene"}],"outputs":[...]}`).
+        /// Empty string for unknown types. Static data, no renderer needed —
+        /// the visual graph is created before the render surface exists.
+        #[qinvokable]
+        fn on_node_graph_get_pin_metadata(
+            self: Pin<&mut BifShellState>,
+            type_name: QString,
+        ) -> QString;
+
         #[qinvokable]
         fn on_node_graph_set_usd_read_path(
             self: Pin<&mut BifShellState>,
@@ -2156,6 +2166,20 @@ impl qobject::BifShellState {
             .flatten()
             .unwrap_or_default();
         cxx_qt_lib::QString::from(&result)
+    }
+
+    fn on_node_graph_get_pin_metadata(
+        self: Pin<&mut Self>,
+        type_name: cxx_qt_lib::QString,
+    ) -> cxx_qt_lib::QString {
+        let type_name_str: String = (&type_name).into();
+        // Static metadata, deliberately reached without the viewport: pin
+        // layout is fixed per type, and the Qt graph must stay correct even
+        // when the render panel isn't initialized.
+        let json = bif_viewport::node_graph::pin_metadata_for_type(&type_name_str)
+            .map(|meta| meta.to_json())
+            .unwrap_or_default();
+        cxx_qt_lib::QString::from(&json)
     }
 
     fn on_node_graph_set_usd_read_path(

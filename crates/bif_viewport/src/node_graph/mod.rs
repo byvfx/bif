@@ -192,6 +192,141 @@ impl PinType {
             PinType::Environment => theme::PIN_ENVIRONMENT,
         }
     }
+
+    /// Stable lowercase name for this pin type (`"scene"`, `"image"`,
+    /// `"environment"`). This is the string the Qt bridge sends in pin
+    /// metadata JSON, so the UI can pick colours without matching variant
+    /// names.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            PinType::Scene => "scene",
+            PinType::Image => "image",
+            PinType::Environment => "environment",
+        }
+    }
+}
+
+/// One pin on a node: display name + data type.
+type PinSpec = (&'static str, PinType);
+
+/// One pin row: names + types, in row order.
+type PinRow = &'static [PinSpec];
+
+/// Type names the node graph UI can create, i.e. the ones
+/// [`SceneNode::default_for_type_name`] and [`pin_tables_for_type_name`] must
+/// both cover. `GraftBranches` is listed because its pins and default node are
+/// known, even though [`crate::Renderer::node_graph_add_node`] still refuses to
+/// bridge it while its behavior is redesigned.
+pub const NODE_GRAPH_TYPE_NAMES: &[&str] = &[
+    "UsdRead",
+    "HdriEnvironment",
+    "IvarRender",
+    "Cube",
+    "Sphere",
+    "Camera",
+    "ScatterPoints",
+    "PointInstancer",
+    "Xform",
+    "UsdPrim",
+    "UsdExport",
+    "Cache",
+    "GraftBranches",
+];
+
+/// Pin row for nodes with no pins on that side.
+const NO_PINS: &[PinSpec] = &[];
+/// Single pass-through scene input (`Primitive`, `Xform`, `UsdPrim`, ...).
+const IN_SCENE: &[PinSpec] = &[("scene", PinType::Scene)];
+/// `IvarRender` inputs: scene to render + environment lighting.
+const IN_SCENE_ENV: &[PinSpec] = &[("scene", PinType::Scene), ("env", PinType::Environment)];
+/// `PointInstancer` inputs: point cloud + prototype to instance.
+const IN_POINTS_PROTO: &[PinSpec] = &[("points", PinType::Scene), ("proto", PinType::Scene)];
+/// `GraftBranches` inputs: up to four branch scenes.
+const IN_GRAFT_BRANCHES: &[PinSpec] = &[
+    ("branch 1", PinType::Scene),
+    ("branch 2", PinType::Scene),
+    ("branch 3", PinType::Scene),
+    ("branch 4", PinType::Scene),
+];
+/// Single scene output (most nodes).
+const OUT_SCENE: &[PinSpec] = &[("scene", PinType::Scene)];
+/// Rendered image output (`IvarRender`).
+const OUT_IMAGE: &[PinSpec] = &[("image", PinType::Image)];
+/// Generated point cloud output (`ScatterPoints`).
+const OUT_POINTS: &[PinSpec] = &[("points", PinType::Scene)];
+/// Environment lighting output (`HdriEnvironment`).
+const OUT_ENV: &[PinSpec] = &[("env", PinType::Environment)];
+
+/// Pin names + types for a node type, split into inputs and outputs.
+///
+/// Describes a *default* node instance: `ScatterPoints` with a non-default
+/// `source` has different inputs than the default (`Surface`) instance.
+#[derive(Clone, Copy, Debug)]
+pub struct PinMetadata {
+    /// Input pins, in row order (left edge of the node).
+    pub inputs: &'static [(&'static str, PinType)],
+    /// Output pins, in row order (right edge of the node).
+    pub outputs: &'static [(&'static str, PinType)],
+}
+
+impl PinMetadata {
+    /// Serialize to the JSON shape the Qt graph consumes:
+    /// `{"inputs":[{"name":"points","type":"scene"}],"outputs":[...]}`.
+    /// Both arrays are always present, empty when the side has no pins.
+    pub fn to_json(&self) -> String {
+        fn pins_json(pins: &[PinSpec]) -> Vec<serde_json::Value> {
+            pins.iter()
+                .map(
+                    |(name, pin_type)| serde_json::json!({"name": name, "type": pin_type.as_str()}),
+                )
+                .collect()
+        }
+
+        serde_json::json!({
+            "inputs": pins_json(self.inputs),
+            "outputs": pins_json(self.outputs),
+        })
+        .to_string()
+    }
+}
+
+/// Pin tables (inputs, outputs) for a node-graph type name.
+///
+/// Pure lookup into the static tables: no `SceneNode` is constructed, so the
+/// per-kind prim-path counters (`CUBE_COUNTER`, `INSTANCER_COUNTER`, ...) are
+/// untouched. That matters because the Qt graph asks for pin metadata
+/// immediately after creating a node — a metadata path that built a node would
+/// burn a counter value and skip prim path numbers.
+///
+/// Names outside [`NODE_GRAPH_TYPE_NAMES`] return `None`.
+fn pin_tables_for_type_name(type_name: &str) -> Option<(PinRow, PinRow)> {
+    if !NODE_GRAPH_TYPE_NAMES.contains(&type_name) {
+        return None;
+    }
+    match type_name {
+        "UsdRead" => Some((NO_PINS, OUT_SCENE)),
+        "HdriEnvironment" => Some((NO_PINS, OUT_ENV)),
+        "IvarRender" => Some((IN_SCENE_ENV, OUT_IMAGE)),
+        "Cube" | "Sphere" | "Camera" => Some((IN_SCENE, OUT_SCENE)),
+        // Default instance: `source = Surface`, i.e. one scene input.
+        "ScatterPoints" => Some((IN_SCENE, OUT_POINTS)),
+        "PointInstancer" => Some((IN_POINTS_PROTO, OUT_SCENE)),
+        "Xform" | "UsdPrim" | "Cache" => Some((IN_SCENE, OUT_SCENE)),
+        "UsdExport" => Some((IN_SCENE, NO_PINS)), // sink node
+        "GraftBranches" => Some((IN_GRAFT_BRANCHES, OUT_SCENE)),
+        _ => None,
+    }
+}
+
+/// Pin metadata for a node-graph type name (`"UsdRead"`, `"PointInstancer"`,
+/// ...) — the same strings [`crate::Renderer::node_graph_add_node`] accepts.
+///
+/// Returns `None` for unknown type names. Side-effect free: reads the static
+/// pin tables without constructing a node. Reflects a default node instance;
+/// see [`PinMetadata`].
+pub fn pin_metadata_for_type(type_name: &str) -> Option<PinMetadata> {
+    let (inputs, outputs) = pin_tables_for_type_name(type_name)?;
+    Some(PinMetadata { inputs, outputs })
 }
 
 /// A node in the scene graph
@@ -568,140 +703,92 @@ impl SceneNode {
         }
     }
 
+    /// Create a default node instance for a node-graph type name.
+    ///
+    /// `type_name` is the string form used by the Qt graph and
+    /// [`crate::Renderer::node_graph_add_node`] (`"UsdRead"`,
+    /// `"PointInstancer"`, ...). Returns `None` for unknown names.
+    ///
+    /// Name membership comes from [`NODE_GRAPH_TYPE_NAMES`], shared with
+    /// [`pin_tables_for_type_name`], so node construction and pin metadata
+    /// always cover the same type set.
+    pub fn default_for_type_name(type_name: &str) -> Option<Self> {
+        if !NODE_GRAPH_TYPE_NAMES.contains(&type_name) {
+            return None;
+        }
+        match type_name {
+            "UsdRead" => Some(Self::usd_read()),
+            "HdriEnvironment" => Some(Self::hdri_environment()),
+            "IvarRender" => Some(Self::ivar_render()),
+            "Cube" => Some(Self::primitive(bif_core::PrimitiveKind::Cube)),
+            "Sphere" => Some(Self::primitive(bif_core::PrimitiveKind::Sphere)),
+            "Camera" => Some(Self::primitive(bif_core::PrimitiveKind::Camera)),
+            "ScatterPoints" => Some(Self::scatter_points()),
+            "PointInstancer" => Some(Self::point_instancer()),
+            "Xform" => Some(Self::xform()),
+            "UsdPrim" => Some(Self::usd_prim()),
+            "UsdExport" => Some(Self::usd_export()),
+            "Cache" => Some(Self::cache()),
+            "GraftBranches" => Some(Self::graft_branches()),
+            _ => None,
+        }
+    }
+
+    /// Input pins for this node's concrete configuration.
+    fn input_pins(&self) -> &'static [PinSpec] {
+        match self {
+            SceneNode::UsdRead { .. } => NO_PINS,
+            SceneNode::IvarRender { .. } => IN_SCENE_ENV,
+            SceneNode::Primitive { .. } => IN_SCENE,
+            SceneNode::ScatterPoints { source, .. } => match source {
+                bif_core::PointSource::Surface => IN_SCENE,
+                bif_core::PointSource::Grid | bif_core::PointSource::Sphere => NO_PINS,
+            },
+            SceneNode::PointInstancer { .. } => IN_POINTS_PROTO,
+            SceneNode::UsdExport { .. } => IN_SCENE,
+            SceneNode::Xform { .. } => IN_SCENE,
+            SceneNode::UsdPrim { .. } => IN_SCENE,
+            SceneNode::GraftBranches { .. } => IN_GRAFT_BRANCHES,
+            SceneNode::Cache { .. } => IN_SCENE,
+            SceneNode::HdriEnvironment { .. } => NO_PINS,
+        }
+    }
+
+    /// Output pins for this node's type.
+    fn output_pins(&self) -> &'static [PinSpec] {
+        match self {
+            SceneNode::UsdRead { .. } => OUT_SCENE,
+            SceneNode::IvarRender { .. } => OUT_IMAGE,
+            SceneNode::Primitive { .. } => OUT_SCENE,
+            SceneNode::ScatterPoints { .. } => OUT_POINTS,
+            SceneNode::PointInstancer { .. } => OUT_SCENE,
+            SceneNode::UsdExport { .. } => NO_PINS, // sink node
+            SceneNode::Cache { .. } => OUT_SCENE,
+            SceneNode::Xform { .. } => OUT_SCENE,
+            SceneNode::UsdPrim { .. } => OUT_SCENE,
+            SceneNode::GraftBranches { .. } => OUT_SCENE,
+            SceneNode::HdriEnvironment { .. } => OUT_ENV,
+        }
+    }
+
     /// Get input pin count
     pub fn input_count(&self) -> usize {
-        match self {
-            SceneNode::UsdRead { .. } => 0,
-            SceneNode::IvarRender { .. } => 2, // scene + environment
-            SceneNode::Primitive { .. } => 1,  // scene pass-through input
-            SceneNode::ScatterPoints { source, .. } => match source {
-                bif_core::PointSource::Surface => 1,
-                bif_core::PointSource::Grid | bif_core::PointSource::Sphere => 0,
-            },
-            SceneNode::PointInstancer { .. } => 2, // points + prototype
-            SceneNode::UsdExport { .. } => 1,      // scene input
-            SceneNode::Xform { .. } => 1,          // scene input
-            SceneNode::UsdPrim { .. } => 1,        // pass-through scene input
-            SceneNode::GraftBranches { .. } => 4,  // up to 4 branches
-            SceneNode::Cache { .. } => 1,          // scene input
-            SceneNode::HdriEnvironment { .. } => 0,
-        }
+        self.input_pins().len()
     }
 
     /// Get output pin count
     pub fn output_count(&self) -> usize {
-        match self {
-            SceneNode::UsdRead { .. } => 1,
-            SceneNode::IvarRender { .. } => 1,
-            SceneNode::Primitive { .. } => 1,
-            SceneNode::ScatterPoints { .. } => 1,
-            SceneNode::PointInstancer { .. } => 1,
-            SceneNode::UsdExport { .. } => 0, // sink node, no output
-            SceneNode::Cache { .. } => 1,
-            SceneNode::Xform { .. } => 1,
-            SceneNode::UsdPrim { .. } => 1,
-            SceneNode::GraftBranches { .. } => 1,
-            SceneNode::HdriEnvironment { .. } => 1,
-        }
+        self.output_pins().len()
     }
 
     /// Get input pin info
     pub fn input_pin(&self, index: usize) -> Option<(&'static str, PinType)> {
-        match self {
-            SceneNode::UsdRead { .. } => None,
-            SceneNode::IvarRender { .. } => match index {
-                0 => Some(("scene", PinType::Scene)),
-                1 => Some(("env", PinType::Environment)),
-                _ => None,
-            },
-            SceneNode::Primitive { .. } => match index {
-                0 => Some(("scene", PinType::Scene)),
-                _ => None,
-            },
-            SceneNode::ScatterPoints { source, .. } => match source {
-                bif_core::PointSource::Surface => match index {
-                    0 => Some(("scene", PinType::Scene)),
-                    _ => None,
-                },
-                bif_core::PointSource::Grid | bif_core::PointSource::Sphere => None,
-            },
-            SceneNode::PointInstancer { .. } => match index {
-                0 => Some(("points", PinType::Scene)),
-                1 => Some(("proto", PinType::Scene)),
-                _ => None,
-            },
-            SceneNode::UsdExport { .. } => match index {
-                0 => Some(("scene", PinType::Scene)),
-                _ => None,
-            },
-            SceneNode::Xform { .. } => match index {
-                0 => Some(("scene", PinType::Scene)),
-                _ => None,
-            },
-            SceneNode::UsdPrim { .. } => match index {
-                0 => Some(("scene", PinType::Scene)),
-                _ => None,
-            },
-            SceneNode::GraftBranches { .. } => match index {
-                0 => Some(("branch 1", PinType::Scene)),
-                1 => Some(("branch 2", PinType::Scene)),
-                2 => Some(("branch 3", PinType::Scene)),
-                3 => Some(("branch 4", PinType::Scene)),
-                _ => None,
-            },
-            SceneNode::Cache { .. } => match index {
-                0 => Some(("scene", PinType::Scene)),
-                _ => None,
-            },
-            SceneNode::HdriEnvironment { .. } => None,
-        }
+        self.input_pins().get(index).copied()
     }
 
     /// Get output pin info
     pub fn output_pin(&self, index: usize) -> Option<(&'static str, PinType)> {
-        match self {
-            SceneNode::UsdRead { .. } => match index {
-                0 => Some(("scene", PinType::Scene)),
-                _ => None,
-            },
-            SceneNode::IvarRender { .. } => match index {
-                0 => Some(("image", PinType::Image)),
-                _ => None,
-            },
-            SceneNode::Primitive { .. } => match index {
-                0 => Some(("scene", PinType::Scene)),
-                _ => None,
-            },
-            SceneNode::ScatterPoints { .. } => match index {
-                0 => Some(("points", PinType::Scene)),
-                _ => None,
-            },
-            SceneNode::PointInstancer { .. } => match index {
-                0 => Some(("scene", PinType::Scene)),
-                _ => None,
-            },
-            SceneNode::UsdExport { .. } => None, // sink node
-            SceneNode::Cache { .. } => match index {
-                0 => Some(("scene", PinType::Scene)),
-                _ => None,
-            },
-            SceneNode::Xform { .. } => match index {
-                0 => Some(("scene", PinType::Scene)),
-                _ => None,
-            },
-            SceneNode::UsdPrim { .. } => match index {
-                0 => Some(("scene", PinType::Scene)),
-                _ => None,
-            },
-            SceneNode::GraftBranches { .. } => match index {
-                0 => Some(("scene", PinType::Scene)),
-                _ => None,
-            },
-            SceneNode::HdriEnvironment { .. } => match index {
-                0 => Some(("env", PinType::Environment)),
-                _ => None,
-            },
-        }
+        self.output_pins().get(index).copied()
     }
 
     /// Path label shown on the node (like Houdini's green prim path text).
@@ -1265,6 +1352,235 @@ mod tests {
 
         let hdri_node = SceneNode::hdri_environment();
         assert_eq!(hdri_node.output_pin(0), Some(("env", PinType::Environment)));
+    }
+
+    #[test]
+    fn pin_metadata_matches_expected_layout() {
+        // Handwritten layout — deliberately independent of both pin switches,
+        // so a rename or reorder in `pin_tables_for_type_name` *or* in
+        // `SceneNode::input_pins`/`output_pins` fails here.
+        let expected: &[(&str, PinRow, PinRow)] = &[
+            ("UsdRead", &[], &[("scene", PinType::Scene)]),
+            ("HdriEnvironment", &[], &[("env", PinType::Environment)]),
+            (
+                "IvarRender",
+                &[("scene", PinType::Scene), ("env", PinType::Environment)],
+                &[("image", PinType::Image)],
+            ),
+            (
+                "Cube",
+                &[("scene", PinType::Scene)],
+                &[("scene", PinType::Scene)],
+            ),
+            (
+                "Sphere",
+                &[("scene", PinType::Scene)],
+                &[("scene", PinType::Scene)],
+            ),
+            (
+                "Camera",
+                &[("scene", PinType::Scene)],
+                &[("scene", PinType::Scene)],
+            ),
+            // Default instance: `Surface` source.
+            (
+                "ScatterPoints",
+                &[("scene", PinType::Scene)],
+                &[("points", PinType::Scene)],
+            ),
+            (
+                "PointInstancer",
+                &[("points", PinType::Scene), ("proto", PinType::Scene)],
+                &[("scene", PinType::Scene)],
+            ),
+            (
+                "Xform",
+                &[("scene", PinType::Scene)],
+                &[("scene", PinType::Scene)],
+            ),
+            (
+                "UsdPrim",
+                &[("scene", PinType::Scene)],
+                &[("scene", PinType::Scene)],
+            ),
+            // Sink node: a scene input and no outputs.
+            ("UsdExport", &[("scene", PinType::Scene)], &[]),
+            (
+                "Cache",
+                &[("scene", PinType::Scene)],
+                &[("scene", PinType::Scene)],
+            ),
+            (
+                "GraftBranches",
+                &[
+                    ("branch 1", PinType::Scene),
+                    ("branch 2", PinType::Scene),
+                    ("branch 3", PinType::Scene),
+                    ("branch 4", PinType::Scene),
+                ],
+                &[("scene", PinType::Scene)],
+            ),
+        ];
+
+        for &(type_name, expected_inputs, expected_outputs) in expected {
+            let meta = pin_metadata_for_type(type_name)
+                .unwrap_or_else(|| panic!("no pin metadata for {type_name}"));
+            assert_eq!(meta.inputs, expected_inputs, "inputs for {type_name}");
+            assert_eq!(meta.outputs, expected_outputs, "outputs for {type_name}");
+
+            // Second check: the same layout must be what the node itself
+            // reports, so the type-name table and the per-node switches agree.
+            let node = SceneNode::default_for_type_name(type_name)
+                .unwrap_or_else(|| panic!("no default node for {type_name}"));
+
+            assert_eq!(
+                meta.inputs.len(),
+                node.input_count(),
+                "input count drift for {type_name}"
+            );
+            for (i, pin) in meta.inputs.iter().enumerate() {
+                assert_eq!(
+                    Some(*pin),
+                    node.input_pin(i),
+                    "input pin {i} drift for {type_name}"
+                );
+            }
+            assert_eq!(
+                meta.outputs.len(),
+                node.output_count(),
+                "output count drift for {type_name}"
+            );
+            for (i, pin) in meta.outputs.iter().enumerate() {
+                assert_eq!(
+                    Some(*pin),
+                    node.output_pin(i),
+                    "output pin {i} drift for {type_name}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn type_name_registry_matches_both_paths() {
+        // The registry is the single membership list; both dispatches must
+        // accept exactly it.
+        for type_name in NODE_GRAPH_TYPE_NAMES {
+            assert!(
+                pin_tables_for_type_name(type_name).is_some(),
+                "{type_name} has no pin tables"
+            );
+            assert!(
+                SceneNode::default_for_type_name(type_name).is_some(),
+                "{type_name} has no default node"
+            );
+            assert!(
+                pin_metadata_for_type(type_name).is_some(),
+                "{type_name} has no pin metadata"
+            );
+        }
+
+        for unknown in ["", "NoSuchNode", "pointinstancer", "Cube "] {
+            assert!(pin_tables_for_type_name(unknown).is_none());
+            assert!(SceneNode::default_for_type_name(unknown).is_none());
+            assert!(pin_metadata_for_type(unknown).is_none());
+        }
+    }
+
+    #[test]
+    fn pin_metadata_for_type_does_not_bump_node_counters() {
+        // The metadata path must not construct a node: primitive/instancer
+        // constructors `fetch_add` on these per-kind counters to pick prim path
+        // numbers, and Qt asks for metadata right after creating a node (a
+        // burned counter skips numbers: `Cube1`, then `Cube3`).
+        //
+        // Tests run in parallel and others do construct nodes, so a single
+        // before/after pair can catch a concurrent bump. Retry until a quiet
+        // window is observed: a non-inert implementation moves the counters in
+        // every window, so it still fails.
+        const MAX_ATTEMPTS: usize = 64;
+
+        for _ in 0..MAX_ATTEMPTS {
+            let before = snapshot_node_counters();
+            for type_name in ["Cube", "Sphere", "Camera", "PointInstancer"] {
+                // Unknown-to-node-type check is covered elsewhere; here only
+                // that this call is inert.
+                let _ = pin_metadata_for_type(type_name);
+            }
+            if snapshot_node_counters() == before {
+                return;
+            }
+        }
+
+        panic!(
+            "pin_metadata_for_type moved the per-kind node counters in all \
+             {MAX_ATTEMPTS} attempts"
+        );
+    }
+
+    /// `(CUBE, SPHERE, CAMERA, INSTANCER)` counter values.
+    fn snapshot_node_counters() -> (u32, u32, u32, u32) {
+        (
+            CUBE_COUNTER.load(Ordering::Relaxed),
+            SPHERE_COUNTER.load(Ordering::Relaxed),
+            CAMERA_COUNTER.load(Ordering::Relaxed),
+            INSTANCER_COUNTER.load(Ordering::Relaxed),
+        )
+    }
+
+    #[test]
+    fn pin_metadata_spot_checks() {
+        let instancer = pin_metadata_for_type("PointInstancer").expect("PointInstancer metadata");
+        assert_eq!(
+            instancer.inputs,
+            &[("points", PinType::Scene), ("proto", PinType::Scene)]
+        );
+        assert_eq!(instancer.outputs, &[("scene", PinType::Scene)]);
+
+        let render = pin_metadata_for_type("IvarRender").expect("IvarRender metadata");
+        assert_eq!(
+            render.inputs,
+            &[("scene", PinType::Scene), ("env", PinType::Environment)]
+        );
+        assert_eq!(render.outputs, &[("image", PinType::Image)]);
+
+        let hdri = pin_metadata_for_type("HdriEnvironment").expect("HdriEnvironment metadata");
+        assert!(hdri.inputs.is_empty());
+        assert_eq!(hdri.outputs, &[("env", PinType::Environment)]);
+
+        let read = pin_metadata_for_type("UsdRead").expect("UsdRead metadata");
+        assert!(read.inputs.is_empty());
+        assert_eq!(read.outputs, &[("scene", PinType::Scene)]);
+
+        assert!(pin_metadata_for_type("NoSuchNode").is_none());
+    }
+
+    #[test]
+    fn pin_metadata_json_shape() {
+        // This JSON is the contract `NodeGraphWidget::parse_pin_metadata` reads
+        // on the C++ side: both arrays always present, each pin
+        // `{"name":..,"type":<PinType::as_str>}`.
+        let meta = pin_metadata_for_type("IvarRender").expect("IvarRender metadata");
+        let value: serde_json::Value =
+            serde_json::from_str(&meta.to_json()).expect("pin metadata is valid JSON");
+
+        let inputs = value["inputs"].as_array().expect("inputs array");
+        assert_eq!(inputs.len(), 2);
+        assert_eq!(inputs[0]["name"], "scene");
+        assert_eq!(inputs[0]["type"], "scene");
+        assert_eq!(inputs[1]["name"], "env");
+        assert_eq!(inputs[1]["type"], "environment");
+
+        let outputs = value["outputs"].as_array().expect("outputs array");
+        assert_eq!(outputs.len(), 1);
+        assert_eq!(outputs[0]["name"], "image");
+        assert_eq!(outputs[0]["type"], "image");
+
+        // Empty sides still serialize as arrays.
+        let hdri = pin_metadata_for_type("HdriEnvironment").expect("HdriEnvironment metadata");
+        let hdri_value: serde_json::Value =
+            serde_json::from_str(&hdri.to_json()).expect("hdri pin metadata is valid JSON");
+        assert_eq!(hdri_value["inputs"].as_array().map(Vec::len), Some(0));
+        assert!(hdri_value["outputs"].as_array().is_some());
     }
 
     #[test]

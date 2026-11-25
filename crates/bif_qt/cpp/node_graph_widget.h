@@ -82,6 +82,9 @@ class BifNodeGraphicsItem : public QGraphicsObject {
 public:
     struct Pin {
         QString name;
+        /// Backend `PinType` string ("scene" / "image" / "environment"),
+        /// drives the pin colour. Empty when the type is unknown.
+        QString type;
         // Local pin-center position relative to the node's top-left.
         QPointF local_pos;
         bool is_input;
@@ -221,8 +224,8 @@ private:
     BifNodeGraphicsItem* add_node(const QString& title,
                                   const QString& type_name,
                                   NodeCategory category,
-                                  int num_inputs,
-                                  int num_outputs,
+                                  QVector<BifNodeGraphicsItem::Pin> inputs,
+                                  QVector<BifNodeGraphicsItem::Pin> outputs,
                                   QPointF scene_pos);
     BifNodeWire* connect_pins(BifNodeGraphicsItem* from, int from_pin,
                               BifNodeGraphicsItem* to, int to_pin);

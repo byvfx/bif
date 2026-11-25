@@ -9,6 +9,7 @@
 #include <QGraphicsScene>
 #include <QGraphicsView>
 #include <QHBoxLayout>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QKeyEvent>
@@ -42,20 +43,60 @@ QColor header_color_for(NodeCategory cat) {
     return QColor(80, 85, 95);
 }
 
-QColor pin_color_for(const QString& pin_name) {
-    // Phase D.2 heuristic — refine with real SceneNode pin types.
-    const auto lower = pin_name.toLower();
-    if (lower.contains(QLatin1String("scene")) || lower.contains(QLatin1String("usd"))
-        || lower == QLatin1String("in") || lower == QLatin1String("out")) {
-        return QColor(100, 200, 100);
-    }
-    if (lower.contains(QLatin1String("image")) || lower.contains(QLatin1String("texture"))) {
-        return QColor(200, 150, 50);
-    }
-    if (lower.contains(QLatin1String("env")) || lower.contains(QLatin1String("hdri"))) {
-        return QColor(100, 150, 255);
-    }
+/// Pin colours keyed by backend `PinType` string — matches `theme::PIN_*` in
+/// `bif_viewport/src/theme.rs`.
+QColor pin_color_for(const QString& pin_type) {
+    if (pin_type == QLatin1String("scene")) return QColor(100, 200, 100);
+    if (pin_type == QLatin1String("image")) return QColor(200, 150, 50);
+    if (pin_type == QLatin1String("environment")) return QColor(100, 150, 255);
     return QColor(180, 185, 195);
+}
+
+/// Parse pin metadata JSON (`{"inputs":[{"name":..,"type":..}],"outputs":[..]}`)
+/// into pin vectors. Returns false when the payload is empty or malformed —
+/// both keys present, both arrays, every element an object — so the caller's
+/// deliberate fallback runs instead of silently building a pin-less node.
+/// Pin positions are left empty for `BifNodeGraphicsItem` to fill from row
+/// order.
+bool parse_pin_metadata(const QString& json,
+                        QVector<BifNodeGraphicsItem::Pin>& inputs,
+                        QVector<BifNodeGraphicsItem::Pin>& outputs) {
+    if (json.isEmpty()) return false;
+
+    QJsonParseError error{};
+    const QJsonDocument doc = QJsonDocument::fromJson(json.toUtf8(), &error);
+    if (error.error != QJsonParseError::NoError || !doc.isObject()) return false;
+
+    const QJsonObject root = doc.object();
+    const QJsonValue inputs_value = root.value(QStringLiteral("inputs"));
+    const QJsonValue outputs_value = root.value(QStringLiteral("outputs"));
+    // Missing (= Undefined) and non-array values are malformed, not "no pins".
+    if (!inputs_value.isArray() || !outputs_value.isArray()) return false;
+
+    const auto read_pins = [](const QJsonArray& array, bool is_input,
+                              QVector<BifNodeGraphicsItem::Pin>& pins) {
+        pins.reserve(array.size());
+        for (const QJsonValue& value : array) {
+            if (!value.isObject()) return false;
+            const QJsonObject pin = value.toObject();
+            pins.append({pin.value(QStringLiteral("name")).toString(),
+                         pin.value(QStringLiteral("type")).toString(),
+                         {},
+                         is_input});
+        }
+        return true;
+    };
+
+    // Parse into locals first: a malformed payload must leave the caller's
+    // vectors empty so its fallback produces a clean pin set.
+    QVector<BifNodeGraphicsItem::Pin> parsed_inputs;
+    QVector<BifNodeGraphicsItem::Pin> parsed_outputs;
+    if (!read_pins(inputs_value.toArray(), true, parsed_inputs)) return false;
+    if (!read_pins(outputs_value.toArray(), false, parsed_outputs)) return false;
+
+    inputs = parsed_inputs;
+    outputs = parsed_outputs;
+    return true;
 }
 
 }  // namespace
@@ -362,7 +403,7 @@ void BifNodeGraphicsItem::paint(QPainter* painter,
     for (int i = 0; i < m_inputs.size(); ++i) {
         const auto& pin = m_inputs[i];
         painter->setPen(QPen(QColor(20, 22, 26), 1));
-        painter->setBrush(pin_color_for(pin.name));
+        painter->setBrush(pin_color_for(pin.type));
         painter->drawEllipse(pin.local_pos, kPinRadius, kPinRadius);
         painter->setPen(QColor(200, 205, 215));
         painter->drawText(QRectF(kPinRadius + 6, pin.local_pos.y() - 8, m_width / 2, 16),
@@ -371,7 +412,7 @@ void BifNodeGraphicsItem::paint(QPainter* painter,
     for (int i = 0; i < m_outputs.size(); ++i) {
         const auto& pin = m_outputs[i];
         painter->setPen(QPen(QColor(20, 22, 26), 1));
-        painter->setBrush(pin_color_for(pin.name));
+        painter->setBrush(pin_color_for(pin.type));
         painter->drawEllipse(pin.local_pos, kPinRadius, kPinRadius);
         painter->setPen(QColor(200, 205, 215));
         painter->drawText(QRectF(m_width / 2, pin.local_pos.y() - 8,
@@ -737,19 +778,11 @@ void NodeGraphWidget::on_node_selected(int backend_id) {
 BifNodeGraphicsItem* NodeGraphWidget::add_node(const QString& title,
                                                const QString& type_name,
                                                NodeCategory category,
-                                               int num_inputs,
-                                               int num_outputs,
+                                               QVector<BifNodeGraphicsItem::Pin> inputs,
+                                               QVector<BifNodeGraphicsItem::Pin> outputs,
                                                QPointF scene_pos) {
-    QVector<BifNodeGraphicsItem::Pin> inputs;
-    QVector<BifNodeGraphicsItem::Pin> outputs;
-    for (int i = 0; i < num_inputs; ++i) {
-        inputs.append({QStringLiteral("in%1").arg(i + 1), {}, true});
-    }
-    for (int i = 0; i < num_outputs; ++i) {
-        outputs.append({QStringLiteral("out%1").arg(i + 1), {}, false});
-    }
     auto* node = new BifNodeGraphicsItem(
-        title, type_name, category, inputs, outputs);
+        title, type_name, category, std::move(inputs), std::move(outputs));
     node->setPos(scene_pos);
     m_scene->addItem(node);
     m_nodes.append(node);
@@ -779,37 +812,65 @@ BifNodeWire* NodeGraphWidget::connect_pins(BifNodeGraphicsItem* from, int from_p
 
 void NodeGraphWidget::add_node_for_type(const QString& type_name, QPointF scene_pos) {
     const int backend_id = create_backend_node(type_name, scene_pos);
-    BifNodeGraphicsItem* node = nullptr;
 
+    // Pin names + types come from the backend SceneNode definition, so
+    // `PointInstancer` shows `points`/`proto` and every pin is coloured by its
+    // real PinType. Nothing is fabricated from a pin count.
+    QVector<BifNodeGraphicsItem::Pin> inputs;
+    QVector<BifNodeGraphicsItem::Pin> outputs;
+    const bool have_pins = m_state
+        && parse_pin_metadata(m_state->on_node_graph_get_pin_metadata(type_name),
+                              inputs, outputs);
+    if (!have_pins) {
+        // No metadata (no shell state yet, or an unparseable payload): one
+        // neutral pin per side keeps the node wireable without inventing
+        // names. The header already shows the type name, so the labels stay
+        // empty and the pins render grey. Unknown types never reach this point
+        // — they return before the node is built.
+        inputs.append({QString(), QString(), {}, true});
+        outputs.append({QString(), QString(), {}, false});
+    }
+
+    QString title;
+    NodeCategory category = NodeCategory::Operation;
     if (type_name == QLatin1String("UsdRead")) {
-        node = add_node(QStringLiteral("USD Read"), type_name, NodeCategory::Composition, 0, 1, scene_pos);
+        title = QStringLiteral("USD Read");
+        category = NodeCategory::Composition;
     } else if (type_name == QLatin1String("HdriEnvironment")) {
-        node = add_node(QStringLiteral("HDRI Environment"), type_name, NodeCategory::Environment, 0, 1, scene_pos);
+        title = QStringLiteral("HDRI Environment");
+        category = NodeCategory::Environment;
     } else if (type_name == QLatin1String("IvarRender")) {
-        node = add_node(QStringLiteral("Ivar Render"), type_name, NodeCategory::Render, 2, 0, scene_pos);
+        title = QStringLiteral("Ivar Render");
+        category = NodeCategory::Render;
     } else if (type_name == QLatin1String("Cube")) {
-        node = add_node(QStringLiteral("Cube"), type_name, NodeCategory::Operation, 1, 1, scene_pos);
+        title = QStringLiteral("Cube");
     } else if (type_name == QLatin1String("Sphere")) {
-        node = add_node(QStringLiteral("Sphere"), type_name, NodeCategory::Operation, 1, 1, scene_pos);
+        title = QStringLiteral("Sphere");
     } else if (type_name == QLatin1String("Camera")) {
-        node = add_node(QStringLiteral("Camera"), type_name, NodeCategory::Operation, 1, 1, scene_pos);
+        title = QStringLiteral("Camera");
     } else if (type_name == QLatin1String("ScatterPoints")) {
-        node = add_node(QStringLiteral("Scatter Points"), type_name, NodeCategory::Operation, 1, 1, scene_pos);
+        title = QStringLiteral("Scatter Points");
     } else if (type_name == QLatin1String("PointInstancer")) {
-        node = add_node(QStringLiteral("Point Instancer"), type_name, NodeCategory::Operation, 2, 1, scene_pos);
+        title = QStringLiteral("Point Instancer");
     } else if (type_name == QLatin1String("Xform")) {
-        node = add_node(QStringLiteral("Xform"), type_name, NodeCategory::Operation, 1, 1, scene_pos);
+        title = QStringLiteral("Xform");
     } else if (type_name == QLatin1String("UsdPrim")) {
-        node = add_node(QStringLiteral("USD Prim"), type_name, NodeCategory::Composition, 1, 1, scene_pos);
+        title = QStringLiteral("USD Prim");
+        category = NodeCategory::Composition;
     } else if (type_name == QLatin1String("GraftBranches")) {
-        node = add_node(QStringLiteral("Graft Branches"), type_name, NodeCategory::Composition, 4, 1, scene_pos);
+        // Backend node is still held for redesign (create_backend_node returns
+        // -1), but the type is known so its branch pins come from metadata.
+        title = QStringLiteral("Graft Branches");
+        category = NodeCategory::Composition;
     } else if (type_name == QLatin1String("UsdExport")) {
-        node = add_node(QStringLiteral("USD Export"), type_name, NodeCategory::Composition, 1, 0, scene_pos);
+        title = QStringLiteral("USD Export");
+        category = NodeCategory::Composition;
     } else if (type_name == QLatin1String("Cache")) {
-        node = add_node(QStringLiteral("Cache"), type_name, NodeCategory::Operation, 1, 1, scene_pos);
+        title = QStringLiteral("Cache");
+    } else {
+        return;  // unknown type: no visual node
     }
 
-    if (node) {
-        node->set_backend_id(backend_id);
-    }
+    auto* node = add_node(title, type_name, category, inputs, outputs, scene_pos);
+    node->set_backend_id(backend_id);
 }
