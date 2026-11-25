@@ -6,7 +6,7 @@
 # Or source it alongside setup_usd_env.ps1 in your PowerShell profile.
 #
 # Qt 6.8.3 LTS — installed via official Qt Online Installer.
-# Binding: cxx-qt 0.7.x (see wiki/architecture/adr/006-qt-via-cxx-qt.md).
+# Binding: cxx-qt 0.7.x (see docs/archive/wiki/architecture/adr/006-qt-via-cxx-qt.md).
 
 $QtRoot = "C:\Qt\6.8.3\msvc2022_64"
 $QtTools = "C:\Qt\Tools"

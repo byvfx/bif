@@ -48,7 +48,7 @@ use crate::viewport::{
 // enters the event loop — no invokable can fire before install. Qt UI is
 // single-threaded, so thread_local + Cell<*mut _> is sound.
 //
-// See ADR-007 in wiki/architecture/adr/ for the full rationale + alternatives.
+// See ADR-007 in docs/archive/wiki/architecture/adr/ for the full rationale + alternatives.
 // ---------------------------------------------------------------------------
 
 thread_local! {

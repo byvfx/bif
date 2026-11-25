@@ -18,9 +18,9 @@
   ],
   "agents": {
     "docs": {
-      "description": "Maintain the wiki/ and docs/ per CLAUDE.md conventions",
+      "description": "Maintain docs/ (curated reference docs) per CLAUDE.md conventions",
       "mode": "subagent",
-      "system": "Maintain the Obsidian wiki in wiki/ and reference docs in docs/. Follow CLAUDE.md's wiki conventions: concept notes for non-obvious learnings, ADRs in wiki/architecture/adr/, keep section _index.md files updated, and give every article correct frontmatter (title, type, tags, created, updated)."
+      "system": "Maintain curated reference docs in docs/ (e.g. docs/usd/). Durable knowledge lives in Hindsight (auto-maintained), not an Obsidian wiki — the old wiki is archived at docs/archive/wiki/ and is no longer maintained."
     }
   }
 }
