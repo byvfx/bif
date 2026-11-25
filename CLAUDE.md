@@ -2,306 +2,107 @@
 
 ## Overview
 
-BIF is a USD Orchestration Tool for VFX — layer-aware USD editing + procedural scene assembly + integrated rendering. Built in Rust with wgpu, USD (C++ FFI), and MaterialX. Inspired by Katana's layer awareness and Houdini's procedural power. Orchestration scope: arrange, compose, override, instance. Not: model, rig, animate, simulate. I have a background in Go and Python/PyQt, and I'm learning Rust and graphics programming. Help me learn effectively while building this.
+BIF is a USD Orchestration Tool for VFX — layer-aware USD editing + procedural scene assembly + integrated rendering. Rust + wgpu + USD (C++ FFI) + MaterialX. Inspired by Katana's layer awareness and Houdini's procedural power. Scope: arrange, compose, override, instance. Not: model, rig, animate, simulate.
 
-- In all intercation and commit messages, be extremely consise and sacrifice grammar for brevity.
+I know Go + Python/PyQt well; learning Rust + graphics. Help me learn, don't lecture.
 
-## Plans
-
-- at the end of each plan, give me a list of unresoved questions to answer, if any and be extremely consise and sacrifice grammar for brevity.
+- In all interaction and commit messages, be extremely concise — sacrifice grammar for brevity.
 
 ## Project Context
 
-**BIF** - USD Orchestration Tool for VFX (layer-aware editing + procedural assembly + rendering).
+**BIF** - USD Orchestration Tool for VFX.
 
-- **Status:** v0.16.9 shipped (2026-06-04) — first working Windows release CI (Qt + USD + OIIO + OIDN + Embree bundled); Qt is primary UI framework (egui removed v0.15.0)
-- **Current:** between releases — `CHANGELOG.md [Unreleased]` populated (cpp_bridge split #13 + Qt node-graph parity work); next = v0.17.0 Node Graph Parity (#22 node-graph audit, #26 framing, #33 pin labels)
-- **Roadmap:** GitHub Milestones + Issues → https://github.com/byvfx/bif/milestones (v0.17.0 Node Graph Parity → v0.17.5 Viewport perf → v0.18.0 Scene Authoring → v0.19.0 MaterialX → v0.20.0 Volumes → v0.21.0 GPU PT → v0.22.0 API/Framework; AI = `backlog` label until app is solid). GitHub is the roadmap source of truth.
-- **Goal:** Layer-aware USD editor + scene assembler — open stage, pick layer, edit, save clean USD
-- **Design:** [BIF_USD_WORKFLOW.md](BIF_USD_WORKFLOW.md) — hybrid approach (procedural nodes + layer awareness)
-- **Timeline:** Side project, 10-20 hrs/week
+- **Status:** v0.16.9 shipped (2026-06-04) — first working Windows release CI; Qt is the UI (egui removed v0.15.0)
+- **Current:** v0.17.0 Node Graph Parity (#22 node-graph audit, #26 framing, #33 pin labels). `CHANGELOG [Unreleased]` holds cpp_bridge split #13 + Qt node-graph parity.
+- **Roadmap:** GitHub Milestones → https://github.com/byvfx/bif/milestones (v0.17.0 Node Graph Parity → v0.17.5 Viewport perf → v0.18.0 Scene Authoring → v0.19.0 MaterialX → v0.20.0 Volumes → v0.21.0 GPU PT → v0.22.0 API/Framework; AI = `backlog` until app is solid). GitHub is the source of truth.
+- **Design:** [BIF_USD_WORKFLOW.md](BIF_USD_WORKFLOW.md) — procedural nodes + layer awareness
 
-### Key Architecture
+### Architecture
 
-- **7 crates + benchmarks:** bif_math, bif_core, bif_renderer, bif_viewport, bif_viewer, bif_qt, bif_maketx, + `benchmarks` (bif_perf harness)
-  - `bif_viewer` — thin entry point only (`main.rs`); no UI logic lives here
-  - `bif_qt` — all Qt UI (cxx-qt 0.7 Rust-C++ bridge; panels in `crates/bif_qt/cpp/`)
-- **Qt panels** (`bif_qt/cpp/`): scene_browser, layer_stack, property_inspector, node_graph, render_settings, render_widget, usda_panel, command_palette, first_launch
-- **Qt Rust** (`bif_qt/src/`): `main_window.rs`, `app.rs`, `viewport.rs`, `theme.rs`, `schema_labels.rs`
-- **Procedural node graph:** 10 node types in `bif_viewport` (UsdRead, Primitive, Scatter, PointInstancer, Xform, UsdExport, UsdPrim, GraftBranches, HdriEnvironment, IvarRender); `node_graph_widget` is the editor UI for these
-- **Scene browser:** CompositeProvider merges USD stage + procedural prims via CachedSceneGraph
-- **Export:** `export_scene()` in `bif_core/src/usd/export.rs`
-- **USD bridge:** `bif_core/src/usd/ffi/` — C++ FFI split into 9 submodules (mod, stage, prim, mesh, material, variant, instance, xform, layer); `cpp_bridge.rs` is a `pub use ffi::*` shim
-- **Materials:** OpenPBR Surface v1.1 (`OpenPbrSurface` in bif_renderer, IOR-based Fresnel)
+- **7 crates + benchmarks:** `bif_math` → `bif_core` → `bif_renderer` → `bif_viewport` → `bif_qt` → `bif_viewer`; + `bif_maketx` (CLI), `benchmarks` (bif_perf)
+  - `bif_viewer` — thin `main.rs` only; no UI logic
+  - `bif_qt` — all Qt UI (cxx-qt 0.7; panels in `crates/bif_qt/cpp/`)
+- **USD bridge:** `bif_core/src/usd/ffi/` (9 submodules); `cpp_bridge.rs` is a `pub use ffi::*` shim
+- **Node graph:** 10 node types in `bif_viewport` (UsdRead, Primitive, Scatter, PointInstancer, Xform, UsdExport, UsdPrim, GraftBranches, HdriEnvironment, IvarRender)
+- **Materials:** OpenPBR Surface v1.1 (`OpenPbrSurface` in bif_renderer)
 - **Renderer:** `Renderer` struct (~75 fields, God object — cleanup deferred)
 
 ## Quick Commands
 
 ```bash
-# Build
-cargo build                    # Dev (~10s)
-cargo build --features oiio    # With OpenImageIO
-cargo build --features oidn    # With Intel OIDN denoising
+cargo build                    # dev (~10s)
+cargo build --features oiio    # OpenImageIO
+cargo build --features oidn    # Intel OIDN denoising
 
-# Test
-cargo test -p bif_math         # 78 tests (no deps)
-cargo test -p bif_renderer     # 122 tests (includes denoise, materials)
-cargo test -p bif_viewport     # 203 tests (needs USD env sourced — see Gotchas)
-cargo test -p bif_qt           # Qt UI crate tests
-. .\setup_usd_env.ps1          # Required before bif_core tests
-cargo test -p bif_core -- --test-threads=1  # needs USD DLLs
+cargo test -p bif_math         # 78 (no deps)
+cargo test -p bif_renderer     # 122
+cargo test -p bif_viewport     # 203 (needs USD env)
+cargo test -p bif_qt
+. .\setup_usd_env.ps1; cargo test -p bif_core -- --test-threads=1  # USD DLLs
 
-# Run
 cargo run -p bif_viewer
-cargo run -p bif_viewer --features oiio,oidn  # With OpenImageIO + denoising
+cargo run -p bif_viewer --features oiio,oidn
 
-# Checks
 cargo clippy -- -D warnings
 cargo fmt --check
 ```
 
 ## Gotchas
 
-- **USD env required:** `setup_usd_env.ps1` must be sourced before running bif_core **or bif_viewport** tests, or loading USD scenes. bif_viewport transitively links USD DLLs via bif_core, so its test binary fails with `STATUS_DLL_NOT_FOUND` without it (run via PowerShell: `. .\setup_usd_env.ps1; cargo test -p bif_viewport`)
-- **bif_core tests are single-threaded:** USD C++ bridge is not thread-safe, use `--test-threads=1`
-- **C++ bridge builds via CMake:** `bif_core/build.rs` triggers CMake for `cpp/usd_bridge/` — needs Visual Studio 2022 C++ workload
-- **CMakeCache bakes the source path — breaks if the repo moves or an agent worktree is used.** The cache lives in the *shared* cargo target dir (`$OUT_DIR/usd_bridge_build`), so a checkout at a new path hits `CMake Error: The source "…" does not match the source "…" used to generate cache`. Fix — delete the stale build dirs and rebuild:
+- **USD env required:** source `setup_usd_env.ps1` before bif_core **or bif_viewport** tests / loading USD scenes (bif_viewport transitively links USD DLLs → `STATUS_DLL_NOT_FOUND` otherwise)
+- **bif_core tests single-threaded:** USD C++ bridge not thread-safe → `--test-threads=1`
+- **C++ bridge via CMake:** `bif_core/build.rs` → `cpp/usd_bridge/`; needs VS 2022 C++ tools
+- **CMakeCache bakes source path** — breaks on repo move / agent worktree. Fix:
   ```powershell
   Get-ChildItem $env:CARGO_TARGET_DIR -Recurse -Directory -Filter usd_bridge_build | Remove-Item -Recurse -Force
   ```
   (target dir defaults to `C:/Users/brandon/.cargo-target` via `~/.cargo/config.toml`)
-- **bif_qt requires Qt 6:** needs Qt 6 dev headers + `qmake`/`cmake` in PATH; cxx-qt 0.7 generates the Rust-C++ glue at build time
-- **UI logic lives in bif_qt, not bif_viewer:** bif_viewer is just `main.rs` — look in `crates/bif_qt/` for all panel/widget code
-- **OIDN DLLs must be in PATH:** Set `OIDN_DIR` and add its `bin/` to PATH for `--features oidn`
-- **Feature flags are optional:** `oiio` and `oidn` are off by default, UI gracefully degrades without them
-- **`test_should_restart_no_render`:** Known timing-sensitive flaky test
-- **USD debug tools at `G:\__projects\_programming\usd_25_11\`:** usdcat, usdchecker, usddumpcrate, usdtree, etc. Run `scripts\set_usd_env.bat` first, or use Python with `from pxr import Usd, UsdGeom`. Custom `dump_usd.py` script for shader inspection also lives there.
+- **bif_qt needs Qt 6:** headers + `qmake`/`cmake` in PATH
+- **UI logic lives in bif_qt, not bif_viewer** (`bif_viewer` = `main.rs` only)
+- **OIDN:** set `OIDN_DIR` + add its `bin/` to PATH for `--features oidn`
+- **`oiio`/`oidn` optional** — off by default, UI degrades gracefully
+- **`test_should_restart_no_render`:** known flaky
+- **USD debug tools** at `G:\__projects\_programming\usd_25_11\` (usdcat, usdchecker, usddumpcrate, usdtree; run `scripts\set_usd_env.bat`, or Python `from pxr import Usd, UsdGeom`)
 
-## Related Docs
+## Knowledge Base
 
-- [README.md](README.md) - setup, commands
-- [docs/WORKFLOW.md](docs/WORKFLOW.md) - branch → PR → review → squash-merge + release quick reference
-- [HANDOFF.md](HANDOFF.md) - current state
-
-## Knowledge Base (Obsidian Wiki)
-
-- **Location:** [`wiki/`](wiki/) — Obsidian vault, open as vault in Obsidian
-- **Entry point:** `wiki/_index.md` — LLM reads this first to navigate
-- **Sections:** architecture, usd, rendering, concepts, rust, ui-ux, journal, raw
-- **52 articles** covering architecture decisions (ADRs), USD integration, rendering pipeline, atomic concept notes
-- **Templates:** `wiki/templates/` — concept, adr, journal, article
-
-### Wiki Maintenance
-
-- After learning something non-obvious, create/update a wiki concept note
-- After making an architecture decision, create an ADR in `wiki/architecture/adr/`
-- Keep section `_index.md` files updated when adding articles
-- Use Obsidian wikilinks `[[Article Name]]` for cross-references
-- Frontmatter: every article needs title, type, tags, created, updated
+Durable knowledge lives in **Hindsight** (auto-maintains from git history + sessions). Query it before acting on architecture, decisions, or conventions. The old Obsidian wiki is archived at `docs/archive/wiki/`.
 
 ## USD Reference
 
-- **Local curated docs:** [`docs/usd/`](docs/usd/) — AI-optimized reference covering core concepts, composition, all major schemas, datatypes, toolset, and common gotchas
-  - `concepts.md` — Stage, Layer, Prim, Property, value resolution, model hierarchy
-  - `composition.md` — LIVRPS, sublayers, references, payloads, variants, inherits, specializes, edit targets
-  - `schemas-geom.md` — UsdGeom (Mesh, Xformable, PointInstancer, Camera, primvars, stage metrics)
-  - `schemas-shade.md` — UsdShade (Material, Shader, NodeGraph, connections, binding, render contexts)
-  - `schemas-lux.md` — UsdLux (all light types, LightAPI, shadow/shaping, filters)
-  - `sdf-foundations.md` — SdfLayer, SdfPath, PrimSpec, file format plugins, asset resolution
-  - `datatypes.md` — All USD types with C++/Rust equivalents, roles, arrays
-  - `toolset.md` — usdcat, usdview, usdedit, usdchecker, usdrecord, etc.
-  - `preview-surface.md` — UsdPreviewSurface spec (all inputs, texture nodes, complete example)
-  - `faq.md` — Common gotchas, pitfalls, format differences
-  - `llm-reference.md` — LLM-optimized consolidated reference
-- **Deep API lookups:** Fetch from `https://openusd.org/release/api/` when specific class/method details needed
-- **Key API URLs for deep dives:**
-  - `https://openusd.org/release/api/class_usd_stage.html`
-  - `https://openusd.org/release/api/class_usd_prim.html`
-  - `https://openusd.org/release/api/class_sdf_layer.html`
-  - `https://openusd.org/release/api/class_sdf_path.html`
-  - `https://openusd.org/release/api/class_usd_geom_mesh.html`
-  - `https://openusd.org/release/api/class_usd_geom_point_instancer.html`
-  - `https://openusd.org/release/api/class_usd_shade_material.html`
-  - `https://openusd.org/release/api/class_usd_shade_shader.html`
-  - `https://openusd.org/release/api/class_usd_geom_xformable.html`
-  - `https://openusd.org/release/glossary.html`
+- Curated docs: [`docs/usd/`](docs/usd/) — concepts, composition, schemas, datatypes, toolset, faq; `llm-reference.md` is the AI-optimized index
+- Deep API: `https://openusd.org/release/api/` — `class_<lower_snake>.html` (e.g. `class_usd_stage.html`)
 
-## Technical Background
+## Background
 
-**Strong:** Go (2000+ line raytracer), Python/PyQt, graphics (raytracing, BVH, materials)
+**Strong:** Go, Python/PyQt, graphics (raytracing, BVH, materials). **Learning:** Rust, wgpu, Qt C++, USD/MaterialX.
 
-**Learning:** Rust (intermediate), wgpu, Qt C++, USD/MaterialX
+## How to work with me
 
-## Interaction Style
-
-### Challenge Me
-
-Push back when appropriate:
-
-- "Do you need this now or is it future work?"
-- "Have you considered X instead?"
-- "That's optimistic - real timeline is..."
-- "Easier path: do Y instead of Z"
-
-### Explain Trade-offs
-
-Show decision table when relevant:
-
-| Option | Pros | Cons | When to Use |
-|--------|------|------|-------------|
-
-Recommend one with rationale.
-
-### Ask Before Solving
-
-Before diving into code:
-
-- What are you actually trying to accomplish?
-- How does this fit your current milestone?
-- Have you finished prerequisites?
-
-### Tone
-
-- **Direct** - Tell me when I'm wrong
-- **Constructive** - Explain better approaches
-- **Pragmatic** - Working > perfect
-- **Encouraging** - Long project, keep momentum
-
-### Success Indicators
-
-**Good:** Asking follow-up questions, challenging suggestions, trying and reporting back
-
-**Red flags:** Just saying "okay" (probably lost), scope-creeping (need refocus)
+- **Challenge me** — push back. "Do you need this now?" / "Consider X instead?" / "What's the real timeline?"
+- **Explain trade-offs** — show a decision table when there's a real choice; recommend one.
+- **Ask before solving** — what are you actually building? does it fit the milestone? prerequisites done?
+- **Tone** — direct, constructive, pragmatic, encouraging
+- **Good:** follow-up questions, challenging me, trying + reporting back. **Red flag:** "okay", scope creep.
 
 ## Code Standards
 
-### Version Control
+- Clear commit messages; never commit commented-out code, `dbg!`/`println!`, or secrets
+- Rust: `rustfmt` + `clippy -D warnings`, zero warnings, exhaustive match (avoid `_`), `unsafe` documented, explicit `.clone()`
+- Tests: `#[test]` + `#[cfg(test)]`, Arrange-Act-Assert, mock externals; USD tests source `setup_usd_env.ps1`
+- Public items need doc comments
 
-- Write clear, descriptive commit messages
-- Never commit commented-out code - delete it
-- Never commit debug `println!` or `dbg!` macros
-- Never commit credentials or sensitive data
+### Before committing
 
-### Rust Best Practices
-
-**Tools:**
-
-- Use `rustfmt` for formatting
-- Use `clippy` for linting, follow its suggestions
-- Ensure no warnings (`cargo build` clean)
-- Use `cargo test`, `cargo doc`
-
-**Idioms:**
-
-- Avoid `unsafe` unless necessary; document safety invariants
-- Call `.clone()` explicitly on non-Copy types
-- Use exhaustive pattern matching; avoid catch-all `_` when possible
-- Use `format!` for string formatting
-- Prefer iterators over manual loops
-- Use `enumerate()` over manual counters
-- Prefer `if let` / `while let` for single-pattern matching
-
-### Testing
-
-- Write unit tests for new functions and types
-- Mock external dependencies (APIs, files, databases)
-- Use `#[test]` attribute and `cargo test`
-- Follow Arrange-Act-Assert pattern
-- Use `#[cfg(test)]` modules for test code
-- Never commit commented-out tests
-- Use the setup_usd_env.ps1 script for USD environment setup in tests
-
-### Before Committing
-
-- All tests pass (`cargo test`)
-- No compiler warnings (`cargo build`)
-- Clippy passes (`cargo clippy -- -D warnings`)
-- Code formatted (`cargo fmt --check`)
-- Update CHANGELOG.md `## [Unreleased]` section (per-PR when on a branch)
-- Make new devlog entry (per-PR when on a branch)
-- Update HANDOFF.md if needed
-- update README.md if needed
-- update CLAUDE.md if needed
-- Public items have doc comments
-- No commented-out code or debug statements
-
-## Don'ts
-
-- Dump code without explanation
-- Assume I know Rust idioms
-- Over-engineer solutions
-- Skip validation steps
+fmt · clippy · tests green. Then CHANGELOG `[Unreleased]` (per PR), devlog (per PR), HANDOFF/README/CLAUDE updates as needed.
 
 ## Workflow
 
-### Plans
-
-At end of each plan, list unresolved questions (if any).
-
-### Daily Development Log
-
-At end of each session, create/update `devlog/YYYY-MM/DEVLOG_YYYY-MM-DD.md`:
-
-```markdown
-# Development Log - YYYY-MM-DD
-
-## Session Duration
-[e.g., 2.5 hours]
-
-## Goals
-- What I planned to accomplish
-
-## What I Did
-- Changes made, files modified
-- Key decisions and why
-- Problems and solutions
-
-## Learnings
-- New concepts, architecture insights, mistakes
-
-## Next Session
-- Immediate next steps
-- Blockers/questions
-```
-
-Also update `HANDOFF.md` with summary, next steps, blockers.
-
-### Github
-
-Use Github CLI (`gh`) for all Github operations.
-
-Remind me to create devlog at end of each session.
-
-### Branching & Review
-
-Real work happens on **feature branches → PR → squash-merge to `main`**. Review is done on the PR diff, NOT per commit.
-
-- **Branch for features/bugfixes:** `git switch -c <type>/<short-desc>` (e.g. `feat/node-outputs-merge`, `fix/payload-policy`). Trivial commits (typo, version bump, docs/CHANGELOG/devlog-only) may go straight to `main`.
-- **Cadence:**
-  - *Per commit* (on the branch): the `Before Committing` gate — fmt + clippy + tests green, no warnings.
-  - *Per PR* (once for the branch): CHANGELOG `[Unreleased]`, devlog, HANDOFF / README updates.
-- **Open the PR:** `gh pr create`. CI `check` runs on the diff.
-- **Address review**, push fixes.
-- **Squash-merge** when green + reviewed: `gh pr merge --squash --delete-branch`. Keeps `main` history linear.
-- Release tags are cut from `main` after merge — see `Releases` below.
-
-The PR is the review unit — don't review per commit.
-
-### Releases
-
-**GitHub Release notes come from `CHANGELOG.md` automatically — never hand-write them.** The `Release` job in `.github/workflows/ci.yml` (tag-only, `refs/tags/v*`) builds the Windows artifact and extracts the changelog section matching the tag version as the release body.
-
-Ship `vX.Y.Z`:
-
-1. **During dev:** add entries under `## [Unreleased]` in `CHANGELOG.md`.
-2. **Release prep (one commit):**
-   - bump `[workspace.package] version` in `Cargo.toml`, then `cargo update --workspace` (refresh `Cargo.lock`)
-   - stamp CHANGELOG: `## [Unreleased]` → `## [X.Y.Z] - YYYY-MM-DD`, leave a fresh empty `## [Unreleased]` above it
-   - commit `release: vX.Y.Z`, push `main`
-3. **Tag:** annotated `git tag -a vX.Y.Z -m ...`, then `git push origin vX.Y.Z` → triggers the Release job.
-4. CI matches `## [X.Y.Z]` (the header may carry a ` - DATE` suffix) and publishes those notes + `bif-windows-x64.zip`.
-
-CI can't launch the exe (headless) — smoke-run the published zip locally before announcing.
+- **Plans:** end each plan with unresolved questions.
+- **Devlog:** per session, `devlog/YYYY-MM/DEVLOG_YYYY-MM-DD.md` (Goals / Did / Learnings / Next). Remind me.
+- **GitHub ops** via `gh`.
+- **Branch/PR:** features on `<type>/<desc>` → PR → squash-merge. Review the diff, not per commit. Trivial (typo/docs/bump) → straight to `main`.
+- **Release** (from `main`): (1) bump `[workspace.package] version` + `cargo update --workspace`; (2) stamp CHANGELOG `[Unreleased]`→`[X.Y.Z] - DATE`; (3) annotated tag `vX.Y.Z` + push → CI builds zip + extracts notes; (4) smoke-run the zip locally.
 
 ---
 
