@@ -280,7 +280,6 @@ Real work happens on **feature branches → PR → squash-merge to `main`**. Rev
   - *Per commit* (on the branch): the `Before Committing` gate — fmt + clippy + tests green, no warnings.
   - *Per PR* (once for the branch): CHANGELOG `[Unreleased]`, devlog, HANDOFF / README updates.
 - **Open the PR:** `gh pr create`. CI `check` runs and `claude-code-review.yml` auto-reviews the diff.
-- **Run `/vfx-code-reviewer` on the PR diff** for VFX-production-pattern review before merging. Reserve `/code-review ultra` for large/risky PRs (e.g. `cpp_bridge` split, renderer changes).
 - **Address review**, push fixes (auto-review re-runs on each push).
 - **Squash-merge** when green + reviewed: `gh pr merge --squash --delete-branch`. Keeps `main` history linear.
 - Release tags are cut from `main` after merge — see `Releases` below.

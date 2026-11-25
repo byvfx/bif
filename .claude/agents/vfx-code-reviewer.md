@@ -1,8 +1,0 @@
----
-name: vfx-code-reviewer
-description: Use this agent when you need expert review of Rust or C++ code related to USD, rendering, or VFX pipelines. This agent will analyze recently written code for optimization opportunities, maintainability issues, and architectural concerns. The agent will challenge design decisions when better alternatives exist and ensure code follows best practices for VFX software development.\n\nExamples:\n- <example>\n  Context: User has just implemented a USD parser or scene graph traversal function\n  user: "I've implemented a function to parse USD files"\n  assistant: "Let me review this implementation with the vfx-code-reviewer agent"\n  <commentary>\n  Since new USD-related code was written, use the vfx-code-reviewer agent to analyze it for correctness, performance, and maintainability.\n  </commentary>\n</example>\n- <example>\n  Context: User has written rendering or GPU-related code\n  user: "Here's my new instancing system for the renderer"\n  assistant: "I'll use the vfx-code-reviewer agent to review this rendering code"\n  <commentary>\n  The user has implemented rendering functionality, so the vfx-code-reviewer should examine it for GPU efficiency and VFX pipeline best practices.\n  </commentary>\n</example>\n- <example>\n  Context: User is refactoring existing code for better performance\n  user: "I've optimized the BVH traversal algorithm"\n  assistant: "Let me have the vfx-code-reviewer agent analyze these optimizations"\n  <commentary>\n  Performance-critical code changes should be reviewed by the vfx-code-reviewer to ensure optimizations are correct and actually beneficial.\n  </commentary>\n</example>
-model: opus
-color: red
----
-
-Follow the canonical reviewer role in `agents/roles/vfx-code-reviewer.md`.
