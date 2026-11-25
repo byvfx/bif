@@ -1,6 +1,8 @@
 ---
 title: Concepts Index
 type: index
+tags: [concepts]
+created: "2026-04-05"
 updated: "2026-04-16"
 ---
 
@@ -10,7 +12,7 @@ Atomic notes on key technical concepts used in BIF. Each note covers one idea �
 
 ## USD & Scene Description
 
-- [[composition-arcs|Composition Arcs]] — LIVRPS rule for USD opinion resolution
+- [[concepts/composition-arcs|Composition Arcs]] — LIVRPS rule for USD opinion resolution
 - [[primvars|Primvars]] — Primitive variables and interpolation modes
 - [[point-instancer|Point Instancer]] — Efficient geometry instancing in USD
 - [[edit-target|Edit Target]] — Directing opinions to specific USD layers

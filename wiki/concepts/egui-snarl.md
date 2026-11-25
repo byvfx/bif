@@ -3,12 +3,12 @@ title: "egui-snarl"
 type: concept
 tags: [ui, node-graph, egui, rust]
 created: "2026-04-05"
-updated: "2026-04-05"
+updated: "2026-11-24"
 ---
 
 ## Summary
 
-egui-snarl is a node graph editor library built on top of egui, Rust's popular immediate-mode GUI framework. It provides the visual node graph canvas -- draggable nodes, input/output pins, connection wires, and graph layout -- that BIF uses for its procedural scene assembly workflow. It is a temporary UI layer; the long-term plan is migration to Qt (see [[wgpu]] for viewport context).
+egui-snarl is a node graph editor library built on top of egui, Rust's popular immediate-mode GUI framework. It provides the visual node graph canvas -- draggable nodes, input/output pins, connection wires, and graph layout. In BIF it is now **backend-only**: the `Snarl<SceneNode>` graph data structure survives, but since v0.15.0 the visual layer is Qt (`node_graph_widget`), and egui renders nothing in production (see [[node-graph-system|Node Graph System]] and [[wgpu]] for viewport context).
 
 ## Details
 
@@ -36,7 +36,7 @@ egui-snarl is a node graph editor library built on top of egui, Rust's popular i
 
 ## In BIF
 
-egui-snarl is the foundation of BIF's node graph system:
+egui-snarl's `Snarl<T>` is BIF's node-graph data structure:
 
 - **Node graph module**: `bif_viewport::node_graph` implements `SnarlViewer` for BIF's 10 node types (UsdRead, Primitive, Scatter, PointInstancer, Xform, UsdExport, UsdPrim, GraftBranches, HdriEnvironment, IvarRender).
 - **Evaluation**: `bif_viewport::node_graph::eval` walks the snarl graph to build the scene pipeline.
@@ -45,9 +45,9 @@ egui-snarl is the foundation of BIF's node graph system:
 - **Viewer integration**: `bif_viewport::node_graph::viewer` implements the `SnarlViewer` trait.
 - **Node IDs**: `bif_viewport::node_graph::node_id` manages stable identity for nodes across serialization.
 
-### Migration Plan
+### Migration Status
 
-egui-snarl is explicitly temporary. All node graph logic is kept in UI-agnostic APIs so that the Qt migration (v0.15.0) can replace the visual layer without rewriting evaluation logic.
+The Qt migration is **done** (v0.15.0). The visual node-graph layer is now `crates/bif_qt/cpp/node_graph_widget.h/.cpp`; only the `Snarl<T>` data structure and `SnarlViewer` trait remain from egui-snarl. See [[node-graph-system|Node Graph System]].
 
 ## Related
 

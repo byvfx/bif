@@ -1,6 +1,8 @@
 ---
 title: USD Knowledge Map
 type: index
+tags: [usd]
+created: "2026-04-05"
 updated: "2026-05-01"
 ---
 
@@ -10,7 +12,7 @@ BIF's core scene description is built on USD. These articles cover how USD works
 
 ## Articles
 
-- [[composition-arcs|Composition Arcs]] — LIVRPS, sublayers, references, payloads, variants
+- [[usd/composition-arcs|Composition Arcs]] — LIVRPS, sublayers, references, payloads, variants
 - [[stage-layer-prim|Stage, Layer, Prim]] — Core USD concepts and value resolution
 - [[shading-materials|Shading and Materials]] — UsdShade, material binding, shader connections
 - [[geometry-schemas|Geometry Schemas]] — UsdGeom mesh, xformable, point instancer, cameras
@@ -36,7 +38,7 @@ These curated docs live outside the vault:
 
 ## Key Concepts
 
-- [[composition-arcs|Composition Arcs]] — The LIVRPS precedence rule
+- [[usd/composition-arcs|Composition Arcs]] — The LIVRPS precedence rule
 - [[primvars|Primvars]] — Primitive variables for shading
 - [[point-instancer|Point Instancer]] — Efficient instancing
 - [[edit-target|Edit Target]] — Layer-directed editing

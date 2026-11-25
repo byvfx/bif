@@ -15,15 +15,15 @@ BIF is a USD Orchestration Tool for VFX — layer-aware USD editing + procedural
 **BIF** - USD Orchestration Tool for VFX (layer-aware editing + procedural assembly + rendering).
 
 - **Status:** v0.16.9 shipped (2026-06-04) — first working Windows release CI (Qt + USD + OIIO + OIDN + Embree bundled); Qt is primary UI framework (egui removed v0.15.0)
-- **Current:** between releases — `CHANGELOG.md [Unreleased]` empty; next work = v0.17.0 (issues #13–#15)
-- **Roadmap:** GitHub Milestones + Issues → https://github.com/byvfx/bif/milestones (v0.17.0 Viewport perf → v0.18.0 Scene Authoring → v0.19.0 MaterialX → v0.20.0 Volumes → v0.21.0 GPU PT → v0.22.0 API/Framework; AI = `backlog` label until app is solid). GitHub is the roadmap source of truth.
+- **Current:** between releases — `CHANGELOG.md [Unreleased]` populated (cpp_bridge split #13 + Qt node-graph parity work); next = v0.17.0 Node Graph Parity (#22 node-graph audit, #26 framing, #33 pin labels)
+- **Roadmap:** GitHub Milestones + Issues → https://github.com/byvfx/bif/milestones (v0.17.0 Node Graph Parity → v0.17.5 Viewport perf → v0.18.0 Scene Authoring → v0.19.0 MaterialX → v0.20.0 Volumes → v0.21.0 GPU PT → v0.22.0 API/Framework; AI = `backlog` label until app is solid). GitHub is the roadmap source of truth.
 - **Goal:** Layer-aware USD editor + scene assembler — open stage, pick layer, edit, save clean USD
 - **Design:** [BIF_USD_WORKFLOW.md](BIF_USD_WORKFLOW.md) — hybrid approach (procedural nodes + layer awareness)
 - **Timeline:** Side project, 10-20 hrs/week
 
 ### Key Architecture
 
-- **8 crates:** bif_math, bif_core, bif_renderer, bif_viewport, bif_viewer, bif_qt, bif_maketx, benchmarks
+- **7 crates + benchmarks:** bif_math, bif_core, bif_renderer, bif_viewport, bif_viewer, bif_qt, bif_maketx, + `benchmarks` (bif_perf harness)
   - `bif_viewer` — thin entry point only (`main.rs`); no UI logic lives here
   - `bif_qt` — all Qt UI (cxx-qt 0.7 Rust-C++ bridge; panels in `crates/bif_qt/cpp/`)
 - **Qt panels** (`bif_qt/cpp/`): scene_browser, layer_stack, property_inspector, node_graph, render_settings, render_widget, usda_panel, command_palette, first_launch
@@ -31,7 +31,7 @@ BIF is a USD Orchestration Tool for VFX — layer-aware USD editing + procedural
 - **Procedural node graph:** 10 node types in `bif_viewport` (UsdRead, Primitive, Scatter, PointInstancer, Xform, UsdExport, UsdPrim, GraftBranches, HdriEnvironment, IvarRender); `node_graph_widget` is the editor UI for these
 - **Scene browser:** CompositeProvider merges USD stage + procedural prims via CachedSceneGraph
 - **Export:** `export_scene()` in `bif_core/src/usd/export.rs`
-- **USD bridge:** `bif_core/src/usd/cpp_bridge.rs` (monolithic, split planned for v0.17.0)
+- **USD bridge:** `bif_core/src/usd/ffi/` — C++ FFI split into 9 submodules (mod, stage, prim, mesh, material, variant, instance, xform, layer); `cpp_bridge.rs` is a `pub use ffi::*` shim
 - **Materials:** OpenPBR Surface v1.1 (`OpenPbrSurface` in bif_renderer, IOR-based Fresnel)
 - **Renderer:** `Renderer` struct (~75 fields, God object — cleanup deferred)
 
@@ -44,9 +44,9 @@ cargo build --features oiio    # With OpenImageIO
 cargo build --features oidn    # With Intel OIDN denoising
 
 # Test
-cargo test -p bif_math         # 74 tests (no deps)
-cargo test -p bif_renderer     # 111 tests (includes denoise, materials)
-cargo test -p bif_viewport     # 179 tests (needs USD env sourced — see Gotchas)
+cargo test -p bif_math         # 78 tests (no deps)
+cargo test -p bif_renderer     # 122 tests (includes denoise, materials)
+cargo test -p bif_viewport     # 203 tests (needs USD env sourced — see Gotchas)
 cargo test -p bif_qt           # Qt UI crate tests
 . .\setup_usd_env.ps1          # Required before bif_core tests
 cargo test -p bif_core -- --test-threads=1  # needs USD DLLs
@@ -88,7 +88,7 @@ cargo fmt --check
 - **Location:** [`wiki/`](wiki/) — Obsidian vault, open as vault in Obsidian
 - **Entry point:** `wiki/_index.md` — LLM reads this first to navigate
 - **Sections:** architecture, usd, rendering, concepts, rust, ui-ux, journal, raw
-- **42 articles** covering architecture decisions (ADRs), USD integration, rendering pipeline, atomic concept notes
+- **52 articles** covering architecture decisions (ADRs), USD integration, rendering pipeline, atomic concept notes
 - **Templates:** `wiki/templates/` — concept, adr, journal, article
 
 ### Wiki Maintenance
@@ -112,6 +112,7 @@ cargo fmt --check
   - `toolset.md` — usdcat, usdview, usdedit, usdchecker, usdrecord, etc.
   - `preview-surface.md` — UsdPreviewSurface spec (all inputs, texture nodes, complete example)
   - `faq.md` — Common gotchas, pitfalls, format differences
+  - `llm-reference.md` — LLM-optimized consolidated reference
 - **Deep API lookups:** Fetch from `https://openusd.org/release/api/` when specific class/method details needed
 - **Key API URLs for deep dives:**
   - `https://openusd.org/release/api/class_usd_stage.html`
@@ -279,8 +280,8 @@ Real work happens on **feature branches → PR → squash-merge to `main`**. Rev
 - **Cadence:**
   - *Per commit* (on the branch): the `Before Committing` gate — fmt + clippy + tests green, no warnings.
   - *Per PR* (once for the branch): CHANGELOG `[Unreleased]`, devlog, HANDOFF / README updates.
-- **Open the PR:** `gh pr create`. CI `check` runs and `claude-code-review.yml` auto-reviews the diff.
-- **Address review**, push fixes (auto-review re-runs on each push).
+- **Open the PR:** `gh pr create`. CI `check` runs on the diff.
+- **Address review**, push fixes.
 - **Squash-merge** when green + reviewed: `gh pr merge --squash --delete-branch`. Keeps `main` history linear.
 - Release tags are cut from `main` after merge — see `Releases` below.
 

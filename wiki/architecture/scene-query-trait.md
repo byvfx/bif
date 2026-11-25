@@ -50,5 +50,5 @@ if let Some(idx) = q.find_instance_by_prim_path("/World/Cube") {
 
 ## See Also
 
-- [[Architecture Review]] — SceneQuery is item #6
+- [[architecture-review]] — SceneQuery is item #6
 - `ARCHITECTURE_REVIEW.md` section 9 — inter-crate boundary issues

@@ -1,6 +1,8 @@
 ---
 title: Map of Content
 type: index
+tags: [index]
+created: "2026-04-05"
 updated: "2026-04-05"
 ---
 
@@ -15,7 +17,7 @@ USD Stage ──→ Scene Browser ──→ Node Graph ──→ Renderer ──
    │              │                 │              │
    ▼              ▼                 ▼              ▼
 [[stage-layer-prim|Stage, Layer, Prim]]    [[node-graph-system|Node Graph System]]  [[wgpu-pipeline|wgpu Pipeline]]
-[[composition-arcs|Composition Arcs]]      [[scene-browser|Scene Browser]]      [[openpbr-surface|OpenPBR Surface]]
+[[usd/composition-arcs|Composition Arcs]]      [[scene-browser|Scene Browser]]      [[openpbr-surface|OpenPBR Surface]]
 [[edit-target|Edit Target]]           [[egui-snarl]]         [[materialx-bridge|MaterialX Bridge]]
 ```
 
@@ -25,12 +27,16 @@ USD Stage ──→ Scene Browser ──→ Node Graph ──→ Renderer ──
 - [[002-egui-temporary-ui|ADR 002: egui Temporary UI]]
 - [[003-hybrid-usd-workflow|ADR 003: Hybrid USD Workflow]]
 - [[004-cpp-bridge-for-usd|ADR 004: C++ Bridge for USD]]
+- [[005-layer-aware-read-model|ADR 005: Layer-aware read model]]
+- [[006-qt-via-cxx-qt|ADR 006: Qt via cxx-qt]]
+- [[007-shell-state-to-viewport-bridge|ADR 007: BifShellState ↔ ViewportCallbacks bridge]]
+- [[008-edit-operation-architecture|ADR 008: Edit operation architecture]]
 
 ## Domain Knowledge
 
 ### USD (Universal Scene Description)
 
-- [[composition-arcs|Composition Arcs]] — LIVRPS rule
+- [[usd/composition-arcs|Composition Arcs]] — LIVRPS rule
 - [[primvars|Primvars]] — Primitive variables
 - [[point-instancer|Point Instancer]] — Efficient instancing
 - [[edit-target|Edit Target]] — Layer-directed editing

@@ -4,7 +4,6 @@ type: article
 tags: [architecture]
 created: "2026-04-05"
 updated: "2026-04-26"
-sources: [ARCHITECTURE.md, ARCHITECTURE_REVIEW.md, ARCHITECTURE_REFACTORS.md, MILESTONES.md]
 ---
 
 # Architecture
@@ -14,8 +13,8 @@ BIF is a USD Orchestration Tool for VFX built in Rust — layer-aware USD editin
 ## Articles
 
 - [[project-identity|Project Identity: USD Orchestration Tool]] — Identity, scope fence, competitive positioning, business model direction
-- [[crate-structure|Crate Structure]] — The 6-crate workspace, responsibilities, and dependency flow
-- [[node-graph-system|Node Graph System]] — egui-snarl based node graph with 10 node types and dirty-propagation evaluation
+- [[crate-structure|Crate Structure]] — The 7-crate workspace (plus benchmarks), responsibilities, and dependency flow
+- [[node-graph-system|Node Graph System]] — Qt node graph (egui-snarl backend-only) with 10 node types and dirty-propagation evaluation
 - [[scene-browser|Scene Browser]] — CompositeProvider merging USD stage hierarchy with procedural prims
 
 - [[architecture-review|Architecture Review]] — Audit status of ARCHITECTURE_REVIEW.md and ARCHITECTURE_REFACTORS.md

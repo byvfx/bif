@@ -203,7 +203,7 @@ path.GetPrefixes()          # [/World, /World/Geo, /World/Geo/Mesh]
 
 ## Related
 
-- [[composition-arcs|Composition Arcs]] -- how layers are composed together
+- [[usd/composition-arcs|Composition Arcs]] -- how layers are composed together
 - [[geometry-schemas|Geometry Schemas]] -- UsdGeomMesh, transforms, point instancers
 - [[shading-materials|Shading and Materials]] -- UsdShade material system
 - [[bif-usd-integration|BIF USD Integration]] -- BIF's hybrid layer-aware workflow

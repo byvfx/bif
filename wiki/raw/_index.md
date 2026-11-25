@@ -1,6 +1,8 @@
 ---
 title: Raw Sources Index
 type: index
+tags: [raw]
+created: "2026-04-05"
 updated: "2026-04-05"
 ---
 

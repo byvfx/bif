@@ -54,5 +54,5 @@ impl Renderer {
 
 ## See Also
 
-- [[Architecture Review]] — dispatch split is Phase 5
+- [[architecture-review]] — dispatch split is Phase 5
 - `crates/bif_viewport/src/app_event.rs` — AppEvent enum (20 variants)

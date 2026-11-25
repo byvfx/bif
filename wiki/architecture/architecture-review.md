@@ -45,4 +45,4 @@ Periodic audit of `ARCHITECTURE_REVIEW.md` (8 recommendations) and `ARCHITECTURE
 
 - `ARCHITECTURE_REVIEW.md` — original recommendations
 - `ARCHITECTURE_REFACTORS.md` — phase definitions
-- [[Event Dispatch Pattern]] — dispatch split details
+- [[event-dispatch-pattern]] — dispatch split details

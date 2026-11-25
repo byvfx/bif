@@ -22,7 +22,7 @@ After setting the edit target, any authoring operation (setting attributes, crea
 
 ### Layer Stack Context
 
-A USD stage is composed from a **layer stack** -- an ordered list of sublayers. Each sublayer can contain opinions about any prim. The [[composition-arcs]] (LIVRPS) determine which opinion wins, but the edit target determines where *new* opinions are stored.
+A USD stage is composed from a **layer stack** -- an ordered list of sublayers. Each sublayer can contain opinions about any prim. The [[concepts/composition-arcs]] (LIVRPS) determine which opinion wins, but the edit target determines where *new* opinions are stored.
 
 ### Common Patterns
 
@@ -45,10 +45,10 @@ A USD stage is composed from a **layer stack** -- an ordered list of sublayers. 
 - **Procedural nodes** (Scatter, PointInstancer, etc.) still emit USD only at `export_scene()` time — node-driven opinion authoring is _Future_ work.
 - **Design doc:** `BIF_USD_WORKFLOW.md` describes the hybrid approach — procedural nodes + layer awareness.
 - **C++ bridge:** `cpp/usd_bridge/usd_bridge.cpp` exposes `UsdEditContext`-scoped writes via the FFI layer in `crates/bif_core/src/usd/cpp_bridge.rs`.
-- **Architecture:** see [[adr/008-edit-operation-architecture|ADR 008]] for the dual-track identity and parallel undo decisions.
+- **Architecture:** see [[../architecture/adr/008-edit-operation-architecture|ADR 008]] for the dual-track identity and parallel undo decisions.
 
 ## Related
 
-- [[composition-arcs]] -- edit targets interact with LIVRPS strength ordering
+- [[concepts/composition-arcs]] -- edit targets interact with LIVRPS strength ordering
 - [[materialx]] -- material overrides authored to specific layers
 - [[primvars]] -- primvar values can be overridden on different layers

@@ -74,7 +74,7 @@ bif/
 │   ├── bif_core/       # Scene graph, USD bridge, materials, textures
 │   ├── bif_renderer/   # "Ivar" CPU path tracer (Embree, OpenPBR)
 │   ├── bif_viewport/   # GPU viewport + interaction engine
-│   ├── bif_viewer/     # Thin runner that boots bif_qt
+│   ├── bif_viewer/     # Thin entry point (main.rs) → bif_qt::run()
 │   ├── bif_maketx/     # Standalone .tx converter
 │   └── bif_qt/         # Qt 6 shell (cxx-qt, docks, panels)
 ├── cpp/usd_bridge/     # C++ FFI to Pixar USD
@@ -131,11 +131,12 @@ See **[GitHub Milestones](https://github.com/byvfx/bif/milestones)** for the ful
 
 | Version | Theme |
 |------|-------|
-| v0.16.8 | Crash-chain hardening + keybinding editor *(latest, 2026-05-28)* |
-| v0.17.0 | Context system *(next)* |
-| v0.18.0 | Viewport performance |
-| v0.19.0 | Scene authoring + layer diff |
-| v0.20.0 | MaterialX authoring |
+| v0.16.9 | First working Windows release CI *(latest, 2026-06-04)* |
+| v0.17.0 | Node Graph Parity *(next)* |
+| v0.17.5 | Viewport performance |
+| v0.18.0 | Scene Authoring — layer-aware USD editing, round-trip |
+| v0.19.0 | MaterialX integration |
+| v0.20.0 | Volumes / OpenVDB |
 | ... | [Full roadmap](https://github.com/byvfx/bif/milestones) |
 
 ---
@@ -164,7 +165,7 @@ See **[CLAUDE.md](CLAUDE.md)** for detailed build instructions and feature flags
 | Doc | Description |
 |-----|-------------|
 | [CHANGELOG.md](CHANGELOG.md) | Release notes |
-| [HOUDINI_EXPORT.md](HOUDINI_EXPORT.md) | USD export best practices |
+| [HOUDINI_EXPORT.md](docs/archive/HOUDINI_EXPORT.md) | USD export best practices |
 | [devlog/](devlog/) | Session-by-session development logs |
 
 ---

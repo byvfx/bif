@@ -1,6 +1,8 @@
 ---
 title: UI/UX Index
 type: index
+tags: [ui-ux]
+created: "2026-04-05"
 updated: "2026-04-05"
 ---
 

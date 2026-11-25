@@ -47,6 +47,6 @@ MaterialX ships a standard library with hundreds of nodes:
 ## Related
 
 - [[openpbr]] -- the material model defined as a MaterialX graph
-- [[composition-arcs]] -- materials can be referenced across USD assets
+- [[concepts/composition-arcs]] -- materials can be referenced across USD assets
 - [[primvars]] -- geometric data that feeds into MaterialX texture lookups
 - [[edit-target]] -- layer where material opinions are authored

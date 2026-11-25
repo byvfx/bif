@@ -85,4 +85,4 @@ for &idx in &meshes {
 
 ## See Also
 
-- [[UsdStage Thread Safety]] — why Mutex is needed for UsdStage
+- [[usdstage-thread-safety]] — why Mutex is needed for UsdStage

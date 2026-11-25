@@ -52,6 +52,6 @@ PointInstancer is deeply integrated across the codebase:
 ## Related
 
 - [[primvars]] -- per-instance primvars can vary appearance across instances
-- [[composition-arcs]] -- prototypes are often referenced from other USD files
+- [[concepts/composition-arcs]] -- prototypes are often referenced from other USD files
 - [[bvh]] -- instance BVHs for ray tracing instanced geometry
 - [[openpbr]] -- material applied to prototypes, shared by all instances

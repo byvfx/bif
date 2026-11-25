@@ -10,7 +10,7 @@ updated: 2026-04-12
 
 ## Summary
 
-BIF v0.13.5 adds UsdSkel-bound character import + CPU linear blend skinning (LBS) so rigged characters exported from Houdini/Maya load, render at bind pose, and deform per-frame when scrubbing the timeline. Math lives in [[bif_core::skinning]]; the USD-facing eval goes through a persistent `UsdSkelCache` on the C++ bridge.
+BIF v0.13.5 adds UsdSkel-bound character import + CPU linear blend skinning (LBS) so rigged characters exported from Houdini/Maya load, render at bind pose, and deform per-frame when scrubbing the timeline. Math lives in `bif_core::skinning`; the USD-facing eval goes through a persistent `UsdSkelCache` on the C++ bridge.
 
 ## Details
 
@@ -109,6 +109,6 @@ Surfaced by code review and HumanFemale validation but deferred to follow-up ver
 
 ## Related
 
-- [[Stage Layer Prim]]
-- [[BIF USD Integration]]
-- [[Geometry Schemas]]
+- [[stage-layer-prim]]
+- [[bif-usd-integration]]
+- [[geometry-schemas]]

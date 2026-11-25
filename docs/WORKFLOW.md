@@ -7,7 +7,7 @@ Quick reference. Full rules live in [CLAUDE.md](../CLAUDE.md) (`Workflow` sectio
 1. Branch: `git switch -c <type>/<short-desc>` (`feat/`, `fix/`, `refactor/`, `docs/`).
 2. Commit in focused increments. Per-commit gate: `cargo fmt --check`, `cargo clippy -- -D warnings`, `cargo test` green.
 3. Once per branch: update CHANGELOG `[Unreleased]`, devlog, HANDOFF.
-4. Open PR: `gh pr create`. CI `check` + auto Claude review run on the diff.
+4. Open PR: `gh pr create`. CI `check` runs on the diff.
 5. Address CI review, push fixes.
 6. Squash-merge when green + reviewed: `gh pr merge --squash --delete-branch`.
 

@@ -3,13 +3,12 @@ title: "Crate Structure"
 type: article
 tags: [architecture]
 created: "2026-04-05"
-updated: "2026-04-05"
-sources: [ARCHITECTURE.md, ARCHITECTURE_REVIEW.md, ARCHITECTURE_REFACTORS.md]
+updated: "2026-11-24"
 ---
 
 # Crate Structure
 
-BIF is organized as a Cargo workspace with 6 crates. Dependencies flow strictly upward — no circular dependencies. This layering is the most important architectural invariant to preserve.
+BIF is organized as a Cargo workspace with 7 crates plus a `benchmarks` harness. Dependencies flow strictly upward — no circular dependencies. This layering is the most important architectural invariant to preserve.
 
 ## Dependency Graph
 
@@ -22,14 +21,17 @@ bif_renderer (depends on bif_core + bif_math)
     ^
 bif_viewport (depends on bif_core + bif_renderer + bif_math)
     ^
-bif_viewer (depends on bif_viewport + bif_core + bif_math)
+bif_qt (depends on bif_core + bif_renderer + bif_viewport)     ← all Qt UI
+    ^
+bif_viewer (depends on bif_qt — thin entry point, main.rs only)
 
 bif_maketx (standalone CLI tool)
+benchmarks (bif_perf performance harness)
 ```
 
 ## Crate Details
 
-### bif_math (~2,000 LOC, 74 tests)
+### bif_math (~2,000 LOC, 78 tests)
 
 Pure math primitives with zero internal dependencies. The leaf crate.
 
@@ -37,19 +39,19 @@ Pure math primitives with zero internal dependencies. The leaf crate.
 - Extension trait `Mat4Ext` on glam::Mat4
 - Excellent test coverage — all pure functions
 
-### bif_core (~13,900 LOC, 163 tests)
+### bif_core (~13,900 LOC, 257 tests)
 
 Scene graph, USD bridge, mesh data, textures, undo system. The domain model.
 
 - `Scene` struct — root container (prototypes, instances, materials, lights, cameras)
 - `EditState` + `UndoStack` — non-destructive editing with undo/redo
-- `usd/cpp_bridge.rs` — Rust wrapper around C++ USD FFI (split into ffi_raw.rs, ffi_convert.rs, cpp_bridge.rs after Phase 1 refactor)
+- `usd/ffi/` — Rust wrapper around C++ USD FFI (9 submodules: stage, prim, mesh, material, variant, instance, xform, layer); `cpp_bridge.rs` is a `pub use ffi::*` shim
 - `usd/export.rs` — `export_scene()` pipeline for writing USD files
 - Textures, scatter algorithms, procedural primitives, point clouds
 - Error handling: typed errors via `thiserror` (`UsdBridgeError`, `TextureError`, `LoadError`, etc.)
 - **Tests require** `setup_usd_env.ps1` and `--test-threads=1` (USD C++ not thread-safe)
 
-### bif_renderer (~10,000 LOC, 111 tests)
+### bif_renderer (~10,000 LOC, 122 tests)
 
 CPU path tracer "Ivar" with Embree acceleration.
 
@@ -64,7 +66,7 @@ CPU path tracer "Ivar" with Embree acceleration.
 - Optional features: `oidn` (Intel denoising), `oiio` (OpenImageIO)
 - Error handling: `thiserror` for `EmbreeError`, `ExrError`, `PickError`
 
-### bif_viewport (~14,000+ LOC, 149 tests)
+### bif_viewport (~14,000+ LOC, 203 tests)
 
 GPU viewport (wgpu), node graph, scene browser, and all UI integration.
 
@@ -77,13 +79,20 @@ GPU viewport (wgpu), node graph, scene browser, and all UI integration.
 - `property_inspector.rs` — property editing UI
 - Error handling: `anyhow::Result` (application-level)
 
-### bif_viewer (~800 LOC, 19 tests)
+### bif_qt (Qt 6 UI)
 
-Thin application shell. Entry point using winit.
+All Qt UI via cxx-qt 0.7. Panels in `crates/bif_qt/cpp/`.
 
-- Creates window, initializes wgpu, launches the Renderer
-- Minimal logic — delegates everything to bif_viewport
-- Error handling: `anyhow::Result`
+- cxx-qt invokables bridge `bif_viewport`'s renderer to `QGraphicsView`-based panels
+- Panels: scene browser, layer stack, property inspector, node graph, render settings, render widget, usda panel, command palette, first launch
+- Depends on `bif_core` + `bif_renderer` + `bif_viewport`
+
+### bif_viewer (thin `main.rs` shim, ~14 LOC)
+
+Thin binary entry point only — boots `bif_qt::run()`.
+
+- No UI logic lives here (all UI is in `bif_qt`)
+- Feature flags (`oiio`, `oidn`) passthrough to `bif_core` / `bif_viewport`
 
 ### bif_maketx (~200 LOC, 0 tests)
 

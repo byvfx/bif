@@ -42,7 +42,7 @@ Regular attributes are just metadata on a prim. Primvars are attributes with int
 
 ## Related
 
-- [[composition-arcs]] -- primvars participate in composition like any attribute
+- [[concepts/composition-arcs]] -- primvars participate in composition like any attribute
 - [[point-instancer]] -- per-instance primvars for varying instance appearance
 - [[openpbr]] -- material model that consumes primvar-driven textures
 - `docs/usd/schemas-geom.md` -- UsdGeom primvar details

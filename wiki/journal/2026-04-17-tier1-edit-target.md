@@ -41,7 +41,7 @@ Growth policy captured in the module docstring: add entries conservatively, only
 
 ## Pragmatic deviations from the plan
 
-The UX audit was specific about the styling expectations — Graphite design system from `assets/stitch_bif_ui/obsidian_graphite/DESIGN.md` ("Quiet Confidence / Technical Atelier"). What shipped matches the *structure* but not the *skin*: generic dark QSS borders + palette, not the specified tonal surface hierarchy or JetBrains-Mono data columns. That's the user's explicit preference ([[../../memory/feedback_function_before_form.md|function before form, skin last]]) — styling passes come after all widgets are in tree.
+The UX audit was specific about the styling expectations — Graphite design system from `assets/stitch_bif_ui/obsidian_graphite/DESIGN.md` ("Quiet Confidence / Technical Atelier"). What shipped matches the *structure* but not the *skin*: generic dark QSS borders + palette, not the specified tonal surface hierarchy or JetBrains-Mono data columns. That's the user's explicit preference (function before form, skin last) — styling passes come after all widgets are in tree.
 
 Also deferred: viewport toolbar (M effort, FEATURES.md expanded the spec to 9+ display modes — separate session) and first-opinion guard (needs Tier 1.5's per-attribute opinion-resolution FFI to color the right things).
 

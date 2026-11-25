@@ -108,7 +108,7 @@ All rendered by `bif_viewport` against `self.scene.layer_state.as_ref()`. None o
 
 ## Related
 
-- [[Composition Arcs]]
-- [[SDF Foundations]]
-- [[Stage Layer Prim]]
-- [[adr/005-layer-aware-read-model|ADR-005 — Layer-aware read model]]
+- [[usd/composition-arcs|Composition Arcs]]
+- [SDF Foundations](../../docs/usd/sdf-foundations.md)
+- [[stage-layer-prim]]
+- [[../architecture/adr/005-layer-aware-read-model|ADR-005 — Layer-aware read model]]

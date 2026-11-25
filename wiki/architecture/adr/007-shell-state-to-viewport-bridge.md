@@ -11,7 +11,7 @@ status: accepted
 
 ## Context
 
-`bif_qt::Viewport` hosts the real [[Renderer]] (as of Phase E.2 move 1, 2026-04-15). The `ViewportCallbacks` struct owns the live `Viewport` and its `Renderer` — allocated by `app.rs` on the stack, handed to C++ as a `*mut ViewportCallbacks` for the duration of the Qt event loop.
+`bif_qt::Viewport` hosts the real `Renderer` (as of Phase E.2 move 1, 2026-04-15). The `ViewportCallbacks` struct owns the live `Viewport` and its `Renderer` — allocated by `app.rs` on the stack, handed to C++ as a `*mut ViewportCallbacks` for the duration of the Qt event loop.
 
 Separately, `BifShellState` (a cxx-qt QObject in `main_window.rs`) owns the Qt-facing state — menu-action invokables, timeline qproperties, layer-stack state surface, etc.
 

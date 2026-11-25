@@ -64,7 +64,7 @@ This is the default until Qt lands. After v0.15.0, the UI itself becomes a legit
 
 ## See also
 
-- [[../../MILESTONES|MILESTONES.md]] — v0.15.0 Qt migration is on the roadmap
+- [GitHub Milestones](https://github.com/byvfx/bif/milestones) — v0.15.0 Qt migration is on the roadmap
 - [[../../CHANGELOG|CHANGELOG.md]] — v0.13.0 and v0.13.5 release notes
 - [[../../devlog/2026-04/v0.13.0_announcement|v0.13.0 announcement drafts]]
 - [[../../devlog/2026-04/v0.13.5_announcement|v0.13.5 announcement drafts]]

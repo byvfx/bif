@@ -68,7 +68,7 @@ See [[architecture/adr/003-hybrid-usd-workflow|ADR 003]] for the decision ration
 ## Related
 
 - [[stage-layer-prim|Stage, Layer, Prim]] — Core USD concepts
-- [[composition-arcs|Composition Arcs]] — How opinions compose
+- [[usd/composition-arcs|Composition Arcs]] — How opinions compose
 - [[edit-target|Edit Target]] — Layer-directed editing
 - [[architecture/adr/004-cpp-bridge-for-usd|ADR 004: C++ Bridge]]
 - [[crate-structure|Crate Structure]] — bif_core houses the USD integration

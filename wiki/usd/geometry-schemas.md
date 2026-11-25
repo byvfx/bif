@@ -216,6 +216,6 @@ UsdGeom.SetStageMetersPerUnit(stage, 0.01)  # centimeters
 
 - [[stage-layer-prim|Stage, Layer, Prim]] -- USD object model
 - [[shading-materials|Shading and Materials]] -- materials bind to geometry
-- [[composition-arcs|Composition Arcs]] -- how geometry assets are composed
+- [[usd/composition-arcs|Composition Arcs]] -- how geometry assets are composed
 - [[bif-usd-integration|BIF USD Integration]] -- geometry in BIF's workflow
-- [[wgpu Rendering Pipeline]] -- how geometry reaches the GPU
+- [[wgpu-pipeline]] -- how geometry reaches the GPU

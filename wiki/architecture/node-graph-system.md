@@ -4,7 +4,6 @@ type: article
 tags: [architecture]
 created: "2026-04-05"
 updated: "2026-06-25"
-sources: [ARCHITECTURE.md, ARCHITECTURE_REVIEW.md, ARCHITECTURE_REFACTORS.md]
 ---
 
 # Node Graph System

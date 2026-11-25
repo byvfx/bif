@@ -46,5 +46,5 @@ MutexGuard lifetime causes common patterns:
 
 ## See Also
 
-- [[Borrow Checker Patterns]] — MutexGuard lifetime patterns
+- [[borrow-checker-patterns]] — MutexGuard lifetime patterns
 - `crates/bif_core/src/usd/cpp_bridge.rs` lines 839-848 — safety comment
