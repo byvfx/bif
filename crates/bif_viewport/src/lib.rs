@@ -453,41 +453,25 @@ pub fn required_limits() -> wgpu::Limits {
 impl Renderer {
     /// Create a node graph node from an external UI surface such as the Qt graph.
     ///
-    /// `GraftBranches` is intentionally not bridged here while its behavior is
-    /// being redesigned.
+    /// Type names are resolved by [`node_graph::SceneNode::default_for_type_name`]
+    /// so the same name list drives pin metadata. `GraftBranches` is
+    /// intentionally not bridged here while its behavior is being redesigned.
     pub fn node_graph_add_node(
         &mut self,
         type_name: &str,
         x: f32,
         y: f32,
     ) -> Option<node_graph::GraphNodeId> {
-        let pos = egui::pos2(x, y);
-        let node_id = match type_name {
-            "UsdRead" => self.nodes.node_graph_state.add_usd_read(pos),
-            "HdriEnvironment" => self.nodes.node_graph_state.add_hdri_environment(pos),
-            "IvarRender" => self.nodes.node_graph_state.add_ivar_render(pos),
-            "Cube" => self
-                .nodes
-                .node_graph_state
-                .add_primitive(bif_core::PrimitiveKind::Cube, pos),
-            "Sphere" => self
-                .nodes
-                .node_graph_state
-                .add_primitive(bif_core::PrimitiveKind::Sphere, pos),
-            "Camera" => self
-                .nodes
-                .node_graph_state
-                .add_primitive(bif_core::PrimitiveKind::Camera, pos),
-            "ScatterPoints" => self.nodes.node_graph_state.add_scatter_points(pos),
-            "PointInstancer" => self.nodes.node_graph_state.add_point_instancer(pos),
-            "Xform" => self.nodes.node_graph_state.add_xform(pos),
-            "UsdPrim" => self.nodes.node_graph_state.add_usd_prim(pos),
-            "UsdExport" => self.nodes.node_graph_state.add_usd_export(pos),
-            "Cache" => self.nodes.node_graph_state.add_cache(pos),
-            "GraftBranches" => return None,
-            _ => return None,
-        };
+        let node = node_graph::SceneNode::default_for_type_name(type_name)?;
+        if matches!(node, node_graph::SceneNode::GraftBranches { .. }) {
+            return None;
+        }
 
+        let node_id = self
+            .nodes
+            .node_graph_state
+            .snarl
+            .insert_node(egui::pos2(x, y), node);
         let graph_id = node_graph::GraphNodeId::from(node_id);
         self.nodes.node_graph_state.selected_node = Some(graph_id);
         self.nodes.node_graph_state.dirty_nodes.insert(graph_id);

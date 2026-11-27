@@ -2,6 +2,13 @@
 
 > Active sessions: last 5. Older entries → [SESSION_HANDOFF_ARCHIVE.md](docs/archive/SESSION_HANDOFF_ARCHIVE.md)
 
+## Current State (2026-11-25)
+
+- **#33 shipped** (`fix/33-pin-labels` → PR): node-graph pins now carry the backend's real names and `PinType` colours. `SceneNode::input_pin`/`output_pin` derive from one static table; `pub const NODE_GRAPH_TYPE_NAMES` gates both `pin_metadata_for_type` and `default_for_type_name` (also the type list for `node_graph_add_node`); new cxx-qt `on_node_graph_get_pin_metadata` feeds `add_node`, and `pin_color_for` keys off the `PinType` string.
+- **Two review findings worth remembering.** (1) `pin_metadata_for_type` originally built a `SceneNode` — that bumped the per-kind counters, so Qt-created prims skipped names (`Cube1`, then `Cube3`); metadata must stay a pure table lookup. (2) The first drift test compared two paths reading the *same* slices — a tautology; now hand-written layouts for all 13 types.
+- **⚠ Qt is not installed on this box.** `setup_qt_env.ps1` points at `C:\Qt\6.8.3\msvc2022_64` (absent); a full `dir /s qmake.exe` on `G:` finds nothing, as do `C:\Qt`, `C:\Program Files\Qt`, `C:\msys64`. So the `bif_qt` half of #33 is review-verified only — **CI's Windows job is its first compile**. Fix `setup_qt_env.ps1` once a real Qt path exists, then smoke-test `PointInstancer` (`points`/`proto`, both green) and `IvarRender` (`scene` green + `env` blue).
+- **Next:** #26 (framing stub: `on_frame_selected` is a status message, no Frame All), then the 5 remaining #22 node types → close #22.
+
 ## Current State (2026-08-26)
 
 - **Branch:** `main` at `82448d6`. **PR #34 MERGED → #28 CLOSED.** (instancer namespacing · wire lifetime fix · connect logging · docs). **PR #35 MERGED** first as the CI unblocker — see below.
